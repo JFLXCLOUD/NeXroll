@@ -82,7 +82,15 @@ The application consists of:
 3. **Run** the appropriate startup script:
    - Windows: `start_windows.bat`
    - Linux/Mac: `chmod +x start_linux.sh && ./start_linux.sh`
-4. **Open** your browser to `http://localhost:9393`
+4. **Wait** for automatic dependency installation (Python packages will be installed automatically)
+5. **Open** your browser to `http://localhost:9393`
+
+#### About Automatic Installation
+The startup scripts (`start_windows.bat` / `start_linux.sh`) automatically:
+- Check for Python installation
+- Install all required dependencies from `requirements.txt`
+- Handle installation errors gracefully
+- Start the NeXroll application
 
 ### Option 2: Development Setup
 
@@ -104,9 +112,23 @@ python -m venv venv
 venv\Scripts\activate  # On Windows
 # source venv/bin/activate  # On Linux/Mac
 
-# Install dependencies
-pip install -r requirements.txt
+# Install dependencies from requirements.txt
+pip install -r ../requirements.txt
 ```
+
+#### Python Dependencies
+The `requirements.txt` file includes all necessary Python packages:
+
+- **fastapi** - Web framework for the API
+- **uvicorn** - ASGI server for FastAPI
+- **sqlalchemy** - Database ORM
+- **pydantic** - Data validation
+- **ffmpeg-python** - Video processing
+- **apscheduler** - Task scheduling
+- **requests** - HTTP client for Plex API
+- **plexapi** - Plex Media Server integration
+- **python-multipart** - File upload handling
+- **jinja2** - Template engine
 
 #### Frontend Setup
 ```bash
