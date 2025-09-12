@@ -366,7 +366,7 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 ## 🆘 Support
 
 ### Getting Help
-
+ 
 - **Documentation**: Check this README and inline code comments
 - **Issues**: [GitHub Issues](https://github.com/JFLXCLOUD/NeXroll/issues)
 - **Discussions**: [GitHub Discussions](https://github.com/JFLXCLOUD/NeXroll/discussions)
