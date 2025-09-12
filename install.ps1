@@ -89,14 +89,27 @@ Download-File $releaseUrl $zipPath
 Write-Host "Extracting NeXroll..." -ForegroundColor Yellow
 Extract-Zip $zipPath $extractPath
 
+# Find the actual NeXroll directory (ZIP contains a folder)
+$neXrollDir = Get-ChildItem -Path $extractPath -Directory | Where-Object { $_.Name -like "NeXroll*" } | Select-Object -First 1
+if (-not $neXrollDir) {
+    Write-Host "ERROR: Could not find NeXroll directory after extraction" -ForegroundColor Red
+    exit 1
+}
+$actualPath = $neXrollDir.FullName
+
 # Change to NeXroll directory
-Set-Location $extractPath
+Set-Location $actualPath
 
 # Install Python dependencies
 Write-Host "Installing Python dependencies..." -ForegroundColor Yellow
 try {
     python -m pip install --upgrade pip
-    python -m pip install -r requirements.txt
+    if (Test-Path "requirements.txt") {
+        python -m pip install -r requirements.txt
+    } else {
+        Write-Host "WARNING: requirements.txt not found, installing core dependencies..." -ForegroundColor Yellow
+        python -m pip install fastapi uvicorn sqlalchemy pydantic ffmpeg-python apscheduler requests plexapi python-multipart jinja2
+    }
     Write-Host "Dependencies installed successfully" -ForegroundColor Green
 } catch {
     Write-Host "ERROR: Failed to install Python dependencies" -ForegroundColor Red
@@ -106,22 +119,26 @@ try {
 # Run Plex token setup
 Write-Host "Setting up Plex token..." -ForegroundColor Yellow
 try {
-    python setup_plex_token.py
-    Write-Host "Plex token setup completed" -ForegroundColor Green
+    if (Test-Path "setup_plex_token.py") {
+        python setup_plex_token.py
+        Write-Host "Plex token setup completed" -ForegroundColor Green
+    } else {
+        Write-Host "WARNING: setup_plex_token.py not found, skipping Plex token setup" -ForegroundColor Yellow
+    }
 } catch {
     Write-Host "ERROR: Plex token setup failed. Please ensure Plex Media Server is installed and signed in." -ForegroundColor Red
     exit 1
 }
 
 # Create desktop shortcut for start script
-$startScript = Join-Path $extractPath "start_windows.bat"
+$startScript = Join-Path $actualPath "start_windows.bat"
 $desktopPath = [Environment]::GetFolderPath("Desktop")
 $shortcutPath = Join-Path $desktopPath "NeXroll.lnk"
 
 $shell = New-Object -ComObject WScript.Shell
 $shortcut = $shell.CreateShortcut($shortcutPath)
 $shortcut.TargetPath = $startScript
-$shortcut.WorkingDirectory = $extractPath
+$shortcut.WorkingDirectory = $actualPath
 $shortcut.Description = "Start NeXroll Application"
 $shortcut.Save()
 
@@ -139,3 +156,4 @@ Write-Host ""
 Write-Host "The application will be available at http://localhost:9393" -ForegroundColor Green
 Write-Host ""
 Write-Host "Note: Ensure Plex Media Server is running and signed in for full functionality." -ForegroundColor Yellow
+Write-Host "Installation directory: $actualPath" -ForegroundColor Cyan
