@@ -68,8 +68,17 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# API routes are defined here (they need to be before static mounts)
+
 # Static files for prerolls
-app.mount("/static", StaticFiles(directory="data"), name="static")
+app.mount("/data", StaticFiles(directory="data"), name="data")
+
+# Static files for frontend - mount CSS and JS at root level
+app.mount("/css", StaticFiles(directory="frontend/static/css"), name="css")
+app.mount("/js", StaticFiles(directory="frontend/static/js"), name="js")
+
+# Mount frontend static files LAST so API routes are checked first
+app.mount("/", StaticFiles(directory="frontend", html=True), name="frontend")
 
 # Start scheduler on app startup
 @app.on_event("startup")
@@ -88,9 +97,6 @@ def get_db():
     finally:
         db.close()
 
-@app.get("/")
-def read_root():
-    return {"message": "NeXroll Backend API"}
 
 @app.get("/health")
 def health_check():
