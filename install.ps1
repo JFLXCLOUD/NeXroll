@@ -90,15 +90,20 @@ Write-Host "Extracting NeXroll..." -ForegroundColor Yellow
 Extract-Zip $zipPath $extractPath
 
 # Find the actual NeXroll directory (ZIP contains a folder)
+Write-Host "Looking for NeXroll directory in: $extractPath" -ForegroundColor Yellow
 $neXrollDir = Get-ChildItem -Path $extractPath -Directory | Where-Object { $_.Name -like "NeXroll*" } | Select-Object -First 1
 if (-not $neXrollDir) {
     Write-Host "ERROR: Could not find NeXroll directory after extraction" -ForegroundColor Red
+    Write-Host "Contents of ${extractPath}:" -ForegroundColor Yellow
+    Get-ChildItem -Path $extractPath | Format-Table Name, PSIsContainer
     exit 1
 }
 $actualPath = $neXrollDir.FullName
+Write-Host "Found NeXroll directory: $actualPath" -ForegroundColor Green
 
 # Change to NeXroll directory
 Set-Location $actualPath
+Write-Host "Changed to directory: $(Get-Location)" -ForegroundColor Green
 
 # Install Python dependencies
 Write-Host "Installing Python dependencies..." -ForegroundColor Yellow
