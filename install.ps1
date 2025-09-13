@@ -121,7 +121,7 @@ try {
     exit 1
 }
 
-# Run Plex token setup
+# Run Plex token setup (optional)
 Write-Host "Setting up Plex token..." -ForegroundColor Yellow
 try {
     if (Test-Path "setup_plex_token.py") {
@@ -131,8 +131,9 @@ try {
         Write-Host "WARNING: setup_plex_token.py not found, skipping Plex token setup" -ForegroundColor Yellow
     }
 } catch {
-    Write-Host "ERROR: Plex token setup failed. Please ensure Plex Media Server is installed and signed in." -ForegroundColor Red
-    exit 1
+    Write-Host "WARNING: Plex token setup failed. This is optional - you can configure Plex later." -ForegroundColor Yellow
+    Write-Host "To set up Plex integration manually, run: python setup_plex_token.py" -ForegroundColor Cyan
+    Write-Host "Make sure Plex Media Server is installed and signed in first." -ForegroundColor Cyan
 }
 
 # Create desktop shortcut for start script
