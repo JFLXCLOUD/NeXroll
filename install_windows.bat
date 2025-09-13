@@ -1,6 +1,6 @@
 @echo off
 echo ========================================
-echo    NeXroll Setup and Startup Script
+echo    NeXroll Installation and Setup
 echo ========================================
 echo.
 
@@ -142,9 +142,13 @@ echo Activating virtual environment and installing dependencies...
 call venv\Scripts\activate.bat
 if errorlevel 1 (
     echo ERROR: Failed to activate virtual environment.
+    echo Current directory: %CD%
+    echo Looking for: %CD%\venv\Scripts\activate.bat
+    dir venv\Scripts\activate.bat 2>nul
     pause
     exit /b 1
 )
+echo Virtual environment activated successfully.
 
 echo Installing/updating dependencies in virtual environment...
 pushd "%CD%\venv\Scripts"
@@ -164,114 +168,64 @@ if errorlevel 1 (
 
 echo.
 echo ========================================
-echo    PLEX STABLE TOKEN SETUP (OPTIONAL)
+echo    PLEX STABLE TOKEN SETUP (RECOMMENDED)
 echo ========================================
 echo.
+echo For first-time users, it's recommended to set up a stable Plex token now.
+echo This will enable the "Connect with Stable Token" option in the web interface.
+echo.
+echo Requirements:
+echo - Plex Media Server must be installed and running
+echo - You must be signed into Plex on this server
+echo.
+echo If you skip this step, you can run it later with: python setup_plex_token.py
+echo.
 
-REM Check if stable token is already configured
-if exist plex_config.json (
-    echo Stable token appears to be already configured.
-    echo If you need to reconfigure it, you can run: python setup_plex_token.py
-    echo.
-    goto skip_token_setup
-) else (
-    echo For first-time users, you can set up a stable Plex token now.
-    echo This will enable the "Connect with Stable Token" option in the web interface.
-    echo.
-    echo Requirements:
-    echo - Plex Media Server must be installed and running
-    echo - You must be signed into Plex on this server
-    echo.
-    set /p setup_token="Would you like to run the Plex stable token setup now? (y/n): "
-)
+:plex_setup_prompt
+set /p setup_token="Would you like to run the Plex stable token setup now? (y/n): "
 if /i "%setup_token%"=="y" (
     echo.
     echo Running Plex stable token setup...
     echo.
-
-    REM Check if virtual environment exists
-    if not exist "%CD%\venv\Scripts\python.exe" (
-        echo ERROR: Virtual environment Python not found at %CD%\venv\Scripts\python.exe
-        echo Please ensure the virtual environment was created successfully.
-        pause
-        goto skip_token_setup
-    )
-
-    echo Using Python from virtual environment: %CD%\venv\Scripts\python.exe
-    echo Running script: %CD%\setup_plex_token.py
-
-    REM Test Python environment first
-    echo Testing Python environment...
-    "%CD%\venv\Scripts\python.exe" -c "import sys; print(f'Python version: {sys.version}'); print('Python test successful')"
+    call setup_token_only.bat
     if errorlevel 1 (
-        echo ERROR: Python environment test failed.
-        echo There may be an issue with the virtual environment.
-        pause
-        goto skip_token_setup
-    )
-
-    REM Run the setup script and capture output
-    "%CD%\venv\Scripts\python.exe" "%CD%\setup_plex_token.py"
-    set setup_result=%errorlevel%
-
-    echo Setup script exited with code: %setup_result%
-
-    if %setup_result% equ 1 (
         echo.
         echo WARNING: Stable token setup failed or was cancelled.
-        echo You can run it manually later with: python setup_plex_token.py
         echo.
-        pause
-    ) else if %setup_result% equ 0 (
+        set /p retry_setup="Would you like to try again? (y/n): "
+        if /i "%retry_setup%"=="y" goto plex_setup_prompt
         echo.
-        echo SUCCESS: Stable token has been configured!
-        echo You can now use the "Connect with Stable Token" option in the web interface.
+        echo You can run the setup manually later with: setup_token_only.bat
         echo.
     ) else (
         echo.
-        echo WARNING: Setup script exited with unexpected code: %setup_result%
-        echo The setup may or may not have been successful.
+        echo SUCCESS: Stable token setup completed!
         echo.
-        pause
     )
-) else (
+) else if /i "%setup_token%"=="n" (
     echo.
     echo Skipping stable token setup.
-    echo You can run it manually later with: python setup_plex_token.py
+    echo You can run it manually later with: setup_token_only.bat
     echo.
+) else (
+    echo Please enter 'y' for yes or 'n' for no.
+    goto plex_setup_prompt
 )
 
-:skip_token_setup
-
-echo.
-echo Starting NeXroll Backend...
-pushd "%CD%\backend"
-echo Current directory: %CD%
-echo Python executable: ..\venv\Scripts\python.exe
-echo Command: ..\venv\Scripts\python.exe -m uvicorn main:app --host 0.0.0.0 --port 9393 --reload
-
-REM Start the server from backend directory
-start /B ..\venv\Scripts\python.exe -m uvicorn main:app --host 0.0.0.0 --port 9393 --reload
-
-REM Wait a moment and check if server is running
-timeout /t 5 /nobreak > nul
-
-REM If server didn't start, try alternative method
-tasklist /FI "IMAGENAME eq python.exe" 2>NUL | find /I /N "python.exe">NUL
-if %ERRORLEVEL% NEQ 0 (
-    echo Server may not have started. Trying alternative method...
-    start /B cmd /c "cd /d %CD% && ..\venv\Scripts\python.exe -m uvicorn main:app --host 0.0.0.0 --port 9393 --reload"
-)
-popd
-echo Backend started. Opening frontend...
-timeout /t 3 /nobreak > nul
-start http://localhost:9393
 echo.
 echo ========================================
-echo NeXroll is running at http://localhost:9393
+echo    INSTALLATION COMPLETE!
 echo ========================================
 echo.
-echo Note: Backend is running in virtual environment.
-echo To stop the backend, close the command window or press Ctrl+C.
+echo NeXroll has been successfully installed and configured.
+echo.
+echo To start NeXroll:
+echo 1. Run start_windows.bat
+echo 2. Or manually start with: venv\Scripts\python.exe backend/main.py
+echo.
+echo The web interface will be available at: http://localhost:9393
+echo.
+echo If you skipped the stable token setup, you can run it later:
+echo python setup_plex_token.py
 echo.
 pause

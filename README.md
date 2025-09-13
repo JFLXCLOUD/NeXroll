@@ -1,7 +1,7 @@
 # NeXroll - Plex Preroll Management System
 
 <div align="center">
-  <img src="NeXroll_Logo_WHT.png" alt="NeXroll Logo" width="400"/>
+  <img src="NeXroll_Logo_BLK.png" alt="NeXroll Logo" width="200"/>
   <br>
   <p><strong>A comprehensive Plex preroll management system with web interface</strong></p>
   <p>
@@ -13,6 +13,28 @@
     <a href="#contributing">Contributing</a>
   </p>
 </div>
+
+---
+
+## ⚡ Quick Start
+
+**One-command installation:**
+```powershell
+irm https://raw.githubusercontent.com/JFLXCLOUD/NeXroll/main/install.ps1 | iex
+```
+
+This will:
+- ✅ Install all prerequisites (Python, FFmpeg)
+- ✅ Download and set up NeXroll
+- ✅ Configure Plex integration
+- ✅ Start the application at http://localhost:9393
+
+**Manual installation:**
+```batch
+# Download latest release
+# Extract ZIP file
+# Run: install_windows.bat
+```
 
 ---
 
@@ -71,20 +93,40 @@ The application consists of:
 - **Backup & Restore**: Database and file backup/restore functionality
 - **Community Templates**: Share and import schedule templates
 - **API Access**: RESTful API for programmatic access
-- **Cross-Platform**: Works on Windows, Linux, and macOS
+- **Plex Integration**: Seamless connection with Plex Media Server
 
 ## 🚀 Installation
 
-### Option 1: Pre-built Release (Recommended)
+### Option 1: One-Click PowerShell Installation (Recommended)
+
+For the easiest installation experience, use our PowerShell script that handles everything automatically:
+
+```powershell
+# Download and run the installation script
+irm https://raw.githubusercontent.com/JFLXCLOUD/NeXroll/main/install.ps1 | iex
+```
+
+**What this does:**
+- ✅ Installs Python and FFmpeg if needed
+- ✅ Downloads the latest NeXroll release
+- ✅ Sets up the virtual environment
+- ✅ Configures Plex stable token (optional)
+- ✅ Creates desktop shortcut
+- ✅ Starts NeXroll automatically
+- ✅ Opens web interface at http://localhost:9393
+
+### Option 2: Manual Installation
 
 1. **Download** the latest release from [GitHub Releases](https://github.com/JFLXCLOUD/NeXroll/releases)
 2. **Extract** the zip file to your desired location
-3. **Run** the appropriate startup script:
-   - Windows: `start_windows.bat`
-   - Linux/Mac: `chmod +x start_linux.sh && ./start_linux.sh`
-4. **Open** your browser to `http://localhost:9393`
+3. **Run** the installation script:
+   ```batch
+   install_windows.bat
+   ```
+4. **Follow the prompts** to configure Plex integration (recommended)
+5. **The application will start automatically** and open at `http://localhost:9393`
 
-### Option 2: Development Setup
+### Option 3: Development Setup
 
 #### Prerequisites
 - Python 3.8+
@@ -125,28 +167,25 @@ python -c "from database import engine; from models import Base; Base.metadata.c
 
 ### Starting the Application
 
-#### Development Mode
-```bash
-# Backend (Terminal 1)
+After installation, NeXroll starts automatically. If you need to restart it:
+
+```batch
+# From the installation directory
+start_windows.bat
+```
+
+The web interface will be available at `http://localhost:9393`
+
+#### Development Mode (for contributors)
+```batch
+# Backend
 cd backend
 venv\Scripts\activate
 uvicorn main:app --reload --port 9393
 
-# Frontend (Terminal 2)
+# Frontend (in another terminal)
 cd frontend
 npm start
-```
-
-#### Production Mode
-```bash
-# Build frontend
-cd frontend
-npm run build
-
-# Start backend
-cd backend
-venv\Scripts\activate
-uvicorn main:app --host 0.0.0.0 --port 9393
 ```
 
 ### Basic Workflow
@@ -198,16 +237,20 @@ PLEX_TOKEN=your-plex-token
 
 ### Plex Configuration
 
-#### Method 1: Manual Token
-1. Open Plex Web at `http://localhost:32400/web`
-2. Sign in and go to Settings → General → Advanced
-3. Copy the "Authentication Token"
-4. Enter URL and token in NeXroll's Plex configuration
+During installation, you'll be prompted to set up Plex integration. The installer will:
 
-#### Method 2: Stable Token (Recommended)
-1. Run the setup script: `python setup_plex_token.py`
-2. Follow the prompts to configure your stable token
-3. Use the stable token connection method in NeXroll
+1. **Automatically detect** your Plex token from:
+   - Windows Registry (preferred method)
+   - Preferences.xml file locations
+2. **Guide you through** the setup process with clear instructions
+3. **Offer manual entry** if automatic detection fails
+
+#### Manual Configuration (if needed)
+If you skipped the setup or need to reconfigure:
+
+1. Run: `python setup_plex_token.py`
+2. Or manually enter your Plex token in the web interface
+3. Get your token from: `http://localhost:32400/web` → Settings → General → Advanced
 
 ## 🛠️ Development
 
@@ -328,7 +371,7 @@ We welcome contributions! Please follow these steps:
 - Use ESLint configuration for JavaScript/React
 - Write tests for new features
 - Update documentation for API changes
-- Ensure cross-platform compatibility
+- Test on Windows systems
 
 ### Reporting Issues
 
@@ -375,6 +418,4 @@ If you find NeXroll helpful, consider supporting the development:
     <a href="https://github.com/JFLXCLOUD/NeXroll/releases">Releases</a> •
     <a href="https://github.com/JFLXCLOUD/NeXroll/issues">Issues</a>
   </p>
-
 </div>
-
