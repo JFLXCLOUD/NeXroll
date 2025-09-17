@@ -12,6 +12,7 @@ import random
 import zipfile
 import io
 import shutil
+import subprocess
 from pathlib import Path
 
 import sys
@@ -67,7 +68,7 @@ class PlexConnectRequest(BaseModel):
     url: str
     token: str
 
-app = FastAPI(title="NeXroll Backend", version="1.0.0")
+app = FastAPI(title="NeXroll Backend", version="1.0.1")
 
 # CORS middleware for frontend integration
 app.add_middleware(
@@ -101,6 +102,58 @@ def get_db():
 @app.get("/health")
 def health_check():
     return {"status": "healthy"}
+
+
+@app.get("/system/ffmpeg-info")
+def system_ffmpeg_info():
+    """Return presence and versions for ffmpeg and ffprobe (for diagnostics UI)."""
+    def probe(cmd: str):
+        try:
+            r = subprocess.run([cmd, "-version"], capture_output=True, text=True)
+            if r.returncode == 0:
+                first = r.stdout.splitlines()[0] if r.stdout else ""
+                return True, first
+        except Exception:
+            pass
+        return False, None
+
+    ffmpeg_ok, ffmpeg_ver = probe("ffmpeg")
+    ffprobe_ok, ffprobe_ver = probe("ffprobe")
+    return {
+        "ffmpeg_present": ffmpeg_ok,
+        "ffmpeg_version": ffmpeg_ver,
+        "ffprobe_present": ffprobe_ok,
+        "ffprobe_version": ffprobe_ver,
+    }
+
+
+@app.get("/system/version")
+def system_version():
+    """Expose backend version and installed version (from Windows registry if present)."""
+    reg_version = None
+    install_dir = None
+    try:
+        if sys.platform.startswith("win"):
+            import winreg
+            key = winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, r"Software\NeXroll")
+            try:
+                reg_version, _ = winreg.QueryValueEx(key, "Version")
+            except Exception:
+                reg_version = None
+            try:
+                install_dir, _ = winreg.QueryValueEx(key, "InstallDir")
+            except Exception:
+                install_dir = None
+            winreg.CloseKey(key)
+    except Exception:
+        reg_version = None
+        install_dir = None
+
+    return {
+        "api_version": getattr(app, "version", None),
+        "registry_version": reg_version,
+        "install_dir": install_dir,
+    }
 
 @app.post("/plex/connect")
 def connect_plex(request: PlexConnectRequest, db: Session = Depends(get_db)):
@@ -1101,6 +1154,32 @@ def run_scheduler_now(db: Session = Depends(get_db)):
         return {"message": "Scheduler executed successfully"}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Scheduler execution failed: {str(e)}")
+
+
+@app.post("/schedules/validate-cron")
+def validate_cron(pattern: str):
+    """
+    Placeholder cron-like pattern validation for v1.1.0 scaffolding.
+    Accepts 5-field patterns (minute hour day month weekday). Basic syntax-only checks.
+    """
+    try:
+        parts = pattern.strip().split()
+    except Exception:
+        parts = []
+
+    valid = False
+    message = ""
+    if len(parts) == 5:
+        allowed = set("0123456789*/,-")
+        if all(len(p) > 0 and set(p) <= allowed for p in parts):
+            valid = True
+            message = "Pattern looks valid (basic checks only)."
+        else:
+            message = "Invalid characters in one or more fields."
+    else:
+        message = "Pattern must have 5 fields separated by spaces."
+
+    return {"valid": valid, "message": message, "pattern": pattern}
 
 # Stable token workflow endpoints
 @app.get("/plex/stable-token/status")
