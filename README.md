@@ -1,7 +1,7 @@
 # NeXroll - Plex Preroll Management System
 
 <div align="center">
-  <img src="frontend/NeXroll_Logo_WHT.png" alt="NeXroll Logo" width="200"/>
+  <img src="frontend/NeXroll_Logo_WHT.png" alt="NeXroll Logo" width="500"/>
   <br>
   <p><strong>A comprehensive Plex preroll management system with web interface</strong></p>
   <p>
@@ -374,3 +374,4 @@ If you find NeXroll helpful, consider supporting the development:
   </p>
 
 </div>
+
