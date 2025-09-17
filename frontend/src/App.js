@@ -29,6 +29,8 @@ function App() {
     token_length: 0
   });
   const [manualToken, setManualToken] = useState('');
+  const [systemVersion, setSystemVersion] = useState(null);
+  const [ffmpegInfo, setFfmpegInfo] = useState(null);
 
   // Schedule form state
   const [scheduleForm, setScheduleForm] = useState({
@@ -88,9 +90,11 @@ function App() {
       fetch('http://localhost:9393/scheduler/status'),
       fetch('http://localhost:9393/tags'),
       fetch('http://localhost:9393/community-templates'),
-      fetch('http://localhost:9393/plex/stable-token/status')
+      fetch('http://localhost:9393/plex/stable-token/status'),
+      fetch('http://localhost:9393/system/version'),
+      fetch('http://localhost:9393/system/ffmpeg-info')
     ]).then(responses => Promise.all(responses.map(r => r.json())))
-      .then(([plex, prerolls, schedules, categories, holidays, scheduler, tags, templates, stableToken]) => {
+      .then(([plex, prerolls, schedules, categories, holidays, scheduler, tags, templates, stableToken, sysVersion, ffmpeg]) => {
         setPlexStatus(plex.connected ? 'Connected' : 'Disconnected');
         setPlexServerInfo(plex);
         setPrerolls(Array.isArray(prerolls) ? prerolls : []);
@@ -105,6 +109,8 @@ function App() {
           config_file_exists: false,
           token_length: 0
         });
+        setSystemVersion(sysVersion || null);
+        setFfmpegInfo(ffmpeg || null);
       }).catch(err => {
         console.error('Fetch error:', err);
         // Set default values on error
@@ -120,6 +126,8 @@ function App() {
           config_file_exists: false,
           token_length: 0
         });
+        setSystemVersion(null);
+        setFfmpegInfo(null);
       });
   };
 
@@ -1465,6 +1473,13 @@ function App() {
     </div>
   );
 
+  const recheckFfmpeg = () => {
+    fetch('http://localhost:9393/system/ffmpeg-info')
+      .then(res => res.json())
+      .then(data => setFfmpegInfo(data))
+      .catch(() => setFfmpegInfo(null));
+  };
+
   const renderSettings = () => (
     <div>
       <h1 className="header">Settings</h1>
@@ -1623,6 +1638,14 @@ function App() {
           <div><strong>Community Templates:</strong> {communityTemplates.length}</div>
           <div><strong>Scheduler Status:</strong> {schedulerStatus.running ? 'Running' : 'Stopped'}</div>
           <div><strong>Theme:</strong> {darkMode ? 'Dark' : 'Light'}</div>
+          <div><strong>Version (API):</strong> {systemVersion?.api_version || 'unknown'}</div>
+          <div><strong>Version (Installed):</strong> {systemVersion?.registry_version || 'n/a'}</div>
+          {systemVersion?.install_dir && <div><strong>Install Dir:</strong> {systemVersion.install_dir}</div>}
+          <div><strong>FFmpeg:</strong> {ffmpegInfo ? (ffmpegInfo.ffmpeg_present ? ffmpegInfo.ffmpeg_version : 'Not found') : 'Detecting...'}</div>
+          <div><strong>FFprobe:</strong> {ffmpegInfo ? (ffmpegInfo.ffprobe_present ? ffmpegInfo.ffprobe_version : 'Not found') : 'Detecting...'}</div>
+        </div>
+        <div style={{ marginTop: '0.75rem' }}>
+          <button onClick={recheckFfmpeg} className="button">🔎 Re-check FFmpeg</button>
         </div>
       </div>
     </div>
@@ -1691,6 +1714,9 @@ function App() {
         {activeTab === 'categories' && renderCategories()}
         {activeTab === 'settings' && renderSettings()}
         {activeTab === 'plex' && renderPlex()}
+      </div>
+      <div style={{ marginTop: '1rem', fontSize: '0.85rem', color: '#666', textAlign: 'center' }}>
+        NeXroll {systemVersion?.registry_version ? `v${systemVersion.registry_version}` : (systemVersion?.api_version ? `v${systemVersion.api_version}` : '')}
       </div>
     </div>
   );
