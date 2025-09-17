@@ -1,377 +1,184 @@
-# NeXroll - Plex Preroll Management System
-
+# NeXroll
 <div align="center">
   <img src="frontend/NeXroll_Logo_WHT.png" alt="NeXroll Logo" width="500"/>
   <br>
-  <p><strong>A comprehensive Plex preroll management system with web interface</strong></p>
-  <p>
-    <a href="#features">Features</a> •
-    <a href="#installation">Installation</a> •
-    <a href="#usage">Usage</a> •
-    <a href="#configuration">Configuration</a> •
-    <a href="#development">Development</a> •
-    <a href="#contributing">Contributing</a>
-  </p>
-</div>
+NeXroll is a Windows-ready Plex preroll management system with a modern web UI, an optional Windows Service, and a lightweight system tray app. All executables are self‑contained (no Python required on user machines), and a single installer configures everything end‑to‑end.
+
+Web UI: http://localhost:9393
+
+Repository layout lives under `NeXroll/`, and the single installer is built from the repo using PyInstaller + NSIS.
 
 ---
 
-## 📋 Table of Contents
+## Download and Install (Users)
 
-- [About](#-about)
-- [Features](#-features)
-- [Installation](#-installation)
-- [Usage](#-usage)
-- [Configuration](#-configuration)
-- [Development](#-development)
-- [Project Structure](#-project-structure)
-- [API Documentation](#-api-documentation)
-- [Contributing](#-contributing)
-- [License](#-license)
-- [Support](#-support)
+1. Download the latest `NeXroll_Installer.exe` from GitHub Releases:
+   https://github.com/JFLXCLOUD/NeXroll/releases
+2. Run `NeXroll_Installer.exe` (administrator recommended).
+3. Choose:
+   - Install location (default: `C:\Program Files\NeXroll`)
+   - Preroll storage directory (can be on any drive)
+4. Optional components you may select:
+   - Install as Windows Service (`NeXrollService`)
+   - Plex Stable Token setup (runs `setup_plex_token.exe`)
+   - Start with Windows (adds the tray app to Startup)
+   - Install FFmpeg via winget (for thumbnail generation)
+5. Finish the installer and open the app from the Start Menu or tray menu.
 
-## 🎯 About
+After install, visit http://localhost:9393 to use the web UI.
+### PowerShell one‑liner (download + launch installer)
 
-NeXroll is a powerful, user-friendly application designed to manage preroll videos for Plex Media Server. It provides a modern web interface for uploading, organizing, and scheduling preroll content, with seamless integration with Plex's preroll system.
-
-The application consists of:
-- **Backend**: FastAPI-based REST API server
-- **Frontend**: Modern React-based web interface
-- **Database**: SQLite database for data persistence
-- **Scheduler**: Automated preroll scheduling system
-
-## ✨ Features
-
-### 🎬 Preroll Management
-- **Upload & Organize**: Upload multiple preroll videos with metadata
-- **Category System**: Organize prerolls by categories (Default, Halloween, Christmas, etc.)
-- **Thumbnail Generation**: Automatic thumbnail generation for uploaded videos
-- **Tag System**: Add tags for better organization and filtering
-- **Bulk Operations**: Upload multiple files simultaneously
-
-### ⏰ Scheduling System
-- **Flexible Scheduling**: Create schedules with various recurrence patterns
-- **Holiday Presets**: Built-in holiday-themed scheduling presets
-- **Priority System**: Set fallback categories for when no schedule is active
-- **Real-time Status**: Monitor scheduler status and active schedules
-
-### 🔗 Plex Integration
-- **Seamless Connection**: Connect to Plex Media Server via URL and token
-- **Stable Token Support**: Use stable tokens for persistent authentication
-- **Category Sync**: Apply entire categories to Plex as preroll sequences
-- **Status Monitoring**: Real-time connection status and server information
-
-### 🎨 User Interface
-- **Modern Design**: Clean, responsive React-based interface
-- **Dark/Light Mode**: Toggle between themes
-- **Intuitive Navigation**: Tabbed interface for easy access to features
-- **Real-time Updates**: Live status updates and progress indicators
-
-### 🔧 Advanced Features
-- **Backup & Restore**: Database and file backup/restore functionality
-- **Community Templates**: Share and import schedule templates
-- **API Access**: RESTful API for programmatic access
-- **Cross-Platform**: Works on Windows, Linux, and macOS
-
-## 🚀 Installation
-
-### Option 1: Pre-built Release (Recommended)
-
-1. **Download** the latest release from [GitHub Releases](https://github.com/JFLXCLOUD/NeXroll/releases)
-2. **Extract** the zip file to your desired location
-3. **Run** the installation script:
-   - Windows: Launch `install_windows.bat`, then run `start_windows.bat`
-4. **Open** your browser to `http://localhost:9393`
-
-### Option 2: Development Setup
-
-#### Prerequisites
-- Python 3.8+
-- Node.js 16+
-- FFmpeg (for video processing)
-- Git
-
-#### Backend Setup
-```bash
-# Clone the repository
-git clone https://github.com/JFLXCLOUD/NeXroll.git
-cd NeXroll
-
-# Set up Python virtual environment
-cd backend
-python -m venv venv
-venv\Scripts\activate  # On Windows
-# source venv/bin/activate  # On Linux/Mac
-
-# Install dependencies
-pip install -r requirements.txt
+```powershell
+$release = Invoke-RestMethod https://api.github.com/repos/JFLXCLOUD/NeXroll/releases/latest
+$asset = $release.assets | Where-Object { $_.name -eq 'NeXroll_Installer.exe' } | Select-Object -First 1
+$dest = Join-Path $env:TEMP $asset.name
+Invoke-WebRequest -Uri $asset.browser_download_url -OutFile $dest
+Start-Process -FilePath $dest
 ```
 
-#### Frontend Setup
-```bash
-# In a new terminal
-cd frontend
-npm install
+### Silent install (defaults)
+
+```powershell
+&amp; "$env:TEMP\NeXroll_Installer.exe" /S
 ```
 
-#### Database Setup
-```bash
-# Initialize the database (from backend directory)
-python -c "from database import engine; from models import Base; Base.metadata.create_all(bind=engine)"
-```
-
-## 💻 Usage
-
-### Starting the Application
-
-#### Development Mode
-```bash
-# Backend (Terminal 1)
-cd backend
-venv\Scripts\activate
-uvicorn main:app --reload --port 9393
-
-# Frontend (Terminal 2)
-cd frontend
-npm start
-```
-
-#### Production Mode
-```bash
-# Build frontend
-cd frontend
-npm run build
-
-# Start backend
-cd backend
-venv\Scripts\activate
-uvicorn main:app --host 0.0.0.0 --port 9393
-```
-
-### Basic Workflow
-
-1. **Connect to Plex**
-   - Navigate to the "Plex" tab
-   - Enter your Plex server URL and authentication token
-   - Or use the stable token method for persistent authentication
-
-2. **Upload Prerolls**
-   - Go to the "Dashboard" tab
-   - Select video files to upload
-   - Add tags, select category, and provide description
-   - Click "Upload" to process files
-
-3. **Create Categories**
-   - Use the "Categories" tab to organize your prerolls
-   - Create custom categories or use built-in holiday presets
-
-4. **Set Up Schedules**
-   - Navigate to the "Schedules" tab
-   - Create new schedules with date/time ranges
-   - Choose categories and scheduling options
-   - Enable/disable schedules as needed
-
-5. **Apply to Plex**
-   - Select a category in the "Categories" tab
-   - Click "Apply to Plex" to sync with your Plex server
-   - Monitor the connection status
-
-## ⚙️ Configuration
-
-### Environment Variables
-
-Create a `.env` file in the backend directory:
-
-```env
-# Database
-DATABASE_URL=sqlite:///./nexroll.db
-
-# Server
-HOST=0.0.0.0
-PORT=9393
-
-# Plex (optional - can be configured via UI)
-PLEX_URL=http://your-plex-server:32400
-PLEX_TOKEN=your-plex-token
-```
-
-### Plex Configuration
-
-#### Method 1: Manual Token
-1. Open Plex Web at `http://localhost:32400/web`
-2. Sign in and go to Settings → General → Advanced
-3. Copy the "Authentication Token"
-4. Enter URL and token in NeXroll's Plex configuration
-
-#### Method 2: Stable Token (Recommended)
-1. Run the setup script: `python setup_plex_token.py`
-2. Follow the prompts to configure your stable token
-3. Use the stable token connection method in NeXroll
-
-## 🛠️ Development
-
-### Project Structure
-
-```
-NeXroll/
-├── backend/                 # FastAPI backend
-│   ├── main.py             # Main application file
-│   ├── models.py           # Database models
-│   ├── database.py         # Database configuration
-│   ├── plex_connector.py   # Plex integration
-│   ├── scheduler.py        # Scheduling system
-│   └── data/               # Application data
-├── frontend/                # React frontend
-│   ├── src/
-│   │   ├── App.js          # Main React component
-│   │   ├── App.css         # Styles
-│   │   └── ...
-│   └── public/             # Static assets
-└── README.md               # This file
-```
-
-### Running Tests
-
-```bash
-# Backend tests
-cd backend
-python -m pytest
-
-# Frontend tests
-cd frontend
-npm test
-```
-
-### Building for Production
-
-```bash
-# Build backend executable
-python build_backend.py
-
-# Build frontend
-cd frontend
-npm run build
-
-# Create release package
-python create_release.py
-```
-
-## 📁 Project Structure
-
-### Backend Components
-
-- **`main.py`**: FastAPI application with all endpoints
-- **`models.py`**: SQLAlchemy models for database tables
-- **`database.py`**: Database connection and session management
-- **`plex_connector.py`**: Plex Media Server integration
-- **`scheduler.py`**: Background job scheduling system
-
-### Frontend Components
-
-- **`App.js`**: Main React application component
-- **`Dashboard`**: Preroll upload and management
-- **`Schedules`**: Schedule creation and management
-- **`Categories`**: Category organization and Plex sync
-- **`Settings`**: Application configuration and utilities
-
-### Database Schema
-
-- **Prerolls**: Video files with metadata
-- **Categories**: Organizational groupings
-- **Schedules**: Automated playback schedules
-- **Holiday Presets**: Pre-configured holiday schedules
-- **Settings**: Application configuration
-- **Community Templates**: Shareable schedule templates
-
-## 📚 API Documentation
-
-The backend provides a comprehensive REST API:
-
-### Core Endpoints
-
-- `GET /` - Health check
-- `POST /plex/connect` - Connect to Plex server
-- `POST /prerolls/upload` - Upload preroll videos
-- `GET /prerolls` - List prerolls with filtering
-- `POST /schedules` - Create schedules
-- `GET /schedules` - List schedules
-- `POST /categories` - Create categories
-- `GET /categories` - List categories
-
-### Advanced Endpoints
-
-- `POST /plex/connect/stable-token` - Connect with stable token
-- `POST /categories/{id}/apply-to-plex` - Sync category to Plex
-- `POST /scheduler/start` - Start scheduler
-- `GET /scheduler/status` - Get scheduler status
-- `GET /backup/database` - Export database
-- `POST /restore/database` - Import database
-
-For detailed API documentation, see the interactive API docs at `http://localhost:9393/docs` when the server is running.
-
-## 🤝 Contributing
-
-We welcome contributions! Please follow these steps:
-
-1. **Fork** the repository
-2. **Create** a feature branch: `git checkout -b feature/your-feature`
-3. **Commit** your changes: `git commit -m 'Add your feature'`
-4. **Push** to the branch: `git push origin feature/your-feature`
-5. **Create** a Pull Request
-
-### Development Guidelines
-
-- Follow PEP 8 for Python code
-- Use ESLint configuration for JavaScript/React
-- Write tests for new features
-- Update documentation for API changes
-- Ensure cross-platform compatibility
-
-### Reporting Issues
-
-- Use GitHub Issues for bug reports and feature requests
-- Include detailed steps to reproduce
-- Provide system information and error logs
-- Suggest potential solutions when possible
-
-## 📄 License
-
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
-
-## 🆘 Support
-
-### Getting Help
-
-- **Documentation**: Check this README and inline code comments
-- **Issues**: [GitHub Issues](https://github.com/JFLXCLOUD/NeXroll/issues)
-- **Discussions**: [GitHub Discussions](https://github.com/JFLXCLOUD/NeXroll/discussions)
-
-### Support the Project
-
-If you find NeXroll helpful, consider supporting the development:
-
-[![Ko-fi](https://img.shields.io/badge/Ko--fi-Support%20Me-FF5E5B?style=for-the-badge&logo=ko-fi&logoColor=white)](https://ko-fi.com/j_b__)
-
-
-**Plex Connection Issues**:
-- Ensure Plex server is running and accessible
-- Verify authentication token is valid
-- Check firewall settings allow connections
-
-**Video Processing Errors**:
-- Install FFmpeg for video thumbnail generation
-- Ensure uploaded files are valid video formats
-- Check file permissions for upload directories
+Silent mode installs to `C:\Program Files\NeXroll` and uses the default Preroll path. Use interactive mode to customize components or directories.
 
 ---
 
-<div align="center">
-  <p><strong>Built with ❤️ for the Plex community</strong></p>
-  <p>
-    <a href="https://github.com/JFLXCLOUD/NeXroll">GitHub</a> •
-    <a href="https://github.com/JFLXCLOUD/NeXroll/releases">Releases</a> •
-    <a href="https://github.com/JFLXCLOUD/NeXroll/issues">Issues</a>
-  </p>
+## What’s Installed
 
-</div>
+- `NeXroll.exe` — the web application (FastAPI + bundled frontend)
+- `NeXrollService.exe` — optional Windows Service wrapper
+- `NeXrollTray.exe` — system tray app with quick actions
+- `setup_plex_token.exe` — helper to obtain a stable Plex token
+- `favicon.ico` — NeXroll icon used across executables and the installer
 
+Start Menu shortcuts are created for NeXroll, NeXroll Tray, and Uninstall NeXroll. A desktop shortcut for NeXroll is also added.
+
+---
+
+## System Tray App
+
+The tray icon provides quick actions:
+- Open — launches http://localhost:9393
+- About — shows app information
+- GitHub — opens https://github.com/JFLXCLOUD/NeXroll
+- Exit — closes the tray app
+
+If you selected “Start with Windows,” the tray app launches automatically at login.
+
+---
+
+## Windows Service (Optional)
+
+If chosen during installation, the `NeXrollService` Windows Service is installed. You can manage it via Services.msc or the following commands (run from `C:\Program Files\NeXroll` or your chosen InstallDir):
+
+```
+NeXrollService.exe install
+NeXrollService.exe start
+NeXrollService.exe stop
+NeXrollService.exe remove
+```
+
+Tip: if a previous NeXroll instance is still running and occupying port 9393, the service may need a second start attempt after that instance is closed.
+
+---
+
+## Requirements (User machines)
+
+- Windows 10/11 x64
+- FFmpeg for thumbnail generation (you can install it from the installer’s optional components, or manually)
+- Network access to your Plex server
+- No Python required on user machines
+
+---
+
+## First‑Time Setup
+
+1. Open http://localhost:9393
+2. Connect to Plex:
+   - Use your Plex URL and token; or
+   - Run `setup_plex_token.exe` to create a long‑lived “stable token,” then connect using that token.
+3. Upload prerolls, create categories, and configure schedules.
+
+---
+
+## Upgrade / Uninstall
+
+- Upgrade: simply run the newer `NeXroll_Installer.exe` over the existing installation. Your configured Preroll storage path is preserved, and data is not removed.
+- Uninstall: use “Uninstall NeXroll” from the Start Menu (or Apps & Features). The installer removes the service and shortcuts; your Preroll storage directory is not deleted.
+
+---
+
+## Building From Source (Maintainers)
+
+See the full packaging guide at `NeXroll/PACKAGING.md`.
+
+Prerequisites (build machine):
+- Python 3.10+ (build‑time only)
+- pip install: `pyinstaller`, `pywin32`, `pystray`, `Pillow`
+- NSIS 3.x (`makensis` on PATH)
+
+Build commands (run from the repository root):
+
+```
+py -m PyInstaller -y NeXroll\neXroll.spec
+py -m PyInstaller -y NeXroll\NeXrollService.spec
+py -m PyInstaller -y NeXroll\setup_plex_token.spec
+py -m PyInstaller -y NeXroll\NeXrollTray.spec
+
+makensis NeXroll\installer.nsi
+```
+
+Outputs:
+- `dist\NeXroll.exe`
+- `dist\NeXrollService.exe`
+- `dist\setup_plex_token.exe`
+- `dist\NeXrollTray.exe`
+- `NeXroll\NeXroll_Installer.exe`
+
+---
+
+
+## Project Structure (key files)
+
+- Backend (FastAPI): `NeXroll/backend/`
+- Frontend (static build served by backend): `NeXroll/frontend/`
+- Windows Service wrapper: `NeXroll/windows_service.py`
+- System tray app: `NeXroll/tray_app.py`
+- PyInstaller specs:
+  - `NeXroll/neXroll.spec`
+  - `NeXroll/NeXrollService.spec`
+  - `NeXroll/NeXrollTray.spec`
+  - `NeXroll/setup_plex_token.spec`
+- NSIS installer: `NeXroll/installer.nsi`
+- Packaging guide: `NeXroll/PACKAGING.md`
+
+---
+
+## Troubleshooting
+
+- “Service did not respond in time”
+  - Ensure no other process is using port 9393; stop any `NeXroll.exe` that’s running, then start the service again.
+- Thumbnails not created
+  - Install FFmpeg (choose the installer component, or install manually); re‑upload a preroll.
+- Tray icon not shown
+  - Run “NeXroll Tray” from Start Menu; pin it so it’s always visible.
+- Plex connection issues
+  - Verify Plex is reachable from the machine, and the token is valid (retry `setup_plex_token.exe` if needed).
+
+---
+
+## License
+
+MIT. Third‑party components remain under their respective licenses.
+
+
+---
+
+## Support
+
+If NeXroll is helpful, consider supporting ongoing development:
+
+[![Ko-fi](https://img.shields.io/badge/Ko--fi-Support%20Me-FF5E5B?style=for-the-badge&amp;logo=ko-fi&amp;logoColor=white)](https://ko-fi.com/j_b__)
