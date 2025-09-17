@@ -14,13 +14,22 @@
 !include "nsDialogs.nsh"
 
 Name "NeXroll"
-OutFile "NeXroll_Installer.exe"
 InstallDir "$PROGRAMFILES64\NeXroll"
+InstallDirRegKey HKLM "Software\NeXroll" "InstallDir"
 RequestExecutionLevel admin
 ShowInstDetails show
 Icon "frontend\favicon.ico"
 UninstallIcon "frontend\favicon.ico"
 
+!define APP_VERSION "1.0.1"
+VIProductVersion "1.0.1.0"
+VIAddVersionKey /LANG=1033 "ProductName" "NeXroll"
+VIAddVersionKey /LANG=1033 "ProductVersion" "${APP_VERSION}"
+VIAddVersionKey /LANG=1033 "FileVersion" "${APP_VERSION}"
+VIAddVersionKey /LANG=1033 "CompanyName" "NeXroll"
+VIAddVersionKey /LANG=1033 "FileDescription" "NeXroll Installer"
+OutFile "NeXroll_Installer_${APP_VERSION}.exe"
+ 
 ; Variables
 Var PREROLL_PATH
 Var hPrerollEdit
@@ -44,19 +53,21 @@ Page custom PrerollPathPageCreate PrerollPathPageLeave
 Function PrerollPathPageCreate
   nsDialogs::Create 1018
   Pop $0
-
+ 
   ${NSD_CreateLabel} 0 0 100% 12u "Select Preroll Video Storage"
   ${NSD_CreateLabel} 0 18u 100% 12u "Choose a directory where Preroll videos will be stored:"
   
-  ; Default path
-  StrCpy $PREROLL_PATH "$DOCUMENTS\NeXroll\Prerolls"
+  ; Default path from registry if available
+  ReadRegStr $PREROLL_PATH HKLM "Software\NeXroll" "PrerollPath"
+  StrCmp $PREROLL_PATH "" 0 +2
+    StrCpy $PREROLL_PATH "$DOCUMENTS\NeXroll\Prerolls"
   ${NSD_CreateText} 0 36u 80% 12u "$PREROLL_PATH"
   Pop $hPrerollEdit
-
+ 
   ${NSD_CreateButton} 82% 35u 18% 14u "Browse..."
   Pop $1
   ${NSD_OnClick} $1 PrerollPathBrowse
-
+ 
   nsDialogs::Show
 FunctionEnd
 
@@ -114,6 +125,7 @@ Section "!NeXroll Application (Required)" SEC_APP
   ; Persist config to registry
   WriteRegStr HKLM "Software\NeXroll" "InstallDir" "$INSTDIR"
   WriteRegStr HKLM "Software\NeXroll" "PrerollPath" "$PREROLL_PATH"
+  WriteRegStr HKLM "Software\NeXroll" "Version" "${APP_VERSION}"
 
   ; Start Menu shortcuts
   CreateDirectory "$SMPROGRAMS\NeXroll"
@@ -153,6 +165,12 @@ Section "Install Dependencies (FFmpeg via winget)" SEC_DEPS
   ; $0 contains exit code (ignored for best-effort)
 SectionEnd
 
+Section "Windows Firewall Rule (Allow TCP 9393)" SEC_FIREWALL
+  ; Add inbound firewall rule for NeXroll port
+  nsExec::ExecToStack 'netsh advfirewall firewall add rule name="NeXroll (TCP 9393)" dir=in action=allow protocol=TCP localport=9393'
+  Pop $0
+SectionEnd
+
 ; ------------------------------
 ; Uninstaller
 ; ------------------------------
@@ -161,19 +179,32 @@ Section "Uninstall"
   IfFileExists "$INSTDIR\NeXrollService.exe" 0 +5
     ExecWait '"$INSTDIR\NeXrollService.exe" stop' $0
     ExecWait '"$INSTDIR\NeXrollService.exe" remove' $0
-
+ 
+  ; Ensure no running processes are locking files (best-effort)
+  nsExec::ExecToStack 'taskkill /F /IM NeXrollTray.exe /T'
+  Pop $0
+  nsExec::ExecToStack 'taskkill /F /IM NeXroll.exe /T'
+  Pop $0
+  nsExec::ExecToStack 'taskkill /F /IM NeXrollService.exe /T'
+  Pop $0
+ 
+  ; Remove firewall rule (best-effort)
+  nsExec::ExecToStack 'netsh advfirewall firewall delete rule name="NeXroll (TCP 9393)"'
+  Pop $0
+ 
   ; Remove shortcuts
   Delete "$SMPROGRAMS\NeXroll\NeXroll.lnk"
+  Delete "$SMPROGRAMS\NeXroll\NeXroll Tray.lnk"
   Delete "$SMPROGRAMS\NeXroll\Uninstall.lnk"
   RMDir "$SMPROGRAMS\NeXroll"
-
+ 
   ; Remove desktop shortcut
   Delete "$DESKTOP\NeXroll.lnk"
-
+ 
   ; Remove startup shortcuts
   Delete "$SMSTARTUP\NeXroll.lnk"
   Delete "$SMSTARTUP\NeXroll Tray.lnk"
-
+ 
   ; Remove install directory (keep user data at $PREROLL_PATH)
   Delete "$INSTDIR\NeXroll.exe"
   Delete "$INSTDIR\NeXrollService.exe"
@@ -183,10 +214,11 @@ Section "Uninstall"
   Delete "$INSTDIR\start_windows.bat"
   Delete "$INSTDIR\uninstall.exe"
   RMDir "$INSTDIR"
-
+ 
   ; Remove registry keys
   DeleteRegValue HKLM "Software\NeXroll" "InstallDir"
   DeleteRegValue HKLM "Software\NeXroll" "PrerollPath"
+  DeleteRegValue HKLM "Software\NeXroll" "Version"
   DeleteRegKey /ifempty HKLM "Software\NeXroll"
 SectionEnd
 
@@ -195,6 +227,20 @@ SectionEnd
 ; Optional: warn if ffmpeg not found and SEC_DEPS not selected
 ; ------------------------------
 Function .onInit
+  ; Best-effort: stop running NeXroll processes so upgrade can proceed
+  ; Try to stop the Windows service first (ignore errors if not installed/running)
+  nsExec::ExecToStack 'sc stop "NeXrollService"'
+  Pop $0
+  Sleep 1500
+  ; Kill any UI/EXE processes that might lock files (ignore errors)
+  nsExec::ExecToStack 'taskkill /F /IM NeXroll.exe /T'
+  Pop $0
+  nsExec::ExecToStack 'taskkill /F /IM NeXrollTray.exe /T'
+  Pop $0
+  ; Ensure the service wrapper binary isn't locking (ignore errors)
+  nsExec::ExecToStack 'taskkill /F /IM NeXrollService.exe /T'
+  Pop $0
+
   ; No Python checks (NeXroll.exe is self-contained)
   ; Light ffmpeg check just to inform user
   ClearErrors

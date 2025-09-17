@@ -5,6 +5,9 @@ import threading
 import time
 import subprocess
 import ctypes
+import socket
+import urllib.request
+import json
 
 # Third-party (packaged into the EXE)
 from PIL import Image, ImageDraw
@@ -13,6 +16,8 @@ import pystray
 
 APP_URL = "http://localhost:9393"
 GITHUB_URL = "https://github.com/JFLXCLOUD/NeXroll"
+LATEST_RELEASE_API = "https://api.github.com/repos/JFLXCLOUD/NeXroll/releases/latest"
+LATEST_RELEASE_URL = "https://github.com/JFLXCLOUD/NeXroll/releases/latest"
 APP_NAME = "NeXroll"
 
 
@@ -21,6 +26,135 @@ def _message_box(title: str, text: str):
         ctypes.windll.user32.MessageBoxW(None, text, title, 0x40)  # MB_ICONINFORMATION
     except Exception:
         pass
+
+
+def _reg_get_value(subkey: str, value_name: str) -> str | None:
+    """Read a registry value from HKLM in both 64-bit and 32-bit views (handles NSIS x86 writes)."""
+    try:
+        if not sys.platform.startswith("win"):
+            return None
+        import winreg
+        # Try 64-bit view first, then 32-bit (Wow6432Node)
+        for access in (
+            winreg.KEY_READ | getattr(winreg, "KEY_WOW64_64KEY", 0),
+            winreg.KEY_READ | getattr(winreg, "KEY_WOW64_32KEY", 0),
+        ):
+            try:
+                key = winreg.OpenKeyEx(winreg.HKEY_LOCAL_MACHINE, subkey, 0, access)
+                try:
+                    val, _ = winreg.QueryValueEx(key, value_name)
+                    s = str(val).strip() if val is not None else ""
+                    if s:
+                        return s
+                finally:
+                    winreg.CloseKey(key)
+            except Exception:
+                continue
+    except Exception:
+        pass
+    return None
+
+
+def _reg_install_dir() -> str | None:
+    return _reg_get_value(r"Software\NeXroll", "InstallDir")
+
+
+def _paths():
+    inst = _reg_install_dir() or os.path.dirname(sys.executable)
+    svc = os.path.join(inst, "NeXrollService.exe")
+    app = os.path.join(inst, "NeXroll.exe")
+    return inst, svc, app
+
+
+def _is_listening(port: int = 9393, host: str = "127.0.0.1") -> bool:
+    try:
+        with socket.create_connection((host, port), timeout=1.5):
+            return True
+    except Exception:
+        return False
+
+
+def _probe_health(url: str = f"{APP_URL}/health", timeout: float = 2.5) -> bool:
+    try:
+        with urllib.request.urlopen(url, timeout=timeout) as resp:
+            return resp.status == 200
+    except Exception:
+        return False
+
+
+def _start_service_blocking(wait_seconds: int = 30) -> bool:
+    inst, svc, _ = _paths()
+    if not os.path.exists(svc):
+        return False
+    try:
+        subprocess.run([svc, "start"], cwd=inst, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+    except Exception:
+        return False
+    # Wait for health
+    start = time.time()
+    while time.time() - start < wait_seconds:
+        if _probe_health() or _is_listening():
+            return True
+        time.sleep(1.5)
+    return False
+
+
+def _start_app_blocking(wait_seconds: int = 20) -> bool:
+    inst, _, app = _paths()
+    if not os.path.exists(app):
+        return False
+    try:
+        subprocess.Popen([app], cwd=inst, stdout=subprocess.DEVNULL, stderr=subprocess.STDOUT,
+                         creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+    except Exception:
+        return False
+    start = time.time()
+    while time.time() - start < wait_seconds:
+        if _probe_health() or _is_listening():
+            return True
+        time.sleep(1.5)
+    return False
+
+
+def ensure_backend_running():
+    # If already good, nothing to do
+    if _probe_health() or _is_listening():
+        return
+    # Try to start service first; if fails (e.g., no admin rights), fall back to app
+    if _start_service_blocking():
+        return
+    _start_app_blocking()
+
+
+def start_service(icon: pystray.Icon = None, item=None):
+    ok = _start_service_blocking()
+    if not ok:
+        _message_box("NeXroll Service", "Failed to start service (may require admin). "
+                     "Attempting to start app instead.")
+        if not _start_app_blocking():
+            _message_box("NeXroll", "Could not start NeXroll. Please run NeXroll.exe manually.")
+
+
+def stop_service(icon: pystray.Icon = None, item=None):
+    inst, svc, _ = _paths()
+    if not os.path.exists(svc):
+        _message_box("NeXroll Service", "Service executable not found.")
+        return
+    try:
+        subprocess.run([svc, "stop"], cwd=inst, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+    except Exception as e:
+        _message_box("NeXroll Service", f"Failed to stop service: {e}")
+
+
+def restart_service(icon: pystray.Icon = None, item=None):
+    stop_service()
+    time.sleep(1.5)
+    start_service()
+
+
+def start_app(icon: pystray.Icon = None, item=None):
+    if not _start_app_blocking():
+        _message_box("NeXroll", "Failed to start NeXroll application.")
 
 
 def open_app(icon: pystray.Icon, item=None):
@@ -37,6 +171,87 @@ def open_github(icon: pystray.Icon, item=None):
         _message_box("Open GitHub", f"Could not open {GITHUB_URL}")
 
 
+def _reg_version() -> str | None:
+    # Read HKLM\Software\NeXroll\Version from both 64-bit and 32-bit views
+    return _reg_get_value(r"Software\NeXroll", "Version")
+
+
+def _backend_version() -> str | None:
+    """Fallback: query the backend /system/version endpoint for installed/api version."""
+    try:
+        req = urllib.request.Request(
+            f"{APP_URL}/system/version",
+            headers={"User-Agent": "NeXrollTray/1.0", "Accept": "application/json"},
+        )
+        with urllib.request.urlopen(req, timeout=3) as resp:
+            if getattr(resp, "status", 200) == 200:
+                import json as _json
+                data = _json.loads(resp.read().decode("utf-8"))
+                # Prefer registry_version if provided by backend, else api_version
+                ver = data.get("registry_version") or data.get("api_version") or ""
+                ver = str(ver).strip()
+                return ver if ver else None
+    except Exception:
+        return None
+    return None
+
+
+def _parse_version(s: str) -> tuple[int, int, int]:
+    if not s:
+        return (0, 0, 0)
+    try:
+        s = s.strip()
+        if s and (s[0] == "v" or s[0] == "V"):
+            s = s[1:]
+        parts = s.split(".")
+        nums = []
+        for p in parts:
+            # keep digits only
+            digits = "".join(ch for ch in p if ch.isdigit())
+            nums.append(int(digits) if digits else 0)
+        while len(nums) < 3:
+            nums.append(0)
+        return tuple(nums[:3])
+    except Exception:
+        return (0, 0, 0)
+
+
+def check_for_updates(icon: pystray.Icon = None, item=None):
+    # Prefer registry version, then backend-reported version, else 0.0.0
+    current = _reg_version() or _backend_version() or "0.0.0"
+    latest_tag = None
+    try:
+        req = urllib.request.Request(
+            LATEST_RELEASE_API,
+            headers={"User-Agent": "NeXrollTray/1.0", "Accept": "application/vnd.github+json"},
+        )
+        with urllib.request.urlopen(req, timeout=6) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+            latest_tag = data.get("tag_name") or data.get("name")
+    except Exception:
+        latest_tag = None
+
+    if not latest_tag:
+        _message_box("NeXroll Update", "Could not check for updates. Opening releases page.")
+        try:
+            webbrowser.open(LATEST_RELEASE_URL)
+        except Exception:
+            pass
+        return
+
+    curr_v = _parse_version(current)
+    latest_v = _parse_version(latest_tag)
+
+    if latest_v > curr_v:
+        _message_box("NeXroll Update", f"New version available: {latest_tag} (installed: {current}). Opening download page.")
+        try:
+            webbrowser.open(LATEST_RELEASE_URL)
+        except Exception:
+            pass
+    else:
+        _message_box("NeXroll Update", f"You are up to date.\nInstalled: {current}\nLatest: {latest_tag}")
+
+
 def about(icon: pystray.Icon, item=None):
     _message_box(
         "About NeXroll",
@@ -47,52 +262,32 @@ def about(icon: pystray.Icon, item=None):
 
 
 def on_exit(icon: pystray.Icon, item=None):
-    # Stop the tray loop
     try:
         icon.visible = False
         icon.stop()
     except Exception:
         pass
-    # Give UI thread time to unwind
     time.sleep(0.2)
     os._exit(0)
 
 
-def _ensure_health_probe():
-    # Best-effort: if the service is installed and stopped, the user can still open manually.
-    # We keep tray lightweight and do not auto-start/stop services here.
-    pass
-
-
 def _build_icon_image():
-    # Create a small 16x16 tray icon with a stylized 'N'
     size = (16, 16)
     img = Image.new("RGBA", size, (0, 0, 0, 0))
     draw = ImageDraw.Draw(img)
-
-    # Background circle
-    draw.ellipse((0, 0, 15, 15), fill=(30, 144, 255, 255))  # DodgerBlue
-
-    # Letter 'N'
+    draw.ellipse((0, 0, 15, 15), fill=(30, 144, 255, 255))
     draw.line((4, 11, 4, 4), fill=(255, 255, 255, 255), width=2)
     draw.line((4, 4, 11, 11), fill=(255, 255, 255, 255), width=2)
     draw.line((11, 11, 11, 4), fill=(255, 255, 255, 255), width=2)
-
     return img
 
 
 def resource_path(rel_path: str) -> str:
-    """
-    Resolve resource path for both dev mode and PyInstaller onefile.
-    """
     base_path = getattr(sys, "_MEIPASS", os.path.dirname(__file__))
     return os.path.join(base_path, rel_path)
 
 
 def get_tray_image():
-    """
-    Try to load the packaged favicon.ico, fall back to generated glyph.
-    """
     try:
         candidates = [
             resource_path(os.path.join("frontend", "favicon.ico")),
@@ -102,7 +297,6 @@ def get_tray_image():
         for p in candidates:
             if os.path.exists(p):
                 img = Image.open(p).convert("RGBA")
-                # Ensure a sensible tray size; keep aspect ratio if already small
                 if max(img.size) > 32:
                     img = img.resize((16, 16))
                 return img
@@ -114,16 +308,19 @@ def get_tray_image():
 def run_tray():
     menu = pystray.Menu(
         pystray.MenuItem("Open", open_app, default=True),
+        pystray.MenuItem("Start Service", start_service),
+        pystray.MenuItem("Stop Service", stop_service),
+        pystray.MenuItem("Restart Service", restart_service),
+        pystray.MenuItem("Start App (portable)", start_app),
+        pystray.MenuItem("Check for updates", check_for_updates),
         pystray.MenuItem("About", about),
         pystray.MenuItem("GitHub: JFLXCLOUD/NeXroll", open_github),
         pystray.MenuItem("Exit", on_exit)
     )
 
     icon = pystray.Icon("NeXrollTray", get_tray_image(), APP_NAME, menu)
-    # Start a background health probe (optional, presently no-ops)
-    t = threading.Thread(target=_ensure_health_probe, daemon=True)
+    t = threading.Thread(target=ensure_backend_running, daemon=True)
     t.start()
-
     icon.run()
 
 
