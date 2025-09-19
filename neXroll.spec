@@ -2,6 +2,8 @@
 # Hardened PyInstaller spec for NeXroll production build
 
 import os
+import sys
+from PyInstaller.utils.hooks import collect_submodules, collect_all
 
 block_cipher = None
 
@@ -19,6 +21,13 @@ def _resolve_project_root():
     return d
 
 project_root = _resolve_project_root()
+launcher = os.path.join(project_root, "launcher.py")
+# Ensure 'backend' is importable when collect_submodules('backend') runs
+if project_root not in sys.path:
+    sys.path.insert(0, project_root)
+# Collect backend package (datas, binaries, hiddenimports) fully to ensure proper packaging
+_backend_datas, _backend_bins, _backend_hidden = collect_all('nexroll_backend')
+
 ico_path = os.path.join(project_root, "frontend", "favicon.ico")
 if not os.path.exists(ico_path):
     # fallback to repo-root based path if needed
@@ -29,16 +38,22 @@ if not os.path.exists(ico_path):
 # App icon (used for embedded EXE icon and bundled as data)
 # ico_path resolved above via project_root (with fallback if needed)
 
+# Prefer built React assets if available; fall back to source 'frontend'
+fe_dir = os.path.join(project_root, 'frontend', 'build')
+if not os.path.isdir(fe_dir):
+    fe_dir = os.path.join(project_root, 'frontend')
+
 a = Analysis(
-    ['backend/main.py'],
-    pathex=[project_root, os.path.join(project_root, 'backend')],
-    binaries=[],
+    [launcher],
+    pathex=[project_root],
+    binaries=_backend_bins,
     datas=[
-        (os.path.join(project_root, 'backend', 'data'), 'data'),
-        (os.path.join(project_root, 'frontend'), 'frontend'),
+        (os.path.join(project_root, 'nexroll_backend', 'data'), 'data'),
+        (fe_dir, 'frontend'),
         (ico_path, 'frontend'),
-    ],
-    hiddenimports=[
+    ] + _backend_datas,
+    hiddenimports=(_backend_hidden + [
+        'nexroll_backend',
         'uvicorn',
         'uvicorn.config',
         'uvicorn.importer',
@@ -53,7 +68,7 @@ a = Analysis(
         'requests',
         'ffmpeg',
         'plexapi',
-    ],
+    ]),
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],

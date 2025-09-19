@@ -20,12 +20,45 @@ LATEST_RELEASE_API = "https://api.github.com/repos/JFLXCLOUD/NeXroll/releases/la
 LATEST_RELEASE_URL = "https://github.com/JFLXCLOUD/NeXroll/releases/latest"
 APP_NAME = "NeXroll"
 
-
-def _message_box(title: str, text: str):
+def _log_tray(msg: str):
     try:
-        ctypes.windll.user32.MessageBoxW(None, text, title, 0x40)  # MB_ICONINFORMATION
+        base = os.environ.get("PROGRAMDATA") or os.environ.get("ALLUSERSPROFILE") or os.path.dirname(sys.executable)
+        log_dir = os.path.join(base, "NeXroll", "logs")
+        os.makedirs(log_dir, exist_ok=True)
+        ts = time.strftime("%Y-%m-%d %H:%M:%S")
+        with open(os.path.join(log_dir, "tray.log"), "a", encoding="utf-8") as f:
+            f.write(f"[{ts}] {msg}\n")
     except Exception:
         pass
+
+
+def _message_box(title: str, text: str):
+    # Show a topmost, foreground info dialog on a background thread to avoid blocking the tray UI
+    def _show():
+        try:
+            MB_OK = 0x00000000
+            MB_ICONINFORMATION = 0x00000040
+            MB_SETFOREGROUND = 0x00010000
+            MB_TOPMOST = 0x00040000
+            MB_TASKMODAL = 0x00002000
+            flags = MB_OK | MB_ICONINFORMATION | MB_SETFOREGROUND | MB_TOPMOST | MB_TASKMODAL
+            # Allow the MessageBox to take focus from background process
+            try:
+                ctypes.windll.user32.AllowSetForegroundWindow(-1)
+            except Exception:
+                pass
+            ctypes.windll.user32.MessageBoxW(None, text, title, flags)
+        except Exception:
+            pass
+    try:
+        t = threading.Thread(target=_show, daemon=True)
+        t.start()
+    except Exception:
+        # Fallback to synchronous display
+        try:
+            ctypes.windll.user32.MessageBoxW(None, text, title, 0x00000040)
+        except Exception:
+            pass
 
 
 def _reg_get_value(subkey: str, value_name: str) -> str | None:
@@ -82,7 +115,7 @@ def _probe_health(url: str = f"{APP_URL}/health", timeout: float = 2.5) -> bool:
         return False
 
 
-def _start_service_blocking(wait_seconds: int = 30) -> bool:
+def _start_service_blocking(wait_seconds: int = 45) -> bool:
     inst, svc, _ = _paths()
     if not os.path.exists(svc):
         return False
@@ -99,14 +132,32 @@ def _start_service_blocking(wait_seconds: int = 30) -> bool:
     return False
 
 
-def _start_app_blocking(wait_seconds: int = 20) -> bool:
+def _start_app_blocking(wait_seconds: int = 45) -> bool:
     inst, _, app = _paths()
     if not os.path.exists(app):
+        _log_tray("start_app: app executable not found at " + app)
         return False
     try:
-        subprocess.Popen([app], cwd=inst, stdout=subprocess.DEVNULL, stderr=subprocess.STDOUT,
-                         creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
-    except Exception:
+        # Best-effort: ensure no prior instances are locking port 9393
+        try:
+            subprocess.run(
+                ["taskkill", "/F", "/IM", "NeXroll.exe", "/T"],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0)
+            )
+        except Exception:
+            pass
+        subprocess.Popen(
+            [app],
+            cwd=inst,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.STDOUT,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0)
+        )
+        _log_tray("start_app: launched NeXroll.exe from " + inst)
+    except Exception as e:
+        _log_tray(f"start_app: failed to launch NeXroll.exe: {e}")
         return False
     start = time.time()
     while time.time() - start < wait_seconds:
@@ -117,13 +168,22 @@ def _start_app_blocking(wait_seconds: int = 20) -> bool:
 
 
 def ensure_backend_running():
+    _log_tray("ensure_backend_running: invoked")
     # If already good, nothing to do
     if _probe_health() or _is_listening():
+        _log_tray("ensure_backend_running: backend already healthy")
         return
     # Try to start service first; if fails (e.g., no admin rights), fall back to app
+    _log_tray("ensure_backend_running: attempting to start service")
     if _start_service_blocking():
+        _log_tray("ensure_backend_running: service reported healthy")
         return
-    _start_app_blocking()
+    _log_tray("ensure_backend_running: service not available, trying portable app")
+    ok = _start_app_blocking()
+    if ok:
+        _log_tray("ensure_backend_running: portable app reported healthy")
+    else:
+        _log_tray("ensure_backend_running: portable app did not reach healthy state")
 
 
 def start_service(icon: pystray.Icon = None, item=None):

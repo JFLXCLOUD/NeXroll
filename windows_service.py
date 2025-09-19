@@ -50,7 +50,19 @@ class NeXrollService(win32serviceutil.ServiceFramework):
         python = None
         for cand in ["python", "python3", sys.executable]:
             try:
-                completed = subprocess.run([cand, "--version"], capture_output=True)
+                # Hide any flash of console windows when probing python
+                si = None
+                try:
+                    si = subprocess.STARTUPINFO()
+                    si.dwFlags |= getattr(subprocess, "STARTF_USESHOWWINDOW", 0)
+                except Exception:
+                    si = None
+                completed = subprocess.run(
+                    [cand, "--version"],
+                    capture_output=True,
+                    startupinfo=si,
+                    creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+                )
                 if completed.returncode == 0:
                     python = cand
                     break
@@ -61,7 +73,7 @@ class NeXrollService(win32serviceutil.ServiceFramework):
             # Note: In installed layout, backend sources are not present; this fallback
             # is best-effort for developer installs only.
             return {
-                "cmd": [python, "-m", "uvicorn", "backend.main:app", "--host", "0.0.0.0", "--port", "9393"],
+                "cmd": [python, "-m", "uvicorn", "nexroll_backend.main:app", "--host", "0.0.0.0", "--port", "9393"],
                 "cwd": inst_dir,
             }
 
@@ -69,7 +81,7 @@ class NeXrollService(win32serviceutil.ServiceFramework):
         venv_python = os.path.join(inst_dir, "venv", "Scripts", "python.exe")
         if os.path.exists(venv_python):
             return {
-                "cmd": [venv_python, "-m", "uvicorn", "backend.main:app", "--host", "0.0.0.0", "--port", "9393"],
+                "cmd": [venv_python, "-m", "uvicorn", "nexroll_backend.main:app", "--host", "0.0.0.0", "--port", "9393"],
                 "cwd": inst_dir,
             }
 
