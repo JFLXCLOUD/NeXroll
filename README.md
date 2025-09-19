@@ -30,23 +30,6 @@ Repository layout lives under `NeXroll/`, and the single installer is built from
 5. Finish the installer and open the app from the Start Menu or tray menu.
 
 After install, visit http://localhost:9393 to use the web UI.
-### PowerShell one‑liner (download + launch installer)
-
-```powershell
-$release = Invoke-RestMethod https://api.github.com/repos/JFLXCLOUD/NeXroll/releases/latest
-$asset = $release.assets | Where-Object { $_.name -eq 'NeXroll_Installer.exe' } | Select-Object -First 1
-$dest = Join-Path $env:TEMP $asset.name
-Invoke-WebRequest -Uri $asset.browser_download_url -OutFile $dest
-Start-Process -FilePath $dest
-```
-
-### Silent install (defaults)
-
-```powershell
-&amp; "$env:TEMP\NeXroll_Installer.exe" /S
-```
-
-Silent mode installs to `C:\Program Files\NeXroll` and uses the default Preroll path. Use interactive mode to customize components or directories.
 
 ---
 
@@ -186,6 +169,7 @@ MIT. Third‑party components remain under their respective licenses.
 If NeXroll is helpful, consider supporting ongoing development:
 
 [![Ko-fi](https://img.shields.io/badge/Ko--fi-Support%20Me-FF5E5B?style=for-the-badge&amp;logo=ko-fi&amp;logoColor=white)](https://ko-fi.com/j_b__)
+
 
 
 
