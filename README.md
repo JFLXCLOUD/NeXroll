@@ -10,7 +10,6 @@ NeXroll is a Windows-ready Plex preroll management system with a modern web UI, 
 
 Web UI: http://localhost:9393
 
-Repository layout lives under `NeXroll/`, and the single installer is built from the repo using PyInstaller + NSIS.
 
 ---
 
@@ -169,6 +168,7 @@ MIT. Third‑party components remain under their respective licenses.
 If NeXroll is helpful, consider supporting ongoing development:
 
 [![Ko-fi](https://img.shields.io/badge/Ko--fi-Support%20Me-FF5E5B?style=for-the-badge&amp;logo=ko-fi&amp;logoColor=white)](https://ko-fi.com/j_b__)
+
 
 
 
