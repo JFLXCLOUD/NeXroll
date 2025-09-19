@@ -21,13 +21,14 @@ ShowInstDetails show
 Icon "frontend\favicon.ico"
 UninstallIcon "frontend\favicon.ico"
 
-!define APP_VERSION "1.0.1"
-VIProductVersion "1.0.1.0"
+!define APP_VERSION "1.0.7"
+VIProductVersion "1.0.7.0"
 VIAddVersionKey /LANG=1033 "ProductName" "NeXroll"
 VIAddVersionKey /LANG=1033 "ProductVersion" "${APP_VERSION}"
 VIAddVersionKey /LANG=1033 "FileVersion" "${APP_VERSION}"
 VIAddVersionKey /LANG=1033 "CompanyName" "NeXroll"
 VIAddVersionKey /LANG=1033 "FileDescription" "NeXroll Installer"
+VIAddVersionKey /LANG=1033 "LegalCopyright" "© 2025 NeXroll"
 OutFile "NeXroll_Installer_${APP_VERSION}.exe"
  
 ; Variables
@@ -127,6 +128,10 @@ Section "!NeXroll Application (Required)" SEC_APP
   WriteRegStr HKLM "Software\NeXroll" "PrerollPath" "$PREROLL_PATH"
   WriteRegStr HKLM "Software\NeXroll" "Version" "${APP_VERSION}"
 
+  ; Ensure common ProgramData log directory exists (service/tray friendly)
+  CreateDirectory "$COMMONAPPDATA\NeXroll"
+  CreateDirectory "$COMMONAPPDATA\NeXroll\logs"
+
   ; Start Menu shortcuts
   CreateDirectory "$SMPROGRAMS\NeXroll"
   CreateShortCut "$SMPROGRAMS\NeXroll\NeXroll.lnk" "$INSTDIR\NeXroll.exe" "" "$INSTDIR\NeXroll.exe" 0
@@ -163,6 +168,46 @@ Section "Install Dependencies (FFmpeg via winget)" SEC_DEPS
   nsExec::ExecToStack 'powershell -NoProfile -ExecutionPolicy Bypass -Command "if (-not (Get-Command ffmpeg -ErrorAction SilentlyContinue)) { winget install Gyan.FFmpeg --accept-source-agreements --accept-package-agreements -e }"'
   Pop $0
   ; $0 contains exit code (ignored for best-effort)
+SectionEnd
+
+; Auto-detect ffmpeg/ffprobe and record absolute paths in HKLM\Software\NeXroll
+; This helps the service and tray resolve tools without relying on PATH.
+Section "FFmpeg Path Registration (Auto-detect)" SEC_FFREG
+  ; Detect ffmpeg.exe
+  StrCpy $0 ""
+  IfFileExists "$PROGRAMFILES64\ffmpeg\bin\ffmpeg.exe" 0 +2
+    StrCpy $0 "$PROGRAMFILES64\ffmpeg\bin\ffmpeg.exe"
+  IfFileExists "$PROGRAMFILES\ffmpeg\bin\ffmpeg.exe" 0 +2
+    StrCpy $0 "$PROGRAMFILES\ffmpeg\bin\ffmpeg.exe"
+  IfFileExists "$PROGRAMFILES64\FFmpeg\bin\ffmpeg.exe" 0 +2
+    StrCpy $0 "$PROGRAMFILES64\FFmpeg\bin\ffmpeg.exe"
+  IfFileExists "$PROGRAMFILES\FFmpeg\bin\ffmpeg.exe" 0 +2
+    StrCpy $0 "$PROGRAMFILES\FFmpeg\bin\ffmpeg.exe"
+  IfFileExists "$COMMONAPPDATA\chocolatey\bin\ffmpeg.exe" 0 +2
+    StrCpy $0 "$COMMONAPPDATA\chocolatey\bin\ffmpeg.exe"
+  IfFileExists "C:\ffmpeg\bin\ffmpeg.exe" 0 +2
+    StrCpy $0 "C:\ffmpeg\bin\ffmpeg.exe"
+  ${If} $0 != ""
+    WriteRegStr HKLM "Software\NeXroll" "FFmpegPath" "$0"
+  ${EndIf}
+
+  ; Detect ffprobe.exe
+  StrCpy $1 ""
+  IfFileExists "$PROGRAMFILES64\ffmpeg\bin\ffprobe.exe" 0 +2
+    StrCpy $1 "$PROGRAMFILES64\ffmpeg\bin\ffprobe.exe"
+  IfFileExists "$PROGRAMFILES\ffmpeg\bin\ffprobe.exe" 0 +2
+    StrCpy $1 "$PROGRAMFILES\ffmpeg\bin\ffprobe.exe"
+  IfFileExists "$PROGRAMFILES64\FFmpeg\bin\ffprobe.exe" 0 +2
+    StrCpy $1 "$PROGRAMFILES64\FFmpeg\bin\ffprobe.exe"
+  IfFileExists "$PROGRAMFILES\FFmpeg\bin\ffprobe.exe" 0 +2
+    StrCpy $1 "$PROGRAMFILES\FFmpeg\bin\ffprobe.exe"
+  IfFileExists "$COMMONAPPDATA\chocolatey\bin\ffprobe.exe" 0 +2
+    StrCpy $1 "$COMMONAPPDATA\chocolatey\bin\ffprobe.exe"
+  IfFileExists "C:\ffmpeg\bin\ffprobe.exe" 0 +2
+    StrCpy $1 "C:\ffmpeg\bin\ffprobe.exe"
+  ${If} $1 != ""
+    WriteRegStr HKLM "Software\NeXroll" "FFprobePath" "$1"
+  ${EndIf}
 SectionEnd
 
 Section "Windows Firewall Rule (Allow TCP 9393)" SEC_FIREWALL
@@ -219,6 +264,8 @@ Section "Uninstall"
   DeleteRegValue HKLM "Software\NeXroll" "InstallDir"
   DeleteRegValue HKLM "Software\NeXroll" "PrerollPath"
   DeleteRegValue HKLM "Software\NeXroll" "Version"
+  DeleteRegValue HKLM "Software\NeXroll" "FFmpegPath"
+  DeleteRegValue HKLM "Software\NeXroll" "FFprobePath"
   DeleteRegKey /ifempty HKLM "Software\NeXroll"
 SectionEnd
 
