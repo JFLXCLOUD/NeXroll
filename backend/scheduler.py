@@ -4,11 +4,12 @@ import random
 import threading
 import time
 from typing import List, Optional
+import os
 
 from sqlalchemy.orm import Session
-import models
-from plex_connector import PlexConnector
-from database import SessionLocal
+import nexroll_backend.models as models
+from nexroll_backend.plex_connector import PlexConnector
+from nexroll_backend.database import SessionLocal
 
 class Scheduler:
     def __init__(self):
@@ -95,10 +96,11 @@ class Scheduler:
         # Get prerolls for this schedule's category
         prerolls = []
         if schedule.category_id:
+            # Correct: fetch prerolls by category_id, not by tag name
             category_prerolls = db.query(models.Preroll).filter(
-                models.Preroll.tags.contains(schedule.category.name) if schedule.category else True
+                models.Preroll.category_id == schedule.category_id
             ).all()
-            prerolls = [p for p in category_prerolls]
+            prerolls = category_prerolls
 
         if not prerolls:
             return
