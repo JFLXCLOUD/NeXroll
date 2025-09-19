@@ -39,7 +39,6 @@ After install, visit http://localhost:9393 to use the web UI.
 - `NeXrollService.exe` — optional Windows Service wrapper
 - `NeXrollTray.exe` — system tray app with quick actions
 - `setup_plex_token.exe` — helper to obtain a stable Plex token
-- `favicon.ico` — NeXroll icon used across executables and the installer
 
 Start Menu shortcuts are created for NeXroll, NeXroll Tray, and Uninstall NeXroll. A desktop shortcut for NeXroll is also added.
 
@@ -184,5 +183,6 @@ MIT. Third‑party components remain under their respective licenses.
 If NeXroll is helpful, consider supporting ongoing development:
 
 [![Ko-fi](https://img.shields.io/badge/Ko--fi-Support%20Me-FF5E5B?style=for-the-badge&amp;logo=ko-fi&amp;logoColor=white)](https://ko-fi.com/j_b__)
+
 
 
