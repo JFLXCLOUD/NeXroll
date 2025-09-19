@@ -1,11 +1,7 @@
-
+# NeXroll
 <div align="center">
-  <img src="frontend/NeXroll_Logo_WHT.png" alt="NeXroll Logo" width="400"/>
+  <img src="frontend/NeXroll_Logo_WHT.png" alt="NeXroll Logo" width="500"/>
   <br>
-</div>
-
----
-
 NeXroll is a Windows-ready Plex preroll management system with a modern web UI, an optional Windows Service, and a lightweight system tray app. All executables are self‑contained (no Python required on user machines), and a single installer configures everything end‑to‑end.
 
 Web UI: http://localhost:9393
@@ -26,9 +22,11 @@ Web UI: http://localhost:9393
    - Plex Stable Token setup (runs `setup_plex_token.exe`)
    - Start with Windows (adds the tray app to Startup)
    - Install FFmpeg via winget (for thumbnail generation)
+   - Windows Firewall rule (Allow inbound TCP 9393 for local web UI)
 5. Finish the installer and open the app from the Start Menu or tray menu.
 
 After install, visit http://localhost:9393 to use the web UI.
+
 
 ---
 
@@ -47,8 +45,13 @@ Start Menu shortcuts are created for NeXroll, NeXroll Tray, and Uninstall NeXrol
 ## System Tray App
 
 The tray icon provides quick actions:
-- Open — launches http://localhost:9393
-- About — shows app information
+- Open — launches http://localhost:9393 (default action)
+- Start Service — attempts to start the Windows service (if installed)
+- Stop Service — stops the Windows service (if installed)
+- Restart Service — restarts the Windows service (if installed)
+- Start App (portable) — starts the packaged app directly (non‑service)
+- Check for updates — checks GitHub Releases and opens the latest release if a newer version is available (dialog is foreground and closable)
+- About — shows app information (dialog is foreground and closable)
 - GitHub — opens https://github.com/JFLXCLOUD/NeXroll
 - Exit — closes the tray app
 
@@ -66,6 +69,11 @@ NeXrollService.exe start
 NeXrollService.exe stop
 NeXrollService.exe remove
 ```
+
+Logs (service mode): `%ProgramData%\NeXroll\logs\service.log`
+Logs (packaged app): `%ProgramData%\NeXroll\logs\app.log`
+Logs (tray): `%ProgramData%\NeXroll\logs\tray.log`
+Database (packaged): `%ProgramData%\NeXroll\nexroll.db`
 
 Tip: if a previous NeXroll instance is still running and occupying port 9393, the service may need a second start attempt after that instance is closed.
 
@@ -122,7 +130,7 @@ Outputs:
 - `dist\NeXrollService.exe`
 - `dist\setup_plex_token.exe`
 - `dist\NeXrollTray.exe`
-- `NeXroll\NeXroll_Installer.exe`
+- `NeXroll\NeXroll_Installer.exe`  (Release asset is published as a generic name)
 
 ---
 
@@ -130,6 +138,7 @@ Outputs:
 ## Project Structure (key files)
 
 - Backend (FastAPI): `NeXroll/backend/`
+- Packaged runtime backend: `NeXroll/nexroll_backend/`
 - Frontend (static build served by backend): `NeXroll/frontend/`
 - Windows Service wrapper: `NeXroll/windows_service.py`
 - System tray app: `NeXroll/tray_app.py`
@@ -147,6 +156,10 @@ Outputs:
 
 - “Service did not respond in time”
   - Ensure no other process is using port 9393; stop any `NeXroll.exe` that’s running, then start the service again.
+- UI not reachable at http://localhost:9393
+  - If you selected the firewall component, verify the inbound rule “NeXroll (TCP 9393)” exists. Otherwise, allow inbound TCP 9393 or re-run the installer and select the firewall option.
+- Service logs location
+  - Check `%ProgramData%\NeXroll\logs\service.log` for service-mode startup and health probe messages.
 - Thumbnails not created
   - Install FFmpeg (choose the installer component, or install manually); re‑upload a preroll.
 - Tray icon not shown
@@ -168,8 +181,3 @@ MIT. Third‑party components remain under their respective licenses.
 If NeXroll is helpful, consider supporting ongoing development:
 
 [![Ko-fi](https://img.shields.io/badge/Ko--fi-Support%20Me-FF5E5B?style=for-the-badge&amp;logo=ko-fi&amp;logoColor=white)](https://ko-fi.com/j_b__)
-
-
-
-
-
