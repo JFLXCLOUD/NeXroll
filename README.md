@@ -1,12 +1,7 @@
-
-
+# NeXroll
 <div align="center">
   <img src="frontend/NeXroll_Logo_WHT.png" alt="NeXroll Logo" width="500"/>
   <br>
-</div>
-
----
-
 NeXroll is a Windows-ready Plex preroll management system with a modern web UI, an optional Windows Service, and a lightweight system tray app. All executables are self‑contained (no Python required on user machines), and a single installer configures everything end‑to‑end.
 
 Web UI: http://localhost:9393
@@ -14,6 +9,35 @@ Web UI: http://localhost:9393
 
 ---
 
+## Main Features
+
+- Preroll management
+  - Upload multiple preroll videos with metadata
+  - Automatic thumbnail generation (FFmpeg)
+  - Tags and multi‑category assignment with improved multi‑select workflow
+- Categories & Holiday Presets
+  - Organize your library by categories (Default, Halloween, Christmas, etc.)
+  - One‑click Holiday Presets initializer creates per‑holiday categories and date ranges
+  - Apply a category to Plex as a preroll sequence
+- Scheduling
+  - Flexible schedules with date/time ranges and recurrence
+  - Optional fallback category when no schedule is active
+  - Real‑time scheduler status
+- UI (v1.0.15_r4)
+  - Inline edit modals for Prerolls, Schedules, and Categories
+  - Polished header with NeXroll logo placement and responsive alignment
+- Plex integration
+  - Connect via URL/token or Stable Token (persistent)
+  - Status monitoring and quick Apply‑to‑Plex actions
+- Windows experience
+  - One‑click installer with optional Windows Service and System Tray app
+  - “Start with Windows,” Firewall rule (TCP 9393), and FFmpeg installation via winget
+  - Self‑contained executables (no Python required on user machines)
+- Observability & storage
+  - Logs under %ProgramData%\NeXroll\logs
+  - SQLite database storage under %ProgramData%\NeXroll
+- API
+  - REST API with interactive docs at http://localhost:9393/docs
 ## Download and Install (Users)
 
 1. Download the latest `NeXroll_Installer.exe` from GitHub Releases:
@@ -41,8 +65,10 @@ After install, visit http://localhost:9393 to use the web UI.
 - `NeXrollService.exe` — optional Windows Service wrapper
 - `NeXrollTray.exe` — system tray app with quick actions
 - `setup_plex_token.exe` — helper to obtain a stable Plex token
+- `favicon.ico` — NeXroll icon used across executables and the installer
 
 Start Menu shortcuts are created for NeXroll, NeXroll Tray, and Uninstall NeXroll. A desktop shortcut for NeXroll is also added.
+
 
 ---
 
@@ -185,8 +211,3 @@ MIT. Third‑party components remain under their respective licenses.
 If NeXroll is helpful, consider supporting ongoing development:
 
 [![Ko-fi](https://img.shields.io/badge/Ko--fi-Support%20Me-FF5E5B?style=for-the-badge&amp;logo=ko-fi&amp;logoColor=white)](https://ko-fi.com/j_b__)
-
-
-
-
-
