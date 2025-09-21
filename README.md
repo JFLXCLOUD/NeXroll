@@ -1,7 +1,9 @@
-# NeXroll
+
 <div align="center">
   <img src="frontend/NeXroll_Logo_WHT.png" alt="NeXroll Logo" width="500"/>
   <br>
+</div>
+
 NeXroll is a Windows-ready Plex preroll management system with a modern web UI, an optional Windows Service, and a lightweight system tray app. All executables are self‑contained (no Python required on user machines), and a single installer configures everything end‑to‑end.
 
 Web UI: http://localhost:9393
@@ -23,7 +25,7 @@ Web UI: http://localhost:9393
   - Flexible schedules with date/time ranges and recurrence
   - Optional fallback category when no schedule is active
   - Real‑time scheduler status
-- UI (v1.0.15_r4)
+- UI (v1.0.15_r4 and after)
   - Inline edit modals for Prerolls, Schedules, and Categories
   - Polished header with NeXroll logo placement and responsive alignment
 - Plex integration
@@ -211,3 +213,4 @@ MIT. Third‑party components remain under their respective licenses.
 If NeXroll is helpful, consider supporting ongoing development:
 
 [![Ko-fi](https://img.shields.io/badge/Ko--fi-Support%20Me-FF5E5B?style=for-the-badge&amp;logo=ko-fi&amp;logoColor=white)](https://ko-fi.com/j_b__)
+
