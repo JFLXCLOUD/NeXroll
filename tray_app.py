@@ -22,7 +22,14 @@ APP_NAME = "NeXroll"
 
 def _log_tray(msg: str):
     try:
-        base = os.environ.get("PROGRAMDATA") or os.environ.get("ALLUSERSPROFILE") or os.path.dirname(sys.executable)
+        # Prefer user-writable locations to avoid requiring elevation
+        base = (
+            os.environ.get("LOCALAPPDATA")
+            or os.environ.get("APPDATA")
+            or os.environ.get("PROGRAMDATA")
+            or os.environ.get("ALLUSERSPROFILE")
+            or os.path.dirname(sys.executable)
+        )
         log_dir = os.path.join(base, "NeXroll", "logs")
         os.makedirs(log_dir, exist_ok=True)
         ts = time.strftime("%Y-%m-%d %H:%M:%S")
@@ -115,24 +122,53 @@ def _probe_health(url: str = f"{APP_URL}/health", timeout: float = 2.5) -> bool:
         return False
 
 
-def _start_service_blocking(wait_seconds: int = 45) -> bool:
+def _service_installed() -> bool:
+    """Return True if the Windows service 'NeXrollService' is installed."""
+    try:
+        # 'sc query' returns 0 if service exists, non-zero otherwise
+        rc = subprocess.run(
+            ["sc", "query", "NeXrollService"],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0)
+        )
+        return getattr(rc, "returncode", 1) == 0
+    except Exception:
+        return False
+
+
+def _start_service_blocking(wait_seconds: int = 20) -> bool:
+    """Attempt to start the service quickly; fall back to app if not installed or fails."""
     inst, svc, _ = _paths()
     if not os.path.exists(svc):
         return False
+    # If the service is not installed, do not wait
+    if not _service_installed():
+        return False
     try:
-        subprocess.run([svc, "start"], cwd=inst, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+        r = subprocess.run(
+            [svc, "start"],
+            cwd=inst,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0)
+        )
+        # If start failed, do not wait for long health timeout
+        if getattr(r, "returncode", 1) != 0:
+            return False
     except Exception:
         return False
-    # Wait for health
+
+    # Short health wait (reduce tray startup delay when service cannot become healthy)
     start = time.time()
     while time.time() - start < wait_seconds:
         if _probe_health() or _is_listening():
             return True
-        time.sleep(1.5)
+        time.sleep(1.0)
     return False
 
 
-def _start_app_blocking(wait_seconds: int = 45) -> bool:
+def _start_app_blocking(wait_seconds: int = 20) -> bool:
     inst, _, app = _paths()
     if not os.path.exists(app):
         _log_tray("start_app: app executable not found at " + app)
@@ -163,7 +199,7 @@ def _start_app_blocking(wait_seconds: int = 45) -> bool:
     while time.time() - start < wait_seconds:
         if _probe_health() or _is_listening():
             return True
-        time.sleep(1.5)
+        time.sleep(1.0)
     return False
 
 
@@ -230,6 +266,22 @@ def open_github(icon: pystray.Icon, item=None):
     except Exception:
         _message_box("Open GitHub", f"Could not open {GITHUB_URL}")
 
+
+def rebuild_thumbnails(icon: pystray.Icon = None, item=None):
+    try:
+        req = urllib.request.Request(f"{APP_URL}/thumbnails/rebuild?force=true", method="POST")
+        with urllib.request.urlopen(req, timeout=60) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+        msg = (
+            "Rebuild complete.\n"
+            f"Processed: {data.get('processed')}\n"
+            f"Generated: {data.get('generated')}\n"
+            f"Skipped: {data.get('skipped')}\n"
+            f"Failures: {data.get('failures')}"
+        )
+    except Exception as e:
+        msg = f"Rebuild failed: {e}"
+    _message_box("Rebuild Thumbnails", msg)
 
 def _reg_version() -> str | None:
     # Read HKLM\Software\NeXroll\Version from both 64-bit and 32-bit views
@@ -349,6 +401,39 @@ def resource_path(rel_path: str) -> str:
 
 def get_tray_image():
     try:
+        # Prefer packaged dedicated icons if present
+        try:
+            icon_dir = resource_path("NeXroll_ICON")
+            if os.path.isdir(icon_dir):
+                # Prefer specific sizes first, then any .ico
+                ordered = []
+                for fname in os.listdir(icon_dir):
+                    fn = fname.lower()
+                    if fn.endswith("16x16.ico"):
+                        ordered.append(os.path.join(icon_dir, fname))
+                for fname in os.listdir(icon_dir):
+                    fn = fname.lower()
+                    if fn.endswith("32x32.ico"):
+                        ordered.append(os.path.join(icon_dir, fname))
+                for fname in os.listdir(icon_dir):
+                    fn = fname.lower()
+                    if fn.endswith("64x64.ico"):
+                        ordered.append(os.path.join(icon_dir, fname))
+                for fname in os.listdir(icon_dir):
+                    fn = fname.lower()
+                    if fn.endswith(".ico") and os.path.join(icon_dir, fname) not in ordered:
+                        ordered.append(os.path.join(icon_dir, fname))
+
+                for p in ordered:
+                    if os.path.exists(p):
+                        img = Image.open(p).convert("RGBA")
+                        if max(img.size) > 32:
+                            img = img.resize((16, 16))
+                        return img
+        except Exception:
+            pass
+
+        # Fallbacks
         candidates = [
             resource_path(os.path.join("frontend", "favicon.ico")),
             resource_path("favicon.ico"),
@@ -372,6 +457,7 @@ def run_tray():
         pystray.MenuItem("Stop Service", stop_service),
         pystray.MenuItem("Restart Service", restart_service),
         pystray.MenuItem("Start App (portable)", start_app),
+        pystray.MenuItem("Rebuild Thumbnails", rebuild_thumbnails),
         pystray.MenuItem("Check for updates", check_for_updates),
         pystray.MenuItem("About", about),
         pystray.MenuItem("GitHub: JFLXCLOUD/NeXroll", open_github),

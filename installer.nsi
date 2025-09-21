@@ -18,18 +18,18 @@ InstallDir "$PROGRAMFILES64\NeXroll"
 InstallDirRegKey HKLM "Software\NeXroll" "InstallDir"
 RequestExecutionLevel admin
 ShowInstDetails show
-Icon "frontend\favicon.ico"
-UninstallIcon "frontend\favicon.ico"
+Icon "..\NeXroll_ICON\icon_1758297097_64x64.ico"
+UninstallIcon "..\NeXroll_ICON\icon_1758297097_32x32.ico"
 
-!define APP_VERSION "1.0.7"
-VIProductVersion "1.0.7.0"
+!define APP_VERSION "1.0.15"
+VIProductVersion "1.0.15.0"
 VIAddVersionKey /LANG=1033 "ProductName" "NeXroll"
 VIAddVersionKey /LANG=1033 "ProductVersion" "${APP_VERSION}"
 VIAddVersionKey /LANG=1033 "FileVersion" "${APP_VERSION}"
-VIAddVersionKey /LANG=1033 "CompanyName" "NeXroll"
+VIAddVersionKey /LANG=1033 "CompanyName" "JFLXCLOUD"
 VIAddVersionKey /LANG=1033 "FileDescription" "NeXroll Installer"
-VIAddVersionKey /LANG=1033 "LegalCopyright" "© 2025 NeXroll"
-OutFile "NeXroll_Installer_${APP_VERSION}.exe"
+VIAddVersionKey /LANG=1033 "LegalCopyright" "© 2025 JFLXCLOUD"
+OutFile "NeXroll_Installer_${APP_VERSION}_r4.exe"
  
 ; Variables
 Var PREROLL_PATH
@@ -116,12 +116,25 @@ Section "!NeXroll Application (Required)" SEC_APP
   ; Tray app executable (onefile output)
   File /oname=NeXrollTray.exe "..\dist\NeXrollTray.exe"
   ; Include favicon in install dir (optional reference)
-  File /oname=favicon.ico "frontend\favicon.ico"
+  File /oname=favicon.ico "..\NeXroll_ICON\icon_1758297097_32x32.ico"
   ; Convenience start script
   File "start_windows.bat"
 
   ; Create preroll directory
   CreateDirectory "$PREROLL_PATH"
+  ; Ensure selected preroll path is writable by standard Users (Modify rights, recursive)
+  nsExec::ExecToStack 'icacls "$PREROLL_PATH" /grant *S-1-5-32-545:(OI)(CI)M /T /C'
+  Pop $0
+
+  ; Migrate existing prerolls from previous install directory if present
+  ; This preserves user thumbnails/videos across upgrades when prior versions
+  ; stored data under $INSTDIR\data\prerolls (which could be wiped on reinstall)
+  IfFileExists "$INSTDIR\data\prerolls\*.*" 0 +7
+    DetailPrint "Migrating existing prerolls from $INSTDIR\data\prerolls to $PREROLL_PATH"
+    nsExec::ExecToStack 'cmd /c xcopy /E /I /Y "$INSTDIR\data\prerolls" "$PREROLL_PATH"'
+    Pop $0
+    ; Best-effort; ignore errors. Subdirectories (including thumbnails) are copied due to /E
+
 
   ; Persist config to registry
   WriteRegStr HKLM "Software\NeXroll" "InstallDir" "$INSTDIR"
@@ -129,8 +142,15 @@ Section "!NeXroll Application (Required)" SEC_APP
   WriteRegStr HKLM "Software\NeXroll" "Version" "${APP_VERSION}"
 
   ; Ensure common ProgramData log directory exists (service/tray friendly)
-  CreateDirectory "$COMMONAPPDATA\NeXroll"
-  CreateDirectory "$COMMONAPPDATA\NeXroll\logs"
+  ; Create ProgramData\NeXroll and logs via cmd to avoid NSIS constant compatibility issues
+  nsExec::ExecToStack 'cmd /c if not exist "%ProgramData%\NeXroll" mkdir "%ProgramData%\NeXroll"'
+  Pop $0
+  nsExec::ExecToStack 'cmd /c if not exist "%ProgramData%\NeXroll\logs" mkdir "%ProgramData%\NeXroll\logs"'
+  Pop $0
+  ; Grant standard Users Modify rights to ProgramData\NeXroll so non-admin contexts can write logs/DB/WAL
+  ; Use env %ProgramData% to avoid NSIS constant compatibility issues
+  nsExec::ExecToStack 'cmd /c icacls "%ProgramData%\NeXroll" /grant *S-1-5-32-545:(OI)(CI)M /T /C'
+  Pop $0
 
   ; Start Menu shortcuts
   CreateDirectory "$SMPROGRAMS\NeXroll"
@@ -143,6 +163,14 @@ Section "!NeXroll Application (Required)" SEC_APP
 
   ; Uninstaller
   WriteUninstaller "$INSTDIR\uninstall.exe"
+
+  ; Add Programs and Features (Uninstall) entry
+  WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\NeXroll" "DisplayName" "NeXroll"
+  WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\NeXroll" "DisplayVersion" "${APP_VERSION}"
+  WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\NeXroll" "Publisher" "JFLXCLOUD"
+  WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\NeXroll" "InstallLocation" "$INSTDIR"
+  WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\NeXroll" "UninstallString" '"$INSTDIR\uninstall.exe"'
+  WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\NeXroll" "DisplayIcon" "$INSTDIR\NeXroll.exe"
 SectionEnd
 
 Section "Install as Windows Service" SEC_SERVICE
@@ -183,8 +211,8 @@ Section "FFmpeg Path Registration (Auto-detect)" SEC_FFREG
     StrCpy $0 "$PROGRAMFILES64\FFmpeg\bin\ffmpeg.exe"
   IfFileExists "$PROGRAMFILES\FFmpeg\bin\ffmpeg.exe" 0 +2
     StrCpy $0 "$PROGRAMFILES\FFmpeg\bin\ffmpeg.exe"
-  IfFileExists "$COMMONAPPDATA\chocolatey\bin\ffmpeg.exe" 0 +2
-    StrCpy $0 "$COMMONAPPDATA\chocolatey\bin\ffmpeg.exe"
+  IfFileExists "%ProgramData%\chocolatey\bin\ffmpeg.exe" 0 +2
+    StrCpy $0 "%ProgramData%\chocolatey\bin\ffmpeg.exe"
   IfFileExists "C:\ffmpeg\bin\ffmpeg.exe" 0 +2
     StrCpy $0 "C:\ffmpeg\bin\ffmpeg.exe"
   ${If} $0 != ""
@@ -201,8 +229,8 @@ Section "FFmpeg Path Registration (Auto-detect)" SEC_FFREG
     StrCpy $1 "$PROGRAMFILES64\FFmpeg\bin\ffprobe.exe"
   IfFileExists "$PROGRAMFILES\FFmpeg\bin\ffprobe.exe" 0 +2
     StrCpy $1 "$PROGRAMFILES\FFmpeg\bin\ffprobe.exe"
-  IfFileExists "$COMMONAPPDATA\chocolatey\bin\ffprobe.exe" 0 +2
-    StrCpy $1 "$COMMONAPPDATA\chocolatey\bin\ffprobe.exe"
+  IfFileExists "%ProgramData%\chocolatey\bin\ffprobe.exe" 0 +2
+    StrCpy $1 "%ProgramData%\chocolatey\bin\ffprobe.exe"
   IfFileExists "C:\ffmpeg\bin\ffprobe.exe" 0 +2
     StrCpy $1 "C:\ffmpeg\bin\ffprobe.exe"
   ${If} $1 != ""
@@ -267,6 +295,7 @@ Section "Uninstall"
   DeleteRegValue HKLM "Software\NeXroll" "FFmpegPath"
   DeleteRegValue HKLM "Software\NeXroll" "FFprobePath"
   DeleteRegKey /ifempty HKLM "Software\NeXroll"
+  DeleteRegKey HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\NeXroll"
 SectionEnd
 
 ; ------------------------------

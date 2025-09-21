@@ -19,11 +19,28 @@ def _resolve_project_root():
 
 project_root = _resolve_project_root()
 entry_script = os.path.join(project_root, "tray_app.py")
-ico_path = os.path.join(project_root, "frontend", "favicon.ico")
-if not os.path.exists(ico_path):
-    alt = os.path.join(os.getcwd(), "NeXroll", "frontend", "favicon.ico")
-    if os.path.exists(alt):
-        ico_path = alt
+
+# Prefer dedicated icon pack under repo root: ../NeXroll_ICON
+icon_dir = os.path.abspath(os.path.join(project_root, "..", "NeXroll_ICON"))
+ico_path = None
+try:
+    if os.path.isdir(icon_dir):
+        # Prefer a 64x64 ICO if present, else any .ico in that folder
+        cands = [os.path.join(icon_dir, f) for f in os.listdir(icon_dir) if f.lower().endswith("64x64.ico")]
+        if not cands:
+            cands = [os.path.join(icon_dir, f) for f in os.listdir(icon_dir) if f.lower().endswith(".ico")]
+        if cands:
+            ico_path = cands[0]
+except Exception:
+    ico_path = None
+
+if not ico_path or not os.path.exists(ico_path):
+    # Fallback to frontend favicon if dedicated pack not found
+    ico_path = os.path.join(project_root, "frontend", "favicon.ico")
+    if not os.path.exists(ico_path):
+        alt = os.path.join(os.getcwd(), "NeXroll", "frontend", "favicon.ico")
+        if os.path.exists(alt):
+            ico_path = alt
 
 a = Analysis(
     [entry_script],
@@ -31,7 +48,9 @@ a = Analysis(
     binaries=[],
     datas=[
         (ico_path, 'frontend'),
-    ],
+    ] + (
+        [ (icon_dir, 'NeXroll_ICON') ] if os.path.isdir(icon_dir) else []
+    ),
     hiddenimports=[
         'pystray',
         'PIL',
@@ -59,6 +78,7 @@ exe = EXE(
     [],
     name='NeXrollTray',
     icon=ico_path,
+    version=os.path.join(project_root, "version_info.txt"),
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
