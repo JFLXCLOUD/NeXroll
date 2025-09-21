@@ -7,6 +7,7 @@ from typing import List, Optional
 import os
 
 from sqlalchemy.orm import Session
+from sqlalchemy import or_
 import nexroll_backend.models as models
 from nexroll_backend.plex_connector import PlexConnector
 from nexroll_backend.database import SessionLocal
@@ -31,30 +32,134 @@ class Scheduler:
             self.thread.join()
 
     def _run_scheduler(self):
-        """Main scheduler loop - runs every minute"""
+        """Main scheduler loop - runs every ~15 seconds for better responsiveness"""
         while self.running:
             try:
                 self._check_and_execute_schedules()
             except Exception as e:
                 print(f"Scheduler error: {e}")
-            time.sleep(60)  # Check every minute
+            time.sleep(15)  # Check every 15 seconds
 
     def _check_and_execute_schedules(self):
-        """Check all active schedules and execute if needed"""
+        """Evaluate schedules, apply active category to Plex, and handle fallback when idle."""
         db = SessionLocal()
         try:
             now = datetime.datetime.utcnow()
-            schedules = db.query(models.Schedule).filter(
-                models.Schedule.is_active == True
-            ).all()
+            schedules = db.query(models.Schedule).filter(models.Schedule.is_active == True).all()
 
-            for schedule in schedules:
-                if self._should_execute_schedule(schedule, now, db):
-                    self._execute_schedule(schedule, db)
-                    schedule.last_run = now
-                    schedule.next_run = self._calculate_next_run(schedule)
+            # Determine active schedules (window-aware)
+            active = [s for s in schedules if self._is_schedule_active(s, now)]
+
+            # Ensure a settings row exists to track current active category
+            setting = db.query(models.Setting).first()
+            if not setting:
+                setting = models.Setting(plex_url=None, plex_token=None, active_category=None)
+                db.add(setting)
+                db.commit()
+                db.refresh(setting)
+
+            desired_category_id = None
+            chosen_schedule = None
+
+            if active:
+                # Prefer the schedule that ends soonest, then earliest start, then lowest id
+                def _sort_key(s):
+                    end = s.end_date if s.end_date else datetime.datetime.max
+                    start = s.start_date or datetime.datetime.min
+                    return (end, start, s.id)
+                active.sort(key=_sort_key)
+                chosen_schedule = active[0]
+                desired_category_id = chosen_schedule.category_id
+            else:
+                # No active schedules -> attempt fallback from any schedule that defines it
+                fallback_ids = [s.fallback_category_id for s in schedules if getattr(s, "fallback_category_id", None)]
+                if fallback_ids:
+                    desired_category_id = fallback_ids[0]
+
+            # Apply category change to Plex only if it differs from current
+            if desired_category_id and setting.active_category != desired_category_id:
+                if self._apply_category_to_plex(desired_category_id, db):
+                    setting.active_category = desired_category_id
+                    if chosen_schedule:
+                        chosen_schedule.last_run = now
+                        chosen_schedule.next_run = self._calculate_next_run(chosen_schedule)
                     db.commit()
+            # If no desired_category_id, leave Plex as-is to avoid unintended clears
 
+        finally:
+            db.close()
+
+    def _is_schedule_active(self, schedule: models.Schedule, now: datetime.datetime) -> bool:
+        """
+        Determine whether a schedule should be considered active at 'now'.
+        - If end_date is provided: active for the whole window [start_date, end_date].
+        - If no end_date: treat as an ongoing schedule starting at start_date (indefinite)
+          until another schedule takes precedence or a fallback is applied when no schedule is active.
+        """
+        if not schedule or not getattr(schedule, "start_date", None):
+            return False
+
+        # Windowed schedules: active between start and end (inclusive)
+        if getattr(schedule, "end_date", None):
+            return schedule.start_date <= now <= schedule.end_date
+
+        # Indefinite schedule: active from start onward
+        return now >= schedule.start_date
+
+    def _apply_category_to_plex(self, category_id: int, db: Session) -> bool:
+        """
+        Apply all prerolls from a category (including many-to-many) to Plex as a semicolon-separated list.
+        Mirrors the logic in the /categories/{id}/apply-to-plex endpoint.
+        """
+        if not category_id:
+            return False
+
+        # Collect prerolls (primary or associated) for the category
+        prerolls = db.query(models.Preroll) \
+            .outerjoin(models.preroll_categories, models.Preroll.id == models.preroll_categories.c.preroll_id) \
+            .filter(or_(models.Preroll.category_id == category_id,
+                        models.preroll_categories.c.category_id == category_id)) \
+            .distinct().all()
+
+        if not prerolls:
+            print(f"SCHEDULER: No prerolls found for category_id={category_id}")
+            return False
+
+        # Build combined path string for Plex multi-preroll format
+        preroll_paths = [os.path.abspath(p.path) for p in prerolls]
+        combined = ";".join(preroll_paths)
+
+        setting = db.query(models.Setting).first()
+        if not setting or not getattr(setting, "plex_url", None) or not getattr(setting, "plex_token", None):
+            print("SCHEDULER: Plex not configured; cannot apply category.")
+            return False
+
+        connector = PlexConnector(setting.plex_url, setting.plex_token)
+        print(f"SCHEDULER: Applying category_id={category_id} with {len(prerolls)} prerolls to Plex…")
+        ok = connector.set_preroll(combined)
+        print(f"SCHEDULER: {'SUCCESS' if ok else 'FAIL'} setting multi-preroll.")
+        if ok:
+            # Mirror manual "Apply to Plex" behavior so UI reflects the active category
+            try:
+                db.query(models.Category).update({"apply_to_plex": False})
+                cat = db.query(models.Category).filter(models.Category.id == category_id).first()
+                if cat:
+                    cat.apply_to_plex = True
+                db.commit()
+            except Exception:
+                try:
+                    db.rollback()
+                except Exception:
+                    pass
+        return ok
+
+    def _get_active_schedules(self) -> List[models.Schedule]:
+        """Return a list of schedules currently active (for diagnostics/status)."""
+        db = SessionLocal()
+        try:
+            now = datetime.datetime.utcnow()
+            schedules = db.query(models.Schedule).filter(models.Schedule.is_active == True).all()
+            return [s for s in schedules if self._is_schedule_active(s, now)]
         finally:
             db.close()
 
@@ -92,24 +197,13 @@ class Scheduler:
         return False
 
     def _execute_schedule(self, schedule: models.Schedule, db: Session):
-        """Execute a schedule by updating Plex with selected preroll"""
-        # Get prerolls for this schedule's category
-        prerolls = []
-        if schedule.category_id:
-            # Correct: fetch prerolls by category_id, not by tag name
-            category_prerolls = db.query(models.Preroll).filter(
-                models.Preroll.category_id == schedule.category_id
-            ).all()
-            prerolls = category_prerolls
-
-        if not prerolls:
+        """
+        Execute a schedule by applying its entire category to Plex
+        (multi-preroll rotation), instead of a single random preroll.
+        """
+        if not schedule or not schedule.category_id:
             return
-
-        # Select preroll(s) based on settings
-        selected_prerolls = self._select_prerolls(schedule, prerolls)
-
-        # Update Plex with selected preroll
-        self._update_plex_preroll(selected_prerolls, db)
+        self._apply_category_to_plex(schedule.category_id, db)
 
     def _select_prerolls(self, schedule: models.Schedule, prerolls: List[models.Preroll]) -> List[models.Preroll]:
         """Select prerolls based on shuffle and playlist settings"""

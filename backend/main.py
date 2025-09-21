@@ -3,11 +3,11 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, Response
 from sqlalchemy.orm import Session, joinedload
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy import or_, select, func
+from sqlalchemy.exc import IntegrityError, OperationalError
 from pydantic import BaseModel
 import datetime
 import os
-import ffmpeg
 import json
 import random
 import zipfile
@@ -15,6 +15,7 @@ import io
 import shutil
 import subprocess
 from pathlib import Path
+from urllib.parse import unquote
 
 import sys
 import os
@@ -59,9 +60,11 @@ def ensure_schema() -> None:
             # Categories: ensure apply_to_plex
             if not _sqlite_has_column("categories", "apply_to_plex"):
                 _sqlite_add_column("categories", "apply_to_plex BOOLEAN DEFAULT 0")
+
             # Schedules: ensure fallback_category_id
             if not _sqlite_has_column("schedules", "fallback_category_id"):
                 _sqlite_add_column("schedules", "fallback_category_id INTEGER")
+
             # Holiday presets: ensure date range fields and is_recurring
             for col, ddl in [
                 ("start_month", "start_month INTEGER"),
@@ -72,8 +75,71 @@ def ensure_schema() -> None:
             ]:
                 if not _sqlite_has_column("holiday_presets", col):
                     _sqlite_add_column("holiday_presets", ddl)
+
+            # Settings: ensure new Plex and app-state columns exist on legacy DBs
+            for col, ddl in [
+                ("plex_client_id", "plex_client_id TEXT"),
+                ("plex_server_base_url", "plex_server_base_url TEXT"),
+                ("plex_server_machine_id", "plex_server_machine_id TEXT"),
+                ("plex_server_name", "plex_server_name TEXT"),
+                ("active_category", "active_category INTEGER"),
+                ("updated_at", "updated_at DATETIME"),
+            ]:
+                if not _sqlite_has_column("settings", col):
+                    _sqlite_add_column("settings", ddl)
+
+            # Prerolls: ensure display_name column for UI-friendly naming separate from disk file
+            if not _sqlite_has_column("prerolls", "display_name"):
+                _sqlite_add_column("prerolls", "display_name TEXT")
     except Exception as e:
         print(f"Schema ensure error: {e}")
+
+def ensure_settings_schema_now() -> None:
+    """
+    Best-effort migration to add newer Setting columns on legacy SQLite DBs.
+    Safe to call multiple times. Logs any errors to file logger.
+    """
+    try:
+        if not engine.url.drivername.startswith("sqlite"):
+            return
+        with engine.connect() as conn:
+            cols = []
+            try:
+                res = conn.exec_driver_sql("PRAGMA table_info(settings)")
+                cols = [row[1] for row in res.fetchall()]
+            except Exception:
+                cols = []
+
+            need = {
+                "plex_client_id": "TEXT",
+                "plex_server_base_url": "TEXT",
+                "plex_server_machine_id": "TEXT",
+                "plex_server_name": "TEXT",
+                "active_category": "INTEGER",
+                "updated_at": "DATETIME",
+            }
+            for col, ddl in need.items():
+                if col not in cols:
+                    try:
+                        conn.exec_driver_sql(f"ALTER TABLE settings ADD COLUMN {col} {ddl}")
+                        try:
+                            _file_log(f"ensure_settings_schema_now: added settings.{col}")
+                        except Exception:
+                            pass
+                    except Exception as e:
+                        try:
+                            _file_log(f"ensure_settings_schema_now: skip add settings.{col}: {e}")
+                        except Exception:
+                            pass
+        try:
+            _file_log("ensure_settings_schema_now: completed")
+        except Exception:
+            pass
+    except Exception as e:
+        try:
+            _file_log(f"ensure_settings_schema_now error: {e}")
+        except Exception:
+            pass
 
 # Run schema upgrades early so requests won't hit missing columns
 ensure_schema()
@@ -171,15 +237,24 @@ def _resolve_tool(tool_name: str) -> str:
         if sys.platform.startswith("win"):
             try:
                 import winreg
-                with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, r"Software\NeXroll") as k:
-                    reg_name = "FFmpegPath" if tool_name.lower() == "ffmpeg" else ("FFprobePath" if tool_name.lower() == "ffprobe" else None)
-                    if reg_name:
+                # Try both 64-bit and 32-bit registry views (NSIS may write to Wow6432Node)
+                views = [
+                    getattr(winreg, "KEY_WOW64_64KEY", 0),
+                    getattr(winreg, "KEY_WOW64_32KEY", 0),
+                ]
+                reg_name = "FFmpegPath" if tool_name.lower() == "ffmpeg" else ("FFprobePath" if tool_name.lower() == "ffprobe" else None)
+                if reg_name:
+                    for view in views:
                         try:
-                            val, _ = winreg.QueryValueEx(k, reg_name)
-                            if val and os.path.exists(val):
-                                return val
+                            k = winreg.OpenKeyEx(winreg.HKEY_LOCAL_MACHINE, r"Software\NeXroll", 0, winreg.KEY_READ | view)
+                            try:
+                                val, _ = winreg.QueryValueEx(k, reg_name)
+                                if val and os.path.exists(val):
+                                    return val
+                            finally:
+                                winreg.CloseKey(k)
                         except Exception:
-                            pass
+                            continue
             except Exception:
                 pass
 
@@ -228,6 +303,99 @@ def get_ffmpeg_cmd() -> str:
 
 def get_ffprobe_cmd() -> str:
     return _resolve_tool("ffprobe")
+
+def _generate_placeholder(out_path: str, width: int = 426, height: int = 240):
+    """
+    Generate a placeholder JPEG thumbnail at out_path.
+    Prefer ffmpeg color source; fallback to an embedded tiny JPEG.
+    """
+    try:
+        # Attempt to generate with ffmpeg
+        res = _run_subprocess(
+            [get_ffmpeg_cmd(), "-f", "lavfi", "-i", f"color=c=gray:s={width}x{height}", "-vframes", "1", "-y", out_path],
+            capture_output=True,
+            text=True,
+        )
+        if os.path.exists(out_path):
+            return
+    except Exception:
+        pass
+    # Fallback: embedded 1x1 white JPEG
+    try:
+        import base64
+        _SMALL_JPEG = (
+            "/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAP//////////////////////////////////////////////////////////////////////////////////////"
+            "//////////////////////////////////////////////////////////////////////////////////////////////2wBDAf//////////////////////////////////////////////////////////////////////////////////////"
+            "//////////////////////////////////////////////////////////////////////////////////////////////wAARCAAQABADASIAAhEBAxEB/8QAFQABAQAAAAAAAAAAAAAAAAAAAAb/xAAUEAEAAAAAAAAAAAAAAAAAAAAA/8QAFQEBAQAAAAAAAAAAAAAAAAAAAgP/xAAUEQEAAAAAAAAAAAAAAAAAAAAA/9oADAMBAAIRAxEAPwC4A//Z"
+        )
+        data = base64.b64decode(_SMALL_JPEG)
+        try:
+            os.makedirs(os.path.dirname(out_path) or ".", exist_ok=True)
+        except Exception:
+            pass
+        with open(out_path, "wb") as f:
+            f.write(data)
+    except Exception:
+        try:
+            with open(out_path, "wb") as f:
+                f.write(b"")
+        except Exception:
+            pass
+
+def _generate_placeholder(out_path: str, width: int = 426, height: int = 240):
+    """
+    Generate a placeholder JPEG thumbnail at out_path.
+    Prefer ffmpeg color source; fallback to an embedded 1x1 JPEG.
+    """
+    try:
+        # Attempt using ffmpeg to generate a neutral gray frame
+        res = _run_subprocess(
+            [get_ffmpeg_cmd(), "-f", "lavfi", "-i", f"color=c=gray:s={width}x{height}", "-vframes", "1", "-y", out_path],
+            capture_output=True,
+            text=True,
+        )
+        if os.path.exists(out_path):
+            return
+    except Exception:
+        pass
+    # Fallback: embedded tiny white JPEG (base64)
+    try:
+        import base64
+        _SMALL_JPEG = (
+            "/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAP//////////////////////////////////////////////////////////////////////////////////////"
+            "//////////////////////////////////////////////////////////////////////////////////////////////2wBDAf//////////////////////////////////////////////////////////////////////////////////////"
+            "//////////////////////////////////////////////////////////////////////////////////////////////wAARCAAQABADASIAAhEBAxEB/8QAFQABAQAAAAAAAAAAAAAAAAAAAAb/xAAUEAEAAAAAAAAAAAAAAAAAAAAA/8QAFQEBAQAAAAAAAAAAAAAAAAAAAgP/xAAUEQEAAAAAAAAAAAAAAAAAAAAA/9oADAMBAAIRAxEAPwC4A//Z"
+        )
+        data = base64.b64decode(_SMALL_JPEG)
+        # Ensure output directory exists
+        try:
+            os.makedirs(os.path.dirname(out_path) or ".", exist_ok=True)
+        except Exception:
+            pass
+        with open(out_path, "wb") as f:
+            f.write(data)
+    except Exception:
+        # Last resort: create an empty file to avoid repeated attempts
+        try:
+            with open(out_path, "wb") as f:
+                f.write(b"")
+        except Exception:
+            pass
+def _placeholder_bytes_jpeg() -> bytes:
+    """
+    Return a tiny valid JPEG as bytes for inline responses when file I/O fails.
+    """
+    import base64
+    _SMALL_JPEG = (
+        "/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAP//////////////////////////////////////////////////////////////////////////////////////"
+        "//////////////////////////////////////////////////////////////////////////////////////////////2wBDAf//////////////////////////////////////////////////////////////////////////////////////"
+        "//////////////////////////////////////////////////////////////////////////////////////////////wAARCAAQABADASIAAhEBAxEB/8QAFQABAQAAAAAAAAAAAAAAAAAAAAb/xAAUEAEAAAAAAAAAAAAAAAAAAAAA/8QAFQEBAQAAAAAAAAAAAAAAAAAAAgP/xAAUEQEAAAAAAAAAAAAAAAAAAAAA/9oADAMBAAIRAxEAPwC4A//Z"
+    )
+    try:
+        return base64.b64decode(_SMALL_JPEG)
+    except Exception:
+        # Minimal SOI/EOI as a last resort (may not render everywhere, but prevents crashes)
+        return b"\xff\xd8\xff\xd9"
 # Pydantic models for API
 class ScheduleCreate(BaseModel):
     name: str
@@ -261,16 +429,34 @@ class CategoryCreate(BaseModel):
     description: str = None
     apply_to_plex: bool = False
 
+class PrerollUpdate(BaseModel):
+    tags: str | list[str] | None = None
+    category_id: int | None = None                 # primary category (affects storage path and thumbnail folder)
+    category_ids: list[int] | None = None          # additional categories (many-to-many)
+    description: str | None = None
+    display_name: str | None = None                # UI display label
+    new_filename: str | None = None                # optional on-disk rename (basename; extension optional)
+
 class PlexConnectRequest(BaseModel):
     url: str
     token: str
 
-app = FastAPI(title="NeXroll Backend", version="1.0.7")
+class PlexStableConnectRequest(BaseModel):
+    url: str | None = None
+    token: str | None = None  # accepted but ignored for stable-token flow
+    stableToken: str | None = None  # alias some UIs might send
+
+app = FastAPI(title="NeXroll Backend", version="1.0.15")
 
 # CORS middleware for frontend integration
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000", "http://localhost:9393"],  # React dev server and production port
+    allow_origins=[
+        "http://localhost:3000",
+        "http://127.0.0.1:3000",
+        "http://localhost:9393",
+        "http://127.0.0.1:9393",
+    ],  # React dev server and production port (localhost and 127.0.0.1)
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -468,6 +654,18 @@ def system_db_introspect():
         info["schedules_columns"] = schedules_columns
         info["has_fallback_category_id"] = "fallback_category_id" in schedules_columns
 
+        # Introspect settings table
+        settings_columns = []
+        try:
+            with engine.connect() as conn:
+                res = conn.exec_driver_sql("PRAGMA table_info(settings)")
+                settings_columns = [row[1] for row in res.fetchall()]
+        except Exception as e:
+            info["settings_error"] = str(e)
+        info["settings_columns"] = settings_columns
+        info["has_plex_client_id"] = "plex_client_id" in settings_columns
+        info["has_updated_at"] = "updated_at" in settings_columns
+
     except Exception as e:
         info["error"] = str(e)
 
@@ -509,32 +707,124 @@ def system_paths():
 
     return info
 
+# Minimal built-in Dashboard with a Reinitialize Thumbnails button
+@app.get("/dashboard")
+def dashboard():
+    html = """<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>NeXroll Dashboard</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+body{font-family:Segoe UI, Arial, sans-serif; margin:24px; color:#222; background:#fafafa}
+h1{margin:0 0 12px 0}
+small{color:#666}
+button{padding:8px 12px; margin:8px 8px 8px 0; cursor:pointer}
+pre{background:#0b1020;color:#d1f7c4;padding:12px;border-radius:6px;white-space:pre-wrap;max-width:100%;overflow:auto}
+.card{background:#fff;padding:16px;border:1px solid #e5e7eb;border-radius:8px;box-shadow:0 1px 2px rgba(0,0,0,0.04);margin-bottom:16px}
+</style>
+</head>
+<body>
+  <h1>NeXroll Dashboard</h1>
+  <div class="card">
+    <div>
+      <button onclick="reinit()">Reinitialize Thumbnails</button>
+      <button onclick="ffmpeg()">FFmpeg Info</button>
+      <button onclick="plex()">Plex Status</button>
+      <button onclick="version()">Version</button>
+      <small id="status"></small>
+    </div>
+  </div>
+  <div class="card">
+    <pre id="out">Ready.</pre>
+  </div>
+<script>
+function setOut(t){document.getElementById('out').textContent=t;}
+function setStatus(t){document.getElementById('status').textContent=t;}
+
+async function reinit(){
+  setStatus('Rebuilding thumbnails...');
+  setOut('POST /thumbnails/rebuild?force=true ...');
+  try{
+    const res = await fetch('/thumbnails/rebuild?force=true', { method:'POST' });
+    const j = await res.json();
+    setOut(JSON.stringify(j,null,2));
+    setStatus('Done.');
+  }catch(e){
+    setOut('Error: '+e);
+    setStatus('Failed.');
+  }
+}
+
+async function ffmpeg(){
+  setStatus('Probing ffmpeg...');
+  try{
+    const res = await fetch('/system/ffmpeg-info');
+    const j = await res.json();
+    setOut(JSON.stringify(j,null,2));
+    setStatus('OK.');
+  }catch(e){
+    setOut('Error: '+e);
+    setStatus('Failed.');
+  }
+}
+
+async function plex(){
+  setStatus('Checking Plex status...');
+  try{
+    const res = await fetch('/plex/status');
+    const j = await res.json();
+    setOut(JSON.stringify(j,null,2));
+    setStatus('OK.');
+  }catch(e){
+    setOut('Error: '+e);
+    setStatus('Failed.');
+  }
+}
+
+async function version(){
+  setStatus('Getting version...');
+  try{
+    const res = await fetch('/system/version');
+    const j = await res.json();
+    setOut(JSON.stringify(j,null,2));
+    setStatus('OK.');
+  }catch(e){
+    setOut('Error: '+e);
+    setStatus('Failed.');
+  }
+}
+</script>
+</body>
+</html>"""
+    return Response(content=html, media_type="text/html")
 @app.post("/plex/connect")
 def connect_plex(request: PlexConnectRequest, db: Session = Depends(get_db)):
-    url = request.url
-    token = request.token
+    url = (request.url or "").strip()
+    token = (request.token or "").strip()
 
     # Validate input
-    if not url or not url.strip():
+    if not url:
         raise HTTPException(status_code=422, detail="Plex server URL is required")
-    if not token or not token.strip():
+    if not token:
         raise HTTPException(status_code=422, detail="Plex authentication token is required")
 
-    # Validate URL format
+    # Normalize URL format (default to http:// when scheme missing)
     if not url.startswith(('http://', 'https://')):
-        raise HTTPException(status_code=422, detail="Plex server URL must start with http:// or https://")
+        url = f"http://{url}"
 
     try:
-        connector = PlexConnector(url.strip(), token.strip())
+        connector = PlexConnector(url, token)
         if connector.test_connection():
             # Save to settings
             setting = db.query(models.Setting).first()
             if not setting:
-                setting = models.Setting(plex_url=url.strip(), plex_token=token.strip())
+                setting = models.Setting(plex_url=url, plex_token=token)
                 db.add(setting)
             else:
-                setting.plex_url = url.strip()
-                setting.plex_token = token.strip()
+                setting.plex_url = url
+                setting.plex_token = token
                 setting.updated_at = datetime.datetime.utcnow()
             db.commit()
             return {"connected": True, "message": "Successfully connected to Plex server"}
@@ -545,12 +835,46 @@ def connect_plex(request: PlexConnectRequest, db: Session = Depends(get_db)):
 
 @app.get("/plex/status")
 def get_plex_status(db: Session = Depends(get_db)):
-    setting = db.query(models.Setting).first()
-    if setting:
+    """
+    Return Plex connection status without throwing 500s.
+    Always returns 200 with a JSON object. Logs internal errors.
+    Triggers a best-effort settings schema migration if a legacy DB is detected.
+    """
+    def _do_fetch():
+        setting = db.query(models.Setting).first()
+        if not setting or not getattr(setting, "plex_url", None) or not getattr(setting, "plex_token", None):
+            return {"connected": False}
         connector = PlexConnector(setting.plex_url, setting.plex_token)
-        info = connector.get_server_info()
-        return info or {"connected": False}
-    return {"connected": False}
+        info = connector.get_server_info() or {}
+        if not isinstance(info, dict):
+            info = {}
+        info.setdefault("connected", False)
+        return info
+
+    try:
+        return _do_fetch()
+    except OperationalError as oe:
+        # Auto-migrate settings schema then retry once
+        try:
+            _file_log(f"/plex/status OperationalError: {oe} (attempting schema ensure)")
+        except Exception:
+            pass
+        try:
+            ensure_settings_schema_now()
+            return _do_fetch()
+        except Exception as e2:
+            try:
+                _file_log(f"/plex/status post-migration fetch failed: {e2}")
+            except Exception:
+                pass
+            return {"connected": False}
+    except Exception as e:
+        try:
+            _file_log(f"/plex/status error: {e}")
+        except Exception:
+            pass
+        # Never propagate error to the UI; keep the dashboard stable
+        return {"connected": False}
 
 @app.post("/plex/disconnect")
 def disconnect_plex(db: Session = Depends(get_db)):
@@ -567,28 +891,28 @@ def disconnect_plex(db: Session = Depends(get_db)):
         return {"disconnected": True, "message": "No Plex connection found"}
 
 @app.post("/plex/connect/stable-token")
-def connect_plex_stable_token(request: PlexConnectRequest, db: Session = Depends(get_db)):
+def connect_plex_stable_token(request: PlexStableConnectRequest, db: Session = Depends(get_db)):
     """Connect to Plex server using stable token from config file"""
-    url = request.url
+    url = (getattr(request, "url", None) or "").strip()
 
-    # Validate URL format
-    if not url or not url.strip():
+    # Normalize URL format (default to http:// when scheme missing)
+    if not url:
         raise HTTPException(status_code=422, detail="Plex server URL is required")
     if not url.startswith(('http://', 'https://')):
-        raise HTTPException(status_code=422, detail="Plex server URL must start with http:// or https://")
+        url = f"http://{url}"
 
     try:
-        # Create connector without token - it will try to load stable token
-        connector = PlexConnector(url.strip())
+        # Create connector without explicit token - it will try to load stable token
+        connector = PlexConnector(url)
         if connector.token:
             if connector.test_connection():
                 # Save to settings
                 setting = db.query(models.Setting).first()
                 if not setting:
-                    setting = models.Setting(plex_url=url.strip(), plex_token=connector.token)
+                    setting = models.Setting(plex_url=url, plex_token=connector.token)
                     db.add(setting)
                 else:
-                    setting.plex_url = url.strip()
+                    setting.plex_url = url
                     setting.plex_token = connector.token
                     setting.updated_at = datetime.datetime.utcnow()
                 db.commit()
@@ -598,17 +922,33 @@ def connect_plex_stable_token(request: PlexConnectRequest, db: Session = Depends
                     "method": "stable_token"
                 }
             else:
-                raise HTTPException(status_code=422, detail="Failed to connect to Plex server with stable token. Please check your URL and ensure the stable token is valid.")
+                # Keep UI stable with structured response
+                return {
+                    "connected": False,
+                    "message": "Failed to connect to Plex server with stable token. Please verify URL and token.",
+                    "method": "stable_token"
+                }
         else:
-            raise HTTPException(status_code=422, detail="No stable token found. Please run the setup script to configure your stable token.")
+            # No stable token available
+            return {
+                "connected": False,
+                "message": "No stable token found. Run setup_plex_token.exe or save token via UI.",
+                "method": "stable_token"
+            }
     except Exception as e:
-        raise HTTPException(status_code=422, detail=f"Connection error: {str(e)}")
+        # Keep contract stable with 200 where possible
+        return {
+            "connected": False,
+            "message": f"Connection error: {str(e)}",
+            "method": "stable_token"
+        }
 
 @app.post("/prerolls/upload")
 def upload_preroll(
     file: UploadFile = File(...),
     tags: str = Form(""),
     category_id: str = Form(""),
+    category_ids: str = Form(""),
     description: str = Form(""),
     db: Session = Depends(get_db)
 ):
@@ -616,28 +956,49 @@ def upload_preroll(
     os.makedirs(PREROLLS_DIR, exist_ok=True)
     os.makedirs(THUMBNAILS_DIR, exist_ok=True)
 
-    # Determine category directory
-    category_dir = "Default"  # Default category
+    def _parse_id_list(s: str) -> list[int]:
+        ids: list[int] = []
+        if s and s.strip():
+            try:
+                data = json.loads(s)
+                if isinstance(data, list):
+                    ids = [int(x) for x in data if str(x).strip().isdigit()]
+            except Exception:
+                ids = [int(x) for x in [p.strip() for p in s.split(",")] if str(x).isdigit()]
+        # unique preserve order
+        seen = set()
+        uniq = []
+        for x in ids:
+            if x not in seen:
+                seen.add(x)
+                uniq.append(x)
+        return uniq
+
+    all_ids = _parse_id_list(category_ids)
+    # Determine primary category (explicit category_id first, otherwise first from category_ids)
+    primary_category_id = None
     if category_id and category_id.strip():
         try:
-            cat_id_int = int(category_id)
-            # Get category name from database
-            from nexroll_backend.database import SessionLocal
-            db_session = SessionLocal()
-            category = db_session.query(models.Category).filter(models.Category.id == cat_id_int).first()
-            if category:
-                category_dir = category.name
-            db_session.close()
-        except:
-            pass
+            primary_category_id = int(category_id)
+        except Exception:
+            primary_category_id = None
+    if primary_category_id is None and all_ids:
+        primary_category_id = all_ids[0]
 
-    # Create category directory if it doesn't exist
+    # Determine category directory name for storage
+    category_dir = "Default"
+    if primary_category_id:
+        category = db.query(models.Category).filter(models.Category.id == primary_category_id).first()
+        if category:
+            category_dir = category.name
+
+    # Create category directories if they don't exist
     category_path = os.path.join(PREROLLS_DIR, category_dir)
     thumbnail_category_path = os.path.join(THUMBNAILS_DIR, category_dir)
     os.makedirs(category_path, exist_ok=True)
     os.makedirs(thumbnail_category_path, exist_ok=True)
 
-    # Save file
+    # Save file to disk (single physical copy regardless of multi-category assignment)
     file_path = os.path.join(category_path, file.filename)
     file_size = 0
     with open(file_path, "wb") as f:
@@ -645,80 +1006,118 @@ def upload_preroll(
         file_size = len(content)
         f.write(content)
 
-    # Get video duration using ffprobe
+    # Probe duration (best-effort)
     duration = None
     try:
-        import subprocess
-        result = _run_subprocess([
-            get_ffprobe_cmd(), '-v', 'quiet', '-print_format', 'json', '-show_format', file_path
-        ], capture_output=True, text=True)
+        result = _run_subprocess(
+            [get_ffprobe_cmd(), "-v", "quiet", "-print_format", "json", "-show_format", file_path],
+            capture_output=True,
+            text=True,
+        )
         if result.returncode == 0:
-            probe_data = json.loads(result.stdout)
-            duration = float(probe_data['format']['duration'])
-    except:
-        pass  # ffprobe not available or failed
+            probe_data = json.loads(result.stdout) if result.stdout else {}
+            duration = float(probe_data.get("format", {}).get("duration"))
+    except Exception:
+        pass
 
-    # Generate thumbnail
-    thumbnail_path = os.path.join(thumbnail_category_path, f"{file.filename}.jpg")
-    try:
-        # Use subprocess to run ffmpeg with proper single image output
-        import subprocess
-        result = _run_subprocess([
-            get_ffmpeg_cmd(), '-i', file_path, '-ss', '5', '-vframes', '1', '-q:v', '2',
-            '-y', thumbnail_path  # -y to overwrite existing files
-        ], capture_output=True, text=True)
-
-        if result.returncode == 0:
-            # Store path relative to data_dir for static serving
-            thumbnail_path = os.path.relpath(thumbnail_path, data_dir).replace("\\", "/") if thumbnail_path else None
-        else:
-            print(f"FFmpeg thumbnail generation failed: {result.stderr}")
-            thumbnail_path = None
-    except Exception as e:
-        print(f"Thumbnail generation error: {e}")
-        thumbnail_path = None  # If ffmpeg fails
-
-    # Process tags
+    # Normalize tags -> JSON string array
     processed_tags = None
     if tags and tags.strip():
         try:
-            # Try to parse as JSON array
             processed_tags = json.dumps(json.loads(tags))
-        except:
-            # Treat as comma-separated string and convert to JSON array
-            tag_list = [tag.strip() for tag in tags.split(',') if tag.strip()]
+        except Exception:
+            tag_list = [t.strip() for t in tags.split(",") if t.strip()]
             processed_tags = json.dumps(tag_list)
 
-    # Convert category_id to int if provided
-    category_id_int = None
-    if category_id and category_id.strip():
-        try:
-            category_id_int = int(category_id)
-        except ValueError:
-            pass  # Invalid category_id, ignore
-
-    # Save to DB
+    # Persist initial row (to get ID for thumbnail naming)
     preroll = models.Preroll(
         filename=file.filename,
+        display_name=None,
         path=file_path,
-        thumbnail=thumbnail_path,
+        thumbnail=None,
         tags=processed_tags,
-        category_id=category_id_int,
-        description=description,
+        category_id=primary_category_id,
+        description=description or None,
         duration=duration,
-        file_size=file_size
+        file_size=file_size,
     )
     db.add(preroll)
     db.commit()
     db.refresh(preroll)
 
+    # If file is named 'loading.*', place it into a unique subfolder to avoid name collisions
+    try:
+        stem = os.path.splitext(file.filename)[0].lower()
+        if stem == "loading":
+            subdir = os.path.join(category_path, f"Preroll_{preroll.id}")
+            os.makedirs(subdir, exist_ok=True)
+            new_abs = os.path.join(subdir, file.filename)
+            if os.path.abspath(new_abs) != os.path.abspath(file_path):
+                try:
+                    os.replace(file_path, new_abs)
+                except Exception:
+                    shutil.copy2(file_path, new_abs)
+                    try:
+                        os.remove(file_path)
+                    except Exception:
+                        pass
+            file_path = new_abs
+            preroll.path = new_abs
+    except Exception as e:
+        _file_log(f"upload_preroll: move to subfolder failed: {e}")
+
+    # Generate id-prefixed thumbnail under primary category
+    thumbnail_path = None
+    try:
+        thumbnail_abs = os.path.join(thumbnail_category_path, f"{preroll.id}_{file.filename}.jpg")
+        tmp_thumb = thumbnail_abs + ".tmp.jpg"
+        res = _run_subprocess(
+            [get_ffmpeg_cmd(), "-v", "error", "-y", "-ss", "5", "-i", file_path, "-vframes", "1", "-q:v", "2", "-f", "mjpeg", tmp_thumb],
+            capture_output=True,
+            text=True,
+        )
+        if getattr(res, "returncode", 1) != 0 or not os.path.exists(tmp_thumb):
+            _file_log(f"FFmpeg thumbnail generation failed: {getattr(res, 'stderr', '')}")
+            _generate_placeholder(tmp_thumb)
+        try:
+            if os.path.exists(thumbnail_abs):
+                os.remove(thumbnail_abs)
+        except Exception:
+            pass
+        os.replace(tmp_thumb, thumbnail_abs)
+        thumbnail_path = os.path.relpath(thumbnail_abs, data_dir).replace("\\", "/")
+        preroll.thumbnail = thumbnail_path
+    except Exception as e:
+        _file_log(f"upload_preroll: thumbnail generation error: {e}")
+        preroll.thumbnail = None
+
+    # Assign many-to-many categories (store a single file; categories are tags)
+    try:
+        assoc_ids = list(all_ids)
+        if primary_category_id and primary_category_id not in assoc_ids:
+            assoc_ids.insert(0, primary_category_id)
+        if assoc_ids:
+            cats = db.query(models.Category).filter(models.Category.id.in_(assoc_ids)).all()
+            preroll.categories = cats
+    except Exception as e:
+        _file_log(f"upload_preroll: category association failed: {e}")
+
+    try:
+        db.commit()
+    except Exception as e:
+        db.rollback()
+        _file_log(f"upload_preroll: final commit failed: {e}")
+
     return {
         "uploaded": True,
         "id": preroll.id,
-        "filename": file.filename,
+        "filename": preroll.filename,
+        "display_name": preroll.display_name,
         "thumbnail": thumbnail_path,
         "duration": duration,
-        "file_size": file_size
+        "file_size": file_size,
+        "category_id": preroll.category_id,
+        "categories": [{"id": c.id, "name": c.name} for c in (preroll.categories or [])],
     }
 
 @app.post("/prerolls/upload-multiple")
@@ -726,12 +1125,33 @@ def upload_multiple_prerolls(
     files: list[UploadFile] = File(...),
     tags: str = Form(""),
     category_id: str = Form(""),
+    category_ids: str = Form(""),
     description: str = Form(""),
     db: Session = Depends(get_db)
 ):
-    """Upload multiple preroll files at once"""
+    """Upload multiple preroll files at once with optional multi-category assignment"""
     if not files or len(files) == 0:
         raise HTTPException(status_code=422, detail="No files provided")
+
+    def _parse_id_list(s: str) -> list[int]:
+        ids: list[int] = []
+        if s and s.strip():
+            try:
+                data = json.loads(s)
+                if isinstance(data, list):
+                    ids = [int(x) for x in data if str(x).strip().isdigit()]
+            except Exception:
+                ids = [int(x) for x in [p.strip() for p in s.split(",")] if str(x).isdigit()]
+        # unique keep order
+        seen = set()
+        out = []
+        for i in ids:
+            if i not in seen:
+                seen.add(i)
+                out.append(i)
+        return out
+
+    all_ids = _parse_id_list(category_ids)
 
     results = []
     successful_uploads = 0
@@ -742,25 +1162,30 @@ def upload_multiple_prerolls(
             os.makedirs(PREROLLS_DIR, exist_ok=True)
             os.makedirs(THUMBNAILS_DIR, exist_ok=True)
 
-            # Determine category directory
-            category_dir = "Default"  # Default category
+            # Resolve primary category
+            primary_category_id = None
             if category_id and category_id.strip():
                 try:
-                    cat_id_int = int(category_id)
-                    # Get category name from database
-                    category = db.query(models.Category).filter(models.Category.id == cat_id_int).first()
-                    if category:
-                        category_dir = category.name
-                except:
-                    pass
+                    primary_category_id = int(category_id)
+                except Exception:
+                    primary_category_id = None
+            if primary_category_id is None and all_ids:
+                primary_category_id = all_ids[0]
 
-            # Create category directory if it doesn't exist
+            # Determine primary category directory name
+            category_dir = "Default"
+            if primary_category_id:
+                category = db.query(models.Category).filter(models.Category.id == primary_category_id).first()
+                if category:
+                    category_dir = category.name
+
+            # Ensure category folders
             category_path = os.path.join(PREROLLS_DIR, category_dir)
-            thumbnail_category_path = os.path.join(THUMBNAILS_DIR, category_dir)
+            thumb_cat_path = os.path.join(THUMBNAILS_DIR, category_dir)
             os.makedirs(category_path, exist_ok=True)
-            os.makedirs(thumbnail_category_path, exist_ok=True)
+            os.makedirs(thumb_cat_path, exist_ok=True)
 
-            # Save file
+            # Save file to disk
             file_path = os.path.join(category_path, file.filename)
             file_size = 0
             with open(file_path, "wb") as f:
@@ -768,86 +1193,124 @@ def upload_multiple_prerolls(
                 file_size = len(content)
                 f.write(content)
 
-            # Get video duration using ffprobe
+            # Probe duration (best-effort)
             duration = None
             try:
-                import subprocess
-                result = _run_subprocess([
-                    get_ffprobe_cmd(), '-v', 'quiet', '-print_format', 'json', '-show_format', file_path
-                ], capture_output=True, text=True)
+                result = _run_subprocess(
+                    [get_ffprobe_cmd(), "-v", "quiet", "-print_format", "json", "-show_format", file_path],
+                    capture_output=True,
+                    text=True,
+                )
                 if result.returncode == 0:
-                    probe_data = json.loads(result.stdout)
-                    duration = float(probe_data['format']['duration'])
-            except:
-                pass  # ffprobe not available or failed
+                    probe_data = json.loads(result.stdout) if result.stdout else {}
+                    duration = float(probe_data.get("format", {}).get("duration"))
+            except Exception:
+                pass
 
-            # Generate thumbnail
-            thumbnail_path = os.path.join(thumbnail_category_path, f"{file.filename}.jpg")
-            try:
-                # Use subprocess to run ffmpeg with proper single image output
-                import subprocess
-                result = _run_subprocess([
-                    get_ffmpeg_cmd(), '-i', file_path, '-ss', '5', '-vframes', '1', '-q:v', '2',
-                    '-y', thumbnail_path  # -y to overwrite existing files
-                ], capture_output=True, text=True)
-        
-                if result.returncode == 0:
-                    # Store path relative to data_dir for static serving
-                    thumbnail_path = os.path.relpath(thumbnail_path, data_dir).replace("\\", "/") if thumbnail_path else None
-                else:
-                    print(f"FFmpeg thumbnail generation failed: {result.stderr}")
-                    thumbnail_path = None
-            except Exception as e:
-                print(f"Thumbnail generation error: {e}")
-                thumbnail_path = None  # If ffmpeg fails
-
-            # Process tags
+            # Normalize tags -> JSON string array
             processed_tags = None
             if tags and tags.strip():
                 try:
-                    # Try to parse as JSON array
                     processed_tags = json.dumps(json.loads(tags))
-                except:
-                    # Treat as comma-separated string and convert to JSON array
-                    tag_list = [tag.strip() for tag in tags.split(',') if tag.strip()]
+                except Exception:
+                    tag_list = [t.strip() for t in tags.split(",") if t.strip()]
                     processed_tags = json.dumps(tag_list)
 
-            # Convert category_id to int if provided
-            category_id_int = None
-            if category_id and category_id.strip():
-                try:
-                    category_id_int = int(category_id)
-                except ValueError:
-                    pass  # Invalid category_id, ignore
-
-            # Save to DB
+            # Persist preroll row (to get ID)
             preroll = models.Preroll(
                 filename=file.filename,
+                display_name=None,
                 path=file_path,
-                thumbnail=thumbnail_path,
+                thumbnail=None,
                 tags=processed_tags,
-                category_id=category_id_int,
-                description=description,
+                category_id=primary_category_id,
+                description=description or None,
                 duration=duration,
-                file_size=file_size
+                file_size=file_size,
             )
             db.add(preroll)
             db.commit()
             db.refresh(preroll)
 
+            # If filename is 'loading.*', place into unique subfolder
+            try:
+                stem = os.path.splitext(file.filename)[0].lower()
+                if stem == "loading":
+                    subdir = os.path.join(category_path, f"Preroll_{preroll.id}")
+                    os.makedirs(subdir, exist_ok=True)
+                    new_abs = os.path.join(subdir, file.filename)
+                    if os.path.abspath(new_abs) != os.path.abspath(file_path):
+                        try:
+                            os.replace(file_path, new_abs)
+                        except Exception:
+                            shutil.copy2(file_path, new_abs)
+                            try:
+                                os.remove(file_path)
+                            except Exception:
+                                pass
+                    file_path = new_abs
+                    preroll.path = new_abs
+            except Exception as e:
+                _file_log(f"upload_multiple: move to subfolder failed: {e}")
+
+            # Generate id-prefixed thumbnail under primary category
+            thumbnail_rel = None
+            try:
+                thumb_abs = os.path.join(thumb_cat_path, f"{preroll.id}_{file.filename}.jpg")
+                tmp = thumb_abs + ".tmp.jpg"
+                res = _run_subprocess(
+                    [get_ffmpeg_cmd(), "-v", "error", "-y", "-ss", "5", "-i", file_path, "-vframes", "1", "-q:v", "2", "-f", "mjpeg", tmp],
+                    capture_output=True,
+                    text=True,
+                )
+                if getattr(res, "returncode", 1) != 0 or not os.path.exists(tmp):
+                    _file_log(f"FFmpeg thumbnail generation failed: {getattr(res, 'stderr', '')}")
+                    _generate_placeholder(tmp)
+                try:
+                    if os.path.exists(thumb_abs):
+                        os.remove(thumb_abs)
+                except Exception:
+                    pass
+                os.replace(tmp, thumb_abs)
+                thumbnail_rel = os.path.relpath(thumb_abs, data_dir).replace("\\", "/")
+                preroll.thumbnail = thumbnail_rel
+            except Exception as e:
+                _file_log(f"upload_multiple: thumbnail generation error: {e}")
+                preroll.thumbnail = None
+
+            # Assign many-to-many categories
+            try:
+                assoc_ids = list(all_ids)
+                if primary_category_id and primary_category_id not in assoc_ids:
+                    assoc_ids.insert(0, primary_category_id)
+                if assoc_ids:
+                    cats = db.query(models.Category).filter(models.Category.id.in_(assoc_ids)).all()
+                    preroll.categories = cats
+            except Exception as e:
+                _file_log(f"upload_multiple: category association failed: {e}")
+
+            try:
+                db.commit()
+                db.refresh(preroll)
+            except Exception as e:
+                db.rollback()
+                _file_log(f"upload_multiple: final commit failed: {e}")
+
             results.append({
                 "filename": file.filename,
                 "uploaded": True,
                 "id": preroll.id,
-                "thumbnail": thumbnail_path,
+                "thumbnail": thumbnail_rel,
                 "duration": duration,
-                "file_size": file_size
+                "file_size": file_size,
+                "category_id": preroll.category_id,
+                "categories": [{"id": c.id, "name": c.name} for c in (preroll.categories or [])],
             })
             successful_uploads += 1
 
         except Exception as e:
             results.append({
-                "filename": file.filename,
+                "filename": file.filename if hasattr(file, "filename") else "unknown",
                 "uploaded": False,
                 "error": str(e)
             })
@@ -861,51 +1324,228 @@ def upload_multiple_prerolls(
 
 @app.get("/prerolls")
 def get_prerolls(db: Session = Depends(get_db), category_id: str = "", tags: str = ""):
+    # Base query
     query = db.query(models.Preroll)
 
-    # Handle category filtering
+    # Handle category filtering (include primary and many-to-many associations)
     if category_id and category_id.strip():
         try:
             cat_id = int(category_id)
-            query = query.filter(models.Preroll.category_id == cat_id)
+            query = query.outerjoin(
+                models.preroll_categories, models.Preroll.id == models.preroll_categories.c.preroll_id
+            ).filter(
+                or_(
+                    models.Preroll.category_id == cat_id,
+                    models.preroll_categories.c.category_id == cat_id,
+                )
+            )
         except ValueError:
             pass  # Invalid category_id, ignore filter
 
-    # Handle tag filtering
+    # Handle tag filtering (contains string; tags stored as JSON)
     if tags and tags.strip():
         tag_list = [tag.strip() for tag in tags.split(',') if tag.strip()]
         for tag in tag_list:
             query = query.filter(models.Preroll.tags.contains(tag))
 
-    prerolls = query.all()
-    return [{
-        "id": p.id,
-        "filename": p.filename,
-        "path": p.path,
-        "thumbnail": (p.thumbnail if not (p.thumbnail and str(p.thumbnail).startswith("thumbnails/")) else f"prerolls/{p.thumbnail}"),
-        "tags": p.tags,
-        "category": {"id": p.category.id, "name": p.category.name} if p.category else None,
-        "description": p.description,
-        "duration": p.duration,
-        "file_size": p.file_size,
-        "upload_date": p.upload_date
-    } for p in prerolls]
+    prerolls = query.distinct().all()
+    result = []
+    for p in prerolls:
+        cats = [{"id": c.id, "name": c.name} for c in (p.categories or [])]
+        result.append({
+            "id": p.id,
+            "filename": p.filename,
+            "display_name": getattr(p, "display_name", None),
+            "path": p.path,
+            "thumbnail": (p.thumbnail if not (p.thumbnail and str(p.thumbnail).startswith("thumbnails/")) else f"prerolls/{p.thumbnail}"),
+            "tags": p.tags,
+            "category_id": p.category_id,
+            "category": {"id": p.category.id, "name": p.category.name} if p.category else None,
+            "categories": cats,
+            "description": p.description,
+            "duration": p.duration,
+            "file_size": p.file_size,
+            "upload_date": p.upload_date
+        })
+    return result
 
 @app.put("/prerolls/{preroll_id}")
-def update_preroll(preroll_id: int, tags: str = None, category_id: int = None, description: str = None, db: Session = Depends(get_db)):
-    preroll = db.query(models.Preroll).filter(models.Preroll.id == preroll_id).first()
-    if not preroll:
+def update_preroll(preroll_id: int, payload: PrerollUpdate, db: Session = Depends(get_db)):
+    p = db.query(models.Preroll).filter(models.Preroll.id == preroll_id).first()
+    if not p:
         raise HTTPException(status_code=404, detail="Preroll not found")
 
-    if tags is not None:
-        preroll.tags = tags
-    if category_id is not None:
-        preroll.category_id = category_id
-    if description is not None:
-        preroll.description = description
+    changed_thumbnail = False
+    old_primary_cat_name = getattr(getattr(p, "category", None), "name", None)
 
-    db.commit()
-    return {"message": "Preroll updated"}
+    # Tags: accept JSON array or comma-separated string; persist as JSON string array
+    if payload.tags is not None:
+        try:
+            if isinstance(payload.tags, list):
+                p.tags = json.dumps(payload.tags)
+            elif isinstance(payload.tags, str):
+                try:
+                    p.tags = json.dumps(json.loads(payload.tags))
+                except Exception:
+                    tag_list = [t.strip() for t in payload.tags.split(",") if t.strip()]
+                    p.tags = json.dumps(tag_list)
+        except Exception:
+            # Keep original if conversion fails
+            pass
+
+    # Display name (UI label)
+    if payload.display_name is not None:
+        p.display_name = (payload.display_name or "").strip() or None
+
+    # Description
+    if payload.description is not None:
+        p.description = (payload.description or "").strip() or None
+
+    # Physical rename on disk (optional)
+    if payload.new_filename and str(payload.new_filename).strip():
+        new_name = str(payload.new_filename).strip()
+        # resolve current absolute path
+        old_abs = p.path if os.path.isabs(p.path) else os.path.join(data_dir, p.path)
+        base_dir = os.path.dirname(old_abs)
+        old_ext = os.path.splitext(old_abs)[1]
+        # Append old extension if none provided
+        if not os.path.splitext(new_name)[1]:
+            new_name = f"{new_name}{old_ext}"
+        new_abs = os.path.join(base_dir, new_name)
+        try:
+            if os.path.abspath(old_abs) != os.path.abspath(new_abs):
+                os.makedirs(os.path.dirname(new_abs), exist_ok=True)
+                try:
+                    os.replace(old_abs, new_abs)
+                except Exception:
+                    shutil.copy2(old_abs, new_abs)
+                    try:
+                        os.remove(old_abs)
+                    except Exception:
+                        pass
+                p.path = new_abs
+                p.filename = new_name
+                changed_thumbnail = True
+        except Exception as e:
+            _file_log(f"update_preroll: rename failed for id={p.id}: {e}")
+
+    # Primary category change: move file under new primary category folder
+    new_primary = None
+    if payload.category_id is not None and payload.category_id != p.category_id:
+        new_primary = db.query(models.Category).filter(models.Category.id == payload.category_id).first()
+        if new_primary:
+            # Resolve current absolute path
+            cur_abs = p.path if os.path.isabs(p.path) else os.path.join(data_dir, p.path)
+            try:
+                # Derive suffix relative to <oldCat>/ (preserve subfolders like Preroll_<id>)
+                rel_from_root = os.path.relpath(cur_abs, PREROLLS_DIR)
+                parts = rel_from_root.split(os.sep)
+                suffix = os.path.join(*parts[1:]) if len(parts) > 1 else os.path.basename(cur_abs)
+            except Exception:
+                # Fallback: just use filename
+                suffix = os.path.basename(p.path)
+
+            new_cat_dir = os.path.join(PREROLLS_DIR, new_primary.name)
+            os.makedirs(new_cat_dir, exist_ok=True)
+            new_abs = os.path.join(new_cat_dir, suffix)
+            try:
+                if os.path.abspath(new_abs) != os.path.abspath(cur_abs):
+                    os.makedirs(os.path.dirname(new_abs), exist_ok=True)
+                    try:
+                        os.replace(cur_abs, new_abs)
+                    except Exception:
+                        shutil.copy2(cur_abs, new_abs)
+                        try:
+                            os.remove(cur_abs)
+                        except Exception:
+                            pass
+                    p.path = new_abs
+                p.category_id = new_primary.id
+                changed_thumbnail = True
+            except Exception as e:
+                _file_log(f"update_preroll: move to new category failed id={p.id}: {e}")
+
+    # Many-to-many categories update
+    if payload.category_ids is not None:
+        try:
+            ids = [int(x) for x in payload.category_ids if str(x).isdigit()]
+            # Ensure primary is included when provided
+            if p.category_id and p.category_id not in ids:
+                ids.insert(0, p.category_id)
+            cats = db.query(models.Category).filter(models.Category.id.in_(ids)).all() if ids else []
+            p.categories = cats
+        except Exception as e:
+            _file_log(f"update_preroll: updating categories failed id={p.id}: {e}")
+
+    # Update thumbnail if filename or primary category changed
+    try:
+        primary_name = getattr(getattr(p, "category", None), "name", None) or old_primary_cat_name or "Default"
+        tgt_dir = os.path.join(THUMBNAILS_DIR, primary_name)
+        os.makedirs(tgt_dir, exist_ok=True)
+        new_thumb_abs = os.path.join(tgt_dir, f"{p.id}_{p.filename}.jpg")
+
+        # Determine current thumbnail absolute path (if exists)
+        old_thumb_abs = None
+        if p.thumbnail:
+            old_thumb_abs = p.thumbnail if os.path.isabs(p.thumbnail) else os.path.join(data_dir, p.thumbnail)
+
+        if changed_thumbnail or not old_thumb_abs or not os.path.exists(old_thumb_abs):
+            # Regenerate from video file
+            video_abs = p.path if os.path.isabs(p.path) else os.path.join(data_dir, p.path)
+            tmp = new_thumb_abs + ".tmp.jpg"
+            res = _run_subprocess(
+                [get_ffmpeg_cmd(), "-v", "error", "-y", "-ss", "5", "-i", video_abs, "-vframes", "1", "-q:v", "2", "-f", "mjpeg", tmp],
+                capture_output=True,
+                text=True,
+            )
+            if getattr(res, "returncode", 1) != 0 or not os.path.exists(tmp):
+                _generate_placeholder(tmp)
+            try:
+                if os.path.exists(new_thumb_abs):
+                    os.remove(new_thumb_abs)
+            except Exception:
+                pass
+            os.replace(tmp, new_thumb_abs)
+        else:
+            # Try to rename/move existing thumbnail if only path/name changed
+            try:
+                if os.path.abspath(old_thumb_abs) != os.path.abspath(new_thumb_abs):
+                    os.makedirs(os.path.dirname(new_thumb_abs), exist_ok=True)
+                    try:
+                        os.replace(old_thumb_abs, new_thumb_abs)
+                    except Exception:
+                        shutil.copy2(old_thumb_abs, new_thumb_abs)
+                        try:
+                            os.remove(old_thumb_abs)
+                        except Exception:
+                            pass
+            except Exception:
+                pass
+
+        # Store relative path
+        rel = os.path.relpath(new_thumb_abs, data_dir).replace("\\", "/")
+        p.thumbnail = rel
+    except Exception as e:
+        _file_log(f"update_preroll: thumbnail update failed id={p.id}: {e}")
+
+    try:
+        db.commit()
+        db.refresh(p)
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"Failed to update preroll: {str(e)}")
+
+    return {
+        "message": "Preroll updated",
+        "id": p.id,
+        "filename": p.filename,
+        "display_name": getattr(p, "display_name", None),
+        "category_id": p.category_id,
+        "categories": [{"id": c.id, "name": c.name} for c in (p.categories or [])],
+        "thumbnail": p.thumbnail,
+        "description": p.description,
+        "tags": p.tags,
+    }
 
 @app.delete("/prerolls/{preroll_id}")
 def delete_preroll(preroll_id: int, db: Session = Depends(get_db)):
@@ -963,11 +1603,13 @@ def delete_category(category_id: int, db: Session = Depends(get_db)):
     if not category:
         raise HTTPException(status_code=404, detail="Category not found")
 
-    # Check if category is used by prerolls or schedules
-    preroll_count = db.query(models.Preroll).filter(models.Preroll.category_id == category_id).count()
+    # Check if category is used by prerolls (primary) or via many-to-many, or by schedules
+    preroll_primary_count = db.query(models.Preroll).filter(models.Preroll.category_id == category_id).count()
+    m2m_count = db.query(models.Preroll).join(models.preroll_categories, models.Preroll.id == models.preroll_categories.c.preroll_id)\
+        .filter(models.preroll_categories.c.category_id == category_id).count()
     schedule_count = db.query(models.Schedule).filter(models.Schedule.category_id == category_id).count()
 
-    if preroll_count > 0 or schedule_count > 0:
+    if (preroll_primary_count + m2m_count) > 0 or schedule_count > 0:
         raise HTTPException(status_code=400, detail="Cannot delete category that is in use")
 
     db.delete(category)
@@ -1063,6 +1705,173 @@ def update_category(category_id: int, category: CategoryCreate, db: Session = De
         "message": "Category updated",
     }
 
+@app.get("/categories/{category_id}/prerolls")
+def get_category_prerolls(category_id: int, db: Session = Depends(get_db)):
+    """
+    List prerolls assigned to a category (includes primary and many-to-many associations).
+    Response mirrors /prerolls fields.
+    """
+    # Validate category
+    category = db.query(models.Category).filter(models.Category.id == category_id).first()
+    if not category:
+        raise HTTPException(status_code=404, detail="Category not found")
+
+    query = db.query(models.Preroll)\
+        .outerjoin(models.preroll_categories, models.Preroll.id == models.preroll_categories.c.preroll_id)\
+        .filter(or_(models.Preroll.category_id == category_id, models.preroll_categories.c.category_id == category_id))\
+        .distinct()
+
+    prerolls = query.all()
+    result = []
+    for p in prerolls:
+        cats = [{"id": c.id, "name": c.name} for c in (p.categories or [])]
+        result.append({
+            "id": p.id,
+            "filename": p.filename,
+            "display_name": getattr(p, "display_name", None),
+            "path": p.path,
+            "thumbnail": (p.thumbnail if not (p.thumbnail and str(p.thumbnail).startswith("thumbnails/")) else f"prerolls/{p.thumbnail}"),
+            "tags": p.tags,
+            "category_id": p.category_id,
+            "category": {"id": p.category.id, "name": p.category.name} if p.category else None,
+            "categories": cats,
+            "description": p.description,
+            "duration": p.duration,
+            "file_size": p.file_size,
+            "upload_date": p.upload_date
+        })
+    return result
+
+@app.post("/categories/{category_id}/prerolls/{preroll_id}")
+def add_preroll_to_category(category_id: int, preroll_id: int, set_primary: bool = False, db: Session = Depends(get_db)):
+    """
+    Add a preroll to a category (many-to-many). If set_primary=true, make this category
+    the primary category and move the file under the new primary category folder.
+    """
+    cat = db.query(models.Category).filter(models.Category.id == category_id).first()
+    if not cat:
+        raise HTTPException(status_code=404, detail="Category not found")
+
+    p = db.query(models.Preroll).filter(models.Preroll.id == preroll_id).first()
+    if not p:
+        raise HTTPException(status_code=404, detail="Preroll not found")
+
+    # Add association (if not already present)
+    try:
+        assigned_ids = {c.id for c in (p.categories or [])}
+        if category_id not in assigned_ids:
+            # attach (load actual row to ensure identity matches)
+            p.categories = (p.categories or []) + [cat]
+    except Exception as e:
+        _file_log(f"add_preroll_to_category: association add failed p={p.id}, c={category_id}: {e}")
+
+    moved_primary = False
+    # Optionally set as primary category (move file path)
+    if set_primary and p.category_id != category_id:
+        # Resolve current absolute path
+        cur_abs = p.path if os.path.isabs(p.path) else os.path.join(data_dir, p.path)
+        try:
+            # Derive suffix relative to <oldCat>/ (preserve subfolders like Preroll_<id>)
+            rel_from_root = os.path.relpath(cur_abs, PREROLLS_DIR)
+            parts = rel_from_root.split(os.sep)
+            suffix = os.path.join(*parts[1:]) if len(parts) > 1 else os.path.basename(cur_abs)
+        except Exception:
+            suffix = os.path.basename(p.path)
+
+        new_cat_dir = os.path.join(PREROLLS_DIR, cat.name)
+        os.makedirs(new_cat_dir, exist_ok=True)
+        new_abs = os.path.join(new_cat_dir, suffix)
+        try:
+            if os.path.abspath(new_abs) != os.path.abspath(cur_abs):
+                os.makedirs(os.path.dirname(new_abs), exist_ok=True)
+                try:
+                    os.replace(cur_abs, new_abs)
+                except Exception:
+                    shutil.copy2(cur_abs, new_abs)
+                    try:
+                        os.remove(cur_abs)
+                    except Exception:
+                        pass
+                p.path = new_abs
+            p.category_id = cat.id
+            moved_primary = True
+            # Update thumbnail for new primary location/name (id-prefixed)
+            try:
+                tgt_dir = os.path.join(THUMBNAILS_DIR, cat.name)
+                os.makedirs(tgt_dir, exist_ok=True)
+                new_thumb_abs = os.path.join(tgt_dir, f"{p.id}_{p.filename}.jpg")
+                video_abs = p.path if os.path.isabs(p.path) else os.path.join(data_dir, p.path)
+                tmp = new_thumb_abs + ".tmp.jpg"
+                res = _run_subprocess(
+                    [get_ffmpeg_cmd(), "-v", "error", "-y", "-ss", "5", "-i", video_abs, "-vframes", "1", "-q:v", "2", "-f", "mjpeg", tmp],
+                    capture_output=True,
+                    text=True,
+                )
+                if getattr(res, "returncode", 1) != 0 or not os.path.exists(tmp):
+                    _generate_placeholder(tmp)
+                try:
+                    if os.path.exists(new_thumb_abs):
+                        os.remove(new_thumb_abs)
+                except Exception:
+                    pass
+                os.replace(tmp, new_thumb_abs)
+                rel = os.path.relpath(new_thumb_abs, data_dir).replace("\\", "/")
+                p.thumbnail = rel
+            except Exception as e:
+                _file_log(f"add_preroll_to_category: primary move thumb update failed p={p.id}: {e}")
+        except Exception as e:
+            _file_log(f"add_preroll_to_category: primary move failed p={p.id} to category={cat.name}: {e}")
+            raise HTTPException(status_code=500, detail="Failed to set primary category (move operation)")
+
+    try:
+        db.commit()
+        db.refresh(p)
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"Failed to add preroll to category: {str(e)}")
+
+    return {
+        "message": "Preroll added to category" + (" and set as primary" if set_primary else ""),
+        "category_id": category_id,
+        "preroll_id": p.id,
+        "primary_category_id": p.category_id,
+        "categories": [{"id": c.id, "name": c.name} for c in (p.categories or [])],
+        "moved_primary": moved_primary,
+    }
+
+@app.delete("/categories/{category_id}/prerolls/{preroll_id}")
+def remove_preroll_from_category(category_id: int, preroll_id: int, db: Session = Depends(get_db)):
+    """
+    Remove a preroll's membership from a category (many-to-many).
+    Primary category cannot be removed here; change primary on the preroll edit instead.
+    """
+    cat = db.query(models.Category).filter(models.Category.id == category_id).first()
+    if not cat:
+        raise HTTPException(status_code=404, detail="Category not found")
+
+    p = db.query(models.Preroll).filter(models.Preroll.id == preroll_id).first()
+    if not p:
+        raise HTTPException(status_code=404, detail="Preroll not found")
+
+    if p.category_id == category_id:
+        raise HTTPException(status_code=400, detail="Cannot remove primary category here. Edit the preroll to change its primary category.")
+
+    try:
+        p.categories = [c for c in (p.categories or []) if c.id != category_id]
+        db.commit()
+        db.refresh(p)
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"Failed to remove preroll from category: {str(e)}")
+
+    return {
+        "message": "Preroll removed from category",
+        "category_id": category_id,
+        "preroll_id": p.id,
+        "primary_category_id": p.category_id,
+        "categories": [{"id": c.id, "name": c.name} for c in (p.categories or [])],
+    }
+
 @app.post("/categories/{category_id}/apply-to-plex")
 def apply_category_to_plex(category_id: int, rotation_hours: int = 24, db: Session = Depends(get_db)):
     """Apply a category's videos to Plex as the active preroll with optional rotation"""
@@ -1071,8 +1880,11 @@ def apply_category_to_plex(category_id: int, rotation_hours: int = 24, db: Sessi
     if not category:
         raise HTTPException(status_code=404, detail="Category not found")
 
-    # Get all prerolls in this category
-    prerolls = db.query(models.Preroll).filter(models.Preroll.category_id == category_id).all()
+    # Get all prerolls in this category (include primary and many-to-many)
+    prerolls = db.query(models.Preroll)\
+        .outerjoin(models.preroll_categories, models.Preroll.id == models.preroll_categories.c.preroll_id)\
+        .filter(or_(models.Preroll.category_id == category_id, models.preroll_categories.c.category_id == category_id))\
+        .distinct().all()
     if not prerolls:
         raise HTTPException(status_code=404, detail="No prerolls found in this category")
 
@@ -1730,10 +2542,12 @@ def backup_database(db: Session = Depends(get_db)):
             "prerolls": [
                 {
                     "filename": p.filename,
+                    "display_name": getattr(p, "display_name", None),
                     "path": p.path,
                     "thumbnail": p.thumbnail,
                     "tags": p.tags,
                     "category_id": p.category_id,
+                    "categories": [{"id": c.id, "name": c.name} for c in (p.categories or [])],
                     "description": p.description,
                     "upload_date": p.upload_date.isoformat() if p.upload_date else None
                 } for p in db.query(models.Preroll).all()
@@ -1801,7 +2615,7 @@ def backup_files():
 
 @app.post("/restore/database")
 def restore_database(backup_data: dict, db: Session = Depends(get_db)):
-    """Import database from JSON backup"""
+    """Import database from JSON backup (restores categories, prerolls with multi-category links, schedules, and holidays)"""
     try:
         # Clear existing data
         db.query(models.Preroll).delete()
@@ -1819,13 +2633,14 @@ def restore_database(backup_data: dict, db: Session = Depends(get_db)):
             db.add(category)
         db.commit()
 
-        # Get category mapping
-        category_map = {c.name: c.id for c in db.query(models.Category).all()}
+        # Build quick lookup by name
+        name_to_category = {c.name: c for c in db.query(models.Category).all()}
 
-        # Restore prerolls
+        # Restore prerolls (including display_name and many-to-many categories if present)
         for preroll_data in backup_data.get("prerolls", []):
-            preroll = models.Preroll(
+            p = models.Preroll(
                 filename=preroll_data["filename"],
+                display_name=preroll_data.get("display_name"),
                 path=preroll_data["path"],
                 thumbnail=preroll_data.get("thumbnail"),
                 tags=preroll_data.get("tags"),
@@ -1833,7 +2648,20 @@ def restore_database(backup_data: dict, db: Session = Depends(get_db)):
                 description=preroll_data.get("description"),
                 upload_date=datetime.datetime.fromisoformat(preroll_data["upload_date"]) if preroll_data.get("upload_date") else None
             )
-            db.add(preroll)
+            db.add(p)
+            db.flush()  # get p.id without full commit
+
+            # Restore associated categories by name (IDs in backup may not match new DB)
+            assoc = []
+            try:
+                for c in preroll_data.get("categories", []):
+                    nm = c.get("name")
+                    if nm and nm in name_to_category:
+                        assoc.append(name_to_category[nm])
+            except Exception:
+                assoc = []
+            if assoc:
+                p.categories = assoc
 
         # Restore schedules
         for schedule_data in backup_data.get("schedules", []):
@@ -1959,8 +2787,8 @@ def thumbnails_rebuild(category: str = None, force: bool = False, db: Session = 
             cat_thumb_dir = os.path.join(THUMBNAILS_DIR, cat_name)
             os.makedirs(cat_thumb_dir, exist_ok=True)
 
-            # Target thumbnail path: <thumbnails>/<Category>/<filename>.<ext>.jpg
-            thumb_filename = f"{p.filename}.jpg"
+            # Target thumbnail path: <thumbnails>/<Category>/<id>_<filename>.<ext>.jpg (id-prefixed for uniqueness)
+            thumb_filename = f"{p.id}_{p.filename}.jpg"
             target_thumb = os.path.join(cat_thumb_dir, thumb_filename)
 
             # If not forcing and file exists, ensure DB path is set and skip
@@ -1977,14 +2805,30 @@ def thumbnails_rebuild(category: str = None, force: bool = False, db: Session = 
                 video_path = os.path.join(data_dir, video_path)
 
             if not os.path.exists(video_path):
-                failures.append({"id": p.id, "file": p.filename, "reason": "video_missing"})
+                # Source video missing; generate a placeholder thumbnail instead of failing
+                try:
+                    # Ensure temp file has .jpg extension for ffmpeg/placeholder compatibility
+                    tmp_thumb = target_thumb + ".tmp.jpg"
+                    _generate_placeholder(tmp_thumb)
+                    try:
+                        if os.path.exists(target_thumb):
+                            os.remove(target_thumb)
+                    except Exception:
+                        pass
+                    os.replace(tmp_thumb, target_thumb)
+                    rel = os.path.relpath(target_thumb, data_dir).replace("\\", "/")
+                    p.thumbnail = rel
+                    generated += 1
+                except Exception:
+                    failures.append({"id": p.id, "file": p.filename, "reason": "placeholder_failed"})
                 continue
 
             # Generate thumbnail with ffmpeg
             try:
-                tmp_thumb = target_thumb + ".tmp"
+                # Use a .jpg temp name and force MJPEG so ffmpeg doesn't mis-detect format
+                tmp_thumb = target_thumb + ".tmp.jpg"
                 res = _run_subprocess(
-                    [get_ffmpeg_cmd(), "-v", "error", "-y", "-ss", "5", "-i", video_path, "-vframes", "1", "-q:v", "2", tmp_thumb],
+                    [get_ffmpeg_cmd(), "-v", "error", "-y", "-ss", "5", "-i", video_path, "-vframes", "1", "-q:v", "2", "-f", "mjpeg", tmp_thumb],
                     capture_output=True,
                     text=True,
                 )
@@ -2063,11 +2907,22 @@ def _get_windows_preroll_path_from_registry():
     try:
         if sys.platform.startswith("win"):
             import winreg
-            key = winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, r"Software\NeXroll")
-            value, _ = winreg.QueryValueEx(key, "PrerollPath")
-            winreg.CloseKey(key)
-            if value and str(value).strip():
-                return str(value).strip()
+            # Support both 64-bit and 32-bit registry views
+            views = [
+                getattr(winreg, "KEY_WOW64_64KEY", 0),
+                getattr(winreg, "KEY_WOW64_32KEY", 0),
+            ]
+            for view in views:
+                try:
+                    key = winreg.OpenKeyEx(winreg.HKEY_LOCAL_MACHINE, r"Software\NeXroll", 0, winreg.KEY_READ | view)
+                    try:
+                        value, _ = winreg.QueryValueEx(key, "PrerollPath")
+                        if value and str(value).strip():
+                            return str(value).strip()
+                    finally:
+                        winreg.CloseKey(key)
+                except Exception:
+                    continue
     except Exception:
         return None
     return None
@@ -2080,7 +2935,7 @@ def _resolve_data_dir(project_root_path: str) -> str:
       2) HKLM\Software\NeXroll\PrerollPath (must be writable)
       3) %ProgramData%\NeXroll\Prerolls (if writable)
       4) %LOCALAPPDATA% or %APPDATA%\NeXroll\Prerolls (if writable)
-      5) project_root\data (last resort)
+      5) project_root\data (last resort), but also check a repo-root sibling 'data' during dev
     """
     def _is_dir_writable(p: str) -> bool:
         try:
@@ -2118,8 +2973,94 @@ def _resolve_data_dir(project_root_path: str) -> str:
             if _is_dir_writable(user_dir):
                 return user_dir
 
+    # Dev convenience: if a sibling 'data' folder exists (repo root), prefer it
+    try:
+        parent = os.path.dirname(project_root_path)
+        sibling = os.path.join(parent, "data")
+        if os.path.isdir(sibling) and _is_dir_writable(sibling):
+            return sibling
+    except Exception:
+        pass
+
+    # Final fallback to project root 'data'
+    try:
+        d = os.path.join(project_root_path, "data")
+        os.makedirs(d, exist_ok=True)
+    except Exception:
+        pass
+    return d
+
+def migrate_legacy_data():
+    """
+    Migrate existing prerolls and thumbnails from legacy locations into PREROLLS_DIR
+    if PREROLLS_DIR is empty. This preserves user assets across upgrades.
+    Legacy candidates:
+      - $INSTDIR\\data\\prerolls (previous installer layout)
+      - <install_root>\\..\\data\\prerolls (portable/dev sibling)
+      - %ProgramData%\\NeXroll\\Prerolls (standard ProgramData path)
+    """
+    try:
+        candidates = []
+        try:
+            candidates.append(os.path.join(install_root, "data", "prerolls"))
+        except Exception:
+            pass
+        try:
+            parent = os.path.dirname(install_root)
+            candidates.append(os.path.join(parent, "data", "prerolls"))
+        except Exception:
+            pass
+        try:
+            pd = os.environ.get("ProgramData")
+            if pd:
+                candidates.append(os.path.join(pd, "NeXroll", "Prerolls"))
+        except Exception:
+            pass
+
+        # Only migrate if destination is empty or non-existent
+        dest_empty = False
+        try:
+            if not os.path.isdir(PREROLLS_DIR) or not any(os.scandir(PREROLLS_DIR)):
+                dest_empty = True
+        except Exception:
+            dest_empty = False
+
+        if not dest_empty:
+            return
+
+        for src in candidates:
+            try:
+                if not src or not os.path.isdir(src):
+                    continue
+                # Avoid copying onto itself
+                try:
+                    if os.path.samefile(src, PREROLLS_DIR):
+                        continue
+                except Exception:
+                    pass
+
+                for root, dirs, files in os.walk(src):
+                    rel = os.path.relpath(root, src)
+                    out_dir = os.path.join(PREROLLS_DIR, rel) if rel != "." else PREROLLS_DIR
+                    os.makedirs(out_dir, exist_ok=True)
+                    for f in files:
+                        try:
+                            dst = os.path.join(out_dir, f)
+                            if not os.path.exists(dst):
+                                shutil.copy2(os.path.join(root, f), dst)
+                        except Exception:
+                            pass
+                _file_log(f"migrate_legacy_data: migrated from {src}")
+                break
+            except Exception:
+                continue
+    except Exception as e:
+        try:
+            _file_log(f"migrate_legacy_data error: {e}")
+        except Exception:
+            pass
     # Fallback to install directory (portable/dev)
-    d = os.path.join(project_root_path, "data")
+    d = os.path.join(install_root, "data")
     try:
         os.makedirs(d, exist_ok=True)
     except Exception:
@@ -2133,8 +3074,98 @@ basename = os.path.basename(os.path.normpath(data_dir)).lower()
 PREROLLS_DIR = data_dir if basename == "prerolls" else os.path.join(data_dir, "prerolls")
 THUMBNAILS_DIR = os.path.join(PREROLLS_DIR, "thumbnails")
 
+def ensure_runtime_assets():
+    """
+    Copy bundled default preroll assets and thumbnails into the runtime data directory
+    if they are missing. This restores out-of-the-box thumbnails for the UI and keeps
+    parity across portable EXE, service, and tray startup contexts.
+    """
+    try:
+        src_root = os.path.join(resource_root, "nexroll_backend", "data", "prerolls")
+        if not os.path.isdir(src_root):
+            return
+
+        # Ensure target directories exist
+        os.makedirs(PREROLLS_DIR, exist_ok=True)
+        os.makedirs(THUMBNAILS_DIR, exist_ok=True)
+
+        # Copy category folders (excluding 'thumbnails') if missing or empty
+        for name in os.listdir(src_root):
+            src_path = os.path.join(src_root, name)
+            if not os.path.isdir(src_path) or name.lower() == "thumbnails":
+                continue
+
+            dst_path = os.path.join(PREROLLS_DIR, name)
+            need_copy = False
+            if not os.path.isdir(dst_path):
+                need_copy = True
+            else:
+                try:
+                    if not any(os.scandir(dst_path)):
+                        need_copy = True
+                except Exception:
+                    need_copy = False
+
+            if need_copy:
+                for root, dirs, files in os.walk(src_path):
+                    rel = os.path.relpath(root, src_path)
+                    out_dir = os.path.join(dst_path, rel) if rel != "." else dst_path
+                    os.makedirs(out_dir, exist_ok=True)
+                    for f in files:
+                        try:
+                            shutil.copy2(os.path.join(root, f), os.path.join(out_dir, f))
+                        except Exception:
+                            pass
+
+        # Copy prebuilt thumbnails if missing or empty
+        thumbs_src = os.path.join(src_root, "thumbnails")
+        if os.path.isdir(thumbs_src):
+            for name in os.listdir(thumbs_src):
+                src_cat = os.path.join(thumbs_src, name)
+                if not os.path.isdir(src_cat):
+                    continue
+                dst_cat = os.path.join(THUMBNAILS_DIR, name)
+
+                need_copy = False
+                if not os.path.isdir(dst_cat):
+                    need_copy = True
+                else:
+                    try:
+                        if not any(os.scandir(dst_cat)):
+                            need_copy = True
+                    except Exception:
+                        need_copy = False
+
+                if need_copy:
+                    for root, dirs, files in os.walk(src_cat):
+                        rel = os.path.relpath(root, src_cat)
+                        out_dir = os.path.join(dst_cat, rel) if rel != "." else dst_cat
+                        os.makedirs(out_dir, exist_ok=True)
+                        for f in files:
+                            try:
+                                shutil.copy2(os.path.join(root, f), os.path.join(out_dir, f))
+                            except Exception:
+                                pass
+
+        _file_log("ensure_runtime_assets: defaults ensured")
+    except Exception as e:
+        try:
+            _file_log(f"ensure_runtime_assets error: {e}")
+        except Exception:
+            pass
+
 os.makedirs(PREROLLS_DIR, exist_ok=True)
 os.makedirs(THUMBNAILS_DIR, exist_ok=True)
+# Migrate legacy assets into PREROLLS_DIR if destination is empty
+try:
+    migrate_legacy_data()
+except Exception:
+    pass
+# Ensure default runtime assets exist after migration
+try:
+    ensure_runtime_assets()
+except Exception:
+    pass
 
 # Debug prints
 print(f"Backend running from: {os.getcwd()}")
@@ -2153,7 +3184,13 @@ def get_or_create_thumbnail(category: str, thumb_name: str):
     This preserves existing frontend URLs like:
       /static/prerolls/thumbnails/<Category>/<VideoName>.<ext>.jpg
     """
-    # Basic path sanitization
+    # Decode URL-encoded parts then sanitize
+    try:
+        category = unquote(category or "")
+        thumb_name = unquote(thumb_name or "")
+    except Exception:
+        pass
+
     for frag in (category, thumb_name):
         if ".." in frag or "/" in frag or "\\" in frag:
             raise HTTPException(status_code=400, detail="Invalid path")
@@ -2187,13 +3224,24 @@ def get_or_create_thumbnail(category: str, thumb_name: str):
         raise HTTPException(status_code=404, detail="Thumbnail not found")
 
     # base is expected to include the video extension (e.g., Movie.mp4)
+    # Support id-prefixed thumbnails "<id>_<filename>.<ext>.jpg" by stripping the numeric prefix
+    video_base = base
+    try:
+        if "_" in base:
+            maybe_id, rest = base.split("_", 1)
+            if all(ch.isdigit() for ch in maybe_id):
+                video_base = rest
+    except Exception:
+        video_base = base
+
     video_cat_dir = _resolve_category_dir(PREROLLS_DIR, category)
-    video_path = os.path.join(video_cat_dir, base)
+    video_path = os.path.join(video_cat_dir, video_base)
+
     if not os.path.exists(video_path):
         # Try to find case-insensitive match within the category folder
         try:
             if os.path.isdir(video_cat_dir):
-                lower_target = base.lower()
+                lower_target = video_base.lower()
                 for fname in os.listdir(video_cat_dir):
                     if fname.lower() == lower_target:
                         video_path = os.path.join(video_cat_dir, fname)
@@ -2202,22 +3250,34 @@ def get_or_create_thumbnail(category: str, thumb_name: str):
             pass
 
     if not os.path.exists(video_path):
-        # No source video available; let the UI know it's missing
-        raise HTTPException(status_code=404, detail="Source video not found for thumbnail")
+        # Source video is missing; generate a placeholder thumbnail and serve it
+        try:
+            # Ensure temp file has .jpg extension for ffmpeg/placeholder compatibility
+            tmp_thumb = thumb_path + ".tmp.jpg"
+            _generate_placeholder(tmp_thumb)
+            try:
+                if os.path.exists(thumb_path):
+                    os.remove(thumb_path)
+            except Exception:
+                pass
+            os.replace(tmp_thumb, thumb_path)
+            return FileResponse(thumb_path, media_type="image/jpeg")
+        except Exception:
+            raise HTTPException(status_code=404, detail="Source video not found for thumbnail")
 
     # Generate the thumbnail using ffmpeg
     try:
-        import subprocess
         # Write to a temp path first, then move into place to avoid partial reads
-        tmp_thumb = thumb_path + ".tmp"
+        tmp_thumb = thumb_path + ".tmp.jpg"
         res = _run_subprocess(
-            [get_ffmpeg_cmd(), "-v", "error", "-y", "-ss", "5", "-i", video_path, "-vframes", "1", "-q:v", "2", tmp_thumb],
+            [get_ffmpeg_cmd(), "-v", "error", "-y", "-ss", "5", "-i", video_path, "-vframes", "1", "-q:v", "2", "-f", "mjpeg", tmp_thumb],
             capture_output=True,
             text=True,
         )
         if res.returncode != 0 or not os.path.exists(tmp_thumb):
             _file_log(f"Thumbnail generation failed for '{video_path}': {res.stderr}")
-            raise HTTPException(status_code=500, detail="Thumbnail generation failed")
+            # Fallback to placeholder
+            _generate_placeholder(tmp_thumb)
         # Atomic-ish replace
         try:
             if os.path.exists(thumb_path):
@@ -2226,13 +3286,32 @@ def get_or_create_thumbnail(category: str, thumb_name: str):
             pass
         os.replace(tmp_thumb, thumb_path)
     except FileNotFoundError:
-        # ffmpeg not present
-        raise HTTPException(status_code=500, detail="ffmpeg is not available to generate thumbnails")
-    except HTTPException:
-        raise
+        # ffmpeg not present; fallback to placeholder
+        try:
+            tmp_thumb = thumb_path + ".tmp.jpg"
+            _generate_placeholder(tmp_thumb)
+            try:
+                if os.path.exists(thumb_path):
+                    os.remove(thumb_path)
+            except Exception:
+                pass
+            os.replace(tmp_thumb, thumb_path)
+        except Exception:
+            raise HTTPException(status_code=500, detail="ffmpeg is not available to generate thumbnails")
     except Exception as e:
         _file_log(f"Thumbnail generation exception for '{video_path}': {e}")
-        raise HTTPException(status_code=500, detail="Thumbnail generation error")
+        # Fallback to placeholder to keep UI stable
+        try:
+            tmp_thumb = thumb_path + ".tmp.jpg"
+            _generate_placeholder(tmp_thumb)
+            try:
+                if os.path.exists(thumb_path):
+                    os.remove(thumb_path)
+            except Exception:
+                pass
+            os.replace(tmp_thumb, thumb_path)
+        except Exception:
+            raise HTTPException(status_code=500, detail="Thumbnail generation error")
 
     return FileResponse(thumb_path, media_type="image/jpeg")
 
@@ -2262,11 +3341,13 @@ if getattr(sys, "frozen", False):
     _file_log("Starting FastAPI (frozen build)")
     try:
         import uvicorn
-        uvicorn.run(app, host="0.0.0.0", port=9393, log_config=None)
+        port = int(os.environ.get("NEXROLL_PORT", "9393"))
+        uvicorn.run(app, host="0.0.0.0", port=port, log_config=None)
     except Exception as e:
         _file_log(f"Uvicorn failed: {e}")
         raise
 
 if __name__ == "__main__" and not getattr(sys, "frozen", False):
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=9393, log_config=None)
+    port = int(os.environ.get("NEXROLL_PORT", "9393"))
+    uvicorn.run(app, host="0.0.0.0", port=port, log_config=None)

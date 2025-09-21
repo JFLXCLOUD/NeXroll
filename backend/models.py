@@ -1,13 +1,22 @@
-from sqlalchemy import Column, Integer, String, DateTime, Boolean, ForeignKey, Text, Float
+from sqlalchemy import Column, Integer, String, DateTime, Boolean, ForeignKey, Text, Float, Table
 from sqlalchemy.orm import relationship
-from database import Base
+from nexroll_backend.database import Base
 import datetime
+
+# Association (many-to-many) between prerolls and categories
+preroll_categories = Table(
+    "preroll_categories",
+    Base.metadata,
+    Column("preroll_id", Integer, ForeignKey("prerolls.id", ondelete="CASCADE"), primary_key=True),
+    Column("category_id", Integer, ForeignKey("categories.id", ondelete="CASCADE"), primary_key=True),
+)
 
 class Preroll(Base):
     __tablename__ = "prerolls"
 
     id = Column(Integer, primary_key=True, index=True)
     filename = Column(String, index=True)
+    display_name = Column(String, nullable=True)  # Optional UI/display label separate from disk filename
     path = Column(String)
     thumbnail = Column(String)
     tags = Column(Text)  # JSON array of tags
@@ -18,6 +27,8 @@ class Preroll(Base):
     upload_date = Column(DateTime, default=datetime.datetime.utcnow)
 
     category = relationship("Category")
+    # Additional categories (many-to-many via preroll_categories)
+    categories = relationship("Category", secondary="preroll_categories")
 
 class Category(Base):
     __tablename__ = "categories"
@@ -26,6 +37,8 @@ class Category(Base):
     name = Column(String, unique=True, index=True)
     description = Column(Text)
     apply_to_plex = Column(Boolean, default=False)  # Whether this category should be applied to Plex
+    # Optional: reverse relation to list all prerolls tagged with this category (view-only)
+    prerolls = relationship("Preroll", secondary="preroll_categories", viewonly=True)
 
 class Schedule(Base):
     __tablename__ = "schedules"
@@ -84,7 +97,13 @@ class Setting(Base):
     __tablename__ = "settings"
 
     id = Column(Integer, primary_key=True, index=True)
-    plex_url = Column(String)
-    plex_token = Column(String)
+    plex_url = Column(String)  # Chosen Plex server base URL (e.g., http://192.168.1.x:32400)
+    plex_token = Column(String)  # Plex auth token (manual/stable/OAuth)
+    # Plex.tv Connect (OAuth-style) metadata
+    plex_client_id = Column(String, nullable=True)  # X-Plex-Client-Identifier
+    plex_server_base_url = Column(String, nullable=True)  # Best-resolved server URL (local preferred)
+    plex_server_machine_id = Column(String, nullable=True)  # Server machineIdentifier
+    plex_server_name = Column(String, nullable=True)  # Server name (friendly)
+    # App state
     active_category = Column(Integer, ForeignKey("categories.id"))
     updated_at = Column(DateTime, default=datetime.datetime.utcnow)
