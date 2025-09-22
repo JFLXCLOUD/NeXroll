@@ -21,15 +21,15 @@ ShowInstDetails show
 Icon "..\NeXroll_ICON\icon_1758297097_64x64.ico"
 UninstallIcon "..\NeXroll_ICON\icon_1758297097_32x32.ico"
 
-!define APP_VERSION "1.0.15"
-VIProductVersion "1.0.15.0"
+!define APP_VERSION "1.0.16"
+VIProductVersion "1.0.16.0"
 VIAddVersionKey /LANG=1033 "ProductName" "NeXroll"
 VIAddVersionKey /LANG=1033 "ProductVersion" "${APP_VERSION}"
 VIAddVersionKey /LANG=1033 "FileVersion" "${APP_VERSION}"
 VIAddVersionKey /LANG=1033 "CompanyName" "JFLXCLOUD"
 VIAddVersionKey /LANG=1033 "FileDescription" "NeXroll Installer"
 VIAddVersionKey /LANG=1033 "LegalCopyright" "© 2025 JFLXCLOUD"
-OutFile "NeXroll_Installer_${APP_VERSION}_r4.exe"
+OutFile "NeXroll_Installer_${APP_VERSION}.exe"
  
 ; Variables
 Var PREROLL_PATH
