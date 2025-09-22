@@ -60,10 +60,16 @@ def ensure_schema() -> None:
             # Categories: ensure apply_to_plex
             if not _sqlite_has_column("categories", "apply_to_plex"):
                 _sqlite_add_column("categories", "apply_to_plex BOOLEAN DEFAULT 0")
+            # Categories: ensure plex_mode
+            if not _sqlite_has_column("categories", "plex_mode"):
+                _sqlite_add_column("categories", "plex_mode TEXT DEFAULT 'shuffle'")
 
             # Schedules: ensure fallback_category_id
             if not _sqlite_has_column("schedules", "fallback_category_id"):
                 _sqlite_add_column("schedules", "fallback_category_id INTEGER")
+            # Schedules: ensure sequence JSON field
+            if not _sqlite_has_column("schedules", "sequence"):
+                _sqlite_add_column("schedules", "sequence TEXT")
 
             # Holiday presets: ensure date range fields and is_recurring
             for col, ddl in [
@@ -407,6 +413,7 @@ class ScheduleCreate(BaseModel):
     playlist: bool = False
     recurrence_pattern: str = None
     preroll_ids: str = None
+    sequence: str | None = None
     fallback_category_id: int | None = None
 
 class ScheduleResponse(BaseModel):
@@ -423,11 +430,13 @@ class ScheduleResponse(BaseModel):
     next_run: datetime.datetime | None = None
     recurrence_pattern: str | None = None
     preroll_ids: str | None = None
+    sequence: str | None = None
 
 class CategoryCreate(BaseModel):
     name: str
     description: str = None
     apply_to_plex: bool = False
+    plex_mode: str = "shuffle"
 
 class PrerollUpdate(BaseModel):
     tags: str | list[str] | None = None
@@ -446,7 +455,7 @@ class PlexStableConnectRequest(BaseModel):
     token: str | None = None  # accepted but ignored for stable-token flow
     stableToken: str | None = None  # alias some UIs might send
 
-app = FastAPI(title="NeXroll Backend", version="1.0.15")
+app = FastAPI(title="NeXroll Backend", version="1.0.16")
 
 # CORS middleware for frontend integration
 app.add_middleware(
@@ -1599,21 +1608,38 @@ def get_all_tags(db: Session = Depends(get_db)):
 
 @app.delete("/categories/{category_id}")
 def delete_category(category_id: int, db: Session = Depends(get_db)):
+    """
+    Delete a category if it is not referenced by prerolls (primary or many-to-many)
+    or by schedules. Any HolidayPreset rows that reference this category will be
+    removed automatically to prevent foreign-key errors on legacy databases.
+    """
     category = db.query(models.Category).filter(models.Category.id == category_id).first()
     if not category:
         raise HTTPException(status_code=404, detail="Category not found")
 
     # Check if category is used by prerolls (primary) or via many-to-many, or by schedules
     preroll_primary_count = db.query(models.Preroll).filter(models.Preroll.category_id == category_id).count()
-    m2m_count = db.query(models.Preroll).join(models.preroll_categories, models.Preroll.id == models.preroll_categories.c.preroll_id)\
-        .filter(models.preroll_categories.c.category_id == category_id).count()
+    m2m_count = db.query(models.Preroll).join(
+        models.preroll_categories, models.Preroll.id == models.preroll_categories.c.preroll_id
+    ).filter(models.preroll_categories.c.category_id == category_id).count()
     schedule_count = db.query(models.Schedule).filter(models.Schedule.category_id == category_id).count()
 
     if (preroll_primary_count + m2m_count) > 0 or schedule_count > 0:
         raise HTTPException(status_code=400, detail="Cannot delete category that is in use")
 
+    # Remove any holiday presets pointing at this category to avoid FK integrity errors
+    try:
+        db.query(models.HolidayPreset).filter(models.HolidayPreset.category_id == category_id).delete(synchronize_session=False)
+    except Exception:
+        # Best-effort; continue with deletion attempt
+        pass
+
     db.delete(category)
-    db.commit()
+    try:
+        db.commit()
+    except IntegrityError as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"Failed to delete category due to integrity constraints: {e}")
     return {"message": "Category deleted"}
 
 # Category endpoints
@@ -1629,9 +1655,15 @@ def create_category(category: CategoryCreate, db: Session = Depends(get_db)):
     if existing:
         raise HTTPException(status_code=409, detail="Category with this name already exists")
 
+    # Normalize plex_mode
+    mode = (getattr(category, "plex_mode", "shuffle") or "shuffle").strip().lower()
+    if mode not in ("shuffle", "playlist"):
+        mode = "shuffle"
+
     db_category = models.Category(
         name=name,
         description=(category.description or "").strip() or None,
+        plex_mode=mode,
         # keep compatibility; apply_to_plex is controlled via separate endpoints
         apply_to_plex=getattr(category, "apply_to_plex", False)
     )
@@ -1653,6 +1685,7 @@ def create_category(category: CategoryCreate, db: Session = Depends(get_db)):
         "name": db_category.name,
         "description": db_category.description,
         "apply_to_plex": getattr(db_category, "apply_to_plex", False),
+        "plex_mode": getattr(db_category, "plex_mode", "shuffle"),
     }
 
 @app.get("/categories")
@@ -1663,6 +1696,7 @@ def get_categories(db: Session = Depends(get_db)):
         "name": c.name,
         "description": c.description,
         "apply_to_plex": getattr(c, "apply_to_plex", False),
+        "plex_mode": getattr(c, "plex_mode", "shuffle"),
     } for c in categories]
 
 @app.put("/categories/{category_id}")
@@ -1685,6 +1719,14 @@ def update_category(category_id: int, category: CategoryCreate, db: Session = De
 
     db_category.name = new_name
     db_category.description = (category.description or "").strip() or None
+    # Normalize and update plex_mode
+    mode = (getattr(category, "plex_mode", "shuffle") or "shuffle").strip().lower()
+    if mode not in ("shuffle", "playlist"):
+        mode = "shuffle"
+    try:
+        db_category.plex_mode = mode
+    except Exception:
+        pass
     # Do not toggle apply_to_plex here; dedicated endpoints manage it
 
     try:
@@ -1702,6 +1744,7 @@ def update_category(category_id: int, category: CategoryCreate, db: Session = De
         "name": db_category.name,
         "description": db_category.description,
         "apply_to_plex": getattr(db_category, "apply_to_plex", False),
+        "plex_mode": getattr(db_category, "plex_mode", "shuffle"),
         "message": "Category updated",
     }
 
@@ -1894,8 +1937,17 @@ def apply_category_to_plex(category_id: int, rotation_hours: int = 24, db: Sessi
         full_local_path = os.path.abspath(preroll.path)
         preroll_paths.append(full_local_path)
 
-    # Join all paths with semicolons for Plex multi-preroll format
-    multi_preroll_path = ";".join(preroll_paths)
+    # Choose delimiter based on category.plex_mode:
+    # - ';' for shuffle (random rotation)
+    # - ',' for playlist (ordered playback)
+    delimiter = ";"
+    try:
+        mode = getattr(category, "plex_mode", "shuffle")
+        if isinstance(mode, str) and mode.lower() == "playlist":
+            delimiter = ","
+    except Exception:
+        pass
+    multi_preroll_path = delimiter.join(preroll_paths)
 
     # Get Plex settings
     setting = db.query(models.Setting).first()
@@ -1929,7 +1981,7 @@ def apply_category_to_plex(category_id: int, rotation_hours: int = 24, db: Sessi
             "message": f"Category '{category.name}' applied to Plex successfully",
             "preroll_count": len(prerolls),
             "prerolls": [p.filename for p in prerolls],
-            "rotation_info": "Plex will automatically rotate through all prerolls in this category",
+            "rotation_info": ("Plex will play all prerolls in order (Sequential ,)" if getattr(category, "plex_mode", "shuffle") == "playlist" else "Plex will pick one preroll at random each time (Random ;)"),
             "plex_updated": True
         }
     else:
@@ -2015,7 +2067,8 @@ def create_schedule(schedule: ScheduleCreate, db: Session = Depends(get_db)):
         shuffle=schedule.shuffle,
         playlist=schedule.playlist,
         recurrence_pattern=schedule.recurrence_pattern,
-        preroll_ids=schedule.preroll_ids
+        preroll_ids=schedule.preroll_ids,
+        sequence=schedule.sequence
     )
     db.add(db_schedule)
     try:
@@ -2043,7 +2096,9 @@ def create_schedule(schedule: ScheduleCreate, db: Session = Depends(get_db)):
         "last_run": created_schedule.last_run.isoformat() + "Z" if created_schedule.last_run else None,
         "next_run": created_schedule.next_run.isoformat() + "Z" if created_schedule.next_run else None,
         "recurrence_pattern": created_schedule.recurrence_pattern,
-        "preroll_ids": created_schedule.preroll_ids
+        "preroll_ids": created_schedule.preroll_ids,
+        "fallback_category_id": getattr(created_schedule, "fallback_category_id", None),
+        "sequence": getattr(created_schedule, "sequence", None)
     }
 
 @app.get("/schedules")
@@ -2063,7 +2118,9 @@ def get_schedules(db: Session = Depends(get_db)):
         "last_run": s.last_run.isoformat() + "Z" if s.last_run else None,
         "next_run": s.next_run.isoformat() + "Z" if s.next_run else None,
         "recurrence_pattern": s.recurrence_pattern,
-        "preroll_ids": s.preroll_ids
+        "preroll_ids": s.preroll_ids,
+        "fallback_category_id": getattr(s, "fallback_category_id", None),
+        "sequence": getattr(s, "sequence", None)
     } for s in schedules]
 
 @app.put("/schedules/{schedule_id}")
@@ -2106,6 +2163,7 @@ def update_schedule(schedule_id: int, schedule: ScheduleCreate, db: Session = De
     db_schedule.recurrence_pattern = schedule.recurrence_pattern
     db_schedule.preroll_ids = schedule.preroll_ids
     db_schedule.fallback_category_id = schedule.fallback_category_id
+    db_schedule.sequence = schedule.sequence
 
     try:
         db.commit()
