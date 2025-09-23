@@ -204,6 +204,11 @@ Outputs:
 - Plex connection issues
   - Verify Plex is reachable from the machine, and the token is valid (retry `setup_plex_token.exe` if needed).
 
+## Addition Support
+
+- Export full log files from Settings > Download Diagnostics. Private information such as Plex Tokens are dedacted.
+   - Send to JeffBurns@JFLX.CLOUD with a description of the issue.
+
 ---
 
 ## License
@@ -218,3 +223,4 @@ MIT. Third‑party components remain under their respective licenses.
 If NeXroll is helpful, consider supporting ongoing development:
 
 [![Ko-fi](https://img.shields.io/badge/Ko--fi-Support%20Me-FF5E5B?style=for-the-badge&amp;logo=ko-fi&amp;logoColor=white)](https://ko-fi.com/j_b__)
+
