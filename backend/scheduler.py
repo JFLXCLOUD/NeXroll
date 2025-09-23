@@ -78,7 +78,13 @@ class Scheduler:
 
             # Apply category change to Plex only if it differs from current
             if desired_category_id and setting.active_category != desired_category_id:
-                if self._apply_category_to_plex(desired_category_id, db):
+                applied_ok = False
+                # If this schedule defines an explicit sequence, honor it; otherwise apply whole category
+                if chosen_schedule and getattr(chosen_schedule, "sequence", None):
+                    applied_ok = self._apply_schedule_sequence_to_plex(chosen_schedule, db)
+                else:
+                    applied_ok = self._apply_category_to_plex(desired_category_id, db)
+                if applied_ok:
                     setting.active_category = desired_category_id
                     if chosen_schedule:
                         chosen_schedule.last_run = now
@@ -125,9 +131,15 @@ class Scheduler:
             print(f"SCHEDULER: No prerolls found for category_id={category_id}")
             return False
 
-        # Build combined path string for Plex multi-preroll format
+        # Build combined path string for Plex multi-preroll format, honoring category.plex_mode
         preroll_paths = [os.path.abspath(p.path) for p in prerolls]
-        combined = ";".join(preroll_paths)
+        try:
+            cat = db.query(models.Category).filter(models.Category.id == category_id).first()
+            mode = getattr(cat, "plex_mode", "shuffle") if cat else "shuffle"
+        except Exception:
+            mode = "shuffle"
+        delimiter = "," if isinstance(mode, str) and mode.lower() == "playlist" else ";"
+        combined = delimiter.join(preroll_paths)
 
         setting = db.query(models.Setting).first()
         if not setting or not getattr(setting, "plex_url", None) or not getattr(setting, "plex_token", None):
@@ -135,14 +147,111 @@ class Scheduler:
             return False
 
         connector = PlexConnector(setting.plex_url, setting.plex_token)
-        print(f"SCHEDULER: Applying category_id={category_id} with {len(prerolls)} prerolls to Plex…")
+        print(f"SCHEDULER: Applying category_id={category_id} with {len(prerolls)} prerolls to Plex (mode={mode}, delim={'comma' if delimiter==',' else 'semicolon'})…")
         ok = connector.set_preroll(combined)
-        print(f"SCHEDULER: {'SUCCESS' if ok else 'FAIL'} setting multi-preroll.")
+        print(f"SCHEDULER: {'SUCCESS' if ok else 'FAIL'} setting multi-preroll (mode={mode}).")
         if ok:
             # Mirror manual "Apply to Plex" behavior so UI reflects the active category
             try:
                 db.query(models.Category).update({"apply_to_plex": False})
                 cat = db.query(models.Category).filter(models.Category.id == category_id).first()
+                if cat:
+                    cat.apply_to_plex = True
+                db.commit()
+            except Exception:
+                try:
+                    db.rollback()
+                except Exception:
+                    pass
+        return ok
+
+    def _apply_schedule_sequence_to_plex(self, schedule: models.Schedule, db: Session) -> bool:
+        """
+        Apply an explicit ordered sequence for a schedule to Plex.
+        Sequence format (JSON list):
+          - {"type":"random", "category_id": <int>, "count": <int>}
+          - {"type":"fixed", "preroll_id": <int>}
+        """
+        if not schedule or not schedule.category_id or not getattr(schedule, "sequence", None):
+            return False
+        try:
+            seq = schedule.sequence
+            if isinstance(seq, str):
+                seq = json.loads(seq)
+            if not isinstance(seq, list):
+                return False
+        except Exception:
+            return False
+
+        # Helper to gather prerolls for a category (primary and many-to-many)
+        def _prerolls_for_category(cid: int):
+            return db.query(models.Preroll) \
+                .outerjoin(models.preroll_categories, models.Preroll.id == models.preroll_categories.c.preroll_id) \
+                .filter(or_(models.Preroll.category_id == cid, models.preroll_categories.c.category_id == cid)) \
+                .distinct().all()
+
+        # Build ordered list of file paths per sequence steps
+        paths = []
+        for step in seq:
+            try:
+                stype = str(step.get("type", "")).lower()
+            except Exception:
+                stype = ""
+            if stype == "random":
+                try:
+                    cid = int(step.get("category_id") or schedule.category_id or 0)
+                except Exception:
+                    cid = schedule.category_id or 0
+                if not cid:
+                    continue
+                try:
+                    count = int(step.get("count") or 1)
+                except Exception:
+                    count = 1
+                pool = _prerolls_for_category(cid)
+                if not pool:
+                    continue
+                k = min(max(count, 1), len(pool))
+                picks = random.sample(pool, k) if len(pool) > k else pool
+                for p in picks:
+                    paths.append(os.path.abspath(p.path))
+            elif stype == "fixed":
+                try:
+                    pid = int(step.get("preroll_id") or 0)
+                except Exception:
+                    pid = 0
+                if not pid:
+                    continue
+                p = db.query(models.Preroll).filter(models.Preroll.id == pid).first()
+                if p:
+                    paths.append(os.path.abspath(p.path))
+            else:
+                # ignore unknown step types
+                continue
+
+        if not paths:
+            print("SCHEDULER: Sequence produced no preroll paths; aborting.")
+            return False
+
+        # Choose delimiter: sequences must play in order. Always use playlist (comma) for sequences.
+        mode = "playlist"
+        delimiter = ","
+        combined = delimiter.join(paths)
+
+        setting = db.query(models.Setting).first()
+        if not setting or not getattr(setting, "plex_url", None) or not getattr(setting, "plex_token", None):
+            print("SCHEDULER: Plex not configured; cannot apply sequence.")
+            return False
+
+        connector = PlexConnector(setting.plex_url, setting.plex_token)
+        print(f"SCHEDULER: Applying schedule sequence with {len(paths)} items (mode={mode}, delim={'comma' if delimiter==',' else 'semicolon'})…")
+        ok = connector.set_preroll(combined)
+        print(f"SCHEDULER: {'SUCCESS' if ok else 'FAIL'} setting sequence preroll list.")
+        if ok:
+            # Mirror manual "Apply to Plex" behavior: mark schedule's category as applied
+            try:
+                db.query(models.Category).update({"apply_to_plex": False})
+                cat = db.query(models.Category).filter(models.Category.id == schedule.category_id).first()
                 if cat:
                     cat.apply_to_plex = True
                 db.commit()

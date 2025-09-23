@@ -1,7 +1,7 @@
-from fastapi import FastAPI, Depends, File, UploadFile, HTTPException, Form
+from fastapi import FastAPI, Depends, File, UploadFile, HTTPException, Form, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse, Response
+from fastapi.responses import FileResponse, Response, StreamingResponse
 from sqlalchemy.orm import Session, joinedload
 from sqlalchemy import or_, select, func
 from sqlalchemy.exc import IntegrityError, OperationalError
@@ -16,6 +16,9 @@ import shutil
 import subprocess
 from pathlib import Path
 from urllib.parse import unquote
+import uuid
+import plexapi
+from plexapi.myplex import MyPlexPinLogin, MyPlexAccount
 
 import sys
 import os
@@ -31,6 +34,7 @@ from nexroll_backend.database import SessionLocal, engine
 import nexroll_backend.models as models
 from nexroll_backend.plex_connector import PlexConnector
 from nexroll_backend.scheduler import scheduler
+from nexroll_backend import secure_store
 
 models.Base.metadata.create_all(bind=engine)
 
@@ -455,7 +459,30 @@ class PlexStableConnectRequest(BaseModel):
     token: str | None = None  # accepted but ignored for stable-token flow
     stableToken: str | None = None  # alias some UIs might send
 
-app = FastAPI(title="NeXroll Backend", version="1.0.16")
+class PlexTvConnectRequest(BaseModel):
+    id: str | None = None
+    token: str | None = None
+    prefer_local: bool = True
+    save_token: bool = True
+
+app = FastAPI(title="NeXroll Backend", version="1.1.1")
+
+# In-memory store for Plex.tv OAuth sessions
+OAUTH_SESSIONS: dict[str, dict] = {}
+
+def _build_plex_headers() -> dict:
+    """
+    Build X-Plex-* headers for OAuth device auth.
+    """
+    try:
+        headers = dict(getattr(plexapi, "BASE_HEADERS", {}))
+    except Exception:
+        headers = {}
+    headers["X-Plex-Product"] = "NeXroll"
+    headers["X-Plex-Device"] = "NeXroll"
+    headers["X-Plex-Version"] = getattr(app, "version", None) or "1.0.0"
+    headers.setdefault("X-Plex-Client-Identifier", str(uuid.uuid4()))
+    return headers
 
 # CORS middleware for frontend integration
 app.add_middleware(
@@ -496,7 +523,8 @@ async def _no_cache_index_mw(request, call_next):
     response = await call_next(request)
     try:
         path = (request.url.path or "").lower()
-        if path in ("/", "/index.html", "/manifest.json"):
+        # Prevent cache for entry and manifest/service worker to avoid stale hashed bundles
+        if path in ("/", "/index.html", "/manifest.json", "/asset-manifest.json", "/sw.js", "/service-worker.js"):
             response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
             response.headers["Pragma"] = "no-cache"
             response.headers["Expires"] = "0"
@@ -601,16 +629,31 @@ def system_version():
     try:
         if sys.platform.startswith("win"):
             import winreg
-            key = winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, r"Software\NeXroll")
-            try:
-                reg_version, _ = winreg.QueryValueEx(key, "Version")
-            except Exception:
-                reg_version = None
-            try:
-                install_dir, _ = winreg.QueryValueEx(key, "InstallDir")
-            except Exception:
-                install_dir = None
-            winreg.CloseKey(key)
+            # Read both 64-bit and 32-bit registry views (NSIS x86 writes to Wow6432Node)
+            for access in (
+                getattr(winreg, "KEY_READ", 0) | getattr(winreg, "KEY_WOW64_64KEY", 0),
+                getattr(winreg, "KEY_READ", 0) | getattr(winreg, "KEY_WOW64_32KEY", 0),
+            ):
+                try:
+                    k = winreg.OpenKeyEx(winreg.HKEY_LOCAL_MACHINE, r"Software\NeXroll", 0, access)
+                    try:
+                        v, _ = winreg.QueryValueEx(k, "Version")
+                        if v and str(v).strip():
+                            reg_version = str(v).strip()
+                    except Exception:
+                        pass
+                    try:
+                        d, _ = winreg.QueryValueEx(k, "InstallDir")
+                        if d and str(d).strip():
+                            install_dir = str(d).strip()
+                    except Exception:
+                        pass
+                    try:
+                        winreg.CloseKey(k)
+                    except Exception:
+                        pass
+                except Exception:
+                    continue
     except Exception:
         reg_version = None
         install_dir = None
@@ -826,17 +869,28 @@ def connect_plex(request: PlexConnectRequest, db: Session = Depends(get_db)):
     try:
         connector = PlexConnector(url, token)
         if connector.test_connection():
-            # Save to settings
+            # Save to settings (do not persist plaintext token)
             setting = db.query(models.Setting).first()
             if not setting:
-                setting = models.Setting(plex_url=url, plex_token=token)
+                setting = models.Setting(plex_url=url, plex_token=None)
                 db.add(setting)
             else:
                 setting.plex_url = url
-                setting.plex_token = token
+                setting.plex_token = None
                 setting.updated_at = datetime.datetime.utcnow()
+
+            # Persist token in secure store
+            try:
+                secure_store.set_plex_token(token)
+            except Exception:
+                pass
+
             db.commit()
-            return {"connected": True, "message": "Successfully connected to Plex server"}
+            return {
+                "connected": True,
+                "message": "Successfully connected to Plex server",
+                "token_storage": secure_store.provider_info()[1]
+            }
         else:
             raise HTTPException(status_code=422, detail="Failed to connect to Plex server. Please check your URL and token.")
     except Exception as e:
@@ -848,16 +902,47 @@ def get_plex_status(db: Session = Depends(get_db)):
     Return Plex connection status without throwing 500s.
     Always returns 200 with a JSON object. Logs internal errors.
     Triggers a best-effort settings schema migration if a legacy DB is detected.
+
+    Enhancement: fall back to secure_store token when Setting.plex_token is None
+    (e.g., after manual X-Plex-Token connect that avoids persisting plaintext).
     """
     def _do_fetch():
         setting = db.query(models.Setting).first()
-        if not setting or not getattr(setting, "plex_url", None) or not getattr(setting, "plex_token", None):
-            return {"connected": False}
-        connector = PlexConnector(setting.plex_url, setting.plex_token)
+
+        # Resolve URL and token with secure-store fallback
+        plex_url = getattr(setting, "plex_url", None) if setting else None
+        token = None
+        try:
+            token = getattr(setting, "plex_token", None) if setting else None
+        except Exception:
+            token = None
+        if not token:
+            try:
+                token = secure_store.get_plex_token()
+            except Exception:
+                token = None
+
+        # If either piece is missing, report disconnected but include useful hints
+        if not plex_url or not token:
+            out = {"connected": False}
+            try:
+                out["url"] = plex_url
+                out["has_token"] = bool(token)
+                out["provider"] = secure_store.provider_info()[1]
+            except Exception:
+                pass
+            return out
+
+        connector = PlexConnector(plex_url, token)
         info = connector.get_server_info() or {}
         if not isinstance(info, dict):
             info = {}
         info.setdefault("connected", False)
+        # Surface resolved URL for UI/diagnostics
+        try:
+            info.setdefault("url", plex_url)
+        except Exception:
+            pass
         return info
 
     try:
@@ -889,15 +974,20 @@ def get_plex_status(db: Session = Depends(get_db)):
 def disconnect_plex(db: Session = Depends(get_db)):
     """Disconnect from Plex server by clearing stored credentials"""
     setting = db.query(models.Setting).first()
+
+    # Clear secure token (best-effort)
+    try:
+        secure_store.delete_plex_token()
+    except Exception:
+        pass
+
     if setting:
-        # Clear Plex settings
         setting.plex_url = None
         setting.plex_token = None
         setting.updated_at = datetime.datetime.utcnow()
         db.commit()
-        return {"disconnected": True, "message": "Successfully disconnected from Plex server"}
-    else:
-        return {"disconnected": True, "message": "No Plex connection found"}
+
+    return {"disconnected": True, "message": "Successfully disconnected from Plex server"}
 
 @app.post("/plex/connect/stable-token")
 def connect_plex_stable_token(request: PlexStableConnectRequest, db: Session = Depends(get_db)):
@@ -951,6 +1041,153 @@ def connect_plex_stable_token(request: PlexStableConnectRequest, db: Session = D
             "message": f"Connection error: {str(e)}",
             "method": "stable_token"
         }
+
+@app.post("/plex/tv/start")
+def plex_tv_start(forward_url: str | None = None):
+    """
+    Start Plex.tv OAuth device login and return the URL to open.
+    The session id can be polled via /plex/tv/status/{id} and finalized via /plex/tv/connect.
+    """
+    try:
+        # Periodically purge expired sessions
+        try:
+            now = datetime.datetime.utcnow()
+            expired = [k for k, v in OAUTH_SESSIONS.items() if v.get("expires") and v["expires"] < now]
+            for k in expired:
+                OAUTH_SESSIONS.pop(k, None)
+        except Exception:
+            pass
+
+        headers = _build_plex_headers()
+        pinlogin = MyPlexPinLogin(headers=headers, oauth=True)
+        url = pinlogin.oauthUrl(forward_url)
+        # Spawn background thread and return immediately
+        pinlogin.run(timeout=600)  # 10 minutes window
+
+        sid = str(uuid.uuid4())
+        OAUTH_SESSIONS[sid] = {
+            "pin": pinlogin,
+            "headers": headers,
+            "created": datetime.datetime.utcnow(),
+            "expires": datetime.datetime.utcnow() + datetime.timedelta(minutes=10),
+        }
+        return {"id": sid, "url": url}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to start Plex OAuth: {str(e)}")
+
+
+@app.get("/plex/tv/status/{sid}")
+def plex_tv_status(sid: str):
+    """
+    Poll the status of a Plex.tv OAuth device login.
+    Returns: { status: pending|success|expired|not_found|error, token_preview? }
+    """
+    s = OAUTH_SESSIONS.get(sid)
+    if not s:
+        return {"status": "not_found"}
+    pin = s.get("pin")
+    try:
+        if getattr(pin, "expired", False):
+            return {"status": "expired"}
+        token = getattr(pin, "token", None)
+        if token:
+            preview = (token[:8] + "...") if len(token) > 8 else token
+            return {"status": "success", "token_preview": preview}
+        return {"status": "pending"}
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+
+
+@app.post("/plex/tv/connect")
+def plex_tv_connect(req: PlexTvConnectRequest, db: Session = Depends(get_db)):
+    """
+    Complete Plex.tv OAuth by resolving a reachable server URL and saving credentials.
+    Body: { id?: string, token?: string, prefer_local?: bool, save_token?: bool }
+    """
+    # Resolve token from request or session
+    token = (getattr(req, "token", None) or "").strip() or None
+    if not token and getattr(req, "id", None):
+        st = OAUTH_SESSIONS.get(req.id)
+        if st and getattr(st.get("pin"), "token", None):
+            token = st["pin"].token
+
+    if not token:
+        raise HTTPException(status_code=422, detail="Missing token or session id")
+
+    try:
+        # Discover servers from Plex account
+        account = MyPlexAccount(token=token)
+        resources = account.resources()
+        servers = [
+            r for r in resources
+            if isinstance(getattr(r, "provides", []), (list, set, tuple)) and "server" in r.provides
+        ]
+        if not servers:
+            raise HTTPException(status_code=404, detail="No Plex servers found on this account")
+
+        # Prefer owned servers and try to connect
+        baseurl = None
+        server_name = None
+        machine_id = None
+        ordered = sorted(servers, key=lambda r: (not getattr(r, "owned", True)))
+        for res in ordered:
+            try:
+                srv = res.connect(timeout=5)
+                baseurl = getattr(srv, "_baseurl", None) or getattr(srv, "url", None)
+                server_name = getattr(srv, "friendlyName", None) or getattr(srv, "name", None) or getattr(res, "name", None)
+                machine_id = getattr(srv, "machineIdentifier", None) or getattr(res, "clientIdentifier", None)
+                if baseurl:
+                    break
+            except Exception:
+                continue
+
+        # Fallback to first declared connection URI
+        if not baseurl:
+            for res in ordered:
+                try:
+                    conns = getattr(res, "connections", []) or []
+                    if conns:
+                        baseurl = getattr(conns[0], "uri", None)
+                        server_name = getattr(res, "name", None)
+                        machine_id = getattr(res, "clientIdentifier", None)
+                        if baseurl:
+                            break
+                except Exception:
+                    continue
+
+        if not baseurl:
+            raise HTTPException(status_code=502, detail="Unable to resolve a reachable Plex server URL")
+
+        # Persist settings
+        setting = db.query(models.Setting).first()
+        if not setting:
+            setting = models.Setting(plex_url=baseurl, plex_token=token)
+            db.add(setting)
+        else:
+            setting.plex_url = baseurl
+            setting.plex_token = token
+            setting.updated_at = datetime.datetime.utcnow()
+
+        # Save to secure store (best effort)
+        try:
+            if getattr(req, "save_token", True):
+                secure_store.set_plex_token(token)
+        except Exception:
+            pass
+
+        db.commit()
+        return {
+            "connected": True,
+            "message": "Connected via Plex.tv authentication",
+            "method": "plex_oauth",
+            "url": baseurl,
+            "server_name": server_name,
+            "machine_identifier": machine_id,
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to complete Plex.tv auth: {str(e)}")
 
 @app.post("/prerolls/upload")
 def upload_preroll(
@@ -2528,11 +2765,16 @@ def validate_cron(pattern: str):
 @app.get("/plex/stable-token/status")
 def get_stable_token_status():
     """Check if stable token is configured"""
-    connector = PlexConnector(None)  # Will try to load from config
+    # Prefer secure store
+    try:
+        tok = secure_store.get_plex_token()
+    except Exception:
+        tok = None
     return {
-        "has_stable_token": bool(connector.token),
+        "has_stable_token": bool(tok),
         "config_file_exists": os.path.exists("plex_config.json"),
-        "token_length": len(connector.token) if connector.token else 0
+        "token_length": len(tok) if tok else 0,
+        "provider": secure_store.provider_info()[1],
     }
 
 @app.post("/plex/stable-token/save")
@@ -2546,20 +2788,32 @@ def save_stable_token(token: str):
 
 @app.get("/plex/stable-token/config")
 def get_stable_token_config():
-    """Get current stable token configuration"""
+    """Get current stable token configuration (sanitized; token never returned)."""
     try:
-        if os.path.exists("plex_config.json"):
-            with open("plex_config.json", "r") as f:
-                config = json.load(f)
-                # Don't return the actual token for security
-                return {
-                    "configured": True,
-                    "setup_date": config.get("setup_date"),
-                    "note": config.get("note"),
-                    "token_length": len(config.get("plex_token", ""))
-                }
-        else:
-            return {"configured": False}
+        tok = None
+        try:
+            tok = secure_store.get_plex_token()
+        except Exception:
+            tok = None
+
+        cfg = {}
+        try:
+            if os.path.exists("plex_config.json"):
+                with open("plex_config.json", "r", encoding="utf-8") as f:
+                    cfg = json.load(f) or {}
+        except Exception:
+            cfg = {}
+
+        # Prefer secure store length if present; otherwise fall back to legacy hints
+        length = len(tok) if tok else (cfg.get("token_length") if isinstance(cfg.get("token_length"), int) else 0)
+
+        return {
+            "configured": bool(tok),
+            "setup_date": cfg.get("setup_date"),
+            "note": "Token stored in secure store" if tok else (cfg.get("note") or "No token configured"),
+            "token_length": length,
+            "provider": secure_store.provider_info()[1],
+        }
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error reading config: {str(e)}")
 
@@ -3382,6 +3636,57 @@ def compat_static_thumbnails(category: str, thumb_name: str):
 def alias_thumbgen(category: str, thumb_name: str):
     return get_or_create_thumbnail(category, thumb_name)
 
+# Fallback handlers for hashed frontend assets (avoid 404 when index.html points to old main.<hash>.{js,css})
+# This serves the latest present main.* file when the requested hashed file is missing.
+def _hashed_fallback_path(subdir: str, requested: str, main_prefix: str, ext: str) -> str | None:
+    try:
+        # Sanitize
+        requested_safe = os.path.basename(requested or "")
+        base_dir = os.path.join(frontend_dir, "static", subdir)
+        candidate = os.path.join(base_dir, requested_safe)
+        if os.path.exists(candidate):
+            return candidate
+        # Fallback only for main.* assets
+        if requested_safe.startswith(main_prefix) and requested_safe.endswith(ext) and os.path.isdir(base_dir):
+            try:
+                files = [f for f in os.listdir(base_dir) if f.startswith(main_prefix) and f.endswith(ext)]
+                if files:
+                    files = sorted(files, key=lambda f: os.path.getmtime(os.path.join(base_dir, f)), reverse=True)
+                    return os.path.join(base_dir, files[0])
+            except Exception:
+                pass
+    except Exception:
+        pass
+    return None
+
+@app.get("/static/js/{fname}")
+def static_js_fallback(fname: str):
+    p = _hashed_fallback_path("js", fname, "main.", ".js")
+    if p and os.path.exists(p):
+        resp = FileResponse(p, media_type="application/javascript")
+        try:
+            resp.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+            resp.headers["Pragma"] = "no-cache"
+            resp.headers["Expires"] = "0"
+        except Exception:
+            pass
+        return resp
+    raise HTTPException(status_code=404, detail="Not found")
+
+@app.get("/static/css/{fname}")
+def static_css_fallback(fname: str):
+    p = _hashed_fallback_path("css", fname, "main.", ".css")
+    if p and os.path.exists(p):
+        resp = FileResponse(p, media_type="text/css")
+        try:
+            resp.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+            resp.headers["Pragma"] = "no-cache"
+            resp.headers["Expires"] = "0"
+        except Exception:
+            pass
+        return resp
+    raise HTTPException(status_code=404, detail="Not found")
+
 app.mount("/data", StaticFiles(directory=data_dir), name="data")
 
 # Thumbnails are served by dynamic endpoints to support on-demand generation:
@@ -3392,6 +3697,115 @@ app.mount("/data", StaticFiles(directory=data_dir), name="data")
 
 
 # Mount frontend static files LAST so API routes are checked first
+# Diagnostics bundle (ZIP)
+@app.get("/diagnostics/bundle")
+def diagnostics_bundle():
+    """
+    Create a diagnostics ZIP with:
+    - info.json (version, scheduler status, secure provider, resolved paths)
+    - db/schema.sql (SQLite schema dump)
+    - logs (app.log, service.log if present)
+    - config/plex_config.sanitized.json (token removed if file exists)
+    """
+    try:
+        import tempfile
+
+        ts = datetime.datetime.utcnow().strftime("%Y%m%d_%H%M%S")
+        tmp_path = os.path.join(tempfile.gettempdir(), f"NeXroll_Diagnostics_{ts}.zip")
+
+        # Collect info
+        info = {
+            "api_version": getattr(app, "version", None),
+            "scheduler": {"running": scheduler.running},
+            "secure_provider": secure_store.provider_info()[1],
+            "paths": system_paths(),
+            "timestamp_utc": datetime.datetime.utcnow().isoformat() + "Z",
+        }
+
+        with zipfile.ZipFile(tmp_path, "w", zipfile.ZIP_DEFLATED) as z:
+            # info.json
+            z.writestr("info.json", json.dumps(info, indent=2))
+
+            # DB schema
+            try:
+                schema_lines = []
+                with engine.connect() as conn:
+                    rows = conn.exec_driver_sql(
+                        "SELECT type, name, sql FROM sqlite_master "
+                        "WHERE type IN ('table','index','view') ORDER BY type,name"
+                    ).fetchall()
+                    for t, n, s in rows:
+                        if s:
+                            schema_lines.append(f"-- {t}: {n}\n{s};\n")
+                if schema_lines:
+                    z.writestr("db/schema.sql", "\n".join(schema_lines))
+            except Exception as e:
+                z.writestr("db/schema_error.txt", str(e))
+
+            # Logs
+            try:
+                log_file = _log_file_path()
+                if log_file and os.path.exists(log_file):
+                    z.write(log_file, arcname=os.path.join("logs", os.path.basename(log_file)))
+            except Exception:
+                pass
+            # Common service log location
+            try:
+                pd = os.environ.get("ProgramData")
+                if pd:
+                    svc_log = os.path.join(pd, "NeXroll", "logs", "service.log")
+                    if os.path.exists(svc_log):
+                        z.write(svc_log, arcname=os.path.join("logs", "service.log"))
+            except Exception:
+                pass
+
+            # Sanitized legacy config
+            try:
+                if os.path.exists("plex_config.json"):
+                    with open("plex_config.json", "r", encoding="utf-8") as f:
+                        cfg = json.load(f) or {}
+                    cfg.pop("plex_token", None)
+                    z.writestr("config/plex_config.sanitized.json", json.dumps(cfg, indent=2))
+            except Exception:
+                pass
+
+        return FileResponse(
+            tmp_path,
+            media_type="application/zip",
+            filename=os.path.basename(tmp_path),
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to build diagnostics bundle: {e}")
+
+# Server-Sent Events stream for lightweight live status
+@app.get("/events")
+async def events(request: Request):
+    """
+    Basic SSE endpoint emitting scheduler status and heartbeat every ~5s.
+    """
+    import asyncio as _asyncio
+    import json as _json
+
+    async def _gen():
+        while True:
+            # client disconnected
+            if await request.is_disconnected():
+                break
+            payload = {
+                "type": "status",
+                "time": datetime.datetime.utcnow().isoformat() + "Z",
+                "scheduler": {"running": scheduler.running},
+            }
+            yield f"data: {_json.dumps(payload)}\n\n"
+            await _asyncio.sleep(5)
+
+    headers = {
+        "Cache-Control": "no-cache",
+        "Connection": "keep-alive",
+        "X-Accel-Buffering": "no",
+    }
+    return StreamingResponse(_gen(), media_type="text/event-stream", headers=headers)
+
 app.mount("/", StaticFiles(directory=frontend_dir, html=True, check_dir=False), name="frontend")
 
 # Auto-start when running as packaged EXE (PyInstaller onefile)

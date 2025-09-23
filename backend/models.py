@@ -36,6 +36,7 @@ class Category(Base):
     id = Column(Integer, primary_key=True, index=True)
     name = Column(String, unique=True, index=True)
     description = Column(Text)
+    plex_mode = Column(String, default="shuffle")  # 'shuffle' or 'playlist' for Plex delimiter behavior
     apply_to_plex = Column(Boolean, default=False)  # Whether this category should be applied to Plex
     # Optional: reverse relation to list all prerolls tagged with this category (view-only)
     prerolls = relationship("Preroll", secondary="preroll_categories", viewonly=True)
@@ -57,6 +58,7 @@ class Schedule(Base):
     next_run = Column(DateTime, nullable=True)
     recurrence_pattern = Column(String, nullable=True)  # For cron-like patterns
     preroll_ids = Column(Text, nullable=True)  # JSON array of preroll IDs for playlists
+    sequence = Column(Text, nullable=True)  # JSON describing stacked prerolls (e.g., random blocks + fixed)
 
     category = relationship("Category", foreign_keys=[category_id])
     fallback_category = relationship("Category", foreign_keys=[fallback_category_id])

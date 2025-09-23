@@ -3,6 +3,7 @@ import json
 import os
 from typing import Optional
 from pathlib import Path
+from nexroll_backend import secure_store
 
 def _is_dir_writable(p: str) -> bool:
     try:
@@ -92,40 +93,80 @@ class PlexConnector:
         return new_path
 
     def load_stable_token(self):
-        """Load stable token from plex_config.json"""
+        """Load stable token from secure store (preferred). Migrate from legacy plex_config.json if present."""
         try:
+            # 1) Preferred: secure store
+            try:
+                tok = secure_store.get_plex_token()
+            except Exception:
+                tok = None
+
+            if tok:
+                self.token = tok
+                self.headers = {'X-Plex-Token': self.token}
+                print("Loaded Plex token from secure store")
+                return True
+
+            # 2) Legacy fallback and one-time migration from plex_config.json
             if os.path.exists(self.config_file):
-                with open(self.config_file, 'r') as f:
-                    config = json.load(f)
-                    self.token = config.get('plex_token')
-                    if self.token:
+                with open(self.config_file, 'r', encoding='utf-8') as f:
+                    cfg = json.load(f)
+                legacy = cfg.get('plex_token')
+                if legacy:
+                    if secure_store.set_plex_token(legacy):
+                        # Rewrite legacy file without the plaintext token
+                        try:
+                            cfg.pop('plex_token', None)
+                            cfg['token_migrated'] = True
+                            cfg['token_length'] = len(legacy)
+                            cfg.setdefault('note', 'Token migrated to secure store; file contains no secrets')
+                            with open(self.config_file, 'w', encoding='utf-8') as wf:
+                                json.dump(cfg, wf, indent=2)
+                        except Exception:
+                            pass
+                        self.token = legacy
                         self.headers = {'X-Plex-Token': self.token}
-                        print(f"Loaded stable token from {self.config_file}")
+                        print(f"Migrated Plex token from {self.config_file} to secure store")
                         return True
+                else:
+                    print("No token present in legacy plex_config.json")
             else:
-                print(f"No plex_config.json found. Using manual token entry.")
+                print("No plex_config.json; expecting secure token or manual entry")
         except Exception as e:
-            print(f"Error loading stable token: {e}")
+            print(f"Error loading Plex token: {e}")
 
         return False
 
     def save_stable_token(self, token: str):
-        """Save token to a writable plex_config.json path."""
+        """Persist token to secure store. Writes a sanitized plex_config.json without secrets for diagnostics."""
         try:
-            cfg_dir = os.path.dirname(self.config_file) or "."
-            os.makedirs(cfg_dir, exist_ok=True)
-            config_data = {
-                "plex_token": token,
-                "setup_date": __import__("datetime").datetime.utcnow().isoformat() + "Z",
-                "note": "This token remains valid until you sign out of Plex on this server"
-            }
+            ok = False
+            try:
+                ok = secure_store.set_plex_token(token)
+            except Exception:
+                ok = False
 
-            with open(self.config_file, "w", encoding="utf-8") as f:
-                json.dump(config_data, f, indent=2)
+            if not ok:
+                print("Secure store not available; refusing to write plaintext token")
+                return False
 
-            print(f"Stable token saved to {self.config_file}")
+            # Optionally write a sanitized config file (no secrets) for tooling/diagnostics
+            try:
+                cfg_dir = os.path.dirname(self.config_file) or "."
+                os.makedirs(cfg_dir, exist_ok=True)
+                cfg = {
+                    "setup_date": __import__("datetime").datetime.utcnow().isoformat() + "Z",
+                    "note": "Token saved to secure store; this file contains no secrets",
+                    "token_length": len(token)
+                }
+                with open(self.config_file, "w", encoding="utf-8") as f:
+                    json.dump(cfg, f, indent=2)
+            except Exception:
+                pass
+
             self.token = token
             self.headers = {'X-Plex-Token': self.token}
+            print("Stable token saved to secure store")
             return True
         except Exception as e:
             print(f"Error saving token: {e}")
