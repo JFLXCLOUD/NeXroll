@@ -27,6 +27,13 @@ Web UI: http://localhost:9393
   - Flexible schedules with date/time ranges and recurrence
   - Optional fallback category when no schedule is active
   - Real‑time scheduler status
+- UI enhancements (v1.1.1)
+  - Sticky top navigation bar for persistent access to Dashboard, Schedules, Categories, Settings, and Plex
+  - Pagination for Prerolls: default 20 per page, adjustable up to 50
+  - Multi-select with bulk primary category update/move
+  - Inline category creation directly from Upload and Edit Preroll
+  - Storage usage card on the Dashboard showing total preroll storage used
+  - Long preroll title handling so Edit/Delete buttons remain visible in Grid and List views
 - Plex integration
   - Connect via URL/token or Stable Token (persistent)
   - Status monitoring and quick Apply‑to‑Plex actions
@@ -211,6 +218,3 @@ MIT. Third‑party components remain under their respective licenses.
 If NeXroll is helpful, consider supporting ongoing development:
 
 [![Ko-fi](https://img.shields.io/badge/Ko--fi-Support%20Me-FF5E5B?style=for-the-badge&amp;logo=ko-fi&amp;logoColor=white)](https://ko-fi.com/j_b__)
-
-
-

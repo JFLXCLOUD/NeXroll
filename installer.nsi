@@ -12,6 +12,7 @@
 !include "LogicLib.nsh"
 !include "FileFunc.nsh"
 !include "nsDialogs.nsh"
+!include "Sections.nsh"
 
 Name "NeXroll"
 InstallDir "$PROGRAMFILES64\NeXroll"
@@ -21,8 +22,8 @@ ShowInstDetails show
 Icon "..\NeXroll_ICON\icon_1758297097_64x64.ico"
 UninstallIcon "..\NeXroll_ICON\icon_1758297097_32x32.ico"
 
-!define APP_VERSION "1.0.16"
-VIProductVersion "1.0.16.0"
+!define APP_VERSION "1.1.1"
+VIProductVersion "1.1.1.0"
 VIAddVersionKey /LANG=1033 "ProductName" "NeXroll"
 VIAddVersionKey /LANG=1033 "ProductVersion" "${APP_VERSION}"
 VIAddVersionKey /LANG=1033 "FileVersion" "${APP_VERSION}"
@@ -45,6 +46,8 @@ Var hPrerollEdit
 Page custom PrerollPathPageCreate PrerollPathPageLeave
 !insertmacro MUI_PAGE_COMPONENTS
 !insertmacro MUI_PAGE_INSTFILES
+!define MUI_FINISHPAGE_RUN "$INSTDIR\setup_plex_token.exe"
+!define MUI_FINISHPAGE_RUN_TEXT "Run Plex Stable Token Setup now"
 !insertmacro MUI_PAGE_FINISH
 !insertmacro MUI_LANGUAGE "English"
 
@@ -107,7 +110,7 @@ Section "!NeXroll Application (Required)" SEC_APP
   ;
   ; If paths differ in your build pipeline, adjust these File lines accordingly.
 
-  ; Main app (onefile output goes directly under dist\)
+  ; Main app (onefile output goes under repo-root .\dist\)
   File /oname=NeXroll.exe "..\dist\NeXroll.exe"
   ; Windows service wrapper (onefile output)
   File /oname=NeXrollService.exe "..\dist\NeXrollService.exe"
@@ -156,6 +159,7 @@ Section "!NeXroll Application (Required)" SEC_APP
   CreateDirectory "$SMPROGRAMS\NeXroll"
   CreateShortCut "$SMPROGRAMS\NeXroll\NeXroll.lnk" "$INSTDIR\NeXroll.exe" "" "$INSTDIR\NeXroll.exe" 0
   CreateShortCut "$SMPROGRAMS\NeXroll\NeXroll Tray.lnk" "$INSTDIR\NeXrollTray.exe" "" "$INSTDIR\NeXrollTray.exe" 0
+  CreateShortCut "$SMPROGRAMS\NeXroll\Setup Plex Stable Token.lnk" "$INSTDIR\setup_plex_token.exe" "" "$INSTDIR\setup_plex_token.exe" 0
   CreateShortCut "$SMPROGRAMS\NeXroll\Uninstall.lnk" "$INSTDIR\uninstall.exe" "" "$INSTDIR\uninstall.exe" 0
 
   ; Desktop shortcut
@@ -181,10 +185,6 @@ Section "Install as Windows Service" SEC_SERVICE
   ExecWait '"$INSTDIR\NeXrollService.exe" start' $0
 SectionEnd
 
-Section "Plex Stable Token Setup (Run Now)" SEC_TOKEN
-  SetOutPath "$INSTDIR"
-  ExecWait '"$INSTDIR\setup_plex_token.exe"' $0
-SectionEnd
 
 Section "Start with Windows (Startup Shortcut)" SEC_STARTUP
   ; Create shortcut in Startup folder (launches tray app so icon is visible and provides menu)
@@ -303,6 +303,7 @@ SectionEnd
 ; Optional: warn if ffmpeg not found and SEC_DEPS not selected
 ; ------------------------------
 Function .onInit
+  ; Stable Token setup can be run from Finish page; no auto-run during install
   ; Best-effort: stop running NeXroll processes so upgrade can proceed
   ; Try to stop the Windows service first (ignore errors if not installed/running)
   nsExec::ExecToStack 'sc stop "NeXrollService"'
@@ -332,5 +333,9 @@ FunctionEnd
 ; Post-install message
 ; ------------------------------
 Function .onInstSuccess
-  MessageBox MB_ICONINFORMATION|MB_OK "Installation complete!$\n$\n- Web interface: http://localhost:9393$\n- Preroll videos location: $PREROLL_PATH$\n- Start from Start Menu or Desktop shortcut.$\n- If installed as a service, it is running under 'NeXrollService'."
+  ; Auto-start NeXroll Tray after install completes
+  ; Note: This runs elevated (installer is admin). If you prefer non-elevated launch,
+  ;       we can switch to a ShellExecAsUser approach with a helper plugin.
+  Exec '"$INSTDIR\NeXrollTray.exe"'
+  MessageBox MB_ICONINFORMATION|MB_OK "Installation complete!$\n$\n- Web interface: http://localhost:9393$\n- Preroll videos location: $PREROLL_PATH$\n- NeXroll Tray has been started.$\n- If installed as a service, it is running under 'NeXrollService'."
 FunctionEnd
