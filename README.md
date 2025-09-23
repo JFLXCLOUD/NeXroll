@@ -27,9 +27,6 @@ Web UI: http://localhost:9393
   - Flexible schedules with date/time ranges and recurrence
   - Optional fallback category when no schedule is active
   - Real‑time scheduler status
-- UI (v1.0.15_r4 and after)
-  - Inline edit modals for Prerolls, Schedules, and Categories
-  - Polished header with NeXroll logo placement and responsive alignment
 - Plex integration
   - Connect via URL/token or Stable Token (persistent)
   - Status monitoring and quick Apply‑to‑Plex actions
@@ -69,7 +66,6 @@ After install, visit http://localhost:9393 to use the web UI.
 - `NeXrollService.exe` — optional Windows Service wrapper
 - `NeXrollTray.exe` — system tray app with quick actions
 - `setup_plex_token.exe` — helper to obtain a stable Plex token
-- `favicon.ico` — NeXroll icon used across executables and the installer
 
 Start Menu shortcuts are created for NeXroll, NeXroll Tray, and Uninstall NeXroll. A desktop shortcut for NeXroll is also added.
 
