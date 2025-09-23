@@ -1,5 +1,269 @@
 import React, { useState, useEffect } from 'react';
 
+const Modal = ({ title, onClose, children, width = 700 }) => {
+  React.useEffect(() => {
+    const onEsc = (e) => { if (e.key === 'Escape') onClose && onClose(); };
+    document.addEventListener('keydown', onEsc);
+    return () => document.removeEventListener('keydown', onEsc);
+  }, [onClose]);
+
+  return (
+    <div className="nx-modal-overlay" onMouseDown={(e) => { if (e.target.classList.contains('nx-modal-overlay')) onClose && onClose(); }}>
+      <div className="nx-modal" style={{ maxWidth: width }}>
+        <div className="nx-modal-header">
+          <h3 className="nx-modal-title">{title}</h3>
+          <button className="nx-modal-close" type="button" onClick={onClose} aria-label="Close">✕</button>
+        </div>
+        <div className="nx-modal-body">
+          {children}
+        </div>
+      </div>
+    </div>
+  );
+};
+
+const CategoryPicker = ({ categories, primaryId, secondaryIds, onChange, onCreateCategory, label = 'Categories', placeholder = 'Search categories…' }) => {
+  const [open, setOpen] = React.useState(false);
+  const [query, setQuery] = React.useState('');
+  const containerRef = React.useRef(null);
+  const inputRef = React.useRef(null);
+
+  React.useEffect(() => {
+    const onDocClick = (e) => {
+      if (containerRef.current && !containerRef.current.contains(e.target)) {
+        setOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', onDocClick);
+    return () => document.removeEventListener('mousedown', onDocClick);
+  }, []);
+
+  React.useEffect(() => {
+    if (open && inputRef.current) {
+      inputRef.current.focus();
+    }
+  }, [open]);
+
+  const [creating, setCreating] = React.useState(false);
+
+  const items = Array.isArray(categories) ? categories.map(c => ({ id: String(c.id), name: c.name })) : [];
+  const normalizedPrimary = primaryId ? String(primaryId) : '';
+  const normalizedSecondary = Array.isArray(secondaryIds) ? secondaryIds.map(String) : [];
+
+  const selectedSet = new Set([normalizedPrimary, ...normalizedSecondary].filter(Boolean));
+
+  const filtered = items.filter(i => i.name.toLowerCase().includes(query.toLowerCase()));
+
+  const normalizedQuery = (query || '').trim();
+  const existsByName = items.some(i => i.name.toLowerCase() === normalizedQuery.toLowerCase());
+  const showCreate = !!onCreateCategory && normalizedQuery.length > 0 && !existsByName;
+
+  const handleCreateCategory = async () => {
+    if (!showCreate || !onCreateCategory) return;
+    try {
+      setCreating(true);
+      const created = await onCreateCategory(normalizedQuery);
+      if (created && created.id) {
+        const newId = String(created.id);
+        if (!normalizedPrimary) {
+          onChange(newId, normalizedSecondary);
+        } else {
+          const nextSecondary = [...normalizedSecondary, newId].filter((v, i, a) => v && a.indexOf(v) === i);
+          onChange(normalizedPrimary, nextSecondary);
+        }
+        setQuery('');
+        setOpen(false);
+      }
+    } catch (err) {
+      alert('Failed to create category: ' + (err && err.message ? err.message : err));
+    } finally {
+      setCreating(false);
+    }
+  };
+
+  const toggle = (id) => {
+    id = String(id);
+    const isSelected = selectedSet.has(id);
+
+    if (isSelected) {
+      // Removing
+      if (id === normalizedPrimary) {
+        // Remove primary; promote first secondary (if any) to primary
+        const remaining = normalizedSecondary.filter(x => x !== id);
+        if (remaining.length > 0) {
+          const newPrimary = remaining[0];
+          const newSecondary = remaining.slice(1);
+          onChange(newPrimary, newSecondary);
+        } else {
+          onChange('', []);
+        }
+      } else {
+        const newSecondary = normalizedSecondary.filter(x => x !== id);
+        onChange(normalizedPrimary, newSecondary);
+      }
+    } else {
+      // Adding
+      if (!normalizedPrimary) {
+        onChange(id, normalizedSecondary);
+      } else {
+        const nextSecondary = [...normalizedSecondary, id].filter((v, i, a) => v && a.indexOf(v) === i);
+        onChange(normalizedPrimary, nextSecondary);
+      }
+    }
+  };
+
+  const makePrimary = (id) => {
+    id = String(id);
+    if (id === normalizedPrimary) return;
+    let nextSecondary = normalizedSecondary.filter(x => x !== id);
+    if (normalizedPrimary) {
+      nextSecondary = [normalizedPrimary, ...nextSecondary.filter(x => x !== normalizedPrimary)];
+    }
+    // Dedupe + remove blanks
+    nextSecondary = nextSecondary.filter((v, i, a) => v && a.indexOf(v) === i);
+    onChange(id, nextSecondary);
+    setOpen(false);
+  };
+
+  const clearAll = () => {
+    onChange('', []);
+    setQuery('');
+    setOpen(false);
+  };
+
+  const selectedItems = items.filter(i => selectedSet.has(i.id));
+  const primaryItem = items.find(i => i.id === normalizedPrimary) || null;
+
+  return (
+    <div ref={containerRef} className="nx-catpicker">
+      <label className="nx-label" style={{ marginBottom: '0.35rem' }}>{label}</label>
+
+      <div
+        className={`nx-catpicker-input ${open ? 'open' : ''}`}
+        onClick={() => setOpen(true)}
+        role="combobox"
+        aria-expanded={open}
+        aria-haspopup="listbox"
+      >
+        {primaryItem ? (
+          <span className="nx-chip primary" title="Primary category">
+            ⭐ {primaryItem.name}
+            <button
+              type="button"
+              className="nx-chip-x"
+              onClick={(e) => { e.stopPropagation(); toggle(primaryItem.id); }}
+              aria-label="Remove primary"
+              title="Remove primary"
+            >
+              ×
+            </button>
+          </span>
+        ) : (
+          <span className="nx-chip ghost">No primary</span>
+        )}
+
+        {selectedItems.filter(i => i.id !== normalizedPrimary).map(i => (
+          <span key={i.id} className="nx-chip" title="Secondary category">
+            {i.name}
+            <button
+              type="button"
+              className="nx-chip-star"
+              onClick={(e) => { e.stopPropagation(); makePrimary(i.id); }}
+              aria-label={`Make ${i.name} primary`}
+              title="Make primary"
+            >
+              ⭐
+            </button>
+            <button
+              type="button"
+              className="nx-chip-x"
+              onClick={(e) => { e.stopPropagation(); toggle(i.id); }}
+              aria-label={`Remove ${i.name}`}
+              title="Remove"
+            >
+              ×
+            </button>
+          </span>
+        ))}
+
+        <input
+          ref={inputRef}
+          className="nx-catpicker-hidden-input"
+          placeholder={placeholder}
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          onFocus={() => setOpen(true)}
+        />
+
+        {(normalizedPrimary || normalizedSecondary.length > 0) && (
+          <button
+            type="button"
+            className="nx-catpicker-clear"
+            onClick={(e) => { e.stopPropagation(); clearAll(); }}
+            title="Clear all"
+          >
+            Clear
+          </button>
+        )}
+      </div>
+
+      {open && (
+        <div className="nx-catpicker-dropdown">
+          <div className="nx-catpicker-search">
+            <input
+              type="text"
+              placeholder={placeholder}
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+            />
+          </div>
+          {showCreate && (
+            <div className="nx-catpicker-create">
+              <button
+                type="button"
+                className="button"
+                onClick={(e) => { e.stopPropagation(); handleCreateCategory(); }}
+                disabled={creating}
+                title={creating ? 'Creating…' : `Create category "${normalizedQuery}"`}
+              >
+                ➕ Create "{normalizedQuery}"{creating ? '…' : ''}
+              </button>
+            </div>
+          )}
+          <div className="nx-catpicker-list" role="listbox">
+            {filtered.length === 0 ? (
+              <div className="nx-catpicker-empty">No categories found</div>
+            ) : filtered.map(i => {
+              const selected = selectedSet.has(i.id);
+              const isPrimary = normalizedPrimary === i.id;
+              return (
+                <div
+                  key={i.id}
+                  className={`nx-catpicker-item ${selected ? 'selected' : ''}`}
+                  onClick={() => toggle(i.id)}
+                  role="option"
+                  aria-selected={selected}
+                >
+                  <input type="checkbox" checked={selected} readOnly />
+                  <span className="nx-catpicker-name">{i.name}</span>
+                  <button
+                    type="button"
+                    className={`nx-catpicker-star ${isPrimary ? 'active' : ''}`}
+                    onClick={(e) => { e.stopPropagation(); makePrimary(i.id); }}
+                    title={isPrimary ? 'Primary' : 'Make primary'}
+                    aria-label={isPrimary ? `${i.name} is primary` : `Make ${i.name} primary`}
+                  >
+                    ⭐
+                  </button>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};
 function App() {
   const [plexStatus, setPlexStatus] = useState('Disconnected');
   const [plexServerInfo, setPlexServerInfo] = useState(null);
@@ -28,10 +292,78 @@ function App() {
     config_file_exists: false,
     token_length: 0
   });
-  const [manualToken, setManualToken] = useState('');
+  // Plex.tv OAuth UI state and helpers
+  const [plexOAuth, setPlexOAuth] = useState({ id: null, url: '', status: 'idle', error: null });
+  const oauthPollRef = React.useRef(null);
+  // Stable token management (optional advanced)
+  const [showStableTokenSave, setShowStableTokenSave] = useState(false);
+  const [stableTokenInput, setStableTokenInput] = useState('');
   const [systemVersion, setSystemVersion] = useState(null);
   const [ffmpegInfo, setFfmpegInfo] = useState(null);
+  const [updateInfo, setUpdateInfo] = useState(null);
+  const [showUpdateBanner, setShowUpdateBanner] = useState(false);
+  const [prerollView, setPrerollView] = useState(() => {
+    try { return localStorage.getItem('prerollView') || 'grid'; } catch { return 'grid'; }
+  });
 
+  // PWA install state
+  const [deferredPrompt, setDeferredPrompt] = useState(null);
+  const [showInstallPrompt, setShowInstallPrompt] = useState(false);
+  const [isInstalled, setIsInstalled] = useState(false);
+
+ 
+  // Category preroll management UI state
+  const [expandedCategories, setExpandedCategories] = useState({});
+  const [categoryPrerolls, setCategoryPrerolls] = useState({});
+  const [categoryPrerollsLoading, setCategoryPrerollsLoading] = useState({});
+  const [categoryAddSelection, setCategoryAddSelection] = useState({});
+// Calendar view state
+const [showCalendar, setShowCalendar] = useState(false);
+const [calendarMonth, setCalendarMonth] = useState(() => {
+  const d = new Date();
+  return d.getMonth() + 1; // 1-12
+});
+const [calendarYear, setCalendarYear] = useState(() => {
+  const d = new Date();
+  return d.getFullYear();
+});
+const [calendarMode, setCalendarMode] = useState('month'); // 'month' | 'year'
+
+// Date/time helpers: treat backend datetimes as UTC and format for local display/inputs
+const ensureUtcIso = (s) => {
+  if (!s || typeof s !== 'string') return s;
+  return (s.endsWith('Z') || s.includes('+')) ? s : (s + 'Z');
+};
+const toLocalInputValue = (isoOrNaive) => {
+  if (!isoOrNaive) return '';
+  const d = new Date(ensureUtcIso(isoOrNaive));
+  const pad = (n) => String(n).padStart(2, '0');
+  const yyyy = d.getFullYear();
+  const mm = pad(d.getMonth() + 1);
+  const dd = pad(d.getDate());
+  const hh = pad(d.getHours());
+  const mi = pad(d.getMinutes());
+  return `${yyyy}-${mm}-${dd}T${hh}:${mi}`;
+};
+const toLocalDisplay = (isoOrNaive) => {
+  if (!isoOrNaive) return 'N/A';
+  try {
+    const d = new Date(ensureUtcIso(isoOrNaive));
+    return d.toLocaleString();
+  } catch {
+    return isoOrNaive;
+  }
+};
+const toLocalInputFromDate = (d) => {
+  if (!d) return '';
+  const pad = (n) => String(n).padStart(2, '0');
+  const yyyy = d.getFullYear();
+  const mm = pad(d.getMonth() + 1);
+  const dd = pad(d.getDate());
+  const hh = pad(d.getHours());
+  const mi = pad(d.getMinutes());
+  return `${yyyy}-${mm}-${dd}T${hh}:${mi}`;
+};
   // Schedule form state
   const [scheduleForm, setScheduleForm] = useState({
     name: '',
@@ -40,13 +372,23 @@ function App() {
     end_date: '',
     category_id: '',
     shuffle: false,
-    playlist: false
+    playlist: false,
+    fallback_category_id: ''
   });
 
   // Upload form state
   const [uploadForm, setUploadForm] = useState({
     tags: '',
     category_id: '',
+    category_ids: [],
+    description: ''
+  });
+  const [editForm, setEditForm] = useState({
+    display_name: '',
+    new_filename: '',
+    tags: '',
+    category_id: '',
+    category_ids: [],
     description: ''
   });
 
@@ -54,6 +396,19 @@ function App() {
   const [filterTags, setFilterTags] = useState('');
   const [filterCategory, setFilterCategory] = useState('');
   const [availableTags, setAvailableTags] = useState([]);
+
+  // Preroll pagination and selection
+  const [selectedPrerollIds, setSelectedPrerollIds] = useState([]);
+  const [currentPage, setCurrentPage] = useState(1);
+  const [pageSize, setPageSize] = useState(() => {
+    try {
+      const v = parseInt(localStorage.getItem('prerollPageSize') || '20', 10);
+      return Math.min(50, Math.max(20, isNaN(v) ? 20 : v));
+    } catch {
+      return 20;
+    }
+  });
+  const [bulkCategoryId, setBulkCategoryId] = useState('');
 
   // Load theme preference from localStorage
   useEffect(() => {
@@ -69,6 +424,158 @@ function App() {
     document.body.className = darkMode ? 'dark' : 'light';
   }, [darkMode]);
 
+  useEffect(() => {
+    try { localStorage.setItem('prerollView', prerollView); } catch {}
+  }, [prerollView]);
+
+  // Persist and clamp preroll pagination
+  useEffect(() => {
+    try { localStorage.setItem('prerollPageSize', String(pageSize)); } catch {}
+  }, [pageSize]);
+
+  useEffect(() => {
+    const totalPages = Math.max(1, Math.ceil((prerolls || []).length / pageSize));
+    setCurrentPage(prev => Math.min(prev, totalPages));
+  }, [prerolls.length, pageSize]);
+
+  useEffect(() => {
+    // Reset to first page when filters change
+    setCurrentPage(1);
+  }, [filterCategory, filterTags]);
+
+  // Ensure tab title always shows "NeXroll" (guards against cached index.html/manifest)
+  useEffect(() => {
+    try {
+      if (document && document.title !== 'NeXroll') {
+        document.title = 'NeXroll';
+      }
+    } catch {}
+  }, []);
+
+  // Safe JSON parser to prevent UI breakage if an endpoint returns non-JSON or HTTP 500/HTML
+  const safeJson = async (r) => {
+    try {
+      return await r.json();
+    } catch (e) {
+      return r && typeof r.status === 'number' ? { __error: true, status: r.status } : {};
+    }
+  };
+
+  // Version helpers and GitHub update check
+  const normalizeVersionString = (input) => {
+    try {
+      if (!input) return '0.0.0';
+      let s = String(input).trim();
+      // strip leading "v"
+      s = s.replace(/^v+/i, '');
+      // treat "-" and "_" as separators
+      s = s.replace(/[_-]/g, '.');
+      // pick up to 4 numeric segments
+      const m = s.match(/(\d+(?:\.\d+){0,3})/);
+      return m ? m[1] : '0.0.0';
+    } catch {
+      return '0.0.0';
+    }
+  };
+
+  const parseVersion = (v) => {
+    const parts = normalizeVersionString(v).split('.').map(n => parseInt(n, 10) || 0);
+    while (parts.length < 3) parts.push(0);
+    return parts.slice(0, 4);
+  };
+
+  const compareVersions = (a, b) => {
+    const pa = parseVersion(a);
+    const pb = parseVersion(b);
+    const len = Math.max(pa.length, pb.length);
+    for (let i = 0; i < len; i++) {
+      const ai = pa[i] || 0;
+      const bi = pb[i] || 0;
+      if (ai > bi) return 1;
+      if (ai < bi) return -1;
+    }
+    return 0;
+  };
+
+  const extractVersionFromRelease = (data) => {
+    const tag = (data && data.tag_name) || '';
+    const name = (data && data.name) || '';
+    return normalizeVersionString(tag || name);
+  };
+
+  const checkForUpdates = async (installedVersion) => {
+    try {
+      const now = Date.now();
+      const lastChecked = parseInt(localStorage.getItem('nx_update_checked_at') || '0', 10);
+      let latest = null;
+
+      if (!lastChecked || (now - lastChecked) > (12 * 60 * 60 * 1000)) {
+        const res = await fetch('https://api.github.com/repos/JFLXCLOUD/NeXroll/releases/latest', {
+          headers: { 'Accept': 'application/vnd.github+json' }
+        });
+        if (!res.ok) {
+          // Fallback: use releases/latest page if API blocked
+          latest = {
+            version: null,
+            url: 'https://github.com/JFLXCLOUD/NeXroll/releases/latest',
+            name: 'Latest Release'
+          };
+        } else {
+          const data = await res.json();
+          latest = {
+            version: extractVersionFromRelease(data),
+            url: data.html_url || 'https://github.com/JFLXCLOUD/NeXroll/releases/latest',
+            name: data.name || data.tag_name || 'Latest Release'
+          };
+        }
+        localStorage.setItem('nx_latest_release_info', JSON.stringify(latest));
+        localStorage.setItem('nx_update_checked_at', String(now));
+      } else {
+        const cached = localStorage.getItem('nx_latest_release_info');
+        latest = cached ? JSON.parse(cached) : null;
+      }
+
+      if (latest && latest.version && installedVersion) {
+        const dismissed = normalizeVersionString(localStorage.getItem('nx_dismissed_version') || '');
+        const cmp = compareVersions(latest.version, installedVersion);
+        setUpdateInfo(latest);
+        setShowUpdateBanner(cmp > 0 && dismissed !== normalizeVersionString(latest.version));
+      } else {
+        setShowUpdateBanner(false);
+      }
+    } catch (e) {
+      console.warn('Update check failed:', e);
+    }
+  };
+
+  const handleDismissUpdate = () => {
+    try {
+      if (updateInfo && updateInfo.version) {
+        localStorage.setItem('nx_dismissed_version', normalizeVersionString(updateInfo.version));
+      }
+    } catch {}
+    setShowUpdateBanner(false);
+  };
+
+  const handleInstallPWA = async () => {
+    if (!deferredPrompt) return;
+
+    deferredPrompt.prompt();
+    const { outcome } = await deferredPrompt.userChoice;
+
+    console.log('PWA install outcome:', outcome);
+    setDeferredPrompt(null);
+    setShowInstallPrompt(false);
+
+    if (outcome === 'accepted') {
+      setIsInstalled(true);
+    }
+  };
+
+  const dismissInstallPrompt = () => {
+    setShowInstallPrompt(false);
+  };
+ 
   const toggleTheme = () => {
     setDarkMode(!darkMode);
   };
@@ -76,9 +583,76 @@ function App() {
   useEffect(() => {
     fetchData();
     const interval = setInterval(fetchData, 30000); // Refresh every 30 seconds
-    return () => clearInterval(interval);
+
+    // Live status via Server-Sent Events (SSE)
+    let es;
+    try {
+      es = new EventSource('http://localhost:9393/events');
+      es.onmessage = (ev) => {
+        try {
+          const data = JSON.parse(ev.data);
+          if (data && data.scheduler) {
+            setSchedulerStatus(prev => ({
+              ...prev,
+              running: !!data.scheduler.running
+            }));
+          }
+        } catch (e) {
+          // ignore parse errors
+        }
+      };
+    } catch (e) {
+      // SSE not available
+    }
+
+    return () => {
+      clearInterval(interval);
+      try { es && es.close(); } catch {}
+    };
   }, []);
 
+  // Check GitHub for latest release once system version is known
+  useEffect(() => {
+    if (!systemVersion) return;
+    const installed = normalizeVersionString(
+      (systemVersion.registry_version || systemVersion.api_version || '').toString()
+    );
+    checkForUpdates(installed);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [systemVersion]);
+
+  // PWA install prompt handling
+  useEffect(() => {
+    // Check if already installed
+    const isStandalone = window.matchMedia('(display-mode: standalone)').matches;
+    const isInWebAppiOS = window.navigator.standalone === true;
+    setIsInstalled(isStandalone || isInWebAppiOS);
+
+    // Listen for the beforeinstallprompt event
+    const handleBeforeInstallPrompt = (e) => {
+      console.log('PWA install prompt available');
+      e.preventDefault();
+      setDeferredPrompt(e);
+      setShowInstallPrompt(true);
+    };
+
+    // Listen for successful installation
+    const handleAppInstalled = () => {
+      console.log('PWA was installed');
+      setDeferredPrompt(null);
+      setShowInstallPrompt(false);
+      setIsInstalled(true);
+    };
+
+    window.addEventListener('beforeinstallprompt', handleBeforeInstallPrompt);
+    window.addEventListener('appinstalled', handleAppInstalled);
+
+    return () => {
+      window.removeEventListener('beforeinstallprompt', handleBeforeInstallPrompt);
+      window.removeEventListener('appinstalled', handleAppInstalled);
+    };
+  }, []);
+ 
   const fetchData = () => {
     // Fetch all data
     Promise.all([
@@ -93,7 +667,7 @@ function App() {
       fetch('http://localhost:9393/plex/stable-token/status'),
       fetch('http://localhost:9393/system/version'),
       fetch('http://localhost:9393/system/ffmpeg-info')
-    ]).then(responses => Promise.all(responses.map(r => r.json())))
+    ]).then(responses => Promise.all(responses.map(safeJson)))
       .then(([plex, prerolls, schedules, categories, holidays, scheduler, tags, templates, stableToken, sysVersion, ffmpeg]) => {
         setPlexStatus(plex.connected ? 'Connected' : 'Disconnected');
         setPlexServerInfo(plex);
@@ -146,17 +720,15 @@ function App() {
 
     for (let i = 0; i < files.length; i++) {
       const file = files[i];
-      const formData = new FormData();
-      formData.append('file', file);
-      if (uploadForm.tags.trim()) formData.append('tags', uploadForm.tags.trim());
-      if (uploadForm.category_id) formData.append('category_id', uploadForm.category_id);
-      if (uploadForm.description.trim()) formData.append('description', uploadForm.description.trim());
-
       try {
         const formData = new FormData();
         formData.append('file', file);
         if (uploadForm.tags.trim()) formData.append('tags', uploadForm.tags.trim());
         if (uploadForm.category_id) formData.append('category_id', uploadForm.category_id);
+        if (uploadForm.category_ids && uploadForm.category_ids.length > 0) {
+          const ids = uploadForm.category_ids.map(id => parseInt(id)).filter(n => !isNaN(n));
+          if (ids.length > 0) formData.append('category_ids', JSON.stringify(ids));
+        }
         if (uploadForm.description.trim()) formData.append('description', uploadForm.description.trim());
 
         const response = await fetch('http://localhost:9393/prerolls/upload', {
@@ -203,7 +775,7 @@ function App() {
 
     // Clear files and form
     setFiles([]);
-    setUploadForm({ tags: '', category_id: '', description: '' });
+    setUploadForm({ tags: '', category_id: '', category_ids: [], description: '' });
     fetchData();
   };
 
@@ -240,6 +812,9 @@ function App() {
       shuffle: scheduleForm.shuffle,
       playlist: scheduleForm.playlist
     };
+    if (scheduleForm.fallback_category_id) {
+      scheduleData.fallback_category_id = parseInt(scheduleForm.fallback_category_id);
+    }
 
     fetch('http://localhost:9393/schedules', {
       method: 'POST',
@@ -274,6 +849,7 @@ function App() {
       });
   };
 
+
   const handleInitHolidays = () => {
     fetch('http://localhost:9393/holiday-presets/init', { method: 'POST' })
       .then(res => res.json())
@@ -284,7 +860,7 @@ function App() {
   };
 
   const handleApplyCategoryToPlex = (categoryId, categoryName) => {
-    const message = `Apply category "${categoryName}" to Plex?\n\nThis will send ALL prerolls from this category to Plex. Plex will automatically rotate through them during playback.`;
+    const message = `Apply category "${categoryName}" to Plex?\n\nThis will send ALL prerolls from this category to Plex.`;
     if (window.confirm(message)) {
       fetch(`http://localhost:9393/categories/${categoryId}/apply-to-plex`, { method: 'POST' })
         .then(res => {
@@ -303,7 +879,7 @@ function App() {
             });
           }
           if (data.rotation_info) {
-            successMessage += `\n\n${data.rotation_info}`;
+            // rotation_info removed from UI per feedback
           }
           alert(successMessage);
           fetchData();
@@ -535,13 +1111,14 @@ function App() {
     setScheduleForm({
       name: schedule.name,
       type: schedule.type,
-      start_date: schedule.start_date ? new Date(schedule.start_date).toISOString().slice(0, 16) : '',
-      end_date: schedule.end_date ? new Date(schedule.end_date).toISOString().slice(0, 16) : '',
+      start_date: toLocalInputValue(schedule.start_date),
+      end_date: toLocalInputValue(schedule.end_date),
       category_id: schedule.category_id || '',
       shuffle: schedule.shuffle,
-      playlist: schedule.playlist
+      playlist: schedule.playlist,
+      fallback_category_id: schedule.fallback_category_id || ''
     });
-  };
+ };
 
   const handleUpdateSchedule = (e) => {
     e.preventDefault();
@@ -556,6 +1133,9 @@ function App() {
       shuffle: scheduleForm.shuffle,
       playlist: scheduleForm.playlist
     };
+    if (scheduleForm.fallback_category_id) {
+      scheduleData.fallback_category_id = parseInt(scheduleForm.fallback_category_id);
+    }
 
     fetch(`http://localhost:9393/schedules/${editingSchedule.id}`, {
       method: 'PUT',
@@ -607,9 +1187,24 @@ function App() {
 
   const handleEditPreroll = (preroll) => {
     setEditingPreroll(preroll);
-    setUploadForm({
-      tags: preroll.tags ? (Array.isArray(JSON.parse(preroll.tags)) ? JSON.parse(preroll.tags).join(', ') : preroll.tags) : '',
-      category_id: preroll.category_id || '',
+    let tagsStr = '';
+    try {
+      if (preroll.tags) {
+        const t = typeof preroll.tags === 'string' ? JSON.parse(preroll.tags) : preroll.tags;
+        if (Array.isArray(t)) tagsStr = t.join(', ');
+        else if (typeof preroll.tags === 'string') tagsStr = preroll.tags;
+      }
+    } catch {
+      tagsStr = typeof preroll.tags === 'string' ? preroll.tags : '';
+    }
+    const primaryId = preroll.category_id || (preroll.category?.id || '');
+    const assocIds = Array.isArray(preroll.categories) ? preroll.categories.map(c => String(c.id)) : [];
+    setEditForm({
+      display_name: preroll.display_name || '',
+      new_filename: '',
+      tags: tagsStr,
+      category_id: primaryId ? String(primaryId) : '',
+      category_ids: assocIds,
       description: preroll.description || ''
     });
   };
@@ -618,15 +1213,20 @@ function App() {
     e.preventDefault();
     if (!editingPreroll) return;
 
-    const updateData = {};
-    if (uploadForm.tags.trim()) updateData.tags = uploadForm.tags.trim();
-    if (uploadForm.category_id) updateData.category_id = parseInt(uploadForm.category_id);
-    if (uploadForm.description.trim()) updateData.description = uploadForm.description.trim();
+    const payload = {};
+    if (editForm.tags && editForm.tags.trim()) payload.tags = editForm.tags.trim();
+    if (editForm.category_id) payload.category_id = parseInt(editForm.category_id);
+    if (editForm.category_ids && editForm.category_ids.length > 0) {
+      payload.category_ids = editForm.category_ids.map(id => parseInt(id)).filter(n => !isNaN(n));
+    }
+    if (editForm.description && editForm.description.trim()) payload.description = editForm.description.trim();
+    if (typeof editForm.display_name === 'string') payload.display_name = editForm.display_name.trim();
+    if (editForm.new_filename && editForm.new_filename.trim()) payload.new_filename = editForm.new_filename.trim();
 
     fetch(`http://localhost:9393/prerolls/${editingPreroll.id}`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(updateData)
+      body: JSON.stringify(payload)
     })
       .then(res => {
         if (!res.ok) {
@@ -634,10 +1234,10 @@ function App() {
         }
         return res.json();
       })
-      .then(data => {
+      .then(() => {
         alert('Preroll updated successfully!');
         setEditingPreroll(null);
-        setUploadForm({ tags: '', category_id: '', description: '' });
+        setEditForm({ display_name: '', new_filename: '', tags: '', category_id: '', category_ids: [], description: '' });
         fetchData();
       })
       .catch(error => {
@@ -670,40 +1270,278 @@ function App() {
 
   const handleEditCategory = (category) => {
     setEditingCategory(category);
-    setNewCategory({ name: category.name, description: category.description || '' });
+    setNewCategory({ name: category.name, description: category.description || '', plex_mode: (category.plex_mode || 'shuffle') });
+    try { loadCategoryPrerolls(category.id); } catch (e) {}
   };
 
-  const handleUpdateCategory = (e) => {
+  const handleUpdateCategory = async (e) => {
     e.preventDefault();
     if (!editingCategory) return;
 
-    fetch(`http://localhost:9393/categories/${editingCategory.id}`, {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(newCategory)
-    })
-      .then(res => {
-        if (!res.ok) {
-          throw new Error(`HTTP error! status: ${res.status}`);
-        }
-        return res.json();
-      })
-      .then(data => {
-        alert('Category updated successfully!');
-        setEditingCategory(null);
-        setNewCategory({ name: '', description: '' });
-        fetchData();
-      })
-      .catch(error => {
-        console.error('Update category error:', error);
-        alert('Failed to update category: ' + error.message);
+    const name = (newCategory.name || '').trim();
+    const description = (newCategory.description || '').trim();
+    if (!name) {
+      alert('Category name is required');
+      return;
+    }
+
+    try {
+      const res = await fetch(`http://localhost:9393/categories/${editingCategory.id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name, description, plex_mode: newCategory.plex_mode || 'shuffle' })
       });
+      const text = await res.text();
+      let data = null;
+      try { data = text ? JSON.parse(text) : null; } catch {}
+
+      if (!res.ok) {
+        const msg = (data && (data.detail || data.message)) || text || `HTTP ${res.status}`;
+        throw new Error(msg);
+      }
+
+      alert('Category updated successfully!');
+      setEditingCategory(null);
+      setNewCategory({ name: '', description: '' });
+
+      if (data && data.id) {
+        setCategories(prev => prev.map(c => c.id === data.id ? data : c));
+      } else {
+        fetchData();
+      }
+    } catch (error) {
+      console.error('Update category error:', error);
+      alert(error.message.includes('already exists') ? 'Category name already exists' : 'Failed to update category: ' + error.message);
+    }
+  };
+
+  const handleUpdateCategoryAndApply = async (e) => {
+    e.preventDefault();
+    if (!editingCategory) return;
+
+    const name = (newCategory.name || '').trim();
+    const description = (newCategory.description || '').trim();
+    if (!name) {
+      alert('Category name is required');
+      return;
+    }
+
+    try {
+      const res = await fetch(`http://localhost:9393/categories/${editingCategory.id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name, description, plex_mode: newCategory.plex_mode || 'shuffle' })
+      });
+      const text = await res.text();
+      let data = null;
+      try { data = text ? JSON.parse(text) : null; } catch {}
+
+      if (!res.ok) {
+        const msg = (data && (data.detail || data.message)) || text || `HTTP ${res.status}`;
+        throw new Error(msg);
+      }
+
+      if (data && data.id) {
+        setCategories(prev => prev.map(c => (c.id === data.id ? data : c)));
+      }
+
+      const idToApply = (data && data.id) || editingCategory.id;
+      const nameToApply = (data && data.name) || name;
+      const resApply = await fetch(`http://localhost:9393/categories/${idToApply}/apply-to-plex`, { method: 'POST' });
+      const applyText = await resApply.text();
+      let applyData = null;
+      try { applyData = applyText ? JSON.parse(applyText) : null; } catch {}
+
+      if (!resApply.ok) {
+        const msg = (applyData && (applyData.detail || applyData.message)) || applyText || `HTTP ${resApply.status}`;
+        throw new Error(`Saved but failed to apply to Plex: ${msg}`);
+      }
+
+      alert(`Saved and applied "${nameToApply}" to Plex!`);
+      setEditingCategory(null);
+      setNewCategory({ name: '', description: '' });
+      fetchData();
+    } catch (error) {
+      console.error('Save & Apply category error:', error);
+      alert(error.message || 'Failed to save/apply category');
+    }
+  };
+
+  // Category preroll management helpers
+  const isPrerollInCategory = (pr, catId) => {
+    if (!pr) return false;
+    if (pr.category_id === catId) return true;
+    if (Array.isArray(pr.categories)) return pr.categories.some(c => c.id === catId);
+    return false;
+  };
+
+  const loadCategoryPrerolls = async (categoryId) => {
+    setCategoryPrerollsLoading(prev => ({ ...prev, [categoryId]: true }));
+    try {
+      const res = await fetch(`http://localhost:9393/categories/${categoryId}/prerolls`);
+      const data = await safeJson(res);
+      setCategoryPrerolls(prev => ({ ...prev, [categoryId]: Array.isArray(data) ? data : [] }));
+    } catch (e) {
+      console.error('Load category prerolls error:', e);
+      setCategoryPrerolls(prev => ({ ...prev, [categoryId]: [] }));
+    } finally {
+      setCategoryPrerollsLoading(prev => ({ ...prev, [categoryId]: false }));
+    }
+  };
+
+  const toggleManageCategory = (categoryId) => {
+    setExpandedCategories(prev => {
+      const expanded = !prev[categoryId];
+      if (expanded && !categoryPrerolls[categoryId]) {
+        loadCategoryPrerolls(categoryId);
+      }
+      return { ...prev, [categoryId]: expanded };
+    });
+  };
+
+  const handleCategoryRemovePreroll = async (categoryId, preroll) => {
+    if (!preroll) return;
+    if (preroll.category_id === categoryId) {
+      alert('Cannot remove the primary category here. Use "Edit Preroll" to change the primary category.');
+      return;
+    }
+    if (!window.confirm(`Remove "${preroll.display_name || preroll.filename}" from this category?`)) return;
+    try {
+      const res = await fetch(`http://localhost:9393/categories/${categoryId}/prerolls/${preroll.id}`, { method: 'DELETE' });
+      if (!res.ok) {
+        const text = await res.text();
+        throw new Error(text || `HTTP ${res.status}`);
+      }
+      setCategoryPrerolls(prev => ({
+        ...prev,
+        [categoryId]: (prev[categoryId] || []).filter(p => p.id !== preroll.id)
+      }));
+      fetchData();
+    } catch (e) {
+      console.error('Remove preroll from category error:', e);
+      alert('Failed to remove preroll from category: ' + e.message);
+    }
+  };
+
+  const handleCategoryAddPreroll = async (categoryId) => {
+    const sel = categoryAddSelection[categoryId] || {};
+    const prerollId = sel.prerollId || '';
+    if (!prerollId) {
+      alert('Please select a preroll to add');
+      return;
+    }
+    try {
+      const res = await fetch(`http://localhost:9393/categories/${categoryId}/prerolls/${prerollId}?set_primary=${sel.setPrimary ? 'true' : 'false'}`, { method: 'POST' });
+      if (!res.ok) {
+        const text = await res.text();
+        throw new Error(text || `HTTP ${res.status}`);
+      }
+      await res.json().catch(() => null);
+      setCategoryAddSelection(prev => ({ ...prev, [categoryId]: { prerollId: '', setPrimary: false } }));
+      loadCategoryPrerolls(categoryId);
+      fetchData();
+      alert(`Preroll added to category${sel.setPrimary ? ' and set as primary' : ''}!`);
+    } catch (e) {
+      console.error('Add preroll to category error:', e);
+      alert('Failed to add preroll to category: ' + e.message);
+    }
+  };
+
+  const availablePrerollsForCategory = (categoryId) => {
+    const assigned = new Set((categoryPrerolls[categoryId] || []).map(p => p.id));
+    return prerolls.filter(p => !assigned.has(p.id));
+  };
+
+  // UI helpers and derived values for prerolls list
+  const formatBytes = (bytes) => {
+    const b = Number(bytes) || 0;
+    if (b <= 0) return '0 B';
+    const units = ['B','KB','MB','GB','TB','PB'];
+    const i = Math.floor(Math.log(b) / Math.log(1024));
+    const val = b / Math.pow(1024, i);
+    const prec = i === 0 ? 0 : (val >= 100 ? 0 : val >= 10 ? 1 : 2);
+    return `${val.toFixed(prec)} ${units[i]}`;
+  };
+  const totalStorageBytes = prerolls.reduce((sum, p) => sum + (Number(p.file_size) || 0), 0);
+
+  const totalPrerolls = prerolls.length;
+  const totalPages = Math.max(1, Math.ceil(totalPrerolls / pageSize));
+  const currentPageClamped = Math.min(currentPage, totalPages);
+  const pageStartIndex = (currentPageClamped - 1) * pageSize;
+  const pageEndIndex = Math.min(pageStartIndex + pageSize, totalPrerolls);
+  const visiblePrerolls = prerolls.slice(pageStartIndex, pageEndIndex);
+  const visibleIds = visiblePrerolls.map(p => p.id);
+  const allSelectedOnPage = visibleIds.length > 0 && visibleIds.every(id => selectedPrerollIds.includes(id));
+
+  const toggleSelectPreroll = (id) => {
+    setSelectedPrerollIds(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]);
+  };
+  const selectAllVisible = (ids, checked) => {
+    setSelectedPrerollIds(prev => {
+      const set = new Set(prev);
+      if (checked) {
+        ids.forEach(id => set.add(id));
+      } else {
+        ids.forEach(id => set.delete(id));
+      }
+      return Array.from(set);
+    });
+  };
+  const clearSelection = () => setSelectedPrerollIds([]);
+
+  const handleBulkSetPrimary = async (categoryId) => {
+    const cid = parseInt(categoryId, 10);
+    if (!cid || isNaN(cid)) { alert('Select a target category'); return; }
+    if (selectedPrerollIds.length === 0) { alert('No prerolls selected'); return; }
+    if (!window.confirm(`Change primary category for ${selectedPrerollIds.length} preroll(s)? This will move files on disk.`)) return;
+    let ok = 0, fail = 0;
+    for (const id of selectedPrerollIds) {
+      try {
+        const res = await fetch(`http://localhost:9393/prerolls/${id}`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ category_id: cid })
+        });
+        if (!res.ok) fail++; else ok++;
+      } catch { fail++; }
+    }
+    alert(`Primary category updated. Success: ${ok}, Failed: ${fail}`);
+    setSelectedPrerollIds([]);
+    setBulkCategoryId('');
+    fetchData();
+  };
+
+  const createCategoryInline = async (name) => {
+    const n = String(name || '').trim();
+    if (!n) return null;
+    try {
+      const res = await fetch('http://localhost:9393/categories', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: n, description: '', plex_mode: 'shuffle' })
+      });
+      const text = await res.text();
+      let data = null;
+      try { data = text ? JSON.parse(text) : null; } catch {}
+      if (!res.ok) {
+        const msg = (data && (data.detail || data.message)) || text || `HTTP ${res.status}`;
+        throw new Error(msg);
+      }
+      if (data && data.id) {
+        setCategories(prev => prev.some(c => c.id === data.id) ? prev : [...prev, data]);
+      }
+      return data;
+    } catch (err) {
+      alert('Failed to create category: ' + (err && err.message ? err.message : err));
+      return null;
+    }
   };
 
   const renderDashboard = () => (
     <div>
       <h1 className="header">NeXroll Dashboard</h1>
 
+ 
       <div className="grid">
         <div className="card">
           <h2>Plex Status</h2>
@@ -725,6 +1563,13 @@ function App() {
         <div className="card">
           <h2>Prerolls</h2>
           <p>{prerolls.length} uploaded</p>
+          <button onClick={handleReinitThumbnails} className="button" style={{ marginTop: '0.5rem' }}>
+            🔄 Reinitialize Thumbnails
+          </button>
+        </div>
+        <div className="card">
+          <h2>Storage</h2>
+          <p>{formatBytes(totalStorageBytes)} used</p>
         </div>
         <div className="card">
           <h2>Schedules</h2>
@@ -781,16 +1626,15 @@ function App() {
               onChange={(e) => setUploadForm({...uploadForm, tags: e.target.value})}
               style={{ padding: '0.5rem' }}
             />
-            <select
-              value={uploadForm.category_id}
-              onChange={(e) => setUploadForm({...uploadForm, category_id: e.target.value})}
-              style={{ padding: '0.5rem' }}
-            >
-              <option value="">Select Category (Optional)</option>
-              {categories.map(cat => (
-                <option key={cat.id} value={cat.id}>{cat.name}</option>
-              ))}
-            </select>
+            <CategoryPicker
+              categories={categories}
+              primaryId={uploadForm.category_id}
+              secondaryIds={uploadForm.category_ids}
+              onChange={(primary, secondary) => setUploadForm({ ...uploadForm, category_id: primary, category_ids: secondary })}
+              onCreateCategory={createCategoryInline}
+              label="Categories"
+              placeholder="Search categories…"
+            />
             <textarea
               placeholder="Description (Optional)"
               value={uploadForm.description}
@@ -805,11 +1649,101 @@ function App() {
         </form>
       </div>
 
+      {editingPreroll && (
+        <Modal
+          title="Edit Preroll"
+          onClose={() => { setEditingPreroll(null); setEditForm({ display_name: '', new_filename: '', tags: '', category_id: '', category_ids: [], description: '' }); }}
+        >
+          <form onSubmit={handleUpdatePreroll}>
+            <div className="nx-form-grid">
+              <div className="nx-field">
+                <label className="nx-label">Display Name</label>
+                <input
+                  className="nx-input"
+                  type="text"
+                  placeholder="Optional friendly name"
+                  value={editForm.display_name}
+                  onChange={(e) => setEditForm({ ...editForm, display_name: e.target.value })}
+                />
+              </div>
+              <div className="nx-field">
+                <label className="nx-label">New File Name</label>
+                <input
+                  className="nx-input"
+                  type="text"
+                  placeholder="Optional rename on disk (extension optional)"
+                  value={editForm.new_filename}
+                  onChange={(e) => setEditForm({ ...editForm, new_filename: e.target.value })}
+                />
+              </div>
+              <div className="nx-field nx-span-2">
+                <CategoryPicker
+                  categories={categories}
+                  primaryId={editForm.category_id}
+                  secondaryIds={editForm.category_ids}
+                  onChange={(primary, secondary) => setEditForm({ ...editForm, category_id: primary, category_ids: secondary })}
+                  onCreateCategory={createCategoryInline}
+                  label="Categories"
+                  placeholder="Search categories…"
+                />
+              </div>
+              <div className="nx-field">
+                <label className="nx-label">Tags</label>
+                <input
+                  className="nx-input"
+                  type="text"
+                  placeholder="Comma separated"
+                  value={editForm.tags}
+                  onChange={(e) => setEditForm({ ...editForm, tags: e.target.value })}
+                />
+              </div>
+              <div className="nx-field nx-span-2">
+                <label className="nx-label">Description</label>
+                <textarea
+                  className="nx-textarea"
+                  placeholder="Optional details"
+                  value={editForm.description}
+                  onChange={(e) => setEditForm({ ...editForm, description: e.target.value })}
+                  rows="4"
+                />
+              </div>
+            </div>
+            <div className="nx-actions">
+              <button type="submit" className="button">Save Changes</button>
+              <button
+                type="button"
+                className="button-secondary"
+                onClick={() => { setEditingPreroll(null); setEditForm({ display_name: '', new_filename: '', tags: '', category_id: '', category_ids: [], description: '' }); }}
+              >
+                Cancel
+              </button>
+            </div>
+          </form>
+        </Modal>
+      )}
       <div className="card">
         <h2>Prerolls</h2>
+        <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '0.5rem' }}>
+          <button
+            type="button"
+            className="button"
+            onClick={() => setPrerollView('grid')}
+            style={{ backgroundColor: prerollView === 'grid' ? '#28a745' : '#6c757d' }}
+          >
+            Grid
+          </button>
+          <button
+            type="button"
+            className="button"
+            onClick={() => setPrerollView('list')}
+            style={{ backgroundColor: prerollView === 'list' ? '#28a745' : '#6c757d' }}
+          >
+            List
+          </button>
+        </div>
 
-        {/* Filter Controls */}
-        <div style={{ marginBottom: '1rem', display: 'flex', gap: '1rem', flexWrap: 'wrap' }}>
+        {/* Filter + Pagination Controls */}
+        <div style={{ marginBottom: '0.5rem', display: 'flex', gap: '1rem', flexWrap: 'wrap', alignItems: 'center' }}>
           <select
             value={filterCategory}
             onChange={(e) => setFilterCategory(e.target.value)}
@@ -827,7 +1761,72 @@ function App() {
             onChange={(e) => setFilterTags(e.target.value)}
             style={{ padding: '0.5rem' }}
           />
-          <button onClick={fetchData} className="button" style={{ padding: '0.5rem 1rem' }}>Filter</button>
+          <button
+            onClick={() => { setCurrentPage(1); fetchData(); }}
+            className="button"
+            style={{ padding: '0.5rem 1rem' }}
+          >
+            Filter
+          </button>
+
+          <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+            <label style={{ fontSize: '0.9rem', color: 'var(--text-color)' }}>
+              Per page:
+              <select
+                value={pageSize}
+                onChange={(e) => { const v = parseInt(e.target.value, 10); setPageSize(v); setCurrentPage(1); }}
+                className="nx-select"
+                style={{ marginLeft: '0.5rem' }}
+              >
+                {[20, 30, 40, 50].map(n => <option key={n} value={n}>{n}</option>)}
+              </select>
+            </label>
+          </div>
+        </div>
+
+        {/* Selection + Bulk Actions */}
+        <div style={{ marginBottom: '1rem', display: 'flex', gap: '0.75rem', flexWrap: 'wrap', alignItems: 'center' }}>
+          <label style={{ display: 'inline-flex', alignItems: 'center', gap: '0.5rem' }}>
+            <input
+              type="checkbox"
+              checked={allSelectedOnPage}
+              onChange={(e) => selectAllVisible(visibleIds, e.target.checked)}
+            />
+            Select all on page
+          </label>
+          <button
+            type="button"
+            className="button-secondary"
+            onClick={clearSelection}
+            disabled={selectedPrerollIds.length === 0}
+            title="Clear selected prerolls"
+          >
+            Clear selection
+          </button>
+          <span style={{ fontSize: '0.9rem', color: '#666' }}>Selected: {selectedPrerollIds.length}</span>
+
+          <div style={{ marginLeft: 'auto', display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+            <select
+              className="nx-select"
+              value={bulkCategoryId}
+              onChange={(e) => setBulkCategoryId(e.target.value)}
+              style={{ minWidth: 200 }}
+            >
+              <option value="">Set Primary Category…</option>
+              {categories.map(cat => (
+                <option key={cat.id} value={cat.id}>{cat.name}</option>
+              ))}
+            </select>
+            <button
+              type="button"
+              className="button"
+              onClick={() => handleBulkSetPrimary(bulkCategoryId)}
+              disabled={!bulkCategoryId || selectedPrerollIds.length === 0}
+              title="Change primary category for all selected prerolls"
+            >
+              Apply to Selected
+            </button>
+          </div>
         </div>
 
         {/* Available Tags */}
@@ -837,12 +1836,20 @@ function App() {
           </div>
         )}
 
-        <div className="preroll-grid">
-          {prerolls.map(preroll => (
+        <div className="preroll-grid" style={{ display: prerollView === 'grid' ? 'grid' : 'none' }}>
+          {visiblePrerolls.map(preroll => (
             <div key={preroll.id} className="preroll-item">
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '0.5rem' }}>
-                <p style={{ fontWeight: 'bold', margin: 0 }}>{preroll.filename}</p>
-                <div style={{ display: 'flex', gap: '0.25rem' }}>
+              <div className="preroll-header" style={{ marginBottom: '0.5rem' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', minWidth: 0 }}>
+                  <input
+                    type="checkbox"
+                    checked={selectedPrerollIds.includes(preroll.id)}
+                    onChange={() => toggleSelectPreroll(preroll.id)}
+                    title="Select preroll"
+                  />
+                  <p className="preroll-title" style={{ fontWeight: 'bold', margin: 0 }}>{preroll.display_name || preroll.filename}</p>
+                </div>
+                <div className="preroll-actions">
                   <button
                     onClick={() => handleEditPreroll(preroll)}
                     className="button"
@@ -861,8 +1868,33 @@ function App() {
                   </button>
                 </div>
               </div>
-              {preroll.thumbnail && <img src={`http://localhost:9393/static/${preroll.thumbnail}`} alt="thumbnail" />}
-              {preroll.category && <p style={{ fontSize: '0.8rem', color: '#666' }}>Category: {preroll.category.name}</p>}
+              {preroll.thumbnail && (
+                <img
+                  src={`http://localhost:9393/static/${preroll.thumbnail}`}
+                  alt="thumbnail"
+                  onError={(e) => {
+                    try {
+                      const rel = preroll.thumbnail || '';
+                      const parts = rel.split('/');
+                      const category = parts[2] || 'Default';
+                      const filename = parts.slice(3).join('/') || (parts.length ? parts[parts.length - 1] : '');
+                      e.currentTarget.onerror = null;
+                      e.currentTarget.src = `http://localhost:9393/thumbgen/${encodeURIComponent(category)}/${encodeURIComponent(filename)}`;
+                    } catch (_) {
+                      // ignore
+                    }
+                  }}
+                />
+              )}
+              {preroll.category && <p style={{ fontSize: '0.8rem', color: '#666' }}>Primary: {preroll.category.name}</p>}
+              {Array.isArray(preroll.categories) && preroll.categories.filter(c => !preroll.category || c.id !== preroll.category.id).length > 0 && (
+                <p style={{ fontSize: '0.8rem', color: '#666' }}>
+                  Also in: {preroll.categories
+                    .filter(c => !preroll.category || c.id !== preroll.category.id)
+                    .map(c => c.name)
+                    .join(', ')}
+                </p>
+              )}
               {preroll.tags && (
                 <p style={{ fontSize: '0.8rem', color: '#666' }}>
                   Tags: {Array.isArray(preroll.tags) ? preroll.tags.join(', ') : preroll.tags}
@@ -876,6 +1908,99 @@ function App() {
             </div>
           ))}
         </div>
+        {/* Pagination (Grid) */}
+        {prerollView === 'grid' && (
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '0.5rem' }}>
+            <div style={{ fontSize: '0.9rem', color: '#666' }}>
+              Showing {totalPrerolls === 0 ? 0 : (pageStartIndex + 1)}-{pageEndIndex} of {totalPrerolls}
+            </div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+              <button className="button-secondary" disabled={currentPageClamped === 1} onClick={() => setCurrentPage(p => Math.max(1, p - 1))}>◀ Prev</button>
+              <span style={{ fontSize: '0.9rem' }}>Page {currentPageClamped} of {totalPages}</span>
+              <button className="button-secondary" disabled={currentPageClamped === totalPages} onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}>Next ▶</button>
+            </div>
+          </div>
+        )}
+      </div>
+      <div className="preroll-list" style={{ display: prerollView === 'list' ? 'block' : 'none' }}>
+       {visiblePrerolls.map(preroll => (
+         <div key={preroll.id} style={{ display: 'flex', gap: '0.75rem', alignItems: 'center', padding: '0.5rem 0', borderBottom: '1px solid var(--border-color)' }}>
+           <input
+             type="checkbox"
+             checked={selectedPrerollIds.includes(preroll.id)}
+             onChange={() => toggleSelectPreroll(preroll.id)}
+             title="Select preroll"
+           />
+           {preroll.thumbnail && (
+             <img
+               src={`http://localhost:9393/static/${preroll.thumbnail}`}
+               alt="thumbnail"
+               style={{ width: 120, height: 'auto', borderRadius: 4 }}
+               onError={(e) => {
+                 try {
+                   const rel = preroll.thumbnail || '';
+                   const parts = rel.split('/');
+                   const category = parts[2] || 'Default';
+                   const filename = parts.slice(3).join('/') || (parts.length ? parts[parts.length - 1] : '');
+                   e.currentTarget.onerror = null;
+                   e.currentTarget.src = `http://localhost:9393/thumbgen/${encodeURIComponent(category)}/${encodeURIComponent(filename)}`;
+                 } catch (_) {}
+               }}
+             />
+           )}
+           <div style={{ flex: 1, minWidth: 0 }}>
+             <div className="preroll-row-title" style={{ fontWeight: 'bold' }}>{preroll.display_name || preroll.filename}</div>
+             {preroll.category && <div style={{ fontSize: '0.85rem', color: '#666' }}>Primary: {preroll.category.name}</div>}
+             {Array.isArray(preroll.categories) && preroll.categories.filter(c => !preroll.category || c.id !== preroll.category.id).length > 0 && (
+               <div style={{ fontSize: '0.85rem', color: '#666' }}>
+                 Also in: {preroll.categories
+                   .filter(c => !preroll.category || c.id !== preroll.category.id)
+                   .map(c => c.name)
+                   .join(', ')}
+               </div>
+             )}
+             {preroll.tags && (
+               <div style={{ fontSize: '0.85rem', color: '#666' }}>
+                 Tags: {Array.isArray(preroll.tags) ? preroll.tags.join(', ') : preroll.tags}
+               </div>
+             )}
+             {preroll.description && <div style={{ fontSize: '0.85rem', color: '#666' }}>{preroll.description}</div>}
+             {preroll.duration && <div style={{ fontSize: '0.85rem', color: '#666' }}>Duration: {Math.round(preroll.duration)}s</div>}
+             <div style={{ fontSize: '0.8rem', color: '#999' }}>
+               {new Date(preroll.upload_date).toLocaleDateString()}
+             </div>
+           </div>
+           <div style={{ display: 'flex', gap: '0.25rem' }}>
+             <button
+               onClick={() => handleEditPreroll(preroll)}
+               className="button"
+               style={{ fontSize: '0.8rem', padding: '0.25rem 0.5rem' }}
+               title="Edit preroll"
+             >
+               ✏️
+             </button>
+             <button
+               onClick={() => handleDeletePreroll(preroll.id)}
+               className="button"
+               style={{ fontSize: '0.8rem', padding: '0.25rem 0.5rem', backgroundColor: '#dc3545' }}
+               title="Delete preroll"
+             >
+               🗑️
+             </button>
+           </div>
+         </div>
+       ))}
+       {/* Pagination (List) */}
+       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '0.5rem' }}>
+         <div style={{ fontSize: '0.9rem', color: '#666' }}>
+           Showing {totalPrerolls === 0 ? 0 : (pageStartIndex + 1)}-{pageEndIndex} of {totalPrerolls}
+         </div>
+         <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+           <button className="button-secondary" disabled={currentPageClamped === 1} onClick={() => setCurrentPage(p => Math.max(1, p - 1))}>◀ Prev</button>
+           <span style={{ fontSize: '0.9rem' }}>Page {currentPageClamped} of {totalPages}</span>
+           <button className="button-secondary" disabled={currentPageClamped === totalPages} onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}>Next ▶</button>
+         </div>
+       </div>
       </div>
     </div>
   );
@@ -883,10 +2008,216 @@ function App() {
   const renderSchedules = () => (
     <div>
       <h1 className="header">Schedule Management</h1>
+<div className="card" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap', marginBottom: '0.75rem' }}>
+  <button className="button" onClick={() => setShowCalendar(!showCalendar)}>
+    {showCalendar ? 'Hide Calendar' : 'Show Calendar'}
+  </button>
+  <label style={{ fontSize: '0.9rem' }}>View:</label>
+  <select value={calendarMode} onChange={(e) => setCalendarMode(e.target.value)} className="nx-select">
+    <option value="month">Month</option>
+    <option value="year">Year</option>
+  </select>
+  {calendarMode === 'month' && (
+    <>
+      <label style={{ fontSize: '0.9rem' }}>Month:</label>
+      <select value={calendarMonth} onChange={(e) => setCalendarMonth(parseInt(e.target.value, 10))} className="nx-select">
+        {[1,2,3,4,5,6,7,8,9,10,11,12].map(m => (
+          <option key={m} value={m}>{new Date(2000, m - 1, 1).toLocaleString(undefined, { month: 'long' })}</option>
+        ))}
+      </select>
+      <label style={{ fontSize: '0.9rem' }}>Year:</label>
+      <input type="number" value={calendarYear} onChange={(e) => setCalendarYear(parseInt(e.target.value, 10) || calendarYear)} style={{ width: 90, padding: '0.25rem' }} />
+      <button
+        className="button"
+        onClick={() => { let m = calendarMonth - 1; let y = calendarYear; if (m < 1) { m = 12; y--; } setCalendarMonth(m); setCalendarYear(y); }}
+        title="Previous Month"
+      >◀</button>
+      <button
+        className="button"
+        onClick={() => { let m = calendarMonth + 1; let y = calendarYear; if (m > 12) { m = 1; y++; } setCalendarMonth(m); setCalendarYear(y); }}
+        title="Next Month"
+      >▶</button>
+    </>
+  )}
+  {calendarMode === 'year' && (
+    <>
+      <label style={{ fontSize: '0.9rem' }}>Year:</label>
+      <input type="number" value={calendarYear} onChange={(e) => setCalendarYear(parseInt(e.target.value, 10) || calendarYear)} style={{ width: 90, padding: '0.25rem' }} />
+    </>
+  )}
+</div>
+<div style={{ display: showCalendar ? 'block' : 'none' }}>
+  {calendarMode === 'month' ? (() => {
+    const monthIndex = calendarMonth - 1;
+    const startOfMonth = new Date(calendarYear, monthIndex, 1);
+    const start = new Date(startOfMonth);
+    start.setDate(start.getDate() - start.getDay()); // back to Sunday
+
+    const days = [];
+    for (let i = 0; i < 42; i++) {
+      const d = new Date(start);
+      d.setDate(start.getDate() + i);
+      days.push(d);
+    }
+
+    const palette = ['#f94144','#f3722c','#f8961e','#f9844a','#f9c74f','#90be6d','#43aa8b','#577590','#9b5de5','#f15bb5'];
+    const catMap = new Map((categories || []).map((c, idx) => [c.id, { name: c.name, color: palette[idx % palette.length] }]));
+
+    const normalizeDay = (iso) => {
+      if (!iso) return null;
+      const d = new Date(ensureUtcIso(iso));
+      return new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
+    };
+
+    const scheds = (schedules || []).map(s => ({
+      ...s,
+      sDay: normalizeDay(s.start_date),
+      eDay: normalizeDay(s.end_date) ?? normalizeDay(s.start_date),
+      cat: catMap.get(s.category_id) || { name: (s.category?.name || 'Unknown'), color: '#6c757d' }
+    }));
+
+    const byDay = new Map(); // dayTime -> Set of cat ids
+    days.forEach(d => {
+      const t = new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
+      byDay.set(t, new Set());
+    });
+
+    for (const s of scheds) {
+      if (s.sDay == null || s.eDay == null) continue;
+      for (const d of days) {
+        const t = new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
+        if (t >= s.sDay && t <= s.eDay) {
+          const set = byDay.get(t);
+          if (set) set.add(s.category_id);
+        }
+      }
+    }
+
+    const monthName = startOfMonth.toLocaleString(undefined, { month: 'long', year: 'numeric' });
+
+    return (
+      <div className="card" style={{ marginBottom: '1rem' }}>
+        <h2 style={{ marginTop: 0 }}>{monthName}</h2>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', gap: '4px' }}>
+          {['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].map(dow => (
+            <div key={dow} style={{ fontWeight: 'bold', textAlign: 'center', padding: '4px 0' }}>{dow}</div>
+          ))}
+          {days.map((d, idx) => {
+            const inMonth = d.getMonth() === monthIndex;
+            const t = new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
+            const cats = Array.from(byDay.get(t) || []);
+            return (
+              <div key={idx} style={{
+                border: '1px solid var(--border-color)',
+                backgroundColor: inMonth ? 'var(--card-bg)' : 'rgba(0,0,0,0.03)',
+                minHeight: 72,
+                padding: '4px',
+                borderRadius: '4px',
+                position: 'relative',
+                overflow: 'hidden'
+              }}>
+                <div style={{ position: 'absolute', top: 4, right: 6, fontSize: '0.8rem', color: '#666' }}>{d.getDate()}</div>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px', marginTop: '18px' }}>
+                  {cats.slice(0, 4).map((cid, i) => {
+                    const cat = catMap.get(cid) || { name: 'Unknown', color: '#6c757d' };
+                    return (
+                      <span key={cid + '_' + i} title={cat.name} style={{
+                        backgroundColor: cat.color, color: '#fff', borderRadius: '3px',
+                        padding: '2px 4px', fontSize: '0.72rem', maxWidth: '100%', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis'
+                      }}>
+                        {cat.name}
+                      </span>
+                    );
+                  })}
+                  {cats.length > 4 && (
+                    <span style={{ fontSize: '0.72rem', color: '#666' }}>+{cats.length - 4} more</span>
+                  )}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+        <div style={{ marginTop: '8px', display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+          {(categories || []).map((c, idx) => (
+            <span key={c.id} style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', fontSize: '0.85rem' }}>
+              <span style={{ width: 12, height: 12, backgroundColor: palette[idx % palette.length], display: 'inline-block', borderRadius: 2 }} />
+              {c.name}
+            </span>
+          ))}
+        </div>
+      </div>
+    );
+  })() : (() => {
+    const palette = ['#f94144','#f3722c','#f8961e','#f9844a','#f9c74f','#90be6d','#43aa8b','#577590','#9b5de5','#f15bb5'];
+    const catMap = new Map((categories || []).map((c, idx) => [c.id, { name: c.name, color: palette[idx % palette.length] }]));
+
+    // Count scheduled days per month
+    const counts = Array.from({ length: 12 }, (_, m) => ({ month: m, cats: new Map() }));
+    const normalizeDay = (iso) => {
+      if (!iso) return null;
+      const d = new Date(ensureUtcIso(iso));
+      return new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
+    };
+    const yearStart = new Date(calendarYear, 0, 1).getTime();
+    const yearEnd = new Date(calendarYear, 11, 31).getTime();
+
+    for (const s of (schedules || [])) {
+      const sDay = normalizeDay(s.start_date);
+      const eDay = normalizeDay(s.end_date) ?? sDay;
+      if (sDay == null || eDay == null) continue;
+
+      // intersect with chosen year
+      const from = Math.max(sDay, yearStart);
+      const to = Math.min(eDay, yearEnd);
+      if (from > to) continue;
+
+      const catId = s.category_id;
+      for (let t = from; t <= to; t += 86400000) {
+        const d = new Date(t);
+        const m = d.getMonth();
+        const map = counts[m].cats;
+        map.set(catId, (map.get(catId) || 0) + 1);
+      }
+    }
+
+    return (
+      <div className="card">
+        <h2 style={{ marginTop: 0 }}>{calendarYear}</h2>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '8px' }}>
+          {counts.map((entry) => {
+            const monthName = new Date(calendarYear, entry.month, 1).toLocaleString(undefined, { month: 'long' });
+            const topCats = Array.from(entry.cats.entries()).sort((a, b) => b[1] - a[1]).slice(0, 3);
+            return (
+              <div key={entry.month} style={{ border: '1px solid var(--border-color)', borderRadius: 6, padding: 8, background: 'var(--card-bg)' }}>
+                <div style={{ fontWeight: 'bold', marginBottom: 6 }}>{monthName}</div>
+                {topCats.length === 0 ? (
+                  <div style={{ fontSize: '0.85rem', color: '#666' }}>No scheduled days</div>
+                ) : (
+                  <div style={{ display: 'grid', gap: 4 }}>
+                    {topCats.map(([cid, cnt], i) => {
+                      const cat = catMap.get(cid) || { name: 'Unknown', color: '#6c757d' };
+                      return (
+                        <div key={cid} style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: '0.85rem' }}>
+                          <span style={{ width: 12, height: 12, backgroundColor: cat.color, display: 'inline-block', borderRadius: 2 }} />
+                          <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{cat.name}</span>
+                          <span style={{ color: '#666' }}>{cnt}d</span>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    );
+  })()}
+</div>
 
       <div className="upload-section">
-        <h2>{editingSchedule ? 'Edit Schedule' : 'Create New Schedule'}</h2>
-        <form onSubmit={editingSchedule ? (e) => handleUpdateSchedule(e) : handleCreateSchedule}>
+        <h2>Create New Schedule</h2>
+        <form onSubmit={handleCreateSchedule}>
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem', marginBottom: '1rem' }}>
             <input
               type="text"
@@ -961,7 +2292,7 @@ function App() {
                       ...scheduleForm,
                       name: `${preset.name} Schedule`,
                       type: 'holiday',
-                      start_date: startDate.toISOString().slice(0, 16),
+                      start_date: toLocalInputFromDate(startDate),
                       end_date: endDate.toISOString().slice(0, 16),
                       category_id: preset.category_id.toString()
                     });
@@ -985,7 +2316,7 @@ function App() {
                 checked={scheduleForm.shuffle}
                 onChange={(e) => setScheduleForm({...scheduleForm, shuffle: e.target.checked})}
               />
-              Shuffle Prerolls
+              Random
             </label>
             <label>
               <input
@@ -993,7 +2324,7 @@ function App() {
                 checked={scheduleForm.playlist}
                 onChange={(e) => setScheduleForm({...scheduleForm, playlist: e.target.checked})}
               />
-              Use as Playlist
+              Sequential
             </label>
           </div>
           <div style={{ marginBottom: '1rem', padding: '1rem', backgroundColor: 'var(--card-bg)', borderRadius: '0.25rem' }}>
@@ -1013,24 +2344,135 @@ function App() {
             </select>
           </div>
           <button type="submit" className="button">{editingSchedule ? 'Update Schedule' : 'Create Schedule'}</button>
-          {editingSchedule && (
-            <button
-              type="button"
-              className="button"
-              style={{ marginLeft: '0.5rem', backgroundColor: '#6c757d' }}
-              onClick={() => {
-                setEditingSchedule(null);
-                setScheduleForm({
-                  name: '', type: 'monthly', start_date: '', end_date: '',
-                  category_id: '', shuffle: false, playlist: false
-                });
-              }}
-            >
-              Cancel Edit
-            </button>
-          )}
+          {/* edit handled via modal */}
         </form>
       </div>
+
+      {editingSchedule && (
+        <Modal
+          title="Edit Schedule"
+          onClose={() => {
+            setEditingSchedule(null);
+            setScheduleForm({
+              name: '', type: 'monthly', start_date: '', end_date: '',
+              category_id: '', shuffle: false, playlist: false, fallback_category_id: ''
+            });
+          }}
+        >
+          <form onSubmit={handleUpdateSchedule}>
+            <div className="nx-form-grid">
+              <div className="nx-field">
+                <label className="nx-label">Name</label>
+                <input
+                  className="nx-input"
+                  type="text"
+                  placeholder="Schedule Name"
+                  value={scheduleForm.name}
+                  onChange={(e) => setScheduleForm({...scheduleForm, name: e.target.value})}
+                  required
+                />
+              </div>
+              <div className="nx-field">
+                <label className="nx-label">Type</label>
+                <select
+                  className="nx-select"
+                  value={scheduleForm.type}
+                  onChange={(e) => setScheduleForm({...scheduleForm, type: e.target.value})}
+                >
+                  <option value="monthly">Monthly</option>
+                  <option value="yearly">Yearly</option>
+                  <option value="holiday">Holiday</option>
+                  <option value="custom">Custom</option>
+                </select>
+              </div>
+              <div className="nx-field">
+                <label className="nx-label">Start Date & Time</label>
+                <input
+                  className="nx-input"
+                  type="datetime-local"
+                  value={scheduleForm.start_date}
+                  onChange={(e) => setScheduleForm({...scheduleForm, start_date: e.target.value})}
+                  required
+                />
+              </div>
+              <div className="nx-field">
+                <label className="nx-label">End Date & Time (Optional)</label>
+                <input
+                  className="nx-input"
+                  type="datetime-local"
+                  value={scheduleForm.end_date}
+                  onChange={(e) => setScheduleForm({...scheduleForm, end_date: e.target.value})}
+                />
+              </div>
+              <div className="nx-field">
+                <label className="nx-label">Category</label>
+                <select
+                  className="nx-select"
+                  value={scheduleForm.category_id}
+                  onChange={(e) => setScheduleForm({...scheduleForm, category_id: e.target.value})}
+                  required
+                >
+                  <option value="">Select Category</option>
+                  {categories.map(cat => (
+                    <option key={cat.id} value={cat.id}>{cat.name}</option>
+                  ))}
+                </select>
+              </div>
+              <div className="nx-field">
+                <label className="nx-label">Fallback Category</label>
+                <select
+                  className="nx-select"
+                  value={scheduleForm.fallback_category_id || ''}
+                  onChange={(e) => setScheduleForm({...scheduleForm, fallback_category_id: e.target.value})}
+                >
+                  <option value="">No Fallback</option>
+                  {categories.map(cat => (
+                    <option key={cat.id} value={cat.id}>{cat.name}</option>
+                  ))}
+                </select>
+              </div>
+              <div className="nx-field nx-span-2">
+                <label className="nx-label">
+                  <input
+                    type="checkbox"
+                    checked={scheduleForm.shuffle}
+                    onChange={(e) => setScheduleForm({...scheduleForm, shuffle: e.target.checked})}
+                    style={{ marginRight: '0.5rem' }}
+                  />
+                  Random
+                </label>
+              </div>
+              <div className="nx-field nx-span-2">
+                <label className="nx-label">
+                  <input
+                    type="checkbox"
+                    checked={scheduleForm.playlist}
+                    onChange={(e) => setScheduleForm({...scheduleForm, playlist: e.target.checked})}
+                    style={{ marginRight: '0.5rem' }}
+                  />
+                  Sequential
+                </label>
+              </div>
+            </div>
+            <div className="nx-actions">
+              <button type="submit" className="button">Update Schedule</button>
+              <button
+                type="button"
+                className="button-secondary"
+                onClick={() => {
+                  setEditingSchedule(null);
+                  setScheduleForm({
+                    name: '', type: 'monthly', start_date: '', end_date: '',
+                    category_id: '', shuffle: false, playlist: false, fallback_category_id: ''
+                  });
+                }}
+              >
+                Cancel
+              </button>
+            </div>
+          </form>
+        </Modal>
+      )}
 
       <div className="card">
         <h2>Active Schedules</h2>
@@ -1058,8 +2500,10 @@ function App() {
               </div>
               <p>Type: {schedule.type} | Category: {schedule.category?.name || 'N/A'}</p>
               <p>Status: {schedule.is_active ? 'Active' : 'Inactive'}</p>
+              <p>Start: {toLocalDisplay(schedule.start_date)}{schedule.end_date ? ` | End: ${toLocalDisplay(schedule.end_date)}` : ''}</p>
               <p>Shuffle: {schedule.shuffle ? 'Yes' : 'No'} | Playlist: {schedule.playlist ? 'Yes' : 'No'}</p>
-              {schedule.last_run && <p>Last Run: {new Date(schedule.last_run).toLocaleString()}</p>}
+              {schedule.next_run && <p>Next Run: {toLocalDisplay(schedule.next_run)}</p>}
+              {schedule.last_run && <p>Last Run: {toLocalDisplay(schedule.last_run)}</p>}
             </div>
           ))}
         </div>
@@ -1067,39 +2511,58 @@ function App() {
     </div>
   );
 
-  const [newCategory, setNewCategory] = useState({ name: '', description: '' });
+  const [newCategory, setNewCategory] = useState({ name: '', description: '', plex_mode: 'shuffle' });
 
-  const handleCreateCategory = (e) => {
+  const handleCreateCategory = async (e) => {
     e.preventDefault();
-    if (!newCategory.name.trim()) {
+
+    const name = (newCategory.name || '').trim();
+    const description = (newCategory.description || '').trim();
+    if (!name) {
       alert('Category name is required');
       return;
     }
 
-    fetch('http://localhost:9393/categories', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(newCategory)
-    })
-      .then(res => res.json())
-      .then(data => {
-        alert('Category created successfully!');
-        setNewCategory({ name: '', description: '' });
-        fetchData();
-      })
-      .catch(error => {
-        console.error('Category creation error:', error);
-        alert('Failed to create category: ' + error.message);
+    try {
+      const res = await fetch('http://localhost:9393/categories', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name, description, plex_mode: newCategory.plex_mode || 'shuffle' })
       });
+
+      const text = await res.text();
+      let data = null;
+      try { data = text ? JSON.parse(text) : null; } catch {}
+
+      if (!res.ok) {
+        const msg = (data && (data.detail || data.message)) || text || `HTTP ${res.status}`;
+        throw new Error(msg);
+      }
+
+      alert('Category created successfully!');
+      setNewCategory({ name: '', description: '' });
+
+      if (data && data.id) {
+        setCategories(prev => [...prev, data]);
+      } else {
+        fetchData();
+      }
+    } catch (error) {
+      console.error('Category creation error:', error);
+      alert(error.message.includes('already exists') ? 'Category already exists' : 'Failed to create category: ' + error.message);
+    }
   };
 
   const renderCategories = () => (
     <div>
       <h1 className="header">Category Management</h1>
+      <div className="card" style={{ marginBottom: '1rem' }}>
+        <button onClick={handleInitHolidays} className="button">Load Holiday Categories</button>
+      </div>
 
       <div className="upload-section">
-        <h2>{editingCategory ? 'Edit Category' : 'Create New Category'}</h2>
-        <form onSubmit={editingCategory ? (e) => handleUpdateCategory(e) : handleCreateCategory}>
+        <h2>Create New Category</h2>
+        <form onSubmit={handleCreateCategory}>
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 2fr', gap: '1rem', marginBottom: '1rem' }}>
             <input
               type="text"
@@ -1116,27 +2579,194 @@ function App() {
               onChange={(e) => setNewCategory({...newCategory, description: e.target.value})}
               style={{ padding: '0.5rem' }}
             />
+            <select
+              value={newCategory.plex_mode}
+              onChange={(e) => setNewCategory({ ...newCategory, plex_mode: e.target.value })}
+              style={{ padding: '0.5rem' }}
+            >
+              <option value="shuffle">Random</option>
+              <option value="playlist">Sequential</option>
+            </select>
           </div>
           <button type="submit" className="button">{editingCategory ? 'Update Category' : 'Create Category'}</button>
-          {editingCategory && (
-            <button
-              type="button"
-              className="button"
-              style={{ marginLeft: '0.5rem', backgroundColor: '#6c757d' }}
-              onClick={() => {
-                setEditingCategory(null);
-                setNewCategory({ name: '', description: '' });
-              }}
-            >
-              Cancel Edit
-            </button>
-          )}
+          {/* edit handled via modal */}
         </form>
       </div>
 
-      <div className="upload-section">
+      {editingCategory && (
+        <Modal
+          title="Edit Category"
+          onClose={() => { setEditingCategory(null); setNewCategory({ name: '', description: '' }); }}
+          width={820}
+        >
+          <form onSubmit={handleUpdateCategory}>
+            <div className="nx-form-grid">
+              <div className="nx-field nx-span-2">
+                <label className="nx-label">Category Name</label>
+                <input
+                  className="nx-input"
+                  type="text"
+                  placeholder="Category Name"
+                  value={newCategory.name}
+                  onChange={(e) => setNewCategory({...newCategory, name: e.target.value})}
+                  required
+                />
+              </div>
+              <div className="nx-field nx-span-2">
+                <label className="nx-label">Description</label>
+                <input
+                  className="nx-input"
+                  type="text"
+                  placeholder="Optional description"
+                  value={newCategory.description}
+                  onChange={(e) => setNewCategory({...newCategory, description: e.target.value})}
+                />
+              </div>
+              <div className="nx-field nx-span-2">
+                <label className="nx-label">Plex Mode</label>
+                <select
+                  className="nx-select"
+                  value={newCategory.plex_mode || 'shuffle'}
+                  onChange={(e) => setNewCategory({ ...newCategory, plex_mode: e.target.value })}
+                >
+                  <option value="shuffle">Random</option>
+                  <option value="playlist">Sequential</option>
+                </select>
+              </div>
+            </div>
+            <div className="nx-actions">
+              <button type="submit" className="button">Update Category</button>
+              <button
+                type="button"
+                className="button"
+                onClick={handleUpdateCategoryAndApply}
+                style={{ backgroundColor: '#28a745' }}
+                title="Save changes and apply to Plex"
+              >
+                Save & Apply
+              </button>
+              <button
+                type="button"
+                className="button-secondary"
+                onClick={() => { setEditingCategory(null); setNewCategory({ name: '', description: '' }); }}
+              >
+                Cancel
+              </button>
+            </div>
+          </form>
+
+          <div style={{ borderTop: '1px solid var(--border-color)', margin: '1rem 0' }} />
+
+          <div>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '0.5rem' }}>
+              <h3 className="nx-modal-title" style={{ fontSize: '1rem', margin: 0 }}>Manage Prerolls</h3>
+              <button
+                type="button"
+                className="button-secondary"
+                onClick={() => { try { loadCategoryPrerolls(editingCategory.id); } catch (e) {} }}
+                title="Refresh list"
+              >
+                Refresh
+              </button>
+            </div>
+
+            {categoryPrerollsLoading[editingCategory.id] ? (
+              <div style={{ fontSize: '0.9rem', color: '#666' }}>Loading prerolls…</div>
+            ) : (
+              <>
+                <div className="nx-field nx-span-2" style={{ marginBottom: '0.5rem' }}>
+                  <label className="nx-label">Assigned Prerolls</label>
+                  {(categoryPrerolls[editingCategory.id] || []).length === 0 ? (
+                    <p style={{ fontSize: '0.9rem', color: '#666', fontStyle: 'italic' }}>No prerolls assigned</p>
+                  ) : (
+                    <div style={{ display: 'grid', gap: '0.4rem' }}>
+                      {(categoryPrerolls[editingCategory.id] || []).map(p => (
+                        <div key={p.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: 'var(--card-bg)', border: '1px solid var(--border-color)', borderRadius: '6px', padding: '0.4rem 0.6rem' }}>
+                          <span style={{ fontSize: '0.9rem' }}>
+                            {p.display_name || p.filename}
+                            {p.category_id === editingCategory.id && (
+                              <span style={{ marginLeft: '0.5rem', fontSize: '0.8rem', color: '#28a745' }}>(Primary)</span>
+                            )}
+                          </span>
+                          <div>
+                            <button
+                              onClick={() => handleEditPreroll(p)}
+                              className="button"
+                              style={{ fontSize: '0.8rem', padding: '0.2rem 0.5rem', marginRight: '0.25rem' }}
+                              title="Edit preroll"
+                            >
+                              ✏️
+                            </button>
+                            <button
+                              onClick={() => handleCategoryRemovePreroll(editingCategory.id, p)}
+                              className="button"
+                              disabled={p.category_id === editingCategory.id}
+                              style={{ fontSize: '0.8rem', padding: '0.2rem 0.5rem', backgroundColor: p.category_id === editingCategory.id ? '#6c757d' : '#dc3545', cursor: p.category_id === editingCategory.id ? 'not-allowed' : 'pointer' }}
+                              title={p.category_id === editingCategory.id ? 'Cannot remove primary here' : 'Remove from this category'}
+                            >
+                              🗑️ Remove
+                            </button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
+                <div className="nx-form-grid" style={{ marginTop: '0.5rem' }}>
+                  <div className="nx-field nx-span-2">
+                    <label className="nx-label">Add a Preroll to this Category</label>
+                    <select
+                      className="nx-select"
+                      value={(categoryAddSelection[editingCategory.id]?.prerollId) || ''}
+                      onChange={(e) => setCategoryAddSelection(prev => ({ ...prev, [editingCategory.id]: { ...(prev[editingCategory.id] || {}), prerollId: e.target.value } }))}
+                    >
+                      <option value="">Select preroll…</option>
+                      {availablePrerollsForCategory(editingCategory.id).map(p => (
+                        <option key={p.id} value={p.id}>
+                          {(p.display_name || p.filename) + (p.category_id ? ` — Primary: ${categories.find(c => c.id === p.category_id)?.name || 'Unknown'}` : '')}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <div className="nx-field nx-span-2">
+                    <label className="nx-label" style={{ display: 'inline-flex', alignItems: 'center', gap: '0.5rem' }}>
+                      <input
+                        type="checkbox"
+                        checked={Boolean(categoryAddSelection[editingCategory.id]?.setPrimary)}
+                        onChange={(e) => setCategoryAddSelection(prev => ({ ...prev, [editingCategory.id]: { ...(prev[editingCategory.id] || {}), setPrimary: e.target.checked } }))}
+                      />
+                      Set as Primary (moves the file under this category)
+                    </label>
+                  </div>
+                  <div className="nx-actions nx-span-2" style={{ justifyContent: 'flex-start' }}>
+                    <button
+                      type="button"
+                      className="button"
+                      disabled={!categoryAddSelection[editingCategory.id]?.prerollId}
+                      onClick={() => handleCategoryAddPreroll(editingCategory.id)}
+                    >
+                      ➕ Add to Category
+                    </button>
+                  </div>
+                </div>
+              </>
+            )}
+          </div>
+        </Modal>
+      )}
+
+      {false && (<div className="upload-section">
         <h2>Holiday Presets</h2>
-        <button onClick={handleInitHolidays} className="button">Initialize Holiday Presets</button>
+        <p style={{ marginBottom: '0.5rem', color: '#666' }}>
+          Initialize to create holiday categories and preset date ranges. Use them on the Schedules page via the "Holiday Preset" picker or by selecting the created categories.
+        </p>
+        <div style={{ display: 'flex', gap: '0.5rem' }}>
+          <button onClick={handleInitHolidays} className="button">Initialize Holiday Presets</button>
+          <button onClick={() => setActiveTab('schedules')} className="button" style={{ backgroundColor: '#6c757d' }}>
+            Go to Schedules
+          </button>
+        </div>
         <div style={{ marginTop: '1rem', display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))', gap: '1rem' }}>
           {holidayPresets.map(preset => (
             <div key={preset.id} style={{ border: '1px solid var(--border-color)', padding: '1rem', borderRadius: '0.25rem', backgroundColor: 'var(--card-bg)' }}>
@@ -1151,7 +2781,7 @@ function App() {
             </div>
           ))}
         </div>
-      </div>
+      </div>)}
 
       <div className="card">
         <h2>Categories</h2>
@@ -1180,6 +2810,7 @@ function App() {
                 </div>
               </div>
               <p style={{ fontSize: '0.9rem', marginBottom: '0.5rem' }}>{category.description || 'No description'}</p>
+              <p style={{ fontSize: '0.8rem', color: '#666' }}>Plex Preroll Mode: {category.plex_mode === 'playlist' ? 'Sequential' : 'Random'}</p>
 
               {/* Apply to Plex Section */}
               <div style={{ borderTop: '1px solid var(--border-color)', paddingTop: '0.5rem', marginTop: '0.5rem' }}>
@@ -1222,6 +2853,18 @@ function App() {
                     </button>
                   )}
                 </div>
+              </div>
+
+              {/* Manage Prerolls */}
+              <div style={{ borderTop: '1px dashed var(--border-color)', paddingTop: '0.5rem', marginTop: '0.5rem' }}>
+                <button
+                  onClick={() => handleEditCategory(category)}
+                  className="button"
+                  style={{ fontSize: '0.8rem', padding: '0.25rem 0.5rem', backgroundColor: '#17a2b8' }}
+                  title="Manage prerolls in this category"
+                >
+                  Manage Prerolls
+                </button>
               </div>
             </div>
           ))}
@@ -1301,87 +2944,136 @@ function App() {
     }
   };
 
+  // -------- Plex Stable Token: save/update (advanced) --------
+  const handleSaveStableToken = async (e) => {
+    e.preventDefault();
+    const tok = (stableTokenInput || '').trim();
+    if (!tok) {
+      alert('Enter a token to save.');
+      return;
+    }
+    try {
+      const res = await fetch(`http://localhost:9393/plex/stable-token/save?token=${encodeURIComponent(tok)}`, { method: 'POST' });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data?.detail || data?.message || `HTTP ${res.status}`);
+      alert('Stable token saved. You can now connect using Method 1.');
+      setStableTokenInput('');
+      setShowStableTokenSave(false);
+      fetchData();
+    } catch (err) {
+      alert('Failed to save stable token: ' + (err?.message || err));
+    }
+  };
+
+  // -------- Plex.tv OAuth helpers --------
+  const clearOAuthPoll = () => {
+    try {
+      if (oauthPollRef.current) {
+        clearInterval(oauthPollRef.current);
+        oauthPollRef.current = null;
+      }
+    } catch {}
+  };
+
+  const startPlexOAuth = async () => {
+    try {
+      setPlexOAuth({ id: null, url: '', status: 'starting', error: null });
+      const res = await fetch('http://localhost:9393/plex/tv/start', { method: 'POST' });
+      const data = await res.json();
+      if (!res.ok || !data?.id || !data?.url) {
+        throw new Error(data?.detail || 'Failed to start Plex.tv login');
+      }
+      setPlexOAuth({ id: data.id, url: data.url, status: 'pending', error: null });
+      try { window.open(data.url, '_blank', 'noopener,noreferrer'); } catch {}
+
+      clearOAuthPoll();
+      oauthPollRef.current = setInterval(async () => {
+        try {
+          const r = await fetch(`http://localhost:9393/plex/tv/status/${data.id}`);
+          const s = await r.json();
+          if (s?.status === 'success') {
+            clearOAuthPoll();
+            setPlexOAuth(prev => ({ ...prev, status: 'authorized' }));
+            await finishPlexOAuth(data.id);
+          } else if (s?.status === 'expired' || s?.status === 'not_found') {
+            clearOAuthPoll();
+            setPlexOAuth(prev => ({ ...prev, status: 'expired' }));
+          }
+        } catch {
+          // ignore transient errors during polling
+        }
+      }, 2000);
+    } catch (e) {
+      setPlexOAuth({ id: null, url: '', status: 'error', error: String(e?.message || e) });
+    }
+  };
+
+  const finishPlexOAuth = async (id) => {
+    const sid = id || plexOAuth.id;
+    if (!sid) return;
+    setPlexOAuth(prev => ({ ...prev, status: 'connecting' }));
+    try {
+      const res = await fetch('http://localhost:9393/plex/tv/connect', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id: sid, save_token: true })
+      });
+      const data = await res.json();
+      if (!res.ok || !data?.connected) {
+        throw new Error(data?.detail || data?.message || `HTTP ${res.status}`);
+      }
+      setPlexOAuth(prev => ({ ...prev, status: 'connected' }));
+      alert('Successfully connected to Plex via Plex.tv!');
+      fetchData();
+    } catch (e) {
+      setPlexOAuth(prev => ({ ...prev, status: 'error', error: String(e?.message || e) }));
+    }
+  };
+
+  const cancelPlexOAuth = () => {
+    clearOAuthPoll();
+    setPlexOAuth({ id: null, url: '', status: 'idle', error: null });
+  };
+
+  // Cleanup poller on unmount
+  React.useEffect(() => {
+    return () => { clearOAuthPoll(); };
+  }, []);
+
   const renderPlex = () => (
     <div>
       <h1 className="header">Plex Integration</h1>
 
-      <div className="card">
+      <div className="card nx-plex-card">
         <h2>Connect to Plex Server</h2>
         <p style={{ marginBottom: '1rem', color: 'var(--text-color)' }}>
           Connect your local Plex server to enable automatic preroll scheduling and media synchronization.
         </p>
-
-        {/* Manual Token Connection */}
-        <div style={{ marginBottom: '2rem', padding: '1rem', border: '1px solid var(--border-color)', borderRadius: '0.25rem' }}>
-          <h3 style={{ marginBottom: '0.5rem', color: 'var(--text-color)' }}>Method 1: Manual Token</h3>
-          <p style={{ fontSize: '0.9rem', color: '#666', marginBottom: '1rem' }}>
-            Enter your Plex server URL and authentication token manually.
-          </p>
-
-          <form onSubmit={handleConnectPlex}>
-            <div style={{ display: 'grid', gap: '1rem', marginBottom: '1rem' }}>
-              <div>
-                <label style={{ display: 'block', marginBottom: '0.5rem', fontWeight: 'bold' }}>
-                  Plex Server URL
-                </label>
-                <input
-                  type="url"
-                  placeholder="http://192.168.1.100:32400"
-                  value={plexConfig.url}
-                  onChange={(e) => setPlexConfig({...plexConfig, url: e.target.value})}
-                  required
-                  style={{ width: '100%', padding: '0.5rem' }}
-                />
-              </div>
-
-              <div>
-                <label style={{ display: 'block', marginBottom: '0.5rem', fontWeight: 'bold' }}>
-                  Plex Token
-                </label>
-                <input
-                  type="password"
-                  placeholder="Enter your Plex token"
-                  value={plexConfig.token}
-                  onChange={(e) => setPlexConfig({...plexConfig, token: e.target.value})}
-                  required
-                  style={{ width: '100%', padding: '0.5rem' }}
-                />
-                <p style={{ fontSize: '0.8rem', color: '#666', marginTop: '0.25rem' }}>
-                  <strong>How to get your token:</strong><br/>
-                  1. Open Plex Web at http://localhost:32400/web<br/>
-                  2. Sign in to your Plex account<br/>
-                  3. Go to Settings → General → Advanced<br/>
-                  4. Enable "Show Advanced" if needed<br/>
-                  5. Copy the "Authentication Token"
-                </p>
-              </div>
-            </div>
-
-            <button type="submit" className="button">Connect with Manual Token</button>
-          </form>
+        <div className="nx-plex-steps">
+          <span className="nx-step"><span className="nx-badge">1</span> Stable Token</span>
+          <span className="nx-step"><span className="nx-badge">2</span> Manual X-Plex-Token</span>
+          <span className="nx-step"><span className="nx-badge">3</span> Plex.tv Auth</span>
         </div>
-
         {/* Stable Token Connection */}
-        <div style={{ padding: '1rem', border: '1px solid var(--border-color)', borderRadius: '0.25rem' }}>
-          <h3 style={{ marginBottom: '0.5rem', color: 'var(--text-color)' }}>Method 2: Stable Token (Recommended)</h3>
+        <div className="upload-section nx-plex-method" style={{ marginBottom: '2rem' }}>
+          <h3 style={{ marginBottom: '0.5rem', color: 'var(--text-color)' }}>🌟 Method 1: Stable Token (Recommended)</h3>
           <p style={{ fontSize: '0.9rem', color: '#666', marginBottom: '1rem' }}>
-            Use a stable token that doesn't expire. Run the setup script first to configure it.
+            Uses a non-expiring token stored securely. The installer selects "Plex Stable Token Setup" by default.
+            If your Plex server runs on a different machine, run "Setup Plex Stable Token" from the Start Menu
+            on that machine to configure it, then connect here.
           </p>
 
-          <div style={{ marginBottom: '1rem' }}>
-            <div style={{ display: 'grid', gap: '0.5rem', fontSize: '0.9rem' }}>
-              <div><strong>Stable Token Status:</strong>
-                <span style={{
-                  color: stableTokenStatus.has_stable_token ? 'green' : 'red',
-                  marginLeft: '0.5rem'
-                }}>
-                  {stableTokenStatus.has_stable_token ? 'Configured' : 'Not Configured'}
-                </span>
-              </div>
-              {stableTokenStatus.has_stable_token && (
-                <div><strong>Token Length:</strong> {stableTokenStatus.token_length} characters</div>
-              )}
-            </div>
+          <div className="nx-plex-note" style={{ padding: '0.5rem 0.75rem', borderRadius: '6px', border: '1px dashed var(--border-color)', marginBottom: '0.75rem' }}>
+            <strong>Tip:</strong> For best results, use Method 1. It's resilient to password changes and service restarts.
+          </div>
+          <div style={{ marginBottom: '1rem', display: 'grid', gap: '0.3rem', fontSize: '0.9rem' }}>
+            <div><strong>Stable Token:</strong> <span className={`nx-chip nx-status ${stableTokenStatus.has_stable_token ? 'ok' : 'bad'}`}>{stableTokenStatus.has_stable_token ? 'Configured' : 'Not Configured'}</span></div>
+            {stableTokenStatus.has_stable_token && (
+              <div><strong>Token Length:</strong> {stableTokenStatus.token_length} characters</div>
+            )}
+            {stableTokenStatus.provider && (
+              <div><strong>Storage:</strong> {stableTokenStatus.provider}</div>
+            )}
           </div>
 
           <form onSubmit={handleConnectPlexStableToken}>
@@ -1404,22 +3096,203 @@ function App() {
             <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
               <button
                 type="submit"
-                className="button"
-                disabled={!stableTokenStatus.has_stable_token}
-                style={{
-                  backgroundColor: stableTokenStatus.has_stable_token ? '#28a745' : '#6c757d',
-                  cursor: stableTokenStatus.has_stable_token ? 'pointer' : 'not-allowed'
-                }}
+                className="button button-success"
+                title={stableTokenStatus.has_stable_token ? 'Connect using configured stable token' : 'Attempt connection; if not configured, you will be prompted'}
               >
                 Connect with Stable Token
               </button>
               {!stableTokenStatus.has_stable_token && (
                 <span style={{ fontSize: '0.9rem', color: '#666' }}>
-                  Run setup script to configure stable token
+                  If the stable token isn’t configured yet, run "Setup Plex Stable Token" from the Start Menu,
+                  then try again.
                 </span>
               )}
             </div>
           </form>
+
+          {/* Advanced: Save/Update stable token locally (optional) */}
+          <div style={{ marginTop: '0.75rem' }}>
+            <button
+              type="button"
+              className="button-secondary"
+              onClick={() => setShowStableTokenSave(!showStableTokenSave)}
+              style={{ fontSize: '0.85rem' }}
+              title="Save or update the stable token in secure storage"
+            >
+              {showStableTokenSave ? 'Hide Advanced' : 'Advanced: Save/Update Stable Token'}
+            </button>
+            {showStableTokenSave && (
+              <form onSubmit={handleSaveStableToken} style={{ marginTop: '0.5rem', display: 'grid', gap: '0.5rem' }}>
+                <input
+                  type="password"
+                  placeholder="Paste your stable token"
+                  value={stableTokenInput}
+                  onChange={(e) => setStableTokenInput(e.target.value)}
+                  style={{ width: '100%', padding: '0.5rem' }}
+                />
+                <button type="submit" className="button" style={{ backgroundColor: '#17a2b8' }}>
+                  Save Stable Token
+                </button>
+              </form>
+            )}
+          </div>
+        </div>
+
+        {/* Method 2: Manual X-Plex-Token */}
+        <div className="upload-section nx-plex-method" style={{ marginBottom: '2rem' }}>
+          <h3 style={{ marginBottom: '0.5rem', color: 'var(--text-color)' }}>🧰 Method 2: Manual X-Plex-Token</h3>
+          <p style={{ fontSize: '0.9rem', color: '#666', marginBottom: '1rem' }}>
+            Enter your Plex server URL and authentication token manually.
+          </p>
+
+          <form onSubmit={handleConnectPlex}>
+            <div style={{ display: 'grid', gap: '1rem', marginBottom: '1rem' }}>
+              <div>
+                <label style={{ display: 'block', marginBottom: '0.5rem', fontWeight: 'bold' }}>
+                  Plex Server URL
+                </label>
+                <input
+                  type="url"
+                  placeholder="http://192.168.1.100:32400"
+                  value={plexConfig.url}
+                  onChange={(e) => setPlexConfig({ ...plexConfig, url: e.target.value })}
+                  required
+                  style={{ width: '100%', padding: '0.5rem' }}
+                />
+              </div>
+
+              <div>
+                <label style={{ display: 'block', marginBottom: '0.5rem', fontWeight: 'bold' }}>
+                  X-Plex-Token
+                </label>
+                <input
+                  type="password"
+                  placeholder="Enter your X-Plex-Token"
+                  value={plexConfig.token}
+                  onChange={(e) => setPlexConfig({ ...plexConfig, token: e.target.value })}
+                  required
+                  style={{ width: '100%', padding: '0.5rem' }}
+                />
+                <details className="nx-plex-help">
+                  <summary>How to get your X-Plex-Token</summary>
+                  <ol style={{ marginTop: '0.5rem' }}>
+                    <li>Open Plex Web at your server's URL (e.g., http://your-plex-server:32400/web)</li>
+                    <li>Sign in to your Plex account</li>
+                    <li>Go to Settings → General → Advanced</li>
+                    <li>Enable "Show Advanced" if needed</li>
+                    <li>Copy the "Authentication Token" (X-Plex-Token)</li>
+                  </ol>
+                  <p style={{ fontSize: '0.85rem', color: '#666' }}>
+                    Note: For remote servers, ensure you can access the Plex Web interface from your current location.
+                  </p>
+                </details>
+              </div>
+            </div>
+
+            <button type="submit" className="button">Connect with Manual Token</button>
+          </form>
+        </div>
+
+        {/* Plex.tv Authentication */}
+        <div className="upload-section nx-plex-method" style={{ marginTop: '1rem' }}>
+          <h3 style={{ marginBottom: '0.5rem', color: 'var(--text-color)' }}>Method 3: Plex.tv Authentication</h3>
+          <p style={{ fontSize: '0.9rem', color: '#666', marginBottom: '0.75rem' }}>
+            Sign in with Plex.tv to auto-discover a reachable server and save credentials securely.
+          </p>
+
+          {(plexOAuth.status === 'idle' || plexOAuth.status === 'error') && (
+            <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+              <button
+                type="button"
+                className="button button-warn"
+                onClick={startPlexOAuth}
+                title="Start Plex.tv device login"
+              >
+                Start Plex.tv Login
+              </button>
+              {plexOAuth.status === 'error' && (
+                <span style={{ color: '#dc3545', fontSize: '0.85rem' }}>{plexOAuth.error}</span>
+              )}
+            </div>
+          )}
+
+          {(plexOAuth.status === 'starting' || plexOAuth.status === 'pending') && (
+            <div style={{ display: 'grid', gap: '0.5rem' }}>
+              <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+                {plexOAuth.url && (
+                  <a
+                    href={plexOAuth.url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="button"
+                    style={{ backgroundColor: '#0ea5e9' }}
+                  >
+                    Open Login
+                  </a>
+                )}
+                <button type="button" className="button-secondary" onClick={cancelPlexOAuth}>
+                  Cancel
+                </button>
+              </div>
+              <div style={{ fontSize: '0.9rem', color: '#666' }}>
+                Waiting for authorization from Plex.tv…
+              </div>
+            </div>
+          )}
+
+          {plexOAuth.status === 'authorized' && (
+            <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+              <button
+                type="button"
+                className="button button-success"
+                onClick={() => finishPlexOAuth(plexOAuth.id)}
+              >
+                Connect Now
+              </button>
+              {plexOAuth.url && (
+                <a
+                  href={plexOAuth.url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="button-secondary"
+                >
+                  Open Login
+                </a>
+              )}
+            </div>
+          )}
+
+          {plexOAuth.status === 'connecting' && (
+            <div style={{ fontSize: '0.9rem', color: '#666' }}>
+              Connecting to your Plex server…
+            </div>
+          )}
+
+          {plexOAuth.status === 'connected' && (
+            <div style={{ fontSize: '0.9rem', color: 'green', fontWeight: 'bold' }}>
+              Connected via Plex.tv!
+            </div>
+          )}
+        </div>
+
+        {/* Remote Server Setup Guide */}
+        <div style={{ marginTop: '2rem', padding: '1rem', border: '1px solid var(--border-color)', borderRadius: '0.25rem', backgroundColor: 'var(--card-bg)' }}>
+          <h3 style={{ marginBottom: '0.5rem', color: 'var(--text-color)' }}>Connecting to Remote Plex Servers</h3>
+          <p style={{ fontSize: '0.9rem', color: '#666', marginBottom: '1rem' }}>
+            If your Plex server is not on the same machine as NeXroll, you'll need to ensure remote access is configured:
+          </p>
+          <ul style={{ fontSize: '0.9rem', color: '#666', paddingLeft: '1.5rem', marginBottom: '1rem' }}>
+            <li>Enable remote access in your Plex server settings</li>
+            <li>Ensure your router forwards port 32400 to your Plex server</li>
+            <li>Use your external IP address or domain name in the Server URL field</li>
+            <li>If using HTTPS, include 'https://' in the URL</li>
+          </ul>
+          <p style={{ fontSize: '0.9rem', color: '#666' }}>
+            <strong>Example URLs:</strong><br/>
+            Local: http://192.168.1.100:32400<br/>
+            Remote: https://my-plex-server.example.com:32400<br/>
+            Plex Cloud: https://app.plex.tv/desktop (use your server's URL)
+          </p>
         </div>
 
         {/* Disconnect Button */}
@@ -1427,8 +3300,7 @@ function App() {
           <div style={{ marginTop: '1rem', paddingTop: '1rem', borderTop: '1px solid var(--border-color)' }}>
             <button
               onClick={handleDisconnectPlex}
-              className="button"
-              style={{ backgroundColor: '#dc3545' }}
+              className="button button-danger"
             >
               Disconnect from Plex
             </button>
@@ -1439,7 +3311,7 @@ function App() {
       <div className="card">
         <h2>Plex Status</h2>
         <div style={{ display: 'grid', gap: '0.5rem' }}>
-          <div><strong>Connection:</strong> <span style={{ color: plexStatus === 'Connected' ? 'green' : 'red' }}>{plexStatus}</span></div>
+          <div><strong>Connection:</strong> <span className={`nx-chip nx-status ${plexStatus === 'Connected' ? 'ok' : 'bad'}`}>{plexStatus}</span></div>
           <div><strong>Server URL:</strong> {plexConfig.url || 'Not configured'}</div>
           <div><strong>Token:</strong> {plexConfig.token ? '••••••••' : 'Not configured'}</div>
         </div>
@@ -1447,8 +3319,7 @@ function App() {
           <div style={{ marginTop: '1rem', paddingTop: '1rem', borderTop: '1px solid var(--border-color)' }}>
             <button
               onClick={handleDisconnectPlex}
-              className="button"
-              style={{ backgroundColor: '#dc3545' }}
+              className="button button-danger"
             >
               Disconnect from Plex
             </button>
@@ -1473,11 +3344,69 @@ function App() {
     </div>
   );
 
+  const handleDownloadDiagnostics = async () => {
+    try {
+      const res = await fetch('http://localhost:9393/diagnostics/bundle');
+      if (!res.ok) {
+        throw new Error(`HTTP ${res.status}`);
+      }
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `NeXroll_Diagnostics_${new Date().toISOString().replace(/[:.]/g, '-')}.zip`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    } catch (e) {
+      alert('Failed to download diagnostics: ' + (e && e.message ? e.message : e));
+    }
+  };
+
   const recheckFfmpeg = () => {
     fetch('http://localhost:9393/system/ffmpeg-info')
       .then(res => res.json())
       .then(data => setFfmpegInfo(data))
       .catch(() => setFfmpegInfo(null));
+  };
+
+  const handleReinitThumbnails = async () => {
+    if (!window.confirm('Rebuild all thumbnails now? This may take several minutes depending on your library size.')) return;
+    try {
+      const res = await fetch('http://localhost:9393/thumbnails/rebuild?force=true', { method: 'POST' });
+      const text = await res.text();
+      let data = null;
+      try { data = text ? JSON.parse(text) : null; } catch {}
+      if (!res.ok) {
+        const msg = (data && (data.detail || data.message)) || text || `HTTP ${res.status}`;
+        throw new Error(msg);
+      }
+      alert(`Thumbnails rebuilt:\nProcessed: ${data.processed}\nGenerated: ${data.generated}\nSkipped: ${data.skipped}\nFailures: ${data.failures}`);
+      fetchData();
+    } catch (err) {
+      console.error('Thumbnail rebuild error:', err);
+      alert('Thumbnail rebuild failed: ' + err.message);
+    }
+  };
+
+  const handleShowSystemPaths = async () => {
+    try {
+      const res = await fetch('http://localhost:9393/system/paths');
+      const data = await res.json();
+      alert([
+        `Install: ${data.install_root || 'n/a'}`,
+        `Resource: ${data.resource_root || 'n/a'}`,
+        `Frontend: ${data.frontend_dir || 'n/a'}`,
+        `Data: ${data.data_dir || 'n/a'}`,
+        `Prerolls: ${data.prerolls_dir || 'n/a'}`,
+        `Thumbnails: ${data.thumbnails_dir || 'n/a'}`,
+        `Logs: ${data.log_path || data.log_dir || 'n/a'}`,
+        `DB: ${data.db_path || data.db_url || 'n/a'}`
+      ].join('\n'));
+    } catch (e) {
+      alert('Failed to load system paths');
+    }
   };
 
   const renderSettings = () => (
@@ -1646,6 +3575,8 @@ function App() {
         </div>
         <div style={{ marginTop: '0.75rem' }}>
           <button onClick={recheckFfmpeg} className="button">🔎 Re-check FFmpeg</button>
+          <button onClick={handleShowSystemPaths} className="button" style={{ marginLeft: '0.5rem' }}>📂 Show Resolved Paths</button>
+          <button onClick={handleDownloadDiagnostics} className="button" style={{ marginLeft: '0.5rem' }}>🧰 Download Diagnostics</button>
         </div>
       </div>
     </div>
@@ -1653,60 +3584,149 @@ function App() {
 
   return (
     <div className="app-container">
-      {/* Header with Logo and Theme Toggle */}
-      <div style={{
-        display: 'flex',
-        justifyContent: 'space-between',
-        alignItems: 'center',
-        marginBottom: '1rem',
-        padding: '0.5rem 0'
-      }}>
-        <img
-          src={darkMode ? "/NeXroll_Logo_WHT.png" : "/NeXroll_Logo_BLK.png"}
-          alt="NeXroll Logo"
-          style={{
-            maxWidth: '120px',
-            height: 'auto'
-          }}
-        />
-        <button className="theme-toggle" onClick={toggleTheme} title="Toggle theme">
-          {darkMode ? '☀️' : '🌙'}
-        </button>
+      {/* Tab Navigation with right-aligned logo */}
+      <div
+        className="tab-buttons"
+        style={{ alignItems: 'center', justifyContent: 'space-between', padding: '0 0.5rem' }}
+      >
+        <div className="tab-group">
+          <button
+            className={`tab-button ${activeTab === 'dashboard' ? 'active' : ''}`}
+            onClick={() => setActiveTab('dashboard')}
+          >
+            Dashboard
+          </button>
+          <button
+            className={`tab-button ${activeTab === 'schedules' ? 'active' : ''}`}
+            onClick={() => setActiveTab('schedules')}
+          >
+            Schedules
+          </button>
+          <button
+            className={`tab-button ${activeTab === 'categories' ? 'active' : ''}`}
+            onClick={() => setActiveTab('categories')}
+          >
+            Categories
+          </button>
+          <button
+            className={`tab-button ${activeTab === 'settings' ? 'active' : ''}`}
+            onClick={() => setActiveTab('settings')}
+          >
+            Settings
+          </button>
+          <button
+            className={`tab-button ${activeTab === 'plex' ? 'active' : ''}`}
+            onClick={() => setActiveTab('plex')}
+          >
+            Plex
+          </button>
+        </div>
+        <div className="tabbar-right" style={{ display: 'flex', alignItems: 'center', paddingRight: '48px' }}>
+          <img
+            src={darkMode ? "/NeXroll_Logo_WHT.png" : "/NeXroll_Logo_BLK.png"}
+            alt="NeXroll Logo"
+            style={{ height: '50px', width: 'auto', display: 'block' }}
+          />
+        </div>
       </div>
 
-      {/* Tab Navigation */}
-      <div className="tab-buttons">
-        <button
-          className={`tab-button ${activeTab === 'dashboard' ? 'active' : ''}`}
-          onClick={() => setActiveTab('dashboard')}
+      {showUpdateBanner && updateInfo && (
+        <div
+          className="nx-update-banner"
+          style={{
+            backgroundColor: 'var(--card-bg)',
+            border: '1px solid var(--border-color)',
+            padding: '0.5rem 0.75rem',
+            borderRadius: '0.375rem',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            gap: '0.5rem',
+            margin: '0.5rem 0'
+          }}
         >
-          Dashboard
-        </button>
-        <button
-          className={`tab-button ${activeTab === 'schedules' ? 'active' : ''}`}
-          onClick={() => setActiveTab('schedules')}
+          <div style={{ fontSize: '0.9rem', color: 'var(--text-color)' }}>
+            New release available: <strong>v{updateInfo.version}</strong>
+            <a
+              href={updateInfo.url}
+              target="_blank"
+              rel="noopener noreferrer"
+              style={{ marginLeft: '0.5rem', textDecoration: 'underline' }}
+              title="View the latest release on GitHub"
+            >
+              View on GitHub
+            </a>
+          </div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+            <button
+              type="button"
+              className="button-secondary"
+              onClick={handleDismissUpdate}
+              style={{ fontSize: '0.8rem' }}
+              title="Dismiss update notice"
+            >
+              Dismiss
+            </button>
+          </div>
+        </div>
+      )}
+
+      {showInstallPrompt && !isInstalled && (
+        <div
+          className="nx-install-banner"
+          style={{
+            backgroundColor: '#e3f2fd',
+            border: '1px solid #2196f3',
+            padding: '0.75rem 1rem',
+            borderRadius: '0.375rem',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            gap: '1rem',
+            margin: '0.5rem 0'
+          }}
         >
-          Schedules
-        </button>
-        <button
-          className={`tab-button ${activeTab === 'categories' ? 'active' : ''}`}
-          onClick={() => setActiveTab('categories')}
-        >
-          Categories
-        </button>
-        <button
-          className={`tab-button ${activeTab === 'settings' ? 'active' : ''}`}
-          onClick={() => setActiveTab('settings')}
-        >
-          Settings
-        </button>
-        <button
-          className={`tab-button ${activeTab === 'plex' ? 'active' : ''}`}
-          onClick={() => setActiveTab('plex')}
-        >
-          Plex
-        </button>
-      </div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+            <span style={{ fontSize: '1.5rem' }}>📱</span>
+            <div>
+              <div style={{ fontWeight: 'bold', color: '#1976d2', marginBottom: '0.25rem' }}>
+                Install NeXroll
+              </div>
+              <div style={{ fontSize: '0.9rem', color: '#424242' }}>
+                Install as an app for quick access and offline functionality
+              </div>
+            </div>
+          </div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+            <button
+              type="button"
+              className="button"
+              onClick={handleInstallPWA}
+              style={{
+                backgroundColor: '#2196f3',
+                fontSize: '0.9rem',
+                padding: '0.5rem 1rem'
+              }}
+              title="Install NeXroll as a PWA"
+            >
+              Install
+            </button>
+            <button
+              type="button"
+              className="button-secondary"
+              onClick={dismissInstallPrompt}
+              style={{ fontSize: '0.8rem' }}
+              title="Dismiss install prompt"
+            >
+              Not now
+            </button>
+          </div>
+        </div>
+      )}
+
+      <button className="theme-toggle" onClick={toggleTheme} title="Toggle theme">
+        {darkMode ? '☀️' : '🌙'}
+      </button>
 
       <div className="dashboard">
         {activeTab === 'dashboard' && renderDashboard()}

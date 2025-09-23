@@ -156,12 +156,16 @@ body.dark {
 }
 
 .tab-buttons {
+  position: sticky;
+  top: 0;
+  z-index: 900;
   display: flex;
   margin-bottom: 1rem;
   border-bottom: 1px solid var(--border-color);
   background-color: var(--header-bg);
   border-radius: 0.5rem 0.5rem 0 0;
   overflow: hidden;
+  box-shadow: 0 2px 4px var(--shadow);
 }
 
 .tab-button {
@@ -182,4 +186,428 @@ body.dark {
 
 .tab-button:hover:not(.active) {
   background-color: var(--card-bg);
+}
+
+/* ---------- Modal (nx-) ---------- */
+.nx-modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,0.45);
+  backdrop-filter: blur(2px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 2rem;
+  z-index: 1000;
+}
+
+@keyframes nx-fade-up {
+  from { opacity: 0; transform: translateY(10px) scale(0.98); }
+  to   { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+.nx-modal {
+  background: var(--card-bg);
+  color: var(--text-color);
+  border: 1px solid var(--border-color);
+  border-radius: 12px;
+  box-shadow: 0 12px 30px var(--shadow);
+  width: 100%;
+  max-width: 700px;
+  max-height: 85vh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  animation: nx-fade-up 0.18s ease-out;
+}
+
+.nx-modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 1rem 1.25rem;
+  border-bottom: 1px solid var(--border-color);
+  background: var(--header-bg);
+}
+
+.nx-modal-title {
+  margin: 0;
+  font-size: 1.25rem;
+  color: var(--text-color);
+}
+
+.nx-modal-close {
+  border: none;
+  background: transparent;
+  color: var(--text-color);
+  font-size: 1.25rem;
+  cursor: pointer;
+  border-radius: 8px;
+  width: 36px;
+  height: 36px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.nx-modal-close:hover {
+  background: var(--card-bg);
+}
+
+.nx-modal-body {
+  padding: 1rem 1.25rem;
+  overflow: auto;
+}
+
+/* ---------- Form layout ---------- */
+.nx-form-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1rem;
+}
+
+.nx-field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.nx-span-2 {
+  grid-column: span 2;
+}
+
+.nx-label {
+  font-size: 0.9rem;
+  color: var(--text-color);
+  opacity: 0.9;
+}
+
+.nx-input,
+.nx-select,
+.nx-textarea {
+  width: 100%;
+  padding: 0.5rem 0.6rem;
+  border: 1px solid var(--border-color);
+  background: var(--card-bg);
+  color: var(--text-color);
+  border-radius: 0.4rem;
+  box-shadow: inset 0 1px 2px var(--shadow);
+}
+
+.nx-input:focus,
+.nx-select:focus,
+.nx-textarea:focus {
+  outline: none;
+  border-color: var(--button-bg);
+  box-shadow: 0 0 0 3px rgba(59,130,246,0.2);
+}
+
+.nx-textarea {
+  resize: vertical;
+  min-height: 90px;
+}
+
+/* ---------- Actions ---------- */
+.nx-actions {
+  margin-top: 1rem;
+  display: flex;
+  gap: 0.5rem;
+  justify-content: flex-end;
+}
+
+.button-secondary {
+  background-color: #6c757d;
+  color: white;
+  padding: 0.5rem 1rem;
+  border-radius: 0.25rem;
+  border: none;
+  cursor: pointer;
+  transition: background-color 0.3s ease;
+}
+
+.button-secondary:hover {
+  background-color: #5a6268;
+}
+
+/* ---------- Responsive ---------- */
+@media (max-width: 720px) {
+  .nx-form-grid { grid-template-columns: 1fr; }
+  .nx-span-2 { grid-column: span 1; }
+  .nx-modal { max-height: 90vh; }
+}
+
+/* ---------- CategoryPicker (nx-catpicker) ---------- */
+.nx-catpicker {
+  position: relative;
+}
+
+.nx-catpicker-input {
+  min-height: 40px;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 6px 40px 6px 8px;
+  border: 1px solid var(--border-color);
+  background: var(--card-bg);
+  color: var(--text-color);
+  border-radius: 8px;
+  cursor: text;
+  box-shadow: inset 0 1px 2px var(--shadow);
+}
+
+.nx-catpicker-input.open {
+  border-color: var(--button-bg);
+  box-shadow: 0 0 0 3px rgba(59,130,246,0.2);
+}
+
+.nx-catpicker-hidden-input {
+  border: none;
+  outline: none;
+  background: transparent;
+  color: var(--text-color);
+  padding: 4px;
+  min-width: 120px;
+  flex: 1;
+}
+
+.nx-catpicker-clear {
+  position: absolute;
+  right: 8px;
+  top: 8px;
+  height: 24px;
+  padding: 0 8px;
+  background: #6c757d;
+  color: #fff;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 0.8rem;
+}
+
+.nx-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 8px;
+  border-radius: 9999px;
+  background: var(--header-bg);
+  border: 1px solid var(--border-color);
+  color: var(--text-color);
+  font-size: 0.85rem;
+}
+
+.nx-chip.primary {
+  background: #fffbeb;
+  border-color: #fbbf24;
+  color: #92400e;
+}
+
+body.dark .nx-chip.primary {
+  background: #3a2d00;
+  border-color: #fbbf24;
+  color: #ffdd57;
+}
+
+.nx-chip.ghost {
+  opacity: 0.7;
+  font-style: italic;
+}
+
+.nx-chip-x,
+.nx-chip-star {
+  border: none;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  padding: 0;
+  line-height: 1;
+}
+
+.nx-chip-x:hover { color: #dc3545; }
+.nx-chip-star:hover { color: #f59e0b; }
+
+.nx-catpicker-dropdown {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: calc(100% + 4px);
+  background: var(--card-bg);
+  color: var(--text-color);
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  box-shadow: 0 8px 20px var(--shadow);
+  z-index: 100;
+  overflow: hidden;
+}
+
+.nx-catpicker-search {
+  padding: 0.5rem;
+  border-bottom: 1px solid var(--border-color);
+}
+
+.nx-catpicker-search input {
+  width: 100%;
+  padding: 0.5rem;
+  border: 1px solid var(--border-color);
+  background: var(--card-bg);
+  color: var(--text-color);
+  border-radius: 6px;
+}
+
+.nx-catpicker-list {
+  max-height: 260px;
+  overflow: auto;
+}
+
+.nx-catpicker-item {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.45rem 0.6rem;
+  border-bottom: 1px solid var(--border-color);
+}
+
+.nx-catpicker-item:last-child {
+  border-bottom: none;
+}
+
+.nx-catpicker-item.selected {
+  background: rgba(59,130,246,0.08);
+}
+
+.nx-catpicker-name {
+  flex: 1;
+}
+
+.nx-catpicker-star {
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  font-size: 1rem;
+  color: #999;
+}
+
+.nx-catpicker-star.active {
+  color: #f59e0b;
+}
+
+.nx-catpicker-empty {
+  padding: 0.75rem;
+  font-size: 0.9rem;
+  color: #666;
+}
+
+@media (max-width: 720px) {
+  .nx-catpicker-input { padding-right: 34px; }
+  .nx-catpicker-clear { top: 6px; }
+}
+
+/* ---------- Plex page enhancements ---------- */
+.nx-plex-card h2 { margin-top: 0; }
+
+.nx-plex-steps {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  margin: 0.25rem 0 1rem;
+}
+
+.nx-step {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 10px;
+  background: var(--header-bg);
+  border: 1px solid var(--border-color);
+  border-radius: 9999px;
+  font-size: 0.85rem;
+}
+
+.nx-badge {
+  width: 18px;
+  height: 18px;
+  border-radius: 9999px;
+  background: var(--button-bg);
+  color: #fff;
+  display: inline-grid;
+  place-items: center;
+  font-size: 0.75rem;
+  font-weight: 700;
+}
+
+/* Method sections */
+.nx-plex-method {
+  border-left: 4px solid var(--button-bg);
+  background: var(--card-bg);
+}
+
+/* Info note */
+.nx-plex-note {
+  background: var(--header-bg);
+}
+
+/* Button variants */
+.button-success { background-color: #28a745 !important; }
+.button-danger  { background-color: #dc3545 !important; }
+.button-warn    { background-color: #f59e0b !important; }
+.button-outline {
+  background: transparent !important;
+  color: var(--text-color) !important;
+  border: 1px solid var(--border-color) !important;
+}
+
+/* Status chip */
+.nx-chip.nx-status {
+  padding: 0.1rem 0.5rem;
+  border-radius: 9999px;
+  border: 1px solid var(--border-color);
+  background: var(--header-bg);
+  font-size: 0.85rem;
+}
+
+.nx-chip.nx-status.ok {
+  background: rgba(40,167,69,0.15);
+  border-color: rgba(40,167,69,0.45);
+  color: #1e7e34;
+}
+
+.nx-chip.nx-status.bad {
+  background: rgba(220,53,69,0.15);
+  border-color: rgba(220,53,69,0.45);
+  color: #842029;
+}
+
+/* Collapsible help */
+details.nx-plex-help { margin-top: 0.25rem; }
+details.nx-plex-help summary { cursor: pointer; color: var(--button-bg); }
+details.nx-plex-help[open] {
+  background: var(--card-bg);
+  border: 1px dashed var(--border-color);
+  border-radius: 8px;
+  padding: 0.5rem 0.75rem;
+}
+
+/* Sticky top navigation refinement for better UX on scroll */
+.tabbar-right { display: flex; align-items: center; }
+
+/* Preroll card header and actions: prevent overflow on long titles */
+.preroll-header { display: flex; justify-content: space-between; align-items: flex-start; gap: 0.5rem; min-width: 0; }
+.preroll-title { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.preroll-actions { display: flex; gap: 0.25rem; flex-shrink: 0; }
+
+/* Preroll list row title clamp */
+.preroll-row-title { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+/* Inline create button row for CategoryPicker dropdown */
+.nx-catpicker-create {
+  padding: 0.5rem;
+  border-bottom: 1px solid var(--border-color);
+  background: var(--card-bg);
+}
+
+.nx-catpicker-create .button {
+  font-size: 0.85rem;
+  padding: 0.35rem 0.6rem;
 }
