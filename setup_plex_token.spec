@@ -4,13 +4,46 @@
 import os
 
 block_cipher = None
-project_root = os.getcwd()
-script_path = os.path.join(project_root, "NeXroll", "setup_plex_token.py")
-ico_path = os.path.join(project_root, "NeXroll", "frontend", "favicon.ico")
+
+# Resolve project root to the NeXroll directory regardless of launch CWD
+def _resolve_project_root():
+    try:
+        d = os.path.dirname(os.path.abspath(__file__))
+    except NameError:
+        d = os.getcwd()
+    if os.path.basename(d).lower() != "nexroll":
+        cand = os.path.join(d, "NeXroll")
+        if os.path.isdir(cand):
+            d = cand
+    return d
+
+project_root = _resolve_project_root()
+script_path = os.path.join(project_root, "setup_plex_token.py")
+
+# Icon: prefer dedicated icon pack if present, else fallback to frontend favicon
+import os as _os
+icon_dir = _os.path.abspath(_os.path.join(project_root, "..", "NeXroll_ICON"))
+ico_path = None
+try:
+    if _os.path.isdir(icon_dir):
+        cands = [_os.path.join(icon_dir, f) for f in _os.listdir(icon_dir) if f.lower().endswith("64x64.ico")]
+        if not cands:
+            cands = [_os.path.join(icon_dir, f) for f in _os.listdir(icon_dir) if f.lower().endswith(".ico")]
+        if cands:
+            ico_path = cands[0]
+except Exception:
+    ico_path = None
+
+if not ico_path or not _os.path.exists(ico_path):
+    ico_path = os.path.join(project_root, "frontend", "favicon.ico")
+    if not os.path.exists(ico_path):
+        alt = os.path.join(os.getcwd(), "NeXroll", "frontend", "favicon.ico")
+        if os.path.exists(alt):
+            ico_path = alt
 
 a = Analysis(
     [script_path],
-    pathex=[os.path.join(project_root, "NeXroll")],
+    pathex=[project_root],
     binaries=[],
     datas=[
         (ico_path, 'frontend'),
