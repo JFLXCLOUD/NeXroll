@@ -2022,7 +2022,7 @@ const toLocalInputFromDate = (d) => {
                       const category = parts[2] || 'Default';
                       const filename = parts.slice(3).join('/') || (parts.length ? parts[parts.length - 1] : '');
                       e.currentTarget.onerror = null;
-                      e.currentTarget.src = `http://localhost:9393/thumbgen/${encodeURIComponent(category)}/${encodeURIComponent(filename)}`;
+                      e.currentTarget.src = apiUrl(`thumbgen/${encodeURIComponent(category)}/${encodeURIComponent(filename)}`);
                     } catch (_) {
                       // ignore
                     }
@@ -2086,7 +2086,7 @@ const toLocalInputFromDate = (d) => {
                    const category = parts[2] || 'Default';
                    const filename = parts.slice(3).join('/') || (parts.length ? parts[parts.length - 1] : '');
                    e.currentTarget.onerror = null;
-                   e.currentTarget.src = `http://localhost:9393/thumbgen/${encodeURIComponent(category)}/${encodeURIComponent(filename)}`;
+                   e.currentTarget.src = apiUrl(`thumbgen/${encodeURIComponent(category)}/${encodeURIComponent(filename)}`);
                  } catch (_) {}
                }}
              />
@@ -3279,6 +3279,19 @@ const toLocalInputFromDate = (d) => {
               </form>
             )}
           </div>
+          <details className="nx-plex-help" style={{ marginTop: '0.75rem' }}>
+            <summary>Docker/Remote: save token headlessly</summary>
+            <div style={{ fontSize: '0.9rem', color: '#666', marginTop: '0.25rem' }}>
+              If NeXroll runs in Docker or on a different host than Plex, you can paste your Plex token via “Advanced: Save/Update Stable Token” above,
+              or run this from any machine that can reach NeXroll:
+            </div>
+            <pre className="nx-code" style={{ whiteSpace: 'pre-wrap', marginTop: '0.5rem' }}>
+curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN"
+            </pre>
+            <div style={{ fontSize: '0.9rem', color: '#666' }}>
+              Then click “Connect with Stable Token” and enter your Plex Server URL (e.g., http://192.168.1.100:32400). Make sure your Plex server is claimed and Remote Access is enabled if it’s off-LAN.
+            </div>
+          </details>
         </div>
 
         {/* Method 2: Manual X-Plex-Token */}
@@ -3898,6 +3911,28 @@ C:\\\\Media\\\\Prerolls\\\\summer\\\\beach.mp4`}
               <div className="nx-progress"><div className="bar"></div></div>
             </div>
           )}
+        </div>
+        <div className="nx-help" style={{ marginTop: '0.75rem', padding: '0.75rem', border: '1px dashed var(--border-color)', borderRadius: '6px', background: 'var(--card-bg)' }}>
+          <h3 style={{ margin: 0, marginBottom: '0.5rem' }}>Docker/NAS guidance</h3>
+          <ul style={{ margin: 0, paddingLeft: '1.25rem' }}>
+            <li>If NeXroll runs in Docker, the container cannot see Windows mapped drives or UNC paths by default. Mount your NAS/host folder into the container and use the container path in “Root path”.</li>
+            <li>UNC paths like \\NAS\share aren’t usable inside Linux containers. Mount the SMB share on the host (e.g., /mnt/nas) and map it into the container.</li>
+            <li>Example docker run: <code>docker run -d --name nexroll -p 9393:9393 -v /mnt/nas/prerolls:/nas/prerolls jbrns/nexroll:latest</code> → then use <code>/nas/prerolls</code> as the Root path.</li>
+            <li>docker-compose example:</li>
+          </ul>
+          <pre className="nx-code" style={{ whiteSpace: 'pre-wrap', marginTop: '0.5rem' }}>
+version: "3.8"
+services:
+  nexroll:
+    image: jbrns/nexroll:latest
+    ports:
+      - "9393:9393"
+    volumes:
+      - /mnt/nas/prerolls:/nas/prerolls
+          </pre>
+          <div style={{ fontSize: '0.9rem', color: '#666' }}>
+            Tip: Use the “UNC/Local → Plex Path Mappings” section above to translate your local or container paths (e.g., <code>/nas/prerolls</code> or <code>\\NAS\share\prerolls</code>) into the Plex-visible mount on your Plex host (e.g., <code>/mnt/prerolls</code>).
+          </div>
         </div>
       </details>
 
