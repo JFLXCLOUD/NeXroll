@@ -108,6 +108,7 @@ jobs:
           ENV PYTHONDONTWRITEBYTECODE=1 \
               PYTHONUNBUFFERED=1 \
               PIP_NO_CACHE_DIR=1 \
+              PYTHONPATH=/app/NeXroll \
               NEXROLL_PORT=9393 \
               NEXROLL_DB_DIR=/data \
               NEXROLL_PREROLL_PATH=/data/prerolls \
@@ -126,6 +127,8 @@ jobs:
 
           # Copy backend into a directory named by its package folder, so the module path matches
           COPY $BE_PATH /app/NeXroll/$BE_NAME
+          # Duplicate into nexroll_backend alias to satisfy old import paths
+          COPY $BE_PATH /app/NeXroll/nexroll_backend
           COPY --from=frontend-builder /build/frontend/build /app/NeXroll/frontend/build
 
           RUN mkdir -p /data /data/prerolls
