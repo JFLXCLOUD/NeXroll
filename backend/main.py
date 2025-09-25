@@ -101,6 +101,12 @@ def ensure_schema() -> None:
             # Prerolls: ensure display_name column for UI-friendly naming separate from disk file
             if not _sqlite_has_column("prerolls", "display_name"):
                 _sqlite_add_column("prerolls", "display_name TEXT")
+            # Prerolls: ensure managed flag to indicate external/mapped files (no moves/deletes)
+            if not _sqlite_has_column("prerolls", "managed"):
+                _sqlite_add_column("prerolls", "managed BOOLEAN DEFAULT 1")
+            # Settings: ensure path_mappings JSON field for local->plex path conversion
+            if not _sqlite_has_column("settings", "path_mappings"):
+                _sqlite_add_column("settings", "path_mappings TEXT")
     except Exception as e:
         print(f"Schema ensure error: {e}")
 
@@ -127,6 +133,7 @@ def ensure_settings_schema_now() -> None:
                 "plex_server_name": "TEXT",
                 "active_category": "INTEGER",
                 "updated_at": "DATETIME",
+                "path_mappings": "TEXT",
             }
             for col, ddl in need.items():
                 if col not in cols:
@@ -450,6 +457,25 @@ class PrerollUpdate(BaseModel):
     display_name: str | None = None                # UI display label
     new_filename: str | None = None                # optional on-disk rename (basename; extension optional)
 
+class PathMapping(BaseModel):
+    local: str
+    plex: str
+
+class PathMappingsPayload(BaseModel):
+    mappings: list[PathMapping]
+
+class TestTranslationRequest(BaseModel):
+    paths: list[str]
+
+class MapRootRequest(BaseModel):
+    root_path: str
+    category_id: int | None = None
+    recursive: bool = True
+    extensions: list[str] | None = None
+    dry_run: bool = True
+    generate_thumbnails: bool = True
+    tags: list[str] | None = None
+
 class PlexConnectRequest(BaseModel):
     url: str
     token: str
@@ -465,7 +491,7 @@ class PlexTvConnectRequest(BaseModel):
     prefer_local: bool = True
     save_token: bool = True
 
-app = FastAPI(title="NeXroll Backend", version="1.1.1")
+app = FastAPI(title="NeXroll Backend", version="1.2.2")
 
 # In-memory store for Plex.tv OAuth sessions
 OAUTH_SESSIONS: dict[str, dict] = {}
@@ -524,7 +550,7 @@ async def _no_cache_index_mw(request, call_next):
     try:
         path = (request.url.path or "").lower()
         # Prevent cache for entry and manifest/service worker to avoid stale hashed bundles
-        if path in ("/", "/index.html", "/manifest.json", "/asset-manifest.json", "/sw.js", "/service-worker.js"):
+        if path in ("/", "/index.html", "/manifest.json", "/asset-manifest.json", "/sw.js", "/service-worker.js", "/dashboard"):
             response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
             response.headers["Pragma"] = "no-cache"
             response.headers["Expires"] = "0"
@@ -769,18 +795,32 @@ def dashboard():
 <title>NeXroll Dashboard</title>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <style>
-body{font-family:Segoe UI, Arial, sans-serif; margin:24px; color:#222; background:#fafafa}
-h1{margin:0 0 12px 0}
-small{color:#666}
-button{padding:8px 12px; margin:8px 8px 8px 0; cursor:pointer}
-pre{background:#0b1020;color:#d1f7c4;padding:12px;border-radius:6px;white-space:pre-wrap;max-width:100%;overflow:auto}
-.card{background:#fff;padding:16px;border:1px solid #e5e7eb;border-radius:8px;box-shadow:0 1px 2px rgba(0,0,0,0.04);margin-bottom:16px}
+  :root{--bg:#fafafa;--card:#fff;--text:#222;--muted:#666;--border:#e5e7eb;--brand:#0b1020;--brandText:#d1f7c4}
+  body{font-family:Segoe UI, Arial, sans-serif; margin:24px; color:var(--text); background:var(--bg)}
+  h1{margin:0 0 12px 0}
+  small{color:var(--muted)}
+  button{padding:8px 12px; margin:8px 8px 8px 0; cursor:pointer}
+  pre{background:var(--brand);color:var(--brandText);padding:12px;border-radius:6px;white-space:pre-wrap;max-width:100%;overflow:auto}
+  .card{background:var(--card);padding:16px;border:1px solid var(--border);border-radius:8px;box-shadow:0 1px 2px rgba(0,0,0,0.04);margin-bottom:16px}
+  .row{display:flex; gap:12px; flex-wrap:wrap; align-items:center}
+  .field{display:flex; flex-direction:column; margin:6px 12px 6px 0}
+  .field label{font-size:12px; color:#444; margin-bottom:4px}
+  input[type="text"], input[type="number"], textarea, select{
+    padding:8px; border:1px solid var(--border); border-radius:6px; min-width:220px; font-family:inherit
+  }
+  input[type="checkbox"]{transform:translateY(2px)}
+  table{border-collapse:collapse; width:100%; margin-top:8px}
+  th, td{border:1px solid var(--border); padding:8px; text-align:left}
+  th{background:#f3f4f6; font-weight:600}
+  .muted{color:#666; font-size:12px}
 </style>
 </head>
 <body>
   <h1>NeXroll Dashboard</h1>
+
+  <!-- Quick actions -->
   <div class="card">
-    <div>
+    <div class="row">
       <button onclick="reinit()">Reinitialize Thumbnails</button>
       <button onclick="ffmpeg()">FFmpeg Info</button>
       <button onclick="plex()">Plex Status</button>
@@ -788,13 +828,222 @@ pre{background:#0b1020;color:#d1f7c4;padding:12px;border-radius:6px;white-space:
       <small id="status"></small>
     </div>
   </div>
+
+  <!-- Path Mappings -->
+  <div class="card">
+    <h2 style="margin:0 0 8px 0;">Path Mappings</h2>
+    <div class="muted">Define how local/UNC paths translate to the path Plex sees. Longest-prefix wins; Windows is case-insensitive.</div>
+
+    <div class="row" style="margin-top:8px;">
+      <button onclick="loadMappings()">Load Mappings</button>
+      <button onclick="addMappingRow()">Add Row</button>
+      <button onclick="saveMappings(false)">Save (Replace)</button>
+      <button onclick="saveMappings(true)">Save (Merge)</button>
+    </div>
+
+    <table id="mapTable">
+      <thead>
+        <tr><th style="width:45%;">Local Prefix (e.g. \\\\NAS\\PreRolls or D:\\Media\\Prerolls)</th><th style="width:45%;">Plex Prefix (e.g. Z:\\PreRolls or /mnt/prerolls)</th><th style="width:10%;">Actions</th></tr>
+      </thead>
+      <tbody id="mapTableBody">
+      </tbody>
+    </table>
+
+    <div class="row" style="margin-top:12px;">
+      <div class="field" style="flex:1 1 420px;">
+        <label for="testPaths">Test translation (one path per line)</label>
+        <textarea id="testPaths" rows="4" placeholder="\\\\NAS\\PreRolls\\Holiday\\intro.mp4"></textarea>
+      </div>
+    </div>
+    <div class="row">
+      <button onclick="testMappings()">Run Test</button>
+    </div>
+    <pre id="mapOut">Mappings ready.</pre>
+  </div>
+
+  <!-- Map External Folder -->
+  <div class="card">
+    <h2 style="margin:0 0 8px 0;">Map External Folder (No Copy/Move)</h2>
+    <div class="muted">Indexes an existing folder (local or UNC) into NeXroll. Files are marked managed=false so NeXroll will not move/delete them.</div>
+
+    <div class="row" style="margin-top:8px;">
+      <div class="field" style="flex:1 1 420px;">
+        <label for="rootPath">Root Path</label>
+        <input type="text" id="rootPath" placeholder="\\\\NAS\\PreRolls\\Holiday or D:\\Media\\Prerolls\\Holiday" />
+      </div>
+      <div class="field">
+        <label for="categoryId">Category ID (optional)</label>
+        <input type="number" id="categoryId" placeholder="e.g. 5" />
+      </div>
+      <div class="field">
+        <label for="extensions">Extensions (comma)</label>
+        <input type="text" id="extensions" value="mp4,mkv,mov,avi,m4v,webm" />
+      </div>
+    </div>
+
+    <div class="row">
+      <div class="field">
+        <label>
+          <input type="checkbox" id="recursive" checked />
+          Recursive
+        </label>
+      </div>
+      <div class="field">
+        <label>
+          <input type="checkbox" id="generateThumbnails" checked />
+          Generate Thumbnails
+        </label>
+      </div>
+      <div class="field" style="flex:1 1 420px;">
+        <label for="tags">Tags (comma, optional)</label>
+        <input type="text" id="tags" placeholder="mapped,external" />
+      </div>
+    </div>
+
+    <div class="row" style="margin-top:8px;">
+      <button onclick="mapRoot(true)">Dry Run</button>
+      <button onclick="mapRoot(false)">Map Now</button>
+    </div>
+    <pre id="mapRootOut">Ready.</pre>
+  </div>
+
+  <!-- Output -->
   <div class="card">
     <pre id="out">Ready.</pre>
   </div>
+
 <script>
 function setOut(t){document.getElementById('out').textContent=t;}
 function setStatus(t){document.getElementById('status').textContent=t;}
+function setMapOut(t){document.getElementById('mapOut').textContent=t;}
+function setMapRootOut(t){document.getElementById('mapRootOut').textContent=t;}
 
+function addMappingRow(local='', plex=''){
+  const tb = document.getElementById('mapTableBody');
+  const tr = document.createElement('tr');
+  tr.innerHTML = `
+    <td><input type="text" class="mapLocal" placeholder="\\\\\\NAS\\PreRolls or D:\\\\Media\\\\Prerolls" style="width:100%;"/></td>
+    <td><input type="text" class="mapPlex" placeholder="Z:\\\\PreRolls or /mnt/prerolls" style="width:100%;"/></td>
+    <td><button type="button" onclick="this.closest('tr').remove()">Remove</button></td>
+  `;
+  tb.appendChild(tr);
+  // Set values after insertion to avoid JS parsing issues with backslashes in HTML attributes
+  try{
+    const loc = tr.querySelector('.mapLocal');
+    const plx = tr.querySelector('.mapPlex');
+    if(loc) loc.value = local || '';
+    if(plx) plx.value = plex || '';
+  }catch(e){}
+}
+
+async function loadMappings(){
+  setMapOut('GET /settings/path-mappings ...');
+  try{
+    const res = await fetch('/settings/path-mappings');
+    const j = await res.json();
+    const tb = document.getElementById('mapTableBody');
+    tb.innerHTML = '';
+    const maps = (j && j.mappings) ? j.mappings : [];
+    for(const m of maps){
+      addMappingRow(m.local || '', m.plex || '');
+    }
+    if(maps.length === 0){ addMappingRow(); }
+    setMapOut(JSON.stringify(j,null,2));
+  }catch(e){
+    setMapOut('Error: '+e);
+  }
+}
+
+function collectMappings(){
+  const rows = Array.from(document.querySelectorAll('#mapTableBody tr'));
+  const out = [];
+  for(const r of rows){
+    const local = (r.querySelector('.mapLocal')?.value || '').trim();
+    const plex = (r.querySelector('.mapPlex')?.value || '').trim();
+    if(local && plex){ out.push({local, plex}); }
+  }
+  return out;
+}
+
+async function saveMappings(merge){
+  const mappings = collectMappings();
+  const payload = { mappings };
+  setMapOut((merge? 'PUT /settings/path-mappings?merge=true' : 'PUT /settings/path-mappings') + ' ...');
+  try{
+    const res = await fetch('/settings/path-mappings' + (merge ? '?merge=true' : ''), {
+      method:'PUT',
+      headers:{'Content-Type':'application/json'},
+      body: JSON.stringify(payload)
+    });
+    const j = await res.json();
+    setMapOut(JSON.stringify(j,null,2));
+  }catch(e){
+    setMapOut('Error: '+e);
+  }
+}
+
+async function testMappings(){
+  const raw = (document.getElementById('testPaths').value || '').split(/\\r?\\n/).map(s=>s.trim()).filter(Boolean);
+  const payload = { paths: raw };
+  setMapOut('POST /settings/path-mappings/test ...');
+  try{
+    const res = await fetch('/settings/path-mappings/test', {
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body: JSON.stringify(payload)
+    });
+    const j = await res.json();
+    setMapOut(JSON.stringify(j,null,2));
+  }catch(e){
+    setMapOut('Error: '+e);
+  }
+}
+
+function parseExtensions(str){
+  if(!str) return [];
+  return str.split(',').map(s=>s.trim()).filter(Boolean).map(s => s.startsWith('.') ? s : ('.'+s));
+}
+
+function parseTags(str){
+  if(!str) return null;
+  const t = str.split(',').map(s=>s.trim()).filter(Boolean);
+  return t.length ? t : null;
+}
+
+async function mapRoot(isDry){
+  const root_path = (document.getElementById('rootPath').value || '').trim();
+  const categoryRaw = (document.getElementById('categoryId').value || '').trim();
+  const category_id = categoryRaw ? parseInt(categoryRaw, 10) : null;
+  const recursive = document.getElementById('recursive').checked;
+  const exts = parseExtensions((document.getElementById('extensions').value || ''));
+  const generate_thumbnails = document.getElementById('generateThumbnails').checked;
+  const tags = parseTags((document.getElementById('tags').value || ''));
+
+  const payload = {
+    root_path,
+    category_id,
+    recursive,
+    extensions: exts,
+    dry_run: !!isDry,
+    generate_thumbnails,
+    tags
+  };
+
+  setMapRootOut('POST /prerolls/map-root ...');
+  try{
+    const res = await fetch('/prerolls/map-root', {
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body: JSON.stringify(payload)
+    });
+    const j = await res.json();
+    setMapRootOut(JSON.stringify(j,null,2));
+  }catch(e){
+    setMapRootOut('Error: '+e);
+  }
+}
+
+/* Existing quick actions */
 async function reinit(){
   setStatus('Rebuilding thumbnails...');
   setOut('POST /thumbnails/rebuild?force=true ...');
@@ -847,6 +1096,11 @@ async function version(){
     setStatus('Failed.');
   }
 }
+
+/* Initialize UI */
+window.addEventListener('DOMContentLoaded', () => {
+  loadMappings().catch(()=>{});
+});
 </script>
 </body>
 </html>"""
@@ -1611,6 +1865,7 @@ def get_prerolls(db: Session = Depends(get_db), category_id: str = "", tags: str
             "description": p.description,
             "duration": p.duration,
             "file_size": p.file_size,
+            "managed": getattr(p, "managed", True),
             "upload_date": p.upload_date
         })
     return result
@@ -1648,7 +1903,7 @@ def update_preroll(preroll_id: int, payload: PrerollUpdate, db: Session = Depend
         p.description = (payload.description or "").strip() or None
 
     # Physical rename on disk (optional)
-    if payload.new_filename and str(payload.new_filename).strip():
+    if payload.new_filename and str(payload.new_filename).strip() and getattr(p, "managed", True):
         new_name = str(payload.new_filename).strip()
         # resolve current absolute path
         old_abs = p.path if os.path.isabs(p.path) else os.path.join(data_dir, p.path)
@@ -1680,36 +1935,41 @@ def update_preroll(preroll_id: int, payload: PrerollUpdate, db: Session = Depend
     if payload.category_id is not None and payload.category_id != p.category_id:
         new_primary = db.query(models.Category).filter(models.Category.id == payload.category_id).first()
         if new_primary:
-            # Resolve current absolute path
-            cur_abs = p.path if os.path.isabs(p.path) else os.path.join(data_dir, p.path)
-            try:
-                # Derive suffix relative to <oldCat>/ (preserve subfolders like Preroll_<id>)
-                rel_from_root = os.path.relpath(cur_abs, PREROLLS_DIR)
-                parts = rel_from_root.split(os.sep)
-                suffix = os.path.join(*parts[1:]) if len(parts) > 1 else os.path.basename(cur_abs)
-            except Exception:
-                # Fallback: just use filename
-                suffix = os.path.basename(p.path)
+            if getattr(p, "managed", True):
+                # Resolve current absolute path
+                cur_abs = p.path if os.path.isabs(p.path) else os.path.join(data_dir, p.path)
+                try:
+                    # Derive suffix relative to <oldCat>/ (preserve subfolders like Preroll_<id>)
+                    rel_from_root = os.path.relpath(cur_abs, PREROLLS_DIR)
+                    parts = rel_from_root.split(os.sep)
+                    suffix = os.path.join(*parts[1:]) if len(parts) > 1 else os.path.basename(cur_abs)
+                except Exception:
+                    # Fallback: just use filename
+                    suffix = os.path.basename(p.path)
 
-            new_cat_dir = os.path.join(PREROLLS_DIR, new_primary.name)
-            os.makedirs(new_cat_dir, exist_ok=True)
-            new_abs = os.path.join(new_cat_dir, suffix)
-            try:
-                if os.path.abspath(new_abs) != os.path.abspath(cur_abs):
-                    os.makedirs(os.path.dirname(new_abs), exist_ok=True)
-                    try:
-                        os.replace(cur_abs, new_abs)
-                    except Exception:
-                        shutil.copy2(cur_abs, new_abs)
+                new_cat_dir = os.path.join(PREROLLS_DIR, new_primary.name)
+                os.makedirs(new_cat_dir, exist_ok=True)
+                new_abs = os.path.join(new_cat_dir, suffix)
+                try:
+                    if os.path.abspath(new_abs) != os.path.abspath(cur_abs):
+                        os.makedirs(os.path.dirname(new_abs), exist_ok=True)
                         try:
-                            os.remove(cur_abs)
+                            os.replace(cur_abs, new_abs)
                         except Exception:
-                            pass
-                    p.path = new_abs
+                            shutil.copy2(cur_abs, new_abs)
+                            try:
+                                os.remove(cur_abs)
+                            except Exception:
+                                pass
+                        p.path = new_abs
+                    p.category_id = new_primary.id
+                    changed_thumbnail = True
+                except Exception as e:
+                    _file_log(f"update_preroll: move to new category failed id={p.id}: {e}")
+            else:
+                # External/mapped file: do not move on disk; only change primary category
                 p.category_id = new_primary.id
                 changed_thumbnail = True
-            except Exception as e:
-                _file_log(f"update_preroll: move to new category failed id={p.id}: {e}")
 
     # Many-to-many categories update
     if payload.category_ids is not None:
@@ -1799,15 +2059,16 @@ def delete_preroll(preroll_id: int, db: Session = Depends(get_db)):
     if not preroll:
         raise HTTPException(status_code=404, detail="Preroll not found")
 
-    # Delete the actual files
+    # Delete the actual files (do not delete external mapped files)
     try:
         # Handle new path structure
-        full_path = preroll.path
-        if not os.path.isabs(full_path):
-            full_path = os.path.join(data_dir, full_path)
+        if getattr(preroll, "managed", True):
+            full_path = preroll.path
+            if not os.path.isabs(full_path):
+                full_path = os.path.join(data_dir, full_path)
 
-        if os.path.exists(full_path):
-            os.remove(full_path)
+            if os.path.exists(full_path):
+                os.remove(full_path)
 
         if preroll.thumbnail:
             thumbnail_path = preroll.thumbnail
@@ -2018,6 +2279,7 @@ def get_category_prerolls(category_id: int, db: Session = Depends(get_db)):
             "description": p.description,
             "duration": p.duration,
             "file_size": p.file_size,
+            "managed": getattr(p, "managed", True),
             "upload_date": p.upload_date
         })
     return result
@@ -2048,34 +2310,65 @@ def add_preroll_to_category(category_id: int, preroll_id: int, set_primary: bool
     moved_primary = False
     # Optionally set as primary category (move file path)
     if set_primary and p.category_id != category_id:
-        # Resolve current absolute path
-        cur_abs = p.path if os.path.isabs(p.path) else os.path.join(data_dir, p.path)
-        try:
-            # Derive suffix relative to <oldCat>/ (preserve subfolders like Preroll_<id>)
-            rel_from_root = os.path.relpath(cur_abs, PREROLLS_DIR)
-            parts = rel_from_root.split(os.sep)
-            suffix = os.path.join(*parts[1:]) if len(parts) > 1 else os.path.basename(cur_abs)
-        except Exception:
-            suffix = os.path.basename(p.path)
+        if getattr(p, "managed", True):
+            # Resolve current absolute path
+            cur_abs = p.path if os.path.isabs(p.path) else os.path.join(data_dir, p.path)
+            try:
+                # Derive suffix relative to <oldCat>/ (preserve subfolders like Preroll_<id>)
+                rel_from_root = os.path.relpath(cur_abs, PREROLLS_DIR)
+                parts = rel_from_root.split(os.sep)
+                suffix = os.path.join(*parts[1:]) if len(parts) > 1 else os.path.basename(cur_abs)
+            except Exception:
+                suffix = os.path.basename(p.path)
 
-        new_cat_dir = os.path.join(PREROLLS_DIR, cat.name)
-        os.makedirs(new_cat_dir, exist_ok=True)
-        new_abs = os.path.join(new_cat_dir, suffix)
-        try:
-            if os.path.abspath(new_abs) != os.path.abspath(cur_abs):
-                os.makedirs(os.path.dirname(new_abs), exist_ok=True)
-                try:
-                    os.replace(cur_abs, new_abs)
-                except Exception:
-                    shutil.copy2(cur_abs, new_abs)
+            new_cat_dir = os.path.join(PREROLLS_DIR, cat.name)
+            os.makedirs(new_cat_dir, exist_ok=True)
+            new_abs = os.path.join(new_cat_dir, suffix)
+            try:
+                if os.path.abspath(new_abs) != os.path.abspath(cur_abs):
+                    os.makedirs(os.path.dirname(new_abs), exist_ok=True)
                     try:
-                        os.remove(cur_abs)
+                        os.replace(cur_abs, new_abs)
+                    except Exception:
+                        shutil.copy2(cur_abs, new_abs)
+                        try:
+                            os.remove(cur_abs)
+                        except Exception:
+                            pass
+                    p.path = new_abs
+                p.category_id = cat.id
+                moved_primary = True
+                # Update thumbnail for new primary location/name (id-prefixed)
+                try:
+                    tgt_dir = os.path.join(THUMBNAILS_DIR, cat.name)
+                    os.makedirs(tgt_dir, exist_ok=True)
+                    new_thumb_abs = os.path.join(tgt_dir, f"{p.id}_{p.filename}.jpg")
+                    video_abs = p.path if os.path.isabs(p.path) else os.path.join(data_dir, p.path)
+                    tmp = new_thumb_abs + ".tmp.jpg"
+                    res = _run_subprocess(
+                        [get_ffmpeg_cmd(), "-v", "error", "-y", "-ss", "5", "-i", video_abs, "-vframes", "1", "-q:v", "2", "-f", "mjpeg", tmp],
+                        capture_output=True,
+                        text=True,
+                    )
+                    if getattr(res, "returncode", 1) != 0 or not os.path.exists(tmp):
+                        _generate_placeholder(tmp)
+                    try:
+                        if os.path.exists(new_thumb_abs):
+                            os.remove(new_thumb_abs)
                     except Exception:
                         pass
-                p.path = new_abs
+                    os.replace(tmp, new_thumb_abs)
+                    rel = os.path.relpath(new_thumb_abs, data_dir).replace("\\", "/")
+                    p.thumbnail = rel
+                except Exception as e:
+                    _file_log(f"add_preroll_to_category: primary move thumb update failed p={p.id}: {e}")
+            except Exception as e:
+                _file_log(f"add_preroll_to_category: primary move failed p={p.id} to category={cat.name}: {e}")
+                raise HTTPException(status_code=500, detail="Failed to set primary category (move operation)")
+        else:
+            # External/mapped file: do not move on disk; only change primary category and update thumbnail
             p.category_id = cat.id
             moved_primary = True
-            # Update thumbnail for new primary location/name (id-prefixed)
             try:
                 tgt_dir = os.path.join(THUMBNAILS_DIR, cat.name)
                 os.makedirs(tgt_dir, exist_ok=True)
@@ -2098,10 +2391,7 @@ def add_preroll_to_category(category_id: int, preroll_id: int, set_primary: bool
                 rel = os.path.relpath(new_thumb_abs, data_dir).replace("\\", "/")
                 p.thumbnail = rel
             except Exception as e:
-                _file_log(f"add_preroll_to_category: primary move thumb update failed p={p.id}: {e}")
-        except Exception as e:
-            _file_log(f"add_preroll_to_category: primary move failed p={p.id} to category={cat.name}: {e}")
-            raise HTTPException(status_code=500, detail="Failed to set primary category (move operation)")
+                _file_log(f"add_preroll_to_category: external primary thumb update failed p={p.id}: {e}")
 
     try:
         db.commit()
@@ -2168,11 +2458,11 @@ def apply_category_to_plex(category_id: int, rotation_hours: int = 24, db: Sessi
     if not prerolls:
         raise HTTPException(status_code=404, detail="No prerolls found in this category")
 
-    # Create semicolon-separated list of all preroll file paths
-    preroll_paths = []
+    # Collect local absolute paths
+    preroll_paths_local = []
     for preroll in prerolls:
         full_local_path = os.path.abspath(preroll.path)
-        preroll_paths.append(full_local_path)
+        preroll_paths_local.append(full_local_path)
 
     # Choose delimiter based on category.plex_mode:
     # - ';' for shuffle (random rotation)
@@ -2184,12 +2474,65 @@ def apply_category_to_plex(category_id: int, rotation_hours: int = 24, db: Sessi
             delimiter = ","
     except Exception:
         pass
-    multi_preroll_path = delimiter.join(preroll_paths)
 
     # Get Plex settings
     setting = db.query(models.Setting).first()
     if not setting:
         raise HTTPException(status_code=400, detail="Plex not configured")
+
+    # Translate local paths to Plex-accessible paths using configured mappings
+    mappings = []
+    try:
+        raw = getattr(setting, "path_mappings", None)
+        if raw:
+            data = json.loads(raw)
+            if isinstance(data, list):
+                mappings = [m for m in data if isinstance(m, dict) and m.get("local") and m.get("plex")]
+    except Exception:
+        mappings = []
+
+    def _translate_for_plex(local_path: str) -> str:
+        try:
+            lp = os.path.normpath(local_path)
+            best = None
+            best_src = None
+            best_len = -1
+            for m in mappings:
+                src = os.path.normpath(str(m.get("local")))
+                # Case-insensitive on Windows
+                if sys.platform.startswith("win"):
+                    if lp.lower().startswith(src.lower()) and len(src) > best_len:
+                        best = m
+                        best_src = src
+                        best_len = len(src)
+                else:
+                    if lp.startswith(src) and len(src) > best_len:
+                        best = m
+                        best_src = src
+                        best_len = len(src)
+            if best:
+                dst_prefix = str(best.get("plex"))
+                rest = lp[len(best_src):].lstrip("\\/")
+                # Join using the separator implied by the mapping's plex prefix
+                try:
+                    if ("/" in dst_prefix) and ("\\" not in dst_prefix):
+                        # Likely Plex path on POSIX
+                        out = dst_prefix.rstrip("/") + "/" + rest.replace("\\", "/")
+                    elif "\\" in dst_prefix:
+                        # Likely Windows path
+                        out = dst_prefix.rstrip("\\") + "\\" + rest.replace("/", "\\")
+                    else:
+                        # Fallback: safest to use forward slashes for Plex
+                        out = dst_prefix.rstrip("/") + "/" + rest.replace("\\", "/")
+                except Exception:
+                    out = dst_prefix + (("/" if not dst_prefix.endswith(("/", "\\")) else "") + rest)
+                return out
+        except Exception:
+            pass
+        return local_path
+
+    preroll_paths_plex = [_translate_for_plex(p) for p in preroll_paths_local]
+    multi_preroll_path = delimiter.join(preroll_paths_plex)
 
     # Apply to Plex
     connector = PlexConnector(setting.plex_url, setting.plex_token)
@@ -2844,6 +3187,374 @@ def delete_stable_token():
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error deleting config: {str(e)}")
 
+# Path mapping management endpoints
+@app.get("/settings/path-mappings")
+def get_path_mappings(db: Session = Depends(get_db)):
+    """
+    Return the configured local->plex path prefix mappings used to translate local/UNC paths
+    to Plex-acceptable paths when setting prerolls.
+    """
+    setting = db.query(models.Setting).first()
+    if not setting:
+        setting = models.Setting(plex_url=None, plex_token=None)
+        db.add(setting)
+        db.commit()
+        db.refresh(setting)
+
+    mappings = []
+    try:
+        raw = getattr(setting, "path_mappings", None)
+        if raw:
+            data = json.loads(raw)
+            if isinstance(data, list):
+                for m in data:
+                    if isinstance(m, dict) and m.get("local") and m.get("plex"):
+                        mappings.append({"local": str(m["local"]), "plex": str(m["plex"])})
+    except Exception:
+        mappings = []
+    return {"mappings": mappings}
+
+@app.put("/settings/path-mappings")
+def put_path_mappings(payload: PathMappingsPayload, merge: bool = False, db: Session = Depends(get_db)):
+    """
+    Set or merge local->plex path mappings.
+    - payload.mappings: list of {local, plex}
+    - merge=false (default): replace existing
+    - merge=true: merge with existing by 'local' key (case-insensitive on Windows)
+    """
+    setting = db.query(models.Setting).first()
+    if not setting:
+        setting = models.Setting(plex_url=None, plex_token=None)
+        db.add(setting)
+        db.commit()
+        db.refresh(setting)
+
+    # Normalize incoming mappings (normalize ONLY local side)
+    def _norm_local(p: str) -> str:
+        try:
+            return os.path.normpath(p)
+        except Exception:
+            return p
+
+    incoming = []
+    for m in payload.mappings or []:
+        try:
+            loc = _norm_local(str(m.local).strip())
+            plex = str(m.plex).strip()
+            if loc and plex:
+                incoming.append({"local": loc, "plex": plex})
+        except Exception:
+            continue
+
+    if merge:
+        existing = []
+        try:
+            raw = getattr(setting, "path_mappings", None)
+            if raw:
+                data = json.loads(raw)
+                if isinstance(data, list):
+                    for m in data:
+                        if isinstance(m, dict) and m.get("local") and m.get("plex"):
+                            existing.append({"local": _norm_local(str(m["local"])), "plex": str(m["plex"])})
+        except Exception:
+            existing = []
+        # Merge by local prefix key
+        merged: dict[str, dict] = {}
+        if sys.platform.startswith("win"):
+            for m in existing:
+                merged[m["local"].lower()] = m
+            for m in incoming:
+                merged[m["local"].lower()] = m
+            out = list(merged.values())
+        else:
+            for m in existing:
+                merged[m["local"]] = m
+            for m in incoming:
+                merged[m["local"]] = m
+            out = list(merged.values())
+    else:
+        out = incoming
+
+    try:
+        setting.path_mappings = json.dumps(out)
+        setting.updated_at = datetime.datetime.utcnow()
+        db.commit()
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"Failed to save path mappings: {e}")
+
+    return {"saved": len(out), "mappings": out, "merge": merge}
+
+@app.post("/settings/path-mappings/test")
+def test_path_mappings(req: TestTranslationRequest, db: Session = Depends(get_db)):
+    """
+    Test-translate one or more local paths using the configured mappings.
+    Returns per-path translation result and matched mapping (if any).
+    """
+    setting = db.query(models.Setting).first()
+    if not setting:
+        return {"results": []}
+
+    mappings = []
+    try:
+        raw = getattr(setting, "path_mappings", None)
+        if raw:
+            data = json.loads(raw)
+            if isinstance(data, list):
+                mappings = [m for m in data if isinstance(m, dict) and m.get("local") and m.get("plex")]
+    except Exception:
+        mappings = []
+
+    def _translate(local_path: str):
+        lp = os.path.normpath(local_path)
+        best = None
+        best_src = None
+        best_len = -1
+        for m in mappings:
+            src = os.path.normpath(str(m.get("local")))
+            if sys.platform.startswith("win"):
+                if lp.lower().startswith(src.lower()) and len(src) > best_len:
+                    best = m
+                    best_src = src
+                    best_len = len(src)
+            else:
+                if lp.startswith(src) and len(src) > best_len:
+                    best = m
+                    best_src = src
+                    best_len = len(src)
+        if best:
+            dst_prefix = str(best.get("plex"))
+            rest = lp[len(best_src):].lstrip("\\/")
+            try:
+                if ("/" in dst_prefix) and ("\\" not in dst_prefix):
+                    out = dst_prefix.rstrip("/") + "/" + rest.replace("\\", "/")
+                elif "\\" in dst_prefix:
+                    out = dst_prefix.rstrip("\\") + "\\" + rest.replace("/", "\\")
+                else:
+                    out = dst_prefix.rstrip("/") + "/" + rest.replace("\\", "/")
+            except Exception:
+                out = dst_prefix + (("/" if not dst_prefix.endswith(("/", "\\")) else "") + rest)
+            return {
+                "input": local_path,
+                "output": out,
+                "matched_local_prefix": best_src,
+                "mapping": best,
+                "matched": True,
+            }
+        return {"input": local_path, "output": local_path, "matched": False}
+
+    paths = list(req.paths or [])
+    results = [_translate(p) for p in paths]
+    return {"results": results}
+
+# Preroll external directory mapping endpoint
+@app.post("/prerolls/map-root")
+def map_preroll_root(req: MapRootRequest, db: Session = Depends(get_db)):
+    """
+    Map an existing directory of preroll files (local or UNC) into NeXroll without copying/moving files.
+    Creates Preroll rows with managed=False and optionally generates thumbnails.
+    """
+    root = (req.root_path or "").strip()
+    if not root:
+        raise HTTPException(status_code=422, detail="root_path is required")
+    try:
+        root_abs = os.path.abspath(root)
+    except Exception:
+        root_abs = root
+
+    if not os.path.isdir(root_abs):
+        raise HTTPException(status_code=404, detail=f"Root path not found or not a directory: {root_abs}")
+
+    # Resolve target category
+    category = None
+    if req.category_id:
+        category = db.query(models.Category).filter(models.Category.id == int(req.category_id)).first()
+        if not category:
+            raise HTTPException(status_code=404, detail=f"Category id {req.category_id} not found")
+    else:
+        category = db.query(models.Category).filter(models.Category.name == "Default").first()
+        if not category:
+            category = models.Category(name="Default", description="Default category for mapped prerolls")
+            db.add(category)
+            db.commit()
+            db.refresh(category)
+
+    # Extensions to include
+    default_exts = [".mp4", ".mkv", ".mov", ".avi", ".m4v", ".webm"]
+    exts = req.extensions if isinstance(req.extensions, list) else default_exts
+    try:
+        exts = [(e if e.startswith(".") else f".{e}").lower() for e in exts]
+    except Exception:
+        exts = default_exts
+
+    # Walk and collect files
+    candidate_files: list[str] = []
+    if req.recursive:
+        for r, _dirs, files in os.walk(root_abs):
+            for f in files:
+                if os.path.splitext(f)[1].lower() in exts:
+                    candidate_files.append(os.path.join(r, f))
+    else:
+        try:
+            for f in os.listdir(root_abs):
+                fp = os.path.join(root_abs, f)
+                if os.path.isfile(fp) and os.path.splitext(fp)[1].lower() in exts:
+                    candidate_files.append(fp)
+        except Exception:
+            pass
+
+    total_found = len(candidate_files)
+
+    # Helper: check existing by case-insensitive path on Windows
+    def _exists_in_db(abs_path: str) -> bool:
+        try:
+            row = db.query(models.Preroll).filter(models.Preroll.path == abs_path).first()
+            if row:
+                return True
+            if sys.platform.startswith("win"):
+                lp = abs_path.lower()
+                row = db.query(models.Preroll).filter(func.lower(models.Preroll.path) == lp).first()
+                if row:
+                    return True
+        except Exception:
+            pass
+        return False
+
+    existing = 0
+    for pth in candidate_files:
+        try:
+            ap = os.path.abspath(pth)
+        except Exception:
+            ap = pth
+        if _exists_in_db(ap):
+            existing += 1
+
+    to_add = total_found - existing
+    if req.dry_run:
+        return {
+            "dry_run": True,
+            "root": root_abs,
+            "category": {"id": category.id, "name": category.name},
+            "total_found": total_found,
+            "already_present": existing,
+            "to_add": to_add,
+        }
+
+    # Normalize tags
+    tags_json = None
+    if req.tags:
+        try:
+            tags_json = json.dumps([str(t).strip() for t in req.tags if str(t).strip()])
+        except Exception:
+            tags_json = None
+
+    added_details = []
+    added_count = 0
+    skipped_count = existing
+
+    # Ensure thumbnail category folder
+    thumb_cat_dir = os.path.join(THUMBNAILS_DIR, category.name)
+    try:
+        os.makedirs(thumb_cat_dir, exist_ok=True)
+    except Exception:
+        pass
+
+    for src in candidate_files:
+        try:
+            abs_src = os.path.abspath(src)
+        except Exception:
+            abs_src = src
+
+        if _exists_in_db(abs_src):
+            continue
+
+        filename = os.path.basename(abs_src)
+        file_size = None
+        try:
+            file_size = os.path.getsize(abs_src)
+        except Exception:
+            file_size = None
+
+        duration = None
+        try:
+            result = _run_subprocess(
+                [get_ffprobe_cmd(), "-v", "quiet", "-print_format", "json", "-show_format", abs_src],
+                capture_output=True,
+                text=True,
+            )
+            if getattr(result, "returncode", 1) == 0 and result.stdout:
+                probe_data = json.loads(result.stdout)
+                duration = float(probe_data.get("format", {}).get("duration")) if probe_data else None
+        except Exception:
+            duration = None
+
+        # Create DB row (managed=False)
+        p = models.Preroll(
+            filename=filename,
+            display_name=None,
+            path=abs_src,
+            thumbnail=None,
+            tags=tags_json,
+            category_id=category.id,
+            description=None,
+            duration=duration,
+            file_size=file_size,
+            managed=False,
+        )
+        db.add(p)
+        db.commit()
+        db.refresh(p)
+
+        # Generate thumbnail if requested
+        thumb_rel = None
+        if req.generate_thumbnails:
+            try:
+                thumb_abs = os.path.join(thumb_cat_dir, f"{p.id}_{filename}.jpg")
+                tmp = thumb_abs + ".tmp.jpg"
+                res = _run_subprocess(
+                    [get_ffmpeg_cmd(), "-v", "error", "-y", "-ss", "5", "-i", abs_src, "-vframes", "1", "-q:v", "2", "-f", "mjpeg", tmp],
+                    capture_output=True,
+                    text=True,
+                )
+                if getattr(res, "returncode", 1) != 0 or not os.path.exists(tmp):
+                    _generate_placeholder(tmp)
+                try:
+                    if os.path.exists(thumb_abs):
+                        os.remove(thumb_abs)
+                except Exception:
+                    pass
+                os.replace(tmp, thumb_abs)
+                thumb_rel = os.path.relpath(thumb_abs, data_dir).replace("\\", "/")
+                p.thumbnail = thumb_rel
+            except Exception as e:
+                try:
+                    _file_log(f"map_preroll_root: thumbnail generation failed for '{abs_src}': {e}")
+                except Exception:
+                    pass
+            finally:
+                try:
+                    db.commit()
+                except Exception:
+                    db.rollback()
+
+        added_details.append({
+            "id": p.id,
+            "filename": p.filename,
+            "path": p.path,
+            "thumbnail": thumb_rel,
+        })
+        added_count += 1
+
+    return {
+        "dry_run": False,
+        "root": root_abs,
+        "category": {"id": category.id, "name": category.name},
+        "total_found": total_found,
+        "already_present": skipped_count,
+        "added": added_count,
+        "added_details": added_details[:50],  # limit detail size
+    }
+
 # Backup and Restore endpoints
 @app.get("/backup/database")
 def backup_database(db: Session = Depends(get_db)):
@@ -2861,6 +3572,7 @@ def backup_database(db: Session = Depends(get_db)):
                     "category_id": p.category_id,
                     "categories": [{"id": c.id, "name": c.name} for c in (p.categories or [])],
                     "description": p.description,
+                    "managed": getattr(p, "managed", True),
                     "upload_date": p.upload_date.isoformat() if p.upload_date else None
                 } for p in db.query(models.Preroll).all()
             ],
@@ -2958,7 +3670,8 @@ def restore_database(backup_data: dict, db: Session = Depends(get_db)):
                 tags=preroll_data.get("tags"),
                 category_id=preroll_data.get("category_id"),
                 description=preroll_data.get("description"),
-                upload_date=datetime.datetime.fromisoformat(preroll_data["upload_date"]) if preroll_data.get("upload_date") else None
+                upload_date=datetime.datetime.fromisoformat(preroll_data["upload_date"]) if preroll_data.get("upload_date") else None,
+                managed=preroll_data.get("managed", True)
             )
             db.add(p)
             db.flush()  # get p.id without full commit

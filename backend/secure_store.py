@@ -19,8 +19,15 @@ from typing import Optional, Tuple
 def _program_data_root() -> str:
     r"""
     Returns a writable base directory for NeXroll app data.
-    Prefers ProgramData\NeXroll or LOCALAPPDATA/APPDATA\NeXroll on Windows.
-    Falls back to current working directory otherwise.
+
+    Windows:
+      - ProgramData\NeXroll or LOCALAPPDATA/APPDATA\NeXroll
+
+    Non-Windows (containers/portable):
+      - NEXROLL_SECRETS_DIR (explicit)
+      - NEXROLL_DB_DIR
+      - NEXROLL_PREROLL_PATH (parent if path ends with 'prerolls')
+      - ./data under current working directory
     """
     try:
         if sys.platform.startswith("win"):
@@ -41,8 +48,31 @@ def _program_data_root() -> str:
             return p
     except Exception:
         pass
-    # Non-Windows or last resort
+
+    # Non-Windows: honor container env overrides to land under /data
     try:
+        sd = os.environ.get("NEXROLL_SECRETS_DIR")
+        if sd and sd.strip():
+            p = sd.strip()
+            os.makedirs(p, exist_ok=True)
+            return p
+
+        dbd = os.environ.get("NEXROLL_DB_DIR")
+        if dbd and dbd.strip():
+            p = dbd.strip()
+            os.makedirs(p, exist_ok=True)
+            return p
+
+        pr = os.environ.get("NEXROLL_PREROLL_PATH")
+        if pr and pr.strip():
+            p = pr.strip()
+            base = os.path.basename(os.path.normpath(p)).lower()
+            if base == "prerolls":
+                p = os.path.dirname(os.path.normpath(p)) or p
+            os.makedirs(p, exist_ok=True)
+            return p
+
+        # Fallback to ./data
         p = os.path.join(os.getcwd(), "data")
         os.makedirs(p, exist_ok=True)
         return p
@@ -308,6 +338,86 @@ def _dpapi_file_delete(name: str) -> bool:
 
 
 # ----------------------------
+# Provider 3: Plain file store (Linux/portable)
+# ----------------------------
+def _plain_file_available() -> bool:
+    try:
+        root = _program_data_root()
+        return _is_writable_dir(root)
+    except Exception:
+        return False
+
+def _plain_file_has(name: str) -> bool:
+    try:
+        fp = _secrets_file_path()
+        if not os.path.exists(fp):
+            return False
+        with open(fp, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        return name in data
+    except Exception:
+        return False
+
+def _plain_file_get(name: str) -> Optional[str]:
+    try:
+        fp = _secrets_file_path()
+        if not os.path.exists(fp):
+            return None
+        with open(fp, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        entry = data.get(name)
+        if entry is None:
+            return None
+        # Accept {"name": "base64"} or {"name": {"b64": "..."}}
+        if isinstance(entry, dict) and "b64" in entry:
+            try:
+                return base64.b64decode(entry["b64"]).decode("utf-8")
+            except Exception:
+                return None
+        if isinstance(entry, str):
+            try:
+                return base64.b64decode(entry).decode("utf-8")
+            except Exception:
+                # Treat as plaintext if not base64
+                return entry
+        return None
+    except Exception:
+        return None
+
+def _plain_file_set(name: str, value: str) -> bool:
+    try:
+        root = _program_data_root()
+        if not _is_writable_dir(root):
+            return False
+        fp = _secrets_file_path()
+        store = {}
+        if os.path.exists(fp):
+            try:
+                with open(fp, "r", encoding="utf-8") as f:
+                    store = json.load(f) or {}
+            except Exception:
+                store = {}
+        store[name] = {"b64": base64.b64encode(value.encode("utf-8")).decode("ascii")}
+        _atomic_write(fp, json.dumps(store, indent=2).encode("utf-8"))
+        return True
+    except Exception:
+        return False
+
+def _plain_file_delete(name: str) -> bool:
+    try:
+        fp = _secrets_file_path()
+        if not os.path.exists(fp):
+            return True
+        with open(fp, "r", encoding="utf-8") as f:
+            store = json.load(f) or {}
+        if name in store:
+            del store[name]
+            _atomic_write(fp, json.dumps(store, indent=2).encode("utf-8"))
+        return True
+    except Exception:
+        return False
+
+# ----------------------------
 # Provider selection and facade
 # ----------------------------
 
@@ -337,10 +447,15 @@ def provider_info() -> Tuple[str, str]:
             available.append("credman")
         if _DPAPI_AVAILABLE:
             available.append("dpapi_file")
+    else:
+        if _plain_file_available():
+            available.append("file")
+
     key = "/".join(available) if available else "none"
     labels = {
         "credman": "Windows Credential Manager",
         "dpapi_file": "Windows DPAPI-encrypted file",
+        "file": "Plain file store",
     }
     if not available:
         human = "No secure provider available"
@@ -363,6 +478,11 @@ def has_secret(name: str) -> bool:
             return True
     except Exception:
         pass
+    try:
+        if _plain_file_available() and _plain_file_has(name):
+            return True
+    except Exception:
+        pass
     return False
 
 
@@ -371,6 +491,7 @@ def get_secret(name: str) -> Optional[str]:
     Try all providers in order:
       1) Credential Manager
       2) DPAPI file (machine scope)
+      3) Plain file store (containers/portable)
     """
     val = None
     try:
@@ -383,6 +504,13 @@ def get_secret(name: str) -> Optional[str]:
     try:
         if _DPAPI_AVAILABLE:
             val = _dpapi_file_get(name)
+            if val:
+                return val
+    except Exception:
+        pass
+    try:
+        if _plain_file_available():
+            val = _plain_file_get(name)
             if val:
                 return val
     except Exception:
@@ -406,6 +534,11 @@ def set_secret(name: str, value: str) -> bool:
             ok = _dpapi_file_set(name, value) or ok
     except Exception:
         pass
+    try:
+        if _plain_file_available():
+            ok = _plain_file_set(name, value) or ok
+    except Exception:
+        pass
     return ok
 
 
@@ -424,8 +557,13 @@ def delete_secret(name: str) -> bool:
             ok = _dpapi_file_delete(name) or ok
     except Exception:
         pass
-    # If neither provider is available, treat as no-op success
-    return ok or (not _WIN_CRED_AVAILABLE and not _DPAPI_AVAILABLE)
+    try:
+        if _plain_file_available():
+            ok = _plain_file_delete(name) or ok
+    except Exception:
+        pass
+    # If no providers are available, treat as no-op success
+    return ok or (not _WIN_CRED_AVAILABLE and not _DPAPI_AVAILABLE and not _plain_file_available())
 
 
 # ----------------------------

@@ -5,6 +5,7 @@ import threading
 import time
 from typing import List, Optional
 import os
+import sys
 
 from sqlalchemy.orm import Session
 from sqlalchemy import or_
@@ -132,19 +133,59 @@ class Scheduler:
             return False
 
         # Build combined path string for Plex multi-preroll format, honoring category.plex_mode
-        preroll_paths = [os.path.abspath(p.path) for p in prerolls]
+        preroll_paths_local = [os.path.abspath(p.path) for p in prerolls]
         try:
             cat = db.query(models.Category).filter(models.Category.id == category_id).first()
             mode = getattr(cat, "plex_mode", "shuffle") if cat else "shuffle"
         except Exception:
             mode = "shuffle"
         delimiter = "," if isinstance(mode, str) and mode.lower() == "playlist" else ";"
-        combined = delimiter.join(preroll_paths)
 
         setting = db.query(models.Setting).first()
         if not setting or not getattr(setting, "plex_url", None) or not getattr(setting, "plex_token", None):
             print("SCHEDULER: Plex not configured; cannot apply category.")
             return False
+
+        # Translate local paths to Plex-accessible paths using configured mappings
+        mappings = []
+        try:
+            raw = getattr(setting, "path_mappings", None)
+            if raw:
+                data = json.loads(raw)
+                if isinstance(data, list):
+                    mappings = [m for m in data if isinstance(m, dict) and m.get("local") and m.get("plex")]
+        except Exception:
+            mappings = []
+
+        def _translate_for_plex(local_path: str) -> str:
+            try:
+                lp = os.path.normpath(local_path)
+                best = None
+                best_src = None
+                best_len = -1
+                for m in mappings:
+                    src = os.path.normpath(str(m.get("local")))
+                    if sys.platform.startswith("win"):
+                        if lp.lower().startswith(src.lower()) and len(src) > best_len:
+                            best = m
+                            best_src = src
+                            best_len = len(src)
+                    else:
+                        if lp.startswith(src) and len(src) > best_len:
+                            best = m
+                            best_src = src
+                            best_len = len(src)
+                if best:
+                    dst_prefix = str(best.get("plex"))
+                    rest = lp[len(best_src):].lstrip("\\/")
+                    out = os.path.join(dst_prefix, rest)
+                    return out
+            except Exception:
+                pass
+            return local_path
+
+        preroll_paths_plex = [_translate_for_plex(p) for p in preroll_paths_local]
+        combined = delimiter.join(preroll_paths_plex)
 
         connector = PlexConnector(setting.plex_url, setting.plex_token)
         print(f"SCHEDULER: Applying category_id={category_id} with {len(prerolls)} prerolls to Plex (mode={mode}, delim={'comma' if delimiter==',' else 'semicolon'})…")
@@ -236,12 +277,52 @@ class Scheduler:
         # Choose delimiter: sequences must play in order. Always use playlist (comma) for sequences.
         mode = "playlist"
         delimiter = ","
-        combined = delimiter.join(paths)
 
         setting = db.query(models.Setting).first()
         if not setting or not getattr(setting, "plex_url", None) or not getattr(setting, "plex_token", None):
             print("SCHEDULER: Plex not configured; cannot apply sequence.")
             return False
+
+        # Translate each path to Plex-visible paths using configured mappings
+        mappings = []
+        try:
+            raw = getattr(setting, "path_mappings", None)
+            if raw:
+                data = json.loads(raw)
+                if isinstance(data, list):
+                    mappings = [m for m in data if isinstance(m, dict) and m.get("local") and m.get("plex")]
+        except Exception:
+            mappings = []
+
+        def _translate_for_plex(local_path: str) -> str:
+            try:
+                lp = os.path.normpath(local_path)
+                best = None
+                best_src = None
+                best_len = -1
+                for m in mappings:
+                    src = os.path.normpath(str(m.get("local")))
+                    if sys.platform.startswith("win"):
+                        if lp.lower().startswith(src.lower()) and len(src) > best_len:
+                            best = m
+                            best_src = src
+                            best_len = len(src)
+                    else:
+                        if lp.startswith(src) and len(src) > best_len:
+                            best = m
+                            best_src = src
+                            best_len = len(src)
+                if best:
+                    dst_prefix = str(best.get("plex"))
+                    rest = lp[len(best_src):].lstrip("\\/")
+                    out = os.path.join(dst_prefix, rest)
+                    return out
+            except Exception:
+                pass
+            return local_path
+
+        paths_plex = [_translate_for_plex(p) for p in paths]
+        combined = delimiter.join(paths_plex)
 
         connector = PlexConnector(setting.plex_url, setting.plex_token)
         print(f"SCHEDULER: Applying schedule sequence with {len(paths)} items (mode={mode}, delim={'comma' if delimiter==',' else 'semicolon'})…")
@@ -349,14 +430,54 @@ class Scheduler:
 
         # For multiple prerolls (like categories), create semicolon-separated list
         if len(prerolls) > 1:
-            # Create semicolon-separated list of all preroll file paths
-            preroll_paths = []
+            # Create list of all local preroll file paths
+            preroll_paths_local = []
             for preroll in prerolls:
                 full_local_path = os.path.abspath(preroll.path)
-                preroll_paths.append(full_local_path)
+                preroll_paths_local.append(full_local_path)
+
+            # Translate using configured mappings
+            mappings = []
+            try:
+                raw = getattr(setting, "path_mappings", None)
+                if raw:
+                    data = json.loads(raw)
+                    if isinstance(data, list):
+                        mappings = [m for m in data if isinstance(m, dict) and m.get("local") and m.get("plex")]
+            except Exception:
+                mappings = []
+
+            def _translate_for_plex(local_path: str) -> str:
+                try:
+                    lp = os.path.normpath(local_path)
+                    best = None
+                    best_src = None
+                    best_len = -1
+                    for m in mappings:
+                        src = os.path.normpath(str(m.get("local")))
+                        if sys.platform.startswith("win"):
+                            if lp.lower().startswith(src.lower()) and len(src) > best_len:
+                                best = m
+                                best_src = src
+                                best_len = len(src)
+                        else:
+                            if lp.startswith(src) and len(src) > best_len:
+                                best = m
+                                best_src = src
+                                best_len = len(src)
+                    if best:
+                        dst_prefix = str(best.get("plex"))
+                        rest = lp[len(best_src):].lstrip("\\/")
+                        out = os.path.join(dst_prefix, rest)
+                        return out
+                except Exception:
+                    pass
+                return local_path
+
+            preroll_paths_plex = [_translate_for_plex(p) for p in preroll_paths_local]
 
             # Join all paths with semicolons for Plex multi-preroll format
-            multi_preroll_path = ";".join(preroll_paths)
+            multi_preroll_path = ";".join(preroll_paths_plex)
 
             print(f"SCHEDULER: Setting {len(prerolls)} prerolls for schedule:")
             for i, preroll in enumerate(prerolls, 1):
@@ -370,6 +491,46 @@ class Scheduler:
             # Ensure the path is absolute for Plex
             if not os.path.isabs(preroll_path):
                 preroll_path = os.path.abspath(preroll_path)
+
+            # Translate single path too
+            mappings = []
+            try:
+                raw = getattr(setting, "path_mappings", None)
+                if raw:
+                    data = json.loads(raw)
+                    if isinstance(data, list):
+                        mappings = [m for m in data if isinstance(m, dict) and m.get("local") and m.get("plex")]
+            except Exception:
+                mappings = []
+
+            def _translate_for_plex(local_path: str) -> str:
+                try:
+                    lp = os.path.normpath(local_path)
+                    best = None
+                    best_src = None
+                    best_len = -1
+                    for m in mappings:
+                        src = os.path.normpath(str(m.get("local")))
+                        if sys.platform.startswith("win"):
+                            if lp.lower().startswith(src.lower()) and len(src) > best_len:
+                                best = m
+                                best_src = src
+                                best_len = len(src)
+                        else:
+                            if lp.startswith(src) and len(src) > best_len:
+                                best = m
+                                best_src = src
+                                best_len = len(src)
+                    if best:
+                        dst_prefix = str(best.get("plex"))
+                        rest = lp[len(best_src):].lstrip("\\/")
+                        out = os.path.join(dst_prefix, rest)
+                        return out
+                except Exception:
+                    pass
+                return local_path
+
+            preroll_path = _translate_for_plex(preroll_path)
 
             print(f"SCHEDULER: Attempting to update Plex with single preroll: {preroll_path}")
 

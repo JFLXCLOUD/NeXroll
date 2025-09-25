@@ -24,6 +24,7 @@ class Preroll(Base):
     description = Column(Text, nullable=True)
     duration = Column(Float, nullable=True)  # Duration in seconds
     file_size = Column(Integer, nullable=True)  # File size in bytes
+    managed = Column(Boolean, default=True)  # True = uploaded/managed by NeXroll; False = externally mapped
     upload_date = Column(DateTime, default=datetime.datetime.utcnow)
 
     category = relationship("Category")
@@ -109,3 +110,4 @@ class Setting(Base):
     # App state
     active_category = Column(Integer, ForeignKey("categories.id"))
     updated_at = Column(DateTime, default=datetime.datetime.utcnow)
+    path_mappings = Column(Text, nullable=True)  # JSON list of {"local": "...", "plex": "..."} path prefix mappings
