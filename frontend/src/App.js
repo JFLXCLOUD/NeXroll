@@ -402,6 +402,10 @@ function App() {
   const [ffmpegInfo, setFfmpegInfo] = useState(null);
   const [updateInfo, setUpdateInfo] = useState(null);
   const [showUpdateBanner, setShowUpdateBanner] = useState(false);
+  // Docker Quick Connect UI state
+  const [dockerToken, setDockerToken] = useState('');
+  const [dockerCandidates, setDockerCandidates] = useState('');
+  const [dockerAutoResult, setDockerAutoResult] = useState(null);
   const [prerollView, setPrerollView] = useState(() => {
     try { return localStorage.getItem('prerollView') || 'grid'; } catch { return 'grid'; }
   });
@@ -3066,6 +3070,35 @@ const toLocalInputFromDate = (d) => {
       });
   };
 
+  // Docker Quick Connect: probe host URLs and user-provided candidates using a Plex token
+  const handleDockerAutoConnect = async (e) => {
+    if (e && typeof e.preventDefault === 'function') e.preventDefault();
+    try {
+      const tok = (dockerToken || plexConfig.token || '').trim();
+      const urls = (dockerCandidates || '').split(/[,\s]+/).map(s => s.trim()).filter(Boolean);
+      const body = {};
+      if (tok) body.token = tok;
+      if (urls.length) body.urls = urls;
+      const res = await fetch(apiUrl('plex/auto-connect'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body)
+      });
+      const data = await res.json().catch(() => ({}));
+      setDockerAutoResult(data);
+      if (res.ok && data && data.connected) {
+        alert(`Connected to Plex at: ${data.url}`);
+        setPlexConfig(prev => ({ ...prev, url: data.url }));
+        fetchData();
+      } else {
+        const detail = Array.isArray(data?.tried) ? data.tried.map(t => `${t.url} ${t.ok ? '✓' : `✗ (${t.status || 'n/a'})`}`).join('\n') : '';
+        alert(`Auto-connect did not find a reachable server.${detail ? '\n\nTried:\n' + detail : ''}`);
+      }
+    } catch (err) {
+      alert('Auto-connect error: ' + (err && err.message ? err.message : err));
+    }
+  };
+
   const handleDisconnectPlex = () => {
     if (window.confirm('Are you sure you want to disconnect from Plex? This will clear all stored connection settings.')) {
       fetch('http://localhost:9393/plex/disconnect', {
@@ -3292,6 +3325,54 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
               Then click “Connect with Stable Token” and enter your Plex Server URL (e.g., http://192.168.1.100:32400). Make sure your Plex server is claimed and Remote Access is enabled if it’s off-LAN.
             </div>
           </details>
+        </div>
+
+        {/* Docker Quick Connect */}
+        <div className="upload-section nx-plex-method" style={{ marginBottom: '2rem' }}>
+          <h3 style={{ marginBottom: '0.5rem', color: 'var(--text-color)' }}>🐳 Docker Quick Connect</h3>
+          <p style={{ fontSize: '0.9rem', color: '#666', marginBottom: '0.75rem' }}>
+            If NeXroll runs in Docker, this will probe common host URLs and any you provide using your Plex token.
+            You can paste your token here or save it above via “Advanced: Save/Update Stable Token”.
+          </p>
+          <form onSubmit={handleDockerAutoConnect} style={{ display: 'grid', gap: '0.75rem', marginBottom: '0.5rem' }}>
+            <input
+              type="password"
+              placeholder="Plex Token (optional if already saved)"
+              value={dockerToken}
+              onChange={(e) => setDockerToken(e.target.value)}
+              style={{ width: '100%', padding: '0.5rem' }}
+            />
+            <input
+              type="text"
+              placeholder="Candidate URLs (optional, comma/space separated), e.g. http://host.docker.internal:32400 http://192.168.1.20:32400"
+              value={dockerCandidates}
+              onChange={(e) => setDockerCandidates(e.target.value)}
+              style={{ width: '100%', padding: '0.5rem' }}
+            />
+            <div>
+              <button type="submit" className="button" style={{ backgroundColor: '#28a745' }}>
+                Auto-Connect (Docker)
+              </button>
+            </div>
+          </form>
+          {dockerAutoResult && (
+            <div style={{ fontSize: '0.9rem', color: 'var(--text-color)' }}>
+              <div><strong>Connected:</strong> {dockerAutoResult.connected ? 'Yes' : 'No'}</div>
+              {dockerAutoResult.url && <div><strong>URL:</strong> {dockerAutoResult.url}</div>}
+              {Array.isArray(dockerAutoResult.tried) && dockerAutoResult.tried.length > 0 && (
+                <div style={{ marginTop: '0.5rem' }}>
+                  <div style={{ fontWeight: 'bold' }}>Tried:</div>
+                  <ul style={{ margin: 0, paddingLeft: '1.25rem' }}>
+                    {dockerAutoResult.tried.map((t, i) => (
+                      <li key={i} style={{ color: t.ok ? 'green' : '#666' }}>
+                        {t.url} — {t.ok ? 'OK' : `Fail${t.status ? ` (${t.status})` : ''}`}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+            </div>
+          )}
         </div>
 
         {/* Method 2: Manual X-Plex-Token */}
