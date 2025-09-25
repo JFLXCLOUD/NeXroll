@@ -20,6 +20,7 @@ import uuid
 import plexapi
 from plexapi.myplex import MyPlexPinLogin, MyPlexAccount
 
+import requests
 import sys
 import os
 
@@ -491,15 +492,233 @@ class PlexTvConnectRequest(BaseModel):
     prefer_local: bool = True
     save_token: bool = True
 
+class PlexAutoConnectRequest(BaseModel):
+    token: str | None = None
+    urls: list[str] | None = None
+    prefer_local: bool = True
+
+
+def _normalize_url(url: str) -> str:
+    try:
+        if not url:
+            return ""
+        u = str(url).strip()
+        if not u.startswith(("http://", "https://")):
+            u = "http://" + u
+        return u.rstrip("/")
+    except Exception:
+        return ""
+
+
+def _probe_plex_url(url: str, token: str, timeout: int = 5) -> tuple[bool, int | None]:
+    try:
+        headers = {"X-Plex-Token": token} if token else {}
+        r = requests.get(f"{_normalize_url(url)}/", headers=headers, timeout=timeout)
+        return (r.status_code == 200, r.status_code)
+    except Exception:
+        return (False, None)
+
+
+def _default_gateway_candidates() -> list[str]:
+    cands: list[str] = []
+    try:
+        # Linux containers: parse default gateway from /proc/net/route
+        if os.name != "nt" and os.path.exists("/proc/net/route"):
+            with open("/proc/net/route", "r", encoding="utf-8") as f:
+                rows = f.read().strip().splitlines()
+            for ln in rows[1:]:
+                parts = ln.strip().split()
+                # Destination hex 00000000 means default
+                if len(parts) >= 3 and parts[1] == "00000000":
+                    gw_hex = parts[2]
+                    try:
+                        gw_ip = ".".join(str(int(gw_hex[i:i+2], 16)) for i in (6, 4, 2, 0))
+                        if gw_ip:
+                            cands.append(f"http://{gw_ip}:32400")
+                            cands.append(f"https://{gw_ip}:32400")
+                    except Exception:
+                        pass
+                    break
+    except Exception:
+        pass
+    # Common docker bridge host
+    cands.append("http://172.17.0.1:32400")
+    cands.append("https://172.17.0.1:32400")
+    return cands
+
+
+def _docker_candidate_urls() -> list[str]:
+    cands: list[str] = []
+    # Env-provided first
+    try:
+        for k in ("NEXROLL_PLEX_URL", "PLEX_URL"):
+            v = os.environ.get(k)
+            if v and str(v).strip():
+                cands.append(_normalize_url(v))
+    except Exception:
+        pass
+    # Typical host aliases when running in Docker
+    cands += [
+        "http://host.docker.internal:32400",
+        "https://host.docker.internal:32400",
+    ]
+    # Default gateway and docker bridge
+    cands += _default_gateway_candidates()
+    # Local machine fallbacks (when not actually inside docker)
+    cands += [
+        "http://127.0.0.1:32400",
+        "http://localhost:32400",
+    ]
+    # Dedupe preserving order
+    out: list[str] = []
+    seen: set[str] = set()
+    for u in cands:
+        u2 = _normalize_url(u)
+        if u2 and u2 not in seen:
+            seen.add(u2)
+            out.append(u2)
+    return out
+
+
+def _bootstrap_plex_from_env() -> None:
+    """
+    Best-effort auto-connect for container/CI:
+    - Reads NEXROLL_PLEX_TOKEN/PLEX_TOKEN and NEXROLL_PLEX_URL/PLEX_URL
+    - If URL not provided, probes common Docker host addresses with token
+    - Persists to settings and secure store when successful
+    """
+    try:
+        url_env = (os.environ.get("NEXROLL_PLEX_URL") or os.environ.get("PLEX_URL") or "").strip() or None
+        tok_env = (os.environ.get("NEXROLL_PLEX_TOKEN") or os.environ.get("PLEX_TOKEN") or "").strip() or None
+        if not url_env and not tok_env:
+            return
+
+        db = SessionLocal()
+        try:
+            setting = db.query(models.Setting).first()
+            if not setting:
+                setting = models.Setting(plex_url=None, plex_token=None)
+                db.add(setting)
+                db.commit()
+                db.refresh(setting)
+
+            # Prefer existing working configuration
+            cur_url = getattr(setting, "plex_url", None)
+            cur_tok = getattr(setting, "plex_token", None) or secure_store.get_plex_token()
+            if cur_url and cur_tok:
+                try:
+                    if PlexConnector(cur_url, cur_tok).test_connection():
+                        return
+                except Exception:
+                    pass
+
+            # Persist token from env to secure store
+            token = tok_env or cur_tok
+            if tok_env:
+                try:
+                    secure_store.set_plex_token(tok_env)
+                    token = tok_env
+                except Exception:
+                    pass
+
+            if not token:
+                return
+
+            # If URL provided, test it first
+            if url_env:
+                ok, _ = _probe_plex_url(url_env, token, timeout=5)
+                if ok:
+                    setting.plex_url = _normalize_url(url_env)
+                    setting.plex_token = token
+                    try:
+                        setting.updated_at = datetime.datetime.utcnow()
+                    except Exception:
+                        pass
+                    db.commit()
+                    return
+
+            # Probe docker candidates
+            for u in _docker_candidate_urls():
+                ok, _ = _probe_plex_url(u, token, timeout=4)
+                if ok:
+                    setting.plex_url = _normalize_url(u)
+                    setting.plex_token = token
+                    try:
+                        setting.updated_at = datetime.datetime.utcnow()
+                    except Exception:
+                        pass
+                    db.commit()
+                    return
+        finally:
+            try:
+                db.close()
+            except Exception:
+                pass
+    except Exception:
+        pass
+
+
 app = FastAPI(title="NeXroll Backend", version="1.2.2")
 
 # In-memory store for Plex.tv OAuth sessions
 OAUTH_SESSIONS: dict[str, dict] = {}
 
+# Stable client identifier for Plex integrations (persisted in settings when possible)
+CLIENT_ID_CACHE: str | None = None
+def _get_or_create_plex_client_id() -> str:
+    global CLIENT_ID_CACHE
+    if CLIENT_ID_CACHE:
+        return CLIENT_ID_CACHE
+
+    # 1) Environment override for containerized deployments
+    env_id = os.environ.get("NEXROLL_CLIENT_ID")
+    if env_id and str(env_id).strip():
+        CLIENT_ID_CACHE = str(env_id).strip()
+        return CLIENT_ID_CACHE
+
+    # 2) Persist and reuse a client id in the settings table
+    cid = None
+    db = None
+    try:
+        db = SessionLocal()
+        setting = db.query(models.Setting).first()
+        if not setting:
+            setting = models.Setting(plex_url=None, plex_token=None)
+            db.add(setting)
+            db.commit()
+            db.refresh(setting)
+
+        existing = getattr(setting, "plex_client_id", None)
+        if not existing or not str(existing).strip():
+            new_id = str(uuid.uuid4())
+            try:
+                setting.plex_client_id = new_id
+                # best-effort updated_at
+                try:
+                    setting.updated_at = datetime.datetime.utcnow()
+                except Exception:
+                    pass
+                db.commit()
+                existing = new_id
+            except Exception:
+                db.rollback()
+                existing = new_id  # still return a stable id this process
+        cid = str(existing).strip()
+    except Exception:
+        # 3) Fallback: ephemeral in-memory id
+        cid = str(uuid.uuid4())
+    finally:
+        try:
+            if db is not None:
+                db.close()
+        except Exception:
+            pass
+
+    CLIENT_ID_CACHE = cid
+    return CLIENT_ID_CACHE
+
 def _build_plex_headers() -> dict:
-    """
-    Build X-Plex-* headers for OAuth device auth.
-    """
+    """Build X-Plex-* headers for OAuth device auth."""
     try:
         headers = dict(getattr(plexapi, "BASE_HEADERS", {}))
     except Exception:
@@ -507,7 +726,10 @@ def _build_plex_headers() -> dict:
     headers["X-Plex-Product"] = "NeXroll"
     headers["X-Plex-Device"] = "NeXroll"
     headers["X-Plex-Version"] = getattr(app, "version", None) or "1.0.0"
-    headers.setdefault("X-Plex-Client-Identifier", str(uuid.uuid4()))
+    try:
+        headers["X-Plex-Client-Identifier"] = _get_or_create_plex_client_id()
+    except Exception:
+        headers.setdefault("X-Plex-Client-Identifier", str(uuid.uuid4()))
     return headers
 
 # CORS middleware for frontend integration
@@ -601,6 +823,15 @@ def startup_event():
             pass
 
     scheduler.start()
+
+@app.on_event("startup")
+def startup_env_bootstrap():
+    # Independent startup hook to allow env-driven Docker quick-connect
+    try:
+        _bootstrap_plex_from_env()
+    except Exception:
+        # keep server healthy regardless of failures here
+        pass
 
 @app.on_event("shutdown")
 def shutdown_event():
@@ -1296,6 +1527,74 @@ def connect_plex_stable_token(request: PlexStableConnectRequest, db: Session = D
             "method": "stable_token"
         }
 
+@app.post("/plex/auto-connect")
+def plex_auto_connect(req: PlexAutoConnectRequest, db: Session = Depends(get_db)):
+    """
+    Docker-friendly quick connect:
+    - Accepts a server X-Plex-Token (optional; falls back to secure store)
+    - Probes common Docker host URLs and any user-provided candidate URLs
+    - Persists the first reachable URL+token pair
+    """
+    # Resolve token
+    token = (getattr(req, "token", None) or "").strip() or None
+    if not token:
+        try:
+            token = secure_store.get_plex_token()
+        except Exception:
+            token = None
+    if not token:
+        raise HTTPException(status_code=422, detail="Missing Plex token. Paste your X-Plex-Token or save it via /plex/stable-token/save")
+
+    # Build candidate URL list: user-specified first, then Docker heuristics
+    candidates: list[str] = []
+    try:
+        if isinstance(getattr(req, "urls", None), list):
+            for u in req.urls or []:
+                if u and str(u).strip():
+                    candidates.append(_normalize_url(str(u)))
+    except Exception:
+        pass
+    for u in _docker_candidate_urls():
+        if u not in candidates:
+            candidates.append(u)
+
+    tried = []
+    chosen = None
+    for u in candidates:
+        ok, status = _probe_plex_url(u, token, timeout=5)
+        tried.append({"url": u, "ok": bool(ok), "status": status})
+        if ok:
+            chosen = u
+            break
+
+    if not chosen:
+        return {
+            "connected": False,
+            "message": "No reachable Plex server found with the provided/saved token",
+            "tried": tried,
+        }
+
+    # Persist settings
+    setting = db.query(models.Setting).first()
+    if not setting:
+        setting = models.Setting(plex_url=chosen, plex_token=token)
+        db.add(setting)
+    else:
+        setting.plex_url = chosen
+        setting.plex_token = token
+        try:
+            setting.updated_at = datetime.datetime.utcnow()
+        except Exception:
+            pass
+    try:
+        db.commit()
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"Failed to persist Plex settings: {e}")
+
+    return {"connected": True, "url": chosen, "tried": tried, "method": "auto_connect"}
+
+
 @app.post("/plex/tv/start")
 def plex_tv_start(forward_url: str | None = None):
     """
@@ -1372,18 +1671,30 @@ def plex_tv_connect(req: PlexTvConnectRequest, db: Session = Depends(get_db)):
         # Discover servers from Plex account
         account = MyPlexAccount(token=token)
         resources = account.resources()
-        servers = [
-            r for r in resources
-            if isinstance(getattr(r, "provides", []), (list, set, tuple)) and "server" in r.provides
-        ]
-        if not servers:
-            raise HTTPException(status_code=404, detail="No Plex servers found on this account")
+        # Build a robust list of server-capable resources (handles string or list provides)
+        servers = []
+        for r in resources:
+            prov = getattr(r, "provides", None)
+            provs = []
+            try:
+                if isinstance(prov, str):
+                    provs = [p.strip().lower() for p in prov.split(",")]
+                elif isinstance(prov, (list, set, tuple)):
+                    provs = [str(p).strip().lower() for p in prov]
+            except Exception:
+                provs = []
+            # Also consider product/name hints
+            product = (getattr(r, "product", None) or "")
+            name = (getattr(r, "name", None) or "")
+            if ("server" in provs) or ("server" in str(product).lower()) or ("plex media server" in str(name).lower()):
+                servers.append(r)
+        candidates = servers if servers else list(resources)
 
-        # Prefer owned servers and try to connect
+        # Prefer owned resources and try to connect
         baseurl = None
         server_name = None
         machine_id = None
-        ordered = sorted(servers, key=lambda r: (not getattr(r, "owned", True)))
+        ordered = sorted(candidates, key=lambda r: (not getattr(r, "owned", True)))
         for res in ordered:
             try:
                 srv = res.connect(timeout=5)
@@ -1395,12 +1706,17 @@ def plex_tv_connect(req: PlexTvConnectRequest, db: Session = Depends(get_db)):
             except Exception:
                 continue
 
-        # Fallback to first declared connection URI
+        # Fallback: try first declared connection URI across all resources
         if not baseurl:
             for res in ordered:
                 try:
                     conns = getattr(res, "connections", []) or []
+                    # Prefer local connections when available
                     if conns:
+                        try:
+                            conns = sorted(conns, key=lambda c: (not getattr(c, "local", False)))
+                        except Exception:
+                            pass
                         baseurl = getattr(conns[0], "uri", None)
                         server_name = getattr(res, "name", None)
                         machine_id = getattr(res, "clientIdentifier", None)
@@ -1410,7 +1726,7 @@ def plex_tv_connect(req: PlexTvConnectRequest, db: Session = Depends(get_db)):
                     continue
 
         if not baseurl:
-            raise HTTPException(status_code=502, detail="Unable to resolve a reachable Plex server URL")
+            raise HTTPException(status_code=502, detail="Unable to resolve a reachable Plex server URL. Ensure your Plex server is claimed on this account and Remote Access is enabled if not on the same LAN.")
 
         # Persist settings
         setting = db.query(models.Setting).first()
@@ -3363,7 +3679,8 @@ def map_preroll_root(req: MapRootRequest, db: Session = Depends(get_db)):
         root_abs = root
 
     if not os.path.isdir(root_abs):
-        raise HTTPException(status_code=404, detail=f"Root path not found or not a directory: {root_abs}")
+        hint = "If running in Docker, mount your NAS/host folder into the container and use the container path (e.g., /mnt/prerolls or /data/prerolls). UNC paths like \\\\NAS\\share are not visible inside Linux containers."
+        raise HTTPException(status_code=404, detail=f"Root path not found or not a directory: {root_abs}. {hint}")
 
     # Resolve target category
     category = None
