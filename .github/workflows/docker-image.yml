@@ -1,4 +1,4 @@
-name: Publish Docker image
+name: Docker Image
 
 on:
   workflow_dispatch:
@@ -7,9 +7,6 @@ on:
         description: Version tag to publish (e.g. 1.2.2)
         required: true
         default: 1.2.2
-  push:
-    tags:
-      - 'v*'
 
 jobs:
   build-and-push:
@@ -35,12 +32,8 @@ jobs:
         id: v
         shell: bash
         run: |
-          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
-            echo "ver=${{ github.event.inputs.version }}" >> "$GITHUB_OUTPUT"
-          else
-            ref="${GITHUB_REF##*/}"
-            echo "ver=${ref#v}" >> "$GITHUB_OUTPUT"
-          fi
+          set -euo pipefail
+          echo "ver=${{ github.event.inputs.version }}" >> "$GITHUB_OUTPUT"
 
       - name: Detect layout and generate CI Dockerfile
         id: gen
