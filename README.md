@@ -46,6 +46,24 @@ Web UI: http://localhost:9393
   - SQLite database storage under %ProgramData%\NeXroll
 - API
   - REST API with interactive docs at http://localhost:9393/docs
+## External Mapping and Plex Path Translation
+
+NeXroll supports indexing existing preroll directories without moving files and translating paths so Plex always receives Plex‑friendly locations.
+
+- Map Existing Preroll Folder (No Move)
+  - Settings → “Map Existing Preroll Folder” lets you index an existing local or UNC directory directly.
+  - Supports recursive scanning, extension filters, optional thumbnail generation, and tags.
+  - Use Dry Run first to preview counts; then Apply to create entries.
+  - Files are marked managed=false, which protects them from on‑disk moves/deletes when you edit metadata or change primary category.
+
+- UNC/local → Plex path mappings
+  - Settings → “UNC/Local → Plex Path Mappings” lets you define prefix pairs:
+    - Example (Plex on Windows): \\NAS\PreRolls → Z:\PreRolls
+    - Example (Plex on Linux):  \\NAS\PreRolls → /mnt/nas/PreRolls
+  - Longest‑prefix wins; on Windows, source matching is case‑insensitive. The separator is inferred from the destination prefix.
+  - Translation is applied automatically by both “Apply to Plex” and the Scheduler (shuffle and playlist).
+  - Use “Test Translation” to validate outputs before applying categories to Plex.
+
 ## Download and Install (Users)
 
 1. Download the latest `NeXroll_Installer.exe` from GitHub Releases:
@@ -134,7 +152,56 @@ Tip: if a previous NeXroll instance is still running and occupying port 9393, th
 3. Upload prerolls, create categories, and configure schedules.
 
 ---
-
+ 
+## Docker
+ 
+Prebuilt image:
+ 
+```bash
+docker pull jbrns/nexroll:1.2.2
+# Linux/macOS
+mkdir -p ./nexroll-data
+docker run --name nexroll --rm -p 9393:9393 \
+  -e NEXROLL_DB_DIR=/data \
+  -e NEXROLL_PREROLL_PATH=/data/prerolls \
+  -e NEXROLL_SECRETS_DIR=/data \
+  -e TZ=UTC \
+  -v "$(pwd)/nexroll-data:/data" \
+  jbrns/nexroll:1.2.2
+ 
+# Windows PowerShell
+mkdir nexroll-data | Out-Null
+docker run --name nexroll --rm -p 9393:9393 `
+  -e NEXROLL_DB_DIR=/data `
+  -e NEXROLL_PREROLL_PATH=/data/prerolls `
+  -e NEXROLL_SECRETS_DIR=/data `
+  -e TZ=UTC `
+  -v "${PWD}\nexroll-data:/data" `
+  jbrns/nexroll:1.2.2
+```
+ 
+Using docker compose with the prebuilt image (override your build section):
+ 
+```yaml
+services:
+  nexroll:
+    image: jbrns/nexroll:1.2.2
+    ports:
+      - "9393:9393"
+    environment:
+      - NEXROLL_DB_DIR=/data
+      - NEXROLL_PREROLL_PATH=/data/prerolls
+      - NEXROLL_SECRETS_DIR=/data
+      - TZ=UTC
+    volumes:
+      - ./nexroll-data:/data
+    restart: unless-stopped
+```
+ 
+The repository already includes a compose file that builds from source. To consume the public image instead, either swap build: for image: in your compose file or place the snippet above in docker-compose.override.yml. See DOCKER.md for full details.
+ 
+---
+ 
 ## Upgrade / Uninstall
 
 - Upgrade: simply run the newer `NeXroll_Installer.exe` over the existing installation. Your configured Preroll storage path is preserved, and data is not removed.
@@ -204,11 +271,6 @@ Outputs:
 - Plex connection issues
   - Verify Plex is reachable from the machine, and the token is valid (retry `setup_plex_token.exe` if needed).
 
-## Addition Support
-
-- Export full log files from Settings > Download Diagnostics. Private information such as Plex Tokens are dedacted.
-   - Send to JeffBurns@JFLX.CLOUD with a description of the issue.
-
 ---
 
 ## License
@@ -223,4 +285,3 @@ MIT. Third‑party components remain under their respective licenses.
 If NeXroll is helpful, consider supporting ongoing development:
 
 [![Ko-fi](https://img.shields.io/badge/Ko--fi-Support%20Me-FF5E5B?style=for-the-badge&amp;logo=ko-fi&amp;logoColor=white)](https://ko-fi.com/j_b__)
-
