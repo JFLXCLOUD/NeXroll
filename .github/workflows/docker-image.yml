@@ -42,20 +42,94 @@ jobs:
             echo "ver=${ref#v}" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Resolve Dockerfile path
-        id: df
+      - name: Detect layout and generate CI Dockerfile
+        id: gen
         shell: bash
         run: |
-          if [[ -f "Dockerfile" ]]; then
-            echo "DOCKERFILE=Dockerfile" >> "$GITHUB_ENV"
-          elif [[ -f "NeXroll/Dockerfile" ]]; then
-            echo "DOCKERFILE=NeXroll/Dockerfile" >> "$GITHUB_ENV"
-          else
-            echo "No Dockerfile found in repository root or NeXroll/." >&2
-            echo "Workspace listing:"
-            ls -la
+          set -euo pipefail
+
+          echo "Workspace root:" && pwd && ls -la
+
+          # Case-insensitive search for expected paths to tolerate layout/case differences
+          FE_PATH="$(find . -type d -iname frontend | head -n1 | sed 's|^\./||')"
+          BE_PATH="$(find . -type d -iname nexroll_backend -o -type d -iname backend | head -n1 | sed 's|^\./||')"
+          REQ_PATH="$(find . -type f -iname requirements.txt | head -n1 | sed 's|^\./||')"
+
+          if [[ -z "$FE_PATH" || -z "$BE_PATH" || -z "$REQ_PATH" ]]; then
+            echo "Auto-detect failed. Showing tree (depth 3) for diagnostics:" >&2
+            find . -maxdepth 3 -print >&2
+            echo "Resolved FE_PATH='$FE_PATH' BE_PATH='$BE_PATH' REQ_PATH='$REQ_PATH'" >&2
             exit 1
           fi
+
+          BE_NAME="$(basename "$BE_PATH")"
+          # Choose uvicorn module path based on backend folder name
+          MODULE="nexroll_backend.main:app"
+          if [[ "$BE_NAME" == "backend" ]]; then
+            MODULE="backend.main:app"
+          fi
+
+          echo "Resolved FE_PATH=$FE_PATH"
+          echo "Resolved BE_PATH=$BE_PATH (BE_NAME=$BE_NAME)"
+          echo "Resolved REQ_PATH=$REQ_PATH"
+          echo "Resolved MODULE=$MODULE"
+
+          # Generate a Dockerfile with concrete paths so COPY resolves correctly on Linux runners
+          cat > Dockerfile.ci <<EOF
+          # syntax=docker/dockerfile:1
+
+          FROM node:20-alpine AS frontend-builder
+          WORKDIR /build/frontend
+
+          COPY $FE_PATH/package*.json ./
+          RUN npm ci --no-audit --no-fund
+
+          COPY $FE_PATH/ ./
+          RUN npm run build
+
+          FROM python:3.11-slim
+
+          ARG APP_VERSION=dev
+          LABEL org.opencontainers.image.title="NeXroll" \
+                org.opencontainers.image.description="NeXroll Plex preroll manager" \
+                org.opencontainers.image.version="\${APP_VERSION}" \
+                org.opencontainers.image.licenses="MIT"
+
+          ENV PYTHONDONTWRITEBYTECODE=1 \
+              PYTHONUNBUFFERED=1 \
+              PIP_NO_CACHE_DIR=1 \
+              NEXROLL_PORT=9393 \
+              NEXROLL_DB_DIR=/data \
+              NEXROLL_PREROLL_PATH=/data/prerolls \
+              NEXROLL_SECRETS_DIR=/data \
+              PLEX_URL="" \
+              PLEX_TOKEN=""
+
+          RUN apt-get update && \
+              apt-get install -y --no-install-recommends ffmpeg curl tzdata && \
+              rm -rf /var/lib/apt/lists/*
+
+          WORKDIR /app/NeXroll
+
+          COPY $REQ_PATH /app/NeXroll/requirements.txt
+          RUN pip install --no-cache-dir -r /app/NeXroll/requirements.txt
+
+          # Copy backend into a directory named by its package folder, so the module path matches
+          COPY $BE_PATH /app/NeXroll/$BE_NAME
+          COPY --from=frontend-builder /build/frontend/build /app/NeXroll/frontend/build
+
+          RUN mkdir -p /data /data/prerolls
+          VOLUME ["/data"]
+
+          EXPOSE 9393
+
+          HEALTHCHECK --interval=30s --timeout=5s --retries=3 \
+            CMD curl -fsS http://localhost:\${NEXROLL_PORT:-9393}/health || exit 1
+
+          CMD ["sh", "-c", "uvicorn $MODULE --host 0.0.0.0 --port \${NEXROLL_PORT:-9393}"]
+          EOF
+
+          echo "DOCKERFILE=Dockerfile.ci" >> "$GITHUB_ENV"
 
       - name: Build and push
         uses: docker/build-push-action@v6
