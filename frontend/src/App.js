@@ -1,5 +1,105 @@
 import React, { useState, useEffect } from 'react';
 
+// API helpers that resolve the backend base dynamically (works in Docker and behind proxies)
+const apiBase = () => {
+  try {
+    if (typeof window !== 'undefined') {
+      const b = window.__nexrollApiBase || (window.location && window.location.origin) || '';
+      return String(b).replace(/\/+$/, '');
+    }
+  } catch {}
+  return '';
+};
+const apiUrl = (path) => {
+  try {
+    const p = String(path || '').replace(/^\/+/, '');
+    if (/^https?:\/\//i.test(String(path))) return String(path);
+    const b = apiBase();
+    return b ? `${b}/${p}` : `/${p}`;
+  } catch {
+    return path;
+  }
+};
+// Runtime API base resolver + CORS shield: rewrite hardcoded http://localhost:9393 to same-origin or configured base
+(function setupNeXrollApiBase() {
+  try {
+    const envBase = (typeof process !== 'undefined' && process && process.env && process.env.REACT_APP_API_BASE)
+      ? String(process.env.REACT_APP_API_BASE)
+      : null;
+    const globalBase = (typeof window !== 'undefined' && window && window.NEXROLL_API_BASE)
+      ? String(window.NEXROLL_API_BASE)
+      : null;
+    const sameOrigin = (typeof window !== 'undefined' && window.location && window.location.origin)
+      ? String(window.location.origin)
+      : '';
+    const isDevUi = (typeof window !== 'undefined' && window.location && (window.location.port === '3000'));
+    const base = (globalBase || envBase || (isDevUi ? 'http://localhost:9393' : sameOrigin) || '').replace(/\/+$/, '');
+    const LOCAL_BASES = [
+      'http://localhost:9393',
+      'http://127.0.0.1:9393',
+      'https://localhost:9393',
+      'https://127.0.0.1:9393'
+    ];
+
+    const rewriteUrl = (u) => {
+      try {
+        if (typeof u !== 'string') return u;
+        for (const lb of LOCAL_BASES) {
+          if (u.startsWith(lb)) {
+            const suffix = u.slice(lb.length);
+            return base + (suffix.startsWith('/') ? suffix : '/' + suffix);
+          }
+        }
+        return u;
+      } catch {
+        return u;
+      }
+    };
+
+    // Expose helpers for incremental adoption
+    if (typeof window !== 'undefined') {
+      window.__nexrollApiBase = base;
+      window.__nexrollRewriteApiUrl = rewriteUrl;
+    }
+
+    // Patch fetch to normalize absolute localhost calls at runtime
+    if (typeof window !== 'undefined' && typeof window.fetch === 'function') {
+      const origFetch = window.fetch.bind(window);
+      window.fetch = (input, init) => {
+        try {
+          if (typeof input === 'string') {
+            return origFetch(rewriteUrl(input), init);
+          } else if (input && typeof input === 'object' && typeof input.url === 'string') {
+            // If a Request object is passed, clone with rewritten URL (best-effort)
+            const Req = window.Request || null;
+            if (Req) {
+              const req2 = new Req(rewriteUrl(input.url), input);
+              return origFetch(req2, init);
+            }
+          }
+        } catch {}
+        return origFetch(input, init);
+      };
+    }
+
+    // Patch EventSource (SSE) similarly
+    if (typeof window !== 'undefined' && typeof window.EventSource === 'function') {
+      const OrigES = window.EventSource;
+      const PatchedES = function(url, config) {
+        const u2 = rewriteUrl(url);
+        return new OrigES(u2, config);
+      };
+      PatchedES.prototype = OrigES.prototype;
+      // Preserve static constants
+      PatchedES.CONNECTING = OrigES.CONNECTING;
+      PatchedES.OPEN = OrigES.OPEN;
+      PatchedES.CLOSED = OrigES.CLOSED;
+      window.EventSource = PatchedES;
+    }
+  } catch {
+    // silent
+  }
+})();
 const Modal = ({ title, onClose, children, width = 700 }) => {
   React.useEffect(() => {
     const onEsc = (e) => { if (e.key === 'Escape') onClose && onClose(); };
@@ -1913,7 +2013,7 @@ const toLocalInputFromDate = (d) => {
               </div>
               {preroll.thumbnail && (
                 <img
-                  src={`http://localhost:9393/static/${preroll.thumbnail}`}
+                  src={apiUrl(`static/${preroll.thumbnail}`)}
                   alt="thumbnail"
                   onError={(e) => {
                     try {
@@ -1976,7 +2076,7 @@ const toLocalInputFromDate = (d) => {
            />
            {preroll.thumbnail && (
              <img
-               src={`http://localhost:9393/static/${preroll.thumbnail}`}
+               src={apiUrl(`static/${preroll.thumbnail}`)}
                alt="thumbnail"
                style={{ width: 120, height: 'auto', borderRadius: 4 }}
                onError={(e) => {
