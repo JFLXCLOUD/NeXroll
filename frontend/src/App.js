@@ -311,7 +311,22 @@ function App() {
   const [showInstallPrompt, setShowInstallPrompt] = useState(false);
   const [isInstalled, setIsInstalled] = useState(false);
 
- 
+  // Path Mappings & External Mapping UI state
+  const [pathMappings, setPathMappings] = useState([]);
+  const [pathMappingsLoading, setPathMappingsLoading] = useState(false);
+  const [mappingTestInput, setMappingTestInput] = useState('');
+  const [mappingTestResults, setMappingTestResults] = useState([]);
+  const [mapRootForm, setMapRootForm] = useState({
+    root_path: '',
+    category_id: '',
+    recursive: true,
+    extensions: 'mp4,mkv,avi,mov',
+    generate_thumbnails: true,
+    tags: ''
+  });
+  const [mapRootLoading, setMapRootLoading] = useState(false);
+  const [mapRootLoadingMsg, setMapRootLoadingMsg] = useState('');
+
   // Category preroll management UI state
   const [expandedCategories, setExpandedCategories] = useState({});
   const [categoryPrerolls, setCategoryPrerolls] = useState({});
@@ -1511,6 +1526,24 @@ const toLocalInputFromDate = (d) => {
     fetchData();
   };
 
+  const handleBulkDeleteSelected = async () => {
+    const count = selectedPrerollIds.length;
+    if (count === 0) { alert('No prerolls selected'); return; }
+    if (!window.confirm(`Delete ${count} selected preroll(s)?\n\nManaged files may be deleted from disk. External mapped files are protected and will not be removed.`)) return;
+    let ok = 0, fail = 0;
+    for (const id of selectedPrerollIds) {
+      try {
+        const res = await fetch(`http://localhost:9393/prerolls/${id}`, { method: 'DELETE' });
+        if (!res.ok) fail++; else ok++;
+      } catch {
+        fail++;
+      }
+    }
+    alert(`Delete completed. Success: ${ok}, Failed: ${fail}`);
+    setSelectedPrerollIds([]);
+    fetchData();
+  };
+
   const createCategoryInline = async (name) => {
     const n = String(name || '').trim();
     if (!n) return null;
@@ -1804,6 +1837,16 @@ const toLocalInputFromDate = (d) => {
             Clear selection
           </button>
           <span style={{ fontSize: '0.9rem', color: '#666' }}>Selected: {selectedPrerollIds.length}</span>
+          <button
+            type="button"
+            className="button"
+            onClick={handleBulkDeleteSelected}
+            disabled={selectedPrerollIds.length === 0}
+            style={{ backgroundColor: '#dc3545' }}
+            title="Delete all selected prerolls"
+          >
+            Delete Selected
+          </button>
 
           <div style={{ marginLeft: 'auto', display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
             <select
@@ -3409,22 +3452,359 @@ const toLocalInputFromDate = (d) => {
     }
   };
 
+  // === Path mappings helpers and External Mapping actions ===
+  const normalizeMappingList = (data) => {
+    if (Array.isArray(data)) return data;
+    if (data && Array.isArray(data.mappings)) return data.mappings;
+    return [];
+  };
+
+  const loadPathMappings = async () => {
+    setPathMappingsLoading(true);
+    try {
+      const res = await fetch('http://localhost:9393/settings/path-mappings');
+      const data = await safeJson(res);
+      const list = normalizeMappingList(data).map(m => ({
+        local: m.local ?? m.source ?? m.from ?? '',
+        plex: m.plex ?? m.target ?? m.to ?? ''
+      }));
+      setPathMappings(list.length ? list : [{ local: '', plex: '' }]);
+    } catch (_) {
+      setPathMappings([{ local: '', plex: '' }]);
+    } finally {
+      setPathMappingsLoading(false);
+    }
+  };
+
+  const addMappingRow = () => setPathMappings(prev => [...prev, { local: '', plex: '' }]);
+  const updateMappingRow = (idx, field, value) =>
+    setPathMappings(prev => prev.map((m, i) => (i === idx ? { ...m, [field]: value } : m)));
+  const removeMappingRow = (idx) =>
+    setPathMappings(prev => prev.filter((_, i) => i !== idx));
+
+  const tryPutMappings = async (list, shape) => {
+    const body = shape === 'array' ? list : { mappings: list };
+    const res = await fetch('http://localhost:9393/settings/path-mappings', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body)
+    });
+    const text = await res.text();
+    let data = null;
+    try { data = text ? JSON.parse(text) : null; } catch {}
+    if (!res.ok) {
+      const msg = (data && (data.detail || data.message)) || text || `HTTP ${res.status}`;
+      throw new Error(msg);
+    }
+    return data;
+  };
+
+  const savePathMappings = async () => {
+    const list = (pathMappings || [])
+      .map(m => ({ local: (m.local || '').trim(), plex: (m.plex || '').trim() }))
+      .filter(m => m.local && m.plex);
+    try {
+      await tryPutMappings(list, 'array').catch(async () => await tryPutMappings(list, 'object'));
+      alert('Path mappings saved.');
+      await loadPathMappings();
+    } catch (e) {
+      alert('Failed to save mappings: ' + (e && e.message ? e.message : e));
+    }
+  };
+
+  const runMappingsTest = async () => {
+    const lines = (mappingTestInput || '')
+      .split(/\r?\n/)
+      .map(s => s.trim())
+      .filter(Boolean);
+    if (lines.length === 0) {
+      alert('Enter one or more paths to test.');
+      return;
+    }
+    try {
+      const res = await fetch('/settings/path-mappings/test', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ paths: lines })
+      });
+      const text = await res.text();
+      let data = null;
+      try { data = text ? JSON.parse(text) : null; } catch {}
+      let results = [];
+      if (Array.isArray(data)) results = data;
+      else if (data && Array.isArray(data.results)) results = data.results;
+      else if (data && Array.isArray(data.mapped)) results = data.mapped;
+      else results = lines.map(s => ({ input: s, output: s, matched: false }));
+      const norm = results.map(r => {
+        if (typeof r === 'string') return { input: r, output: r, matched: false };
+        const input = r.input ?? r.source ?? r.local ?? r.original ?? '';
+        const output = r.output ?? r.result ?? r.plex ?? r.target ?? '';
+        const matched = 'matched' in r ? !!r.matched : (input && output && input !== output);
+        return { input, output, matched };
+      });
+      setMappingTestResults(norm);
+    } catch (e) {
+      alert('Failed to run test: ' + (e && e.message ? e.message : e));
+    }
+  };
+
+  const submitMapRoot = async (applyNow) => {
+    const root = (mapRootForm.root_path || '').trim();
+    if (!root) { alert('Enter a root path'); return; }
+    const cid = parseInt(mapRootForm.category_id, 10);
+    if (!cid || isNaN(cid)) { alert('Select a category'); return; }
+
+    const payload = {
+      root_path: root,
+      category_id: cid,
+      recursive: !!mapRootForm.recursive,
+      dry_run: !applyNow,
+      generate_thumbnails: !!mapRootForm.generate_thumbnails
+    };
+    const exts = (mapRootForm.extensions || '')
+      .split(/[,\s]+/)
+      .map(s => s.trim().replace(/^\./, ''))
+      .filter(Boolean);
+    if (exts.length) payload.extensions = exts;
+    const tagsStr = (mapRootForm.tags || '').trim();
+    if (tagsStr) {
+      const tagsArr = tagsStr.split(/[,\s]+/).map(s => s.trim()).filter(Boolean);
+      if (tagsArr.length) payload.tags = tagsArr;
+    }
+
+    setMapRootLoading(true);
+    setMapRootLoadingMsg(applyNow ? 'Mapping files… This may take a moment.' : 'Scanning files (dry run)…');
+
+    try {
+      const res = await fetch('/prerolls/map-root', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+      const text = await res.text();
+      let data = null;
+      try { data = text ? JSON.parse(text) : null; } catch {}
+      if (!res.ok) {
+        const msg = (data && (data.detail || data.message)) || text || `HTTP ${res.status}`;
+        throw new Error(msg);
+      }
+      // Summarize counts based on backend response shape
+      // Dry run: { total_found, already_present, to_add }
+      // Apply:   { total_found, already_present, added, added_details[] }
+      let message = '';
+      if (data && data.dry_run) {
+        const found = Number(data.total_found ?? 0);
+        const present = Number(data.already_present ?? 0);
+        const toAdd = Number(data.to_add ?? Math.max(0, found - present));
+        message = `Dry run complete.\nFound: ${found}\nAlready present: ${present}\nWould add: ${toAdd}`;
+      } else {
+        const added = Number(data.added ?? (Array.isArray(data.added_details) ? data.added_details.length : 0));
+        const found = Number(data.total_found ?? 0);
+        const present = Number(data.already_present ?? 0);
+        message = `Mapping complete.\nAdded: ${added}\nTotal found: ${found}\nAlready present: ${present}`;
+      }
+      alert(message);
+      if (applyNow) {
+        setMapRootForm(prev => ({ ...prev, dry_run: true }));
+        fetchData();
+      }
+    } catch (e) {
+      alert('Failed to map: ' + (e && e.message ? e.message : e));
+    } finally {
+      setMapRootLoading(false);
+      setMapRootLoadingMsg('');
+    }
+  };
+
+  // Auto-load mappings at startup
+  React.useEffect(() => {
+    try { loadPathMappings(); } catch {}
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   const renderSettings = () => (
     <div>
       <h1 className="header">Settings</h1>
 
-      <div className="card">
-        <h2>Theme</h2>
+      <details className="card" open>
+        <summary style={{ cursor: 'pointer' }}>
+          <h2 style={{ display: 'inline' }}>Theme</h2>
+        </summary>
         <div style={{ display: 'flex', alignItems: 'center', gap: '1rem', marginTop: '1rem' }}>
           <span>Current theme: {darkMode ? 'Dark' : 'Light'}</span>
           <button onClick={toggleTheme} className="button">
             Switch to {darkMode ? 'Light' : 'Dark'} Mode
           </button>
         </div>
-      </div>
+      </details>
 
-      <div className="card">
-        <h2>Backup & Restore</h2>
+      <details className="card" open>
+        <summary style={{ cursor: 'pointer' }}>
+          <h2 style={{ display: 'inline' }}>UNC/Local → Plex Path Mappings</h2>
+        </summary>
+        <p style={{ marginBottom: '0.5rem', color: 'var(--text-color)' }}>
+          Define how local or UNC paths should be translated to Plex-readable paths when applying prerolls.
+          Longest-prefix rule applies; Windows local prefixes are matched case-insensitively.
+        </p>
+
+        <div style={{ display: 'grid', gap: '0.5rem' }}>
+          {(pathMappings || []).map((m, idx) => (
+            <div key={idx} style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+              <input
+                type="text"
+                placeholder="Local/UNC Prefix (e.g., \\\\NAS\\share\\prerolls or C:\\Media\\Prerolls)"
+                value={m.local}
+                onChange={(e) => updateMappingRow(idx, 'local', e.target.value)}
+                style={{ flex: 1, padding: '0.5rem' }}
+              />
+              <span style={{ fontWeight: 'bold' }}>→</span>
+              <input
+                type="text"
+                placeholder="Plex Prefix (e.g., /mnt/NAS/prerolls or /Volumes/Media/Prerolls)"
+                value={m.plex}
+                onChange={(e) => updateMappingRow(idx, 'plex', e.target.value)}
+                style={{ flex: 1, padding: '0.5rem' }}
+              />
+              <button
+                type="button"
+                className="button"
+                onClick={() => removeMappingRow(idx)}
+                style={{ backgroundColor: '#dc3545' }}
+                title="Remove this mapping"
+              >
+                Remove
+              </button>
+            </div>
+          ))}
+
+          <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
+            <button type="button" className="button" onClick={addMappingRow}>➕ Add Row</button>
+            <button type="button" className="button" onClick={loadPathMappings} disabled={pathMappingsLoading}>↻ Reload</button>
+            <button type="button" className="button" onClick={savePathMappings} disabled={pathMappingsLoading} style={{ backgroundColor: '#28a745' }}>
+              💾 Save
+            </button>
+          </div>
+        </div>
+
+        <div style={{ marginTop: '0.75rem' }}>
+          <h3 style={{ margin: 0, marginBottom: '0.25rem' }}>Test Translation</h3>
+          <p style={{ fontSize: '0.9rem', color: '#666', marginBottom: '0.5rem' }}>
+            Paste one or more local/UNC paths below to preview their translated Plex paths.
+          </p>
+          <textarea
+            rows="4"
+            value={mappingTestInput}
+            onChange={(e) => setMappingTestInput(e.target.value)}
+            placeholder={`Example:
+\\\\NAS\\share\\prerolls\\winter\\snow.mp4
+C:\\\\Media\\\\Prerolls\\\\summer\\\\beach.mp4`}
+            style={{ width: '100%', padding: '0.5rem', resize: 'vertical' }}
+          />
+          <div style={{ marginTop: '0.5rem' }}>
+            <button type="button" className="button" onClick={runMappingsTest}>🧪 Run Test</button>
+          </div>
+          {Array.isArray(mappingTestResults) && mappingTestResults.length > 0 && (
+            <div style={{ marginTop: '0.5rem' }}>
+              <ul style={{ margin: 0, paddingLeft: '1rem' }}>
+                {mappingTestResults.map((r, i) => (
+                  <li key={i} style={{ fontSize: '0.9rem', color: r.matched ? 'green' : '#555' }}>
+                    <code>{r.input}</code> → <code>{r.output || '(no change)'}</code>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+        </div>
+      </details>
+
+      <details className="card" open>
+        <summary style={{ cursor: 'pointer' }}>
+          <h2 style={{ display: 'inline' }}>Map Existing Preroll Folder (No Move)</h2>
+        </summary>
+        <p style={{ marginBottom: '0.5rem', color: 'var(--text-color)' }}>
+          Index files from an existing folder into NeXroll without moving them on disk. These files are marked as external (managed=false).
+        </p>
+        <div style={{ display: 'grid', gap: '0.5rem' }}>
+          <input
+            type="text"
+            placeholder="Root path (e.g., C:\\Prerolls or \\\\NAS\\share\\prerolls)"
+            value={mapRootForm.root_path}
+            onChange={(e) => setMapRootForm({ ...mapRootForm, root_path: e.target.value })}
+            disabled={mapRootLoading}
+            style={{ padding: '0.5rem' }}
+          />
+          <select
+            value={mapRootForm.category_id}
+            onChange={(e) => setMapRootForm({ ...mapRootForm, category_id: e.target.value })}
+            className="nx-select"
+            disabled={mapRootLoading}
+            style={{ padding: '0.5rem' }}
+          >
+            <option value="">Select Category</option>
+            {categories.map(cat => (
+              <option key={cat.id} value={cat.id}>{cat.name}</option>
+            ))}
+          </select>
+          <div style={{ display: 'flex', gap: '1rem', flexWrap: 'wrap' }}>
+            <label style={{ display: 'inline-flex', alignItems: 'center', gap: '0.5rem' }}>
+              <input
+                type="checkbox"
+                checked={!!mapRootForm.recursive}
+                onChange={(e) => setMapRootForm({ ...mapRootForm, recursive: e.target.checked })}
+                disabled={mapRootLoading}
+              />
+              Recurse subfolders
+            </label>
+            <label style={{ display: 'inline-flex', alignItems: 'center', gap: '0.5rem' }}>
+              <input
+                type="checkbox"
+                checked={!!mapRootForm.generate_thumbnails}
+                onChange={(e) => setMapRootForm({ ...mapRootForm, generate_thumbnails: e.target.checked })}
+                disabled={mapRootLoading}
+              />
+              Generate thumbnails
+            </label>
+          </div>
+          <input
+            type="text"
+            placeholder="Extensions (comma-separated, no dots) e.g., mp4,mkv,avi,mov"
+            value={mapRootForm.extensions}
+            onChange={(e) => setMapRootForm({ ...mapRootForm, extensions: e.target.value })}
+            disabled={mapRootLoading}
+            style={{ padding: '0.5rem' }}
+          />
+          <input
+            type="text"
+            placeholder="Tags (optional, comma-separated)"
+            value={mapRootForm.tags}
+            onChange={(e) => setMapRootForm({ ...mapRootForm, tags: e.target.value })}
+            disabled={mapRootLoading}
+            style={{ padding: '0.5rem' }}
+          />
+          <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
+            <button type="button" className="button" onClick={() => submitMapRoot(false)} disabled={mapRootLoading}>🧪 Dry Run</button>
+            <button type="button" className="button" onClick={() => submitMapRoot(true)} disabled={mapRootLoading} style={{ backgroundColor: '#28a745' }}>
+              📥 Map Now
+            </button>
+          </div>
+          {mapRootLoading && (
+            <div className="nx-map-progress" style={{ marginTop: '0.5rem' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.25rem' }}>
+                <span className="nx-spinner" aria-hidden="true"></span>
+                <span style={{ fontSize: '0.9rem', color: 'var(--text-color)' }}>
+                  {mapRootLoadingMsg || 'Working…'}
+                </span>
+              </div>
+              <div className="nx-progress"><div className="bar"></div></div>
+            </div>
+          )}
+        </div>
+      </details>
+
+      <details className="card" open>
+        <summary style={{ cursor: 'pointer' }}>
+          <h2 style={{ display: 'inline' }}>Backup & Restore</h2>
+        </summary>
         <p style={{ marginBottom: '1rem', color: 'var(--text-color)' }}>
           Create backups of your NeXroll data and restore from previous backups.
         </p>
@@ -3479,10 +3859,12 @@ const toLocalInputFromDate = (d) => {
             </div>
           </div>
         </div>
-      </div>
+        </details>
 
-      <div className="card">
-        <h2>Community Templates</h2>
+      <details className="card" open>
+        <summary style={{ cursor: 'pointer' }}>
+          <h2 style={{ display: 'inline' }}>Community Templates</h2>
+        </summary>
         <p style={{ marginBottom: '1rem', color: 'var(--text-color)' }}>
           Browse and import community-created schedule templates, or create your own to share.
         </p>
@@ -3555,7 +3937,7 @@ const toLocalInputFromDate = (d) => {
             ))
           )}
         </div>
-      </div>
+      </details>
 
       <div className="card">
         <h2>System Information</h2>

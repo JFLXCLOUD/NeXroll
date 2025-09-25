@@ -611,3 +611,57 @@ details.nx-plex-help[open] {
   font-size: 0.85rem;
   padding: 0.35rem 0.6rem;
 }
+
+/* ---------- Map Root Loading Indicator (theme-aware) ---------- */
+.nx-map-progress {
+  padding: 0.5rem 0.75rem;
+  background: var(--card-bg);
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  box-shadow: 0 2px 4px var(--shadow);
+}
+
+.nx-spinner {
+  width: 16px;
+  height: 16px;
+  border: 2px solid var(--border-color);
+  border-top-color: var(--button-bg);
+  border-right-color: var(--button-bg);
+  border-radius: 50%;
+  animation: nx-spin 0.7s linear infinite;
+}
+
+@keyframes nx-spin {
+  to { transform: rotate(360deg); }
+}
+
+.nx-progress {
+  position: relative;
+  height: 6px;
+  background: var(--header-bg);
+  border: 1px solid var(--border-color);
+  border-radius: 9999px;
+  overflow: hidden;
+}
+
+.nx-progress .bar {
+  position: absolute;
+  left: -40%;
+  width: 40%;
+  height: 100%;
+  background: var(--button-bg);
+  border-radius: inherit;
+  animation: nx-indeterminate 1.2s ease-in-out infinite;
+}
+
+@keyframes nx-indeterminate {
+  0%   { left: -40%; }
+  50%  { left: 60%; }
+  100% { left: 100%; }
+}
+
+/* Respect users who prefer reduced motion */
+@media (prefers-reduced-motion: reduce) {
+  .nx-spinner { animation: none; }
+  .nx-progress .bar { animation: none; left: 0; width: 100%; }
+}
