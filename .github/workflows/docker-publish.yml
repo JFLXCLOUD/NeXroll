@@ -1,4 +1,4 @@
-name: Docker Image
+name: Publish Docker image
 
 on:
   workflow_dispatch:
@@ -7,6 +7,9 @@ on:
         description: Version tag to publish (e.g. 1.2.2)
         required: true
         default: 1.2.3
+  push:
+    tags:
+      - 'v*'
 
 permissions:
   contents: read
@@ -43,8 +46,12 @@ jobs:
         id: v
         shell: bash
         run: |
-          set -euo pipefail
-          echo "ver=${{ github.event.inputs.version }}" >> "$GITHUB_OUTPUT"
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            echo "ver=${{ github.event.inputs.version }}" >> "$GITHUB_OUTPUT"
+          else
+            ref="${GITHUB_REF##*/}"
+            echo "ver=${ref#v}" >> "$GITHUB_OUTPUT"
+          fi
 
       - name: Derive GHCR namespace
         id: meta
@@ -69,19 +76,19 @@ jobs:
 
           # If no requirements file is found, synthesize a minimal one
           if [[ -z "$REQ_PATH" ]]; then
+            cat > requirements.ci.txt <<'EOR'
+          fastapi==0.104.1
+          uvicorn==0.24.0
+          sqlalchemy==2.0.23
+          pydantic==2.5.0
+          ffmpeg-python==0.2.0
+          apscheduler==3.10.4
+          requests==2.31.0
+          plexapi==4.15.1
+          python-multipart==0.0.6
+          jinja2==3.1.2
+          EOR
             REQ_PATH="requirements.ci.txt"
-            printf "%s\n" \
-              "fastapi==0.104.1" \
-              "uvicorn==0.24.0" \
-              "sqlalchemy==2.0.23" \
-              "pydantic==2.5.0" \
-              "ffmpeg-python==0.2.0" \
-              "apscheduler==3.10.4" \
-              "requests==2.31.0" \
-              "plexapi==4.15.1" \
-              "python-multipart==0.0.6" \
-              "jinja2==3.1.2" \
-              > "$REQ_PATH"
           fi
 
           if [[ -z "$FE_PATH" || -z "$BE_CANON" ]]; then
@@ -94,8 +101,8 @@ jobs:
           MODULE="nexroll_backend.main:app"
 
           echo "Resolved FE_PATH=$FE_PATH"
-          echo "Resolved BE_CANON=$BE_CANON"
-          echo "Resolved BE_LEGACY=${BE_LEGACY:-<none>}"
+          echo " Resolved BE_CANON=$BE_CANON"
+          echo " Resolved BE_LEGACY=${BE_LEGACY:-<none>}"
           echo "Resolved REQ_PATH=$REQ_PATH"
           echo "Resolved MODULE=$MODULE"
 
