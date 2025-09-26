@@ -3327,52 +3327,15 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
           </details>
         </div>
 
-        {/* Docker Quick Connect */}
+        {/* Docker Note (Quick Connect removed in favor of Plex.tv auth) */}
         <div className="upload-section nx-plex-method" style={{ marginBottom: '2rem' }}>
-          <h3 style={{ marginBottom: '0.5rem', color: 'var(--text-color)' }}>🐳 Docker Quick Connect</h3>
-          <p style={{ fontSize: '0.9rem', color: '#666', marginBottom: '0.75rem' }}>
-            If NeXroll runs in Docker, this will probe common host URLs and any you provide using your Plex token.
-            You can paste your token here or save it above via “Advanced: Save/Update Stable Token”.
+          <h3 style={{ marginBottom: '0.5rem', color: 'var(--text-color)' }}>🐳 Docker Note</h3>
+          <p style={{ fontSize: '0.9rem', color: '#666' }}>
+            When running NeXroll in Docker, use <strong>Method 3: Plex.tv Authentication</strong> above to connect.
+            After connecting, configure <em>UNC/Local → Plex Path Mappings</em> in Settings to translate container/local paths
+            (e.g., <code>/data/prerolls</code>) to the path Plex can see on its host
+            (e.g., <code>Z:\Prerolls</code> or <code>\\NAS\share\Prerolls</code> on Windows, or <code>/mnt/prerolls</code> on Linux).
           </p>
-          <form onSubmit={handleDockerAutoConnect} style={{ display: 'grid', gap: '0.75rem', marginBottom: '0.5rem' }}>
-            <input
-              type="password"
-              placeholder="Plex Token (optional if already saved)"
-              value={dockerToken}
-              onChange={(e) => setDockerToken(e.target.value)}
-              style={{ width: '100%', padding: '0.5rem' }}
-            />
-            <input
-              type="text"
-              placeholder="Candidate URLs (optional, comma/space separated), e.g. http://host.docker.internal:32400 http://192.168.1.20:32400"
-              value={dockerCandidates}
-              onChange={(e) => setDockerCandidates(e.target.value)}
-              style={{ width: '100%', padding: '0.5rem' }}
-            />
-            <div>
-              <button type="submit" className="button" style={{ backgroundColor: '#28a745' }}>
-                Auto-Connect (Docker)
-              </button>
-            </div>
-          </form>
-          {dockerAutoResult && (
-            <div style={{ fontSize: '0.9rem', color: 'var(--text-color)' }}>
-              <div><strong>Connected:</strong> {dockerAutoResult.connected ? 'Yes' : 'No'}</div>
-              {dockerAutoResult.url && <div><strong>URL:</strong> {dockerAutoResult.url}</div>}
-              {Array.isArray(dockerAutoResult.tried) && dockerAutoResult.tried.length > 0 && (
-                <div style={{ marginTop: '0.5rem' }}>
-                  <div style={{ fontWeight: 'bold' }}>Tried:</div>
-                  <ul style={{ margin: 0, paddingLeft: '1.25rem' }}>
-                    {dockerAutoResult.tried.map((t, i) => (
-                      <li key={i} style={{ color: t.ok ? 'green' : '#666' }}>
-                        {t.url} — {t.ok ? 'OK' : `Fail${t.status ? ` (${t.status})` : ''}`}
-                      </li>
-                    ))}
-                  </ul>
-                </div>
-              )}
-            </div>
-          )}
         </div>
 
         {/* Method 2: Manual X-Plex-Token */}
@@ -3998,6 +3961,7 @@ C:\\\\Media\\\\Prerolls\\\\summer\\\\beach.mp4`}
           <ul style={{ margin: 0, paddingLeft: '1.25rem' }}>
             <li>If NeXroll runs in Docker, the container cannot see Windows mapped drives or UNC paths by default. Mount your NAS/host folder into the container and use the container path in “Root path”.</li>
             <li>UNC paths like \\NAS\share aren’t usable inside Linux containers. Mount the SMB share on the host (e.g., /mnt/nas) and map it into the container.</li>
+            <li>If Plex runs on Windows, ensure Plex can access the same media folder via a Windows path (e.g., <code>Z:\Prerolls</code> or <code>\\NAS\share\Prerolls</code>). Then add a path mapping from the NeXroll path (e.g., <code>/data/prerolls</code> in Docker or a local/UNC path on Windows) to that Windows path so NeXroll sends Plex a reachable path.</li>
             <li>Example docker run: <code>docker run -d --name nexroll -p 9393:9393 -v /mnt/nas/prerolls:/nas/prerolls jbrns/nexroll:latest</code> → then use <code>/nas/prerolls</code> as the Root path.</li>
             <li>docker-compose example:</li>
           </ul>
