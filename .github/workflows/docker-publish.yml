@@ -91,7 +91,8 @@ jobs:
             REQ_PATH="requirements.ci.txt"
           fi
 
-          if [[ -z "$FE_PATH" || -z "$BE_CANON" ]]; then
+          # Require frontend and at least one backend shape (canonical or legacy)
+          if [[ -z "$FE_PATH" || ( -z "$BE_CANON" && -z "$BE_LEGACY" ) ]]; then
             echo "Auto-detect failed. Showing tree (depth 3) for diagnostics:" >&2
             find . -maxdepth 3 -print >&2
             echo "Resolved FE_PATH='$FE_PATH' BE_CANON='$BE_CANON' BE_LEGACY='$BE_LEGACY' REQ_PATH='$REQ_PATH'" >&2
@@ -99,6 +100,9 @@ jobs:
           fi
 
           MODULE="nexroll_backend.main:app"
+          if [[ -z "$BE_CANON" && -n "$BE_LEGACY" ]]; then
+            MODULE="backend.main:app"
+          fi
 
           echo "Resolved FE_PATH=$FE_PATH"
           echo " Resolved BE_CANON=$BE_CANON"
@@ -148,11 +152,17 @@ jobs:
           RUN pip install --no-cache-dir -r /app/NeXroll/requirements.txt
           EOF
 
-          # Copy canonical backend always
-          echo "COPY $BE_CANON /app/NeXroll/nexroll_backend" >> Dockerfile.ci
-          # Copy legacy backend if present (kept for backward-compat imports only)
-          if [[ -n "${BE_LEGACY:-}" ]]; then
+          # Copy sources:
+          # - If canonical exists, copy it to nexroll_backend and legacy (if present) to backend.
+          # - If only legacy exists, mirror it into both backend and nexroll_backend to satisfy imports.
+          if [[ -n "$BE_CANON" ]]; then
+            echo "COPY $BE_CANON /app/NeXroll/nexroll_backend" >> Dockerfile.ci
+            if [[ -n "$BE_LEGACY" ]]; then
+              echo "COPY $BE_LEGACY /app/NeXroll/backend" >> Dockerfile.ci
+            fi
+          else
             echo "COPY $BE_LEGACY /app/NeXroll/backend" >> Dockerfile.ci
+            echo "COPY $BE_LEGACY /app/NeXroll/nexroll_backend" >> Dockerfile.ci
           fi
 
           # Append frontend assets and runtime
