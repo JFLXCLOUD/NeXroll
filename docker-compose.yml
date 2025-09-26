@@ -1,0 +1,27 @@
+version: "3.8"
+
+services:
+  nexroll:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        APP_VERSION: "1.2.3"
+    container_name: nexroll
+    network_mode: "host"
+    environment:
+      - NEXROLL_PORT=9393
+      - NEXROLL_DB_DIR=/data
+      - NEXROLL_PREROLL_PATH=/data/prerolls
+      - NEXROLL_SECRETS_DIR=/data
+      - PLEX_URL=${PLEX_URL:-}
+      - PLEX_TOKEN=${PLEX_TOKEN:-}
+      - TZ=${TZ:-UTC}
+    volumes:
+      - ./nexroll-data:/data
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:9393/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    restart: unless-stopped
