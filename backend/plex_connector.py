@@ -1,6 +1,8 @@
 import requests
 import json
 import os
+import urllib.parse
+import ipaddress
 from typing import Optional
 from pathlib import Path
 from nexroll_backend import secure_store
@@ -48,6 +50,57 @@ def _resolve_config_dir() -> str:
 def _resolve_config_path() -> str:
     return os.path.join(_resolve_config_dir(), "plex_config.json")
 
+def _bool_env(name: str, default=None):
+    try:
+        v = os.environ.get(name)
+        if v is None:
+            return default
+        s = str(v).strip().lower()
+        if s in ("1","true","yes","on"):
+            return True
+        if s in ("0","false","no","off"):
+            return False
+    except Exception:
+        pass
+    return default
+
+def _infer_tls_verify(url: Optional[str]) -> bool:
+    """
+    Determine whether to verify TLS certificates when talking to Plex.
+
+    Priority:
+      1) NEXROLL_PLEX_TLS_VERIFY env (1/true/on or 0/false/off)
+      2) Heuristic: for https URLs pointing to private/local hosts, default False
+         otherwise True.
+    """
+    # Explicit env override
+    env = _bool_env("NEXROLL_PLEX_TLS_VERIFY", None)
+    if env is not None:
+        return bool(env)
+
+    # No URL or not HTTPS -> nothing to verify
+    try:
+        if not url:
+            return True
+        u = urllib.parse.urlparse(str(url))
+        if u.scheme.lower() != "https":
+            return True
+        host = u.hostname or ""
+        # Localhost indicators
+        if host in ("localhost", "127.0.0.1"):
+            return False
+        try:
+            ip = ipaddress.ip_address(host)
+            if ip.is_private or ip.is_loopback or ip.is_link_local:
+                return False
+        except ValueError:
+            # Not an IP; treat .local as mDNS/local
+            if host.endswith(".local"):
+                return False
+    except Exception:
+        return True
+    return True
+
 class PlexConnector:
     def __init__(self, url: str, token: str = None):
         self.url = url.rstrip('/') if url else None
@@ -55,6 +108,7 @@ class PlexConnector:
         # Look for config file in current directory first, then parent directory
         self.config_file = self._find_config_file()
         self.headers = {}
+        self._verify = _infer_tls_verify(self.url)
 
         # Try to load stable token from config file if no token provided
         if not token:
@@ -189,7 +243,7 @@ class PlexConnector:
             print(f"Testing Plex connection to: {self.url}")
             print(f"Using token: {token_preview}")
 
-            response = requests.get(f"{self.url}/", headers=self.headers, timeout=10)
+            response = requests.get(f"{self.url}/", headers=self.headers, timeout=10, verify=self._verify)
             return response.status_code == 200
         except requests.exceptions.RequestException:
             return False
@@ -205,7 +259,7 @@ class PlexConnector:
             if not self.url or not isinstance(self.url, str):
                 return None
 
-            response = requests.get(f"{self.url}/", headers=self.headers, timeout=10)
+            response = requests.get(f"{self.url}/", headers=self.headers, timeout=10, verify=self._verify)
             if response.status_code == 200:
                 # Parse XML response to get server info
                 import xml.etree.ElementTree as ET
@@ -236,7 +290,7 @@ class PlexConnector:
             prefs_url = f"{self.url}/:/prefs"
 
             # First, let's try to get current preferences to understand the structure
-            response = requests.get(prefs_url, headers=self.headers, timeout=10)
+            response = requests.get(prefs_url, headers=self.headers, timeout=10, verify=self._verify)
 
             if response.status_code == 200:
                 print("Successfully accessed Plex preferences endpoint")
@@ -285,7 +339,8 @@ class PlexConnector:
                             set_response = requests.put(
                                 f"{prefs_url}?{pref_name}={preroll_path}",
                                 headers=self.headers,
-                                timeout=10
+                                timeout=10,
+                                verify=self._verify
                             )
 
                             print(f"Query param response for {pref_name}: {set_response.status_code}")
@@ -298,7 +353,8 @@ class PlexConnector:
                                 prefs_url,
                                 headers=self.headers,
                                 data={pref_name: preroll_path},
-                                timeout=10
+                                timeout=10,
+                                verify=self._verify
                             )
 
                             print(f"Form data response for {pref_name}: {set_response.status_code}")
@@ -310,7 +366,8 @@ class PlexConnector:
                             set_response = requests.post(
                                 f"{prefs_url}?{pref_name}={preroll_path}",
                                 headers=self.headers,
-                                timeout=10
+                                timeout=10,
+                                verify=self._verify
                             )
 
                             print(f"POST response for {pref_name}: {set_response.status_code}")
@@ -382,7 +439,7 @@ class PlexConnector:
             for endpoint in alt_endpoints:
                 try:
                     alt_url = f"{self.url}{endpoint}"
-                    alt_response = requests.get(alt_url, headers=self.headers, timeout=5)
+                    alt_response = requests.get(alt_url, headers=self.headers, timeout=5, verify=self._verify)
 
                     if alt_response.status_code == 200:
                         print(f"Successfully accessed alternative endpoint: {endpoint}")
@@ -390,7 +447,8 @@ class PlexConnector:
                         set_response = requests.put(
                             f"{alt_url}?CinemaTrailersPrerollID={preroll_path}",
                             headers=self.headers,
-                            timeout=5
+                            timeout=5,
+                            verify=self._verify
                         )
 
                         if set_response.status_code in [200, 201, 204]:
@@ -424,7 +482,7 @@ class PlexConnector:
         try:
             # Query Plex's current preroll setting
             prefs_url = f"{self.url}/:/prefs"
-            response = requests.get(prefs_url, headers=self.headers, timeout=10)
+            response = requests.get(prefs_url, headers=self.headers, timeout=10, verify=self._verify)
 
             if response.status_code == 200:
                 import xml.etree.ElementTree as ET
@@ -472,7 +530,7 @@ class PlexConnector:
         try:
             # Try to read back the preference to verify it was set
             prefs_url = f"{self.url}/:/prefs"
-            response = requests.get(prefs_url, headers=self.headers, timeout=10)
+            response = requests.get(prefs_url, headers=self.headers, timeout=10, verify=self._verify)
 
             if response.status_code == 200:
                 import xml.etree.ElementTree as ET

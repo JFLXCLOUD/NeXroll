@@ -511,9 +511,61 @@ def _normalize_url(url: str) -> str:
 
 
 def _probe_plex_url(url: str, token: str, timeout: int = 5) -> tuple[bool, int | None]:
+    """
+    Probe a Plex base URL, tolerant of local/private HTTPS with self-signed certs.
+    Env override: NEXROLL_PLEX_TLS_VERIFY=0|1 to force behavior.
+    """
     try:
+        # Normalize URL and decide TLS verification
+        nu = _normalize_url(url)
+
+        def _bool_env(name: str):
+            try:
+                v = os.environ.get(name)
+                if v is None:
+                    return None
+                s = str(v).strip().lower()
+                if s in ("1","true","yes","on"):
+                    return True
+                if s in ("0","false","no","off"):
+                    return False
+            except Exception:
+                pass
+            return None
+
+        verify = True
+        env = _bool_env("NEXROLL_PLEX_TLS_VERIFY")
+        if env is not None:
+            verify = bool(env)
+        else:
+            # Heuristic: disable verify for https to private/local hosts
+            if nu.startswith("https://"):
+                host = ""
+                try:
+                    from urllib.parse import urlparse
+                    host = (urlparse(nu).hostname or "").lower()
+                except Exception:
+                    host = ""
+                private = False
+                if host in ("localhost", "127.0.0.1", "host.docker.internal", "gateway.docker.internal"):
+                    private = True
+                elif host.startswith("192.168.") or host.startswith("10."):
+                    private = True
+                elif host.startswith("172."):
+                    # check 172.16.0.0 – 172.31.255.255
+                    parts = host.split(".")
+                    if len(parts) >= 2:
+                        try:
+                            second = int(parts[1])
+                            if 16 <= second <= 31:
+                                private = True
+                        except Exception:
+                            pass
+                if private:
+                    verify = False
+
         headers = {"X-Plex-Token": token} if token else {}
-        r = requests.get(f"{_normalize_url(url)}/", headers=headers, timeout=timeout)
+        r = requests.get(f"{nu}/", headers=headers, timeout=timeout, verify=verify)
         return (r.status_code == 200, r.status_code)
     except Exception:
         return (False, None)
@@ -559,8 +611,8 @@ def _docker_candidate_urls() -> list[str]:
         pass
     # Typical host aliases when running in Docker
     cands += [
-        "http://host.docker.internal:32400",
-        "https://host.docker.internal:32400",
+        "http://host.docker.internal:32400", "https://host.docker.internal:32400",
+        "http://gateway.docker.internal:32400", "https://gateway.docker.internal:32400",
     ]
     # Default gateway and docker bridge
     cands += _default_gateway_candidates()
@@ -1560,17 +1612,108 @@ def plex_auto_connect(req: PlexAutoConnectRequest, db: Session = Depends(get_db)
 
     tried = []
     chosen = None
+    invalid_token_seen = False
+
+    def _bool_env_local(name: str):
+        try:
+            v = os.environ.get(name)
+            if v is None:
+                return None
+            s = str(v).strip().lower()
+            if s in ("1","true","yes","on"):
+                return True
+            if s in ("0","false","no","off"):
+                return False
+        except Exception:
+            pass
+        return None
+
     for u in candidates:
-        ok, status = _probe_plex_url(u, token, timeout=5)
-        tried.append({"url": u, "ok": bool(ok), "status": status})
-        if ok:
-            chosen = u
-            break
+        nu = _normalize_url(u)
+
+        # Decide TLS verification (mirror _probe_plex_url with Docker host allowances)
+        verify = True
+        env = _bool_env_local("NEXROLL_PLEX_TLS_VERIFY")
+        if env is not None:
+            verify = bool(env)
+        else:
+            if nu.startswith("https://"):
+                try:
+                    from urllib.parse import urlparse
+                    host = (urlparse(nu).hostname or "").lower()
+                except Exception:
+                    host = ""
+                private = False
+                if host in ("localhost", "127.0.0.1", "host.docker.internal", "gateway.docker.internal"):
+                    private = True
+                elif host.startswith("192.168.") or host.startswith("10."):
+                    private = True
+                elif host.startswith("172."):
+                    parts = host.split(".")
+                    if len(parts) >= 2:
+                        try:
+                            second = int(parts[1])
+                            if 16 <= second <= 31:
+                                private = True
+                        except Exception:
+                            pass
+                if private:
+                    verify = False
+
+        det = {"url": nu, "ok": False, "status": None, "verify": verify, "error": None, "reachable": False}
+
+        headers = {"X-Plex-Token": token}
+        # First, verify token works against an authenticated endpoint
+        try:
+            r = requests.get(f"{nu}/status/sessions", headers=headers, timeout=5, verify=verify)
+            det["status"] = r.status_code
+            if r.status_code == 200:
+                det["ok"] = True
+                tried.append(det)
+                chosen = nu
+                break
+            else:
+                if r.status_code in (401, 403):
+                    det["error"] = "invalid_token"
+                    invalid_token_seen = True
+                else:
+                    det["error"] = f"http_{r.status_code}"
+        except requests.exceptions.SSLError:
+            det["error"] = "ssl_verify_failed"
+        except requests.exceptions.ConnectTimeout:
+            det["error"] = "timeout"
+        except requests.exceptions.ReadTimeout:
+            det["error"] = "timeout"
+        except requests.exceptions.ConnectionError as ce:
+            emsg = str(getattr(ce, "__cause__", None) or getattr(ce, "__context__", None) or ce)
+            if ("Name or service not known" in emsg) or ("getaddrinfo" in emsg) or ("No such host" in emsg) or ("nodename nor servname provided" in emsg):
+                det["error"] = "dns"
+            elif ("Connection refused" in emsg) or ("ECONNREFUSED" in emsg):
+                det["error"] = "conn_refused"
+            elif ("Network is unreachable" in emsg) or ("EHOSTUNREACH" in emsg):
+                det["error"] = "host_unreachable"
+            elif "timed out" in emsg:
+                det["error"] = "timeout"
+            else:
+                det["error"] = "conn_error"
+        except Exception:
+            det["error"] = "error"
+
+        # Second, check basic reachability without token for diagnostics
+        try:
+            r2 = requests.get(f"{nu}/identity", timeout=5, verify=verify)
+            if r2.status_code == 200:
+                det["reachable"] = True
+        except Exception:
+            pass
+
+        tried.append(det)
 
     if not chosen:
         return {
             "connected": False,
-            "message": "No reachable Plex server found with the provided/saved token",
+            "invalid_token": invalid_token_seen,
+            "message": "No reachable Plex server found" + (" (token invalid)" if invalid_token_seen else " with the provided/saved token"),
             "tried": tried,
         }
 
