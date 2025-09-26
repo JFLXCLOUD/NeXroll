@@ -710,7 +710,7 @@ def _bootstrap_plex_from_env() -> None:
         pass
 
 
-app = FastAPI(title="NeXroll Backend", version="1.2.2")
+app = FastAPI(title="NeXroll Backend", version="1.2.3")
 
 # In-memory store for Plex.tv OAuth sessions
 OAUTH_SESSIONS: dict[str, dict] = {}
@@ -1738,6 +1738,199 @@ def plex_auto_connect(req: PlexAutoConnectRequest, db: Session = Depends(get_db)
     return {"connected": True, "url": chosen, "tried": tried, "method": "auto_connect"}
 
 
+# Diagnostics: probe a Plex URL with optional token and TLS verify control
+@app.get("/plex/probe")
+def plex_probe(url: str, token: str | None = None, verify: bool | None = None):
+    """
+    Probe a Plex base URL for reachability and token validity.
+
+    Query params:
+      - url: Plex base URL (http/https)
+      - token: optional X-Plex-Token; if omitted, uses secure store if present
+      - verify: optional true/false to override TLS verification
+
+    Returns detailed diagnostics without exposing the token value.
+    """
+    import time as _time
+    from urllib.parse import urlparse as _urlparse
+    import socket as _socket
+    import requests as _rq
+
+    def _bool_env(name: str):
+        try:
+            v = os.environ.get(name)
+            if v is None:
+                return None
+            s = str(v).strip().lower()
+            if s in ("1","true","yes","on"):
+                return True
+            if s in ("0","false","no","off"):
+                return False
+        except Exception:
+            pass
+        return None
+
+    nu = _normalize_url(url or "")
+    if not nu:
+        raise HTTPException(status_code=422, detail="Missing or invalid url")
+
+    # Resolve token
+    tok = (token or "").strip() or None
+    if not tok:
+        try:
+            tok = secure_store.get_plex_token()
+        except Exception:
+            tok = None
+
+    # TLS verification heuristic (same as _probe_plex_url), overridable by query param
+    verify_eff = True
+    env = _bool_env("NEXROLL_PLEX_TLS_VERIFY")
+    if env is not None:
+        verify_eff = bool(env)
+    else:
+        if nu.startswith("https://"):
+            try:
+                host = (_urlparse(nu).hostname or "").lower()
+            except Exception:
+                host = ""
+            private = False
+            if host in ("localhost", "127.0.0.1", "host.docker.internal", "gateway.docker.internal"):
+                private = True
+            elif host.startswith("192.168.") or host.startswith("10."):
+                private = True
+            elif host.startswith("172."):
+                parts = host.split(".")
+                if len(parts) >= 2:
+                    try:
+                        second = int(parts[1])
+                        if 16 <= second <= 31:
+                            private = True
+                    except Exception:
+                        pass
+            if private:
+                verify_eff = False
+    if verify is not None:
+        verify_eff = bool(verify)
+
+    # DNS resolution diagnostics
+    host = ""
+    dns_ok = None
+    ips: list[str] = []
+    try:
+        host = (_urlparse(nu).hostname or "").lower()
+        fams = [getattr(_socket, "AF_INET", None)]
+        for fam in [f for f in fams if f is not None]:
+            try:
+                infos = _socket.getaddrinfo(host, None, family=fam)
+                for inf in infos:
+                    try:
+                        ip = inf[4][0]
+                        if ip and ip not in ips:
+                            ips.append(ip)
+                    except Exception:
+                        pass
+                dns_ok = True if ips else False
+            except Exception:
+                pass
+        if dns_ok is None:
+            # gethostbyname fallback
+            try:
+                ip = _socket.gethostbyname(host)
+                if ip:
+                    ips.append(ip)
+                    dns_ok = True
+            except Exception:
+                dns_ok = False
+    except Exception:
+        dns_ok = False
+
+    def _classify_error(exc: Exception) -> str:
+        if isinstance(exc, _rq.exceptions.SSLError):
+            return "ssl_verify_failed"
+        if isinstance(exc, _rq.exceptions.ConnectTimeout) or isinstance(exc, _rq.exceptions.ReadTimeout):
+            return "timeout"
+        if isinstance(exc, _rq.exceptions.ConnectionError):
+            emsg = str(getattr(exc, "__cause__", None) or getattr(exc, "__context__", None) or exc)
+            if ("Name or service not known" in emsg) or ("getaddrinfo" in emsg) or ("No such host" in emsg) or ("nodename nor servname provided" in emsg):
+                return "dns"
+            if ("Connection refused" in emsg) or ("ECONNREFUSED" in emsg):
+                return "conn_refused"
+            if ("Network is unreachable" in emsg) or ("EHOSTUNREACH" in emsg):
+                return "host_unreachable"
+            if "timed out" in emsg:
+                return "timeout"
+            return "conn_error"
+        return "error"
+
+    # Probe /identity (no token)
+    ident = {"status": None, "latency_ms": None, "error": None}
+    try:
+        t0 = _time.time()
+        r = requests.get(f"{nu}/identity", timeout=5, verify=verify_eff)
+        ident["status"] = r.status_code
+        ident["latency_ms"] = int((_time.time() - t0) * 1000)
+    except Exception as e:
+        ident["error"] = _classify_error(e)
+
+    # Probe /status/sessions (with token if available)
+    sessions = {"status": None, "latency_ms": None, "error": None, "invalid_token": None}
+    if tok:
+        try:
+            t0 = _time.time()
+            r = requests.get(f"{nu}/status/sessions", headers={"X-Plex-Token": tok}, timeout=5, verify=verify_eff)
+            sessions["status"] = r.status_code
+            sessions["latency_ms"] = int((_time.time() - t0) * 1000)
+            if r.status_code in (401, 403):
+                sessions["invalid_token"] = True
+            else:
+                sessions["invalid_token"] = False
+        except Exception as e:
+            sessions["error"] = _classify_error(e)
+    else:
+        sessions["error"] = "no_token"
+
+    # Summarize
+    reachable = bool((ident.get("status") == 200) or (sessions.get("status") == 200))
+    invalid_token = bool(sessions.get("invalid_token")) if tok else False
+
+    host_type = "unknown"
+    try:
+        if host in ("localhost", "127.0.0.1"):
+            host_type = "localhost"
+        elif ".plex.direct" in host:
+            host_type = "plex.direct"
+        elif host.startswith(("192.168.", "10.")) or (host.startswith("172.") and len(host.split(".")) > 1 and 16 <= int(host.split(".")[1]) <= 31):
+            host_type = "lan"
+        else:
+            host_type = "public"
+    except Exception:
+        pass
+
+    advice = []
+    if invalid_token:
+        advice.append("Token rejected by server (401/403). Ensure you used a server token, not a Plex.tv account token.")
+    if not reachable:
+        if ident.get("error") == "ssl_verify_failed" or sessions.get("error") == "ssl_verify_failed":
+            advice.append("HTTPS TLS verification failed. Set NEXROLL_PLEX_TLS_VERIFY=0 or trust the certificate.")
+        if ident.get("error") == "dns" or sessions.get("error") == "dns" or dns_ok is False:
+            advice.append("DNS failed. Verify that this hostname resolves from the NeXroll host/container.")
+        if ident.get("error") == "conn_refused":
+            advice.append("Connection refused. Verify Plex is running and listening on the provided host:port.")
+        if ident.get("error") == "host_unreachable":
+            advice.append("Network unreachable from NeXroll to Plex. Check Docker networking or firewall.")
+        if not advice:
+            advice.append("If using Docker, try http://host.docker.internal:32400 or the host LAN IP.")
+
+    return {
+        "input": {"url": nu, "token_present": bool(tok), "verify_override": verify, "verify_effective": verify_eff},
+        "dns": {"host": host, "ok": dns_ok, "ips": ips},
+        "identity": ident,
+        "sessions": sessions,
+        "reachable": reachable,
+        "invalid_token": invalid_token,
+        "host_type": host_type,
+        "advice": advice,
+    }
 @app.post("/plex/tv/start")
 def plex_tv_start(forward_url: str | None = None):
     """
