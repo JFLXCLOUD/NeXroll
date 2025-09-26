@@ -132,7 +132,8 @@ jobs:
               NEXROLL_PREROLL_PATH=/data/prerolls \
               NEXROLL_SECRETS_DIR=/data \
               PLEX_URL="" \
-              PLEX_TOKEN=""
+              PLEX_TOKEN="" \
+              NEXROLL_PLEX_TLS_VERIFY=""
 
           RUN apt-get update && \
               apt-get install -y --no-install-recommends ffmpeg curl tzdata && \
