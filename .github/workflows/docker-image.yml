@@ -8,6 +8,10 @@ on:
         required: true
         default: 1.2.2
 
+permissions:
+  contents: read
+  packages: write
+
 jobs:
   build-and-push:
     name: Build and push multi-arch image
@@ -28,12 +32,26 @@ jobs:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
+      - name: Login to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
       - name: Derive version
         id: v
         shell: bash
         run: |
           set -euo pipefail
           echo "ver=${{ github.event.inputs.version }}" >> "$GITHUB_OUTPUT"
+
+      - name: Derive GHCR namespace
+        id: meta
+        shell: bash
+        run: |
+          owner="${{ github.repository_owner }}"
+          echo "owner_lc=$(echo "$owner" | tr '[:upper:]' '[:lower:]')" >> "$GITHUB_OUTPUT"
 
       - name: Detect layout and generate CI Dockerfile
         id: gen
@@ -156,3 +174,5 @@ jobs:
           tags: |
             jbrns/nexroll:${{ steps.v.outputs.ver }}
             jbrns/nexroll:latest
+            ghcr.io/${{ steps.meta.outputs.owner_lc }}/nexroll:${{ steps.v.outputs.ver }}
+            ghcr.io/${{ steps.meta.outputs.owner_lc }}/nexroll:latest
