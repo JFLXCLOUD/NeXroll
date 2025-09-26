@@ -1,210 +1,197 @@
 # NeXroll – Docker Deployment
 
-This document explains how to run NeXroll in a Docker container with persistent storage, FFmpeg support, and a Linux-friendly token store.
+This guide explains how to deploy NeXroll with Docker on Linux, Windows, or macOS, connect it to Plex reliably, and ensure Plex can see your preroll paths regardless of where NeXroll runs.
 
-NeXroll inside the container:
-- Backend: FastAPI (Uvicorn) from `nexroll_backend`
-- Frontend: prebuilt assets served from `frontend/build`
-- Storage: single bind-mounted volume at `/data` for DB, prerolls, thumbnails, and secrets
-- FFmpeg: installed in the image for thumbnail generation
+Key components in the image:
+- Backend: FastAPI (Uvicorn) package [nexroll_backend.main()](NeXroll/nexroll_backend/main.py:713)
+- Frontend: prebuilt static assets served from /app/NeXroll/frontend/build
+- Storage: a single bind-mounted volume at /data (DB, prerolls, thumbnails, secure token store)
+- FFmpeg included for thumbnail generation
 
-URLs:
-- Web UI: http://localhost:9393
-- API docs: http://localhost:9393/docs
-- Health: http://localhost:9393/health
-
-
-## Prerequisites
-
-- Docker (20.10+ recommended)
-- Docker Compose v2 (optional but recommended)
-- Host directory for persistent data (e.g., `./nexroll-data`)
+URLs (default):
+- Web UI: http://HOST:9393
+- API health: http://HOST:9393/health
+- API docs: http://HOST:9393/docs
 
 
-## Quick Start (docker compose)
+## 1) Prerequisites
 
-From the repository root:
+- Docker 20.10+ and (optionally) Docker Compose v2
+- A host directory for persistent data (for example ./nexroll-data)
 
-```bash
-docker compose up -d --build
-# then open http://localhost:9393
+
+## 2) Quick Start (Linux – Recommended: host networking)
+
+Host networking avoids container-to-LAN routing issues and makes it easy for NeXroll to reach Plex at 192.168.x.x. On Linux only:
+
+docker-compose.yml
+
+```yaml
+version: "3.8"
+services:
+  nexroll:
+    image: jbrns/nexroll:1.2.3
+    network_mode: "host"
+    environment:
+      - NEXROLL_PORT=9393
+      - NEXROLL_DB_DIR=/data
+      - NEXROLL_PREROLL_PATH=/data/prerolls
+      - NEXROLL_SECRETS_DIR=/data
+      - TZ=UTC
+    volumes:
+      - ./nexroll-data:/data
+    restart: unless-stopped
 ```
 
-Default settings when using the provided `docker-compose.yml`:
-- Port: 9393 (host) → 9393 (container)
-- Volume: `./nexroll-data` → `/data`
-- Env:
-  - `NEXROLL_DB_DIR=/data`
-  - `NEXROLL_PREROLL_PATH=/data/prerolls`
-  - `NEXROLL_SECRETS_DIR=/data`
-  - `PLEX_URL` (optional; blank by default, set via `.env` or environment)
-  - `PLEX_TOKEN` (optional; blank by default, set via `.env` or environment)
-  - `TZ=UTC` (override via environment or `.env`)
+Then run:
 
-To stop:
-```bash
-docker compose down
-```
-
-To view logs:
-```bash
-docker compose logs -f
-```
-
-
-## Build and Run (docker CLI)
-
-Build the image:
-```bash
-docker build -t nexroll:local .
-```
-
-Run with a persistent volume (Linux/macOS):
 ```bash
 mkdir -p ./nexroll-data
-docker run --name nexroll --rm -p 9393:9393 \
-  -e NEXROLL_DB_DIR=/data \
-  -e NEXROLL_PREROLL_PATH=/data/prerolls \
-  -e NEXROLL_SECRETS_DIR=/data \
-  -e TZ=UTC \
-  # Optional Plex bootstrap envs (if used by your deployment flow):
-  # -e PLEX_URL=http://your-plex-server:32400 \
-  # -e PLEX_TOKEN=your-plex-token \
-  -v "$(pwd)/nexroll-data:/data" \
-  nexroll:local
+docker compose up -d
+# open http://YOUR_HOST:9393
 ```
 
-Run with a persistent volume (Windows PowerShell):
-```powershell
-mkdir nexroll-data | Out-Null
-docker run --name nexroll --rm -p 9393:9393 `
-  -e NEXROLL_DB_DIR=/data `
-  -e NEXROLL_PREROLL_PATH=/data/prerolls `
-  -e NEXROLL_SECRETS_DIR=/data `
-  -e TZ=UTC `
-  # Optional Plex bootstrap envs (if used by your deployment flow):
-  # -e PLEX_URL=http://your-plex-server:32400 `
-  # -e PLEX_TOKEN=your-plex-token `
-  -v "${PWD}\nexroll-data:/data" `
-  nexroll:local
+Notes:
+- Do not publish ports when using network_mode: host.
+- The UI remains on port 9393 (NEXROLL_PORT).
+
+
+## 3) Quick Start (All platforms – port mapping)
+
+If you cannot use host networking (e.g., Docker Desktop on Windows/macOS), use normal port publishing:
+
+```yaml
+version: "3.8"
+services:
+  nexroll:
+    image: jbrns/nexroll:1.2.3
+    ports:
+      - "9393:9393"
+    environment:
+      - NEXROLL_PORT=9393
+      - NEXROLL_DB_DIR=/data
+      - NEXROLL_PREROLL_PATH=/data/prerolls
+      - NEXROLL_SECRETS_DIR=/data
+      - TZ=UTC
+    volumes:
+      - ./nexroll-data:/data
+    restart: unless-stopped
+```
+
+On Docker Desktop, the container can usually reach the host at http://host.docker.internal. Ensure firewalls allow Plex port 32400 for the Docker/WSL networks.
+
+
+## 4) Connect NeXroll to Plex (recommended: Plex.tv Authentication)
+
+In the UI, go to the Plex tab and use “Method 3: Plex.tv Authentication.” NeXroll discovers a reachable server and saves credentials into the secure store:
+- On Linux containers the secure store is a plain JSON file under /data/secrets.json
+- On Windows packaged builds the token is stored in the Windows Credential Manager or DPAPI-backed file
+
+You can also use a stable token or manual URL + token, but Plex.tv auth is the most reliable across Docker and mixed networks.
+
+
+## 5) Map existing preroll folders (no move)
+
+Settings → “Map Existing Preroll Folder (No Move)” indexes an existing folder (local or UNC/NAS mount) into NeXroll without copying or moving files:
+- Supports recursive scanning, extension filters, tags, and optional thumbnail generation
+- Files are added with managed=false so NeXroll never moves or deletes them on disk
+
+For containers, ensure the folder is mounted into the container (e.g., /data/prerolls or /nas/prerolls) and use that container path as the Root path.
+
+
+## 6) Make Plex paths work everywhere (UNC/Local → Plex Path Mappings)
+
+When you apply a category to Plex, NeXroll translates local or container paths to the path Plex can see on its host using the mappings you define in Settings → “UNC/Local → Plex Path Mappings”. The longest source prefix wins; on Windows, source matching is case-insensitive, and the output separator is inferred from the destination.
+
+Common examples:
+- Docker NeXroll → Windows Plex (drive letter):
+  - local: /data/prerolls
+  - plex:  Z:\Prerolls
+- Docker NeXroll → Windows Plex (UNC):
+  - local: /data/prerolls
+  - plex:  \\NAS\Prerolls
+- Docker NeXroll → Docker Plex (Linux):
+  - local: /data/prerolls
+  - plex:  /media/prerolls
+- Windows NeXroll → Windows Plex (same host):
+  - local: C:\Prerolls
+  - plex:  C:\Prerolls
+- Windows NeXroll → Windows Plex (different host or service):
+  - local: \\NAS\Prerolls
+  - plex:  \\NAS\Prerolls
+
+Use “Test Translation” in Settings to verify that a sample input path maps to the exact Plex-visible path you expect.
+
+Platform preflight: Before sending paths to Plex, NeXroll verifies that translated paths match the Plex server platform (Windows vs POSIX). If they don’t match (for example, “/data/…” sent to a Windows Plex), Apply-to-Plex is refused with a clear instruction describing the mapping to add. This logic runs inside [app.post()](NeXroll/nexroll_backend/main.py:3186).
+
+
+## 7) NAS mounts and container paths
+
+- Linux hosts: mount your NAS (e.g., /mnt/nas/prerolls) and bind-mount it into the container (e.g., -v /mnt/nas/prerolls:/data/prerolls)
+- Windows hosts: Linux containers cannot see Windows mapped drives; use a bind of a real path or run Plex on a path available to both. For Windows Plex, prefer UNC (\\NAS\share) when the Plex service cannot see a drive letter.
+
+
+## 8) Connectivity diagnostics
+
+If you can’t connect to Plex, open:
+
+- GET /plex/probe?url=http://YOUR_PLEX:32400 at [app.get()](NeXroll/nexroll_backend/main.py:1742)
+
+It checks DNS, reachability, token validity, and suggests fixes (TLS verify, DNS, firewall). On Docker Desktop, try http://host.docker.internal:32400.
+
+
+## 9) Environment variables
+
+- NEXROLL_PORT (default 9393)
+- NEXROLL_DB_DIR (default /data)
+- NEXROLL_PREROLL_PATH (default /data/prerolls)
+- NEXROLL_SECRETS_DIR (default /data in compose)
+- PLEX_URL / PLEX_TOKEN (optional bootstrap)
+- TZ (default UTC)
+
+Build arg:
+- APP_VERSION (labels the image)
+
+
+## 10) Health, FFmpeg, and logs
+
+- Health check: GET /health
+- FFmpeg info: GET /system/ffmpeg-info or from the Dashboard
+- Logs and resolved paths are visible in the container logs on startup
+
+
+## 11) Upgrades
+
+Pull the latest image and recreate the container. Your data persists in the bind mount:
+
+```bash
+docker compose pull
+docker compose up -d
 ```
 
 
-## Persistent Data Layout
+## 12) Troubleshooting
 
-Mounted volume: `/data`
-
-Runtime structure:
-```
-/data
-├── nexroll.db                # SQLite database
-├── prerolls/                 # Uploaded preroll videos (by category)
-│   └── thumbnails/           # Generated thumbnails
-└── secrets.json              # Linux file-based secret store (see below)
-```
-
-To migrate existing prerolls and database from a prior setup, copy your content into the corresponding folders under your host `./nexroll-data` before starting the container.
-
-
-## Environment Variables
-
-- NEXROLL_PORT
-  - Default: 9393
-  - Container port the app listens on
-- NEXROLL_DB_DIR
-  - Default (compose): `/data`
-  - Directory where `nexroll.db` will reside
-- NEXROLL_PREROLL_PATH
-  - Default (compose): `/data/prerolls`
-  - Directory for prerolls and thumbnails
-- NEXROLL_SECRETS_DIR (optional)
-  - Default: `/data` (via compose) or falls back based on the logic below
-  - Directory to store `secrets.json`
-- PLEX_URL (optional)
-  - Example: `http://your-plex-server:32400`
-  - Exposed for deployments that bootstrap Plex configuration via environment variables
-- PLEX_TOKEN (optional)
-  - Plex auth token string (do not commit to VCS)
-  - Exposed for deployments that bootstrap Plex configuration via environment variables
-- TZ
-  - Default: UTC
-  - Container timezone, affects timestamps and scheduler logic
-
-### Build arguments
-
-- APP_VERSION
-  - Injects a version label into the image metadata
-  - docker build: `docker build --build-arg APP_VERSION=1.2.2 -t nexroll:1.2.2 .`
-  - docker compose: already set to `1.2.2` in `build.args` for convenience
-
-
-## Token Storage on Linux (Containers)
-
-For Linux-based containers, NeXroll provides a plain file-based secure store fallback so persistent tokens work without Windows-specific providers:
-
-- File: `/data/secrets.json`
-- Format: JSON with base64-encoded values
-- Scope: shared for the container and survives restarts (bound to the host volume)
-- Note: this approach is not encrypted; protect the host path with proper file-system permissions
-
-No extra configuration is required when using the provided `docker-compose.yml`. If you want to move the secret store elsewhere, set:
-```
-NEXROLL_SECRETS_DIR=/some/other/path
-```
-
-The app uses the following priority to choose where to place `secrets.json` (non-Windows):
-1) `NEXROLL_SECRETS_DIR`
-2) `NEXROLL_DB_DIR`
-3) Parent directory of `NEXROLL_PREROLL_PATH` if it ends with `prerolls`
-4) `./data` inside current working directory
-
-Stable token workflow works via the UI and is persisted to this file store.
-
-
-## FFmpeg
-
-The container includes FFmpeg for thumbnail generation. You can verify FFmpeg presence and version from:
-- API: `GET /system/ffmpeg-info`
-- UI: Dashboard → “FFmpeg Info”
-
-
-## Health Check
-
-The image and compose file include a health check that polls:
-```
-GET http://localhost:9393/health
-```
-
-You can also watch logs during startup for resolved paths and directory info.
-
-
-## Uploads, Thumbnails, and Categories
-
-- Uploads go into `/data/prerolls/<Category>/...`
-- Thumbnails are generated into `/data/prerolls/thumbnails/<Category>/...`
-- The backend generates thumbnails using FFmpeg; placeholders are used if generation fails
-
-
-## Troubleshooting
-
-- Permissions / Ownership:
-  - Ensure the host’s `./nexroll-data` is writable by Docker
-  - On Linux, you may need to adjust ownership or run with a specific user. This image runs as root by default.
+- Container cannot reach Plex on 192.168.x.x:
+  - On Linux, prefer network_mode: "host"
+  - On Docker Desktop, use http://host.docker.internal and allow port 32400 in your host firewall for Docker/WSL subnets
+- Plex doesn’t play preroll after Apply:
+  - Your Plex host cannot see the path you sent. Add a mapping under Settings → “UNC/Local → Plex Path Mappings” so the translated output matches the Plex host platform and mount point (see section 6). The backend now validates platform and will refuse to send unusable paths.
 - Thumbnails not generating:
-  - Check `/system/ffmpeg-info` and logs
-  - Use `/thumbnails/rebuild?force=true` to regenerate
-- Plex connection:
-  - Use the Plex tab in the UI; tokens will persist in `/data/secrets.json` in containers
-- Stale frontend files:
-  - Browser cache may keep old assets; try hard refresh
-  - The backend implements cache-busting headers for key endpoints
+  - Check GET /system/ffmpeg-info and the logs, or use POST /thumbnails/rebuild?force=true from the Dashboard
 
 
-## Production Notes
+## 13) Image metadata
 
-- Reverse proxy (optional): Put Nginx/Traefik/Caddy in front and proxy to the container’s `9393`
-- Backups:
-  - Backup `/data/nexroll.db` and your `/data/prerolls` directory
-  - Optionally backup `/data/secrets.json`
-- Updates:
-  - Pull/build latest, then `docker compose up -d --build` (your data persists in the bind mount)
+Images include OCI labels with title, description, version, and license. CI builds push to Docker Hub and GHCR. See the GitHub Actions workflows at:
+- [docker-image.yml](.github/workflows/docker-image.yml:1)
+- [docker-publish.yml](.github/workflows/docker-publish.yml:1)
+
+
+---
+
+If you run into issues or have an environment not covered here, open an issue with details about:
+- Your platform (Linux distro, Docker Desktop, etc.)
+- Where Plex runs (Windows/Docker/Linux)
+- Your compose/docker run snippet
+- A sample input path and the translated output you expect

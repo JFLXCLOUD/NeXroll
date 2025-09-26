@@ -154,41 +154,24 @@ Tip: if a previous NeXroll instance is still running and occupying port 9393, th
 ---
  
 ## Docker
- 
+
 Prebuilt image:
- 
+
 ```bash
-docker pull jbrns/nexroll:1.2.2
-# Linux/macOS
-mkdir -p ./nexroll-data
-docker run --name nexroll --rm -p 9393:9393 \
-  -e NEXROLL_DB_DIR=/data \
-  -e NEXROLL_PREROLL_PATH=/data/prerolls \
-  -e NEXROLL_SECRETS_DIR=/data \
-  -e TZ=UTC \
-  -v "$(pwd)/nexroll-data:/data" \
-  jbrns/nexroll:1.2.2
- 
-# Windows PowerShell
-mkdir nexroll-data | Out-Null
-docker run --name nexroll --rm -p 9393:9393 `
-  -e NEXROLL_DB_DIR=/data `
-  -e NEXROLL_PREROLL_PATH=/data/prerolls `
-  -e NEXROLL_SECRETS_DIR=/data `
-  -e TZ=UTC `
-  -v "${PWD}\nexroll-data:/data" `
-  jbrns/nexroll:1.2.2
+docker pull jbrns/nexroll:1.2.3
 ```
- 
-Using docker compose with the prebuilt image (override your build section):
- 
+
+### Linux (recommended: host networking)
+Use host networking so the container can reach Plex on your LAN directly (192.168.x.x). Example docker-compose.yml:
+
 ```yaml
+version: "3.8"
 services:
   nexroll:
-    image: jbrns/nexroll:1.2.2
-    ports:
-      - "9393:9393"
+    image: jbrns/nexroll:1.2.3
+    network_mode: "host"
     environment:
+      - NEXROLL_PORT=9393
       - NEXROLL_DB_DIR=/data
       - NEXROLL_PREROLL_PATH=/data/prerolls
       - NEXROLL_SECRETS_DIR=/data
@@ -197,7 +180,89 @@ services:
       - ./nexroll-data:/data
     restart: unless-stopped
 ```
- 
+
+Then:
+
+```bash
+mkdir -p ./nexroll-data
+docker compose up -d
+# open http://YOUR_HOST:9393
+```
+
+### All platforms (port mapping)
+If host networking is not available (e.g., Docker Desktop):
+
+```yaml
+version: "3.8"
+services:
+  nexroll:
+    image: jbrns/nexroll:1.2.3
+    ports:
+      - "9393:9393"
+    environment:
+      - NEXROLL_PORT=9393
+      - NEXROLL_DB_DIR=/data
+      - NEXROLL_PREROLL_PATH=/data/prerolls
+      - NEXROLL_SECRETS_DIR=/data
+      - TZ=UTC
+    volumes:
+      - ./nexroll-data:/data
+    restart: unless-stopped
+```
+
+On Docker Desktop, Plex on the host is usually reachable from the container via http://host.docker.internal:32400 (ensure firewall allows 32400 for Docker/WSL networks).
+
+### docker run (Linux/macOS)
+
+```bash
+mkdir -p ./nexroll-data
+docker run --name nexroll --rm -p 9393:9393 \
+  -e NEXROLL_DB_DIR=/data \
+  -e NEXROLL_PREROLL_PATH=/data/prerolls \
+  -e NEXROLL_SECRETS_DIR=/data \
+  -e TZ=UTC \
+  -v "$(pwd)/nexroll-data:/data" \
+  jbrns/nexroll:1.2.3
+```
+
+### docker run (Windows PowerShell)
+
+```powershell
+mkdir nexroll-data | Out-Null
+docker run --name nexroll --rm -p 9393:9393 `
+  -e NEXROLL_DB_DIR=/data `
+  -e NEXROLL_PREROLL_PATH=/data/prerolls `
+  -e NEXROLL_SECRETS_DIR=/data `
+  -e TZ=UTC `
+  -v "${PWD}\nexroll-data:/data" `
+  jbrns/nexroll:1.2.3
+```
+
+### Connect to Plex (recommended)
+Use “Method 3: Plex.tv Authentication” on the Plex tab. It auto-discovers a reachable server and saves credentials. For Windows/Linux mixed setups, this is the most reliable approach.
+
+### Make Plex see your files (Path Mappings)
+When you Apply a category to Plex, NeXroll translates local/container paths into Plex-visible paths using the mappings you define in Settings → “UNC/Local → Plex Path Mappings.”
+
+Common examples:
+- Docker NeXroll → Windows Plex (drive letter): local /data/prerolls → plex Z:\Prerolls
+- Docker NeXroll → Windows Plex (UNC): local /data/prerolls → plex \\NAS\Prerolls
+- Docker NeXroll → Docker Plex (Linux): local /data/prerolls → plex /media/prerolls
+- Windows NeXroll → Windows Plex (same host): local C:\Prerolls → plex C:\Prerolls
+- Windows NeXroll → Windows Plex (service or different host): local \\NAS\Prerolls → plex \\NAS\Prerolls
+
+Use “Test Translation” in Settings to verify outputs before applying. The backend preflights platform compatibility and will refuse unusable paths (e.g., “/data/…” for Windows Plex) with a clear error describing what mapping to add; this check runs inside [app.post()](NeXroll/nexroll_backend/main.py:3186).
+
+### Troubleshooting connectivity
+Open the diagnostics endpoint to check DNS, reachability, token, and TLS behavior:
+
+- GET /plex/probe?url=http://YOUR_PLEX:32400 at [app.get()](NeXroll/nexroll_backend/main.py:1742)
+
+If you’re on Docker Desktop, try http://host.docker.internal:32400. On Linux, prefer network_mode: "host".
+
+See the full Docker guide in [DOCKER.md](NeXroll/DOCKER.md).
+
+---
  
 ## Upgrade / Uninstall
 
@@ -282,4 +347,3 @@ MIT. Third‑party components remain under their respective licenses.
 If NeXroll is helpful, consider supporting ongoing development:
 
 [![Ko-fi](https://img.shields.io/badge/Ko--fi-Support%20Me-FF5E5B?style=for-the-badge&amp;logo=ko-fi&amp;logoColor=white)](https://ko-fi.com/j_b__)
-
