@@ -17,11 +17,15 @@ body.light {
   --bg-color: #f5f5f5;
   --card-bg: white;
   --text-color: #333;
+  --text-secondary: #666;
+  --text-muted: #999;
   --border-color: #ddd;
   --shadow: rgba(0,0,0,0.1);
   --button-bg: #3b82f6;
   --button-hover: #2563eb;
   --header-bg: #f8f9fa;
+  --success-color: #28a745;
+  --error-color: #dc3545;
 }
 
 /* Dark theme */
@@ -29,11 +33,15 @@ body.dark {
   --bg-color: #1a1a1a;
   --card-bg: #2d2d2d;
   --text-color: #e0e0e0;
+  --text-secondary: #ccc;
+  --text-muted: #888;
   --border-color: #444;
   --shadow: rgba(0,0,0,0.3);
   --button-bg: #4f46e5;
   --button-hover: #4338ca;
   --header-bg: #333;
+  --success-color: #40c057;
+  --error-color: #fa5252;
 }
 
 .app-container {
@@ -134,26 +142,6 @@ body.dark {
   border-radius: 0.25rem;
 }
 
-.theme-toggle {
-  position: fixed;
-  top: 1rem;
-  right: 1rem;
-  background-color: var(--card-bg);
-  border: 1px solid var(--border-color);
-  border-radius: 50%;
-  width: 40px;
-  height: 40px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  cursor: pointer;
-  box-shadow: 0 2px 4px var(--shadow);
-  transition: background-color 0.3s ease, border-color 0.3s ease;
-}
-
-.theme-toggle:hover {
-  transform: scale(1.1);
-}
 
 .tab-buttons {
   position: sticky;
@@ -302,6 +290,20 @@ body.dark {
   box-shadow: 0 0 0 3px rgba(59,130,246,0.2);
 }
 
+/* Placeholder text styling */
+.nx-input::placeholder,
+.nx-select::placeholder,
+.nx-textarea::placeholder {
+  color: var(--text-muted);
+  opacity: 1;
+}
+
+/* Dropdown options styling */
+.nx-select option {
+  background-color: var(--card-bg);
+  color: var(--text-color);
+}
+
 .nx-textarea {
   resize: vertical;
   min-height: 90px;
@@ -377,8 +379,8 @@ body.dark {
   top: 8px;
   height: 24px;
   padding: 0 8px;
-  background: #6c757d;
-  color: #fff;
+  background: var(--button-bg);
+  color: white;
   border: none;
   border-radius: 6px;
   cursor: pointer;
@@ -485,7 +487,8 @@ body.dark .nx-chip.primary {
   background: transparent;
   cursor: pointer;
   font-size: 1rem;
-  color: #999;
+  color: var(--text-color);
+  opacity: 0.6;
 }
 
 .nx-catpicker-star.active {
@@ -495,7 +498,8 @@ body.dark .nx-chip.primary {
 .nx-catpicker-empty {
   padding: 0.75rem;
   font-size: 0.9rem;
-  color: #666;
+  color: var(--text-color);
+  opacity: 0.7;
 }
 
 @media (max-width: 720px) {
@@ -660,8 +664,60 @@ details.nx-plex-help[open] {
   100% { left: 100%; }
 }
 
+/* Rockerswitch toggle */
+.nx-rockerswitch {
+  position: relative;
+  display: inline-block;
+  width: 50px;
+  height: 24px;
+  background-color: var(--border-color);
+  border-radius: 24px;
+  cursor: pointer;
+  transition: background-color 0.3s ease;
+}
+
+.nx-rockerswitch input {
+  opacity: 0;
+  width: 0;
+  height: 0;
+}
+
+.nx-rockerswitch-slider {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background-color: var(--border-color);
+  border-radius: 24px;
+  transition: background-color 0.3s ease;
+}
+
+.nx-rockerswitch-slider:before {
+  position: absolute;
+  content: "";
+  height: 18px;
+  width: 18px;
+  left: 3px;
+  bottom: 3px;
+  background-color: var(--card-bg);
+  border: 1px solid var(--border-color);
+  border-radius: 50%;
+  transition: transform 0.3s ease;
+}
+
+input:checked + .nx-rockerswitch-slider {
+  background-color: var(--button-bg);
+}
+
+input:checked + .nx-rockerswitch-slider:before {
+  transform: translateX(26px);
+}
+
 /* Respect users who prefer reduced motion */
 @media (prefers-reduced-motion: reduce) {
   .nx-spinner { animation: none; }
   .nx-progress .bar { animation: none; left: 0; width: 100%; }
+  .nx-rockerswitch-slider { transition: none; }
+  .nx-rockerswitch-slider:before { transition: none; }
 }

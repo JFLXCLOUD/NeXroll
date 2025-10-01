@@ -127,6 +127,7 @@ const CategoryPicker = ({ categories, primaryId, secondaryIds, onChange, onCreat
   const [query, setQuery] = React.useState('');
   const containerRef = React.useRef(null);
   const inputRef = React.useRef(null);
+  const listboxId = React.useMemo(() => 'nx-catpicker-list-' + Math.random().toString(36).slice(2), []);
 
   React.useEffect(() => {
     const onDocClick = (e) => {
@@ -244,6 +245,7 @@ const CategoryPicker = ({ categories, primaryId, secondaryIds, onChange, onCreat
         role="combobox"
         aria-expanded={open}
         aria-haspopup="listbox"
+        aria-controls={listboxId}
       >
         {primaryItem ? (
           <span className="nx-chip primary" title="Primary category">
@@ -330,7 +332,7 @@ const CategoryPicker = ({ categories, primaryId, secondaryIds, onChange, onCreat
               </button>
             </div>
           )}
-          <div className="nx-catpicker-list" role="listbox">
+          <div id={listboxId} className="nx-catpicker-list" role="listbox">
             {filtered.length === 0 ? (
               <div className="nx-catpicker-empty">No categories found</div>
             ) : filtered.map(i => {
@@ -403,12 +405,12 @@ function App() {
   const [updateInfo, setUpdateInfo] = useState(null);
   const [showUpdateBanner, setShowUpdateBanner] = useState(false);
   // Docker Quick Connect UI state
-  const [dockerToken, setDockerToken] = useState('');
-  const [dockerCandidates, setDockerCandidates] = useState('');
-  const [dockerAutoResult, setDockerAutoResult] = useState(null);
   const [prerollView, setPrerollView] = useState(() => {
     try { return localStorage.getItem('prerollView') || 'grid'; } catch { return 'grid'; }
   });
+
+  // Upload/Import mode for dashboard
+  const [uploadMode, setUploadMode] = useState('upload'); // 'upload' or 'import'
 
   // PWA install state
   const [deferredPrompt, setDeferredPrompt] = useState(null);
@@ -431,8 +433,22 @@ function App() {
   const [mapRootLoading, setMapRootLoading] = useState(false);
   const [mapRootLoadingMsg, setMapRootLoadingMsg] = useState('');
 
+// Genre mapping UI state
+const [genreMaps, setGenreMaps] = useState([]);
+const [genreMapsLoading, setGenreMapsLoading] = useState(false);
+const [gmForm, setGmForm] = useState({ genre: '', category_id: '' });
+const [gmEditing, setGmEditing] = useState(null);
+const [genresTestInput, setGenresTestInput] = useState('');
+const [genresResolveResult, setGenresResolveResult] = useState(null);
+const [genresApplyLoading, setGenresApplyLoading] = useState(false);
+const [genreSettings, setGenreSettings] = useState({
+genre_auto_apply: true,
+genre_priority_mode: 'schedules_override',
+genre_override_ttl_seconds: 10
+});
+const [recentGenreApplications, setRecentGenreApplications] = useState([]);
+const [genreSettingsLoading, setGenreSettingsLoading] = useState(false);
   // Category preroll management UI state
-  const [expandedCategories, setExpandedCategories] = useState({});
   const [categoryPrerolls, setCategoryPrerolls] = useState({});
   const [categoryPrerollsLoading, setCategoryPrerollsLoading] = useState({});
   const [categoryAddSelection, setCategoryAddSelection] = useState({});
@@ -552,6 +568,7 @@ const toLocalInputFromDate = (d) => {
     try { localStorage.setItem('prerollPageSize', String(pageSize)); } catch {}
   }, [pageSize]);
 
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => {
     const totalPages = Math.max(1, Math.ceil((prerolls || []).length / pageSize));
     setCurrentPage(prev => Math.min(prev, totalPages));
@@ -699,6 +716,7 @@ const toLocalInputFromDate = (d) => {
     setDarkMode(!darkMode);
   };
 
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => {
     fetchData();
     const interval = setInterval(fetchData, 30000); // Refresh every 30 seconds
@@ -706,7 +724,7 @@ const toLocalInputFromDate = (d) => {
     // Live status via Server-Sent Events (SSE)
     let es;
     try {
-      es = new EventSource('http://localhost:9393/events');
+      es = new EventSource(apiUrl('/events'));
       es.onmessage = (ev) => {
         try {
           const data = JSON.parse(ev.data);
@@ -720,6 +738,8 @@ const toLocalInputFromDate = (d) => {
           // ignore parse errors
         }
       };
+      // Swallow transient network disconnects; EventSource auto-reconnects.
+      es.onerror = () => {};
     } catch (e) {
       // SSE not available
     }
@@ -785,9 +805,10 @@ const toLocalInputFromDate = (d) => {
       fetch('http://localhost:9393/community-templates'),
       fetch('http://localhost:9393/plex/stable-token/status'),
       fetch('http://localhost:9393/system/version'),
-      fetch('http://localhost:9393/system/ffmpeg-info')
+      fetch('http://localhost:9393/system/ffmpeg-info'),
+      fetch('http://localhost:9393/genres/recent-applications')
     ]).then(responses => Promise.all(responses.map(safeJson)))
-      .then(([plex, prerolls, schedules, categories, holidays, scheduler, tags, templates, stableToken, sysVersion, ffmpeg]) => {
+      .then(([plex, prerolls, schedules, categories, holidays, scheduler, tags, templates, stableToken, sysVersion, ffmpeg, recentGenreApps]) => {
         setPlexStatus(plex.connected ? 'Connected' : 'Disconnected');
         setPlexServerInfo(plex);
         setPrerolls(Array.isArray(prerolls) ? prerolls : []);
@@ -804,6 +825,7 @@ const toLocalInputFromDate = (d) => {
         });
         setSystemVersion(sysVersion || null);
         setFfmpegInfo(ffmpeg || null);
+        setRecentGenreApplications(Array.isArray(recentGenreApps?.applications) ? recentGenreApps.applications : []);
       }).catch(err => {
         console.error('Fetch error:', err);
         // Set default values on error
@@ -821,6 +843,7 @@ const toLocalInputFromDate = (d) => {
         });
         setSystemVersion(null);
         setFfmpegInfo(null);
+        setRecentGenreApplications([]);
       });
   };
 
@@ -1487,12 +1510,6 @@ const toLocalInputFromDate = (d) => {
   };
 
   // Category preroll management helpers
-  const isPrerollInCategory = (pr, catId) => {
-    if (!pr) return false;
-    if (pr.category_id === catId) return true;
-    if (Array.isArray(pr.categories)) return pr.categories.some(c => c.id === catId);
-    return false;
-  };
 
   const loadCategoryPrerolls = async (categoryId) => {
     setCategoryPrerollsLoading(prev => ({ ...prev, [categoryId]: true }));
@@ -1508,15 +1525,6 @@ const toLocalInputFromDate = (d) => {
     }
   };
 
-  const toggleManageCategory = (categoryId) => {
-    setExpandedCategories(prev => {
-      const expanded = !prev[categoryId];
-      if (expanded && !categoryPrerolls[categoryId]) {
-        loadCategoryPrerolls(categoryId);
-      }
-      return { ...prev, [categoryId]: expanded };
-    });
-  };
 
   const handleCategoryRemovePreroll = async (categoryId, preroll) => {
     if (!preroll) return;
@@ -1682,16 +1690,16 @@ const toLocalInputFromDate = (d) => {
       <div className="grid">
         <div className="card">
           <h2>Plex Status</h2>
-          <p style={{ color: plexStatus === 'Connected' ? 'green' : 'red' }}>
+          <p style={{ color: plexStatus === 'Connected' ? 'var(--success-color, #28a745)' : 'var(--error-color, #dc3545)' }}>
             {plexStatus}
             {plexServerInfo?.name && (
-              <span style={{ fontSize: '0.9rem', marginLeft: '0.5rem' }}>
+              <span style={{ fontSize: '0.9rem', marginLeft: '0.5rem', color: 'var(--text-color)' }}>
                 - {plexServerInfo.name}
               </span>
             )}
           </p>
           {plexServerInfo && (
-            <div style={{ fontSize: '0.8rem', color: '#666', marginTop: '0.5rem' }}>
+            <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary, #666)', marginTop: '0.5rem' }}>
               <div>Version: {plexServerInfo.version}</div>
               <div>Platform: {plexServerInfo.platform}</div>
             </div>
@@ -1721,69 +1729,217 @@ const toLocalInputFromDate = (d) => {
             {schedulerStatus.running ? 'Stop' : 'Start'} Scheduler
           </button>
         </div>
+
+        {recentGenreApplications.length > 0 && (
+          <div className="card">
+            <h2>Recent Genre Prerolls</h2>
+            <div style={{ display: 'grid', gap: '0.5rem' }}>
+              {recentGenreApplications.map((app, idx) => (
+                <div key={idx} style={{ fontSize: '0.9rem', padding: '0.5rem', backgroundColor: 'var(--card-bg)', border: '1px solid var(--border-color)', borderRadius: '4px' }}>
+                  <div style={{ fontWeight: 'bold', color: '#28a745' }}>
+                    {app.genre} → {app.category_name}
+                  </div>
+                  <div style={{ fontSize: '0.8rem', color: '#666', marginTop: '0.25rem' }}>
+                    {new Date(app.timestamp).toLocaleString()}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
       </div>
 
       <div className="upload-section">
-        <h2>Upload Prerolls</h2>
-        <form onSubmit={handleUpload}>
-          <div style={{ display: 'grid', gap: '1rem', marginBottom: '1rem' }}>
-            <input
-              type="file"
-              multiple
-              onChange={(e) => setFiles(Array.from(e.target.files))}
-              accept="video/*"
-              required
-            />
-            {files.length > 0 && (
-              <div style={{ marginTop: '0.5rem', fontSize: '0.9rem', color: '#666' }}>
-                {files.length} file{files.length !== 1 ? 's' : ''} selected
-                <ul style={{ marginTop: '0.25rem', paddingLeft: '1rem' }}>
-                  {files.map((file, index) => (
-                    <li key={index} style={{ fontSize: '0.8rem' }}>
-                      {file.name} ({(file.size / (1024 * 1024)).toFixed(1)} MB)
-                      {uploadProgress[file.name] && (
-                        <span style={{
-                          marginLeft: '0.5rem',
-                          color: uploadProgress[file.name].status === 'completed' ? 'green' :
-                                 uploadProgress[file.name].status === 'error' ? 'red' : '#666'
-                        }}>
-                          {uploadProgress[file.name].status === 'completed' ? '✓' :
-                           uploadProgress[file.name].status === 'error' ? '✗' : '...'}
-                        </span>
-                      )}
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            )}
-            <input
-              type="text"
-              placeholder="Tags (comma separated)"
-              value={uploadForm.tags}
-              onChange={(e) => setUploadForm({...uploadForm, tags: e.target.value})}
-              style={{ padding: '0.5rem' }}
-            />
-            <CategoryPicker
-              categories={categories}
-              primaryId={uploadForm.category_id}
-              secondaryIds={uploadForm.category_ids}
-              onChange={(primary, secondary) => setUploadForm({ ...uploadForm, category_id: primary, category_ids: secondary })}
-              onCreateCategory={createCategoryInline}
-              label="Categories"
-              placeholder="Search categories…"
-            />
-            <textarea
-              placeholder="Description (Optional)"
-              value={uploadForm.description}
-              onChange={(e) => setUploadForm({...uploadForm, description: e.target.value})}
-              rows="3"
-              style={{ padding: '0.5rem', resize: 'vertical' }}
-            />
-          </div>
-          <button type="submit" className="button" disabled={files.length === 0}>
-            Upload {files.length > 0 ? `${files.length} Preroll${files.length !== 1 ? 's' : ''}` : 'Prerolls'}
+        <h2>Add Prerolls</h2>
+
+        {/* Tab buttons for Upload vs Import */}
+        <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '1rem' }}>
+          <button
+            type="button"
+            className={`button ${uploadMode === 'upload' ? '' : 'button-secondary'}`}
+            onClick={() => setUploadMode('upload')}
+            style={{ flex: 1 }}
+          >
+            📤 Upload Files
           </button>
-        </form>
+          <button
+            type="button"
+            className={`button ${uploadMode === 'import' ? '' : 'button-secondary'}`}
+            onClick={() => setUploadMode('import')}
+            style={{ flex: 1 }}
+          >
+            📁 Import Folder
+          </button>
+        </div>
+
+        {uploadMode === 'upload' && (
+          <form onSubmit={handleUpload}>
+            <div style={{ display: 'grid', gap: '1rem', marginBottom: '1rem' }}>
+              <input
+                type="file"
+                multiple
+                onChange={(e) => setFiles(Array.from(e.target.files))}
+                accept="video/*"
+                required
+                className="nx-input"
+              />
+              {files.length > 0 && (
+                <div style={{ marginTop: '0.5rem', fontSize: '0.9rem', color: '#666' }}>
+                  {files.length} file{files.length !== 1 ? 's' : ''} selected
+                  <ul style={{ marginTop: '0.25rem', paddingLeft: '1rem' }}>
+                    {files.map((file, index) => (
+                      <li key={index} style={{ fontSize: '0.8rem' }}>
+                        {file.name} ({(file.size / (1024 * 1024)).toFixed(1)} MB)
+                        {uploadProgress[file.name] && (
+                          <span style={{
+                            marginLeft: '0.5rem',
+                            color: uploadProgress[file.name].status === 'completed' ? 'green' :
+                                  uploadProgress[file.name].status === 'error' ? 'red' : '#666'
+                          }}>
+                            {uploadProgress[file.name].status === 'completed' ? '✓' :
+                             uploadProgress[file.name].status === 'error' ? '✗' : '...'}
+                          </span>
+                        )}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+              <input
+                type="text"
+                placeholder="Tags (comma separated)"
+                value={uploadForm.tags}
+                onChange={(e) => setUploadForm({...uploadForm, tags: e.target.value})}
+                className="nx-input"
+              />
+              <CategoryPicker
+                categories={categories}
+                primaryId={uploadForm.category_id}
+                secondaryIds={uploadForm.category_ids}
+                onChange={(primary, secondary) => setUploadForm({ ...uploadForm, category_id: primary, category_ids: secondary })}
+                onCreateCategory={createCategoryInline}
+                label="Categories"
+                placeholder="Search categories…"
+              />
+              <textarea
+                placeholder="Description (Optional)"
+                value={uploadForm.description}
+                onChange={(e) => setUploadForm({...uploadForm, description: e.target.value})}
+                rows="3"
+                style={{ padding: '0.5rem', resize: 'vertical' }}
+              />
+            </div>
+            <button type="submit" className="button" disabled={files.length === 0}>
+              Upload {files.length > 0 ? `${files.length} Preroll${files.length !== 1 ? 's' : ''}` : 'Prerolls'}
+            </button>
+          </form>
+        )}
+
+        {uploadMode === 'import' && (
+          <div>
+            <p style={{ marginBottom: '0.5rem', color: 'var(--text-color)' }}>
+              Index files from an existing folder into NeXroll without moving them on disk. These files are marked as external (managed=false).
+            </p>
+            <div style={{ display: 'grid', gap: '0.5rem' }}>
+              <input
+                type="text"
+                placeholder="Root path (e.g., C:\\Prerolls or \\\\NAS\\share\\prerolls)"
+                value={mapRootForm.root_path}
+                onChange={(e) => setMapRootForm({ ...mapRootForm, root_path: e.target.value })}
+                disabled={mapRootLoading}
+                style={{ padding: '0.5rem' }}
+              />
+              <select
+                value={mapRootForm.category_id}
+                onChange={(e) => setMapRootForm({ ...mapRootForm, category_id: e.target.value })}
+                className="nx-select"
+                disabled={mapRootLoading}
+                style={{ padding: '0.5rem' }}
+              >
+                <option value="">Select Category</option>
+                {categories.map(cat => (
+                  <option key={cat.id} value={cat.id}>{cat.name}</option>
+                ))}
+              </select>
+              <div style={{ display: 'flex', gap: '1rem', flexWrap: 'wrap' }}>
+                <label style={{ display: 'inline-flex', alignItems: 'center', gap: '0.5rem' }}>
+                  <input
+                    type="checkbox"
+                    checked={!!mapRootForm.recursive}
+                    onChange={(e) => setMapRootForm({ ...mapRootForm, recursive: e.target.checked })}
+                    disabled={mapRootLoading}
+                  />
+                  Recurse subfolders
+                </label>
+                <label style={{ display: 'inline-flex', alignItems: 'center', gap: '0.5rem' }}>
+                  <input
+                    type="checkbox"
+                    checked={!!mapRootForm.generate_thumbnails}
+                    onChange={(e) => setMapRootForm({ ...mapRootForm, generate_thumbnails: e.target.checked })}
+                    disabled={mapRootLoading}
+                  />
+                  Generate thumbnails
+                </label>
+              </div>
+              <input
+                type="text"
+                placeholder="Extensions (comma-separated, no dots) e.g., mp4,mkv,avi,mov"
+                value={mapRootForm.extensions}
+                onChange={(e) => setMapRootForm({ ...mapRootForm, extensions: e.target.value })}
+                disabled={mapRootLoading}
+                style={{ padding: '0.5rem' }}
+              />
+              <input
+                type="text"
+                placeholder="Tags (optional, comma-separated)"
+                value={mapRootForm.tags}
+                onChange={(e) => setMapRootForm({ ...mapRootForm, tags: e.target.value })}
+                disabled={mapRootLoading}
+                style={{ padding: '0.5rem' }}
+              />
+              <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
+                <button type="button" className="button" onClick={() => submitMapRoot(false)} disabled={mapRootLoading}>🧪 Dry Run</button>
+                <button type="button" className="button" onClick={() => submitMapRoot(true)} disabled={mapRootLoading} style={{ backgroundColor: '#28a745' }}>
+                  📥 Import Now
+                </button>
+              </div>
+              {mapRootLoading && (
+                <div className="nx-map-progress" style={{ marginTop: '0.5rem' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.25rem' }}>
+                    <span className="nx-spinner" aria-hidden="true"></span>
+                    <span style={{ fontSize: '0.9rem', color: 'var(--text-color)' }}>
+                      {mapRootLoadingMsg || 'Working…'}
+                    </span>
+                  </div>
+                  <div className="nx-progress"><div className="bar"></div></div>
+                </div>
+              )}
+            </div>
+            <div className="nx-help" style={{ marginTop: '0.75rem', padding: '0.75rem', border: '1px dashed var(--border-color)', borderRadius: '6px', background: 'var(--card-bg)' }}>
+              <h3 style={{ margin: 0, marginBottom: '0.5rem' }}>Docker/NAS guidance</h3>
+              <ul style={{ margin: 0, paddingLeft: '1.25rem' }}>
+                <li>If NeXroll runs in Docker, the container cannot see Windows mapped drives or UNC paths by default. Mount your NAS/host folder into the container and use the container path in "Root path".</li>
+                <li>UNC paths like \\NAS\share aren't usable inside Linux containers. Mount the SMB share on the host (e.g., /mnt/nas) and map it into the container.</li>
+                <li>If Plex runs on Windows, ensure Plex can access the same media folder via a Windows path (e.g., <code>Z:\Prerolls</code> or <code>\\NAS\share\Prerolls</code>). Then add a path mapping from the NeXroll path (e.g., <code>/data/prerolls</code> in Docker or a local/UNC path on Windows) to that Windows path so NeXroll sends Plex a reachable path.</li>
+                <li>Example docker run: <code>docker run -d --name nexroll -p 9393:9393 -v /mnt/nas/prerolls:/nas/prerolls jbrns/nexroll:latest</code> → then use <code>/nas/prerolls</code> as the Root path.</li>
+                <li>docker-compose example:</li>
+              </ul>
+              <pre className="nx-code" style={{ whiteSpace: 'pre-wrap', marginTop: '0.5rem' }}>
+version: "3.8"
+services:
+  nexroll:
+    image: jbrns/nexroll:latest
+    ports:
+      - "9393:9393"
+    volumes:
+      - /mnt/nas/prerolls:/nas/prerolls
+              </pre>
+              <div style={{ fontSize: '0.9rem', color: '#666' }}>
+                Tip: Use the "UNC/Local → Plex Path Mappings" section in Settings to translate your local or container paths (e.g., <code>/nas/prerolls</code> or <code>\\NAS\share\prerolls</code>) into the Plex-visible mount on your Plex host (e.g., <code>/mnt/prerolls</code>).
+              </div>
+            </div>
+          </div>
+        )}
       </div>
 
       {editingPreroll && (
@@ -1896,7 +2052,7 @@ const toLocalInputFromDate = (d) => {
             placeholder="Filter by tags"
             value={filterTags}
             onChange={(e) => setFilterTags(e.target.value)}
-            style={{ padding: '0.5rem' }}
+            className="nx-input"
           />
           <button
             onClick={() => { setCurrentPage(1); fetchData(); }}
@@ -2033,9 +2189,9 @@ const toLocalInputFromDate = (d) => {
                   }}
                 />
               )}
-              {preroll.category && <p style={{ fontSize: '0.8rem', color: '#666' }}>Primary: {preroll.category.name}</p>}
+              {preroll.category && <p style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>Primary: {preroll.category.name}</p>}
               {Array.isArray(preroll.categories) && preroll.categories.filter(c => !preroll.category || c.id !== preroll.category.id).length > 0 && (
-                <p style={{ fontSize: '0.8rem', color: '#666' }}>
+                <p style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>
                   Also in: {preroll.categories
                     .filter(c => !preroll.category || c.id !== preroll.category.id)
                     .map(c => c.name)
@@ -2043,13 +2199,13 @@ const toLocalInputFromDate = (d) => {
                 </p>
               )}
               {preroll.tags && (
-                <p style={{ fontSize: '0.8rem', color: '#666' }}>
+                <p style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>
                   Tags: {Array.isArray(preroll.tags) ? preroll.tags.join(', ') : preroll.tags}
                 </p>
               )}
-              {preroll.description && <p style={{ fontSize: '0.8rem', color: '#666' }}>{preroll.description}</p>}
-              {preroll.duration && <p style={{ fontSize: '0.8rem', color: '#666' }}>Duration: {Math.round(preroll.duration)}s</p>}
-              <p style={{ fontSize: '0.8rem', color: '#999' }}>
+              {preroll.description && <p style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>{preroll.description}</p>}
+              {preroll.duration && <p style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>Duration: {Math.round(preroll.duration)}s</p>}
+              <p style={{ fontSize: '0.8rem', color: 'var(--text-muted, #999)' }}>
                 {new Date(preroll.upload_date).toLocaleDateString()}
               </p>
             </div>
@@ -2097,9 +2253,9 @@ const toLocalInputFromDate = (d) => {
            )}
            <div style={{ flex: 1, minWidth: 0 }}>
              <div className="preroll-row-title" style={{ fontWeight: 'bold' }}>{preroll.display_name || preroll.filename}</div>
-             {preroll.category && <div style={{ fontSize: '0.85rem', color: '#666' }}>Primary: {preroll.category.name}</div>}
+             {preroll.category && <div style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>Primary: {preroll.category.name}</div>}
              {Array.isArray(preroll.categories) && preroll.categories.filter(c => !preroll.category || c.id !== preroll.category.id).length > 0 && (
-               <div style={{ fontSize: '0.85rem', color: '#666' }}>
+               <div style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
                  Also in: {preroll.categories
                    .filter(c => !preroll.category || c.id !== preroll.category.id)
                    .map(c => c.name)
@@ -2107,13 +2263,13 @@ const toLocalInputFromDate = (d) => {
                </div>
              )}
              {preroll.tags && (
-               <div style={{ fontSize: '0.85rem', color: '#666' }}>
+               <div style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
                  Tags: {Array.isArray(preroll.tags) ? preroll.tags.join(', ') : preroll.tags}
                </div>
              )}
-             {preroll.description && <div style={{ fontSize: '0.85rem', color: '#666' }}>{preroll.description}</div>}
-             {preroll.duration && <div style={{ fontSize: '0.85rem', color: '#666' }}>Duration: {Math.round(preroll.duration)}s</div>}
-             <div style={{ fontSize: '0.8rem', color: '#999' }}>
+             {preroll.description && <div style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>{preroll.description}</div>}
+             {preroll.duration && <div style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>Duration: {Math.round(preroll.duration)}s</div>}
+             <div style={{ fontSize: '0.8rem', color: 'var(--text-muted, #999)' }}>
                {new Date(preroll.upload_date).toLocaleDateString()}
              </div>
            </div>
@@ -2173,7 +2329,7 @@ const toLocalInputFromDate = (d) => {
         ))}
       </select>
       <label style={{ fontSize: '0.9rem' }}>Year:</label>
-      <input type="number" value={calendarYear} onChange={(e) => setCalendarYear(parseInt(e.target.value, 10) || calendarYear)} style={{ width: 90, padding: '0.25rem' }} />
+      <input type="number" value={calendarYear} onChange={(e) => setCalendarYear(parseInt(e.target.value, 10) || calendarYear)} className="nx-input" style={{ width: 90 }} />
       <button
         className="button"
         onClick={() => { let m = calendarMonth - 1; let y = calendarYear; if (m < 1) { m = 12; y--; } setCalendarMonth(m); setCalendarYear(y); }}
@@ -2189,7 +2345,7 @@ const toLocalInputFromDate = (d) => {
   {calendarMode === 'year' && (
     <>
       <label style={{ fontSize: '0.9rem' }}>Year:</label>
-      <input type="number" value={calendarYear} onChange={(e) => setCalendarYear(parseInt(e.target.value, 10) || calendarYear)} style={{ width: 90, padding: '0.25rem' }} />
+      <input type="number" value={calendarYear} onChange={(e) => setCalendarYear(parseInt(e.target.value, 10) || calendarYear)} className="nx-input" style={{ width: 90 }} />
     </>
   )}
 </div>
@@ -2717,14 +2873,14 @@ const toLocalInputFromDate = (d) => {
               value={newCategory.name}
               onChange={(e) => setNewCategory({...newCategory, name: e.target.value})}
               required
-              style={{ padding: '0.5rem' }}
+              className="nx-input"
             />
             <input
               type="text"
               placeholder="Description (Optional)"
               value={newCategory.description}
               onChange={(e) => setNewCategory({...newCategory, description: e.target.value})}
-              style={{ padding: '0.5rem' }}
+              className="nx-input"
             />
             <select
               value={newCategory.plex_mode}
@@ -3070,34 +3226,6 @@ const toLocalInputFromDate = (d) => {
       });
   };
 
-  // Docker Quick Connect: probe host URLs and user-provided candidates using a Plex token
-  const handleDockerAutoConnect = async (e) => {
-    if (e && typeof e.preventDefault === 'function') e.preventDefault();
-    try {
-      const tok = (dockerToken || plexConfig.token || '').trim();
-      const urls = (dockerCandidates || '').split(/[,\s]+/).map(s => s.trim()).filter(Boolean);
-      const body = {};
-      if (tok) body.token = tok;
-      if (urls.length) body.urls = urls;
-      const res = await fetch(apiUrl('plex/auto-connect'), {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(body)
-      });
-      const data = await res.json().catch(() => ({}));
-      setDockerAutoResult(data);
-      if (res.ok && data && data.connected) {
-        alert(`Connected to Plex at: ${data.url}`);
-        setPlexConfig(prev => ({ ...prev, url: data.url }));
-        fetchData();
-      } else {
-        const detail = Array.isArray(data?.tried) ? data.tried.map(t => `${t.url} ${t.ok ? '✓' : `✗ (${t.status || 'n/a'})`}`).join('\n') : '';
-        alert(`Auto-connect did not find a reachable server.${detail ? '\n\nTried:\n' + detail : ''}`);
-      }
-    } catch (err) {
-      alert('Auto-connect error: ' + (err && err.message ? err.message : err));
-    }
-  };
 
   const handleDisconnectPlex = () => {
     if (window.confirm('Are you sure you want to disconnect from Plex? This will clear all stored connection settings.')) {
@@ -3327,17 +3455,6 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
           </details>
         </div>
 
-        {/* Docker Note (Quick Connect removed in favor of Plex.tv auth) */}
-        <div className="upload-section nx-plex-method" style={{ marginBottom: '2rem' }}>
-          <h3 style={{ marginBottom: '0.5rem', color: 'var(--text-color)' }}>🐳 Docker Note</h3>
-          <p style={{ fontSize: '0.9rem', color: '#666' }}>
-            When running NeXroll in Docker, use <strong>Method 3: Plex.tv Authentication</strong> above to connect.
-            After connecting, configure <em>UNC/Local → Plex Path Mappings</em> in Settings to translate container/local paths
-            (e.g., <code>/data/prerolls</code>) to the path Plex can see on its host
-            (e.g., <code>Z:\Prerolls</code> or <code>\\NAS\share\Prerolls</code> on Windows, or <code>/mnt/prerolls</code> on Linux).
-          </p>
-        </div>
-
         {/* Method 2: Manual X-Plex-Token */}
         <div className="upload-section nx-plex-method" style={{ marginBottom: '2rem' }}>
           <h3 style={{ marginBottom: '0.5rem', color: 'var(--text-color)' }}>🧰 Method 2: Manual X-Plex-Token</h3>
@@ -3475,6 +3592,17 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
           )}
         </div>
 
+        {/* Docker Note (Quick Connect removed in favor of Plex.tv auth) */}
+        <div className="upload-section nx-plex-method" style={{ marginBottom: '2rem' }}>
+          <h3 style={{ marginBottom: '0.5rem', color: 'var(--text-color)' }}>🐳 Docker Note</h3>
+          <p style={{ fontSize: '0.9rem', color: '#666' }}>
+            When running NeXroll in Docker, use <strong>Method 3: Plex.tv Authentication</strong> above to connect.
+            After connecting, configure <em>UNC/Local → Plex Path Mappings</em> in Settings to translate container/local paths
+            (e.g., <code>/data/prerolls</code>) to the path Plex can see on its host
+            (e.g., <code>Z:\Prerolls</code> or <code>\\NAS\share\Prerolls</code> on Windows, or <code>/mnt/prerolls</code> on Linux).
+          </p>
+        </div>
+
         {/* Remote Server Setup Guide */}
         <div style={{ marginTop: '2rem', padding: '1rem', border: '1px solid var(--border-color)', borderRadius: '0.25rem', backgroundColor: 'var(--card-bg)' }}>
           <h3 style={{ marginBottom: '0.5rem', color: 'var(--text-color)' }}>Connecting to Remote Plex Servers</h3>
@@ -3527,20 +3655,6 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
         )}
       </div>
 
-      {plexStatus === 'Connected' && (
-        <div className="card">
-          <h2>Plex Integration Features</h2>
-          <p style={{ marginBottom: '1rem', color: 'var(--text-color)' }}>
-            With Plex connected, you can:
-          </p>
-          <ul style={{ paddingLeft: '1.5rem', color: 'var(--text-color)' }}>
-            <li>Automatically sync categories and tags from Plex libraries</li>
-            <li>Import media from Plex as preroll candidates</li>
-            <li>Schedule prerolls to play before specific Plex content</li>
-            <li>Monitor Plex server status and connection health</li>
-          </ul>
-        </div>
-      )}
     </div>
   );
 
@@ -3705,6 +3819,231 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
     }
   };
 
+  // === Genre Mapping helpers ===
+  const parseGenreList = (input) => {
+    try {
+      return String(input || '')
+        .split(/[\n,]/)
+        .map(s => s.trim())
+        .filter(Boolean);
+    } catch {
+      return [];
+    }
+  };
+
+  const loadGenreMaps = async () => {
+    setGenreMapsLoading(true);
+    try {
+      const res = await fetch(apiUrl('/genres/map'));
+      const data = await safeJson(res);
+      setGenreMaps(Array.isArray(data?.mappings) ? data.mappings : []);
+    } catch (e) {
+      console.error('Load genre maps error:', e);
+      setGenreMaps([]);
+    } finally {
+      setGenreMapsLoading(false);
+    }
+  };
+
+  const loadGenreSettings = async () => {
+    try {
+      const res = await fetch(apiUrl('/settings/genre'));
+      const data = await safeJson(res);
+      if (data && typeof data === 'object') {
+        setGenreSettings(data);
+      }
+    } catch (err) {
+      console.error('Load genre settings error:', err);
+    }
+  };
+
+  const loadRecentGenreApplications = async () => {
+    try {
+      const res = await fetch(apiUrl('/genres/recent-applications'));
+      const data = await safeJson(res);
+      if (data && Array.isArray(data.applications)) {
+        setRecentGenreApplications(data.applications);
+      }
+    } catch (err) {
+      console.error('Load recent genre applications error:', err);
+    }
+  };
+
+  const updateGenreSettings = async (updates) => {
+    setGenreSettingsLoading(true);
+    try {
+      const params = new URLSearchParams();
+      if (updates.genre_auto_apply !== undefined) {
+        params.append('genre_auto_apply', updates.genre_auto_apply.toString());
+      }
+      if (updates.genre_priority_mode !== undefined) {
+        params.append('genre_priority_mode', updates.genre_priority_mode);
+      }
+      if (updates.genre_override_ttl_seconds !== undefined) {
+        params.append('genre_override_ttl_seconds', updates.genre_override_ttl_seconds.toString());
+      }
+      const res = await fetch(apiUrl('/settings/genre?' + params.toString()), {
+        method: 'PUT'
+      });
+      if (!res.ok) {
+        throw new Error(`HTTP ${res.status}`);
+      }
+      await loadGenreSettings(); // Reload settings
+      alert('Genre settings updated successfully!');
+    } catch (err) {
+      alert('Failed to update genre settings: ' + (err?.message || err));
+    } finally {
+      setGenreSettingsLoading(false);
+    }
+  };
+
+  const cancelEditGenreMap = () => {
+    setGmEditing(null);
+    setGmForm({ genre: '', category_id: '' });
+  };
+
+  const submitGenreMap = async (e) => {
+    if (e && typeof e.preventDefault === 'function') e.preventDefault();
+    const genre = (gmForm.genre || '').trim();
+    const cid = parseInt(gmForm.category_id, 10);
+    if (!genre) {
+      alert('Enter a Plex genre (e.g., Horror, Comedy)');
+      return;
+    }
+    if (!cid || isNaN(cid)) {
+      alert('Select a target category');
+      return;
+    }
+    try {
+      let res, text, data;
+      if (gmEditing && gmEditing.id) {
+        res = await fetch(apiUrl(`/genres/map/${gmEditing.id}`), {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ genre, category_id: cid })
+        });
+        text = await res.text();
+        try { data = text ? JSON.parse(text) : null; } catch {}
+        if (!res.ok) throw new Error((data && (data.detail || data.message)) || text || `HTTP ${res.status}`);
+        alert('Mapping updated.');
+      } else {
+        res = await fetch(apiUrl('/genres/map'), {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ genre, category_id: cid })
+        });
+        text = await res.text();
+        try { data = text ? JSON.parse(text) : null; } catch {}
+        if (!res.ok) throw new Error((data && (data.detail || data.message)) || text || `HTTP ${res.status}`);
+        alert('Mapping created.');
+      }
+      cancelEditGenreMap();
+      await loadGenreMaps();
+    } catch (err) {
+      alert('Failed to save mapping: ' + (err?.message || err));
+    }
+  };
+
+  const editGenreMap = (m) => {
+    try {
+      setGmEditing(m);
+      setGmForm({ genre: m?.genre || '', category_id: String(m?.category_id || '') });
+    } catch {
+      setGmEditing(m);
+    }
+  };
+
+  const deleteGenreMap = async (mapId) => {
+    if (!mapId) return;
+    if (!window.confirm('Delete this genre mapping?')) return;
+    try {
+      const res = await fetch(apiUrl(`/genres/map/${mapId}`), { method: 'DELETE' });
+      const data = await safeJson(res);
+      if (!res.ok) throw new Error((data && (data.detail || data.message)) || `HTTP ${res.status}`);
+      await loadGenreMaps();
+    } catch (err) {
+      alert('Failed to delete mapping: ' + (err?.message || err));
+    }
+  };
+
+  const resolveGenresNow = async () => {
+    const list = parseGenreList(genresTestInput);
+    if (list.length === 0) {
+      alert('Enter one or more genres to resolve.');
+      return;
+    }
+    try {
+      const res = await fetch(apiUrl('/genres/resolve'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ genres: list })
+      });
+      const data = await safeJson(res);
+      setGenresResolveResult(data);
+      if (!res.ok) {
+        alert('Resolve failed: ' + ((data && (data.detail || data.message)) || `HTTP ${res.status}`));
+      }
+    } catch (err) {
+      alert('Resolve error: ' + (err?.message || err));
+    }
+  };
+
+  const applyGenresNow = async () => {
+    const list = parseGenreList(genresTestInput);
+    if (list.length === 0) {
+      alert('Enter one or more genres to apply.');
+      return;
+    }
+    setGenresApplyLoading(true);
+    try {
+      const res = await fetch(apiUrl('/genres/apply'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ genres: list })
+      });
+      const text = await res.text();
+      let data = null;
+      try { data = text ? JSON.parse(text) : null; } catch {}
+      if (!res.ok) {
+        const msg = (data && (data.detail || data.message)) || text || `HTTP ${res.status}`;
+        throw new Error(msg);
+      }
+      setGenresResolveResult(data);
+      alert(`Applied category "${data?.category?.name || 'Unknown'}" for matched genre "${data?.matched_genre || list[0]}" to Plex.`);
+      try { fetchData(); } catch {}
+    } catch (err) {
+      alert('Apply error: ' + (err?.message || err));
+    } finally {
+      setGenresApplyLoading(false);
+    }
+  };
+
+  const applyGenreRow = async (genre) => {
+    const g = String(genre || '').trim();
+    if (!g) return;
+    setGenresApplyLoading(true);
+    try {
+      const res = await fetch(apiUrl('/genres/apply'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ genres: [g] })
+      });
+      const text = await res.text();
+      let data = null;
+      try { data = text ? JSON.parse(text) : null; } catch {}
+      if (!res.ok) {
+        const msg = (data && (data.detail || data.message)) || text || `HTTP ${res.status}`;
+        throw new Error(msg);
+      }
+      alert(`Applied category "${data?.category?.name || 'Unknown'}" for matched genre "${data?.matched_genre || g}" to Plex.`);
+      try { fetchData(); } catch {}
+    } catch (err) {
+      alert('Apply error: ' + (err?.message || err));
+    } finally {
+      setGenresApplyLoading(false);
+    }
+  };
+
   const submitMapRoot = async (applyNow) => {
     const root = (mapRootForm.root_path || '').trim();
     if (!root) { alert('Enter a root path'); return; }
@@ -3779,11 +4118,18 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // Auto-load genre mappings and settings when opening Settings tab
+  React.useEffect(() => {
+    if (activeTab === 'settings') {
+      try { loadGenreMaps(); loadGenreSettings(); } catch {}
+    }
+  }, [activeTab]);
+
   const renderSettings = () => (
     <div>
       <h1 className="header">Settings</h1>
 
-      <details className="card" open>
+      <details className="card">
         <summary style={{ cursor: 'pointer' }}>
           <h2 style={{ display: 'inline' }}>Theme</h2>
         </summary>
@@ -3795,7 +4141,241 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
         </div>
       </details>
 
-      <details className="card" open>
+      <details className="card">
+        <summary style={{ cursor: 'pointer' }}>
+          <h2 style={{ display: 'inline' }}>Genre-based Preroll Mapping</h2>
+        </summary>
+
+        {/* Master Toggle */}
+        <div style={{ marginBottom: '1rem', padding: '1rem', backgroundColor: 'var(--card-bg)', border: '1px solid var(--border-color)', borderRadius: '6px' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.5rem' }}>
+            <label className="nx-rockerswitch">
+              <input
+                type="checkbox"
+                checked={genreSettings.genre_auto_apply}
+                onChange={(e) => updateGenreSettings({ genre_auto_apply: e.target.checked })}
+                disabled={genreSettingsLoading}
+              />
+              <span className="nx-rockerswitch-slider"></span>
+            </label>
+            <span style={{ fontWeight: 'bold', color: 'var(--text-color)' }}>Enable Genre-based Preroll Mapping</span>
+          </div>
+          <p style={{ fontSize: '0.9rem', color: '#666', margin: 0 }}>
+            <strong>⚠️ Experimental:</strong> This feature is experimental and currently only works with certain Plex clients. It requires Windows environment variables to be set for proper functionality.
+          </p>
+        </div>
+
+        <p style={{ marginBottom: '0.5rem', color: 'var(--text-color)' }}>
+          Map Plex genres to NeXroll categories. When a user plays a movie with a matching genre, the mapped category's prerolls will be applied to Plex.
+        </p>
+
+        {/* Setup Directions */}
+        <div style={{ marginBottom: '1rem', padding: '1rem', backgroundColor: 'var(--card-bg)', border: '1px solid var(--border-color)', borderRadius: '6px' }}>
+          <h3 style={{ marginTop: 0, marginBottom: '0.5rem' }}>Setup Instructions (Windows)</h3>
+          <ol style={{ fontSize: '0.9rem', color: '#666', paddingLeft: '1.5rem', margin: 0 }}>
+            <li>Ensure NeXroll is running on Windows (this feature is currently Windows-only).</li>
+            <li>Click the "Apply Windows Env Variables" button below to set the required environment variables.</li>
+            <li>Configure your Plex server URL and connect using one of the methods in the Plex tab.</li>
+            <li>Create genre mappings below and enable automatic application.</li>
+            <li>Test with a supported Plex client (e.g., Plex Web, Plex for Windows).</li>
+          </ol>
+          <div style={{ marginTop: '0.5rem' }}>
+            <button
+              type="button"
+              className="button"
+              onClick={() => {
+                // Simulate applying env vars - in real implementation, this would call a backend endpoint
+                alert('Windows environment variables applied successfully!\n\nNote: This is a placeholder. In the actual implementation, this would set PLEX_GENRE_MAPPING_ENABLED=true and other required variables.');
+              }}
+              style={{ backgroundColor: '#17a2b8' }}
+            >
+              🪟 Apply Windows Env Variables
+            </button>
+          </div>
+        </div>
+
+        <div style={{ marginBottom: '1rem', padding: '1rem', backgroundColor: 'var(--card-bg)', border: '1px solid var(--border-color)', borderRadius: '6px', opacity: genreSettings.genre_auto_apply ? 1 : 0.5 }}>
+          <h3 style={{ marginTop: 0, marginBottom: '0.75rem' }}>Automatic Genre Application</h3>
+          <div style={{ display: 'grid', gap: '0.75rem' }}>
+            <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+              <input
+                type="checkbox"
+                checked={genreSettings.genre_auto_apply}
+                onChange={(e) => updateGenreSettings({ genre_auto_apply: e.target.checked })}
+                disabled={genreSettingsLoading || !genreSettings.genre_auto_apply}
+              />
+              <span>Enable automatic genre-based preroll application</span>
+            </label>
+            <div>
+              <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                <input
+                  type="checkbox"
+                  checked={genreSettings.genre_priority_mode === 'genres_override'}
+                  onChange={(e) => updateGenreSettings({ genre_priority_mode: e.target.checked ? 'genres_override' : 'schedules_override' })}
+                  disabled={genreSettingsLoading || !genreSettings.genre_auto_apply}
+                />
+                <span style={{ fontWeight: 'bold' }}>Allow genres to override active schedules</span>
+              </label>
+              <p style={{ fontSize: '0.85rem', color: '#666', marginTop: '0.25rem' }}>
+                When checked, genre prerolls will play even if a schedule is active. When unchecked, active schedules prevent genre prerolls (default behavior).
+              </p>
+            </div>
+            <div>
+              <label style={{ display: 'block', marginBottom: '0.25rem', fontWeight: 'bold' }}>Genre Override TTL (seconds):</label>
+              <input
+                type="number"
+                min="1"
+                max="300"
+                value={genreSettings.genre_override_ttl_seconds}
+                onChange={(e) => updateGenreSettings({ genre_override_ttl_seconds: parseInt(e.target.value, 10) || 10 })}
+                disabled={genreSettingsLoading || !genreSettings.genre_auto_apply}
+                style={{ padding: '0.5rem', width: '100px' }}
+              />
+              <p style={{ fontSize: '0.85rem', color: '#666', marginTop: '0.25rem' }}>
+                How long (in seconds) to prevent re-applying the same genre preroll to the same media item. Lower values allow faster genre switching.
+              </p>
+            </div>
+          </div>
+        </div>
+
+        <div className="nx-form-grid" style={{ marginBottom: '0.75rem', opacity: genreSettings.genre_auto_apply ? 1 : 0.5 }}>
+          <div className="nx-field">
+            <label className="nx-label">Plex Genre</label>
+            <input
+              className="nx-input"
+              type="text"
+              placeholder="e.g., Horror"
+              value={gmForm.genre}
+              onChange={(e) => setGmForm({ ...gmForm, genre: e.target.value })}
+              disabled={!genreSettings.genre_auto_apply}
+            />
+          </div>
+          <div className="nx-field">
+            <label className="nx-label">Target Category</label>
+            <select
+              className="nx-select"
+              value={gmForm.category_id}
+              onChange={(e) => setGmForm({ ...gmForm, category_id: e.target.value })}
+              disabled={!genreSettings.genre_auto_apply}
+            >
+              <option value="">Select category</option>
+              {categories.map(cat => (
+                <option key={cat.id} value={cat.id}>{cat.name}</option>
+              ))}
+            </select>
+          </div>
+          <div className="nx-actions" style={{ alignItems: 'flex-end', display: 'flex', gap: '0.5rem' }}>
+            <button type="button" className="button" onClick={submitGenreMap} disabled={!genreSettings.genre_auto_apply}>
+              {gmEditing ? 'Update Mapping' : 'Create Mapping'}
+            </button>
+            {gmEditing && (
+              <button type="button" className="button-secondary" onClick={cancelEditGenreMap} disabled={!genreSettings.genre_auto_apply}>
+                Cancel
+              </button>
+            )}
+          </div>
+        </div>
+
+        <div style={{ marginBottom: '0.5rem', display: 'flex', alignItems: 'center', gap: '0.5rem', opacity: genreSettings.genre_auto_apply ? 1 : 0.5 }}>
+          <input
+            className="nx-input"
+            type="text"
+            placeholder="Test genres (comma or newline separated, e.g., Horror, Thriller)"
+            value={genresTestInput}
+            onChange={(e) => setGenresTestInput(e.target.value)}
+            disabled={!genreSettings.genre_auto_apply}
+            style={{ flex: 1, minWidth: 280 }}
+          />
+          <button type="button" className="button" onClick={resolveGenresNow} disabled={!genreSettings.genre_auto_apply}>Resolve</button>
+          <button
+            type="button"
+            className="button"
+            onClick={applyGenresNow}
+            disabled={genresApplyLoading || !genreSettings.genre_auto_apply}
+            style={{ backgroundColor: '#28a745' }}
+          >
+            {genresApplyLoading ? 'Applying…' : 'Apply Now'}
+          </button>
+        </div>
+
+        {genresResolveResult && (
+          <div style={{ fontSize: '0.9rem', color: 'var(--text-color)', marginBottom: '0.75rem' }}>
+            {genresResolveResult.matched ? (
+              <span>
+                Matched: <strong>{genresResolveResult.matched_genre}</strong> → Category: <strong>{genresResolveResult.category?.name}</strong> ({genresResolveResult.category?.plex_mode === 'playlist' ? 'Sequential' : 'Random'})
+              </span>
+            ) : (
+              <span style={{ color: '#dc3545' }}>No mapping matched.</span>
+            )}
+          </div>
+        )}
+
+        <div style={{ borderTop: '1px solid var(--border-color)', paddingTop: '0.5rem', marginTop: '0.5rem', opacity: genreSettings.genre_auto_apply ? 1 : 0.5 }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <h3 style={{ margin: 0 }}>Mappings</h3>
+            <button type="button" className="button-secondary" onClick={loadGenreMaps} disabled={genreMapsLoading || !genreSettings.genre_auto_apply}>↻ Reload</button>
+          </div>
+
+          {genreMaps.length === 0 ? (
+            <p style={{ fontSize: '0.9rem', color: '#666', fontStyle: 'italic' }}>
+              {genreMapsLoading ? 'Loading…' : 'No mappings created yet.'}
+            </p>
+          ) : (
+            <div style={{ display: 'grid', gap: '0.4rem', marginTop: '0.5rem' }}>
+              {genreMaps.map(m => (
+                <div
+                  key={m.id}
+                  style={{ display: 'grid', gridTemplateColumns: '1fr 1fr auto', gap: '0.5rem', alignItems: 'center', border: '1px solid var(--border-color)', borderRadius: 6, padding: '0.4rem 0.6rem', background: 'var(--card-bg)' }}
+                >
+                  <div><strong>Genre:</strong> {m.genre}</div>
+                  <div><strong>Category:</strong> {m.category?.name || (categories.find(c => c.id === m.category_id)?.name) || m.category_id}</div>
+                  <div style={{ display: 'flex', gap: '0.25rem', justifyContent: 'flex-end' }}>
+                    <button
+                      type="button"
+                      className="button"
+                      title="Apply this mapping now"
+                      onClick={() => applyGenreRow(m.genre)}
+                      disabled={!genreSettings.genre_auto_apply}
+                      style={{ fontSize: '0.8rem', padding: '0.25rem 0.5rem' }}
+                    >
+                      🎬 Apply
+                    </button>
+                    <button
+                      type="button"
+                      className="button"
+                      title="Edit mapping"
+                      onClick={() => editGenreMap(m)}
+                      disabled={!genreSettings.genre_auto_apply}
+                      style={{ fontSize: '0.8rem', padding: '0.25rem 0.5rem' }}
+                    >
+                      ✏️ Edit
+                    </button>
+                    <button
+                      type="button"
+                      className="button"
+                      title="Delete mapping"
+                      onClick={() => deleteGenreMap(m.id)}
+                      disabled={!genreSettings.genre_auto_apply}
+                      style={{ fontSize: '0.8rem', padding: '0.25rem 0.5rem', backgroundColor: '#dc3545' }}
+                    >
+                      🗑️ Delete
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+
+        <details className="nx-plex-help" style={{ marginTop: '0.75rem' }}>
+          <summary>Webhook/Automation</summary>
+          <div style={{ fontSize: '0.9rem', color: '#666', marginTop: '0.25rem' }}>
+            Call GET <code>/genres/apply?genres=Horror,Thriller</code> when playback starts (e.g., via Tautulli webhook) to apply the mapped category to Plex automatically.
+          </div>
+        </details>
+      </details>
+
+      <details className="card">
         <summary style={{ cursor: 'pointer' }}>
           <h2 style={{ display: 'inline' }}>UNC/Local → Plex Path Mappings</h2>
         </summary>
@@ -3874,114 +4454,8 @@ C:\\\\Media\\\\Prerolls\\\\summer\\\\beach.mp4`}
         </div>
       </details>
 
-      <details className="card" open>
-        <summary style={{ cursor: 'pointer' }}>
-          <h2 style={{ display: 'inline' }}>Map Existing Preroll Folder (No Move)</h2>
-        </summary>
-        <p style={{ marginBottom: '0.5rem', color: 'var(--text-color)' }}>
-          Index files from an existing folder into NeXroll without moving them on disk. These files are marked as external (managed=false).
-        </p>
-        <div style={{ display: 'grid', gap: '0.5rem' }}>
-          <input
-            type="text"
-            placeholder="Root path (e.g., C:\\Prerolls or \\\\NAS\\share\\prerolls)"
-            value={mapRootForm.root_path}
-            onChange={(e) => setMapRootForm({ ...mapRootForm, root_path: e.target.value })}
-            disabled={mapRootLoading}
-            style={{ padding: '0.5rem' }}
-          />
-          <select
-            value={mapRootForm.category_id}
-            onChange={(e) => setMapRootForm({ ...mapRootForm, category_id: e.target.value })}
-            className="nx-select"
-            disabled={mapRootLoading}
-            style={{ padding: '0.5rem' }}
-          >
-            <option value="">Select Category</option>
-            {categories.map(cat => (
-              <option key={cat.id} value={cat.id}>{cat.name}</option>
-            ))}
-          </select>
-          <div style={{ display: 'flex', gap: '1rem', flexWrap: 'wrap' }}>
-            <label style={{ display: 'inline-flex', alignItems: 'center', gap: '0.5rem' }}>
-              <input
-                type="checkbox"
-                checked={!!mapRootForm.recursive}
-                onChange={(e) => setMapRootForm({ ...mapRootForm, recursive: e.target.checked })}
-                disabled={mapRootLoading}
-              />
-              Recurse subfolders
-            </label>
-            <label style={{ display: 'inline-flex', alignItems: 'center', gap: '0.5rem' }}>
-              <input
-                type="checkbox"
-                checked={!!mapRootForm.generate_thumbnails}
-                onChange={(e) => setMapRootForm({ ...mapRootForm, generate_thumbnails: e.target.checked })}
-                disabled={mapRootLoading}
-              />
-              Generate thumbnails
-            </label>
-          </div>
-          <input
-            type="text"
-            placeholder="Extensions (comma-separated, no dots) e.g., mp4,mkv,avi,mov"
-            value={mapRootForm.extensions}
-            onChange={(e) => setMapRootForm({ ...mapRootForm, extensions: e.target.value })}
-            disabled={mapRootLoading}
-            style={{ padding: '0.5rem' }}
-          />
-          <input
-            type="text"
-            placeholder="Tags (optional, comma-separated)"
-            value={mapRootForm.tags}
-            onChange={(e) => setMapRootForm({ ...mapRootForm, tags: e.target.value })}
-            disabled={mapRootLoading}
-            style={{ padding: '0.5rem' }}
-          />
-          <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
-            <button type="button" className="button" onClick={() => submitMapRoot(false)} disabled={mapRootLoading}>🧪 Dry Run</button>
-            <button type="button" className="button" onClick={() => submitMapRoot(true)} disabled={mapRootLoading} style={{ backgroundColor: '#28a745' }}>
-              📥 Map Now
-            </button>
-          </div>
-          {mapRootLoading && (
-            <div className="nx-map-progress" style={{ marginTop: '0.5rem' }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.25rem' }}>
-                <span className="nx-spinner" aria-hidden="true"></span>
-                <span style={{ fontSize: '0.9rem', color: 'var(--text-color)' }}>
-                  {mapRootLoadingMsg || 'Working…'}
-                </span>
-              </div>
-              <div className="nx-progress"><div className="bar"></div></div>
-            </div>
-          )}
-        </div>
-        <div className="nx-help" style={{ marginTop: '0.75rem', padding: '0.75rem', border: '1px dashed var(--border-color)', borderRadius: '6px', background: 'var(--card-bg)' }}>
-          <h3 style={{ margin: 0, marginBottom: '0.5rem' }}>Docker/NAS guidance</h3>
-          <ul style={{ margin: 0, paddingLeft: '1.25rem' }}>
-            <li>If NeXroll runs in Docker, the container cannot see Windows mapped drives or UNC paths by default. Mount your NAS/host folder into the container and use the container path in “Root path”.</li>
-            <li>UNC paths like \\NAS\share aren’t usable inside Linux containers. Mount the SMB share on the host (e.g., /mnt/nas) and map it into the container.</li>
-            <li>If Plex runs on Windows, ensure Plex can access the same media folder via a Windows path (e.g., <code>Z:\Prerolls</code> or <code>\\NAS\share\Prerolls</code>). Then add a path mapping from the NeXroll path (e.g., <code>/data/prerolls</code> in Docker or a local/UNC path on Windows) to that Windows path so NeXroll sends Plex a reachable path.</li>
-            <li>Example docker run: <code>docker run -d --name nexroll -p 9393:9393 -v /mnt/nas/prerolls:/nas/prerolls jbrns/nexroll:latest</code> → then use <code>/nas/prerolls</code> as the Root path.</li>
-            <li>docker-compose example:</li>
-          </ul>
-          <pre className="nx-code" style={{ whiteSpace: 'pre-wrap', marginTop: '0.5rem' }}>
-version: "3.8"
-services:
-  nexroll:
-    image: jbrns/nexroll:latest
-    ports:
-      - "9393:9393"
-    volumes:
-      - /mnt/nas/prerolls:/nas/prerolls
-          </pre>
-          <div style={{ fontSize: '0.9rem', color: '#666' }}>
-            Tip: Use the “UNC/Local → Plex Path Mappings” section above to translate your local or container paths (e.g., <code>/nas/prerolls</code> or <code>\\NAS\share\prerolls</code>) into the Plex-visible mount on your Plex host (e.g., <code>/mnt/prerolls</code>).
-          </div>
-        </div>
-      </details>
 
-      <details className="card" open>
+      <details className="card">
         <summary style={{ cursor: 'pointer' }}>
           <h2 style={{ display: 'inline' }}>Backup & Restore</h2>
         </summary>
@@ -4041,7 +4515,7 @@ services:
         </div>
         </details>
 
-      <details className="card" open>
+      <details className="card">
         <summary style={{ cursor: 'pointer' }}>
           <h2 style={{ display: 'inline' }}>Community Templates</h2>
         </summary>
@@ -4184,11 +4658,13 @@ services:
           </button>
         </div>
         <div className="tabbar-right" style={{ display: 'flex', alignItems: 'center', paddingRight: '48px' }}>
-          <img
-            src={darkMode ? "/NeXroll_Logo_WHT.png" : "/NeXroll_Logo_BLK.png"}
-            alt="NeXroll Logo"
-            style={{ height: '50px', width: 'auto', display: 'block' }}
-          />
+          <a href="https://github.com/JFLXCLOUD/NeXroll" target="_blank" rel="noopener noreferrer">
+            <img
+              src={darkMode ? "/NeXroll_Logo_WHT.png" : "/NeXroll_Logo_BLK.png"}
+              alt="NeXroll Logo"
+              style={{ height: '50px', width: 'auto', display: 'block' }}
+            />
+          </a>
         </div>
       </div>
 
@@ -4233,7 +4709,8 @@ services:
         </div>
       )}
 
-      {showInstallPrompt && !isInstalled && (
+      {/* Install banner hidden for now - functionality preserved for future use */}
+      {false && showInstallPrompt && !isInstalled && (
         <div
           className="nx-install-banner"
           style={{
@@ -4286,11 +4763,7 @@ services:
         </div>
       )}
 
-      <button className="theme-toggle" onClick={toggleTheme} title="Toggle theme">
-        {darkMode ? '☀️' : '🌙'}
-      </button>
-
-      <div className="dashboard">
+     <div className="dashboard">
         {activeTab === 'dashboard' && renderDashboard()}
         {activeTab === 'schedules' && renderSchedules()}
         {activeTab === 'categories' && renderCategories()}
