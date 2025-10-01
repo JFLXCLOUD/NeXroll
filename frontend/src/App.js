@@ -404,6 +404,7 @@ function App() {
   const [ffmpegInfo, setFfmpegInfo] = useState(null);
   const [updateInfo, setUpdateInfo] = useState(null);
   const [showUpdateBanner, setShowUpdateBanner] = useState(false);
+  const [activeCategory, setActiveCategory] = useState(null);
   // Docker Quick Connect UI state
   const [prerollView, setPrerollView] = useState(() => {
     try { return localStorage.getItem('prerollView') || 'grid'; } catch { return 'grid'; }
@@ -806,9 +807,10 @@ const toLocalInputFromDate = (d) => {
       fetch('http://localhost:9393/plex/stable-token/status'),
       fetch('http://localhost:9393/system/version'),
       fetch('http://localhost:9393/system/ffmpeg-info'),
-      fetch('http://localhost:9393/genres/recent-applications')
+      fetch('http://localhost:9393/genres/recent-applications'),
+      fetch('http://localhost:9393/settings/active-category')
     ]).then(responses => Promise.all(responses.map(safeJson)))
-      .then(([plex, prerolls, schedules, categories, holidays, scheduler, tags, templates, stableToken, sysVersion, ffmpeg, recentGenreApps]) => {
+      .then(([plex, prerolls, schedules, categories, holidays, scheduler, tags, templates, stableToken, sysVersion, ffmpeg, recentGenreApps, activeCat]) => {
         setPlexStatus(plex.connected ? 'Connected' : 'Disconnected');
         setPlexServerInfo(plex);
         setPrerolls(Array.isArray(prerolls) ? prerolls : []);
@@ -826,6 +828,7 @@ const toLocalInputFromDate = (d) => {
         setSystemVersion(sysVersion || null);
         setFfmpegInfo(ffmpeg || null);
         setRecentGenreApplications(Array.isArray(recentGenreApps?.applications) ? recentGenreApps.applications : []);
+        setActiveCategory(activeCat?.active_category || null);
       }).catch(err => {
         console.error('Fetch error:', err);
         // Set default values on error
@@ -844,6 +847,7 @@ const toLocalInputFromDate = (d) => {
         setSystemVersion(null);
         setFfmpegInfo(null);
         setRecentGenreApplications([]);
+        setActiveCategory(null);
       });
   };
 
@@ -1708,6 +1712,9 @@ const toLocalInputFromDate = (d) => {
         <div className="card">
           <h2>Prerolls</h2>
           <p>{prerolls.length} uploaded</p>
+          <p style={{ fontSize: '0.9rem', color: 'var(--text-secondary, #666)' }}>
+            {categories.filter(cat => prerolls.some(p => p.category_id === cat.id)).length} categories used
+          </p>
           <button onClick={handleReinitThumbnails} className="button" style={{ marginTop: '0.5rem' }}>
             🔄 Reinitialize Thumbnails
           </button>
@@ -1718,7 +1725,7 @@ const toLocalInputFromDate = (d) => {
         </div>
         <div className="card">
           <h2>Schedules</h2>
-          <p>{schedules.length} active</p>
+          <p>{schedules.filter(s => s.is_active).length} of {schedules.length} active</p>
         </div>
         <div className="card">
           <h2>Scheduler</h2>
@@ -1729,7 +1736,53 @@ const toLocalInputFromDate = (d) => {
             {schedulerStatus.running ? 'Stop' : 'Start'} Scheduler
           </button>
         </div>
-
+        <div className="card">
+          <h2>Current Category</h2>
+          {activeCategory ? (
+            <div>
+              <p style={{ fontWeight: 'bold', color: 'var(--success-color, #28a745)' }}>
+                {activeCategory.name}
+              </p>
+              <p style={{ fontSize: '0.9rem', color: 'var(--text-secondary, #666)' }}>
+                Mode: {activeCategory.plex_mode === 'playlist' ? 'Sequential' : 'Shuffle'}
+              </p>
+              <p style={{ fontSize: '0.9rem', color: 'var(--text-secondary, #666)' }}>
+                Prerolls: {prerolls.filter(p => p.category_id === activeCategory.id).length}
+              </p>
+            </div>
+          ) : (
+            <p style={{ color: 'var(--text-secondary, #666)' }}>No category applied</p>
+          )}
+        </div>
+        <div className="card">
+          <h2>Upcoming Schedules</h2>
+          {(() => {
+            const now = new Date();
+            const upcoming = schedules
+              .filter(s => s.is_active && s.next_run && new Date(s.next_run) > now)
+              .sort((a, b) => new Date(a.next_run) - new Date(b.next_run))
+              .slice(0, 3);
+            return upcoming.length > 0 ? (
+              <div style={{ display: 'grid', gap: '0.5rem' }}>
+                {upcoming.map(schedule => {
+                  const category = categories.find(c => c.id === schedule.category_id);
+                  return (
+                    <div key={schedule.id} style={{ fontSize: '0.9rem', padding: '0.5rem', backgroundColor: 'var(--card-bg)', borderRadius: '4px' }}>
+                      <div style={{ fontWeight: 'bold', color: '#007bff' }}>
+                        {schedule.name}
+                      </div>
+                      <div style={{ color: 'var(--text-secondary, #666)' }}>
+                        {toLocalDisplay(schedule.next_run)} → {category?.name || 'Unknown'}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            ) : (
+              <p style={{ color: 'var(--text-secondary, #666)' }}>No upcoming schedules</p>
+            );
+          })()}
+        </div>
         {recentGenreApplications.length > 0 && (
           <div className="card">
             <h2>Recent Genre Prerolls</h2>
@@ -2015,119 +2068,142 @@ services:
         </Modal>
       )}
       <div className="card">
-        <h2>Prerolls</h2>
-        <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '0.5rem' }}>
-          <button
-            type="button"
-            className="button"
-            onClick={() => setPrerollView('grid')}
-            style={{ backgroundColor: prerollView === 'grid' ? '#28a745' : '#6c757d' }}
-          >
-            Grid
-          </button>
-          <button
-            type="button"
-            className="button"
-            onClick={() => setPrerollView('list')}
-            style={{ backgroundColor: prerollView === 'list' ? '#28a745' : '#6c757d' }}
-          >
-            List
-          </button>
-        </div>
-
-        {/* Filter + Pagination Controls */}
-        <div style={{ marginBottom: '0.5rem', display: 'flex', gap: '1rem', flexWrap: 'wrap', alignItems: 'center' }}>
-          <select
-            value={filterCategory}
-            onChange={(e) => setFilterCategory(e.target.value)}
-            style={{ padding: '0.5rem' }}
-          >
-            <option value="">All Categories</option>
-            {categories.map(cat => (
-              <option key={cat.id} value={cat.id}>{cat.name}</option>
-            ))}
-          </select>
-          <input
-            type="text"
-            placeholder="Filter by tags"
-            value={filterTags}
-            onChange={(e) => setFilterTags(e.target.value)}
-            className="nx-input"
-          />
-          <button
-            onClick={() => { setCurrentPage(1); fetchData(); }}
-            className="button"
-            style={{ padding: '0.5rem 1rem' }}
-          >
-            Filter
-          </button>
-
-          <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-            <label style={{ fontSize: '0.9rem', color: 'var(--text-color)' }}>
-              Per page:
-              <select
-                value={pageSize}
-                onChange={(e) => { const v = parseInt(e.target.value, 10); setPageSize(v); setCurrentPage(1); }}
-                className="nx-select"
-                style={{ marginLeft: '0.5rem' }}
-              >
-                {[20, 30, 40, 50].map(n => <option key={n} value={n}>{n}</option>)}
-              </select>
-            </label>
+        <div className="prerolls-header">
+          <h2>Prerolls</h2>
+          <div className="prerolls-stats">
+            <span className="stat-item">{prerolls.length} total</span>
+            <span className="stat-item">{selectedPrerollIds.length} selected</span>
           </div>
         </div>
 
-        {/* Selection + Bulk Actions */}
-        <div style={{ marginBottom: '1rem', display: 'flex', gap: '0.75rem', flexWrap: 'wrap', alignItems: 'center' }}>
-          <label style={{ display: 'inline-flex', alignItems: 'center', gap: '0.5rem' }}>
-            <input
-              type="checkbox"
-              checked={allSelectedOnPage}
-              onChange={(e) => selectAllVisible(visibleIds, e.target.checked)}
-            />
-            Select all on page
-          </label>
-          <button
-            type="button"
-            className="button-secondary"
-            onClick={clearSelection}
-            disabled={selectedPrerollIds.length === 0}
-            title="Clear selected prerolls"
-          >
-            Clear selection
-          </button>
-          <span style={{ fontSize: '0.9rem', color: '#666' }}>Selected: {selectedPrerollIds.length}</span>
-          <button
-            type="button"
-            className="button"
-            onClick={handleBulkDeleteSelected}
-            disabled={selectedPrerollIds.length === 0}
-            style={{ backgroundColor: '#dc3545' }}
-            title="Delete all selected prerolls"
-          >
-            Delete Selected
-          </button>
+        {/* Enhanced Control Bar */}
+        <div className="prerolls-control-bar">
+          {/* View Toggle */}
+          <div className="control-group">
+            <label className="control-label">View</label>
+            <div className="view-toggle">
+              <button
+                type="button"
+                className={`view-btn ${prerollView === 'grid' ? 'active' : ''}`}
+                onClick={() => setPrerollView('grid')}
+                title="Grid view"
+              >
+                <span className="view-icon">⊞</span>
+                Grid
+              </button>
+              <button
+                type="button"
+                className={`view-btn ${prerollView === 'list' ? 'active' : ''}`}
+                onClick={() => setPrerollView('list')}
+                title="List view"
+              >
+                <span className="view-icon">☰</span>
+                List
+              </button>
+            </div>
+          </div>
 
-          <div style={{ marginLeft: 'auto', display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+          {/* Filters */}
+          <div className="control-group">
+            <label className="control-label">Filters</label>
+            <div className="filter-controls">
+              <select
+                value={filterCategory}
+                onChange={(e) => setFilterCategory(e.target.value)}
+                className="filter-select"
+              >
+                <option value="">All Categories</option>
+                {categories.map(cat => (
+                  <option key={cat.id} value={cat.id}>{cat.name}</option>
+                ))}
+              </select>
+              <div className="search-input-wrapper">
+                <input
+                  type="text"
+                  placeholder="Search tags..."
+                  value={filterTags}
+                  onChange={(e) => setFilterTags(e.target.value)}
+                  className="search-input"
+                />
+                <span className="search-icon">🔍</span>
+              </div>
+              <button
+                onClick={() => { setCurrentPage(1); fetchData(); }}
+                className="filter-btn"
+                title="Apply filters"
+              >
+                Apply
+              </button>
+            </div>
+          </div>
+
+          {/* Pagination */}
+          <div className="control-group">
+            <label className="control-label">Items per page</label>
             <select
-              className="nx-select"
-              value={bulkCategoryId}
-              onChange={(e) => setBulkCategoryId(e.target.value)}
-              style={{ minWidth: 200 }}
+              value={pageSize}
+              onChange={(e) => { const v = parseInt(e.target.value, 10); setPageSize(v); setCurrentPage(1); }}
+              className="page-size-select"
             >
-              <option value="">Set Primary Category…</option>
-              {categories.map(cat => (
-                <option key={cat.id} value={cat.id}>{cat.name}</option>
-              ))}
+              {[20, 30, 40, 50].map(n => <option key={n} value={n}>{n}</option>)}
             </select>
+          </div>
+        </div>
+
+        {/* Bulk Actions Bar */}
+        <div className="bulk-actions-bar">
+          <div className="bulk-actions-left">
+            <label className="select-all-wrapper">
+              <input
+                type="checkbox"
+                checked={allSelectedOnPage}
+                onChange={(e) => selectAllVisible(visibleIds, e.target.checked)}
+                className="select-all-checkbox"
+              />
+              <span className="select-all-label">Select all ({visibleIds.length})</span>
+            </label>
             <button
               type="button"
-              className="button"
-              onClick={() => handleBulkSetPrimary(bulkCategoryId)}
-              disabled={!bulkCategoryId || selectedPrerollIds.length === 0}
-              title="Change primary category for all selected prerolls"
+              className="action-btn secondary"
+              onClick={clearSelection}
+              disabled={selectedPrerollIds.length === 0}
+              title="Clear selected prerolls"
             >
-              Apply to Selected
+              Clear Selection
+            </button>
+          </div>
+
+          <div className="bulk-actions-right">
+            <div className="bulk-category-wrapper">
+              <select
+                value={bulkCategoryId}
+                onChange={(e) => setBulkCategoryId(e.target.value)}
+                className="bulk-category-select"
+                disabled={selectedPrerollIds.length === 0}
+              >
+                <option value="">Set Category...</option>
+                {categories.map(cat => (
+                  <option key={cat.id} value={cat.id}>{cat.name}</option>
+                ))}
+              </select>
+              <button
+                type="button"
+                className="action-btn primary"
+                onClick={() => handleBulkSetPrimary(bulkCategoryId)}
+                disabled={!bulkCategoryId || selectedPrerollIds.length === 0}
+                title="Change primary category for selected prerolls"
+              >
+                Apply to {selectedPrerollIds.length} Selected
+              </button>
+            </div>
+            <button
+              type="button"
+              className="action-btn danger"
+              onClick={handleBulkDeleteSelected}
+              disabled={selectedPrerollIds.length === 0}
+              title="Delete all selected prerolls"
+            >
+              🗑️ Delete {selectedPrerollIds.length > 0 && `(${selectedPrerollIds.length})`}
             </button>
           </div>
         </div>
@@ -2155,16 +2231,14 @@ services:
                 <div className="preroll-actions">
                   <button
                     onClick={() => handleEditPreroll(preroll)}
-                    className="button"
-                    style={{ fontSize: '0.7rem', padding: '0.2rem 0.4rem' }}
+                    className="nx-iconbtn"
                     title="Edit preroll"
                   >
                     ✏️
                   </button>
                   <button
                     onClick={() => handleDeletePreroll(preroll.id)}
-                    className="button"
-                    style={{ fontSize: '0.7rem', padding: '0.2rem 0.4rem', backgroundColor: '#dc3545' }}
+                    className="nx-iconbtn nx-iconbtn--danger"
                     title="Delete preroll"
                   >
                     🗑️
@@ -2276,16 +2350,14 @@ services:
            <div style={{ display: 'flex', gap: '0.25rem' }}>
              <button
                onClick={() => handleEditPreroll(preroll)}
-               className="button"
-               style={{ fontSize: '0.8rem', padding: '0.25rem 0.5rem' }}
+               className="nx-iconbtn"
                title="Edit preroll"
              >
                ✏️
              </button>
              <button
                onClick={() => handleDeletePreroll(preroll.id)}
-               className="button"
-               style={{ fontSize: '0.8rem', padding: '0.25rem 0.5rem', backgroundColor: '#dc3545' }}
+               className="nx-iconbtn nx-iconbtn--danger"
                title="Delete preroll"
              >
                🗑️
@@ -2311,42 +2383,79 @@ services:
   const renderSchedules = () => (
     <div>
       <h1 className="header">Schedule Management</h1>
-<div className="card" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap', marginBottom: '0.75rem' }}>
-  <button className="button" onClick={() => setShowCalendar(!showCalendar)}>
-    {showCalendar ? 'Hide Calendar' : 'Show Calendar'}
-  </button>
-  <label style={{ fontSize: '0.9rem' }}>View:</label>
-  <select value={calendarMode} onChange={(e) => setCalendarMode(e.target.value)} className="nx-select">
-    <option value="month">Month</option>
-    <option value="year">Year</option>
-  </select>
+<div className="card nx-toolbar">
+  <div className="toolbar-group">
+    <button className="button" onClick={() => setShowCalendar(!showCalendar)}>
+      {showCalendar ? 'Hide Calendar' : 'Show Calendar'}
+    </button>
+  </div>
+
+  <div className="toolbar-group">
+    <label className="control-label">View</label>
+    <select className="nx-select" value={calendarMode} onChange={(e) => setCalendarMode(e.target.value)}>
+      <option value="month">Month</option>
+      <option value="year">Year</option>
+    </select>
+  </div>
+
   {calendarMode === 'month' && (
     <>
-      <label style={{ fontSize: '0.9rem' }}>Month:</label>
-      <select value={calendarMonth} onChange={(e) => setCalendarMonth(parseInt(e.target.value, 10))} className="nx-select">
-        {[1,2,3,4,5,6,7,8,9,10,11,12].map(m => (
-          <option key={m} value={m}>{new Date(2000, m - 1, 1).toLocaleString(undefined, { month: 'long' })}</option>
-        ))}
-      </select>
-      <label style={{ fontSize: '0.9rem' }}>Year:</label>
-      <input type="number" value={calendarYear} onChange={(e) => setCalendarYear(parseInt(e.target.value, 10) || calendarYear)} className="nx-input" style={{ width: 90 }} />
-      <button
-        className="button"
-        onClick={() => { let m = calendarMonth - 1; let y = calendarYear; if (m < 1) { m = 12; y--; } setCalendarMonth(m); setCalendarYear(y); }}
-        title="Previous Month"
-      >◀</button>
-      <button
-        className="button"
-        onClick={() => { let m = calendarMonth + 1; let y = calendarYear; if (m > 12) { m = 1; y++; } setCalendarMonth(m); setCalendarYear(y); }}
-        title="Next Month"
-      >▶</button>
+      <div className="toolbar-group">
+        <label className="control-label">Month</label>
+        <select className="nx-select" value={calendarMonth} onChange={(e) => setCalendarMonth(parseInt(e.target.value, 10))}>
+          {[1,2,3,4,5,6,7,8,9,10,11,12].map(m => (
+            <option key={m} value={m}>{new Date(2000, m - 1, 1).toLocaleString(undefined, { month: 'long' })}</option>
+          ))}
+        </select>
+      </div>
+
+      <div className="toolbar-group">
+        <label className="control-label">Year</label>
+        <input
+          className="nx-input"
+          type="number"
+          value={calendarYear}
+          onChange={(e) => setCalendarYear(parseInt(e.target.value, 10) || calendarYear)}
+          style={{ width: 110 }}
+        />
+      </div>
+
+      <div className="toolbar-group">
+        <div className="view-toggle">
+          <button
+            type="button"
+            className="view-btn"
+            onClick={() => { let m = calendarMonth - 1; let y = calendarYear; if (m < 1) { m = 12; y--; } setCalendarMonth(m); setCalendarYear(y); }}
+            title="Previous Month"
+          >
+            <span className="view-icon">◀</span>
+            Prev
+          </button>
+          <button
+            type="button"
+            className="view-btn"
+            onClick={() => { let m = calendarMonth + 1; let y = calendarYear; if (m > 12) { m = 1; y++; } setCalendarMonth(m); setCalendarYear(y); }}
+            title="Next Month"
+          >
+            Next
+            <span className="view-icon">▶</span>
+          </button>
+        </div>
+      </div>
     </>
   )}
+
   {calendarMode === 'year' && (
-    <>
-      <label style={{ fontSize: '0.9rem' }}>Year:</label>
-      <input type="number" value={calendarYear} onChange={(e) => setCalendarYear(parseInt(e.target.value, 10) || calendarYear)} className="nx-input" style={{ width: 90 }} />
-    </>
+    <div className="toolbar-group">
+      <label className="control-label">Year</label>
+      <input
+        className="nx-input"
+        type="number"
+        value={calendarYear}
+        onChange={(e) => setCalendarYear(parseInt(e.target.value, 10) || calendarYear)}
+        style={{ width: 110 }}
+      />
+    </div>
   )}
 </div>
 <div style={{ display: showCalendar ? 'block' : 'none' }}>
@@ -2523,6 +2632,7 @@ services:
         <form onSubmit={handleCreateSchedule}>
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem', marginBottom: '1rem' }}>
             <input
+              className="nx-input"
               type="text"
               placeholder="Schedule Name"
               value={scheduleForm.name}
@@ -2531,6 +2641,7 @@ services:
               style={{ padding: '0.5rem' }}
             />
             <select
+              className="nx-select"
               value={scheduleForm.type}
               onChange={(e) => setScheduleForm({...scheduleForm, type: e.target.value})}
               style={{ padding: '0.5rem' }}
@@ -2543,6 +2654,7 @@ services:
             <div>
               <label style={{ display: 'block', marginBottom: '0.25rem', fontSize: '0.9rem' }}>Start Date & Time</label>
               <input
+                className="nx-input"
                 type="datetime-local"
                 value={scheduleForm.start_date}
                 onChange={(e) => setScheduleForm({...scheduleForm, start_date: e.target.value})}
@@ -2553,6 +2665,7 @@ services:
             <div>
               <label style={{ display: 'block', marginBottom: '0.25rem', fontSize: '0.9rem' }}>End Date & Time (Optional)</label>
               <input
+                className="nx-input"
                 type="datetime-local"
                 value={scheduleForm.end_date}
                 onChange={(e) => setScheduleForm({...scheduleForm, end_date: e.target.value})}
@@ -2560,6 +2673,7 @@ services:
               />
             </div>
             <select
+              className="nx-select"
               value={scheduleForm.category_id}
               onChange={(e) => setScheduleForm({...scheduleForm, category_id: e.target.value})}
               required
@@ -2573,6 +2687,7 @@ services:
             <div>
               <label style={{ display: 'block', marginBottom: '0.25rem', fontSize: '0.9rem' }}>Holiday Preset (Optional)</label>
               <select
+                className="nx-select"
                 value=""
                 onChange={(e) => {
                   const preset = holidayPresets.find(p => p.id === parseInt(e.target.value));
@@ -2612,22 +2727,22 @@ services:
               </select>
             </div>
           </div>
-          <div style={{ marginBottom: '1rem' }}>
-            <label style={{ marginRight: '1rem' }}>
+          <div className="nx-checkrow">
+            <label className="nx-check">
               <input
                 type="checkbox"
                 checked={scheduleForm.shuffle}
-                onChange={(e) => setScheduleForm({...scheduleForm, shuffle: e.target.checked})}
+                onChange={(e) => setScheduleForm({ ...scheduleForm, shuffle: e.target.checked })}
               />
-              Random
+              <span>Random</span>
             </label>
-            <label>
+            <label className="nx-check">
               <input
                 type="checkbox"
                 checked={scheduleForm.playlist}
-                onChange={(e) => setScheduleForm({...scheduleForm, playlist: e.target.checked})}
+                onChange={(e) => setScheduleForm({ ...scheduleForm, playlist: e.target.checked })}
               />
-              Sequential
+              <span>Sequential</span>
             </label>
           </div>
           <div style={{ marginBottom: '1rem', padding: '1rem', backgroundColor: 'var(--card-bg)', borderRadius: '0.25rem' }}>
@@ -2636,6 +2751,7 @@ services:
               When no schedule is active, this category will be used as the default for preroll selection.
             </p>
             <select
+              className="nx-select"
               value={scheduleForm.fallback_category_id || ''}
               onChange={(e) => setScheduleForm({...scheduleForm, fallback_category_id: e.target.value})}
               style={{ padding: '0.5rem', width: '200px' }}
@@ -2735,26 +2851,24 @@ services:
                 </select>
               </div>
               <div className="nx-field nx-span-2">
-                <label className="nx-label">
-                  <input
-                    type="checkbox"
-                    checked={scheduleForm.shuffle}
-                    onChange={(e) => setScheduleForm({...scheduleForm, shuffle: e.target.checked})}
-                    style={{ marginRight: '0.5rem' }}
-                  />
-                  Random
-                </label>
-              </div>
-              <div className="nx-field nx-span-2">
-                <label className="nx-label">
-                  <input
-                    type="checkbox"
-                    checked={scheduleForm.playlist}
-                    onChange={(e) => setScheduleForm({...scheduleForm, playlist: e.target.checked})}
-                    style={{ marginRight: '0.5rem' }}
-                  />
-                  Sequential
-                </label>
+                <div className="nx-checkrow">
+                  <label className="nx-check">
+                    <input
+                      type="checkbox"
+                      checked={scheduleForm.shuffle}
+                      onChange={(e) => setScheduleForm({ ...scheduleForm, shuffle: e.target.checked })}
+                    />
+                    <span>Random</span>
+                  </label>
+                  <label className="nx-check">
+                    <input
+                      type="checkbox"
+                      checked={scheduleForm.playlist}
+                      onChange={(e) => setScheduleForm({ ...scheduleForm, playlist: e.target.checked })}
+                    />
+                    <span>Sequential</span>
+                  </label>
+                </div>
               </div>
             </div>
             <div className="nx-actions">
@@ -2787,15 +2901,13 @@ services:
                 <div style={{ display: 'flex', gap: '0.5rem' }}>
                   <button
                     onClick={() => handleEditSchedule(schedule)}
-                    className="button"
-                    style={{ fontSize: '0.8rem', padding: '0.25rem 0.5rem' }}
+                    className="nx-iconbtn"
                   >
                     ✏️ Edit
                   </button>
                   <button
                     onClick={() => handleDeleteSchedule(schedule.id)}
-                    className="button"
-                    style={{ fontSize: '0.8rem', padding: '0.25rem 0.5rem', backgroundColor: '#dc3545' }}
+                    className="nx-iconbtn nx-iconbtn--danger"
                   >
                     🗑️ Delete
                   </button>
@@ -2883,6 +2995,7 @@ services:
               className="nx-input"
             />
             <select
+              className="nx-select"
               value={newCategory.plex_mode}
               onChange={(e) => setNewCategory({ ...newCategory, plex_mode: e.target.value })}
               style={{ padding: '0.5rem' }}
@@ -2994,17 +3107,16 @@ services:
                           <div>
                             <button
                               onClick={() => handleEditPreroll(p)}
-                              className="button"
-                              style={{ fontSize: '0.8rem', padding: '0.2rem 0.5rem', marginRight: '0.25rem' }}
+                              className="nx-iconbtn"
+                              style={{ marginRight: '0.25rem' }}
                               title="Edit preroll"
                             >
                               ✏️
                             </button>
                             <button
                               onClick={() => handleCategoryRemovePreroll(editingCategory.id, p)}
-                              className="button"
+                              className={`nx-iconbtn ${p.category_id === editingCategory.id ? 'nx-iconbtn--muted' : 'nx-iconbtn--danger'}`}
                               disabled={p.category_id === editingCategory.id}
-                              style={{ fontSize: '0.8rem', padding: '0.2rem 0.5rem', backgroundColor: p.category_id === editingCategory.id ? '#6c757d' : '#dc3545', cursor: p.category_id === editingCategory.id ? 'not-allowed' : 'pointer' }}
                               title={p.category_id === editingCategory.id ? 'Cannot remove primary here' : 'Remove from this category'}
                             >
                               🗑️ Remove
@@ -3096,16 +3208,14 @@ services:
                 <div style={{ display: 'flex', gap: '0.25rem' }}>
                   <button
                     onClick={() => handleEditCategory(category)}
-                    className="button"
-                    style={{ fontSize: '0.7rem', padding: '0.2rem 0.4rem' }}
+                    className="nx-iconbtn"
                     title="Edit category"
                   >
                     ✏️
                   </button>
                   <button
                     onClick={() => handleDeleteCategory(category.id)}
-                    className="button"
-                    style={{ fontSize: '0.7rem', padding: '0.2rem 0.4rem', backgroundColor: '#dc3545' }}
+                    className="nx-iconbtn nx-iconbtn--danger"
                     title="Delete category"
                   >
                     🗑️
@@ -4184,8 +4294,18 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
               type="button"
               className="button"
               onClick={() => {
-                // Simulate applying env vars - in real implementation, this would call a backend endpoint
-                alert('Windows environment variables applied successfully!\n\nNote: This is a placeholder. In the actual implementation, this would set PLEX_GENRE_MAPPING_ENABLED=true and other required variables.');
+                fetch(apiUrl('/system/apply-env-vars'), { method: 'POST' })
+                  .then(res => res.json())
+                  .then(data => {
+                    if (data.success) {
+                      alert('Windows environment variables applied successfully!');
+                    } else {
+                      alert('Failed to apply environment variables: ' + (data.detail || 'Unknown error'));
+                    }
+                  })
+                  .catch(err => {
+                    alert('Failed to apply environment variables: ' + err.message);
+                  });
               }}
               style={{ backgroundColor: '#17a2b8' }}
             >
