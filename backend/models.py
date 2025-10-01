@@ -42,6 +42,16 @@ class Category(Base):
     # Optional: reverse relation to list all prerolls tagged with this category (view-only)
     prerolls = relationship("Preroll", secondary="preroll_categories", viewonly=True)
 
+class GenreMap(Base):
+    __tablename__ = "genre_maps"
+
+    id = Column(Integer, primary_key=True, index=True)
+    genre = Column(String, unique=True, index=True)  # e.g., "Horror", "Comedy" from Plex metadata
+    genre_norm = Column(String, unique=True, index=True, nullable=True)  # canonical normalized key (lowercased, synonyms applied)
+    category_id = Column(Integer, ForeignKey("categories.id"), nullable=False)
+
+    # When this Plex genre is detected, apply this category's prerolls
+    category = relationship("Category")
 class Schedule(Base):
     __tablename__ = "schedules"
 
@@ -110,4 +120,9 @@ class Setting(Base):
     # App state
     active_category = Column(Integer, ForeignKey("categories.id"))
     updated_at = Column(DateTime, default=datetime.datetime.utcnow)
+    override_expires_at = Column(DateTime, nullable=True)
     path_mappings = Column(Text, nullable=True)  # JSON list of {"local": "...", "plex": "..."} path prefix mappings
+    # Genre-based preroll settings
+    genre_auto_apply = Column(Boolean, default=False)  # Enable/disable automatic genre-based preroll application
+    genre_priority_mode = Column(String, default="schedules_override")  # "schedules_override" or "genres_override" - which takes priority when both are active
+    genre_override_ttl_seconds = Column(Integer, default=10)  # TTL in seconds for genre override window (prevents re-applying same genre preroll)

@@ -23,6 +23,9 @@ from plexapi.myplex import MyPlexPinLogin, MyPlexAccount
 import requests
 import sys
 import os
+import hmac
+import hashlib
+import base64
 
 # Add the current directory and parent directory to Python path (dev only; avoid in frozen builds)
 if not getattr(sys, "frozen", False):
@@ -95,6 +98,8 @@ def ensure_schema() -> None:
                 ("plex_server_name", "plex_server_name TEXT"),
                 ("active_category", "active_category INTEGER"),
                 ("updated_at", "updated_at DATETIME"),
+                ("path_mappings", "path_mappings TEXT"),
+                ("override_expires_at", "override_expires_at DATETIME"),
             ]:
                 if not _sqlite_has_column("settings", col):
                     _sqlite_add_column("settings", ddl)
@@ -105,9 +110,23 @@ def ensure_schema() -> None:
             # Prerolls: ensure managed flag to indicate external/mapped files (no moves/deletes)
             if not _sqlite_has_column("prerolls", "managed"):
                 _sqlite_add_column("prerolls", "managed BOOLEAN DEFAULT 1")
-            # Settings: ensure path_mappings JSON field for local->plex path conversion
-            if not _sqlite_has_column("settings", "path_mappings"):
-                _sqlite_add_column("settings", "path_mappings TEXT")
+
+            # Genre maps: ensure canonical normalized key for robust matching/synonyms
+            if not _sqlite_has_column("genre_maps", "genre_norm"):
+                _sqlite_add_column("genre_maps", "genre_norm TEXT")
+
+            # Settings: ensure genre-based preroll settings
+            if not _sqlite_has_column("settings", "genre_auto_apply"):
+                _sqlite_add_column("settings", "genre_auto_apply BOOLEAN DEFAULT 1")
+            if not _sqlite_has_column("settings", "genre_priority_mode"):
+                _sqlite_add_column("settings", "genre_priority_mode TEXT DEFAULT 'schedules_override'")
+            if not _sqlite_has_column("settings", "genre_override_ttl_seconds"):
+                _sqlite_add_column("settings", "genre_override_ttl_seconds INTEGER DEFAULT 10")
+            if not _sqlite_has_column("settings", "genre_override_ttl_seconds"):
+                _sqlite_add_column("settings", "genre_override_ttl_seconds INTEGER DEFAULT 10")
+            # Settings: ensure aggressive intercept setting
+            if not _sqlite_has_column("settings", "genre_aggressive_intercept_enabled"):
+                _sqlite_add_column("settings", "genre_aggressive_intercept_enabled BOOLEAN DEFAULT 0")
     except Exception as e:
         print(f"Schema ensure error: {e}")
 
@@ -135,6 +154,7 @@ def ensure_settings_schema_now() -> None:
                 "active_category": "INTEGER",
                 "updated_at": "DATETIME",
                 "path_mappings": "TEXT",
+                "override_expires_at": "DATETIME",
             }
             for col, ddl in need.items():
                 if col not in cols:
@@ -497,6 +517,16 @@ class PlexAutoConnectRequest(BaseModel):
     urls: list[str] | None = None
     prefer_local: bool = True
 
+class GenreMapCreate(BaseModel):
+    genre: str
+    category_id: int
+
+class GenreMapUpdate(BaseModel):
+    genre: str | None = None
+    category_id: int | None = None
+
+class ResolveGenresRequest(BaseModel):
+    genres: list[str]
 
 def _normalize_url(url: str) -> str:
     try:
@@ -710,10 +740,13 @@ def _bootstrap_plex_from_env() -> None:
         pass
 
 
-app = FastAPI(title="NeXroll Backend", version="1.2.3")
+app = FastAPI(title="NeXroll Backend", version="1.3.7")
 
 # In-memory store for Plex.tv OAuth sessions
 OAUTH_SESSIONS: dict[str, dict] = {}
+
+# Recent genre applications for UI feedback (last 10, in-memory)
+RECENT_GENRE_APPLICATIONS: list[dict] = []
 
 # Stable client identifier for Plex integrations (persisted in settings when possible)
 CLIENT_ID_CACHE: str | None = None
@@ -3185,9 +3218,78 @@ def apply_category_to_plex(category_id: int, rotation_hours: int = 24, db: Sessi
 
     preroll_paths_plex = [_translate_for_plex(p) for p in preroll_paths_local]
     multi_preroll_path = delimiter.join(preroll_paths_plex)
-
+ 
     # Apply to Plex
     connector = PlexConnector(setting.plex_url, setting.plex_token)
+ 
+    # Preflight: ensure the translated path style matches the Plex host platform.
+    # Prevents sending container-only paths (e.g., /data/...) to a Windows Plex or Windows paths (Z:\, \\NAS\share) to a POSIX Plex.
+    try:
+        info = connector.get_server_info() or {}
+    except Exception:
+        info = {}
+    platform_str = str(info.get("platform") or info.get("Platform") or "").lower()
+ 
+    def _looks_windows_path(s: str) -> bool:
+        try:
+            if not s:
+                return False
+            # UNC
+            if s.startswith("\\\\"):
+                return True
+            # Drive-letter
+            if len(s) >= 3 and s[1] == ":" and (s[2] == "\\" or s[2] == "/"):
+                return True
+        except Exception:
+            pass
+        return False
+ 
+    def _looks_posix_path(s: str) -> bool:
+        try:
+            if not s:
+                return False
+            # Exclude Windows patterns first
+            if _looks_windows_path(s):
+                return False
+            return s.startswith("/")
+        except Exception:
+            return False
+ 
+    target_windows = ("win" in platform_str) or ("windows" in platform_str)
+    mismatches: list[str] = []
+    try:
+        for out in preroll_paths_plex:
+            if target_windows and _looks_posix_path(out):
+                mismatches.append(out)
+            elif (not target_windows) and _looks_windows_path(out):
+                mismatches.append(out)
+    except Exception:
+        mismatches = []
+ 
+    if mismatches:
+        # Compose actionable guidance and refuse to send an unusable path to Plex
+        try:
+            changed = sum(1 for a, b in zip(preroll_paths_local, preroll_paths_plex) if a != b)
+        except Exception:
+            changed = 0
+        try:
+            common_local = os.path.commonpath(preroll_paths_local) if preroll_paths_local else None
+        except Exception:
+            common_local = None
+        ex_local = common_local or PREROLLS_DIR
+        if target_windows:
+            # Prefer UNC for Plex service accounts; drive letters shown as an alternative
+            example_hint = f"local='{ex_local}' → plex='Z:\\\\Prerolls' or plex='\\\\\\\\NAS\\\\Prerolls'"
+        else:
+            example_hint = f"local='{ex_local}' → plex='/mnt/prerolls'"
+        detail = (
+            f"Plex platform appears {'Windows' if target_windows else 'POSIX'}, but translated preroll paths look "
+            f"{'POSIX' if target_windows else 'Windows'} (e.g., '{mismatches[0]}'). "
+            "Add a path mapping under Settings → 'UNC/Local → Plex Path Mappings' so NeXroll can translate local/container paths "
+            "to the exact path Plex can see on its host. Example mapping: " + example_hint +
+            ". Use 'Test Translation' in Settings to validate, then retry Apply."
+        )
+        raise HTTPException(status_code=422, detail=detail)
 
     print(f"Setting {len(prerolls)} prerolls for category '{category.name}':")
     for i, preroll in enumerate(prerolls, 1):
@@ -5053,6 +5155,1177 @@ def static_css_fallback(fname: str):
         return resp
     raise HTTPException(status_code=404, detail="Not found")
 
+# --- Genre-based Pre-Roll Mapping APIs ---
+
+def _norm_genre(s):
+    """
+    Normalize a genre string for case-insensitive, punctuation-tolerant matching.
+    - Unicode NFKC normalization
+    - Replace common separators (&, /, - and underscores) with single spaces
+    - Collapse repeated whitespace and lowercase
+    """
+    try:
+        import unicodedata, re
+        t = unicodedata.normalize("NFKC", str(s or ""))
+        # normalize separators
+        t = t.replace("&", " and ")
+        t = re.sub(r"[/_]", " ", t)
+        t = re.sub(r"-+", " ", t)
+        # collapse whitespace and lowercase
+        t = " ".join(t.split()).strip().lower()
+        return t
+    except Exception:
+        return ""
+
+def _canonical_genre_key(s: str) -> str:
+    """
+    Apply synonym normalization on top of _norm_genre.
+    Keeps mapping keys intuitive but tolerant to Plex naming variants.
+    """
+    g = _norm_genre(s)
+    if not g:
+        return ""
+    # lightweight synonyms informed by Plex genre variants
+    synonyms = {
+        "sci fi": "science fiction",
+        "scifi": "science fiction",
+        "sci-fi": "science fiction",  # in case normalization changes later
+        "kids and family": "family",
+        "kids family": "family",
+    }
+    return synonyms.get(g, g)
+
+def _genre_candidate_keys(s: str) -> list[str]:
+    """
+    Generate candidate normalized keys for a raw genre tag:
+      1) canonical normalized form
+      2) split components for composites like "action and adventure"
+    """
+    import re
+    out: list[str] = []
+    base = _canonical_genre_key(s)
+    if base:
+        out.append(base)
+        # split composite tags into parts and try each
+        parts = [p.strip() for p in re.split(r"(?:\s+and\s+|,|\||/)", base) if p and p.strip()]
+        for p in parts:
+            if p and p not in out:
+                out.append(p)
+    # unique while preserving order
+    seen = set()
+    uniq = [x for x in out if not (x in seen or seen.add(x))]
+    return uniq
+
+def _find_genre_map_case_insensitive(db, genre_norm):
+    """
+    Find a GenreMap by canonical key. Prefers genre_norm column; falls back to
+    computing canonical on existing rows for legacy DBs (no column/backfill).
+    """
+    try:
+        key = _canonical_genre_key(genre_norm)
+        if not key:
+            return None
+        # Try direct match on canonical column (if present)
+        try:
+            gm = db.query(models.GenreMap).filter(models.GenreMap.genre_norm == key).first()
+            if gm:
+                return gm
+        except Exception:
+            gm = None
+        # Fallback: scan rows and compare canonicalized raw genre (legacy rows)
+        try:
+            rows = db.query(models.GenreMap).all()
+        except Exception:
+            rows = []
+        for r in rows or []:
+            try:
+                raw = getattr(r, "genre", None)
+                if raw and _canonical_genre_key(raw) == key:
+                    return r
+            except Exception:
+                continue
+        return None
+    except Exception:
+        return None
+
+def _resolve_genre_mapping(db, raw_genres):
+    """
+    Return (matched: bool, matched_genre: str | None, category: models.Category | None, mapping: models.GenreMap | None)
+    Tries the provided genres in order; first match wins (case-insensitive).
+    Also:
+      - handles composite tags like "Action & Adventure" by trying "action" and "adventure"
+      - applies light synonym normalization (e.g., "sci-fi" -> "science fiction")
+      - collapses punctuation and Unicode variants per Plex MediaTag behavior
+    """
+    if not raw_genres:
+        return (False, None, None, None)
+    for raw in raw_genres:
+        candidates = _genre_candidate_keys(raw)
+        for key in candidates:
+            if not key:
+                continue
+            gm = _find_genre_map_case_insensitive(db, key)
+            if gm:
+                cat = db.query(models.Category).filter(models.Category.id == gm.category_id).first()
+                if cat:
+                    return (True, raw, cat, gm)
+    return (False, None, None, None)
+
+@app.get("/genres/map")
+def list_genre_maps(db: Session = Depends(get_db)):
+    """
+    List all genre->category mappings.
+    """
+    rows = db.query(models.GenreMap).all()
+    out = []
+    for r in rows:
+        cat = None
+        try:
+            cat = db.query(models.Category).filter(models.Category.id == r.category_id).first()
+        except Exception:
+            cat = None
+        out.append({
+            "id": r.id,
+            "genre": r.genre,
+            "category_id": r.category_id,
+            "category": {"id": cat.id, "name": cat.name} if cat else None
+        })
+    return {"mappings": out, "count": len(out)}
+
+@app.post("/genres/map")
+def create_or_update_genre_map(payload: GenreMapCreate, db: Session = Depends(get_db)):
+    """
+    Create or update a mapping for a Plex genre to a NeXroll category.
+    Case-insensitive on 'genre'. Enforces uniqueness by canonical normalized key.
+    """
+    genre_raw = (payload.genre or "").strip()
+    if not genre_raw:
+        raise HTTPException(status_code=422, detail="genre is required")
+
+    # Validate category exists
+    cat = db.query(models.Category).filter(models.Category.id == int(payload.category_id)).first()
+    if not cat:
+        raise HTTPException(status_code=404, detail=f"Category id {payload.category_id} not found")
+
+    # Compute canonical key and upsert by canonical
+    canon = _canonical_genre_key(genre_raw)
+    existing = _find_genre_map_case_insensitive(db, canon)
+    if existing:
+        existing.genre = genre_raw  # keep canonical casing as provided
+        try:
+            existing.genre_norm = canon
+        except Exception:
+            pass
+        existing.category_id = cat.id
+        try:
+            db.commit()
+            db.refresh(existing)
+        except Exception as e:
+            db.rollback()
+            raise HTTPException(status_code=500, detail=f"Failed to update mapping: {e}")
+        return {
+            "updated": True,
+            "mapping": {"id": existing.id, "genre": existing.genre, "category_id": existing.category_id}
+        }
+
+    # Create new map
+    try:
+        m = models.GenreMap(genre=genre_raw, genre_norm=canon, category_id=cat.id)
+    except Exception:
+        # Legacy DB without genre_norm column
+        m = models.GenreMap(genre=genre_raw, category_id=cat.id)
+    db.add(m)
+    try:
+        db.commit()
+        db.refresh(m)
+    except Exception as e:
+        db.rollback()
+        # Handle possible unique constraint violation
+        raise HTTPException(status_code=500, detail=f"Failed to create mapping: {e}")
+    return {
+        "created": True,
+        "mapping": {"id": m.id, "genre": m.genre, "category_id": m.category_id}
+    }
+
+@app.put("/genres/map/{map_id}")
+def update_genre_map(map_id: int, payload: GenreMapUpdate, db: Session = Depends(get_db)):
+    """
+    Update an existing genre map by id.
+    """
+    m = db.query(models.GenreMap).filter(models.GenreMap.id == map_id).first()
+    if not m:
+        raise HTTPException(status_code=404, detail="Mapping not found")
+
+    # Update genre with case-insensitive uniqueness
+    if payload.genre is not None:
+        newg = (payload.genre or "").strip()
+        if not newg:
+            raise HTTPException(status_code=422, detail="genre cannot be empty")
+        canon = _canonical_genre_key(newg)
+        dup = _find_genre_map_case_insensitive(db, canon)
+        if dup and dup.id != m.id:
+            raise HTTPException(status_code=409, detail="Another mapping already exists for this genre (case-insensitive)")
+        m.genre = newg
+        try:
+            m.genre_norm = canon
+        except Exception:
+            pass
+
+    if payload.category_id is not None:
+        cat = db.query(models.Category).filter(models.Category.id == int(payload.category_id)).first()
+        if not cat:
+            raise HTTPException(status_code=404, detail=f"Category id {payload.category_id} not found")
+        m.category_id = cat.id
+
+    try:
+        db.commit()
+        db.refresh(m)
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"Failed to update mapping: {e}")
+
+    return {"message": "Mapping updated", "mapping": {"id": m.id, "genre": m.genre, "category_id": m.category_id}}
+
+@app.delete("/genres/map/{map_id}")
+def delete_genre_map(map_id: int, db: Session = Depends(get_db)):
+    m = db.query(models.GenreMap).filter(models.GenreMap.id == map_id).first()
+    if not m:
+        raise HTTPException(status_code=404, detail="Mapping not found")
+    try:
+        db.delete(m)
+        db.commit()
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"Failed to delete mapping: {e}")
+    return {"deleted": True, "id": map_id}
+
+@app.post("/genres/resolve")
+def resolve_genres(req: ResolveGenresRequest, db: Session = Depends(get_db)):
+    """
+    Given a list of genre strings (as Plex would provide), resolve the target category using the mapping table.
+    """
+    matched, matched_genre, cat, gm = _resolve_genre_mapping(db, getattr(req, "genres", []) or [])
+    if not matched:
+        return {"matched": False}
+    return {
+        "matched": True,
+        "matched_genre": matched_genre,
+        "category": {"id": cat.id, "name": cat.name, "plex_mode": getattr(cat, "plex_mode", "shuffle")},
+        "mapping": {"id": gm.id, "genre": gm.genre}
+    }
+
+def _apply_category_to_plex_and_track(db: Session, category_id: int, ttl: int = 15) -> bool:
+    """
+    Use scheduler's category application (which handles translation and apply_to_plex flag),
+    then set Setting.active_category and a short-lived override window to prevent the scheduler
+    from immediately reverting the change. ttl is in minutes.
+    """
+    ok = scheduler._apply_category_to_plex(category_id, db)
+    if ok:
+        try:
+            st = db.query(models.Setting).first()
+            if not st:
+                st = models.Setting(plex_url=None, plex_token=None, active_category=category_id)
+                db.add(st)
+            st.active_category = category_id
+            try:
+                st.override_expires_at = datetime.datetime.utcnow() + datetime.timedelta(minutes=int(ttl))
+            except Exception:
+                st.override_expires_at = None
+            st.updated_at = datetime.datetime.utcnow()
+            db.commit()
+        except Exception:
+            try:
+                db.rollback()
+            except Exception:
+                pass
+    return ok
+
+@app.post("/genres/apply")
+def apply_preroll_by_genres(req: ResolveGenresRequest, ttl: int = 15, db: Session = Depends(get_db)):
+    """
+    Resolve the category by genres and apply its prerolls to Plex immediately.
+    ttl: override window in minutes to prevent the scheduler from overriding immediately.
+    """
+    input_genres = getattr(req, "genres", []) or []
+    matched, matched_genre, cat, gm = _resolve_genre_mapping(db, input_genres)
+    if not matched or not cat:
+        # Return 200 for webhook consumers (e.g., Tautulli) to avoid treating "no mapping" as an error.
+        return {
+            "applied": False,
+            "matched": False,
+            "message": "No matching genre mapping found",
+            "input_genres": input_genres
+        }
+    ok = _apply_category_to_plex_and_track(db, cat.id, ttl=ttl)
+    if not ok:
+        raise HTTPException(status_code=500, detail="Failed to set preroll in Plex (check Plex connection and path mappings)")
+    return {
+        "applied": True,
+        "matched_genre": matched_genre,
+        "category": {"id": cat.id, "name": cat.name, "plex_mode": getattr(cat, "plex_mode", "shuffle")},
+        "mapping": {"id": gm.id, "genre": gm.genre},
+        "override_ttl_minutes": ttl
+    }
+
+@app.get("/settings/genre")
+def get_genre_settings(db: Session = Depends(get_db)):
+    """Get genre-based preroll settings"""
+    setting = db.query(models.Setting).first()
+    if not setting:
+        return {
+            "genre_auto_apply": False,
+            "genre_priority_mode": "schedules_override",
+            "genre_override_ttl_seconds": 10,
+            "genre_aggressive_intercept_enabled": False
+        }
+    return {
+        "genre_auto_apply": getattr(setting, "genre_auto_apply", True),
+        "genre_priority_mode": getattr(setting, "genre_priority_mode", "schedules_override"),
+        "genre_override_ttl_seconds": getattr(setting, "genre_override_ttl_seconds", 10),
+        "genre_aggressive_intercept_enabled": getattr(setting, "genre_aggressive_intercept_enabled", False)
+    }
+
+@app.put("/settings/genre")
+def update_genre_settings(
+    genre_auto_apply: bool = None,
+    genre_priority_mode: str = None,
+    genre_override_ttl_seconds: int = None,
+    genre_aggressive_intercept_enabled: bool = None,
+    db: Session = Depends(get_db)
+):
+    """Update genre-based preroll settings"""
+    setting = db.query(models.Setting).first()
+    if not setting:
+        setting = models.Setting(plex_url=None, plex_token=None)
+        db.add(setting)
+        db.commit()
+        db.refresh(setting)
+
+    updated = False
+    if genre_auto_apply is not None:
+        setting.genre_auto_apply = genre_auto_apply
+        updated = True
+    if genre_priority_mode is not None:
+        if genre_priority_mode not in ["schedules_override", "genres_override"]:
+            raise HTTPException(status_code=422, detail="Invalid priority mode")
+        setting.genre_priority_mode = genre_priority_mode
+        updated = True
+    if genre_override_ttl_seconds is not None:
+        if genre_override_ttl_seconds < 1 or genre_override_ttl_seconds > 300:
+            raise HTTPException(status_code=422, detail="TTL must be between 1 and 300 seconds")
+        setting.genre_override_ttl_seconds = genre_override_ttl_seconds
+        updated = True
+    if genre_aggressive_intercept_enabled is not None:
+        setting.genre_aggressive_intercept_enabled = genre_aggressive_intercept_enabled
+        updated = True
+
+    if updated:
+        setting.updated_at = datetime.datetime.utcnow()
+        db.commit()
+
+    return {"message": "Settings updated"}
+
+@app.get("/genres/recent-applications")
+def get_recent_genre_applications(limit: int = 10):
+    """Get recent genre preroll applications for UI feedback"""
+    return {"applications": RECENT_GENRE_APPLICATIONS[-limit:] if RECENT_GENRE_APPLICATIONS else []}
+
+@app.get("/genres/apply")
+def apply_preroll_by_genres_query(genres: str, ttl: int = 15, db: Session = Depends(get_db)):
+    """
+    Convenience GET for integrations like Tautulli/Webhooks:
+    /genres/apply?genres=Horror,Thriller&ttl=15
+    """
+    # Accept multiple delimiters just in case: comma, semicolon, pipe, slash
+    raw = str(genres or "")
+    parts: list[str] = []
+    for sep in [",", ";", "|", "/"]:
+        if sep in raw:
+            parts = [g.strip() for g in raw.split(sep)]
+            break
+    if not parts:
+        parts = [g.strip() for g in raw.split(",")]
+    genre_list = [g for g in parts if g]
+    matched, matched_genre, cat, gm = _resolve_genre_mapping(db, genre_list)
+    if not matched or not cat:
+        # Return 200 for webhook consumers (e.g., Tautulli) to avoid treating "no mapping" as an error.
+        return {
+            "applied": False,
+            "matched": False,
+            "message": "No matching genre mapping found",
+            "input_genres": genre_list
+        }
+    ok = _apply_category_to_plex_and_track(db, cat.id, ttl=ttl)
+    if not ok:
+        raise HTTPException(status_code=500, detail="Failed to set preroll in Plex (check Plex connection and path mappings)")
+    return {
+        "applied": True,
+        "matched_genre": matched_genre,
+        "category": {"id": cat.id, "name": cat.name, "plex_mode": getattr(cat, "plex_mode", "shuffle")},
+        "mapping": {"id": gm.id, "genre": gm.genre},
+        "override_ttl_minutes": ttl
+    }
+# --- Tautulli-friendly: apply by Plex rating key (server-side genre lookup) ---
+@app.get("/genres/apply-by-key")
+@app.get("/genres/apply/by-key")
+def apply_preroll_by_rating_key(key: str | None = None, rating_key: str | None = None, ttl: int = 15, intercept: bool | None = None, db: Session = Depends(get_db)):
+    """
+    Resolve genres directly from Plex using a rating key (metadata id) and apply the mapped category.
+    This avoids relying on Tautulli template variables for genres.
+
+    Usage from Tautulli Webhook (Playback Start):
+      GET http://&lt;nexroll-host&gt;:9393/genres/apply-by-key?key={rating_key}&amp;ttl=30
+    """
+    key_str = (rating_key or key or "").strip()
+    if not key_str:
+        raise HTTPException(status_code=422, detail="key (rating_key) is required")
+
+    _file_log(f"apply_preroll_by_rating_key: key={key_str}, intercept={intercept}")
+
+    # Plex settings
+    setting = db.query(models.Setting).first()
+    if not setting or not getattr(setting, "plex_url", None):
+        raise HTTPException(status_code=400, detail="Plex not configured (missing URL)")
+
+    # Resolve token (allow secure-store fallback)
+    token = None
+    try:
+        token = getattr(setting, "plex_token", None) or secure_store.get_plex_token()
+    except Exception:
+        token = getattr(setting, "plex_token", None)
+
+    # Build request to Plex metadata API
+    connector = PlexConnector(setting.plex_url, token)
+    headers = connector.headers or ({"X-Plex-Token": token} if token else {})
+    verify = getattr(connector, "_verify", True)
+    chosen_key: str | None = None
+    # Aggressive intercept helpers: optionally stop and relaunch the client at playback start
+    def _bool_env_local(name: str):
+        try:
+            v = os.environ.get(name)
+            if v is None:
+                return None
+            s = str(v).strip().lower()
+            if s in ("1","true","yes","on"):
+                return True
+            if s in ("0","false","no","off"):
+                return False
+        except Exception:
+            pass
+        return None
+
+    def _intercept_threshold_ms_default() -> int:
+        try:
+            v = os.environ.get("NEXROLL_INTERCEPT_THRESHOLD_MS")
+            if v and str(v).strip().isdigit():
+                return int(str(v).strip())
+        except Exception:
+            pass
+        return 15000
+
+    def _want_intercept_flag() -> bool:
+        if intercept is not None:
+            try:
+                return bool(intercept)
+            except Exception:
+                return False
+        # Accept either env name for convenience
+        env1 = _bool_env_local("NEXROLL_INTERCEPT_ALWAYS")
+        if env1 is not None:
+            return bool(env1)
+        env2 = _bool_env_local("NEXROLL_AGGRESSIVE_INTERCEPT")
+        return bool(env2) if env2 is not None else False
+
+    def _find_client_for_key(rk: str) -> tuple[str | None, int | None, str | None, str | None]:
+        """Return (client_machine_id, viewOffsetMs, state, client_address) for current session matching rk, or (None,None,None,None)."""
+        try:
+            import xml.etree.ElementTree as _ET
+            _sess = requests.get(f"{str(setting.plex_url).rstrip('/')}/status/sessions", headers=headers, timeout=5, verify=verify)
+            if getattr(_sess, "status_code", 0) != 200 or not getattr(_sess, "content", None):
+                return (None, None, None, None)
+            _root = _ET.fromstring(_sess.content)
+            for video in _root.iter():
+                t = str(getattr(video, "tag", "") or "")
+                if t.endswith("Video") or t == "Video":
+                    _rk = (video.get("ratingKey") or "").strip()
+                    _prk = (video.get("parentRatingKey") or "").strip()
+                    _grk = (video.get("grandparentRatingKey") or "").strip()
+                    if rk in (_rk, _prk, _grk):
+                        vo = None
+                        try:
+                            vo = int(video.get("viewOffset") or "0")
+                        except Exception:
+                            vo = None
+                        st = None
+                        cid = None
+                        client_addr = None
+                        for child in list(video):
+                            try:
+                                ct = str(getattr(child, "tag", "") or "")
+                                if ct.endswith("Player") or ct == "Player":
+                                    st = (child.get("state") or "").lower()
+                                    cid = (child.get("machineIdentifier") or "").strip() or None
+                                    client_addr = (child.get("address") or "").strip() or None
+                                    break
+                            except Exception:
+                                pass
+                        return (cid, vo, st, client_addr)
+            return (None, None, None, None)
+        except Exception:
+            return (None, None, None, None)
+
+    def _aggressive_intercept(client_id: str, rk: str, view_offset_ms: int | None, client_address: str | None = None) -> bool:
+        """
+        Stop current playback and re-launch with correct preroll.
+
+        NOTE: This approach is DISABLED by default due to fundamental Plex architecture limitations.
+        The CinemaTrailersPrerollID setting is read when playback INITIATES, not dynamically during playback.
+        Attempting to stop/restart after receiving the webhook results in 404s because:
+        1) Plex Web/Desktop don't expose full Player control endpoints via the server API
+        2) By the time we set the preroll and try to restart, the session is already in progress
+
+        This is a known limitation - prerolls must be set BEFORE playback starts.
+        Webhooks can only apply prerolls to FUTURE playback, not currently playing content.
+
+        Set NEXROLL_FORCE_INTERCEPT=1 to attempt anyway (will fail with 404s for most clients).
+        """
+        try:
+            # Check if forced (disabled by default due to 404s with Plex Web)
+            force = False
+            try:
+                force_env = os.environ.get("NEXROLL_FORCE_INTERCEPT")
+                if force_env and str(force_env).strip().lower() in ("1", "true", "yes"):
+                    force = True
+            except Exception:
+                pass
+
+            if not force:
+                try:
+                    _file_log("_aggressive_intercept: DISABLED by default. Plex prerolls are read at playback start, not dynamically. Webhooks can only affect future playback. Set NEXROLL_FORCE_INTERCEPT=1 to attempt anyway (will 404).")
+                except Exception:
+                    pass
+                return False
+
+            if not client_id:
+                return False
+
+            # Allow Plex server time to process the new CinemaTrailersPrerollID preference
+            import time as _time
+            try:
+                delay_ms = int(os.environ.get("NEXROLL_INTERCEPT_DELAY_MS", "1000"))
+            except Exception:
+                delay_ms = 1000
+            try:
+                _file_log(f"_aggressive_intercept: waiting {delay_ms}ms for preroll propagation before relaunch")
+            except Exception:
+                pass
+            _time.sleep(delay_ms / 1000.0)
+
+            # Build headers with client target
+            h = dict(headers or {})
+            try:
+                h.update(_build_plex_headers())
+            except Exception:
+                pass
+            h["X-Plex-Target-Client-Identifier"] = client_id
+
+            # Log what we're attempting
+            try:
+                _file_log(f"_aggressive_intercept: attempting control of client={client_id}, address={client_address}, ratingKey={rk}")
+            except Exception:
+                pass
+
+            # Stop current playback
+            stop_url = f"{str(setting.plex_url).rstrip('/')}/player/playback/stop"
+            try:
+                stop_resp = requests.post(stop_url, headers=h, timeout=4, verify=verify)
+                status = getattr(stop_resp, 'status_code', 'unknown')
+                try:
+                    _file_log(f"_aggressive_intercept: POST {stop_url} → HTTP {status}")
+                except Exception:
+                    pass
+                if status == 404:
+                    try:
+                        _file_log(f"_aggressive_intercept: Client {client_id} does not support remote control (stop endpoint 404), skipping intercept")
+                    except Exception:
+                        pass
+                    return False
+            except Exception as e:
+                try:
+                    _file_log(f"_aggressive_intercept: stop request failed: {e}")
+                except Exception:
+                    pass
+
+            # Server identity and connection details
+            mid = None
+            scheme = "http"
+            host = "127.0.0.1"
+            port = 32400
+            try:
+                si = connector.get_server_info() or {}
+                mid = si.get("machine_identifier") or si.get("machineIdentifier")
+            except Exception:
+                mid = None
+            try:
+                from urllib.parse import urlparse as _urlparse
+                u = _urlparse(str(setting.plex_url).strip())
+                if getattr(u, "scheme", None):
+                    scheme = u.scheme
+                if getattr(u, "hostname", None):
+                    host = u.hostname
+                if getattr(u, "port", None):
+                    port = u.port or (443 if scheme == "https" else 32400)
+                else:
+                    port = 443 if scheme == "https" else 32400
+            except Exception:
+                pass
+
+            # First attempt: playMedia with full connection metadata
+            params = {
+                "key": f"/library/metadata/{rk}",
+                "offset": 0,
+                "autoplay": 1,
+                "protocol": scheme,
+                "address": host,
+                "port": port,
+                "path": f"{scheme}://{host}:{port}/library/metadata/{rk}",
+            }
+            if mid:
+                params["machineIdentifier"] = mid
+            play_url = f"{str(setting.plex_url).rstrip('/')}/player/playback/playMedia"
+            try:
+                rplay = requests.post(play_url, headers=h, params=params, timeout=8, verify=verify)
+                status = getattr(rplay, "status_code", 0)
+                try:
+                    _file_log(f"_aggressive_intercept: POST {play_url} → HTTP {status}, params={params}")
+                except Exception:
+                    pass
+                if 200 <= status < 300:
+                    return True
+            except Exception as e:
+                try:
+                    _file_log(f"_aggressive_intercept: playMedia request failed: {e}")
+                except Exception:
+                    pass
+
+            # Fallback: create a playQueue and start it on the client
+            try:
+                if not mid:
+                    # Without server machine identifier, playQueue URIs cannot be formed
+                    return False
+                # Create playQueue for this item
+                pq_uri = f"server://{mid}/com.plexapp.plugins.library/library/metadata/{rk}"
+                pq_params = {
+                    "type": "video",
+                    "uri": pq_uri,
+                    "shuffle": 0,
+                    "continuous": 1,
+                    "repeat": 0,
+                }
+                # Build server headers (no target for this call)
+                hs = dict(headers or {})
+                try:
+                    hs.update(_build_plex_headers())
+                except Exception:
+                    pass
+
+                pq_resp = requests.post(
+                    f"{str(setting.plex_url).rstrip('/')}/playQueues",
+                    headers=hs,
+                    params=pq_params,
+                    timeout=8,
+                    verify=verify,
+                )
+
+                play_queue_id = None
+                if getattr(pq_resp, "status_code", 0) == 200 and getattr(pq_resp, "content", None):
+                    # Try JSON first, then XML
+                    parsed_ok = False
+                    try:
+                        if "json" in (pq_resp.headers.get("Content-Type", "") or "").lower():
+                            j = pq_resp.json()
+                            play_queue_id = j.get("MediaContainer", {}).get("playQueueID")
+                            parsed_ok = True
+                    except Exception:
+                        parsed_ok = False
+                    if not parsed_ok:
+                        try:
+                            import xml.etree.ElementTree as _ETPQ
+                            root = _ETPQ.fromstring(pq_resp.content)
+                            play_queue_id = root.get("playQueueID")
+                        except Exception:
+                            play_queue_id = None
+
+                if not play_queue_id:
+                    return False
+
+                pq_play_params = {
+                    "playQueueID": play_queue_id,
+                    "protocol": scheme,
+                    "address": host,
+                    "port": port,
+                    "machineIdentifier": mid,
+                    "offset": 0,
+                    "autoplay": 1,
+                }
+                playq_url = f"{str(setting.plex_url).rstrip('/')}/player/playback/playQueue"
+                rplayq = requests.post(playq_url, headers=h, params=pq_play_params, timeout=8, verify=verify)
+                status = getattr(rplayq, "status_code", 0)
+                try:
+                    _file_log(f"_aggressive_intercept: POST {playq_url} → HTTP {status}, queueID={play_queue_id}, params={pq_play_params}")
+                except Exception:
+                    pass
+                return 200 <= status < 300
+            except Exception as e:
+                try:
+                    _file_log(f"_aggressive_intercept: playQueue fallback failed: {e}")
+                except Exception:
+                    pass
+                return False
+        except Exception:
+            return False
+    # Sessions-first: tolerant resolution (handles placeholder/non-numeric keys and multi-session)
+    try:
+        import xml.etree.ElementTree as ET
+        sess_url = f"{str(setting.plex_url).rstrip('/')}/status/sessions"
+        rs = requests.get(sess_url, headers=headers, timeout=5, verify=verify)
+        if rs.status_code != 200:
+            _file_log(f"sessions fetch failed: {rs.status_code}")
+        if rs.status_code == 200:
+            videos = []
+
+            # Prefer JSON only when server indicates JSON; otherwise parse XML (default)
+            is_json = False
+            try:
+                ctype = (rs.headers.get("Content-Type") or rs.headers.get("content-type") or "").lower()
+                is_json = "json" in ctype
+            except Exception:
+                is_json = False
+
+            if is_json:
+                try:
+                    data = rs.json()
+                    for item in (data.get("MediaContainer", {}) or {}).get("Metadata", []) or []:
+                        try:
+                            rk = str(item.get("ratingKey", "")).strip()
+                            prk = str(item.get("parentRatingKey", "")).strip()
+                            grk = str(item.get("grandparentRatingKey", "")).strip()
+                            vo = item.get("viewOffset")
+                            if vo is not None:
+                                vo = int(vo)
+                            player = item.get("Player", {}) or {}
+                            st = str(player.get("state", "") or "").lower()
+                            cid = (player.get("machineIdentifier", "") or "").strip() or None
+                            genres = [g.get("tag", "") for g in (item.get("Genre", []) or []) if g.get("tag", "")]
+                            videos.append({"rk": rk, "prk": prk, "grk": grk, "vo": vo, "state": st, "client_id": cid, "genres": genres})
+                        except Exception:
+                            continue
+                except Exception as je:
+                    try:
+                        _file_log(f"/genres/apply-by-key sessions json parse failed: {je}")
+                    except Exception:
+                        pass
+                    videos = []
+
+            # Fallback to XML when JSON not present or failed
+            if not videos:
+                try:
+                    root = ET.fromstring(rs.content)
+                    for video in root.iter():
+                        t = str(getattr(video, "tag", "") or "")
+                        if t.endswith("Video") or t == "Video":
+                            rk = (video.get("ratingKey") or "").strip()
+                            prk = (video.get("parentRatingKey") or "").strip()
+                            grk = (video.get("grandparentRatingKey") or "").strip()
+                            vo = None
+                            try:
+                                vo = int(video.get("viewOffset") or "0")
+                            except Exception:
+                                vo = None
+                            st = None
+                            cid = None
+                            genres = []
+                            for child in list(video):
+                                try:
+                                    ct = str(getattr(child, "tag", "") or "")
+                                    if ct.endswith("Player") or ct == "Player":
+                                        st = (child.get("state") or "").lower()
+                                        cid = (child.get("machineIdentifier") or "").strip() or None
+                                    elif ct.endswith("Genre") or ct == "Genre":
+                                        g = child.get("tag")
+                                        if g and str(g).strip():
+                                            genres.append(str(g).strip())
+                                except Exception:
+                                    continue
+                            videos.append({"rk": rk, "prk": prk, "grk": grk, "vo": vo, "state": st or "", "client_id": cid, "genres": genres})
+                except Exception as xe:
+                    try:
+                        _file_log(f"/genres/apply-by-key sessions xml parse failed: {xe}")
+                    except Exception:
+                        pass
+                    videos = []
+
+            chosen_info = None
+            # Prefer exact match if caller provided a numeric rating key
+            if key_str and key_str.isdigit():
+                for info in videos:
+                    if key_str in (info.get("rk"), info.get("prk"), info.get("grk")):
+                        chosen_info = info
+                        break
+
+            # If no exact match (placeholder/non-numeric or early webhook), pick the best active session
+            if chosen_info is None and videos:
+                def _rank(info):
+                    st = str(info.get("state") or "").lower()
+                    vo = info.get("vo")
+                    active = 1 if st in ("playing", "buffering") else (0.5 if st == "paused" else 0)
+                    vo_score = -int(vo) if isinstance(vo, int) else -999999
+                    return (active, vo_score)
+                chosen_info = sorted(videos, key=_rank, reverse=True)[0]
+
+            if chosen_info is None:
+                _file_log(f"no matching session found for key={key_str}")
+
+            genres_sess: list[str] = []
+            if chosen_info is not None:
+                try:
+                    chosen_key = (chosen_info.get("rk") or chosen_info.get("prk") or chosen_info.get("grk") or None)
+                except Exception:
+                    chosen_key = chosen_info.get("rk") if isinstance(chosen_info, dict) else None
+
+                genres_sess = chosen_info.get("genres", []) or []
+
+            # Dedupe (case-insensitive) while preserving order
+            seen = set()
+            genres_sess = [g for g in genres_sess if not (g.lower() in seen or seen.add(g.lower()))]
+
+            if genres_sess:
+                matched, matched_genre, cat, gm = _resolve_genre_mapping(db, genres_sess)
+                if matched and cat:
+                    ok = _apply_category_to_plex_and_track(db, cat.id, ttl=ttl)
+                    if not ok:
+                        raise HTTPException(status_code=500, detail="Failed to set preroll in Plex (check Plex connection and path mappings)")
+
+                    client_id = chosen_info.get("client_id") if chosen_info else None
+                    view_offset_ms = chosen_info.get("vo") if chosen_info else None
+                    intercepted = False
+                    if _want_intercept_flag() and client_id:
+                        try:
+                            threshold = _intercept_threshold_ms_default()
+                        except Exception:
+                            threshold = 5000
+                        try:
+                            cond = (view_offset_ms is None) or (int(view_offset_ms) < int(threshold))
+                        except Exception:
+                            cond = True
+                        relaunch_key = (chosen_key or key_str)
+                        if cond:
+                            intercepted = _aggressive_intercept(client_id, relaunch_key, view_offset_ms)
+
+                    return {
+                        "applied": True,
+                        "via": "rating_key",
+                        "rating_key": (chosen_key or key_str),
+                        "extracted_genres": genres_sess,
+                        "matched_genre": matched_genre,
+                        "category": {"id": cat.id, "name": cat.name, "plex_mode": getattr(cat, "plex_mode", "shuffle")},
+                        "mapping": {"id": gm.id, "genre": gm.genre},
+                        "override_ttl_minutes": ttl,
+                        "source": "sessions",
+                        "intercepted": intercepted,
+                        "client_id": client_id,
+                        "view_offset_ms": view_offset_ms,
+                    }
+    except Exception as _e:
+        try:
+            _file_log(f"/genres/apply-by-key sessions-first error: {_e}")
+        except Exception:
+            pass
+    meta_key = (chosen_key or key_str)
+    meta_url = f"{str(setting.plex_url).rstrip('/')}/library/metadata/{meta_key}?includeChildren=1"
+
+    try:
+        r = requests.get(meta_url, headers=headers, timeout=8, verify=getattr(connector, "_verify", True))
+    except Exception as e:
+        try:
+            _file_log(f"/genres/apply-by-key metadata fetch error for key={meta_key}: {e}")
+        except Exception:
+            pass
+        return {
+            "applied": False,
+            "matched": False,
+            "message": f"Plex metadata fetch error: {e}",
+            "rating_key": key_str,
+            "extracted_genres": [],
+            "source": "metadata",
+        }
+
+    if r.status_code != 200:
+        try:
+            _file_log(f"/genres/apply-by-key metadata HTTP {r.status_code} for key={meta_key}")
+        except Exception:
+            pass
+        return {
+            "applied": False,
+            "matched": False,
+            "message": f"Plex metadata HTTP {r.status_code} (may be temporarily unavailable at start)",
+            "rating_key": meta_key,
+            "extracted_genres": [],
+            "source": "metadata",
+        }
+
+    # Parse XML for Genre tags
+    genres: list[str] = []
+    try:
+        import xml.etree.ElementTree as ET
+        root = ET.fromstring(r.content)
+        # Typical structure: &lt;MediaContainer&gt;&lt;Video ...&gt;&lt;Genre tag="Horror"/&gt;...&lt;/Video&gt;&lt;/MediaContainer&gt;
+        for node in root.iter():
+            try:
+                tagname = str(getattr(node, "tag", "") or "")
+                if tagname.endswith("Genre") or tagname == "Genre":
+                    g = node.get("tag")
+                    if g and str(g).strip():
+                        genres.append(str(g).strip())
+            except Exception:
+                continue
+        # Dedupe preserve order
+        seen = set()
+        genres = [g for g in genres if not (g.lower() in seen or seen.add(g.lower()))]
+        # If no genres present on this item (e.g., Episode), try parent/grandparent metadata
+        if not genres:
+            try:
+                primary_video = None
+                for _n in root.iter():
+                    _t = str(getattr(_n, "tag", "") or "")
+                    if _t.endswith("Video") or _t == "Video":
+                        primary_video = _n
+                        break
+                prk = (primary_video.get("parentRatingKey") or "").strip() if primary_video is not None else ""
+                grk = (primary_video.get("grandparentRatingKey") or "").strip() if primary_video is not None else ""
+                for rk2 in [k for k in [prk, grk] if k]:
+                    try:
+                        r2 = requests.get(f"{str(setting.plex_url).rstrip('/')}/library/metadata/{rk2}", headers=headers, timeout=6, verify=verify)
+                        if getattr(r2, "status_code", 0) == 200 and getattr(r2, "content", None):
+                            import xml.etree.ElementTree as _ET2
+                            root2 = _ET2.fromstring(r2.content)
+                            for node2 in root2.iter():
+                                try:
+                                    t2 = str(getattr(node2, "tag", "") or "")
+                                    if t2.endswith("Genre") or t2 == "Genre":
+                                        g2 = node2.get("tag")
+                                        if g2 and str(g2).strip():
+                                            genres.append(str(g2).strip())
+                                except Exception:
+                                    continue
+                    except Exception:
+                        continue
+                # Dedupe after merging
+                _seen2 = set()
+                genres = [g for g in genres if not (g.lower() in _seen2 or _seen2.add(g.lower()))]
+            except Exception:
+                # Ignore parent/grandparent fallback errors
+                pass
+    except Exception as e:
+        try:
+            _file_log(f"/genres/apply-by-key metadata XML parse error for key={key_str}: {e}")
+        except Exception:
+            pass
+        return {
+            "applied": False,
+            "matched": False,
+            "message": f"Plex metadata XML parse error: {e}",
+            "rating_key": key_str,
+            "extracted_genres": [],
+            "source": "metadata",
+        }
+
+    # Resolve mapping and apply
+    matched, matched_genre, cat, gm = _resolve_genre_mapping(db, genres)
+    if not matched or not cat:
+        # Keep webhook-friendly contract (200 + applied:false)
+        return {
+            "applied": False,
+            "matched": False,
+            "message": "No matching genre mapping found",
+            "rating_key": key_str,
+            "extracted_genres": genres,
+        }
+
+    ok = _apply_category_to_plex_and_track(db, cat.id, ttl=ttl)
+    if not ok:
+        raise HTTPException(status_code=500, detail="Failed to set preroll in Plex (check Plex connection and path mappings)")
+
+    # Attempt aggressive intercept via current sessions (fresh playback)
+    intercepted = False
+    cid, vo_ms, st, client_addr = _find_client_for_key(meta_key)
+    if _want_intercept_flag() and cid:
+        try:
+            threshold = _intercept_threshold_ms_default()
+        except Exception:
+            threshold = 5000
+        try:
+            cond = (vo_ms is None) or (int(vo_ms) < int(threshold))
+        except Exception:
+            cond = True
+        if cond:
+            intercepted = _aggressive_intercept(cid, key_str, vo_ms, client_addr)
+
+    return {
+        "applied": True,
+        "via": "rating_key",
+        "rating_key": meta_key,
+        "extracted_genres": genres,
+        "matched_genre": matched_genre,
+        "category": {"id": cat.id, "name": cat.name, "plex_mode": getattr(cat, "plex_mode", "shuffle")},
+        "mapping": {"id": gm.id, "genre": gm.genre},
+        "source": "metadata",
+        "override_ttl_minutes": ttl,
+        "intercepted": intercepted,
+        "client_id": cid,
+        "view_offset_ms": vo_ms
+    }
+
+# --- Plex Webhook: immediate genre-based preroll application ---
+def _verify_plex_webhook_signature(request: Request, raw_body: bytes) -> bool:
+    try:
+        secret = os.environ.get("NEXROLL_PLEX_WEBHOOK_SECRET")
+        if not secret:
+            return True
+        sig_hdr = request.headers.get("X-Plex-Signature") or request.headers.get("x-plex-signature")
+        if not sig_hdr:
+            return False
+        computed = base64.b64encode(hmac.new(secret.encode("utf-8"), raw_body, hashlib.sha1).digest()).decode("utf-8")
+        return hmac.compare_digest(sig_hdr.strip(), computed.strip())
+    except Exception:
+        return False
+
+@app.post("/plex/webhook")
+async def plex_webhook(request: Request, ttl: int = 15, intercept: bool | None = None, db: Session = Depends(get_db)):
+    """
+    Plex webhook receiver. Responds to media.play/media.resume by applying mapped genre prerolls.
+    Supports application/json or multipart/form-data with 'payload' JSON field.
+    Optionally verifies X-Plex-Signature when NEXROLL_PLEX_WEBHOOK_SECRET is set.
+    """
+    raw = await request.body()
+    if not _verify_plex_webhook_signature(request, raw):
+        raise HTTPException(status_code=403, detail="Invalid Plex webhook signature")
+
+    # Parse payload
+    data = {}
+    ctype = (request.headers.get("content-type") or "").lower()
+    if "application/json" in ctype:
+        try:
+            data = await request.json()
+        except Exception:
+            data = {}
+    elif "multipart/form-data" in ctype:
+        try:
+            form = await request.form()
+            payload = form.get("payload")
+            payload_text = None
+            try:
+                if hasattr(payload, "read"):
+                    payload_bytes = await payload.read()
+                    payload_text = payload_bytes.decode("utf-8", errors="ignore")
+                elif payload is not None:
+                    payload_text = str(payload)
+            except Exception:
+                payload_text = None
+            if payload_text:
+                try:
+                    data = json.loads(payload_text)
+                except Exception:
+                    data = {}
+        except Exception:
+            data = {}
+    else:
+        try:
+            data = json.loads(raw.decode("utf-8"))
+        except Exception:
+            data = {}
+
+    event = str((data or {}).get("event") or "").lower()
+    if event not in ("media.play", "media.resume", "media.start"):
+        return {"received": True, "ignored": True, "event": event}
+
+    meta = (data.get("Metadata") or data.get("metadata") or {}) if isinstance(data, dict) else {}
+    # Try ratingKey first (most reliable)
+    rating_key = None
+    try:
+        rating_key = str(meta.get("ratingKey") or meta.get("ratingkey") or "").strip() or None
+    except Exception:
+        rating_key = None
+
+    # Compute TTL minutes (fallback 15)
+    ttl_minutes = 15
+    try:
+        st = db.query(models.Setting).first()
+        sec_ttl = getattr(st, "genre_override_ttl_seconds", None)
+        if isinstance(sec_ttl, int) and sec_ttl > 0:
+            ttl_minutes = max(1, int(round(sec_ttl / 60)))  # seconds -> minutes
+    except Exception:
+        pass
+    try:
+        if ttl is not None:
+            ttl_minutes = int(ttl)
+    except Exception:
+        pass
+
+    if rating_key:
+        try:
+            # Reuse existing logic by calling our route function directly
+            intercept_eff = intercept if intercept is not None else True
+            try:
+                _file_log(f"plex_webhook: ratingKey={rating_key}, intercept={intercept_eff}")
+            except Exception:
+                pass
+            result = apply_preroll_by_rating_key(key=rating_key, ttl=ttl_minutes, intercept=intercept_eff, db=db)
+            return {"handled": True, "via": "rating_key", **(result if isinstance(result, dict) else {"result": result})}
+        except HTTPException as he:
+            # Surface structured error to webhook caller without 500s
+            return {"handled": False, "via": "rating_key", "status": he.status_code, "detail": str(he.detail)}
+        except Exception as e:
+            return {"handled": False, "via": "rating_key", "error": str(e)}
+
+    # Fallback: extract genres directly if ratingKey is absent
+    genres: list[str] = []
+    try:
+        g_list = meta.get("Genre") or []
+        for g in g_list:
+            try:
+                tag = g.get("tag") if isinstance(g, dict) else None
+                if tag:
+                    genres.append(str(tag))
+            except Exception:
+                continue
+        for g in (meta.get("genres") or []):
+            if isinstance(g, str):
+                genres.append(g)
+        # Dedupe case-insensitive
+        seen = set()
+        genres = [g for g in genres if not (g.lower() in seen or seen.add(g.lower()))]
+    except Exception:
+        genres = []
+
+    if genres:
+        try:
+            payload = ResolveGenresRequest(genres=genres)
+            result = apply_preroll_by_genres(payload, ttl=ttl_minutes, db=db)
+            return {"handled": True, "via": "genres", **(result if isinstance(result, dict) else {"result": result})}
+        except HTTPException as he:
+            return {"handled": False, "via": "genres", "status": he.status_code, "detail": str(he.detail)}
+        except Exception as e:
+            return {"handled": False, "via": "genres", "error": str(e)}
+
+    return {"received": True, "ignored": True, "reason": "no ratingKey or genres in payload"}
+
+@app.post("/webhooks/plex")
+async def plex_webhook_alias(request: Request, ttl: int = 15, intercept: bool | None = None, db: Session = Depends(get_db)):
+    """Alias path for Plex Webhooks configuration."""
+    return await plex_webhook(request, ttl, intercept, db)
+
 app.mount("/data", StaticFiles(directory=data_dir), name="data")
 
 # Thumbnails are served by dynamic endpoints to support on-demand generation:
@@ -5148,25 +6421,33 @@ def diagnostics_bundle():
 async def events(request: Request):
     """
     Basic SSE endpoint emitting scheduler status and heartbeat every ~5s.
+    Adds an SSE retry hint and hardens against disconnect races to reduce
+    browser 'ERR_INCOMPLETE_CHUNKED_ENCODING' noise on transient network changes.
     """
     import asyncio as _asyncio
     import json as _json
 
     async def _gen():
-        while True:
-            # client disconnected
-            if await request.is_disconnected():
-                break
-            payload = {
-                "type": "status",
-                "time": datetime.datetime.utcnow().isoformat() + "Z",
-                "scheduler": {"running": scheduler.running},
-            }
-            yield f"data: {_json.dumps(payload)}\n\n"
-            await _asyncio.sleep(5)
+        # Advise EventSource to wait ~5s before reconnect attempts
+        yield "retry: 5000\n\n"
+        try:
+            while True:
+                # client disconnected
+                if await request.is_disconnected():
+                    break
+                payload = {
+                    "type": "status",
+                    "time": datetime.datetime.utcnow().isoformat() + "Z",
+                    "scheduler": {"running": scheduler.running},
+                }
+                yield f"data: {_json.dumps(payload)}\n\n"
+                await _asyncio.sleep(5)
+        except Exception:
+            # Swallow cancellation / network errors to end stream cleanly
+            return
 
     headers = {
-        "Cache-Control": "no-cache",
+        "Cache-Control": "no-cache, no-store, must-revalidate, no-transform",
         "Connection": "keep-alive",
         "X-Accel-Buffering": "no",
     }

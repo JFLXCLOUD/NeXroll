@@ -6,9 +6,11 @@ import time
 from typing import List, Optional
 import os
 import sys
+import requests
+import re
 
 from sqlalchemy.orm import Session
-from sqlalchemy import or_
+from sqlalchemy import or_, func
 import nexroll_backend.models as models
 from nexroll_backend.plex_connector import PlexConnector
 from nexroll_backend.database import SessionLocal
@@ -17,6 +19,9 @@ class Scheduler:
     def __init__(self):
         self.running = False
         self.thread = None
+        # Recent per-item apply dedupe and override TTL (seconds)
+        self._last_applied: dict[str, datetime.datetime] = {}
+        self._default_genre_override_ttl_seconds: float = 10.0  # Default if not configured
 
     def start(self):
         """Start the scheduler in a background thread"""
@@ -33,13 +38,281 @@ class Scheduler:
             self.thread.join()
 
     def _run_scheduler(self):
-        """Main scheduler loop - runs every ~15 seconds for better responsiveness"""
+        """Main scheduler loop - runs every ~5 seconds for better responsiveness"""
         while self.running:
+            try:
+                # Auto-apply mapped category from currently playing Plex item (genre-based)
+                self._apply_genre_mapping_from_playback()
+            except Exception as e:
+                print(f"Scheduler genre-monitor error: {e}")
             try:
                 self._check_and_execute_schedules()
             except Exception as e:
                 print(f"Scheduler error: {e}")
-            time.sleep(15)  # Check every 15 seconds
+            time.sleep(1)  # Check every 1 second for faster genre switching
+
+    def _apply_genre_mapping_from_playback(self):
+        """
+        Poll Plex /status/sessions. If a currently playing item has mapped genres,
+        apply the mapped category and set an override window to prevent schedule overrides.
+        Respects genre_auto_apply setting and priority mode.
+        """
+        db = SessionLocal()
+        try:
+            setting = db.query(models.Setting).first()
+            if not setting or not getattr(setting, "plex_url", None):
+                return
+
+            # Check if genre auto-apply is enabled
+            genre_auto_apply = getattr(setting, "genre_auto_apply", True)
+            if not genre_auto_apply:
+                return
+
+            connector = PlexConnector(setting.plex_url, getattr(setting, "plex_token", None))
+            headers = connector.headers or ({"X-Plex-Token": getattr(setting, "plex_token", None)} if getattr(setting, "plex_token", None) else {})
+            verify = getattr(connector, "_verify", True)
+
+            # Fetch current sessions
+            try:
+                r = requests.get(f"{str(setting.plex_url).rstrip('/')}/status/sessions", headers=headers, timeout=6, verify=verify)
+            except Exception as e:
+                print(f"SCHEDULER: Failed to fetch sessions: {e}")
+                return
+            if getattr(r, "status_code", 0) != 200:
+                print(f"SCHEDULER: Sessions API returned status {r.status_code}")
+                return
+            if not r.content:
+                print("SCHEDULER: Sessions API returned empty content")
+                return
+
+            import xml.etree.ElementTree as ET
+            try:
+                root = ET.fromstring(r.content)
+            except Exception as e:
+                print(f"SCHEDULER: Failed to parse sessions XML: {e}")
+                return
+
+            # Choose the first playing video; otherwise any active with viewOffset/viewCount signal
+            chosen_key = None
+            for video in root.iter():
+                try:
+                    tag = str(getattr(video, "tag", "") or "")
+                    if tag.endswith("Video") or tag == "Video":
+                        vtype = (video.get("type") or "").lower()
+                        if vtype not in ("movie", "episode", "clip"):
+                            continue
+                        # inspect child Player state
+                        state = None
+                        for child in list(video):
+                            try:
+                                ctag = str(getattr(child, "tag", "") or "")
+                                if ctag.endswith("Player") or ctag == "Player":
+                                    state = (child.get("state") or "").lower()
+                                    break
+                            except Exception:
+                                pass
+                        rk = video.get("ratingKey") or video.get("ratingkey")
+                        if rk and (state == "playing" or video.get("viewOffset") or (video.get("viewCount") is not None)):
+                            chosen_key = str(rk).strip()
+                            if state == "playing":
+                                break
+                except Exception:
+                    continue
+
+            if not chosen_key:
+                return
+
+            # Dedupe per ratingKey within TTL
+            now = datetime.datetime.utcnow()
+            ttl_seconds = getattr(setting, "genre_override_ttl_seconds", self._default_genre_override_ttl_seconds)
+            last = self._last_applied.get(chosen_key)
+            if last and (now - last) < datetime.timedelta(seconds=ttl_seconds):
+                return
+
+            # Fetch metadata for genres (with parent/grandparent fallback)
+            try:
+                rm = requests.get(f"{str(setting.plex_url).rstrip('/')}/library/metadata/{chosen_key}", headers=headers, timeout=6, verify=verify)
+                if getattr(rm, "status_code", 0) != 200:
+                    print(f"SCHEDULER: Metadata API for {chosen_key} returned status {rm.status_code}")
+                    return
+                if not rm.content:
+                    print(f"SCHEDULER: Metadata API for {chosen_key} returned empty content")
+                    return
+                rootm = ET.fromstring(rm.content)
+            except Exception as e:
+                print(f"SCHEDULER: Failed to fetch/parse metadata for {chosen_key}: {e}")
+                return
+                genres = []
+                for node in rootm.iter():
+                    try:
+                        tagname = str(getattr(node, "tag", "") or "")
+                        if tagname.endswith("Genre") or tagname == "Genre":
+                            g = node.get("tag")
+                            if g and str(g).strip():
+                                genres.append(str(g).strip())
+                    except Exception:
+                        continue
+                # Dedupe case-insensitive preserving order
+                seen = set()
+                genres = [g for g in genres if not (g.lower() in seen or seen.add(g.lower()))]
+                # If no genres present (episodes often), fetch parent/grandparent metadata and merge their Genre tags
+                if not genres:
+                    try:
+                        primary_video = None
+                        for _n in rootm.iter():
+                            _t = str(getattr(_n, "tag", "") or "")
+                            if _t.endswith("Video") or _t == "Video":
+                                primary_video = _n
+                                break
+                        prk = (primary_video.get("parentRatingKey") or "").strip() if primary_video is not None else ""
+                        grk = (primary_video.get("grandparentRatingKey") or "").strip() if primary_video is not None else ""
+                        for rk2 in [k for k in [prk, grk] if k]:
+                            try:
+                                r2 = requests.get(f"{str(setting.plex_url).rstrip('/')}/library/metadata/{rk2}", headers=headers, timeout=6, verify=verify)
+                                if getattr(r2, "status_code", 0) == 200 and getattr(r2, "content", None):
+                                    import xml.etree.ElementTree as _ET2
+                                    root2 = _ET2.fromstring(r2.content)
+                                    for node2 in root2.iter():
+                                        try:
+                                            t2 = str(getattr(node2, "tag", "") or "")
+                                            if t2.endswith("Genre") or t2 == "Genre":
+                                                g2 = node2.get("tag")
+                                                if g2 and str(g2).strip():
+                                                    genres.append(str(g2).strip())
+                                        except Exception:
+                                            continue
+                            except Exception:
+                                continue
+                        _seen2 = set()
+                        genres = [g for g in genres if not (g.lower() in _seen2 or _seen2.add(g.lower()))]
+                    except Exception:
+                        pass
+            except Exception:
+                return
+
+            if not genres:
+                return
+
+            # Local normalization + synonyms (mirror backend route behavior)
+            def _norm_genre_local(s):
+                try:
+                    import unicodedata, re
+                    t = unicodedata.normalize("NFKC", str(s or ""))
+                    t = t.replace("&", " and ")
+                    t = re.sub(r"[/_]", " ", t)
+                    t = re.sub(r"-+", " ", t)
+                    t = " ".join(t.split()).strip().lower()
+                    return t
+                except Exception:
+                    return ""
+
+            def _canonical_local(s):
+                g = _norm_genre_local(s)
+                if not g:
+                    return ""
+                synonyms = {
+                    "sci fi": "science fiction",
+                    "scifi": "science fiction",
+                    "sci-fi": "science fiction",
+                    "kids and family": "family",
+                    "kids family": "family",
+                }
+                return synonyms.get(g, g)
+
+            import re as _re
+            def _candidates(s):
+                base = _canonical_local(s)
+                out = []
+                if base:
+                    out.append(base)
+                    parts = [p.strip() for p in _re.split(r"(?:\s+and\s+|,|\||/)", base) if p and p.strip()]
+                    for p in parts:
+                        if p and p not in out:
+                            out.append(p)
+                # unique preserve order
+                seen = set()
+                return [x for x in out if not (x in seen or seen.add(x))]
+
+            # Resolve mapping
+            matched_cat = None
+            matched_genre_display = None
+            for raw in genres:
+                for key in _candidates(raw):
+                    gm = None
+                    try:
+                        gm = db.query(models.GenreMap).filter(models.GenreMap.genre_norm == key).first()
+                    except Exception:
+                        gm = None
+                    if not gm:
+                        try:
+                            gm = db.query(models.GenreMap).filter(func.lower(models.GenreMap.genre) == key).first()
+                        except Exception:
+                            gm = None
+                    if gm:
+                        cat = db.query(models.Category).filter(models.Category.id == gm.category_id).first()
+                        if cat:
+                            matched_cat = cat
+                            matched_genre_display = raw
+                            break
+                if matched_cat:
+                    break
+
+            if not matched_cat:
+                return
+
+            # Check priority mode: if schedules_override and there's an active schedule, don't apply genre
+            priority_mode = getattr(setting, "genre_priority_mode", "schedules_override")
+            if priority_mode == "schedules_override":
+                # Check if any schedule is currently active
+                schedules = db.query(models.Schedule).filter(models.Schedule.is_active == True).all()
+                now = datetime.datetime.utcnow()
+                active_schedules = [s for s in schedules if self._is_schedule_active(s, now)]
+                if active_schedules:
+                    print(f"SCHEDULER: Skipping genre mapping for ratingKey={chosen_key} due to active schedule (priority mode: {priority_mode})")
+                    return
+
+            # Apply to Plex and set override to protect from scheduler immediately overriding
+            ok = self._apply_category_to_plex(matched_cat.id, db)
+            if not ok:
+                return
+
+            try:
+                st = db.query(models.Setting).first()
+                if not st:
+                    st = models.Setting(plex_url=None, plex_token=None, active_category=matched_cat.id)
+                    db.add(st)
+                st.active_category = matched_cat.id
+                st.override_expires_at = now + datetime.timedelta(seconds=ttl_seconds)
+                st.updated_at = now
+                db.commit()
+            except Exception:
+                try:
+                    db.rollback()
+                except Exception:
+                    pass
+
+            self._last_applied[chosen_key] = now
+
+            # Record for UI feedback
+            from nexroll_backend.main import RECENT_GENRE_APPLICATIONS
+            application = {
+                "timestamp": now.isoformat() + "Z",
+                "genre": matched_genre_display,
+                "category_name": matched_cat.name,
+                "rating_key": chosen_key
+            }
+            RECENT_GENRE_APPLICATIONS.append(application)
+            # Keep only last 10
+            if len(RECENT_GENRE_APPLICATIONS) > 10:
+                RECENT_GENRE_APPLICATIONS.pop(0)
+
+            print(f"SCHEDULER: Genre mapping applied for ratingKey={chosen_key}: '{matched_genre_display}' -> category '{matched_cat.name}'")
+
+        finally:
+            try:
+                db.close()
+            except Exception:
+                pass
 
     def _check_and_execute_schedules(self):
         """Evaluate schedules, apply active category to Plex, and handle fallback when idle."""
@@ -58,6 +331,20 @@ class Scheduler:
                 db.add(setting)
                 db.commit()
                 db.refresh(setting)
+
+            # Respect temporary override window set by genre-apply (prevents immediate scheduler override)
+            try:
+                ovr = getattr(setting, "override_expires_at", None)
+            except Exception:
+                ovr = None
+            if ovr is not None:
+                try:
+                    if now < ovr:
+                        print(f"SCHEDULER: override active until {ovr.isoformat()}Z; skipping schedule apply")
+                        return
+                except Exception:
+                    # If comparison fails for any reason, ignore override
+                    pass
 
             desired_category_id = None
             chosen_schedule = None
@@ -142,8 +429,9 @@ class Scheduler:
         delimiter = "," if isinstance(mode, str) and mode.lower() == "playlist" else ";"
 
         setting = db.query(models.Setting).first()
-        if not setting or not getattr(setting, "plex_url", None) or not getattr(setting, "plex_token", None):
-            print("SCHEDULER: Plex not configured; cannot apply category.")
+        # Allow secure-store token fallback via PlexConnector; only require URL here
+        if not setting or not getattr(setting, "plex_url", None):
+            print("SCHEDULER: Plex not configured (missing URL); cannot apply category.")
             return False
 
         # Translate local paths to Plex-accessible paths using configured mappings
@@ -178,16 +466,69 @@ class Scheduler:
                 if best:
                     dst_prefix = str(best.get("plex"))
                     rest = lp[len(best_src):].lstrip("\\/")
-                    out = os.path.join(dst_prefix, rest)
+                    try:
+                        if ("/" in dst_prefix) and ("\\" not in dst_prefix):
+                            out = dst_prefix.rstrip("/") + "/" + rest.replace("\\", "/")
+                        elif "\\" in dst_prefix:
+                            out = dst_prefix.rstrip("\\") + "\\" + rest.replace("/", "\\")
+                        else:
+                            out = dst_prefix.rstrip("/") + "/" + rest.replace("\\", "/")
+                    except Exception:
+                        out = dst_prefix + (("/" if not dst_prefix.endswith(("/", "\\")) else "") + rest)
                     return out
             except Exception:
                 pass
             return local_path
 
         preroll_paths_plex = [_translate_for_plex(p) for p in preroll_paths_local]
+
+        # Preflight: ensure translated paths match Plex host platform path style
+        connector = PlexConnector(setting.plex_url, setting.plex_token)
+        try:
+            info = connector.get_server_info() or {}
+        except Exception:
+            info = {}
+        platform_str = str(info.get("platform") or info.get("Platform") or "").lower()
+
+        def _looks_windows_path(s: str) -> bool:
+            try:
+                if not s:
+                    return False
+                if s.startswith("\\\\"):
+                    return True
+                if len(s) >= 3 and s[1] == ":" and (s[2] == "\\" or s[2] == "/"):
+                    return True
+            except Exception:
+                pass
+            return False
+
+        def _looks_posix_path(s: str) -> bool:
+            try:
+                if not s:
+                    return False
+                if _looks_windows_path(s):
+                    return False
+                return s.startswith("/")
+            except Exception:
+                return False
+
+        target_windows = ("win" in platform_str) or ("windows" in platform_str)
+        mismatches: list[str] = []
+        try:
+            for out in preroll_paths_plex:
+                if target_windows and _looks_posix_path(out):
+                    mismatches.append(out)
+                elif (not target_windows) and _looks_windows_path(out):
+                    mismatches.append(out)
+        except Exception:
+            mismatches = []
+
+        if mismatches:
+            print(f"SCHEDULER: Path style mismatch with Plex platform '{platform_str}'; example: {mismatches[0]}")
+            return False
+
         combined = delimiter.join(preroll_paths_plex)
 
-        connector = PlexConnector(setting.plex_url, setting.plex_token)
         print(f"SCHEDULER: Applying category_id={category_id} with {len(prerolls)} prerolls to Plex (mode={mode}, delim={'comma' if delimiter==',' else 'semicolon'})…")
         ok = connector.set_preroll(combined)
         print(f"SCHEDULER: {'SUCCESS' if ok else 'FAIL'} setting multi-preroll (mode={mode}).")
@@ -279,8 +620,9 @@ class Scheduler:
         delimiter = ","
 
         setting = db.query(models.Setting).first()
-        if not setting or not getattr(setting, "plex_url", None) or not getattr(setting, "plex_token", None):
-            print("SCHEDULER: Plex not configured; cannot apply sequence.")
+        # Allow secure-store token fallback via PlexConnector; only require URL here
+        if not setting or not getattr(setting, "plex_url", None):
+            print("SCHEDULER: Plex not configured (missing URL); cannot apply sequence.")
             return False
 
         # Translate each path to Plex-visible paths using configured mappings
@@ -315,16 +657,69 @@ class Scheduler:
                 if best:
                     dst_prefix = str(best.get("plex"))
                     rest = lp[len(best_src):].lstrip("\\/")
-                    out = os.path.join(dst_prefix, rest)
+                    try:
+                        if ("/" in dst_prefix) and ("\\" not in dst_prefix):
+                            out = dst_prefix.rstrip("/") + "/" + rest.replace("\\", "/")
+                        elif "\\" in dst_prefix:
+                            out = dst_prefix.rstrip("\\") + "\\" + rest.replace("/", "\\")
+                        else:
+                            out = dst_prefix.rstrip("/") + "/" + rest.replace("\\", "/")
+                    except Exception:
+                        out = dst_prefix + (("/" if not dst_prefix.endswith(("/", "\\")) else "") + rest)
                     return out
             except Exception:
                 pass
             return local_path
 
         paths_plex = [_translate_for_plex(p) for p in paths]
+
+        # Preflight: ensure translated paths match Plex platform path style
+        connector = PlexConnector(setting.plex_url, setting.plex_token)
+        try:
+            info = connector.get_server_info() or {}
+        except Exception:
+            info = {}
+        platform_str = str(info.get("platform") or info.get("Platform") or "").lower()
+
+        def _looks_windows_path(s: str) -> bool:
+            try:
+                if not s:
+                    return False
+                if s.startswith("\\\\"):
+                    return True
+                if len(s) >= 3 and s[1] == ":" and (s[2] == "\\" or s[2] == "/"):
+                    return True
+            except Exception:
+                pass
+            return False
+
+        def _looks_posix_path(s: str) -> bool:
+            try:
+                if not s:
+                    return False
+                if _looks_windows_path(s):
+                    return False
+                return s.startswith("/")
+            except Exception:
+                return False
+
+        target_windows = ("win" in platform_str) or ("windows" in platform_str)
+        mismatches: list[str] = []
+        try:
+            for out in paths_plex:
+                if target_windows and _looks_posix_path(out):
+                    mismatches.append(out)
+                elif (not target_windows) and _looks_windows_path(out):
+                    mismatches.append(out)
+        except Exception:
+            mismatches = []
+
+        if mismatches:
+            print(f"SCHEDULER: Path style mismatch with Plex platform '{platform_str}'; example: {mismatches[0]}")
+            return False
+
         combined = delimiter.join(paths_plex)
 
-        connector = PlexConnector(setting.plex_url, setting.plex_token)
         print(f"SCHEDULER: Applying schedule sequence with {len(paths)} items (mode={mode}, delim={'comma' if delimiter==',' else 'semicolon'})…")
         ok = connector.set_preroll(combined)
         print(f"SCHEDULER: {'SUCCESS' if ok else 'FAIL'} setting sequence preroll list.")

@@ -336,8 +336,9 @@ class PlexConnector:
                             print(f"Trying to set preference: {pref_name} = {preroll_path}")
 
                             # Method A: PUT request with query parameters (correct method per Plex API guide)
+                            qval = urllib.parse.quote(preroll_path, safe=":/\\;, ")
                             set_response = requests.put(
-                                f"{prefs_url}?{pref_name}={preroll_path}",
+                                f"{prefs_url}?{pref_name}={qval}",
                                 headers=self.headers,
                                 timeout=10,
                                 verify=self._verify
@@ -345,8 +346,12 @@ class PlexConnector:
 
                             print(f"Query param response for {pref_name}: {set_response.status_code}")
                             if set_response.status_code in [200, 201, 204]:
-                                print(f"SUCCESS: Successfully set Plex preroll using preference: {pref_name}")
-                                return True
+                                print(f"SUCCESS: Attempted to set Plex preroll using preference: {pref_name}; verifying...")
+                                if self._verify_preroll_setting(pref_name, preroll_path):
+                                    print(f"SUCCESS: Verified preference {pref_name} updated.")
+                                    return True
+                                else:
+                                    print(f"WARNING: Preference {pref_name} returned {set_response.status_code} but value did not change; trying next method...")
 
                             # Method B: PUT request with form data (fallback)
                             set_response = requests.put(
@@ -359,8 +364,12 @@ class PlexConnector:
 
                             print(f"Form data response for {pref_name}: {set_response.status_code}")
                             if set_response.status_code in [200, 201, 204]:
-                                print(f"SUCCESS: Successfully set Plex preroll using form data: {pref_name}")
-                                return True
+                                print(f"SUCCESS: Attempted form-data set for {pref_name}; verifying...")
+                                if self._verify_preroll_setting(pref_name, preroll_path):
+                                    print(f"SUCCESS: Verified preference {pref_name} updated via form data.")
+                                    return True
+                                else:
+                                    print(f"WARNING: Form-data set returned {set_response.status_code} but value did not change; trying POST...")
 
                             # Method C: POST request (some Plex versions use POST)
                             set_response = requests.post(
@@ -452,8 +461,12 @@ class PlexConnector:
                         )
 
                         if set_response.status_code in [200, 201, 204]:
-                            print(f"Successfully set preroll via alternative endpoint: {endpoint}")
-                            return True
+                            print(f"Attempted to set preroll via alternative endpoint: {endpoint}; verifying...")
+                            if self._verify_preroll_setting("CinemaTrailersPrerollID", preroll_path):
+                                print(f"SUCCESS: Verified update via alternative endpoint {endpoint}")
+                                return True
+                            else:
+                                print(f"WARNING: Alternative endpoint {endpoint} returned {set_response.status_code} but value did not change")
 
                 except Exception as e:
                     print(f"Alternative endpoint {endpoint} failed: {str(e)}")
