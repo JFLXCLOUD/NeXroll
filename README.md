@@ -64,7 +64,7 @@ NeXroll supports indexing existing preroll directories without moving files and 
   - Translation is applied automatically by both “Apply to Plex” and the Scheduler (shuffle and playlist).
   - Use “Test Translation” to validate outputs before applying categories to Plex.
 
-## Download and Install (Users)
+## Download and Install
 
 1. Download the latest `NeXroll_Installer.exe` from GitHub Releases:
    https://github.com/JFLXCLOUD/NeXroll/releases
@@ -347,3 +347,4 @@ MIT. Third‑party components remain under their respective licenses.
 If NeXroll is helpful, consider supporting ongoing development:
 
 [![Ko-fi](https://img.shields.io/badge/Ko--fi-Support%20Me-FF5E5B?style=for-the-badge&amp;logo=ko-fi&amp;logoColor=white)](https://ko-fi.com/j_b__)
+
