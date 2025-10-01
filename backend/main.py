@@ -233,6 +233,78 @@ def _file_log(msg: str):
     except Exception:
         pass
 
+# Global logging helpers: write unhandled exceptions and stdout/stderr to ProgramData\NeXroll\logs\app.log
+def _install_global_excepthook():
+    try:
+        import traceback
+        def _hook(exc_type, exc, tb):
+            try:
+                lines = "".join(traceback.format_exception(exc_type, exc, tb))
+                _file_log(f"Unhandled exception: {lines}")
+            except Exception:
+                pass
+        sys.excepthook = _hook
+    except Exception:
+        pass
+
+def _redirect_std_streams():
+    """
+    When running as a packaged EXE, tee stdout/stderr to app.log so print() and uvicorn traces
+    are persisted under ProgramData. Keeps original console streams in dev runs.
+    """
+    try:
+        if not getattr(sys, "frozen", False):
+            return
+        log_path = _log_file_path()
+        os.makedirs(os.path.dirname(log_path), exist_ok=True)
+        # Open a single append handle for both streams
+        lf = open(log_path, "a", encoding="utf-8", buffering=1)
+        class _Tee:
+            def __init__(self, original, fileh):
+                self._orig = original
+                self._fh = fileh
+            def write(self, s):
+                try:
+                    if self._orig:
+                        self._orig.write(s)
+                except Exception:
+                    pass
+                try:
+                    if self._fh:
+                        self._fh.write(s)
+                except Exception:
+                    pass
+            def flush(self):
+                try:
+                    if self._orig:
+                        self._orig.flush()
+                except Exception:
+                    pass
+                try:
+                    if self._fh:
+                        self._fh.flush()
+                except Exception:
+                    pass
+        try:
+            sys.stdout = _Tee(getattr(sys, "stdout", None), lf)
+            sys.stderr = _Tee(getattr(sys, "stderr", None), lf)
+        except Exception:
+            pass
+        _file_log("Stdout/stderr redirection active")
+    except Exception:
+        pass
+
+def _init_global_logging():
+    try:
+        _install_global_excepthook()
+        _redirect_std_streams()
+        _file_log("Global logging initialized")
+    except Exception:
+        pass
+
+# Initialize logging as early as possible in module import
+_init_global_logging()
+
 # Resolve ffmpeg/ffprobe in a PATH-agnostic way (service/tray safe)
 import shutil
 
@@ -740,7 +812,7 @@ def _bootstrap_plex_from_env() -> None:
         pass
 
 
-app = FastAPI(title="NeXroll Backend", version="1.3.7")
+app = FastAPI(title="NeXroll Backend", version="1.3.15")
 
 # In-memory store for Plex.tv OAuth sessions
 OAUTH_SESSIONS: dict[str, dict] = {}
@@ -1100,6 +1172,30 @@ def system_paths():
         info["error"] = str(e)
 
     return info
+
+@app.post("/system/apply-env-vars")
+def apply_env_vars():
+    """
+    Apply Windows environment variables required for genre-based preroll intercept functionality.
+    Requires administrator privileges to set machine-level environment variables.
+    """
+    try:
+        commands = [
+            "[System.Environment]::SetEnvironmentVariable('NEXROLL_INTERCEPT_ALWAYS','1','Machine')",
+            "[System.Environment]::SetEnvironmentVariable('NEXROLL_INTERCEPT_THRESHOLD_MS','15000','Machine')",
+            "[System.Environment]::SetEnvironmentVariable('NEXROLL_INTERCEPT_DELAY_MS','1000','Machine')",
+            "[System.Environment]::SetEnvironmentVariable('NEXROLL_FORCE_INTERCEPT','1','Machine')"
+        ]
+
+        for cmd in commands:
+            result = _run_subprocess(["powershell", "-Command", cmd], capture_output=True, text=True)
+            if result.returncode != 0:
+                raise Exception(f"Failed to set environment variable: {cmd}, error: {result.stderr}")
+
+        return {"success": True, "message": "Environment variables applied successfully"}
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to apply environment variables: {str(e)}")
 
 # Minimal built-in Dashboard with a Reinitialize Thumbnails button
 @app.get("/dashboard")
@@ -5466,6 +5562,26 @@ def apply_preroll_by_genres(req: ResolveGenresRequest, ttl: int = 15, db: Sessio
         "category": {"id": cat.id, "name": cat.name, "plex_mode": getattr(cat, "plex_mode", "shuffle")},
         "mapping": {"id": gm.id, "genre": gm.genre},
         "override_ttl_minutes": ttl
+    }
+
+@app.get("/settings/active-category")
+def get_active_category(db: Session = Depends(get_db)):
+    """Get the currently applied category"""
+    setting = db.query(models.Setting).first()
+    if not setting or not getattr(setting, "active_category", None):
+        return {"active_category": None}
+
+    category_id = getattr(setting, "active_category", None)
+    category = db.query(models.Category).filter(models.Category.id == category_id).first()
+    if not category:
+        return {"active_category": None}
+
+    return {
+        "active_category": {
+            "id": category.id,
+            "name": category.name,
+            "plex_mode": getattr(category, "plex_mode", "shuffle")
+        }
     }
 
 @app.get("/settings/genre")

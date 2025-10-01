@@ -961,6 +961,31 @@ class Scheduler:
                 next_run = next_run.replace(year=now.year + 1)
             return next_run
 
+        elif schedule.type == "holiday":
+            # Find the associated holiday preset and calculate next occurrence
+            db = SessionLocal()
+            try:
+                holiday = db.query(models.HolidayPreset).filter(
+                    models.HolidayPreset.category_id == schedule.category_id
+                ).first()
+                if holiday:
+                    # Use start_month/start_day if available, otherwise fall back to legacy month/day
+                    target_month = getattr(holiday, 'start_month', None) or holiday.month
+                    target_day = getattr(holiday, 'start_day', None) or holiday.day
+
+                    if target_month and target_day:
+                        # Calculate next occurrence of this holiday date
+                        next_run = now.replace(month=target_month, day=target_day,
+                                             hour=schedule.start_date.hour,
+                                             minute=schedule.start_date.minute,
+                                             second=0, microsecond=0)
+                        if next_run <= now:
+                            # If we're past this year's occurrence, schedule for next year
+                            next_run = next_run.replace(year=now.year + 1)
+                        return next_run
+            finally:
+                db.close()
+
         return None
 
     def _matches_pattern(self, now: datetime.datetime, pattern: str) -> bool:
