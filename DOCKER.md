@@ -30,7 +30,7 @@ docker-compose.yml
 version: "3.8"
 services:
   nexroll:
-    image: jbrns/nexroll:1.2.3
+    image: jbrns/nexroll:1.3.7
     network_mode: "host"
     environment:
       - NEXROLL_PORT=9393
@@ -64,7 +64,7 @@ If you cannot use host networking (e.g., Docker Desktop on Windows/macOS), use n
 version: "3.8"
 services:
   nexroll:
-    image: jbrns/nexroll:1.2.3
+    image: jbrns/nexroll:1.3.7
     ports:
       - "9393:9393"
     environment:

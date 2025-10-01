@@ -22,8 +22,8 @@ ShowInstDetails show
 Icon "..\NeXroll_ICON\icon_1758297097_64x64.ico"
 UninstallIcon "..\NeXroll_ICON\icon_1758297097_32x32.ico"
 
-!define APP_VERSION "1.2.2"
-VIProductVersion "1.2.2.0"
+!define APP_VERSION "1.3.7"
+VIProductVersion "1.3.7.0"
 VIAddVersionKey /LANG=1033 "ProductName" "NeXroll"
 VIAddVersionKey /LANG=1033 "ProductVersion" "${APP_VERSION}"
 VIAddVersionKey /LANG=1033 "FileVersion" "${APP_VERSION}"
@@ -103,21 +103,22 @@ Section "!NeXroll Application (Required)" SEC_APP
 
   ; Runtime files only (built by PyInstaller)
   ; Expected locations relative to this .nsi when makensis runs:
-  ;   dist\NeXroll\NeXroll.exe
-  ;   dist\NeXrollService\NeXrollService.exe
-  ;   dist\setup_plex_token\setup_plex_token.exe
+  ;   dist\NeXroll.exe
+  ;   dist\NeXrollService.exe
+  ;   dist\setup_plex_token.exe
+  ;   dist\NeXrollTray.exe
   ;   start_windows.bat (helper launcher - optional)
   ;
   ; If paths differ in your build pipeline, adjust these File lines accordingly.
 
-  ; Main app (onefile output goes under repo-root .\dist\)
-  File /oname=NeXroll.exe "..\dist\NeXroll.exe"
+  ; Main app (onefile output under NeXroll\dist)
+  File /oname=NeXroll.exe "dist\NeXroll.exe"
   ; Windows service wrapper (onefile output)
-  File /oname=NeXrollService.exe "..\dist\NeXrollService.exe"
+  File /oname=NeXrollService.exe "dist\NeXrollService.exe"
   ; Token setup tool (onefile output)
-  File /oname=setup_plex_token.exe "..\dist\setup_plex_token.exe"
+  File /oname=setup_plex_token.exe "dist\setup_plex_token.exe"
   ; Tray app executable (onefile output)
-  File /oname=NeXrollTray.exe "..\dist\NeXrollTray.exe"
+  File /oname=NeXrollTray.exe "dist\NeXrollTray.exe"
   ; Include favicon in install dir (optional reference)
   File /oname=favicon.ico "..\NeXroll_ICON\icon_1758297097_32x32.ico"
   ; Convenience start script

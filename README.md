@@ -158,7 +158,7 @@ Tip: if a previous NeXroll instance is still running and occupying port 9393, th
 Prebuilt image:
 
 ```bash
-docker pull jbrns/nexroll:1.2.3
+docker pull jbrns/nexroll:1.3.7
 ```
 
 ### Linux (recommended: host networking)
@@ -168,7 +168,7 @@ Use host networking so the container can reach Plex on your LAN directly (192.16
 version: "3.8"
 services:
   nexroll:
-    image: jbrns/nexroll:1.2.3
+    image: jbrns/nexroll:1.3.7
     network_mode: "host"
     environment:
       - NEXROLL_PORT=9393
@@ -196,7 +196,7 @@ If host networking is not available (e.g., Docker Desktop):
 version: "3.8"
 services:
   nexroll:
-    image: jbrns/nexroll:1.2.3
+    image: jbrns/nexroll:1.3.7
     ports:
       - "9393:9393"
     environment:
@@ -222,7 +222,7 @@ docker run --name nexroll --rm -p 9393:9393 \
   -e NEXROLL_SECRETS_DIR=/data \
   -e TZ=UTC \
   -v "$(pwd)/nexroll-data:/data" \
-  jbrns/nexroll:1.2.3
+  jbrns/nexroll:1.3.7
 ```
 
 ### docker run (Windows PowerShell)
@@ -235,7 +235,7 @@ docker run --name nexroll --rm -p 9393:9393 `
   -e NEXROLL_SECRETS_DIR=/data `
   -e TZ=UTC `
   -v "${PWD}\nexroll-data:/data" `
-  jbrns/nexroll:1.2.3
+  jbrns/nexroll:1.3.7
 ```
 
 ### Connect to Plex (recommended)
