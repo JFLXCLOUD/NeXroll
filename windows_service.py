@@ -29,7 +29,12 @@ class NeXrollService(win32serviceutil.ServiceFramework):
             os.makedirs(self.log_dir, exist_ok=True)
         except Exception:
             pass
-        self._log("info", "Service initialized.")
+        # Install global logging early so any startup exceptions are captured
+        try:
+            self._install_global_logging()
+        except Exception:
+            pass
+        self._log("info", f"Service initialized. log_dir={self.log_dir}, install_dir={self._get_install_dir()}")
 
     def _get_install_dir(self) -> str:
         # When frozen by PyInstaller, sys.executable is the service exe path
@@ -91,6 +96,64 @@ class NeXrollService(win32serviceutil.ServiceFramework):
     def _get_log_dir(self) -> str:
         base = os.environ.get("PROGRAMDATA") or os.environ.get("ALLUSERSPROFILE") or self._get_install_dir()
         return os.path.join(base, "NeXroll", "logs")
+
+    def _install_global_logging(self):
+        """Install a global excepthook and tee stdout/stderr into the service log."""
+        try:
+            import traceback
+            def _hook(exc_type, exc, tb):
+                try:
+                    lines = "".join(traceback.format_exception(exc_type, exc, tb))
+                    self._log("error", f"Unhandled exception: {lines}")
+                except Exception:
+                    pass
+            sys.excepthook = _hook
+        except Exception:
+            pass
+        # Redirect std streams as best-effort
+        try:
+            self._redirect_std_streams()
+        except Exception:
+            pass
+
+    def _redirect_std_streams(self):
+        try:
+            log_path = os.path.join(self.log_dir, "service.log")
+            os.makedirs(os.path.dirname(log_path), exist_ok=True)
+            lf = open(log_path, "a", encoding="utf-8", buffering=1)
+            class _Tee:
+                def __init__(self, orig, fh):
+                    self._orig = orig
+                    self._fh = fh
+                def write(self, s):
+                    try:
+                        if self._orig:
+                            self._orig.write(s)
+                    except Exception:
+                        pass
+                    try:
+                        if self._fh:
+                            self._fh.write(s)
+                    except Exception:
+                        pass
+                def flush(self):
+                    try:
+                        if self._orig:
+                            self._orig.flush()
+                    except Exception:
+                        pass
+                    try:
+                        if self._fh:
+                            self._fh.flush()
+                    except Exception:
+                        pass
+            try:
+                sys.stdout = _Tee(getattr(sys, "stdout", None), lf)
+                sys.stderr = _Tee(getattr(sys, "stderr", None), lf)
+            except Exception:
+                pass
+        except Exception:
+            pass
 
     def _log(self, level: str, msg: str):
         # Write to Windows Event Log and file
@@ -167,6 +230,7 @@ class NeXrollService(win32serviceutil.ServiceFramework):
             pass
 
         try:
+            self._log("info", f"Launching backend: {' '.join(launch['cmd'])} cwd={launch['cwd']}")
             proc = subprocess.Popen(
                 launch["cmd"],
                 cwd=launch["cwd"],
@@ -235,6 +299,8 @@ class NeXrollService(win32serviceutil.ServiceFramework):
                         self._log("error", "Restart failed; stopping service loop.")
                         break
 
+        except Exception as e:
+            self._log("error", f"Service run loop exception: {e}")
         finally:
             # Ensure backend is stopped on service exit
             self._terminate_backend()

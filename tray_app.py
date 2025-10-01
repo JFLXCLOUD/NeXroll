@@ -20,18 +20,30 @@ LATEST_RELEASE_API = "https://api.github.com/repos/JFLXCLOUD/NeXroll/releases/la
 LATEST_RELEASE_URL = "https://github.com/JFLXCLOUD/NeXroll/releases/latest"
 APP_NAME = "NeXroll"
 
-def _log_tray(msg: str):
+def _tray_log_dir():
     try:
-        # Prefer user-writable locations to avoid requiring elevation
         base = (
-            os.environ.get("LOCALAPPDATA")
-            or os.environ.get("APPDATA")
-            or os.environ.get("PROGRAMDATA")
+            os.environ.get("PROGRAMDATA")
+            or os.environ.get("ProgramData")
             or os.environ.get("ALLUSERSPROFILE")
+            or os.environ.get("LOCALAPPDATA")
+            or os.environ.get("APPDATA")
             or os.path.dirname(sys.executable)
         )
-        log_dir = os.path.join(base, "NeXroll", "logs")
-        os.makedirs(log_dir, exist_ok=True)
+        d = os.path.join(base, "NeXroll", "logs")
+        os.makedirs(d, exist_ok=True)
+        return d
+    except Exception:
+        try:
+            d = os.path.join(os.path.dirname(sys.executable), "logs")
+            os.makedirs(d, exist_ok=True)
+            return d
+        except Exception:
+            return os.getcwd()
+
+def _log_tray(msg: str):
+    try:
+        log_dir = _tray_log_dir()
         ts = time.strftime("%Y-%m-%d %H:%M:%S")
         with open(os.path.join(log_dir, "tray.log"), "a", encoding="utf-8") as f:
             f.write(f"[{ts}] {msg}\n")
@@ -223,51 +235,72 @@ def ensure_backend_running():
 
 
 def start_service(icon: pystray.Icon = None, item=None):
+    _log_tray("start_service: invoked")
     ok = _start_service_blocking()
-    if not ok:
-        _message_box("NeXroll Service", "Failed to start service (may require admin). "
-                     "Attempting to start app instead.")
-        if not _start_app_blocking():
-            _message_box("NeXroll", "Could not start NeXroll. Please run NeXroll.exe manually.")
+    if ok:
+        _log_tray("start_service: service reported healthy")
+        return
+    _log_tray("start_service: service not available; attempting portable app")
+    _message_box("NeXroll Service", "Failed to start service (may require admin). "
+                 "Attempting to start app instead.")
+    if not _start_app_blocking():
+        _log_tray("start_service: portable app launch failed")
+        _message_box("NeXroll", "Could not start NeXroll. Please run NeXroll.exe manually.")
+    else:
+        _log_tray("start_service: portable app reported healthy")
 
 
 def stop_service(icon: pystray.Icon = None, item=None):
+    _log_tray("stop_service: invoked")
     inst, svc, _ = _paths()
     if not os.path.exists(svc):
+        _log_tray("stop_service: service executable not found")
         _message_box("NeXroll Service", "Service executable not found.")
         return
     try:
         subprocess.run([svc, "stop"], cwd=inst, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+        _log_tray("stop_service: stop command issued")
     except Exception as e:
+        _log_tray(f"stop_service: error: {e}")
         _message_box("NeXroll Service", f"Failed to stop service: {e}")
 
 
 def restart_service(icon: pystray.Icon = None, item=None):
+    _log_tray("restart_service: invoked")
     stop_service()
     time.sleep(1.5)
     start_service()
 
 
 def start_app(icon: pystray.Icon = None, item=None):
+    _log_tray("start_app: invoked")
     if not _start_app_blocking():
+        _log_tray("start_app: failed to start portable app")
         _message_box("NeXroll", "Failed to start NeXroll application.")
+    else:
+        _log_tray("start_app: portable app reported healthy")
 
 
 def open_app(icon: pystray.Icon, item=None):
     try:
+        _log_tray(f"open_app: opening {APP_URL}")
         webbrowser.open(APP_URL)
-    except Exception:
+    except Exception as e:
+        _log_tray(f"open_app: error: {e}")
         _message_box("Open NeXroll", f"Could not open {APP_URL}")
 
 
 def open_github(icon: pystray.Icon, item=None):
     try:
+        _log_tray(f"open_github: opening {GITHUB_URL}")
         webbrowser.open(GITHUB_URL)
-    except Exception:
+    except Exception as e:
+        _log_tray(f"open_github: error: {e}")
         _message_box("Open GitHub", f"Could not open {GITHUB_URL}")
 
 
 def rebuild_thumbnails(icon: pystray.Icon = None, item=None):
+    _log_tray("rebuild_thumbnails: POST /thumbnails/rebuild?force=true")
     try:
         req = urllib.request.Request(f"{APP_URL}/thumbnails/rebuild?force=true", method="POST")
         with urllib.request.urlopen(req, timeout=60) as resp:
@@ -279,8 +312,10 @@ def rebuild_thumbnails(icon: pystray.Icon = None, item=None):
             f"Skipped: {data.get('skipped')}\n"
             f"Failures: {data.get('failures')}"
         )
+        _log_tray(f"rebuild_thumbnails: done processed={data.get('processed')} generated={data.get('generated')} skipped={data.get('skipped')} failures={data.get('failures')}")
     except Exception as e:
         msg = f"Rebuild failed: {e}"
+        _log_tray(f"rebuild_thumbnails: error: {e}")
     _message_box("Rebuild Thumbnails", msg)
 
 def _reg_version() -> str | None:
@@ -340,16 +375,20 @@ def check_for_updates(icon: pystray.Icon = None, item=None):
         with urllib.request.urlopen(req, timeout=6) as resp:
             data = json.loads(resp.read().decode("utf-8"))
             latest_tag = data.get("tag_name") or data.get("name")
-    except Exception:
+    except Exception as e:
         latest_tag = None
+        _log_tray(f"check_for_updates: error contacting GitHub: {e}")
 
     if not latest_tag:
+        _log_tray("check_for_updates: latest release not resolved; opening releases page")
         _message_box("NeXroll Update", "Could not check for updates. Opening releases page.")
         try:
             webbrowser.open(LATEST_RELEASE_URL)
         except Exception:
             pass
         return
+
+    _log_tray(f"check_for_updates: installed={current} latest={latest_tag}")
 
     curr_v = _parse_version(current)
     latest_v = _parse_version(latest_tag)
@@ -451,6 +490,7 @@ def get_tray_image():
 
 
 def run_tray():
+    _log_tray("NeXrollTray starting")
     menu = pystray.Menu(
         pystray.MenuItem("Open", open_app, default=True),
         pystray.MenuItem("Start Service", start_service),
@@ -471,5 +511,22 @@ def run_tray():
 
 
 if __name__ == "__main__":
+    # Install a global excepthook to capture unhandled exceptions to ProgramData\NeXroll\logs\tray.log
+    def _tray_excepthook(exc_type, exc, tb):
+        try:
+            import traceback
+            lines = "".join(traceback.format_exception(exc_type, exc, tb))
+            _log_tray(f"Unhandled exception: {lines}")
+        except Exception:
+            pass
+        # Also show a minimal message box to surface fatal errors when running interactively
+        try:
+            _message_box("NeXroll Tray Error", f"{exc_type.__name__}: {exc}")
+        except Exception:
+            pass
+    try:
+        sys.excepthook = _tray_excepthook
+    except Exception:
+        pass
     # Run as GUI app (no console when packaged)
     run_tray()
