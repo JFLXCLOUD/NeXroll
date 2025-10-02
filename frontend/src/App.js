@@ -4890,9 +4890,54 @@ C:\\\\Media\\\\Prerolls\\\\summer\\\\beach.mp4`}
         {activeTab === 'settings' && renderSettings()}
         {activeTab === 'plex' && renderPlex()}
       </div>
-      <div style={{ marginTop: '1rem', fontSize: '0.85rem', color: '#666', textAlign: 'center' }}>
-        NeXroll {systemVersion?.registry_version ? `v${systemVersion.registry_version}` : (systemVersion?.api_version ? `v${systemVersion.api_version}` : '')}
-      </div>
+      <footer
+        className="nx-footer"
+        aria-label="Site footer"
+        style={{
+          marginTop: '1rem',
+          padding: '0.75rem 0.5rem',
+          borderTop: '1px solid var(--border-color, #e0e0e0)',
+          color: 'var(--text-secondary, #666)'
+        }}
+      >
+        <div
+          className="nx-footer-inner"
+          style={{
+            maxWidth: '1200px',
+            margin: '0 auto',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            gap: '0.75rem',
+            flexWrap: 'wrap'
+          }}
+        >
+          <div className="nx-footer-left" style={{ fontSize: '0.85rem', color: 'var(--text-muted, #888)' }}>
+            NeXroll {systemVersion?.registry_version ? `v${systemVersion.registry_version}` : (systemVersion?.api_version ? `v${systemVersion.api_version}` : '')}
+          </div>
+          <div className="nx-footer-links" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+            <a
+              href="https://github.com/JFLXCLOUD/NeXroll"
+              target="_blank"
+              rel="noopener noreferrer"
+              title="GitHub repository"
+              style={{ color: 'var(--text-secondary, #666)', textDecoration: 'none' }}
+            >
+              GitHub
+            </a>
+            <span className="nx-footer-sep" aria-hidden="true" style={{ color: 'var(--text-muted, #999)' }}>•</span>
+            <a
+              href="https://ko-fi.com/j_b__"
+              target="_blank"
+              rel="noopener noreferrer"
+              title="Support on Ko‑fi"
+              style={{ color: 'var(--text-secondary, #666)', textDecoration: 'none' }}
+            >
+              Ko‑fi
+            </a>
+          </div>
+        </div>
+      </footer>
     </div>
   );
 }
