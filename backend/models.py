@@ -112,6 +112,7 @@ class Setting(Base):
     id = Column(Integer, primary_key=True, index=True)
     plex_url = Column(String)  # Chosen Plex server base URL (e.g., http://192.168.1.x:32400)
     plex_token = Column(String)  # Plex auth token (manual/stable/OAuth)
+    jellyfin_url = Column(String)  # Jellyfin base URL (e.g., http://192.168.1.x:8096)
     # Plex.tv Connect (OAuth-style) metadata
     plex_client_id = Column(String, nullable=True)  # X-Plex-Client-Identifier
     plex_server_base_url = Column(String, nullable=True)  # Best-resolved server URL (local preferred)

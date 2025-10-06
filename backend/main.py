@@ -100,6 +100,7 @@ def ensure_schema() -> None:
                 ("updated_at", "updated_at DATETIME"),
                 ("path_mappings", "path_mappings TEXT"),
                 ("override_expires_at", "override_expires_at DATETIME"),
+                ("jellyfin_url", "jellyfin_url TEXT"),
             ]:
                 if not _sqlite_has_column("settings", col):
                     _sqlite_add_column("settings", ddl)
@@ -155,6 +156,7 @@ def ensure_settings_schema_now() -> None:
                 "updated_at": "DATETIME",
                 "path_mappings": "TEXT",
                 "override_expires_at": "DATETIME",
+                "jellyfin_url": "TEXT",
             }
             for col, ddl in need.items():
                 if col not in cols:
@@ -812,7 +814,7 @@ def _bootstrap_plex_from_env() -> None:
         pass
 
 
-app = FastAPI(title="NeXroll Backend", version="1.3.15")
+app = FastAPI(title="NeXroll Backend", version="1.4.4")
 
 # In-memory store for Plex.tv OAuth sessions
 OAUTH_SESSIONS: dict[str, dict] = {}
@@ -984,8 +986,14 @@ def startup_event():
 @app.on_event("startup")
 def startup_env_bootstrap():
     # Independent startup hook to allow env-driven Docker quick-connect
+    # Bootstraps Plex and Jellyfin from environment variables when present.
     try:
         _bootstrap_plex_from_env()
+    except Exception:
+        # keep server healthy regardless of failures here
+        pass
+    try:
+        _bootstrap_jellyfin_from_env()
     except Exception:
         # keep server healthy regardless of failures here
         pass
@@ -1236,6 +1244,7 @@ def dashboard():
       <button onclick="reinit()">Reinitialize Thumbnails</button>
       <button onclick="ffmpeg()">FFmpeg Info</button>
       <button onclick="plex()">Plex Status</button>
+      <button onclick="jellyfin()">Jellyfin Status</button>
       <button onclick="version()">Version</button>
       <small id="status"></small>
     </div>
@@ -1487,6 +1496,19 @@ async function plex(){
   setStatus('Checking Plex status...');
   try{
     const res = await fetch('/plex/status');
+    const j = await res.json();
+    setOut(JSON.stringify(j,null,2));
+    setStatus('OK.');
+  }catch(e){
+    setOut('Error: '+e);
+    setStatus('Failed.');
+  }
+}
+
+async function jellyfin(){
+  setStatus('Checking Jellyfin status...');
+  try{
+    const res = await fetch('/jellyfin/status');
     const j = await res.json();
     setOut(JSON.stringify(j,null,2));
     setStatus('OK.');
@@ -2629,7 +2651,7 @@ def get_prerolls(db: Session = Depends(get_db), category_id: str = "", tags: str
         for tag in tag_list:
             query = query.filter(models.Preroll.tags.contains(tag))
 
-    prerolls = query.distinct().all()
+    prerolls = query.options(joinedload(models.Preroll.category)).distinct().all()
     result = []
     for p in prerolls:
         cats = [{"id": c.id, "name": c.name} for c in (p.categories or [])]
@@ -4775,9 +4797,9 @@ if getattr(sys, "frozen", False):
 else:
     install_root = os.path.dirname(os.path.dirname(__file__))
     resource_root = install_root
-# Prefer built React assets during dev if present; fallback to source 'frontend'
+# Prefer built React assets if present; fallback to source 'frontend'
 _candidate = os.path.join(resource_root, "frontend", "build")
-frontend_dir = _candidate if (not getattr(sys, "frozen", False) and os.path.isdir(_candidate)) else os.path.join(resource_root, "frontend")
+frontend_dir = _candidate if os.path.isdir(_candidate) else os.path.join(resource_root, "frontend")
 
 def _get_windows_preroll_path_from_registry():
     try:
@@ -5190,6 +5212,81 @@ def get_or_create_thumbnail(category: str, thumb_name: str):
             raise HTTPException(status_code=500, detail="Thumbnail generation error")
 
     return FileResponse(thumb_path, media_type="image/jpeg")
+
+@app.get("/static/prerolls/{category}/{filename}")
+def get_preroll_video(category: str, filename: str, db: Session = Depends(get_db)):
+    """
+    Serve preroll video file from PREROLLS_DIR.
+    """
+    # Decode URL-encoded parts then sanitize
+    try:
+        category = unquote(category or "")
+        filename = unquote(filename or "")
+    except Exception:
+        pass
+
+    for frag in (category, filename):
+        if ".." in frag or "/" in frag or "\\" in frag:
+            raise HTTPException(status_code=400, detail="Invalid path")
+
+    # Resolve target video path and ensure category directory exists (case-insensitive)
+    def _resolve_category_dir(root_dir: str, cat: str) -> str:
+        cand = os.path.join(root_dir, cat)
+        if os.path.isdir(cand):
+            return cand
+        try:
+            for d in os.listdir(root_dir):
+                if d.lower() == cat.lower():
+                    return os.path.join(root_dir, d)
+        except Exception:
+            pass
+        # Fallback: use requested category (will be created under PREROLLS_DIR if missing)
+        return cand
+
+    cat_dir = _resolve_category_dir(PREROLLS_DIR, category)
+    video_path = os.path.join(cat_dir, filename)
+
+    # If not exists, try case-insensitive match
+    if not os.path.exists(video_path):
+        try:
+            if os.path.isdir(cat_dir):
+                lower_target = filename.lower()
+                for fname in os.listdir(cat_dir):
+                    if fname.lower() == lower_target:
+                        video_path = os.path.join(cat_dir, fname)
+                        break
+        except Exception:
+            pass
+
+    # If still not found, check for externally managed preroll
+    if not os.path.exists(video_path):
+        try:
+            # Find category by name
+            cat_obj = db.query(models.Category).filter(models.Category.name == category).first()
+            if cat_obj:
+                # Find preroll by filename and category_id
+                preroll = db.query(models.Preroll).filter(
+                    models.Preroll.filename == filename,
+                    models.Preroll.category_id == cat_obj.id
+                ).first()
+                if preroll and getattr(preroll, "managed", True) == False:
+                    # Use the preroll's path directly
+                    video_path = preroll.path
+                    if not os.path.isabs(video_path):
+                        video_path = os.path.join(data_dir, video_path)
+        except Exception:
+            pass
+
+    if not os.path.exists(video_path):
+        raise HTTPException(status_code=404, detail="Video not found")
+
+    # Detect mime type
+    import mimetypes
+    mime_type, _ = mimetypes.guess_type(video_path)
+    if not mime_type or not mime_type.startswith("video/"):
+        mime_type = "video/mp4"  # default
+
+    return FileResponse(video_path, media_type=mime_type)
 
 @app.get("/static/thumbnails/{category}/{thumb_name}")
 def compat_static_thumbnails(category: str, thumb_name: str):
@@ -6548,9 +6645,6 @@ async def events(request: Request):
         yield "retry: 5000\n\n"
         try:
             while True:
-                # client disconnected
-                if await request.is_disconnected():
-                    break
                 payload = {
                     "type": "status",
                     "time": datetime.datetime.utcnow().isoformat() + "Z",
@@ -6563,11 +6657,425 @@ async def events(request: Request):
             return
 
     headers = {
-        "Cache-Control": "no-cache, no-store, must-revalidate, no-transform",
+        "Cache-Control": "no-cache",
         "Connection": "keep-alive",
-        "X-Accel-Buffering": "no",
     }
     return StreamingResponse(_gen(), media_type="text/event-stream", headers=headers)
+
+# --- Jellyfin Integration ---
+class JellyfinConnectRequest(BaseModel):
+    url: str
+    api_key: str
+
+@app.post("/jellyfin/connect")
+def connect_jellyfin(request: JellyfinConnectRequest, db: Session = Depends(get_db)):
+    url = (request.url or "").strip()
+    api_key = (request.api_key or "").strip()
+
+    if not url:
+        raise HTTPException(status_code=422, detail="Jellyfin server URL is required")
+    if not api_key:
+        raise HTTPException(status_code=422, detail="Jellyfin API key is required")
+
+    # Normalize URL format (default to http:// when scheme missing)
+    if not url.startswith(('http://', 'https://')):
+        url = f"http://{url}"
+
+    try:
+        # Deferred import to avoid top-level import churn
+        from nexroll_backend.jellyfin_connector import JellyfinConnector
+        connector = JellyfinConnector(url, api_key)
+
+        # Reachability (public info/ping)
+        if not connector.test_connection():
+            raise HTTPException(status_code=422, detail="Failed to connect to Jellyfin server. Please check your URL.")
+
+        # Persist URL (no plaintext key in DB)
+        setting = db.query(models.Setting).first()
+        if not setting:
+            setting = models.Setting(plex_url=None, plex_token=None, jellyfin_url=url)
+            db.add(setting)
+        else:
+            setting.jellyfin_url = url
+            try:
+                setting.updated_at = datetime.datetime.utcnow()
+            except Exception:
+                pass
+
+        # Save API key to secure store (best-effort)
+        try:
+            secure_store.set_jellyfin_api_key(api_key)
+        except Exception:
+            pass
+
+        db.commit()
+        return {
+            "connected": True,
+            "message": "Successfully connected to Jellyfin server",
+            "token_storage": secure_store.provider_info()[1]
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=422, detail=f"Connection error: {str(e)}")
+
+@app.get("/jellyfin/status")
+def get_jellyfin_status(db: Session = Depends(get_db)):
+    """
+    Return Jellyfin connection status without throwing 500s.
+    Always returns 200 with a JSON object. Logs internal errors where applicable.
+    """
+    try:
+        setting = db.query(models.Setting).first()
+    except Exception:
+        setting = None
+
+    jellyfin_url = getattr(setting, "jellyfin_url", None) if setting else None
+    # Resolve API key from secure store
+    api_key = None
+    try:
+        api_key = secure_store.get_jellyfin_api_key()
+    except Exception:
+        api_key = None
+
+    # If URL missing, report disconnected with hints
+    if not jellyfin_url:
+        out = {"connected": False}
+        try:
+            out["url"] = jellyfin_url
+            out["has_api_key"] = bool(api_key)
+            out["provider"] = secure_store.provider_info()[1]
+        except Exception:
+            pass
+        return out
+
+    try:
+        from nexroll_backend.jellyfin_connector import JellyfinConnector
+        connector = JellyfinConnector(jellyfin_url, api_key)
+        info = connector.get_server_info() or {}
+        if not isinstance(info, dict):
+            info = {}
+        info.setdefault("connected", False)
+        try:
+            info.setdefault("url", jellyfin_url)
+            info.setdefault("has_api_key", bool(api_key))
+            info.setdefault("provider", secure_store.provider_info()[1])
+        except Exception:
+            pass
+        return info
+    except Exception:
+        return {
+            "connected": False,
+            "url": jellyfin_url,
+            "has_api_key": bool(api_key)
+        }
+
+@app.post("/jellyfin/disconnect")
+def disconnect_jellyfin(db: Session = Depends(get_db)):
+    """Disconnect from Jellyfin server by clearing stored credentials"""
+    setting = db.query(models.Setting).first()
+
+    # Clear secure API key (best-effort)
+    try:
+        secure_store.delete_jellyfin_api_key()
+    except Exception:
+        pass
+
+    if setting:
+        setting.jellyfin_url = None
+        try:
+            setting.updated_at = datetime.datetime.utcnow()
+        except Exception:
+            pass
+        db.commit()
+
+    return {"disconnected": True, "message": "Successfully disconnected from Jellyfin server"}
+
+# --- Jellyfin Category Apply/Remove (stub plan) ---
+@app.post("/categories/{category_id}/apply-to-jellyfin")
+def apply_category_to_jellyfin(category_id: int, db: Session = Depends(get_db)):
+    """
+    Apply a category's prerolls to Jellyfin by configuring the 'Local Intros' plugin when available.
+    Always returns a 'plan' for visibility, and attempts to write the derived intro folders
+    into the plugin configuration automatically.
+    """
+    # Validate Jellyfin configuration
+    setting = db.query(models.Setting).first()
+    if not setting or not getattr(setting, "jellyfin_url", None):
+        raise HTTPException(status_code=400, detail="Jellyfin not configured")
+
+    # Resolve API key from secure store
+    try:
+        api_key = secure_store.get_jellyfin_api_key()
+    except Exception:
+        api_key = None
+    if not api_key:
+        raise HTTPException(status_code=400, detail="Jellyfin API key not available")
+
+    # Validate category
+    category = db.query(models.Category).filter(models.Category.id == category_id).first()
+    if not category:
+        raise HTTPException(status_code=404, detail="Category not found")
+
+    # Collect prerolls (primary and many-to-many)
+    prerolls = db.query(models.Preroll) \
+        .outerjoin(models.preroll_categories, models.Preroll.id == models.preroll_categories.c.preroll_id) \
+        .filter(or_(models.Preroll.category_id == category_id,
+                    models.preroll_categories.c.category_id == category_id)) \
+        .distinct().all()
+    if not prerolls:
+        return {
+            "applied": False,
+            "supported": False,
+            "message": "No prerolls found in this category",
+            "preroll_count": 0
+        }
+
+    # Build absolute local paths
+    preroll_paths_local = [os.path.abspath(p.path) for p in prerolls]
+
+    # Translate local paths to server-visible paths using configured mappings (reuse existing mapping store)
+    mappings = []
+    try:
+        raw = getattr(setting, "path_mappings", None)
+        if raw:
+            data = json.loads(raw)
+            if isinstance(data, list):
+                mappings = [m for m in data if isinstance(m, dict) and m.get("local") and m.get("plex")]
+    except Exception:
+        mappings = []
+
+    def _translate_for_server(local_path: str) -> str:
+        try:
+            lp = os.path.normpath(local_path)
+            best = None
+            best_src = None
+            best_len = -1
+            for m in mappings:
+                src = os.path.normpath(str(m.get("local")))
+                if sys.platform.startswith("win"):
+                    if lp.lower().startswith(src.lower()) and len(src) > best_len:
+                        best = m
+                        best_src = src
+                        best_len = len(src)
+                else:
+                    if lp.startswith(src) and len(src) > best_len:
+                        best = m
+                        best_src = src
+                        best_len = len(src)
+            if best:
+                dst_prefix = str(best.get("plex"))
+                rest = lp[len(best_src):].lstrip("\\/")
+                try:
+                    if ("/" in dst_prefix) and ("\\" not in dst_prefix):
+                        out = dst_prefix.rstrip("/") + "/" + rest.replace("\\", "/")
+                    elif "\\" in dst_prefix:
+                        out = dst_prefix.rstrip("\\") + "\\" + rest.replace("/", "\\")
+                    else:
+                        out = dst_prefix.rstrip("/") + "/" + rest.replace("\\", "/")
+                except Exception:
+                    out = dst_prefix + (("/" if not dst_prefix.endswith(("/", "\\")) else "") + rest)
+                return out
+        except Exception:
+            pass
+        return local_path
+
+    translated_paths = [_translate_for_server(p) for p in preroll_paths_local]
+
+    # Best-effort server info and connector instance
+    connector = None
+    try:
+        from nexroll_backend.jellyfin_connector import JellyfinConnector
+        connector = JellyfinConnector(setting.jellyfin_url, api_key)
+        server_info = connector.get_server_info() or {}
+    except Exception:
+        server_info = {}
+
+    plan = {
+        "category": {"id": category.id, "name": category.name},
+        "preroll_count": len(translated_paths),
+        "translated_paths": translated_paths,
+        "playlist_name": f"NeXroll - {category.name} Prerolls",
+        "server": server_info,
+        "notes": [
+            "Jellyfin core does not support global pre-rolls.",
+            "This endpoint attempts to configure the 'Local Intros' plugin automatically.",
+            "Ensure the translated paths are visible to the Jellyfin server."
+        ]
+    }
+
+    # Attempt to apply into 'Local Intros' plugin
+    if connector is None:
+        return {
+            "applied": False,
+            "supported": False,
+            "message": "Jellyfin connector unavailable; returning plan only.",
+            "plan": plan
+        }
+
+    try:
+        # Locate the plugin by name (case-insensitive substring)
+        plugin = (
+            connector.find_plugin_by_name("Local Intros")
+            or connector.find_plugin_by_name("Intros")
+            or connector.find_plugin_by_name("Intro")
+        )
+        if not plugin:
+            try:
+                names = [(p.get("Name") or p.get("name") or "") for p in (connector.list_plugins() or [])]
+                names = [n for n in names if n]
+            except Exception:
+                names = []
+            return {
+                "applied": False,
+                "supported": False,
+                "message": "Local Intros plugin was not found on this Jellyfin server. Install/enable it and try again.",
+                "available_plugins": names,
+                "plan": plan
+            }
+
+        plugin_id = plugin.get("Id") or plugin.get("id") or plugin.get("Guid") or plugin.get("guid")
+        cfg = connector.get_plugin_configuration(plugin_id) or {}
+        if not isinstance(cfg, dict):
+            cfg = {}
+
+        # Derive unique parent directories from translated file paths (plugin may expect directories to scan)
+        def _parent_dir(pth: str) -> str:
+            try:
+                s = str(pth).rstrip("\\/")
+                return os.path.dirname(s) if s else ""
+            except Exception:
+                return ""
+
+        intro_dirs: list[str] = []
+        for pth in translated_paths:
+            d = _parent_dir(pth)
+            if d and d not in intro_dirs:
+                intro_dirs.append(d)
+        intro_items: list[str] = intro_dirs
+
+        # Heuristics to find a writable field in plugin configuration
+        candidate_list_keys = [
+            "IntroPaths", "Paths", "PrerollPaths", "Folders", "Directories",
+            "IntroFolders", "FolderPaths", "paths", "folders", "directories"
+        ]
+        candidate_string_keys = [
+            "Path", "IntroPath", "Folder", "Directory", "IntroFolder", "Root", "BasePath",
+            "path", "folder", "directory"
+        ]
+
+        target_key = None
+        mode = None  # "list" | "string"
+
+        for k in candidate_list_keys:
+            if k in cfg and isinstance(cfg.get(k), list):
+                target_key = k
+                mode = "list"
+                break
+        if not target_key:
+            for k in candidate_string_keys:
+                if k in cfg and isinstance(cfg.get(k), str):
+                    target_key = k
+                    mode = "string"
+                    break
+
+        # If no existing key found, try to force set a common one
+        if not target_key:
+            target_key = "IntroPaths"
+            mode = "list"
+
+        # Apply new values (always try to set, even if key didn't exist)
+        # For Jellyfin Local Intros plugin, set "Local" to the primary directory
+        if intro_items:
+            cfg["Local"] = intro_items[0]
+        if mode == "list":
+            cfg[target_key] = intro_items
+            new_count = len(intro_items)
+        else:
+            cfg[target_key] = intro_items[0] if intro_items else ""
+            new_count = 1 if intro_items else 0
+
+        _file_log(f"Attempting to set Jellyfin plugin {plugin_id} config: {json.dumps(cfg, indent=2)}")
+        current_cfg = connector.get_plugin_configuration(plugin_id) or {}
+        _file_log(f"Jellyfin plugin current config before update: {json.dumps(current_cfg, indent=2)}")
+        # Set DefaultLocalVideos to detected video IDs that match the category's preroll filenames
+        detected = current_cfg.get("DetectedLocalVideos", [])
+        if detected:
+            # Get normalized names from category preroll filenames
+            preroll_filenames = [os.path.basename(p) for p in translated_paths]
+            normalized_names = set()
+            for f in preroll_filenames:
+                name = os.path.splitext(f)[0].replace('_', ' ')
+                normalized_names.add(name)
+            # Match detected videos to category prerolls
+            cfg["DefaultLocalVideos"] = [d.get("ItemId") for d in detected if d.get("ItemId") and d.get("Name") in normalized_names]
+        _file_log(f"Jellyfin plugin config to set: {json.dumps(cfg, indent=2)}")
+        saved = connector.set_plugin_configuration(plugin_id, cfg)
+        _file_log(f"Jellyfin plugin config update result: {saved}")
+        if saved:
+            return {
+                "applied": True,
+                "supported": True,
+                "message": f"Injected {new_count} {'path' if new_count == 1 else 'paths'} into Jellyfin 'Local Intros' plugin.",
+                "details": {
+                    "plugin": {"id": plugin_id, "name": (plugin.get("Name") or plugin.get("name"))},
+                    "updated_key": target_key,
+                    "value_count": new_count,
+                    "paths_preview": intro_items[:5]
+                },
+                "plan": plan
+            }
+        else:
+            # If failed, try alternative keys
+            alt_keys = ["Paths", "IntroPath", "Folder"]
+            for alt_key in alt_keys:
+                if alt_key != target_key:
+                    cfg_alt = cfg.copy()
+                    cfg_alt[alt_key] = intro_dirs if mode == "list" else (intro_dirs[0] if intro_dirs else "")
+                    if connector.set_plugin_configuration(plugin_id, cfg_alt):
+                        return {
+                            "applied": True,
+                            "supported": True,
+                            "message": f"Injected {new_count} {'path' if new_count == 1 else 'paths'} into Jellyfin 'Local Intros' plugin using alternative key '{alt_key}'.",
+                            "details": {
+                                "plugin": {"id": plugin_id, "name": (plugin.get("Name") or plugin.get("name"))},
+                                "updated_key": alt_key,
+                                "value_count": new_count,
+                                "paths_preview": intro_items[:5]
+                            },
+                            "plan": plan
+                        }
+            return {
+                "applied": False,
+                "supported": False,
+                "message": "Failed to update Local Intros plugin configuration with any key.",
+                "plugin": {"id": plugin_id, "name": (plugin.get("Name") or plugin.get("name"))},
+                "tried_keys": [target_key] + alt_keys,
+                "plan": plan
+            }
+
+    except Exception as e:
+        return {
+            "applied": False,
+            "supported": False,
+            "message": f"Jellyfin plugin update error: {e}",
+            "plan": plan
+        }
+
+@app.post("/categories/{category_id}/remove-from-jellyfin")
+def remove_category_from_jellyfin(category_id: int, db: Session = Depends(get_db)):
+    """
+    Stub endpoint mirroring Plex remove semantics. There is no global Jellyfin pre-roll to remove.
+    Returns a structured response to keep UI stable.
+    """
+    cat = db.query(models.Category).filter(models.Category.id == category_id).first()
+    if not cat:
+        raise HTTPException(status_code=404, detail="Category not found")
+    return {
+        "removed": False,
+        "supported": False,
+        "message": "Jellyfin preroll removal is not applicable yet."
+    }
 
 app.mount("/", StaticFiles(directory=frontend_dir, html=True, check_dir=False), name="frontend")
 
@@ -6586,3 +7094,71 @@ if __name__ == "__main__" and not getattr(sys, "frozen", False):
     import uvicorn
     port = int(os.environ.get("NEXROLL_PORT", "9393"))
     uvicorn.run(app, host="0.0.0.0", port=port, log_config=None)
+def _bootstrap_jellyfin_from_env() -> None:
+    """
+    Best-effort auto-connect for Jellyfin:
+    - Reads NEXROLL_JELLYFIN_URL and NEXROLL_JELLYFIN_API_KEY
+    - Persists to settings and secure store when successful
+    """
+    try:
+        url_env = (os.environ.get("NEXROLL_JELLYFIN_URL") or "").strip() or None
+        key_env = (os.environ.get("NEXROLL_JELLYFIN_API_KEY") or "").strip() or None
+        if not url_env and not key_env:
+            return
+
+        db = SessionLocal()
+        try:
+            setting = db.query(models.Setting).first()
+            if not setting:
+                setting = models.Setting(plex_url=None, plex_token=None)
+                db.add(setting)
+                db.commit()
+                db.refresh(setting)
+
+            # Prefer existing working configuration
+            cur_url = getattr(setting, "jellyfin_url", None)
+            cur_key = None
+            try:
+                cur_key = secure_store.get_jellyfin_api_key()
+            except Exception:
+                cur_key = None
+            if cur_url and (cur_key or key_env):
+                try:
+                    from nexroll_backend.jellyfin_connector import JellyfinConnector
+                    if JellyfinConnector(cur_url, cur_key or key_env).test_connection():
+                        return
+                except Exception:
+                    pass
+
+            # Persist API key from env to secure store
+            if key_env:
+                try:
+                    secure_store.set_jellyfin_api_key(key_env)
+                except Exception:
+                    pass
+
+            # If URL provided, test it first
+            if url_env:
+                try:
+                    from nexroll_backend.jellyfin_connector import JellyfinConnector
+                    test_url = url_env if url_env.startswith(("http://", "https://")) else f"http://{url_env}"
+                    ok = JellyfinConnector(test_url, key_env or cur_key).test_connection()
+                except Exception:
+                    ok = False
+                if ok:
+                    setting.jellyfin_url = test_url
+                    try:
+                        setting.updated_at = datetime.datetime.utcnow()
+                    except Exception:
+                        pass
+                    db.commit()
+                    return
+            # If only key present, leave URL untouched
+        finally:
+            try:
+                db.close()
+            except Exception:
+                pass
+    except Exception:
+        # keep server healthy regardless of failures here
+        pass

@@ -587,3 +587,21 @@ def set_plex_token(token: str) -> bool:
 
 def delete_plex_token() -> bool:
     return delete_secret(_PLEX_TOKEN_KEY)
+
+# ----------------------------
+# Convenience for Jellyfin API key
+# ----------------------------
+
+_JELLYFIN_API_KEY = "jellyfin_api_key"
+
+def has_jellyfin_api_key() -> bool:
+    return has_secret(_JELLYFIN_API_KEY)
+
+def get_jellyfin_api_key() -> Optional[str]:
+    return get_secret(_JELLYFIN_API_KEY)
+
+def set_jellyfin_api_key(api_key: str) -> bool:
+    return set_secret(_JELLYFIN_API_KEY, api_key)
+
+def delete_jellyfin_api_key() -> bool:
+    return delete_secret(_JELLYFIN_API_KEY)

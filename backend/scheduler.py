@@ -142,53 +142,53 @@ class Scheduler:
             except Exception as e:
                 print(f"SCHEDULER: Failed to fetch/parse metadata for {chosen_key}: {e}")
                 return
-                genres = []
-                for node in rootm.iter():
-                    try:
-                        tagname = str(getattr(node, "tag", "") or "")
-                        if tagname.endswith("Genre") or tagname == "Genre":
-                            g = node.get("tag")
-                            if g and str(g).strip():
-                                genres.append(str(g).strip())
-                    except Exception:
-                        continue
-                # Dedupe case-insensitive preserving order
-                seen = set()
-                genres = [g for g in genres if not (g.lower() in seen or seen.add(g.lower()))]
-                # If no genres present (episodes often), fetch parent/grandparent metadata and merge their Genre tags
-                if not genres:
-                    try:
-                        primary_video = None
-                        for _n in rootm.iter():
-                            _t = str(getattr(_n, "tag", "") or "")
-                            if _t.endswith("Video") or _t == "Video":
-                                primary_video = _n
-                                break
-                        prk = (primary_video.get("parentRatingKey") or "").strip() if primary_video is not None else ""
-                        grk = (primary_video.get("grandparentRatingKey") or "").strip() if primary_video is not None else ""
-                        for rk2 in [k for k in [prk, grk] if k]:
-                            try:
-                                r2 = requests.get(f"{str(setting.plex_url).rstrip('/')}/library/metadata/{rk2}", headers=headers, timeout=6, verify=verify)
-                                if getattr(r2, "status_code", 0) == 200 and getattr(r2, "content", None):
-                                    import xml.etree.ElementTree as _ET2
-                                    root2 = _ET2.fromstring(r2.content)
-                                    for node2 in root2.iter():
-                                        try:
-                                            t2 = str(getattr(node2, "tag", "") or "")
-                                            if t2.endswith("Genre") or t2 == "Genre":
-                                                g2 = node2.get("tag")
-                                                if g2 and str(g2).strip():
-                                                    genres.append(str(g2).strip())
-                                        except Exception:
-                                            continue
-                            except Exception:
-                                continue
-                        _seen2 = set()
-                        genres = [g for g in genres if not (g.lower() in _seen2 or _seen2.add(g.lower()))]
-                    except Exception:
-                        pass
-            except Exception:
-                return
+
+            # Collect and normalize Genre tags from the item metadata
+            genres: list[str] = []
+            for node in rootm.iter():
+                try:
+                    tagname = str(getattr(node, "tag", "") or "")
+                    if tagname.endswith("Genre") or tagname == "Genre":
+                        g = node.get("tag")
+                        if g and str(g).strip():
+                            genres.append(str(g).strip())
+                except Exception:
+                    continue
+            # Dedupe case-insensitive preserving order
+            seen = set()
+            genres = [g for g in genres if not (g.lower() in seen or seen.add(g.lower()))]
+            # If no genres present (episodes often), fetch parent/grandparent metadata and merge their Genre tags
+            if not genres:
+                try:
+                    primary_video = None
+                    for _n in rootm.iter():
+                        _t = str(getattr(_n, "tag", "") or "")
+                        if _t.endswith("Video") or _t == "Video":
+                            primary_video = _n
+                            break
+                    prk = (primary_video.get("parentRatingKey") or "").strip() if primary_video is not None else ""
+                    grk = (primary_video.get("grandparentRatingKey") or "").strip() if primary_video is not None else ""
+                    for rk2 in [k for k in [prk, grk] if k]:
+                        try:
+                            r2 = requests.get(f"{str(setting.plex_url).rstrip('/')}/library/metadata/{rk2}", headers=headers, timeout=6, verify=verify)
+                            if getattr(r2, "status_code", 0) == 200 and getattr(r2, "content", None):
+                                import xml.etree.ElementTree as _ET2
+                                root2 = _ET2.fromstring(r2.content)
+                                for node2 in root2.iter():
+                                    try:
+                                        t2 = str(getattr(node2, "tag", "") or "")
+                                        if t2.endswith("Genre") or t2 == "Genre":
+                                            g2 = node2.get("tag")
+                                            if g2 and str(g2).strip():
+                                                genres.append(str(g2).strip())
+                                    except Exception:
+                                        continue
+                        except Exception:
+                            continue
+                    _seen2 = set()
+                    genres = [g for g in genres if not (g.lower() in _seen2 or _seen2.add(g.lower()))]
+                except Exception:
+                    pass
 
             if not genres:
                 return
