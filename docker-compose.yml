@@ -1,12 +1,10 @@
-version: "3.8"
-
 services:
   nexroll:
     build:
       context: .
       dockerfile: Dockerfile
       args:
-        APP_VERSION: "1.2.3"
+        APP_VERSION: "1.4.4"
     container_name: nexroll
     network_mode: "host"
     environment:
@@ -16,6 +14,8 @@ services:
       - NEXROLL_SECRETS_DIR=/data
       - PLEX_URL=${PLEX_URL:-}
       - PLEX_TOKEN=${PLEX_TOKEN:-}
+      - JELLYFIN_URL=${JELLYFIN_URL:-}
+      - JELLYFIN_API_KEY=${JELLYFIN_API_KEY:-}
       - TZ=${TZ:-UTC}
     volumes:
       - ./nexroll-data:/data

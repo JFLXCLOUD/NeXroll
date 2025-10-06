@@ -18,7 +18,7 @@ FROM python:3.11-slim
 
 ARG APP_VERSION=dev
 LABEL org.opencontainers.image.title="NeXroll" \
-      org.opencontainers.image.description="NeXroll Plex preroll manager" \
+      org.opencontainers.image.description="NeXroll preroll management system" \
       org.opencontainers.image.version="${APP_VERSION}" \
       org.opencontainers.image.licenses="MIT"
 
@@ -30,7 +30,9 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     NEXROLL_PREROLL_PATH=/data/prerolls \
     NEXROLL_SECRETS_DIR=/data \
     PLEX_URL="" \
-    PLEX_TOKEN=""
+    PLEX_TOKEN="" \
+    JELLYFIN_URL="" \
+    JELLYFIN_API_KEY=""
 
 RUN apt-get update && \
     apt-get install -y --no-install-recommends ffmpeg curl tzdata && \
