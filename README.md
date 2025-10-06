@@ -6,7 +6,7 @@
 
 ---
 
-NeXroll is a Windows-ready Plex preroll management system with a modern web UI, an optional Windows Service, and a lightweight system tray app. All executables are self‑contained (no Python required on user machines), and a single installer configures everything end‑to‑end.
+NeXroll is a Windows-ready preroll management system with a modern web UI, an optional Windows Service, and a lightweight system tray app. All executables are self‑contained (no Python required on user machines), and a single installer configures everything end‑to‑end.
 
 Web UI: http://localhost:9393
 
@@ -28,15 +28,16 @@ Web UI: http://localhost:9393
   - Optional fallback category when no schedule is active
   - Real‑time scheduler status
 - UI enhancements (v1.1.1)
-  - Sticky top navigation bar for persistent access to Dashboard, Schedules, Categories, Settings, and Plex
+  - Sticky top navigation bar for persistent access to Dashboard, Schedules, Categories, Settings, and Connect
   - Pagination for Prerolls: default 20 per page, adjustable up to 50
   - Multi-select with bulk primary category update/move
   - Inline category creation directly from Upload and Edit Preroll
   - Storage usage card on the Dashboard showing total preroll storage used
   - Long preroll title handling so Edit/Delete buttons remain visible in Grid and List views
-- Plex integration
+- Media Server integration
+  - Connect to Plex or Jellyfin servers
   - Connect via URL/token or Stable Token (persistent)
-  - Status monitoring and quick Apply‑to‑Plex actions
+  - Status monitoring and quick Apply-to-Server actions
 - Windows experience
   - One‑click installer with optional Windows Service and System Tray app
   - “Start with Windows,” Firewall rule (TCP 9393), and FFmpeg installation via winget
@@ -46,25 +47,7 @@ Web UI: http://localhost:9393
   - SQLite database storage under %ProgramData%\NeXroll
 - API
   - REST API with interactive docs at http://localhost:9393/docs
-## External Mapping and Plex Path Translation
-
-NeXroll supports indexing existing preroll directories without moving files and translating paths so Plex always receives Plex‑friendly locations.
-
-- Map Existing Preroll Folder (No Move)
-  - Settings → “Map Existing Preroll Folder” lets you index an existing local or UNC directory directly.
-  - Supports recursive scanning, extension filters, optional thumbnail generation, and tags.
-  - Use Dry Run first to preview counts; then Apply to create entries.
-  - Files are marked managed=false, which protects them from on‑disk moves/deletes when you edit metadata or change primary category.
-
-- UNC/local → Plex path mappings
-  - Settings → “UNC/Local → Plex Path Mappings” lets you define prefix pairs:
-    - Example (Plex on Windows): \\NAS\PreRolls → Z:\PreRolls
-    - Example (Plex on Linux):  \\NAS\PreRolls → /mnt/nas/PreRolls
-  - Longest‑prefix wins; on Windows, source matching is case‑insensitive. The separator is inferred from the destination prefix.
-  - Translation is applied automatically by both “Apply to Plex” and the Scheduler (shuffle and playlist).
-  - Use “Test Translation” to validate outputs before applying categories to Plex.
-
-## Download and Install
+## Download and Install (Users)
 
 1. Download the latest `NeXroll_Installer.exe` from GitHub Releases:
    https://github.com/JFLXCLOUD/NeXroll/releases
@@ -137,8 +120,8 @@ Tip: if a previous NeXroll instance is still running and occupying port 9393, th
 ## Requirements (User machines)
 
 - Windows 10/11 x64
-- FFmpeg for thumbnail generation (you can install it from the installer’s optional components, or manually)
-- Network access to your Plex server
+- FFmpeg for thumbnail generation (you can install it from the installer's optional components, or manually)
+- Network access to your Plex or Jellyfin server
 - No Python required on user machines
 
 ---
@@ -146,124 +129,13 @@ Tip: if a previous NeXroll instance is still running and occupying port 9393, th
 ## First‑Time Setup
 
 1. Open http://localhost:9393
-2. Connect to Plex:
-   - Use your Plex URL and token; or
-   - Run `setup_plex_token.exe` to create a long‑lived “stable token,” then connect using that token.
+2. Connect to your media server:
+   - Connect to Plex or Jellyfin using URL and credentials
+   - For Plex: Use your Plex URL and token; or run `setup_plex_token.exe` to create a long‑lived "stable token"
 3. Upload prerolls, create categories, and configure schedules.
 
 ---
- 
-## Docker
 
-Prebuilt image:
-
-```bash
-docker pull jbrns/nexroll:1.3.7
-```
-
-### Linux (recommended: host networking)
-Use host networking so the container can reach Plex on your LAN directly (192.168.x.x). Example docker-compose.yml:
-
-```yaml
-version: "3.8"
-services:
-  nexroll:
-    image: jbrns/nexroll:1.3.7
-    network_mode: "host"
-    environment:
-      - NEXROLL_PORT=9393
-      - NEXROLL_DB_DIR=/data
-      - NEXROLL_PREROLL_PATH=/data/prerolls
-      - NEXROLL_SECRETS_DIR=/data
-      - TZ=UTC
-    volumes:
-      - ./nexroll-data:/data
-    restart: unless-stopped
-```
-
-Then:
-
-```bash
-mkdir -p ./nexroll-data
-docker compose up -d
-# open http://YOUR_HOST:9393
-```
-
-### All platforms (port mapping)
-If host networking is not available (e.g., Docker Desktop):
-
-```yaml
-version: "3.8"
-services:
-  nexroll:
-    image: jbrns/nexroll:1.3.7
-    ports:
-      - "9393:9393"
-    environment:
-      - NEXROLL_PORT=9393
-      - NEXROLL_DB_DIR=/data
-      - NEXROLL_PREROLL_PATH=/data/prerolls
-      - NEXROLL_SECRETS_DIR=/data
-      - TZ=UTC
-    volumes:
-      - ./nexroll-data:/data
-    restart: unless-stopped
-```
-
-On Docker Desktop, Plex on the host is usually reachable from the container via http://host.docker.internal:32400 (ensure firewall allows 32400 for Docker/WSL networks).
-
-### docker run (Linux/macOS)
-
-```bash
-mkdir -p ./nexroll-data
-docker run --name nexroll --rm -p 9393:9393 \
-  -e NEXROLL_DB_DIR=/data \
-  -e NEXROLL_PREROLL_PATH=/data/prerolls \
-  -e NEXROLL_SECRETS_DIR=/data \
-  -e TZ=UTC \
-  -v "$(pwd)/nexroll-data:/data" \
-  jbrns/nexroll:1.3.7
-```
-
-### docker run (Windows PowerShell)
-
-```powershell
-mkdir nexroll-data | Out-Null
-docker run --name nexroll --rm -p 9393:9393 `
-  -e NEXROLL_DB_DIR=/data `
-  -e NEXROLL_PREROLL_PATH=/data/prerolls `
-  -e NEXROLL_SECRETS_DIR=/data `
-  -e TZ=UTC `
-  -v "${PWD}\nexroll-data:/data" `
-  jbrns/nexroll:1.3.7
-```
-
-### Connect to Plex (recommended)
-Use “Method 3: Plex.tv Authentication” on the Plex tab. It auto-discovers a reachable server and saves credentials. For Windows/Linux mixed setups, this is the most reliable approach.
-
-### Make Plex see your files (Path Mappings)
-When you Apply a category to Plex, NeXroll translates local/container paths into Plex-visible paths using the mappings you define in Settings → “UNC/Local → Plex Path Mappings.”
-
-Common examples:
-- Docker NeXroll → Windows Plex (drive letter): local /data/prerolls → plex Z:\Prerolls
-- Docker NeXroll → Windows Plex (UNC): local /data/prerolls → plex \\NAS\Prerolls
-- Docker NeXroll → Docker Plex (Linux): local /data/prerolls → plex /media/prerolls
-- Windows NeXroll → Windows Plex (same host): local C:\Prerolls → plex C:\Prerolls
-- Windows NeXroll → Windows Plex (service or different host): local \\NAS\Prerolls → plex \\NAS\Prerolls
-
-Use “Test Translation” in Settings to verify outputs before applying. The backend preflights platform compatibility and will refuse unusable paths (e.g., “/data/…” for Windows Plex) with a clear error describing what mapping to add; this check runs inside [app.post()](NeXroll/nexroll_backend/main.py:3186).
-
-### Troubleshooting connectivity
-Open the diagnostics endpoint to check DNS, reachability, token, and TLS behavior:
-
-- GET /plex/probe?url=http://YOUR_PLEX:32400 at [app.get()](NeXroll/nexroll_backend/main.py:1742)
-
-If you’re on Docker Desktop, try http://host.docker.internal:32400. On Linux, prefer network_mode: "host".
-
-See the full Docker guide in [DOCKER.md](NeXroll/DOCKER.md).
-
----
- 
 ## Upgrade / Uninstall
 
 - Upgrade: simply run the newer `NeXroll_Installer.exe` over the existing installation. Your configured Preroll storage path is preserved, and data is not removed.
@@ -330,8 +202,8 @@ Outputs:
   - Install FFmpeg (choose the installer component, or install manually); re‑upload a preroll.
 - Tray icon not shown
   - Run “NeXroll Tray” from Start Menu; pin it so it’s always visible.
-- Plex connection issues
-  - Verify Plex is reachable from the machine, and the token is valid (retry `setup_plex_token.exe` if needed).
+- Media server connection issues
+  - Verify your Plex or Jellyfin server is reachable from the machine, and credentials are valid (retry `setup_plex_token.exe` for Plex if needed).
 
 ---
 
@@ -347,4 +219,3 @@ MIT. Third‑party components remain under their respective licenses.
 If NeXroll is helpful, consider supporting ongoing development:
 
 [![Ko-fi](https://img.shields.io/badge/Ko--fi-Support%20Me-FF5E5B?style=for-the-badge&amp;logo=ko-fi&amp;logoColor=white)](https://ko-fi.com/j_b__)
-
