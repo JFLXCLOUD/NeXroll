@@ -1162,3 +1162,153 @@ body.dark .nx-iconbtn--muted {
 @media (prefers-reduced-motion: reduce) {
   .nx-iconbtn { transition: none; }
 }
+
+/* ========== Dashboard Spotlight Cards (2025-10-02) ========== */
+/* Goal: Make dashboard cards eye-catching, readable at-a-glance, and theme-consistent */
+.dashboard .grid .card {
+  position: relative;
+  overflow: hidden;
+  border-radius: 14px;
+  border: 1px solid var(--border-color);
+  background: var(--card-bg);
+  box-shadow: 0 2px 6px var(--shadow);
+  transition: transform 0.12s ease, box-shadow 0.2s ease, border-color 0.2s ease, background-color 0.2s ease;
+}
+
+/* Accent bar at the top of each card (color is set via --nx-accent below) */
+.dashboard .grid .card::before {
+  content: "";
+  position: absolute;
+  top: 0; left: 0; right: 0;
+  height: 4px;
+  background: var(--nx-accent, var(--button-bg));
+}
+
+/* Gentle background vignette for depth */
+.dashboard .grid .card::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: radial-gradient(110% 60% at 110% -10%, rgba(0,0,0,0.06), transparent 50%);
+  opacity: 0.6;
+}
+
+/* Lift on hover for prominence */
+.dashboard .grid .card:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 10px 20px var(--shadow);
+  border-color: var(--nx-accent, var(--border-color));
+}
+
+/* Titles: slightly tighter, stronger hierarchy */
+.dashboard .grid .card h2 {
+  margin-top: 0;
+  margin-bottom: 0.35rem;
+  font-size: 1.05rem;
+  font-weight: 600;
+  letter-spacing: 0.2px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* First paragraph in each card is treated as KPI */
+.dashboard .grid .card > p:first-of-type {
+  margin: 0.15rem 0 0.25rem 0;
+  font-size: 1.3rem;
+  line-height: 1.15;
+  font-weight: 600;
+  color: var(--text-color);
+  letter-spacing: 0;
+}
+
+/* Secondary text (sub-lines) is slightly muted */
+.dashboard .grid .card p + p {
+  margin-top: 0.25rem;
+  font-size: 0.92rem;
+  color: var(--text-secondary);
+}
+
+/* Internal list/grids inside cards keep the depth but reduce borders a bit */
+.dashboard .grid .card .nx-list,
+.dashboard .grid .card .nx-subgrid {
+  background: var(--card-bg);
+  border: 1px solid var(--border-color);
+  border-radius: 10px;
+}
+
+/* Buttons inside cards: stand out but not overpower */
+.dashboard .grid .card .button {
+  box-shadow: 0 1px 3px var(--shadow);
+}
+
+/* Map a distinct accent to each primary dashboard card by order */
+.dashboard .grid .card:nth-child(1) { /* Plex Status */
+  --nx-accent: #0ea5e9; /* sky */
+}
+.dashboard .grid .card:nth-child(2) { /* Prerolls */
+  --nx-accent: #8b5cf6; /* violet */
+}
+.dashboard .grid .card:nth-child(3) { /* Storage */
+  --nx-accent: #14b8a6; /* teal */
+}
+.dashboard .grid .card:nth-child(4) { /* Schedules */
+  --nx-accent: #10b981; /* emerald */
+}
+.dashboard .grid .card:nth-child(5) { /* Scheduler */
+  --nx-accent: #f59e0b; /* amber */
+}
+.dashboard .grid .card:nth-child(6) { /* Current Category */
+  --nx-accent: #f43f5e; /* rose */
+}
+.dashboard .grid .card:nth-child(7) { /* Upcoming Schedules (if shown) */
+  --nx-accent: #6366f1; /* indigo */
+}
+
+/* Dark theme: a bit more shadow and less vignette opacity */
+body.dark .dashboard .grid .card {
+  box-shadow: 0 2px 10px var(--shadow);
+}
+body.dark .dashboard .grid .card::after {
+  opacity: 0.4;
+}
+body.dark .dashboard .grid .card:hover {
+  box-shadow: 0 8px 16px var(--shadow);
+}
+
+/* If status text is used as KPI, emphasize success/error colors clearly */
+.dashboard .grid .card > p:first-of-type .ok,
+.dashboard .grid .card > .ok {
+  color: var(--success-color);
+}
+.dashboard .grid .card > p:first-of-type .bad,
+.dashboard .grid .card > .bad {
+  color: var(--error-color);
+}
+
+/* Optional micro helpers for future JSX tweaks (non-breaking if unused) */
+.nx-card-title { margin: 0 0 0.35rem 0; font-size: 1.05rem; }
+.nx-card-meta { font-size: 0.92rem; color: var(--text-secondary); }
+.nx-card-action { border: 1px solid var(--border-color); background: transparent; color: var(--text-color); }
+.nx-card-action:hover { background: var(--header-bg); }
+.nx-kpi { display: flex; align-items: baseline; gap: 0.5rem; }
+.nx-kpi-value { font-size: 1.3rem; font-weight: 600; line-height: 1.1; color: var(--text-color); }
+.nx-kpi-label, .nx-kpi-sub { font-size: 0.92rem; color: var(--text-secondary); }
+.nx-kpi-value.ok { color: var(--success-color); }
+.nx-kpi-value.bad { color: var(--error-color); }
+
+/* Responsive: keep cards readable on small screens */
+@media (max-width: 768px) {
+  .dashboard .grid .card > p:first-of-type { font-size: 1.2rem; }
+}
+
+/* Prerolls stats spacing fix (2025-10-02) */
+.prerolls-stats {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+.prerolls-stats .stat-item {
+  display: inline-block;
+}

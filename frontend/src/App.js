@@ -100,6 +100,43 @@ const apiUrl = (path) => {
     // silent
   }
 })();
+  
+// Version helpers (module-scope) - stable across renders
+const normalizeVersionString = (input) => {
+  try {
+    if (!input) return '0.0.0';
+    let s = String(input).trim();
+    s = s.replace(/^v+/i, '');
+    s = s.replace(/[_-]/g, '.');
+    const m = s.match(/(\d+(?:\.\d+){0,3})/);
+    return m ? m[1] : '0.0.0';
+  } catch {
+    return '0.0.0';
+  }
+};
+const parseVersion = (v) => {
+  const parts = normalizeVersionString(v).split('.').map(n => parseInt(n, 10) || 0);
+  while (parts.length < 3) parts.push(0);
+  return parts.slice(0, 4);
+};
+const compareVersions = (a, b) => {
+  const pa = parseVersion(a);
+  const pb = parseVersion(b);
+  const len = Math.max(pa.length, pb.length);
+  for (let i = 0; i < len; i++) {
+    const ai = pa[i] || 0;
+    const bi = pb[i] || 0;
+    if (ai > bi) return 1;
+    if (ai < bi) return -1;
+  }
+  return 0;
+};
+const extractVersionFromRelease = (data) => {
+  const tag = (data && data.tag_name) || '';
+  const name = (data && data.name) || '';
+  return normalizeVersionString(tag || name);
+};
+
 const Modal = ({ title, onClose, children, width = 700 }) => {
   React.useEffect(() => {
     const onEsc = (e) => { if (e.key === 'Escape') onClose && onClose(); };
@@ -367,6 +404,7 @@ const CategoryPicker = ({ categories, primaryId, secondaryIds, onChange, onCreat
   );
 };
 function App() {
+  console.log('App component rendering');
   const [plexStatus, setPlexStatus] = useState('Disconnected');
   const [plexServerInfo, setPlexServerInfo] = useState(null);
   const [prerolls, setPrerolls] = useState([]);
@@ -394,6 +432,28 @@ function App() {
     config_file_exists: false,
     token_length: 0
   });
+  const [previewingPreroll, setPreviewingPreroll] = useState(null);
+
+  // Debug: Log when previewingPreroll state changes
+  React.useEffect(() => {
+    console.log('previewingPreroll state changed to:', previewingPreroll);
+  }, [previewingPreroll]);
+  // Media server selection for Connect page
+  const [activeServer, setActiveServer] = useState(() => {
+    try { return localStorage.getItem('activeServer') || 'plex'; } catch { return 'plex'; }
+  });
+  useEffect(() => {
+    try { localStorage.setItem('activeServer', activeServer); } catch {}
+  }, [activeServer]);
+
+  // Jellyfin connection UI state
+  const [jellyfinStatus, setJellyfinStatus] = useState('Disconnected');
+  const [jellyfinServerInfo, setJellyfinServerInfo] = useState(null);
+  const [jellyfinConfig, setJellyfinConfig] = useState({
+    url: '',
+    api_key: ''
+  });
+
   // Plex.tv OAuth UI state and helpers
   const [plexOAuth, setPlexOAuth] = useState({ id: null, url: '', status: 'idle', error: null });
   const oauthPollRef = React.useRef(null);
@@ -449,6 +509,7 @@ genre_override_ttl_seconds: 10
 });
 const [recentGenreApplications, setRecentGenreApplications] = useState([]);
 const [genreSettingsLoading, setGenreSettingsLoading] = useState(false);
+const [applyingToServer, setApplyingToServer] = useState(false);
   // Category preroll management UI state
   const [categoryPrerolls, setCategoryPrerolls] = useState({});
   const [categoryPrerollsLoading, setCategoryPrerollsLoading] = useState({});
@@ -533,6 +594,12 @@ const toLocalInputFromDate = (d) => {
   const [filterCategory, setFilterCategory] = useState('');
   const [availableTags, setAvailableTags] = useState([]);
 
+  // Keep latest filter values for stable fetchData callback
+  const filterCategoryRef = React.useRef(filterCategory);
+  const filterTagsRef = React.useRef(filterTags);
+  React.useEffect(() => { filterCategoryRef.current = filterCategory; }, [filterCategory]);
+  React.useEffect(() => { filterTagsRef.current = filterTags; }, [filterTags]);
+
   // Preroll pagination and selection
   const [selectedPrerollIds, setSelectedPrerollIds] = useState([]);
   const [currentPage, setCurrentPage] = useState(1);
@@ -569,11 +636,10 @@ const toLocalInputFromDate = (d) => {
     try { localStorage.setItem('prerollPageSize', String(pageSize)); } catch {}
   }, [pageSize]);
 
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => {
     const totalPages = Math.max(1, Math.ceil((prerolls || []).length / pageSize));
     setCurrentPage(prev => Math.min(prev, totalPages));
-  }, [prerolls.length, pageSize]);
+  }, [prerolls, pageSize]);
 
   useEffect(() => {
     // Reset to first page when filters change
@@ -599,48 +665,9 @@ const toLocalInputFromDate = (d) => {
   };
 
   // Version helpers and GitHub update check
-  const normalizeVersionString = (input) => {
-    try {
-      if (!input) return '0.0.0';
-      let s = String(input).trim();
-      // strip leading "v"
-      s = s.replace(/^v+/i, '');
-      // treat "-" and "_" as separators
-      s = s.replace(/[_-]/g, '.');
-      // pick up to 4 numeric segments
-      const m = s.match(/(\d+(?:\.\d+){0,3})/);
-      return m ? m[1] : '0.0.0';
-    } catch {
-      return '0.0.0';
-    }
-  };
+  // moved version helpers to module scope for stable callbacks
 
-  const parseVersion = (v) => {
-    const parts = normalizeVersionString(v).split('.').map(n => parseInt(n, 10) || 0);
-    while (parts.length < 3) parts.push(0);
-    return parts.slice(0, 4);
-  };
-
-  const compareVersions = (a, b) => {
-    const pa = parseVersion(a);
-    const pb = parseVersion(b);
-    const len = Math.max(pa.length, pb.length);
-    for (let i = 0; i < len; i++) {
-      const ai = pa[i] || 0;
-      const bi = pb[i] || 0;
-      if (ai > bi) return 1;
-      if (ai < bi) return -1;
-    }
-    return 0;
-  };
-
-  const extractVersionFromRelease = (data) => {
-    const tag = (data && data.tag_name) || '';
-    const name = (data && data.name) || '';
-    return normalizeVersionString(tag || name);
-  };
-
-  const checkForUpdates = async (installedVersion) => {
+  const checkForUpdates = React.useCallback(async (installedVersion) => {
     try {
       const now = Date.now();
       const lastChecked = parseInt(localStorage.getItem('nx_update_checked_at') || '0', 10);
@@ -683,7 +710,7 @@ const toLocalInputFromDate = (d) => {
     } catch (e) {
       console.warn('Update check failed:', e);
     }
-  };
+  }, [compareVersions, extractVersionFromRelease, normalizeVersionString]);
 
   const handleDismissUpdate = () => {
     try {
@@ -717,87 +744,15 @@ const toLocalInputFromDate = (d) => {
     setDarkMode(!darkMode);
   };
 
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  useEffect(() => {
-    fetchData();
-    const interval = setInterval(fetchData, 30000); // Refresh every 30 seconds
-
-    // Live status via Server-Sent Events (SSE)
-    let es;
-    try {
-      es = new EventSource(apiUrl('/events'));
-      es.onmessage = (ev) => {
-        try {
-          const data = JSON.parse(ev.data);
-          if (data && data.scheduler) {
-            setSchedulerStatus(prev => ({
-              ...prev,
-              running: !!data.scheduler.running
-            }));
-          }
-        } catch (e) {
-          // ignore parse errors
-        }
-      };
-      // Swallow transient network disconnects; EventSource auto-reconnects.
-      es.onerror = () => {};
-    } catch (e) {
-      // SSE not available
-    }
-
-    return () => {
-      clearInterval(interval);
-      try { es && es.close(); } catch {}
-    };
-  }, []);
-
-  // Check GitHub for latest release once system version is known
-  useEffect(() => {
-    if (!systemVersion) return;
-    const installed = normalizeVersionString(
-      (systemVersion.registry_version || systemVersion.api_version || '').toString()
-    );
-    checkForUpdates(installed);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [systemVersion]);
-
-  // PWA install prompt handling
-  useEffect(() => {
-    // Check if already installed
-    const isStandalone = window.matchMedia('(display-mode: standalone)').matches;
-    const isInWebAppiOS = window.navigator.standalone === true;
-    setIsInstalled(isStandalone || isInWebAppiOS);
-
-    // Listen for the beforeinstallprompt event
-    const handleBeforeInstallPrompt = (e) => {
-      console.log('PWA install prompt available');
-      e.preventDefault();
-      setDeferredPrompt(e);
-      setShowInstallPrompt(true);
-    };
-
-    // Listen for successful installation
-    const handleAppInstalled = () => {
-      console.log('PWA was installed');
-      setDeferredPrompt(null);
-      setShowInstallPrompt(false);
-      setIsInstalled(true);
-    };
-
-    window.addEventListener('beforeinstallprompt', handleBeforeInstallPrompt);
-    window.addEventListener('appinstalled', handleAppInstalled);
-
-    return () => {
-      window.removeEventListener('beforeinstallprompt', handleBeforeInstallPrompt);
-      window.removeEventListener('appinstalled', handleAppInstalled);
-    };
-  }, []);
- 
-  const fetchData = () => {
+  // eslint-disable-next-line no-use-before-define
+  const fetchData = React.useCallback(() => {
+    const fc = String(filterCategoryRef.current || '');
+    const ft = String(filterTagsRef.current || '');
     // Fetch all data
     Promise.all([
       fetch('http://localhost:9393/plex/status'),
-      fetch(`http://localhost:9393/prerolls?category_id=${filterCategory}&tags=${filterTags}`),
+      fetch('http://localhost:9393/jellyfin/status'),
+      fetch(`http://localhost:9393/prerolls?category_id=${fc}&tags=${ft}`),
       fetch('http://localhost:9393/schedules'),
       fetch('http://localhost:9393/categories'),
       fetch('http://localhost:9393/holiday-presets'),
@@ -810,9 +765,11 @@ const toLocalInputFromDate = (d) => {
       fetch('http://localhost:9393/genres/recent-applications'),
       fetch('http://localhost:9393/settings/active-category')
     ]).then(responses => Promise.all(responses.map(safeJson)))
-      .then(([plex, prerolls, schedules, categories, holidays, scheduler, tags, templates, stableToken, sysVersion, ffmpeg, recentGenreApps, activeCat]) => {
+      .then(([plex, jellyfin, prerolls, schedules, categories, holidays, scheduler, tags, templates, stableToken, sysVersion, ffmpeg, recentGenreApps, activeCat]) => {
         setPlexStatus(plex.connected ? 'Connected' : 'Disconnected');
         setPlexServerInfo(plex);
+        setJellyfinStatus(jellyfin.connected ? 'Connected' : 'Disconnected');
+        setJellyfinServerInfo(jellyfin);
         setPrerolls(Array.isArray(prerolls) ? prerolls : []);
         setSchedules(Array.isArray(schedules) ? schedules : []);
         setCategories(Array.isArray(categories) ? categories : []);
@@ -849,7 +806,83 @@ const toLocalInputFromDate = (d) => {
         setRecentGenreApplications([]);
         setActiveCategory(null);
       });
-  };
+  }, []);
+
+  useEffect(() => {
+    fetchData();
+    const interval = setInterval(fetchData, 30000); // Refresh every 30 seconds
+
+    // Live status via Server-Sent Events (SSE)
+    let es;
+    try {
+      es = new EventSource(apiUrl('/events'));
+      es.onmessage = (ev) => {
+        try {
+          const data = JSON.parse(ev.data);
+          if (data && data.scheduler) {
+            setSchedulerStatus(prev => ({
+              ...prev,
+              running: !!data.scheduler.running
+            }));
+          }
+        } catch (e) {
+          // ignore parse errors
+        }
+      };
+      // Swallow transient network disconnects; EventSource auto-reconnects.
+      es.onerror = () => {};
+    } catch (e) {
+      // SSE not available
+    }
+
+    return () => {
+      clearInterval(interval);
+      try { es && es.close(); } catch {}
+    };
+  }, [fetchData]);
+
+  // Check GitHub for latest release once system version is known
+  useEffect(() => {
+    if (!systemVersion) return;
+    const installed = normalizeVersionString(
+      (systemVersion.registry_version || systemVersion.api_version || '').toString()
+    );
+    checkForUpdates(installed);
+  }, [systemVersion, checkForUpdates]);
+
+  // PWA install prompt handling
+  useEffect(() => {
+    // Check if already installed
+    const isStandalone = window.matchMedia('(display-mode: standalone)').matches;
+    const isInWebAppiOS = window.navigator.standalone === true;
+    setIsInstalled(isStandalone || isInWebAppiOS);
+
+    // Listen for the beforeinstallprompt event
+    const handleBeforeInstallPrompt = (e) => {
+      console.log('PWA install prompt available');
+      e.preventDefault();
+      setDeferredPrompt(e);
+      setShowInstallPrompt(true);
+    };
+
+    // Listen for successful installation
+    const handleAppInstalled = () => {
+      console.log('PWA was installed');
+      setDeferredPrompt(null);
+      setShowInstallPrompt(false);
+      setIsInstalled(true);
+    };
+
+    window.addEventListener('beforeinstallprompt', handleBeforeInstallPrompt);
+    window.addEventListener('appinstalled', handleAppInstalled);
+
+    return () => {
+      window.removeEventListener('beforeinstallprompt', handleBeforeInstallPrompt);
+      window.removeEventListener('appinstalled', handleAppInstalled);
+    };
+  }, []);
+ 
+  // fetchData moved above initial effect
 
   const handleUpload = async (e) => {
     e.preventDefault();
@@ -1049,6 +1082,96 @@ const toLocalInputFromDate = (d) => {
           alert('Failed to remove category from Plex: ' + error.message);
         });
     }
+  };
+
+    // Jellyfin Category Apply/Remove (real apply via Local Intros plugin)
+    const handleApplyCategoryToJellyfin = async (categoryId, categoryName) => {
+      if (jellyfinStatus !== 'Connected') {
+        alert('Jellyfin is not connected.');
+        return;
+      }
+      setApplyingToServer(true);
+      try {
+        const res = await fetch(apiUrl(`/categories/${categoryId}/apply-to-jellyfin`), { method: 'POST' });
+        const text = await res.text();
+        let data = null;
+        try { data = text ? JSON.parse(text) : null; } catch {}
+  
+        if (!res.ok) {
+          const msg = (data && (data.detail || data.message)) || text || `HTTP ${res.status}`;
+          throw new Error(msg);
+        }
+  
+        const plan = (data && data.plan) || null;
+        const applied = !!(data && data.applied);
+        const supported = (data && data.supported);
+        const message = (data && data.message) || '';
+        const details = (data && data.details) || null;
+  
+        if (applied) {
+          const cnt = (details && typeof details.value_count === 'number')
+            ? details.value_count
+            : (plan && Array.isArray(plan.translated_paths) ? plan.translated_paths.length : 0);
+          const pluginName = (details && details.plugin && (details.plugin.name || details.plugin.Name)) || 'Local Intros';
+          const updatedKey = details && details.updated_key ? ` (${details.updated_key})` : '';
+          const previewList = ((details && Array.isArray(details.paths_preview) ? details.paths_preview : (plan?.translated_paths || [])) || [])
+            .slice(0, 5).join('\n');
+  
+          alert(
+            `Applied to Jellyfin: "${categoryName}".\n` +
+            `${message || `Injected ${cnt} folder${cnt === 1 ? '' : 's'} into ${pluginName}${updatedKey}.`}` +
+            (previewList ? `\n\nPreview:\n${previewList}` : '')
+          );
+          try { fetchData(); } catch {}
+          return;
+        }
+  
+        // Not applied; show concise status with plan preview fallback
+        const planCount = plan && Array.isArray(plan.translated_paths) ? plan.translated_paths.length : 0;
+        const previewList = plan ? (plan.translated_paths || []).slice(0, 5).join('\n') : '';
+        const header = supported === false ? 'Jellyfin apply not completed' : 'Jellyfin status';
+
+        // Copy paths to clipboard for manual configuration
+        if (previewList) {
+          navigator.clipboard.writeText(previewList).catch(err => console.warn('Failed to copy to clipboard:', err));
+        }
+
+        alert(
+          `${header}: ${message || 'Operation did not change plugin configuration. Paths copied to clipboard for manual configuration in Jellyfin Local Intros plugin.'}` +
+          (plan ? `\nItems: ${planCount}` : '') +
+          (previewList ? `\n\nPreview:\n${previewList}` : '')
+        );
+      } catch (e) {
+        alert('Failed to apply to Jellyfin: ' + (e && e.message ? e.message : e));
+      } finally {
+        setApplyingToServer(false);
+      }
+    };
+
+
+  // Determine which server is actively connected (enforce single-server UX)
+  const getActiveConnectedServer = () => {
+    const plexConnected = plexStatus === 'Connected';
+    const jellyConnected = jellyfinStatus === 'Connected';
+    if (plexConnected && !jellyConnected) return 'plex';
+    if (!plexConnected && jellyConnected) return 'jellyfin';
+    if (plexConnected && jellyConnected) return 'conflict';
+    return null;
+  };
+
+  const handleApplyCategoryToActiveServer = (categoryId, categoryName) => {
+    const server = getActiveConnectedServer();
+    if (server === 'plex') {
+      return handleApplyCategoryToPlex(categoryId, categoryName);
+    }
+    if (server === 'jellyfin') {
+      return handleApplyCategoryToJellyfin(categoryId, categoryName);
+    }
+    if (server === 'conflict') {
+      alert('Both Plex and Jellyfin are connected. Only one media server connection is allowed. Disconnect one on the Connect tab, then try again.');
+      return;
+    }
+    alert('No media server connected. Connect to Plex or Jellyfin first.');
   };
 
   const toggleScheduler = () => {
@@ -1493,20 +1616,37 @@ const toLocalInputFromDate = (d) => {
 
       const idToApply = (data && data.id) || editingCategory.id;
       const nameToApply = (data && data.name) || name;
-      const resApply = await fetch(`http://localhost:9393/categories/${idToApply}/apply-to-plex`, { method: 'POST' });
-      const applyText = await resApply.text();
-      let applyData = null;
-      try { applyData = applyText ? JSON.parse(applyText) : null; } catch {}
 
-      if (!resApply.ok) {
-        const msg = (applyData && (applyData.detail || applyData.message)) || applyText || `HTTP ${resApply.status}`;
-        throw new Error(`Saved but failed to apply to Plex: ${msg}`);
+      const server = getActiveConnectedServer();
+      if (server === 'plex') {
+        const resApply = await fetch(`http://localhost:9393/categories/${idToApply}/apply-to-plex`, { method: 'POST' });
+        const applyText = await resApply.text();
+        let applyData = null;
+        try { applyData = applyText ? JSON.parse(applyText) : null; } catch {}
+
+        if (!resApply.ok) {
+          const msg = (applyData && (applyData.detail || applyData.message)) || applyText || `HTTP ${resApply.status}`;
+          throw new Error(`Saved but failed to apply to Plex: ${msg}`);
+        }
+
+        alert(`Saved and applied "${nameToApply}" to Plex!`);
+        setEditingCategory(null);
+        setNewCategory({ name: '', description: '' });
+        fetchData();
+      } else if (server === 'jellyfin') {
+        await handleApplyCategoryToJellyfin(idToApply, nameToApply);
+        setEditingCategory(null);
+        setNewCategory({ name: '', description: '' });
+        try { fetchData(); } catch {}
+      } else if (server === 'conflict') {
+        alert('Saved. Both Plex and Jellyfin are connected. Disconnect one on the Connect tab, then apply from the category card.');
+        setEditingCategory(null);
+        setNewCategory({ name: '', description: '' });
+      } else {
+        alert('Saved. No media server is connected. Connect on the Connect tab, then use "Apply to Server" on the category.');
+        setEditingCategory(null);
+        setNewCategory({ name: '', description: '' });
       }
-
-      alert(`Saved and applied "${nameToApply}" to Plex!`);
-      setEditingCategory(null);
-      setNewCategory({ name: '', description: '' });
-      fetchData();
     } catch (error) {
       console.error('Save & Apply category error:', error);
       alert(error.message || 'Failed to save/apply category');
@@ -1693,21 +1833,50 @@ const toLocalInputFromDate = (d) => {
  
       <div className="grid">
         <div className="card">
-          <h2>Plex Status</h2>
-          <p style={{ color: plexStatus === 'Connected' ? 'var(--success-color, #28a745)' : 'var(--error-color, #dc3545)' }}>
-            {plexStatus}
-            {plexServerInfo?.name && (
-              <span style={{ fontSize: '0.9rem', marginLeft: '0.5rem', color: 'var(--text-color)' }}>
-                - {plexServerInfo.name}
-              </span>
-            )}
-          </p>
-          {plexServerInfo && (
-            <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary, #666)', marginTop: '0.5rem' }}>
-              <div>Version: {plexServerInfo.version}</div>
-              <div>Platform: {plexServerInfo.platform}</div>
-            </div>
-          )}
+          <h2>Servers</h2>
+          <div style={{ display: 'grid', gap: '0.35rem' }}>
+            {(() => {
+              const s = getActiveConnectedServer();
+              if (s === 'plex') {
+                return (
+                  <div>
+                    <strong>Plex:</strong>
+                    <span className={`nx-chip nx-status ok`} style={{ marginLeft: '0.35rem' }}>Connected</span>
+                    {plexServerInfo?.name && (
+                      <span style={{ fontSize: '0.9rem', marginLeft: '0.5rem', color: 'var(--text-color)' }}>
+                        - {plexServerInfo.name}{plexServerInfo.version ? ` (${plexServerInfo.version})` : ''}
+                      </span>
+                    )}
+                  </div>
+                );
+              }
+              if (s === 'jellyfin') {
+                return (
+                  <div>
+                    <strong>Jellyfin:</strong>
+                    <span className={`nx-chip nx-status ok`} style={{ marginLeft: '0.35rem' }}>Connected</span>
+                    {jellyfinServerInfo?.name && (
+                      <span style={{ fontSize: '0.9rem', marginLeft: '0.5rem', color: 'var(--text-color)' }}>
+                        - {jellyfinServerInfo.name}{jellyfinServerInfo.version ? ` (${jellyfinServerInfo.version})` : ''}
+                      </span>
+                    )}
+                  </div>
+                );
+              }
+              if (s === 'conflict') {
+                return (
+                  <div style={{ fontSize: '0.9rem', color: '#dc3545' }}>
+                    Conflict: Both Plex and Jellyfin are connected. Disconnect one on the Connect tab.
+                  </div>
+                );
+              }
+              return (
+                <div style={{ fontSize: '0.9rem', color: 'var(--text-secondary, #666)' }}>
+                  No media server connected. Connect to Plex or Jellyfin on the Connect tab.
+                </div>
+              );
+            })()}
+          </div>
         </div>
         <div className="card">
           <h2>Prerolls</h2>
@@ -2230,6 +2399,18 @@ services:
                 </div>
                 <div className="preroll-actions">
                   <button
+                    onClick={() => {
+                      console.log('List preview button clicked for preroll:', preroll);
+                      console.log('Current previewingPreroll state:', previewingPreroll);
+                      setPreviewingPreroll(preroll);
+                      console.log('Setting previewingPreroll to:', preroll);
+                    }}
+                    className="nx-iconbtn"
+                    title="Preview video"
+                  >
+                    ▶️
+                  </button>
+                  <button
                     onClick={() => handleEditPreroll(preroll)}
                     className="nx-iconbtn"
                     title="Edit preroll"
@@ -2348,6 +2529,18 @@ services:
              </div>
            </div>
            <div style={{ display: 'flex', gap: '0.25rem' }}>
+             <button
+               onClick={() => {
+                 console.log('Grid preview button clicked for preroll:', preroll);
+                 console.log('Current previewingPreroll state:', previewingPreroll);
+                 setPreviewingPreroll(preroll);
+                 console.log('Setting previewingPreroll to:', preroll);
+               }}
+               className="nx-iconbtn"
+               title="Preview video"
+             >
+               ▶️
+             </button>
              <button
                onClick={() => handleEditPreroll(preroll)}
                className="nx-iconbtn"
@@ -3057,9 +3250,9 @@ services:
                 className="button"
                 onClick={handleUpdateCategoryAndApply}
                 style={{ backgroundColor: '#28a745' }}
-                title="Save changes and apply to Plex"
+                title="Save changes and apply to connected server"
               >
-                Save & Apply
+                Save & Apply to Server
               </button>
               <button
                 type="button"
@@ -3171,6 +3364,7 @@ services:
         </Modal>
       )}
 
+
       {false && (<div className="upload-section">
         <h2>Holiday Presets</h2>
         <p style={{ marginBottom: '0.5rem', color: '#666' }}>
@@ -3223,48 +3417,33 @@ services:
                 </div>
               </div>
               <p style={{ fontSize: '0.9rem', marginBottom: '0.5rem' }}>{category.description || 'No description'}</p>
-              <p style={{ fontSize: '0.8rem', color: '#666' }}>Plex Preroll Mode: {category.plex_mode === 'playlist' ? 'Sequential' : 'Random'}</p>
+              <p style={{ fontSize: '0.8rem', color: '#666' }}>Preroll Mode: {category.plex_mode === 'playlist' ? 'Sequential' : 'Random'}</p>
 
-              {/* Apply to Plex Section */}
+              {/* Apply to Server */}
               <div style={{ borderTop: '1px solid var(--border-color)', paddingTop: '0.5rem', marginTop: '0.5rem' }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem' }}>
-                  <span style={{ fontSize: '0.8rem', fontWeight: 'bold' }}>Plex Status:</span>
-                  <span style={{
-                    fontSize: '0.8rem',
-                    color: category.apply_to_plex ? 'green' : '#666',
-                    fontWeight: category.apply_to_plex ? 'bold' : 'normal'
-                  }}>
-                    {category.apply_to_plex ? 'Applied' : 'Not Applied'}
-                  </span>
-                </div>
-                <div style={{ display: 'flex', gap: '0.25rem' }}>
-                  <button
-                    onClick={() => handleApplyCategoryToPlex(category.id, category.name)}
-                    className="button"
-                    style={{
-                      fontSize: '0.7rem',
-                      padding: '0.25rem 0.5rem',
-                      backgroundColor: category.apply_to_plex ? '#28a745' : '#007bff',
-                      flex: 1
-                    }}
-                    title="Apply this category to Plex"
-                  >
-                    {category.apply_to_plex ? '🔄 Reapply' : '🎬 Apply to Plex'}
-                  </button>
-                  {category.apply_to_plex && (
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                  {/* Status indicator removed per UX simplification */}
+                  <div style={{ display: 'flex', gap: '0.25rem' }}>
                     <button
-                      onClick={() => handleRemoveCategoryFromPlex(category.id, category.name)}
+                      onClick={() => handleApplyCategoryToActiveServer(category.id, category.name)}
                       className="button"
-                      style={{
-                        fontSize: '0.7rem',
-                        padding: '0.25rem 0.5rem',
-                        backgroundColor: '#6c757d'
-                      }}
-                      title="Remove from Plex"
+                      style={{ fontSize: '0.7rem', padding: '0.25rem 0.5rem' }}
+                      disabled={(() => { const s = getActiveConnectedServer(); return !s || s === 'conflict'; })() || applyingToServer}
+                      title={applyingToServer ? "Applying to server..." : "Apply this category to the connected server"}
                     >
-                      ❌ Remove
+                      {applyingToServer ? '⏳ Applying...' : '🎬 Apply to Server'}
                     </button>
-                  )}
+                    {plexStatus === 'Connected' && category.apply_to_plex && (
+                      <button
+                        onClick={() => handleRemoveCategoryFromPlex(category.id, category.name)}
+                        className="button"
+                        style={{ fontSize: '0.7rem', padding: '0.25rem 0.5rem', backgroundColor: '#6c757d' }}
+                        title="Remove from Plex"
+                      >
+                        ❌ Remove
+                      </button>
+                    )}
+                  </div>
                 </div>
               </div>
 
@@ -3288,6 +3467,10 @@ services:
 
   const handleConnectPlex = (e) => {
     e.preventDefault();
+    if (jellyfinStatus === 'Connected') {
+      alert('Disconnect Jellyfin first (only one media server connection at a time).');
+      return;
+    }
     fetch('http://localhost:9393/plex/connect', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -3313,6 +3496,10 @@ services:
 
   const handleConnectPlexStableToken = (e) => {
     e.preventDefault();
+    if (jellyfinStatus === 'Connected') {
+      alert('Disconnect Jellyfin first (only one media server connection at a time).');
+      return;
+    }
     fetch('http://localhost:9393/plex/connect/stable-token', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -3358,6 +3545,55 @@ services:
     }
   };
 
+  // Jellyfin connect/disconnect handlers
+  const handleConnectJellyfin = (e) => {
+    e.preventDefault();
+    if (plexStatus === 'Connected') {
+      alert('Disconnect Plex first (only one media server connection at a time).');
+      return;
+    }
+    fetch('http://localhost:9393/jellyfin/connect', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        url: jellyfinConfig.url,
+        api_key: jellyfinConfig.api_key
+      })
+    })
+      .then(res => res.json())
+      .then(data => {
+        if (data && data.connected) {
+          alert('Successfully connected to Jellyfin!');
+          fetchData();
+        } else {
+          alert('Failed to connect to Jellyfin. Please check your URL and API key.');
+        }
+      })
+      .catch(error => {
+        console.error('Jellyfin connection error:', error);
+        alert('Failed to connect to Jellyfin: ' + error.message);
+      });
+  };
+
+  const handleDisconnectJellyfin = () => {
+    if (!window.confirm('Are you sure you want to disconnect from Jellyfin? This will clear all stored connection settings.')) return;
+    fetch('http://localhost:9393/jellyfin/disconnect', {
+      method: 'POST'
+    })
+      .then(res => res.json())
+      .then(() => {
+        alert('Successfully disconnected from Jellyfin!');
+        setJellyfinConfig({ url: '', api_key: '' });
+        setJellyfinStatus('Disconnected');
+        setJellyfinServerInfo(null);
+        fetchData();
+      })
+      .catch(error => {
+        console.error('Jellyfin disconnect error:', error);
+        alert('Failed to disconnect from Jellyfin: ' + error.message);
+      });
+  };
+
   // -------- Plex Stable Token: save/update (advanced) --------
   const handleSaveStableToken = async (e) => {
     e.preventDefault();
@@ -3391,6 +3627,10 @@ services:
 
   const startPlexOAuth = async () => {
     try {
+      if (jellyfinStatus === 'Connected') {
+        alert('Disconnect Jellyfin first (only one media server connection at a time).');
+        return;
+      }
       setPlexOAuth({ id: null, url: '', status: 'starting', error: null });
       const res = await fetch('http://localhost:9393/plex/tv/start', { method: 'POST' });
       const data = await res.json();
@@ -3471,7 +3711,7 @@ services:
         {/* Stable Token Connection */}
         <div className="upload-section nx-plex-method" style={{ marginBottom: '2rem' }}>
           <h3 style={{ marginBottom: '0.5rem', color: 'var(--text-color)' }}>🌟 Method 1: Stable Token (Recommended)</h3>
-          <p style={{ fontSize: '0.9rem', color: '#666', marginBottom: '1rem' }}>
+          <p style={{ fontSize: '0.9rem', color: 'var(--text-color)', marginBottom: '1rem' }}>
             Uses a non-expiring token stored securely. The installer selects "Plex Stable Token Setup" by default.
             If your Plex server runs on a different machine, run "Setup Plex Stable Token" from the Start Menu
             on that machine to configure it, then connect here.
@@ -3568,7 +3808,7 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
         {/* Method 2: Manual X-Plex-Token */}
         <div className="upload-section nx-plex-method" style={{ marginBottom: '2rem' }}>
           <h3 style={{ marginBottom: '0.5rem', color: 'var(--text-color)' }}>🧰 Method 2: Manual X-Plex-Token</h3>
-          <p style={{ fontSize: '0.9rem', color: '#666', marginBottom: '1rem' }}>
+          <p style={{ fontSize: '0.9rem', color: 'var(--text-color)', marginBottom: '1rem' }}>
             Enter your Plex server URL and authentication token manually.
           </p>
 
@@ -3623,7 +3863,7 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
         {/* Plex.tv Authentication */}
         <div className="upload-section nx-plex-method" style={{ marginTop: '1rem' }}>
           <h3 style={{ marginBottom: '0.5rem', color: 'var(--text-color)' }}>Method 3: Plex.tv Authentication</h3>
-          <p style={{ fontSize: '0.9rem', color: '#666', marginBottom: '0.75rem' }}>
+          <p style={{ fontSize: '0.9rem', color: 'var(--text-color)', marginBottom: '0.75rem' }}>
             Sign in with Plex.tv to auto-discover a reachable server and save credentials securely.
           </p>
 
@@ -3705,7 +3945,7 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
         {/* Docker Note (Quick Connect removed in favor of Plex.tv auth) */}
         <div className="upload-section nx-plex-method" style={{ marginBottom: '2rem' }}>
           <h3 style={{ marginBottom: '0.5rem', color: 'var(--text-color)' }}>🐳 Docker Note</h3>
-          <p style={{ fontSize: '0.9rem', color: '#666' }}>
+          <p style={{ fontSize: '0.9rem', color: 'var(--text-color)' }}>
             When running NeXroll in Docker, use <strong>Method 3: Plex.tv Authentication</strong> above to connect.
             After connecting, configure <em>UNC/Local → Plex Path Mappings</em> in Settings to translate container/local paths
             (e.g., <code>/data/prerolls</code>) to the path Plex can see on its host
@@ -3716,34 +3956,22 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
         {/* Remote Server Setup Guide */}
         <div style={{ marginTop: '2rem', padding: '1rem', border: '1px solid var(--border-color)', borderRadius: '0.25rem', backgroundColor: 'var(--card-bg)' }}>
           <h3 style={{ marginBottom: '0.5rem', color: 'var(--text-color)' }}>Connecting to Remote Plex Servers</h3>
-          <p style={{ fontSize: '0.9rem', color: '#666', marginBottom: '1rem' }}>
+          <p style={{ fontSize: '0.9rem', color: 'var(--text-color)', marginBottom: '1rem' }}>
             If your Plex server is not on the same machine as NeXroll, you'll need to ensure remote access is configured:
           </p>
-          <ul style={{ fontSize: '0.9rem', color: '#666', paddingLeft: '1.5rem', marginBottom: '1rem' }}>
+          <ul style={{ fontSize: '0.9rem', color: 'var(--text-color)', paddingLeft: '1.5rem', marginBottom: '1rem' }}>
             <li>Enable remote access in your Plex server settings</li>
             <li>Ensure your router forwards port 32400 to your Plex server</li>
             <li>Use your external IP address or domain name in the Server URL field</li>
             <li>If using HTTPS, include 'https://' in the URL</li>
           </ul>
-          <p style={{ fontSize: '0.9rem', color: '#666' }}>
+          <p style={{ fontSize: '0.9rem', color: 'var(--text-color)' }}>
             <strong>Example URLs:</strong><br/>
             Local: http://192.168.1.100:32400<br/>
             Remote: https://my-plex-server.example.com:32400<br/>
             Plex Cloud: https://app.plex.tv/desktop (use your server's URL)
           </p>
         </div>
-
-        {/* Disconnect Button */}
-        {plexStatus === 'Connected' && (
-          <div style={{ marginTop: '1rem', paddingTop: '1rem', borderTop: '1px solid var(--border-color)' }}>
-            <button
-              onClick={handleDisconnectPlex}
-              className="button button-danger"
-            >
-              Disconnect from Plex
-            </button>
-          </div>
-        )}
       </div>
 
       <div className="card">
@@ -3840,7 +4068,7 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
     return [];
   };
 
-  const loadPathMappings = async () => {
+  const loadPathMappings = React.useCallback(async () => {
     setPathMappingsLoading(true);
     try {
       const res = await fetch('http://localhost:9393/settings/path-mappings');
@@ -3855,7 +4083,7 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
     } finally {
       setPathMappingsLoading(false);
     }
-  };
+  }, []);
 
   const addMappingRow = () => setPathMappings(prev => [...prev, { local: '', plex: '' }]);
   const updateMappingRow = (idx, field, value) =>
@@ -3941,7 +4169,7 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
     }
   };
 
-  const loadGenreMaps = async () => {
+  const loadGenreMaps = React.useCallback(async () => {
     setGenreMapsLoading(true);
     try {
       const res = await fetch(apiUrl('/genres/map'));
@@ -3953,9 +4181,9 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
     } finally {
       setGenreMapsLoading(false);
     }
-  };
+  }, []);
 
-  const loadGenreSettings = async () => {
+  const loadGenreSettings = React.useCallback(async () => {
     try {
       const res = await fetch(apiUrl('/settings/genre'));
       const data = await safeJson(res);
@@ -3965,19 +4193,8 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
     } catch (err) {
       console.error('Load genre settings error:', err);
     }
-  };
+  }, []);
 
-  const loadRecentGenreApplications = async () => {
-    try {
-      const res = await fetch(apiUrl('/genres/recent-applications'));
-      const data = await safeJson(res);
-      if (data && Array.isArray(data.applications)) {
-        setRecentGenreApplications(data.applications);
-      }
-    } catch (err) {
-      console.error('Load recent genre applications error:', err);
-    }
-  };
 
   const updateGenreSettings = async (updates) => {
     setGenreSettingsLoading(true);
@@ -4225,15 +4442,14 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
   // Auto-load mappings at startup
   React.useEffect(() => {
     try { loadPathMappings(); } catch {}
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [loadPathMappings]);
 
   // Auto-load genre mappings and settings when opening Settings tab
   React.useEffect(() => {
     if (activeTab === 'settings') {
       try { loadGenreMaps(); loadGenreSettings(); } catch {}
     }
-  }, [activeTab]);
+  }, [activeTab, loadGenreMaps, loadGenreSettings]);
 
   const renderSettings = () => (
     <div>
@@ -4253,8 +4469,9 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
 
       <details className="card">
         <summary style={{ cursor: 'pointer' }}>
-          <h2 style={{ display: 'inline' }}>Genre-based Preroll Mapping</h2>
+          <h2 style={{ display: 'inline' }}>Plex Settings</h2>
         </summary>
+        <h3 style={{ marginTop: 0 }}>Genre-based Preroll Mapping</h3>
 
         {/* Master Toggle */}
         <div style={{ marginBottom: '1rem', padding: '1rem', backgroundColor: 'var(--card-bg)', border: '1px solid var(--border-color)', borderRadius: '6px' }}>
@@ -4493,12 +4710,9 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
             Call GET <code>/genres/apply?genres=Horror,Thriller</code> when playback starts (e.g., via Tautulli webhook) to apply the mapped category to Plex automatically.
           </div>
         </details>
-      </details>
-
-      <details className="card">
-        <summary style={{ cursor: 'pointer' }}>
-          <h2 style={{ display: 'inline' }}>UNC/Local → Plex Path Mappings</h2>
-        </summary>
+      {/* Path Mappings moved under Plex Settings */}
+      <div style={{ marginTop: '1rem', borderTop: '1px solid var(--border-color)', paddingTop: '0.5rem' }}>
+        <h3 style={{ marginTop: 0 }}>Path Mappings (Plex)</h3>
         <p style={{ marginBottom: '0.5rem', color: 'var(--text-color)' }}>
           Define how local or UNC paths should be translated to Plex-readable paths when applying prerolls.
           Longest-prefix rule applies; Windows local prefixes are matched case-insensitively.
@@ -4572,7 +4786,9 @@ C:\\\\Media\\\\Prerolls\\\\summer\\\\beach.mp4`}
             </div>
           )}
         </div>
+      </div>
       </details>
+
 
 
       <details className="card">
@@ -4738,6 +4954,214 @@ C:\\\\Media\\\\Prerolls\\\\summer\\\\beach.mp4`}
     </div>
   );
 
+  const renderJellyfin = () => (
+    <div>
+      <h1 className="header">Jellyfin Integration</h1>
+
+      <div className="card">
+        <h2>Connect to Jellyfin Server</h2>
+        <p style={{ marginBottom: '1rem', color: 'var(--text-color)' }}>
+          Connect your Jellyfin server to enable preroll management for Jellyfin.
+        </p>
+        <form onSubmit={handleConnectJellyfin}>
+          <div style={{ display: 'grid', gap: '1rem', marginBottom: '1rem' }}>
+            <div>
+              <label style={{ display: 'block', marginBottom: '0.5rem', fontWeight: 'bold' }}>
+                Jellyfin Server URL
+              </label>
+              <input
+                type="url"
+                placeholder="http://127.0.0.1:8096"
+                value={jellyfinConfig.url}
+                onChange={(e) => setJellyfinConfig({ ...jellyfinConfig, url: e.target.value })}
+                required
+                style={{ width: '100%', padding: '0.5rem' }}
+              />
+            </div>
+            <div>
+              <label style={{ display: 'block', marginBottom: '0.5rem', fontWeight: 'bold' }}>
+                API Key
+              </label>
+              <input
+                type="password"
+                placeholder="Enter your Jellyfin API key"
+                value={jellyfinConfig.api_key}
+                onChange={(e) => setJellyfinConfig({ ...jellyfinConfig, api_key: e.target.value })}
+                required
+                style={{ width: '100%', padding: '0.5rem' }}
+              />
+              <details className="nx-plex-help" style={{ marginTop: '0.5rem' }}>
+                <summary>How to create a Jellyfin API key</summary>
+                <ol style={{ marginTop: '0.5rem' }}>
+                  <li>Open Jellyfin Web</li>
+                  <li>Go to Dashboard → Advanced → API Keys</li>
+                  <li>Create a new API key and copy it</li>
+                </ol>
+              </details>
+            </div>
+          </div>
+          <button type="submit" className="button button-success">
+            Connect to Jellyfin
+          </button>
+        </form>
+      </div>
+
+      <div className="card">
+        <h2>Jellyfin Status</h2>
+        <div style={{ display: 'grid', gap: '0.5rem' }}>
+          <div><strong>Connection:</strong> <span className={`nx-chip nx-status ${jellyfinStatus === 'Connected' ? 'ok' : 'bad'}`}>{jellyfinStatus}</span></div>
+          {jellyfinServerInfo && (
+            <>
+              {jellyfinServerInfo.name && <div><strong>Server:</strong> {jellyfinServerInfo.name}</div>}
+              {jellyfinServerInfo.version && <div><strong>Version:</strong> {jellyfinServerInfo.version}</div>}
+            </>
+          )}
+        </div>
+        {jellyfinStatus === 'Connected' && (
+          <div style={{ marginTop: '1rem', paddingTop: '1rem', borderTop: '1px solid var(--border-color)' }}>
+            <button onClick={handleDisconnectJellyfin} className="button button-danger">
+              Disconnect from Jellyfin
+            </button>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+
+  const renderConnect = () => (
+    <div className="nx-connect">
+      <h1 className="header">Connections</h1>
+
+      {/* Secondary tabs for media servers */}
+      <div
+        className="nx-tabs"
+        role="tablist"
+        aria-label="Media server"
+        style={{ display: 'flex', gap: '0.5rem', borderBottom: '1px solid var(--border-color)', marginBottom: '1rem' }}
+      >
+        <button
+          type="button"
+          role="tab"
+          id="tab-plex"
+          aria-selected={activeServer === 'plex'}
+          aria-controls="panel-plex"
+          className={`nx-tab ${activeServer === 'plex' ? 'active' : ''}`}
+          onClick={() => setActiveServer('plex')}
+          style={{
+            padding: '0.5rem 0.75rem',
+            border: 'none',
+            borderBottom: activeServer === 'plex' ? '3px solid #f6685e' : '3px solid transparent',
+            background: 'transparent',
+            cursor: 'pointer',
+            color: 'var(--text-color)',
+            display: 'flex',
+            alignItems: 'center',
+            gap: '0.5rem',
+            fontWeight: activeServer === 'plex' ? 'bold' : 'normal'
+          }}
+        >
+          Plex
+          <span
+            className={`nx-chip nx-status ${plexStatus === 'Connected' ? 'ok' : 'bad'}`}
+            style={{ fontSize: '0.75rem' }}
+          >
+            {plexStatus}
+          </span>
+        </button>
+
+        <button
+          type="button"
+          role="tab"
+          id="tab-jellyfin"
+          aria-selected={activeServer === 'jellyfin'}
+          aria-controls="panel-jellyfin"
+          className={`nx-tab ${activeServer === 'jellyfin' ? 'active' : ''}`}
+          onClick={() => setActiveServer('jellyfin')}
+          style={{
+            padding: '0.5rem 0.75rem',
+            border: 'none',
+            borderBottom: activeServer === 'jellyfin' ? '3px solid #6c5ce7' : '3px solid transparent',
+            background: 'transparent',
+            cursor: 'pointer',
+            color: 'var(--text-color)',
+            display: 'flex',
+            alignItems: 'center',
+            gap: '0.5rem',
+            fontWeight: activeServer === 'jellyfin' ? 'bold' : 'normal'
+          }}
+        >
+          Jellyfin
+          <span
+            className={`nx-chip nx-status ${jellyfinStatus === 'Connected' ? 'ok' : 'bad'}`}
+            style={{ fontSize: '0.75rem' }}
+          >
+            {jellyfinStatus}
+          </span>
+        </button>
+      </div>
+
+      {/* Context banner */}
+      {(() => {
+        const s = getActiveConnectedServer();
+        if (s === 'conflict') {
+          return (
+            <div
+              role="alert"
+              style={{
+                marginBottom: '1rem',
+                padding: '0.75rem',
+                border: '1px solid #dc3545',
+                background: 'rgba(220,53,69,0.08)',
+                color: '#dc3545',
+                borderRadius: '6px'
+              }}
+            >
+              Conflict detected: both Plex and Jellyfin are connected. Disconnect one before proceeding.
+            </div>
+          );
+        }
+        if (s === null) {
+          return (
+            <div
+              role="note"
+              style={{
+                marginBottom: '1rem',
+                padding: '0.75rem',
+                border: '1px solid var(--border-color)',
+                background: 'var(--card-bg)',
+                borderRadius: '6px',
+                color: 'var(--text-secondary, #666)'
+              }}
+            >
+              No media server is connected. Choose a tab above and configure your server.
+            </div>
+          );
+        }
+        return (
+          <div
+            role="status"
+            style={{
+              marginBottom: '1rem',
+              padding: '0.75rem',
+              border: '1px solid var(--border-color)',
+              background: 'var(--card-bg)',
+              borderRadius: '6px',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '0.5rem'
+            }}
+          >
+            <span style={{ fontWeight: 'bold' }}>Active server:</span> {s === 'plex' ? 'Plex' : 'Jellyfin'}
+          </div>
+        );
+      })()}
+
+      {/* Active panel */}
+      <div id={`panel-${activeServer}`} role="tabpanel" aria-labelledby={`tab-${activeServer}`}>
+        {activeServer === 'plex' ? renderPlex() : renderJellyfin()}
+      </div>
+    </div>
+  );
   return (
     <div className="app-container">
       {/* Tab Navigation with right-aligned logo */}
@@ -4771,10 +5195,10 @@ C:\\\\Media\\\\Prerolls\\\\summer\\\\beach.mp4`}
             Settings
           </button>
           <button
-            className={`tab-button ${activeTab === 'plex' ? 'active' : ''}`}
-            onClick={() => setActiveTab('plex')}
+            className={`tab-button ${activeTab === 'connect' ? 'active' : ''}`}
+            onClick={() => setActiveTab('connect')}
           >
-            Plex
+            Connect
           </button>
         </div>
         <div className="tabbar-right" style={{ display: 'flex', alignItems: 'center', paddingRight: '48px' }}>
@@ -4884,13 +5308,67 @@ C:\\\\Media\\\\Prerolls\\\\summer\\\\beach.mp4`}
       )}
 
      <div className="dashboard">
-        {activeTab === 'dashboard' && renderDashboard()}
-        {activeTab === 'schedules' && renderSchedules()}
-        {activeTab === 'categories' && renderCategories()}
-        {activeTab === 'settings' && renderSettings()}
-        {activeTab === 'plex' && renderPlex()}
-      </div>
-      <footer
+       {activeTab === 'dashboard' && renderDashboard()}
+       {activeTab === 'schedules' && renderSchedules()}
+       {activeTab === 'categories' && renderCategories()}
+       {activeTab === 'settings' && renderSettings()}
+       {activeTab === 'connect' && renderConnect()}
+     </div>
+
+     {/* Video Preview Modal */}
+     {previewingPreroll && (
+       <div style={{
+         position: 'fixed',
+         top: 0,
+         left: 0,
+         right: 0,
+         bottom: 0,
+         backgroundColor: 'rgba(0,0,0,0.5)',
+         display: 'flex',
+         alignItems: 'center',
+         justifyContent: 'center',
+         zIndex: 9999
+       }}>
+         <div style={{
+           backgroundColor: 'white',
+           padding: '20px',
+           borderRadius: '8px',
+           maxWidth: '80%',
+           maxHeight: '80%'
+         }}>
+           <h3>Preview: {previewingPreroll.display_name || previewingPreroll.filename}</h3>
+           <button onClick={() => setPreviewingPreroll(null)} style={{ float: 'right' }}>✕</button>
+           <div>
+             {(() => {
+               console.log('Rendering simple modal for preroll:', previewingPreroll);
+               console.log('Category info:', previewingPreroll.category);
+               console.log('Category name:', previewingPreroll.category?.name);
+               console.log('Filename:', previewingPreroll.filename);
+               const videoUrl = apiUrl(`static/prerolls/${encodeURIComponent(previewingPreroll.category?.name || 'unknown')}/${encodeURIComponent(previewingPreroll.filename)}`);
+               console.log('Video URL:', videoUrl);
+               return (
+                 <video
+                   controls
+                   autoPlay
+                   muted
+                   style={{ width: '100%', maxHeight: '400px' }}
+                   onLoadStart={() => console.log('Video load started')}
+                   onLoadedData={() => console.log('Video loaded data')}
+                   onError={(e) => console.error('Video error:', e)}
+                   onCanPlay={() => console.log('Video can play')}
+                   onCanPlayThrough={() => console.log('Video can play through')}
+                 >
+                   <source src={videoUrl} type="video/mp4" />
+                   Your browser does not support the video tag.
+                 </video>
+               );
+             })()}
+           </div>
+         </div>
+       </div>
+     )}
+
+     <footer
         className="nx-footer"
         aria-label="Site footer"
         style={{
