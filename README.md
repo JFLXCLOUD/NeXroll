@@ -143,7 +143,7 @@ Tip: if a previous NeXroll instance is still running and occupying port 9393, th
 
 ## Building From Source (Maintainers)
 
-See the full packaging guide in `NeXroll/Docs/PACKAGING.md` (excluded from repo).
+See the full packaging guide in `NeXroll/Docs/PACKAGING.md`.
 
 Prerequisites (build machine):
 - Python 3.10+ (build‑time only)
