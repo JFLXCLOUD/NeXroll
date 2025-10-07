@@ -11,9 +11,9 @@ import re
 
 from sqlalchemy.orm import Session
 from sqlalchemy import or_, func
-import nexroll_backend.models as models
-from nexroll_backend.plex_connector import PlexConnector
-from nexroll_backend.database import SessionLocal
+import backend.models as models
+from backend.plex_connector import PlexConnector
+from backend.database import SessionLocal
 
 class Scheduler:
     def __init__(self):
@@ -294,7 +294,7 @@ class Scheduler:
             self._last_applied[chosen_key] = now
 
             # Record for UI feedback
-            from nexroll_backend.main import RECENT_GENRE_APPLICATIONS
+            from backend.main import RECENT_GENRE_APPLICATIONS
             application = {
                 "timestamp": now.isoformat() + "Z",
                 "genre": matched_genre_display,

@@ -1,0 +1,11 @@
+NeXroll v1.3.11 Checksums
+========================
+
+SHA256 checksums for NeXroll v1.3.11 release files.
+
+NeXroll_Installer_1.3.11.exe: ccec6cdc3a586e53e1d7cca0317d54ca02387b16eb4fb613ff8fe8239f037425
+
+To verify:
+certutil -hashfile NeXroll_Installer_1.3.11.exe SHA256
+
+Expected output should match the hash above.

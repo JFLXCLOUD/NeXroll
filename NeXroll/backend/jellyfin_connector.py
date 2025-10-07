@@ -4,7 +4,7 @@ import os
 import urllib.parse
 import ipaddress
 from typing import Optional
-from nexroll_backend import secure_store
+from backend import secure_store
 
 def _is_dir_writable(p: str) -> bool:
     try:

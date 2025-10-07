@@ -52,7 +52,7 @@ COPY NeXroll/requirements.txt /app/NeXroll/requirements.txt
 RUN pip install --no-cache-dir -r /app/NeXroll/requirements.txt
 
 # Copy backend
-COPY NeXroll/nexroll_backend /app/NeXroll/nexroll_backend
+COPY NeXroll/backend /app/NeXroll/backend
 
 # Copy freshly built frontend assets from the builder stage
 COPY --from=frontend-builder /build/frontend/build /app/NeXroll/frontend/build
@@ -68,4 +68,4 @@ HEALTHCHECK --interval=30s --timeout=5s --retries=3 \
   CMD curl -fsS http://localhost:${NEXROLL_PORT:-9393}/health || exit 1
 
 # Start Uvicorn
-CMD ["sh", "-c", "uvicorn nexroll_backend.main:app --host 0.0.0.0 --port ${NEXROLL_PORT:-9393}"]
+CMD ["sh", "-c", "uvicorn backend.main:app --host 0.0.0.0 --port ${NEXROLL_PORT:-9393}"]

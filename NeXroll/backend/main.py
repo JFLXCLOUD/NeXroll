@@ -34,11 +34,11 @@ if not getattr(sys, "frozen", False):
     sys.path.insert(0, current_dir)
     sys.path.insert(0, parent_dir)
 
-from nexroll_backend.database import SessionLocal, engine
-import nexroll_backend.models as models
-from nexroll_backend.plex_connector import PlexConnector
-from nexroll_backend.scheduler import scheduler
-from nexroll_backend import secure_store
+from backend.database import SessionLocal, engine
+import backend.models as models
+from backend.plex_connector import PlexConnector
+from backend.scheduler import scheduler
+from backend import secure_store
 
 models.Base.metadata.create_all(bind=engine)
 
@@ -4979,7 +4979,7 @@ def ensure_runtime_assets():
     parity across portable EXE, service, and tray startup contexts.
     """
     try:
-        src_root = os.path.join(resource_root, "nexroll_backend", "data", "prerolls")
+        src_root = os.path.join(resource_root, "backend", "data", "prerolls")
         if not os.path.isdir(src_root):
             return
 
@@ -6683,7 +6683,7 @@ def connect_jellyfin(request: JellyfinConnectRequest, db: Session = Depends(get_
 
     try:
         # Deferred import to avoid top-level import churn
-        from nexroll_backend.jellyfin_connector import JellyfinConnector
+        from backend.jellyfin_connector import JellyfinConnector
         connector = JellyfinConnector(url, api_key)
 
         # Reachability (public info/ping)
@@ -6750,7 +6750,7 @@ def get_jellyfin_status(db: Session = Depends(get_db)):
         return out
 
     try:
-        from nexroll_backend.jellyfin_connector import JellyfinConnector
+        from backend.jellyfin_connector import JellyfinConnector
         connector = JellyfinConnector(jellyfin_url, api_key)
         info = connector.get_server_info() or {}
         if not isinstance(info, dict):
@@ -6885,7 +6885,7 @@ def apply_category_to_jellyfin(category_id: int, db: Session = Depends(get_db)):
     # Best-effort server info and connector instance
     connector = None
     try:
-        from nexroll_backend.jellyfin_connector import JellyfinConnector
+        from backend.jellyfin_connector import JellyfinConnector
         connector = JellyfinConnector(setting.jellyfin_url, api_key)
         server_info = connector.get_server_info() or {}
     except Exception:
@@ -7124,7 +7124,7 @@ def _bootstrap_jellyfin_from_env() -> None:
                 cur_key = None
             if cur_url and (cur_key or key_env):
                 try:
-                    from nexroll_backend.jellyfin_connector import JellyfinConnector
+                    from backend.jellyfin_connector import JellyfinConnector
                     if JellyfinConnector(cur_url, cur_key or key_env).test_connection():
                         return
                 except Exception:
@@ -7140,7 +7140,7 @@ def _bootstrap_jellyfin_from_env() -> None:
             # If URL provided, test it first
             if url_env:
                 try:
-                    from nexroll_backend.jellyfin_connector import JellyfinConnector
+                    from backend.jellyfin_connector import JellyfinConnector
                     test_url = url_env if url_env.startswith(("http://", "https://")) else f"http://{url_env}"
                     ok = JellyfinConnector(test_url, key_env or cur_key).test_connection()
                 except Exception:

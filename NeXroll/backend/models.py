@@ -1,6 +1,6 @@
 from sqlalchemy import Column, Integer, String, DateTime, Boolean, ForeignKey, Text, Float, Table
 from sqlalchemy.orm import relationship
-from nexroll_backend.database import Base
+from backend.database import Base
 import datetime
 
 # Association (many-to-many) between prerolls and categories

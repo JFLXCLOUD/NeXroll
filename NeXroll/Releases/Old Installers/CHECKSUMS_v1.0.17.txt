@@ -1,0 +1,3 @@
+SHA256 hash of NeXroll_Installer_1.0.17.exe:
+f15be60d95d2d96dae90ed81da12960344da090052b9a45ee51be4fb84d0e873
+CertUtil: -hashfile command completed successfully.

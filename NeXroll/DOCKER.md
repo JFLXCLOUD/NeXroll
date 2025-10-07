@@ -3,7 +3,7 @@
 This guide explains how to deploy NeXroll with Docker on Linux, Windows, or macOS, connect it to Plex or Jellyfin reliably, and ensure your media server can see your preroll paths regardless of where NeXroll runs.
 
 Key components in the image:
-- Backend: FastAPI (Uvicorn) package [nexroll_backend.main()](NeXroll/nexroll_backend/main.py:713)
+- Backend: FastAPI (Uvicorn) package [backend.main()](NeXroll/backend/main.py:713)
 - Frontend: prebuilt static assets served from /app/NeXroll/frontend/build
 - Storage: a single bind-mounted volume at /data (DB, prerolls, thumbnails, secure token store)
 - FFmpeg included for thumbnail generation
@@ -122,7 +122,7 @@ Common examples:
 
 Use “Test Translation” in Settings to verify that a sample input path maps to the exact Plex-visible path you expect.
 
-Platform preflight: Before sending paths to Plex, NeXroll verifies that translated paths match the Plex server platform (Windows vs POSIX). If they don’t match (for example, “/data/…” sent to a Windows Plex), Apply-to-Plex is refused with a clear instruction describing the mapping to add. This logic runs inside [app.post()](NeXroll/nexroll_backend/main.py:3186).
+Platform preflight: Before sending paths to Plex, NeXroll verifies that translated paths match the Plex server platform (Windows vs POSIX). If they don’t match (for example, “/data/…” sent to a Windows Plex), Apply-to-Plex is refused with a clear instruction describing the mapping to add. This logic runs inside [app.post()](NeXroll/backend/main.py:3186).
 
 
 ## 7) NAS mounts and container paths
@@ -135,7 +135,7 @@ Platform preflight: Before sending paths to Plex, NeXroll verifies that translat
 
 If you can’t connect to Plex, open:
 
-- GET /plex/probe?url=http://YOUR_PLEX:32400 at [app.get()](NeXroll/nexroll_backend/main.py:1742)
+- GET /plex/probe?url=http://YOUR_PLEX:32400 at [app.get()](NeXroll/backend/main.py:1742)
 
 It checks DNS, reachability, token validity, and suggests fixes (TLS verify, DNS, firewall). On Docker Desktop, try http://host.docker.internal:32400.
 

@@ -131,7 +131,7 @@ From the install directory, double-click NeXroll.lnk (desktop or Start Menu), or
   NeXroll.exe
 
 - Fallback via Python (build/testing machine only):
-  py -m uvicorn nexroll_backend.main:app --host 0.0.0.0 --port 9393
+  py -m uvicorn backend.main:app --host 0.0.0.0 --port 9393
 
 Web interface
 - http://localhost:9393

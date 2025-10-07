@@ -1,0 +1,2 @@
+SHA256 hash of NeXroll_Installer_1.4.3.exe:
+241e6175175ebfe046b6cf9b752a854aa71df22f451bea8e3427c919f10fd845

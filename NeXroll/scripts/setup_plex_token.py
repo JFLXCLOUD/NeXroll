@@ -14,7 +14,7 @@ from pathlib import Path
 
 # Prefer secure secret storage when available
 try:
-    from nexroll_backend import secure_store
+    from backend import secure_store
 except Exception:
     secure_store = None
 

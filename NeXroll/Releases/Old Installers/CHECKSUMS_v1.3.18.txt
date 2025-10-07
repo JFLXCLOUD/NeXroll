@@ -1,0 +1,11 @@
+﻿NeXroll v1.3.18 Checksums
+Generated: 
+2025-10-04 00:19:49 -04:00
+
+File: 
+C:\Users\HDTV\Documents\Preroll Projects\NeXroll - Windows\NeXroll\NeXroll_Installer_1.3.18.exe
+Size: 38152189 bytes (36.38 MB)
+Algorithm: SHA256
+Hash: 
+A20F08D62B7B7A2F295B3CD6D3C891C6046E4901D170450B215B4CD5CBD35368
+

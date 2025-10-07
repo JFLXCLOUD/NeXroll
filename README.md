@@ -176,7 +176,7 @@ Outputs:
 ## Project Structure (key files)
 
 - Backend (FastAPI): `NeXroll/backend/`
-- Packaged runtime backend: `NeXroll/nexroll_backend/`
+- Packaged runtime backend: `NeXroll/backend/`
 - Frontend (static build served by backend): `NeXroll/frontend/`
 - Windows Service wrapper: `NeXroll/windows_service.py`
 - System tray app: `NeXroll/tray_app.py`
