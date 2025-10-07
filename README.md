@@ -1,6 +1,6 @@
 
 <div align="center">
-  <img src="frontend/NeXroll_Logo_WHT.png" alt="NeXroll Logo" width="500"/>
+  <img src="NeXroll/frontend/NeXroll_Logo_WHT.png" alt="NeXroll Logo" width="500"/>
   <br>
 </div>
 
