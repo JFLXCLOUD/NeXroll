@@ -2,6 +2,7 @@
 <div align="center">
   <img src="NeXroll/frontend/NeXroll_Logo_WHT.png" alt="NeXroll Logo" width="500"/>
   <br>
+  <img src="https://img.shields.io/docker/pulls/jflxcloud/nexroll" alt="Docker Pulls"/>
 </div>
 
 ---
