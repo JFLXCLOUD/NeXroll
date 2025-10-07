@@ -1,5 +1,0 @@
-NeXroll_Installer_1.3.2.exe SHA256: 80e25495e0ed2dc48c738c1503e6fcbee0e0ac3b813dc96db73b4e96ee484d1a  
-NeXroll.exe SHA256: f5440018c5445356c172ba6b8bbcf4a6bf08609c9ae7c0bbb5067ee0d8709ec7  
-NeXrollService.exe SHA256: fcd865dab84d3a46f8bc001ce5059d0f902e4e077ed4e569ca948ebc980409c7  
-NeXrollTray.exe SHA256: 02956f10b75f3c182372481cc3678f47705acbafd46570c27437696041e1cb81  
-setup_plex_token.exe SHA256: c4ca1daf15f3b4921da68127abcd4d97cd026f314ccda67c73eb694329fb939b 

@@ -76,3 +76,7 @@ data/
 # Build artifacts
 NeXroll/build/
 NeXroll/install/
+
+# Releases and documentation
+NeXroll/Releases/
+NeXroll/docs/
