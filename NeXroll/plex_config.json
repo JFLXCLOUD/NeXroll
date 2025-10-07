@@ -1,0 +1,6 @@
+{
+  "setup_date": "2025-09-25T20:26:39.092806Z",
+  "note": "Token stored in secure store; this file contains no secrets",
+  "token_length": 20,
+  "provider": "Windows Credential Manager + Windows DPAPI-encrypted file"
+}
