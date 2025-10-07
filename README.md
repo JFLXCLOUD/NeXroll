@@ -2,7 +2,7 @@
 <div align="center">
   <img src="NeXroll/frontend/NeXroll_Logo_WHT.png" alt="NeXroll Logo" width="500"/>
   <br>
-  <img src="https://img.shields.io/docker/pulls/jflxcloud/nexroll" alt="Docker Pulls"/>
+  <a href="https://hub.docker.com/r/jbrns/nexroll"><img src="https://img.shields.io/docker/pulls/JBrns/nexroll" alt="Docker Pulls"/></a> <a href="https://github.com/JFLXCLOUD/NeXroll/releases/latest"><img src="https://img.shields.io/github/v/release/JFLXCLOUD/nexroll?color=%233EF7DA" alt="Latest Release"/></a>
 </div>
 
 ---
