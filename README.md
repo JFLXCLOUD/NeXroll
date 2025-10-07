@@ -2,15 +2,12 @@
 <div align="center">
   <img src="NeXroll/frontend/NeXroll_Logo_WHT.png" alt="NeXroll Logo" width="500"/>
   <br>
-  <a href="https://hub.docker.com/r/jbrns/nexroll"><img src="https://img.shields.io/docker/pulls/JBrns/nexroll" alt="Docker Pulls"/></a> <a href="https://github.com/JFLXCLOUD/NeXroll/releases/latest"><img src="https://img.shields.io/github/v/release/JFLXCLOUD/nexroll?color=%233EF7DA" alt="Latest Release"/></a>
+ <a href="https://github.com/JFLXCLOUD/NeXroll/releases/latest"><img src="https://img.shields.io/github/downloads/jflxcloud/nexroll/total?color=DE7716" alt="Downloads"/></a> ▀ <a href="https://hub.docker.com/r/jbrns/nexroll"><img src="https://img.shields.io/docker/pulls/jbrns/nexroll" alt="Docker Pulls"/></a> ▀ <a href="https://github.com/JFLXCLOUD/NeXroll/releases/latest"><img src="https://img.shields.io/github/v/release/jflxcloud/nexroll?style=flat&color=DEDB16" alt="Latest Release"/></a>
 </div>
 
 ---
 
 NeXroll is a Windows-ready preroll management system with a modern web UI, an optional Windows Service, and a lightweight system tray app. All executables are self‑contained (no Python required on user machines), and a single installer configures everything end‑to‑end.
-
-Web UI: http://localhost:9393
-
 
 ---
 
@@ -146,7 +143,7 @@ Tip: if a previous NeXroll instance is still running and occupying port 9393, th
 
 ## Building From Source (Maintainers)
 
-See the full packaging guide at `NeXroll/PACKAGING.md`.
+See the full packaging guide in `NeXroll/Docs/PACKAGING.md` (excluded from repo).
 
 Prerequisites (build machine):
 - Python 3.10+ (build‑time only)
@@ -156,12 +153,12 @@ Prerequisites (build machine):
 Build commands (run from the repository root):
 
 ```
-py -m PyInstaller -y NeXroll\neXroll.spec
-py -m PyInstaller -y NeXroll\NeXrollService.spec
-py -m PyInstaller -y NeXroll\setup_plex_token.spec
-py -m PyInstaller -y NeXroll\NeXrollTray.spec
+py -m PyInstaller -y NeXroll\build\neXroll.spec
+py -m PyInstaller -y NeXroll\build\NeXrollService.spec
+py -m PyInstaller -y NeXroll\build\setup_plex_token.spec
+py -m PyInstaller -y NeXroll\build\NeXrollTray.spec
 
-makensis NeXroll\installer.nsi
+makensis NeXroll\build\installer.nsi
 ```
 
 Outputs:
@@ -169,7 +166,7 @@ Outputs:
 - `dist\NeXrollService.exe`
 - `dist\setup_plex_token.exe`
 - `dist\NeXrollTray.exe`
-- `NeXroll\NeXroll_Installer.exe`  (Release asset is published as a generic name)
+- `NeXroll\build\NeXroll_Installer.exe`  (Release asset is published as a generic name)
 
 ---
 
@@ -179,15 +176,14 @@ Outputs:
 - Backend (FastAPI): `NeXroll/backend/`
 - Packaged runtime backend: `NeXroll/backend/`
 - Frontend (static build served by backend): `NeXroll/frontend/`
-- Windows Service wrapper: `NeXroll/windows_service.py`
-- System tray app: `NeXroll/tray_app.py`
+- Windows Service wrapper: `NeXroll/scripts/windows_service.py`
+- System tray app: `NeXroll/scripts/tray_app.py`
 - PyInstaller specs:
-  - `NeXroll/neXroll.spec`
-  - `NeXroll/NeXrollService.spec`
-  - `NeXroll/NeXrollTray.spec`
-  - `NeXroll/setup_plex_token.spec`
-- NSIS installer: `NeXroll/installer.nsi`
-- Packaging guide: `NeXroll/PACKAGING.md`
+  - `NeXroll/build/neXroll.spec`
+  - `NeXroll/build/NeXrollService.spec`
+  - `NeXroll/build/NeXrollTray.spec`
+  - `NeXroll/build/setup_plex_token.spec`
+- NSIS installer: `NeXroll/build/installer.nsi`
 
 ---
 
