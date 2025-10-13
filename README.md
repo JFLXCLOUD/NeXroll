@@ -9,7 +9,7 @@
 
 ---
 
-NeXroll is a Windows-ready preroll management system with a modern web UI, an optional Windows Service, and a lightweight system tray app. All executables are self‑contained (no Python required on user machines), and a single installer configures everything end‑to‑end.
+NeXroll is a preroll manager for Plex and Jellyfin that makes setup effortless. It runs natively on Windows and works in Docker, featuring a clean web interface, optional background service, and lightweight tray app. Everything is self-contained, and a single installer gets you up and running in minutes.
 
 ---
 
@@ -27,13 +27,7 @@ NeXroll is a Windows-ready preroll management system with a modern web UI, an op
   - Flexible schedules with date/time ranges and recurrence
   - Optional fallback category when no schedule is active
   - Real‑time scheduler status
-- UI enhancements (v1.1.1)
-  - Sticky top navigation bar for persistent access to Dashboard, Schedules, Categories, Settings, and Connect
-  - Pagination for Prerolls: default 20 per page, adjustable up to 50
-  - Multi-select with bulk primary category update/move
-  - Inline category creation directly from Upload and Edit Preroll
-  - Storage usage card on the Dashboard showing total preroll storage used
-  - Long preroll title handling so Edit/Delete buttons remain visible in Grid and List views
+
 - Media Server integration
   - Connect to Plex or Jellyfin servers
   - Connect via URL/token or Stable Token (persistent)
