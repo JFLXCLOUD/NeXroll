@@ -41,7 +41,7 @@ NeXroll is a preroll manager for Plex and Jellyfin that makes setup effortless. 
   - SQLite database storage under %ProgramData%\NeXroll
 - API
   - REST API with interactive docs at http://localhost:9393/docs
-## Download and Install (Users)
+## Download and Install
 
 1. Download the latest `NeXroll_Installer.exe` from GitHub Releases:
    https://github.com/JFLXCLOUD/NeXroll/releases
@@ -111,7 +111,7 @@ Tip: if a previous NeXroll instance is still running and occupying port 9393, th
 
 ---
 
-## Requirements (User machines)
+## Requirements
 
 - Windows 10/11 x64
 - FFmpeg for thumbnail generation (you can install it from the installer's optional components, or manually)
@@ -137,7 +137,7 @@ Tip: if a previous NeXroll instance is still running and occupying port 9393, th
 
 ---
 
-## Building From Source (Maintainers)
+## Building From Source
 
 See the full packaging guide in `NeXroll/Docs/PACKAGING.md`.
 
@@ -167,7 +167,7 @@ Outputs:
 ---
 
 
-## Project Structure (key files)
+## Project Structure
 
 - Backend (FastAPI): `NeXroll/backend/`
 - Packaged runtime backend: `NeXroll/backend/`
