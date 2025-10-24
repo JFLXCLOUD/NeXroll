@@ -7,7 +7,7 @@ WORKDIR /build/frontend
 
 # Install deps with good caching
 COPY NeXroll/frontend/package*.json ./
-RUN npm ci --no-audit --no-fund
+RUN npm install --no-audit --no-fund --legacy-peer-deps
 
 # Copy source and build
 COPY NeXroll/frontend/ ./
@@ -30,9 +30,8 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     NEXROLL_PREROLL_PATH=/data/prerolls \
     NEXROLL_SECRETS_DIR=/data \
     PLEX_URL="" \
-    PLEX_TOKEN="" \
     JELLYFIN_URL="" \
-    JELLYFIN_API_KEY=""
+    TZ=UTC
 
 RUN apt-get update && \
     apt-get upgrade -y && \
