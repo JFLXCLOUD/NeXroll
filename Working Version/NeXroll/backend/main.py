@@ -6,6 +6,7 @@ from sqlalchemy.orm import Session, joinedload
 from sqlalchemy import or_, select, func
 from sqlalchemy.exc import IntegrityError, OperationalError
 from pydantic import BaseModel
+from typing import List, Optional
 import datetime
 import os
 import json
@@ -17,6 +18,11 @@ import subprocess
 from pathlib import Path
 from urllib.parse import unquote
 import uuid
+
+class DashboardSection(BaseModel):
+    id: str
+    title: str
+    visible: bool
 import plexapi
 from plexapi.myplex import MyPlexPinLogin, MyPlexAccount
 
@@ -41,6 +47,16 @@ from backend.scheduler import scheduler
 from backend import secure_store
 
 models.Base.metadata.create_all(bind=engine)
+
+app = FastAPI()
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 # Lightweight runtime schema upgrades for older SQLite databases
 def _sqlite_has_column(table: str, column: str) -> bool:
@@ -132,6 +148,10 @@ def ensure_schema() -> None:
             # Settings: ensure dashboard tile order
             if not _sqlite_has_column("settings", "dashboard_tile_order"):
                 _sqlite_add_column("settings", "dashboard_tile_order TEXT")
+            
+            # Settings: ensure timezone column
+            if not _sqlite_has_column("settings", "timezone"):
+                _sqlite_add_column("settings", "timezone TEXT DEFAULT 'UTC'")
     except Exception as e:
         print(f"Schema ensure error: {e}")
 
@@ -827,7 +847,7 @@ try:
     from version import get_version
     app_version = get_version()
 except ImportError:
-    app_version = "1.5.0"
+    app_version = "1.5.12"
 
 app = FastAPI(title="NeXroll Backend", version=app_version)
 
@@ -966,6 +986,15 @@ async def _no_cache_index_mw(request, call_next):
 # Start scheduler on app startup
 @app.on_event("startup")
 def startup_event():
+    # First: Ensure database schema is up-to-date (adds missing columns to legacy DBs)
+    try:
+        ensure_schema()
+    except Exception as e:
+        try:
+            _file_log(f"Schema migration error: {e}")
+        except Exception:
+            print(f"Schema migration error: {e}")
+    
     # Normalize thumbnail paths in DB on startup (idempotent migration for legacy paths)
     try:
         db = SessionLocal()
@@ -1009,6 +1038,23 @@ def startup_event():
 def startup_env_bootstrap():
     # Independent startup hook to allow env-driven Docker quick-connect
     # Bootstraps Plex and Jellyfin from environment variables when present.
+    # Also ensures a Setting record exists in the database
+    try:
+        db = SessionLocal()
+        setting = db.query(models.Setting).first()
+        if not setting:
+            # Create an empty Setting record if one doesn't exist
+            setting = models.Setting()
+            db.add(setting)
+            db.commit()
+            _file_log("Created default Setting record on startup")
+        db.close()
+    except Exception as e:
+        try:
+            _file_log(f"Startup Setting initialization error: {e}")
+        except Exception:
+            pass
+    
     try:
         _bootstrap_plex_from_env()
     except Exception:
@@ -1064,6 +1110,56 @@ def system_ffmpeg_info():
         "ffprobe_cmd": ffprobe_cmd,
     }
 
+
+@app.get("/settings/dashboard-layout")
+def get_dashboard_layout(db: Session = Depends(get_db)):
+    """Get the dashboard layout configuration"""
+    setting = db.query(models.Setting).first()
+    if not setting:
+        # Return default layout
+        return {
+            "grid": {"cols": 4, "rows": 2},
+            "order": ["servers", "prerolls", "storage", "schedules", "scheduler", "current_category", "upcoming", "recent_genres"],
+            "hidden": [],
+            "locked": False
+        }
+    
+    layout = setting.get_json_value("dashboard_layout")
+    if not layout:
+        # Return default layout
+        return {
+            "grid": {"cols": 4, "rows": 2},
+            "order": ["servers", "prerolls", "storage", "schedules", "scheduler", "current_category", "upcoming", "recent_genres"],
+            "hidden": [],
+            "locked": False
+        }
+    return layout
+
+@app.put("/settings/dashboard-layout")
+async def update_dashboard_layout(request: Request, db: Session = Depends(get_db)):
+    """Update the dashboard layout configuration"""
+    try:
+        # Get JSON body
+        layout_data = await request.json()
+        
+        # Validate the layout data structure
+        if not isinstance(layout_data, dict):
+            raise ValueError("Layout data must be a dictionary")
+        
+        # Save to database
+        setting = db.query(models.Setting).first()
+        if not setting:
+            setting = models.Setting()
+            db.add(setting)
+        
+        setting.set_json_value("dashboard_layout", layout_data)
+        db.commit()
+        return {"status": "success", "data": layout_data}
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/system/version")
 def system_version():
@@ -2880,36 +2976,95 @@ def update_preroll(preroll_id: int, payload: PrerollUpdate, db: Session = Depend
 
 @app.delete("/prerolls/{preroll_id}")
 def delete_preroll(preroll_id: int, db: Session = Depends(get_db)):
-    preroll = db.query(models.Preroll).filter(models.Preroll.id == preroll_id).first()
-    if not preroll:
-        raise HTTPException(status_code=404, detail="Preroll not found")
-
-    # Delete the actual files (do not delete external mapped files)
     try:
-        # Handle new path structure
-        if getattr(preroll, "managed", True):
-            full_path = preroll.path
-            if not os.path.isabs(full_path):
-                full_path = os.path.join(data_dir, full_path)
+        preroll = db.query(models.Preroll).filter(models.Preroll.id == preroll_id).first()
+        if not preroll:
+            raise HTTPException(status_code=404, detail="Preroll not found")
 
-            if os.path.exists(full_path):
-                os.remove(full_path)
+        # Delete the actual files (do not delete external mapped files)
+        try:
+            # Handle new path structure
+            if getattr(preroll, "managed", True):
+                full_path = preroll.path
+                if not os.path.isabs(full_path):
+                    full_path = os.path.join(data_dir, full_path)
 
-        if preroll.thumbnail:
-            thumbnail_path = preroll.thumbnail
-            if not os.path.isabs(thumbnail_path):
-                thumbnail_path = os.path.join(data_dir, thumbnail_path)
+                if os.path.exists(full_path):
+                    os.remove(full_path)
 
-            if os.path.exists(thumbnail_path):
-                os.remove(thumbnail_path)
+            if preroll.thumbnail:
+                thumbnail_path = preroll.thumbnail
+                if not os.path.isabs(thumbnail_path):
+                    thumbnail_path = os.path.join(data_dir, thumbnail_path)
+
+                if os.path.exists(thumbnail_path):
+                    os.remove(thumbnail_path)
+        except Exception as e:
+            print(f"Warning: Could not delete files for preroll {preroll_id}: {e}")
+
+        # Remove preroll_id from all schedules' preroll_ids JSON field
+        schedules = db.query(models.Schedule).all()
+        for schedule in schedules:
+            if schedule.preroll_ids:
+                try:
+                    preroll_list = json.loads(schedule.preroll_ids)
+                    if isinstance(preroll_list, list) and preroll_id in preroll_list:
+                        preroll_list.remove(preroll_id)
+                        schedule.preroll_ids = json.dumps(preroll_list) if preroll_list else None
+                except Exception as e:
+                    print(f"Warning: Could not update schedule {schedule.id}: {e}")
+        db.commit()
+
+        # Use SQLAlchemy connection to access raw DB connection
+        sqlalchemy_conn = db.connection()
+        dbapi_conn = sqlalchemy_conn.connection  # Get the raw DBAPI connection
+        try:
+            cursor = dbapi_conn.cursor()
+            
+            # Check foreign key status
+            cursor.execute("PRAGMA foreign_keys")
+            fk_status = cursor.fetchone()[0]
+            print(f"FK status before: {fk_status}")
+            
+            # Disable foreign keys
+            cursor.execute("PRAGMA foreign_keys=OFF;")
+            cursor.execute("PRAGMA foreign_keys")
+            fk_status_off = cursor.fetchone()[0]
+            print(f"FK status after OFF: {fk_status_off}")
+            
+            # Delete many-to-many
+            print(f"Deleting from preroll_categories WHERE preroll_id={preroll_id}")
+            cursor.execute("DELETE FROM preroll_categories WHERE preroll_id = ?;", (preroll_id,))
+            print(f"  Deleted {cursor.rowcount} rows from preroll_categories")
+            
+            # Delete preroll
+            print(f"Deleting from prerolls WHERE id={preroll_id}")
+            cursor.execute("DELETE FROM prerolls WHERE id = ?;", (preroll_id,))
+            print(f"  Deleted {cursor.rowcount} rows from prerolls")
+            
+            # Re-enable foreign keys
+            cursor.execute("PRAGMA foreign_keys=ON;")
+            cursor.execute("PRAGMA foreign_keys")
+            fk_status_on = cursor.fetchone()[0]
+            print(f"FK status after ON: {fk_status_on}")
+            
+            # Commit
+            dbapi_conn.commit()
+            cursor.close()
+            print(f"[OK] Successfully deleted preroll {preroll_id} using raw SQL with FK disabled")
+        except Exception as e:
+            print(f"[ERR] Raw SQL deletion failed: {type(e).__name__}: {e}")
+            dbapi_conn.rollback()
+            raise e
+
+        return {"message": "Preroll deleted successfully"}
+    except HTTPException:
+        raise
     except Exception as e:
-        print(f"Warning: Could not delete files for preroll {preroll_id}: {e}")
-
-    # Delete from database
-    db.delete(preroll)
-    db.commit()
-
-    return {"message": "Preroll deleted successfully"}
+        print(f"Error deleting preroll {preroll_id}: {e}")
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"Error deleting preroll: {str(e)}")
 
 @app.get("/tags")
 def get_all_tags(db: Session = Depends(get_db)):
@@ -3449,6 +3604,11 @@ def apply_category_to_plex(category_id: int, rotation_hours: int = 24, db: Sessi
         # Mark this category as applied and remove from others
         db.query(models.Category).update({"apply_to_plex": False})
         category.apply_to_plex = True
+        
+        # Also save it as the active category in the Setting
+        setting = db.query(models.Setting).first()
+        if setting:
+            setting.active_category = category_id
         db.commit()
 
         return {
@@ -4545,11 +4705,16 @@ def restore_database(backup_data: dict, db: Session = Depends(get_db)):
 
         # Restore categories first (needed for foreign keys)
         for cat_data in backup_data.get("categories", []):
-            category = models.Category(
-                name=cat_data["name"],
-                description=cat_data.get("description")
-            )
-            db.add(category)
+            try:
+                category = models.Category(
+                    name=cat_data.get("name"),
+                    description=cat_data.get("description")
+                )
+                db.add(category)
+            except Exception as cat_err:
+                print(f"Error adding category: {cat_err}")
+                db.rollback()
+                continue
         db.commit()
 
         # Build quick lookup by name
@@ -4557,62 +4722,103 @@ def restore_database(backup_data: dict, db: Session = Depends(get_db)):
 
         # Restore prerolls (including display_name and many-to-many categories if present)
         for preroll_data in backup_data.get("prerolls", []):
-            p = models.Preroll(
-                filename=preroll_data["filename"],
-                display_name=preroll_data.get("display_name"),
-                path=preroll_data["path"],
-                thumbnail=preroll_data.get("thumbnail"),
-                tags=preroll_data.get("tags"),
-                category_id=preroll_data.get("category_id"),
-                description=preroll_data.get("description"),
-                upload_date=datetime.datetime.fromisoformat(preroll_data["upload_date"]) if preroll_data.get("upload_date") else None,
-                managed=preroll_data.get("managed", True)
-            )
-            db.add(p)
-            db.flush()  # get p.id without full commit
-
-            # Restore associated categories by name (IDs in backup may not match new DB)
-            assoc = []
             try:
-                for c in preroll_data.get("categories", []):
-                    nm = c.get("name")
-                    if nm and nm in name_to_category:
-                        assoc.append(name_to_category[nm])
-            except Exception:
+                # Safe datetime parsing
+                upload_date = None
+                if preroll_data.get("upload_date"):
+                    try:
+                        upload_date = datetime.datetime.fromisoformat(str(preroll_data["upload_date"]).replace('Z', '+00:00'))
+                    except (ValueError, TypeError):
+                        upload_date = None
+                
+                p = models.Preroll(
+                    filename=preroll_data.get("filename"),
+                    display_name=preroll_data.get("display_name"),
+                    path=preroll_data.get("path"),
+                    thumbnail=preroll_data.get("thumbnail"),
+                    tags=preroll_data.get("tags"),
+                    category_id=preroll_data.get("category_id"),
+                    description=preroll_data.get("description"),
+                    upload_date=upload_date,
+                    managed=preroll_data.get("managed", True)
+                )
+                db.add(p)
+                db.flush()  # get p.id without full commit
+
+                # Restore associated categories by name (IDs in backup may not match new DB)
                 assoc = []
-            if assoc:
-                p.categories = assoc
+                try:
+                    for c in preroll_data.get("categories", []):
+                        nm = c.get("name") if isinstance(c, dict) else c
+                        if nm and nm in name_to_category:
+                            assoc.append(name_to_category[nm])
+                except Exception as cat_assoc_err:
+                    print(f"Error associating categories to preroll: {cat_assoc_err}")
+                    assoc = []
+                if assoc:
+                    p.categories = assoc
+            except Exception as preroll_err:
+                print(f"Error adding preroll {preroll_data.get('filename')}: {preroll_err}")
+                db.rollback()
+                continue
+
+        db.commit()
 
         # Restore schedules
         for schedule_data in backup_data.get("schedules", []):
-            schedule = models.Schedule(
-                name=schedule_data["name"],
-                type=schedule_data["type"],
-                start_date=datetime.datetime.fromisoformat(schedule_data["start_date"]) if schedule_data.get("start_date") else None,
-                end_date=datetime.datetime.fromisoformat(schedule_data["end_date"]) if schedule_data.get("end_date") else None,
-                category_id=schedule_data.get("category_id"),
-                shuffle=schedule_data.get("shuffle", False),
-                playlist=schedule_data.get("playlist", False),
-                is_active=schedule_data.get("is_active", True),
-                recurrence_pattern=schedule_data.get("recurrence_pattern"),
-                preroll_ids=schedule_data.get("preroll_ids")
-            )
-            db.add(schedule)
+            try:
+                # Safe datetime parsing for schedules
+                start_date = None
+                end_date = None
+                if schedule_data.get("start_date"):
+                    try:
+                        start_date = datetime.datetime.fromisoformat(str(schedule_data["start_date"]).replace('Z', '+00:00'))
+                    except (ValueError, TypeError):
+                        start_date = None
+                if schedule_data.get("end_date"):
+                    try:
+                        end_date = datetime.datetime.fromisoformat(str(schedule_data["end_date"]).replace('Z', '+00:00'))
+                    except (ValueError, TypeError):
+                        end_date = None
+                
+                schedule = models.Schedule(
+                    name=schedule_data.get("name"),
+                    type=schedule_data.get("type"),
+                    start_date=start_date,
+                    end_date=end_date,
+                    category_id=schedule_data.get("category_id"),
+                    shuffle=schedule_data.get("shuffle", False),
+                    playlist=schedule_data.get("playlist", False),
+                    is_active=schedule_data.get("is_active", True),
+                    recurrence_pattern=schedule_data.get("recurrence_pattern"),
+                    preroll_ids=schedule_data.get("preroll_ids")
+                )
+                db.add(schedule)
+            except Exception as schedule_err:
+                print(f"Error adding schedule {schedule_data.get('name')}: {schedule_err}")
+                db.rollback()
+                continue
 
         # Restore holiday presets
         for holiday_data in backup_data.get("holiday_presets", []):
-            holiday = models.HolidayPreset(
-                name=holiday_data["name"],
-                description=holiday_data.get("description"),
-                month=holiday_data["month"],
-                day=holiday_data["day"],
-                category_id=holiday_data.get("category_id")
-            )
-            db.add(holiday)
+            try:
+                holiday = models.HolidayPreset(
+                    name=holiday_data.get("name"),
+                    description=holiday_data.get("description"),
+                    month=holiday_data.get("month"),
+                    day=holiday_data.get("day"),
+                    category_id=holiday_data.get("category_id")
+                )
+                db.add(holiday)
+            except Exception as holiday_err:
+                print(f"Error adding holiday preset {holiday_data.get('name')}: {holiday_err}")
+                db.rollback()
+                continue
 
         db.commit()
         return {"message": "Database restored successfully"}
     except Exception as e:
+        print(f"Critical restore error: {str(e)}")
         db.rollback()
         raise HTTPException(status_code=500, detail=f"Restore failed: {str(e)}")
 
@@ -5744,22 +5950,88 @@ def apply_preroll_by_genres(req: ResolveGenresRequest, ttl: int = 15, db: Sessio
 @app.get("/settings/active-category")
 def get_active_category(db: Session = Depends(get_db)):
     """Get the currently applied category"""
-    setting = db.query(models.Setting).first()
-    if not setting or not getattr(setting, "active_category", None):
-        return {"active_category": None}
+    try:
+        setting = db.query(models.Setting).first()
+        if not setting or not getattr(setting, "active_category", None):
+            return {"active_category": None}
 
-    category_id = getattr(setting, "active_category", None)
-    category = db.query(models.Category).filter(models.Category.id == category_id).first()
-    if not category:
-        return {"active_category": None}
+        category_id = getattr(setting, "active_category", None)
+        category = db.query(models.Category).filter(models.Category.id == category_id).first()
+        if not category:
+            return {"active_category": None}
 
-    return {
-        "active_category": {
-            "id": category.id,
-            "name": category.name,
-            "plex_mode": getattr(category, "plex_mode", "shuffle")
+        return {
+            "active_category": {
+                "id": category.id,
+                "name": category.name,
+                "plex_mode": getattr(category, "plex_mode", "shuffle")
+            }
         }
-    }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
+
+@app.get("/settings/timezone")
+def get_timezone(db: Session = Depends(get_db)):
+    """Get the user's timezone setting"""
+    try:
+        setting = db.query(models.Setting).first()
+        if not setting:
+            return {"timezone": "UTC"}
+        
+        timezone = getattr(setting, "timezone", "UTC")
+        return {"timezone": timezone or "UTC"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
+
+@app.put("/settings/timezone")
+async def set_timezone(request: Request, db: Session = Depends(get_db)):
+    """Set the user's timezone"""
+    try:
+        body = await request.json()
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Invalid JSON: {str(e)}")
+    
+    if not isinstance(body, dict):
+        raise HTTPException(status_code=400, detail="Invalid request body")
+    
+    tz = body.get("timezone", "UTC")
+    if isinstance(tz, str):
+        tz = tz.strip()
+    else:
+        tz = "UTC"
+    
+    # Validate timezone
+    try:
+        import pytz
+        pytz.timezone(tz)
+    except Exception:
+        raise HTTPException(status_code=400, detail=f"Invalid timezone: {tz}")
+    
+    try:
+        setting = db.query(models.Setting).first()
+        if not setting:
+            setting = models.Setting(plex_url=None, plex_token=None, timezone=tz)
+            db.add(setting)
+        else:
+            setting.timezone = tz
+        
+        db.commit()
+        return {"timezone": tz, "message": "Timezone updated successfully"}
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
+
+@app.get("/settings/timezones")
+def get_available_timezones():
+    """Get list of all available timezones"""
+    import pytz
+    timezones = []
+    for tz in pytz.all_timezones:
+        timezones.append({
+            "value": tz,
+            "label": tz.replace("_", " ")
+        })
+    return {"timezones": timezones}
 
 @app.get("/settings/dashboard-tile-order")
 def get_dashboard_tile_order(db: Session = Depends(get_db)):
@@ -7165,6 +7437,16 @@ def apply_category_to_jellyfin(category_id: int, db: Session = Depends(get_db)):
         saved = connector.set_plugin_configuration(plugin_id, cfg)
         _file_log(f"Jellyfin plugin config update result: {saved}")
         if saved:
+            # Also save it as the active category in the Setting
+            db.query(models.Category).update({"apply_to_plex": False})
+            cat = db.query(models.Category).filter(models.Category.id == category_id).first()
+            if cat:
+                cat.apply_to_plex = True
+                setting = db.query(models.Setting).first()
+                if setting:
+                    setting.active_category = category_id
+                db.commit()
+            
             return {
                 "applied": True,
                 "supported": True,
@@ -7185,6 +7467,16 @@ def apply_category_to_jellyfin(category_id: int, db: Session = Depends(get_db)):
                     cfg_alt = cfg.copy()
                     cfg_alt[alt_key] = intro_dirs if mode == "list" else (intro_dirs[0] if intro_dirs else "")
                     if connector.set_plugin_configuration(plugin_id, cfg_alt):
+                        # Also save it as the active category in the Setting
+                        db.query(models.Category).update({"apply_to_plex": False})
+                        cat = db.query(models.Category).filter(models.Category.id == category_id).first()
+                        if cat:
+                            cat.apply_to_plex = True
+                            setting = db.query(models.Setting).first()
+                            if setting:
+                                setting.active_category = category_id
+                            db.commit()
+                        
                         return {
                             "applied": True,
                             "supported": True,
@@ -7228,6 +7520,41 @@ def remove_category_from_jellyfin(category_id: int, db: Session = Depends(get_db
         "supported": False,
         "message": "Jellyfin preroll removal is not applicable yet."
     }
+
+# IMPORTANT: Generic /settings/{key} endpoints MUST come after specific /settings/* endpoints
+# to avoid FastAPI route matching the generic pattern first
+@app.get("/settings/{key}")
+def get_setting(key: str, db: Session = Depends(get_db)):
+    """Get a setting value by key"""
+    setting = db.query(models.Setting).first()
+    if not setting:
+        # Create a default Setting record if one doesn't exist
+        setting = models.Setting()
+        db.add(setting)
+        db.commit()
+    value = setting.get_json_value(key)
+    if value is None:
+        raise HTTPException(status_code=404, detail="Setting key not found")
+    return value
+
+@app.put("/settings/{key}")
+def update_setting(key: str, value: dict | list | str, db: Session = Depends(get_db)):
+    """Update a setting value"""
+    setting = db.query(models.Setting).first()
+    if not setting:
+        setting = models.Setting()
+        db.add(setting)
+    
+    if setting.set_json_value(key, value):
+        try:
+            db.commit()
+            return {"status": "success"}
+        except Exception as e:
+            db.rollback()
+            raise HTTPException(status_code=500, detail=str(e))
+    else:
+        raise HTTPException(status_code=400, detail="Failed to set value")
+
 
 try:
     app.mount("/", StaticFiles(directory=frontend_dir, html=True), name="frontend")

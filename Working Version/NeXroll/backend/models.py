@@ -2,6 +2,7 @@ from sqlalchemy import Column, Integer, String, DateTime, Boolean, ForeignKey, T
 from sqlalchemy.orm import relationship
 from backend.database import Base
 import datetime
+import json
 
 # Association (many-to-many) between prerolls and categories
 preroll_categories = Table(
@@ -120,6 +121,7 @@ class Setting(Base):
     plex_server_name = Column(String, nullable=True)  # Server name (friendly)
     # App state
     active_category = Column(Integer, ForeignKey("categories.id"))
+    timezone = Column(String, default="UTC")  # User's timezone (e.g., "America/New_York")
     updated_at = Column(DateTime, default=datetime.datetime.utcnow)
     override_expires_at = Column(DateTime, nullable=True)
     path_mappings = Column(Text, nullable=True)  # JSON list of {"local": "...", "plex": "..."} path prefix mappings
@@ -129,3 +131,20 @@ class Setting(Base):
     genre_override_ttl_seconds = Column(Integer, default=10)  # TTL in seconds for genre override window (prevents re-applying same genre preroll)
     # Dashboard customization
     dashboard_tile_order = Column(Text, nullable=True)  # JSON array of tile IDs for custom dashboard ordering
+    dashboard_layout = Column(Text, nullable=True)  # JSON dashboard section layout configuration
+    
+    def get_json_value(self, key):
+        """Get a JSON value from a column"""
+        try:
+            value = getattr(self, key, None)
+            return json.loads(value) if value else None
+        except:
+            return None
+            
+    def set_json_value(self, key, value):
+        """Set a JSON value for a column"""
+        try:
+            setattr(self, key, json.dumps(value) if value is not None else None)
+            return True
+        except:
+            return False

@@ -1301,6 +1301,20 @@ body.dark .dashboard .grid .card:hover {
 /* Responsive: keep cards readable on small screens */
 @media (max-width: 768px) {
   .dashboard .grid .card > p:first-of-type { font-size: 1.2rem; }
+  .dashboard .grid {
+    grid-template-columns: 1fr; /* Stack cards vertically on mobile */
+    gap: 0.75rem; /* Slightly tighter gap on mobile */
+  }
+  .dashboard .grid .card {
+    min-height: auto; /* Allow cards to shrink on mobile */
+  }
+}
+
+/* Touch-friendly drag handles on mobile */
+@media (max-width: 768px) and (pointer: coarse) {
+  .dashboard .grid .card {
+    touch-action: manipulation; /* Prevent scrolling during drag */
+  }
 }
 
 /* Prerolls stats spacing fix (2025-10-02) */
@@ -1312,3 +1326,34 @@ body.dark .dashboard .grid .card:hover {
 .prerolls-stats .stat-item {
   display: inline-block;
 }
+
+/* Sleek dashboard lock state and hint (2025-10-17) */
+.nx-lockstate {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 8px;
+  border: 1px solid var(--border-color);
+  border-radius: 9999px;
+  font-size: 0.8rem;
+  line-height: 1;
+  background: var(--header-bg);
+  color: var(--text-color);
+  box-shadow: 0 1px 2px var(--shadow);
+  transition: color 0.2s ease, background-color 0.2s ease, opacity 0.2s ease, border-color 0.2s ease;
+}
+
+.nx-dash-hint {
+  font-size: 0.85rem;
+  color: var(--text-secondary);
+  opacity: 0.9;
+  transition: color 0.2s ease, opacity 0.2s ease;
+}
+
+body.dark .nx-dash-hint {
+  opacity: 0.85;
+}
+
+/* Optional state variants for future use */
+.nx-lockstate.is-locked { color: var(--text-secondary); opacity: 0.95; }
+.nx-lockstate.is-editing { color: var(--text-color); }

@@ -472,7 +472,7 @@ def get_tray_image():
         except Exception:
             pass
 
-        # Fallbacks
+        # Fallbacks (packaged resources)
         candidates = [
             resource_path(os.path.join("frontend", "favicon.ico")),
             resource_path("favicon.ico"),
@@ -484,6 +484,22 @@ def get_tray_image():
                 if max(img.size) > 32:
                     img = img.resize((16, 16))
                 return img
+
+        # Also check alongside the installed executable (e.g., C:\ProgramData or Program Files\NeXroll)
+        try:
+            exe_dir = os.path.dirname(sys.executable)
+            extra = [
+                os.path.join(exe_dir, "favicon.ico"),
+                os.path.join(exe_dir, "NeXroll.ico"),
+            ]
+            for p in extra:
+                if os.path.exists(p):
+                    img = Image.open(p).convert("RGBA")
+                    if max(img.size) > 32:
+                        img = img.resize((16, 16))
+                    return img
+        except Exception:
+            pass
     except Exception:
         pass
     return _build_icon_image()

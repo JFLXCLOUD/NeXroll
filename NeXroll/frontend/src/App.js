@@ -1,4 +1,7 @@
 import React, { useState, useEffect } from 'react';
+import { DndContext, closestCenter, PointerSensor, useSensor, useSensors } from '@dnd-kit/core';
+import { SortableContext, rectSortingStrategy, useSortable, arrayMove } from '@dnd-kit/sortable';
+import { CSS } from '@dnd-kit/utilities';
 
 // API helpers that resolve the backend base dynamically (works in Docker and behind proxies)
 const apiBase = () => {
@@ -1825,151 +1828,339 @@ const toLocalInputFromDate = (d) => {
       return null;
     }
   };
+// === Dashboard Customization (Drag &amp; Drop, 4x2 grid) ===
+const DASH_KEYS = ["servers","prerolls","storage","schedules","scheduler","current_category","upcoming","recent_genres"];
+
+const [dashLayout, setDashLayout] = useState({
+  grid: { cols: 4, rows: 2 },
+  order: DASH_KEYS.slice(),
+  hidden: [],
+  locked: false
+});
+const [dashSaving, setDashSaving] = useState(false);
+
+const visibleOrder = React.useMemo(
+  () => (dashLayout?.order || DASH_KEYS),
+  [dashLayout]
+);
+
+const dashSensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 5 } }));
+
+const loadDashLayout = React.useCallback(async () => {
+  try {
+    const res = await fetch(apiUrl('/settings/dashboard-layout'));
+    const data = await safeJson(res);
+    if (data && data.grid && Array.isArray(data.order)) {
+      const cols = Math.max(1, Math.min(8, parseInt(data.grid.cols || 4, 10) || 4));
+      const rows = Math.max(1, Math.min(8, parseInt(data.grid.rows || 2, 10) || 2));
+      const capacity = cols * rows;
+      const canonical = DASH_KEYS.slice();
+      const order = (data.order || [])
+        .map(String)
+        .filter(k => canonical.includes(k));
+      for (const k of canonical) if (!order.includes(k)) order.push(k);
+      const hidden = Array.isArray(data.hidden) ? data.hidden.map(String).filter(k => canonical.includes(k)) : [];
+      setDashLayout({
+        grid: { cols, rows },
+        order: order.slice(0, capacity),
+        hidden,
+        locked: !!data.locked
+      });
+      return;
+    }
+  } catch {}
+  setDashLayout({ grid: { cols: 4, rows: 2 }, order: DASH_KEYS.slice(), hidden: [], locked: false });
+}, []);
+
+React.useEffect(() => { try { loadDashLayout(); } catch {} }, [loadDashLayout]);
+
+const persistDashLayout = React.useCallback(async (next) => {
+  setDashSaving(true);
+  try {
+    await fetch(apiUrl('/settings/dashboard-layout'), {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        version: 1,
+        grid: next.grid,
+        order: next.order,
+        hidden: next.hidden,
+        locked: next.locked
+      })
+    });
+  } catch {}
+  setDashSaving(false);
+}, []);
+
+const handleDashDragEnd = (event) => {
+  if (dashLayout?.locked) return;
+  const { active, over } = event || {};
+  if (!active || !over || active.id === over.id) return;
+
+  const cur = visibleOrder;
+  const oldIndex = cur.indexOf(active.id);
+  const newIndex = cur.indexOf(over.id);
+  if (oldIndex < 0 || newIndex < 0) return;
+
+  const newVisible = arrayMove(cur, oldIndex, newIndex);
+
+  // Merge with any trimmed/missing items to keep full canonical order
+  const canonical = DASH_KEYS;
+  const newOrder = [];
+  for (const k of newVisible) newOrder.push(k);
+  for (const k of canonical) {
+    if (!newOrder.includes(k)) newOrder.push(k);
+  }
+
+  const next = { ...dashLayout, order: newOrder };
+  setDashLayout(next);
+  persistDashLayout(next);
+};
+
+/* Visibility toggling removed: dashboard no longer supports hiding widgets (v1.5.0) */
+
+const toggleDashLock = () => {
+  const next = { ...dashLayout, locked: !dashLayout.locked };
+  setDashLayout(next);
+  persistDashLayout(next);
+};
+
+const SortableTile = ({ id, disabled, children }) => {
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id, disabled });
+  const style = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+    cursor: disabled ? 'default' : 'grab',
+    zIndex: isDragging ? 5 : 1
+  };
+  return (
+    <div ref={setNodeRef} style={style} className={`nx-tile ${isDragging ? 'dragging' : ''}`} {...attributes} {...listeners}>
+      {children}
+    </div>
+  );
+};
+
+// Tile renderers: content mirrors the original dashboard cards
+const DashboardTiles = {
+  servers: () => (
+    <div className="card">
+      <h2>Servers</h2>
+      <div style={{ display: 'grid', gap: '0.35rem' }}>
+        {(() => {
+          const s = getActiveConnectedServer();
+          if (s === 'plex') {
+            return (
+              <div>
+                <strong>Plex:</strong>
+                <span className={`nx-chip nx-status ok`} style={{ marginLeft: '0.35rem' }}>Connected</span>
+                {plexServerInfo?.name && (
+                  <span style={{ fontSize: '0.9rem', marginLeft: '0.5rem', color: 'var(--text-color)' }}>
+                    - {plexServerInfo.name}{plexServerInfo.version ? ` (${plexServerInfo.version})` : ''}
+                  </span>
+                )}
+              </div>
+            );
+          }
+          if (s === 'jellyfin') {
+            return (
+              <div>
+                <strong>Jellyfin:</strong>
+                <span className={`nx-chip nx-status ok`} style={{ marginLeft: '0.35rem' }}>Connected</span>
+                {jellyfinServerInfo?.name && (
+                  <span style={{ fontSize: '0.9rem', marginLeft: '0.5rem', color: 'var(--text-color)' }}>
+                    - {jellyfinServerInfo.name}{jellyfinServerInfo.version ? ` (${jellyfinServerInfo.version})` : ''}
+                  </span>
+                )}
+              </div>
+            );
+          }
+          if (s === 'conflict') {
+            return (
+              <div style={{ fontSize: '0.9rem', color: '#dc3545' }}>
+                Conflict: Both Plex and Jellyfin are connected. Disconnect one on the Connect tab.
+              </div>
+            );
+          }
+          return (
+            <div style={{ fontSize: '0.9rem', color: 'var(--text-secondary, #666)' }}>
+              No media server connected. Connect to Plex or Jellyfin on the Connect tab.
+            </div>
+          );
+        })()}
+      </div>
+    </div>
+  ),
+  prerolls: () => (
+    <div className="card">
+      <h2>Prerolls</h2>
+      <p>{prerolls.length} uploaded</p>
+      <p style={{ fontSize: '0.9rem', color: 'var(--text-secondary, #666)' }}>
+        {categories.filter(cat => prerolls.some(p => p.category_id === cat.id)).length} categories used
+      </p>
+      <button onClick={handleReinitThumbnails} className="button" style={{ marginTop: '0.5rem' }}>
+        🔄 Reinitialize Thumbnails
+      </button>
+    </div>
+  ),
+  storage: () => (
+    <div className="card">
+      <h2>Storage</h2>
+      <p>{formatBytes(totalStorageBytes)} used</p>
+    </div>
+  ),
+  schedules: () => (
+    <div className="card">
+      <h2>Schedules</h2>
+      <p>{schedules.filter(s => s.is_active).length} of {schedules.length} active</p>
+    </div>
+  ),
+  scheduler: () => (
+    <div className="card">
+      <h2>Scheduler</h2>
+      <p style={{ color: schedulerStatus.running ? 'green' : 'red' }}>
+        {schedulerStatus.running ? 'Running' : 'Stopped'}
+      </p>
+      <button onClick={toggleScheduler} className="button" style={{ marginTop: '0.5rem' }}>
+        {schedulerStatus.running ? 'Stop' : 'Start'} Scheduler
+      </button>
+    </div>
+  ),
+  current_category: () => (
+    <div className="card">
+      <h2>Current Category</h2>
+      {activeCategory ? (
+        <div>
+          <p style={{ fontWeight: 'bold', color: 'var(--success-color, #28a745)' }}>
+            {activeCategory.name}
+          </p>
+          <p style={{ fontSize: '0.9rem', color: 'var(--text-secondary, #666)' }}>
+            Mode: {activeCategory.plex_mode === 'playlist' ? 'Sequential' : 'Shuffle'}
+          </p>
+          <p style={{ fontSize: '0.9rem', color: 'var(--text-secondary, #666)' }}>
+            Prerolls: {prerolls.filter(p => p.category_id === activeCategory.id).length}
+          </p>
+        </div>
+      ) : (
+        <p style={{ color: 'var(--text-secondary, #666)' }}>No category applied</p>
+      )}
+    </div>
+  ),
+  upcoming: () => (
+    <div className="card">
+      <h2>Upcoming Schedules</h2>
+      {(() => {
+        const now = new Date();
+        const upcoming = schedules
+          .filter(s => s.is_active && s.next_run && new Date(s.next_run) > now)
+          .sort((a, b) => new Date(a.next_run) - new Date(b.next_run))
+          .slice(0, 3);
+        return upcoming.length > 0 ? (
+          <div style={{ display: 'grid', gap: '0.5rem' }}>
+            {upcoming.map(schedule => {
+              const category = categories.find(c => c.id === schedule.category_id);
+              return (
+                <div key={schedule.id} style={{ fontSize: '0.9rem', padding: '0.5rem', backgroundColor: 'var(--card-bg)', borderRadius: '4px' }}>
+                  <div style={{ fontWeight: 'bold', color: '#007bff' }}>
+                    {schedule.name}
+                  </div>
+                  <div style={{ color: 'var(--text-secondary, #666)' }}>
+                    {toLocalDisplay(schedule.next_run)} → {category?.name || 'Unknown'}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        ) : (
+          <p style={{ color: 'var(--text-secondary, #666)' }}>No upcoming schedules</p>
+        );
+      })()}
+    </div>
+  ),
+  recent_genres: () => (
+    <div className="card">
+      <h2>Recent Genre Prerolls</h2>
+      {recentGenreApplications.length > 0 ? (
+        <div style={{ display: 'grid', gap: '0.5rem' }}>
+          {recentGenreApplications.map((app, idx) => (
+            <div key={idx} style={{ fontSize: '0.9rem', padding: '0.5rem', backgroundColor: 'var(--card-bg)', border: '1px solid var(--border-color)', borderRadius: '4px' }}>
+              <div style={{ fontWeight: 'bold', color: '#28a745' }}>
+                {app.genre} → {app.category_name}
+              </div>
+              <div style={{ fontSize: '0.8rem', color: '#666', marginTop: '0.25rem' }}>
+                {new Date(app.timestamp).toLocaleString()}
+              </div>
+            </div>
+          ))}
+        </div>
+      ) : (
+        <p style={{ color: 'var(--text-secondary, #666)' }}>No recent genre prerolls</p>
+      )}
+    </div>
+  ),
+};
 
   const renderDashboard = () => (
     <div>
       <h1 className="header">NeXroll Dashboard</h1>
 
  
-      <div className="grid">
-        <div className="card">
-          <h2>Servers</h2>
-          <div style={{ display: 'grid', gap: '0.35rem' }}>
-            {(() => {
-              const s = getActiveConnectedServer();
-              if (s === 'plex') {
-                return (
-                  <div>
-                    <strong>Plex:</strong>
-                    <span className={`nx-chip nx-status ok`} style={{ marginLeft: '0.35rem' }}>Connected</span>
-                    {plexServerInfo?.name && (
-                      <span style={{ fontSize: '0.9rem', marginLeft: '0.5rem', color: 'var(--text-color)' }}>
-                        - {plexServerInfo.name}{plexServerInfo.version ? ` (${plexServerInfo.version})` : ''}
-                      </span>
-                    )}
-                  </div>
-                );
-              }
-              if (s === 'jellyfin') {
-                return (
-                  <div>
-                    <strong>Jellyfin:</strong>
-                    <span className={`nx-chip nx-status ok`} style={{ marginLeft: '0.35rem' }}>Connected</span>
-                    {jellyfinServerInfo?.name && (
-                      <span style={{ fontSize: '0.9rem', marginLeft: '0.5rem', color: 'var(--text-color)' }}>
-                        - {jellyfinServerInfo.name}{jellyfinServerInfo.version ? ` (${jellyfinServerInfo.version})` : ''}
-                      </span>
-                    )}
-                  </div>
-                );
-              }
-              if (s === 'conflict') {
-                return (
-                  <div style={{ fontSize: '0.9rem', color: '#dc3545' }}>
-                    Conflict: Both Plex and Jellyfin are connected. Disconnect one on the Connect tab.
-                  </div>
-                );
-              }
-              return (
-                <div style={{ fontSize: '0.9rem', color: 'var(--text-secondary, #666)' }}>
-                  No media server connected. Connect to Plex or Jellyfin on the Connect tab.
-                </div>
-              );
-            })()}
-          </div>
-        </div>
-        <div className="card">
-          <h2>Prerolls</h2>
-          <p>{prerolls.length} uploaded</p>
-          <p style={{ fontSize: '0.9rem', color: 'var(--text-secondary, #666)' }}>
-            {categories.filter(cat => prerolls.some(p => p.category_id === cat.id)).length} categories used
-          </p>
-          <button onClick={handleReinitThumbnails} className="button" style={{ marginTop: '0.5rem' }}>
-            🔄 Reinitialize Thumbnails
-          </button>
-        </div>
-        <div className="card">
-          <h2>Storage</h2>
-          <p>{formatBytes(totalStorageBytes)} used</p>
-        </div>
-        <div className="card">
-          <h2>Schedules</h2>
-          <p>{schedules.filter(s => s.is_active).length} of {schedules.length} active</p>
-        </div>
-        <div className="card">
-          <h2>Scheduler</h2>
-          <p style={{ color: schedulerStatus.running ? 'green' : 'red' }}>
-            {schedulerStatus.running ? 'Running' : 'Stopped'}
-          </p>
-          <button onClick={toggleScheduler} className="button" style={{ marginTop: '0.5rem' }}>
-            {schedulerStatus.running ? 'Stop' : 'Start'} Scheduler
-          </button>
-        </div>
-        <div className="card">
-          <h2>Current Category</h2>
-          {activeCategory ? (
-            <div>
-              <p style={{ fontWeight: 'bold', color: 'var(--success-color, #28a745)' }}>
-                {activeCategory.name}
-              </p>
-              <p style={{ fontSize: '0.9rem', color: 'var(--text-secondary, #666)' }}>
-                Mode: {activeCategory.plex_mode === 'playlist' ? 'Sequential' : 'Shuffle'}
-              </p>
-              <p style={{ fontSize: '0.9rem', color: 'var(--text-secondary, #666)' }}>
-                Prerolls: {prerolls.filter(p => p.category_id === activeCategory.id).length}
-              </p>
-            </div>
-          ) : (
-            <p style={{ color: 'var(--text-secondary, #666)' }}>No category applied</p>
+      <div className="card nx-dashboard-controls">
+        <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem', flexWrap: 'wrap' }}>
+          <label className="nx-rockerswitch" title={dashLayout.locked ? 'Unlock to rearrange' : 'Lock to finish'}>
+            <input
+              type="checkbox"
+              checked={dashLayout.locked}
+              onChange={toggleDashLock}
+              aria-label={dashLayout.locked ? 'Unlock layout' : 'Lock layout'}
+            />
+            <span className="nx-rockerswitch-slider"></span>
+          </label>
+          <span
+            className={`nx-lockstate ${dashLayout.locked ? 'is-locked' : 'is-editing'}`}
+            style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: '6px',
+              padding: '2px 8px',
+              border: '1px solid var(--border-color)',
+              borderRadius: '9999px',
+              fontSize: '0.8rem',
+              lineHeight: 1,
+              background: 'var(--header-bg)',
+              color: dashLayout.locked ? 'var(--text-secondary)' : 'var(--text-color)',
+              opacity: dashLayout.locked ? 0.9 : 1
+            }}
+            aria-live="polite"
+          >
+            {dashLayout.locked ? 'Locked' : 'Editing'}
+          </span>
+          {dashSaving && <span className="nx-spinner" aria-hidden="true" title="Saving layout…"></span>}
+          {!dashLayout.locked && (
+            <span
+              className="nx-dash-hint"
+              style={{ color: 'var(--text-secondary)', fontSize: '0.78rem', opacity: 0.72 }}
+            >
+              Drag to rearrange — lock to save
+            </span>
           )}
         </div>
-        <div className="card">
-          <h2>Upcoming Schedules</h2>
-          {(() => {
-            const now = new Date();
-            const upcoming = schedules
-              .filter(s => s.is_active && s.next_run && new Date(s.next_run) > now)
-              .sort((a, b) => new Date(a.next_run) - new Date(b.next_run))
-              .slice(0, 3);
-            return upcoming.length > 0 ? (
-              <div style={{ display: 'grid', gap: '0.5rem' }}>
-                {upcoming.map(schedule => {
-                  const category = categories.find(c => c.id === schedule.category_id);
-                  return (
-                    <div key={schedule.id} style={{ fontSize: '0.9rem', padding: '0.5rem', backgroundColor: 'var(--card-bg)', borderRadius: '4px' }}>
-                      <div style={{ fontWeight: 'bold', color: '#007bff' }}>
-                        {schedule.name}
-                      </div>
-                      <div style={{ color: 'var(--text-secondary, #666)' }}>
-                        {toLocalDisplay(schedule.next_run)} → {category?.name || 'Unknown'}
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            ) : (
-              <p style={{ color: 'var(--text-secondary, #666)' }}>No upcoming schedules</p>
-            );
-          })()}
-        </div>
-        {recentGenreApplications.length > 0 && (
-          <div className="card">
-            <h2>Recent Genre Prerolls</h2>
-            <div style={{ display: 'grid', gap: '0.5rem' }}>
-              {recentGenreApplications.map((app, idx) => (
-                <div key={idx} style={{ fontSize: '0.9rem', padding: '0.5rem', backgroundColor: 'var(--card-bg)', border: '1px solid var(--border-color)', borderRadius: '4px' }}>
-                  <div style={{ fontWeight: 'bold', color: '#28a745' }}>
-                    {app.genre} → {app.category_name}
-                  </div>
-                  <div style={{ fontSize: '0.8rem', color: '#666', marginTop: '0.25rem' }}>
-                    {new Date(app.timestamp).toLocaleString()}
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
       </div>
+
+      <DndContext sensors={dashSensors} collisionDetection={closestCenter} onDragEnd={handleDashDragEnd}>
+        <SortableContext items={visibleOrder} strategy={rectSortingStrategy}>
+          <div className={`grid nx-dash-grid ${dashLayout.locked ? '' : 'editing'}`} style={{
+            display: 'grid',
+            gridTemplateColumns: `repeat(${dashLayout?.grid?.cols || 4}, 1fr)`,
+            gap: '1rem'
+          }}>
+            {visibleOrder.map((key) => (
+              <SortableTile key={key} id={key} disabled={dashLayout.locked}>
+                {DashboardTiles[key] ? DashboardTiles[key]() : null}
+              </SortableTile>
+            ))}
+          </div>
+        </SortableContext>
+      </DndContext>
 
       <div className="upload-section">
         <h2>Add Prerolls</h2>

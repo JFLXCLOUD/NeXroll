@@ -39,3 +39,45 @@
 
 /* Prerolls UI styles are centralized in index.css for consistency.
    Duplicate rules removed to prevent precedence conflicts. */
+
+
+/* Dashboard drag-and-drop styles */
+.nx-dashboard-controls {
+  margin-bottom: 0.75rem;
+}
+
+.nx-dash-grid {
+  margin-top: 0.75rem;
+}
+
+.nx-tile {
+  user-select: none;
+}
+
+.nx-tile.dragging {
+  opacity: 0.9;
+  box-shadow: 0 8px 20px rgba(0,0,0,0.25);
+  cursor: grabbing;
+}
+
+/* ---------- Dashboard edit mode (iPhone-like jiggle) ---------- */
+.nx-dash-grid.editing .nx-tile {
+  animation: nx-jiggle 0.18s infinite alternate ease-in-out;
+  cursor: grab;
+  border-radius: 12px;
+}
+
+@keyframes nx-jiggle {
+  from { transform: rotate(-0.5deg) scale(1.002); }
+  to   { transform: rotate(0.5deg)  scale(1.002); }
+}
+
+/* Elevate on hover while editing */
+.nx-dash-grid.editing .nx-tile:hover {
+  box-shadow: 0 6px 14px var(--shadow);
+}
+
+/* Disable jiggle when actively dragging (use existing dragging class) */
+.nx-dash-grid .nx-tile.dragging {
+  animation: none;
+}

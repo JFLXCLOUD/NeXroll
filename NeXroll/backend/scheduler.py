@@ -272,7 +272,7 @@ class Scheduler:
                     return
 
             # Apply to Plex and set override to protect from scheduler immediately overriding
-            ok = self._apply_category_to_plex(matched_cat.id, db)
+            ok = self._apply_category_to_plex(matched_cat.id, db, trigger_type="genre_auto", rating_key=chosen_key, genre=matched_genre_display)
             if not ok:
                 return
 
@@ -367,16 +367,32 @@ class Scheduler:
             # Apply category change to Plex only if it differs from current
             if desired_category_id and setting.active_category != desired_category_id:
                 applied_ok = False
+                trigger_type = "schedule" if chosen_schedule else "fallback"
                 # If this schedule defines an explicit sequence, honor it; otherwise apply whole category
                 if chosen_schedule and getattr(chosen_schedule, "sequence", None):
                     applied_ok = self._apply_schedule_sequence_to_plex(chosen_schedule, db)
                 else:
-                    applied_ok = self._apply_category_to_plex(desired_category_id, db)
+                    applied_ok = self._apply_category_to_plex(desired_category_id, db, trigger_type=trigger_type)
                 if applied_ok:
                     setting.active_category = desired_category_id
                     if chosen_schedule:
                         chosen_schedule.last_run = now
                         chosen_schedule.next_run = self._calculate_next_run(chosen_schedule)
+                        # Record schedule execution
+                        try:
+                            execution = models.ScheduleExecution(
+                                schedule_id=chosen_schedule.id,
+                                success=True,
+                                category_id=desired_category_id,
+                                preroll_count=len(db.query(models.Preroll)
+                                    .outerjoin(models.preroll_categories, models.Preroll.id == models.preroll_categories.c.preroll_id)
+                                    .filter(or_(models.Preroll.category_id == desired_category_id,
+                                               models.preroll_categories.c.category_id == desired_category_id))
+                                    .distinct().all())
+                            )
+                            db.add(execution)
+                        except Exception as e:
+                            print(f"SCHEDULER: Failed to record schedule execution: {e}")
                     db.commit()
             # If no desired_category_id, leave Plex as-is to avoid unintended clears
 
@@ -400,7 +416,7 @@ class Scheduler:
         # Indefinite schedule: active from start onward
         return now >= schedule.start_date
 
-    def _apply_category_to_plex(self, category_id: int, db: Session) -> bool:
+    def _apply_category_to_plex(self, category_id: int, db: Session, trigger_type: str = "manual", rating_key: str = None, genre: str = None) -> bool:
         """
         Apply all prerolls from a category (including many-to-many) to Plex as a semicolon-separated list.
         Mirrors the logic in the /categories/{id}/apply-to-plex endpoint.
@@ -418,6 +434,35 @@ class Scheduler:
         if not prerolls:
             print(f"SCHEDULER: No prerolls found for category_id={category_id}")
             return False
+
+        # Record category usage
+        try:
+            usage = models.CategoryUsage(
+                category_id=category_id,
+                trigger_type=trigger_type,
+                preroll_count=len(prerolls)
+            )
+            db.add(usage)
+            db.commit()
+        except Exception as e:
+            print(f"SCHEDULER: Failed to record category usage: {e}")
+            db.rollback()
+
+        # Record individual preroll plays
+        try:
+            for preroll in prerolls:
+                play = models.PrerollPlay(
+                    preroll_id=preroll.id,
+                    category_id=category_id,
+                    trigger_type=trigger_type,
+                    rating_key=rating_key,
+                    genre=genre
+                )
+                db.add(play)
+            db.commit()
+        except Exception as e:
+            print(f"SCHEDULER: Failed to record preroll plays: {e}")
+            db.rollback()
 
         # Build combined path string for Plex multi-preroll format, honoring category.plex_mode
         preroll_paths_local = [os.path.abspath(p.path) for p in prerolls]
