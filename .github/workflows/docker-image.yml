@@ -7,7 +7,7 @@ on:
     paths:
       - 'Dockerfile'
       - 'NeXroll/**'
-      - '.github/workflows/docker-build.yml'
+      - '.github/workflows/docker-image.yml'
   workflow_dispatch:
     inputs:
       version:
@@ -64,8 +64,8 @@ jobs:
 
       - name: Image scan summary
         run: |
-          echo "✅ Docker image successfully built and pushed"
-          echo "📦 Image tags:"
+          echo "Docker image successfully built and pushed"
+          echo "Image tags:"
           echo "  - jbrns/nexroll:latest"
           echo "  - jbrns/nexroll:${{ steps.version.outputs.version }}"
           echo ""
