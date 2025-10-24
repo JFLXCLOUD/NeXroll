@@ -14,7 +14,7 @@ COPY NeXroll/frontend/ ./
 RUN npm run build
 
 # --- Backend runtime stage ---
-FROM python:3.14-slim
+FROM python:3.12-slim
 
 ARG APP_VERSION=dev
 LABEL org.opencontainers.image.title="NeXroll" \
@@ -35,6 +35,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     JELLYFIN_API_KEY=""
 
 RUN apt-get update && \
+    apt-get upgrade -y && \
     apt-get install -y --no-install-recommends \
         ffmpeg \
         curl \
