@@ -1,198 +1,74 @@
-name: Docker Image
+name: Docker Image Build and Push
 
 on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'Dockerfile'
+      - 'NeXroll/**'
+      - '.github/workflows/docker-build.yml'
   workflow_dispatch:
     inputs:
       version:
-        description: Version tag to publish (e.g. 1.4.6)
-        required: true
-        default: 1.4.6
-
-permissions:
-  contents: read
-  packages: write
+        description: 'Image version tag (default: latest)'
+        required: false
+        default: 'latest'
 
 jobs:
-  build-and-push:
-    name: Build and push multi-arch image
+  build:
     runs-on: ubuntu-latest
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+    permissions:
+      contents: read
+      packages: write
 
-      - name: Set up QEMU
-        uses: docker/setup-qemu-action@v3
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      - name: Login to Docker Hub
+      - name: Log in to Docker Hub
         uses: docker/login-action@v3
         with:
-          username: ${{ secrets.DOCKERHUB_USERNAME }}
-          password: ${{ secrets.DOCKERHUB_TOKEN }}
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_PASSWORD }}
 
-      - name: Login to GHCR
-        uses: docker/login-action@v3
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Derive version
-        id: v
-        shell: bash
+      - name: Get version
+        id: version
         run: |
-          set -euo pipefail
-          echo "ver=${{ github.event.inputs.version }}" >> "$GITHUB_OUTPUT"
-
-      - name: Derive GHCR namespace
-        id: meta
-        shell: bash
-        run: |
-          owner="${{ github.repository_owner }}"
-          echo "owner_lc=$(echo "$owner" | tr '[:upper:]' '[:lower:]')" >> "$GITHUB_OUTPUT"
-
-      - name: Detect layout and generate CI Dockerfile
-        id: gen
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          echo "Workspace root:" && pwd && ls -la
-
-          # Case-insensitive search for expected paths to tolerate layout/case differences
-          FE_PATH="$(find . -type d -iname frontend | head -n1 | sed 's|^\./||')"
-          BE_CANON="$(find . -type d -iname nexroll_backend | head -n1 | sed 's|^\./||')"
-          BE_LEGACY="$(find . -type d -iname backend | head -n1 | sed 's|^\./||')"
-          REQ_PATH="$(find . -type f -iname requirements.txt | head -n1 | sed 's|^\./||')"
-
-          # If no requirements file is found, synthesize a minimal one
-          if [[ -z "$REQ_PATH" ]]; then
-            REQ_PATH="requirements.ci.txt"
-            printf "%s\n" \
-              "fastapi==0.104.1" \
-              "uvicorn[standard]==0.24.0" \
-              "sqlalchemy==2.0.23" \
-              "pydantic==2.5.0" \
-              "ffmpeg-python==0.2.0" \
-              "apscheduler==3.10.4" \
-              "requests==2.32.5" \
-              "plexapi==4.17.1" \
-              "python-multipart==0.0.20" \
-              "jinja2==3.1.6" \
-              > "$REQ_PATH"
-          fi
-
-          # Require frontend and at least one backend shape
-          if [[ -z "$FE_PATH" || ( -z "$BE_CANON" && -z "$BE_LEGACY" ) ]]; then
-            echo "Auto-detect failed. Showing tree (depth 3) for diagnostics:" >&2
-            find . -maxdepth 3 -print >&2
-            echo "Resolved FE_PATH='$FE_PATH' BE_CANON='$BE_CANON' BE_LEGACY='$BE_LEGACY' REQ_PATH='$REQ_PATH'" >&2
-            exit 1
-          fi
-
-          # Default to canonical module; fallback to legacy if canonical missing
-          MODULE="nexroll_backend.main:app"
-          if [[ -z "$BE_CANON" && -n "$BE_LEGACY" ]]; then
-            MODULE="backend.main:app"
-          fi
-
-          echo "Resolved FE_PATH=$FE_PATH"
-          echo "Resolved BE_CANON=${BE_CANON:-<none>}"
-          echo "Resolved BE_LEGACY=${BE_LEGACY:-<none>}"
-          echo "Resolved REQ_PATH=$REQ_PATH"
-          echo "Resolved MODULE=$MODULE"
-
-          # Generate a Dockerfile with concrete paths so COPY resolves correctly on Linux runners
-          cat > Dockerfile.ci <<EOF
-          # syntax=docker/dockerfile:1
-
-          FROM node:22-alpine AS frontend-builder
-          WORKDIR /build/frontend
-
-          COPY $FE_PATH/package*.json ./
-          RUN npm install --no-audit --no-fund --legacy-peer-deps
-
-          COPY $FE_PATH/ ./
-          RUN npm run build
-
-          FROM python:3.12-slim
-
-          ARG APP_VERSION=dev
-          LABEL org.opencontainers.image.title="NeXroll" \
-                org.opencontainers.image.description="NeXroll preroll management system" \
-                org.opencontainers.image.version="\${APP_VERSION}" \
-                org.opencontainers.image.licenses="MIT"
-
-          ENV PYTHONDONTWRITEBYTECODE=1 \
-              PYTHONUNBUFFERED=1 \
-              PIP_NO_CACHE_DIR=1 \
-              PYTHONPATH=/app/NeXroll \
-              NEXROLL_PORT=9393 \
-              NEXROLL_DB_DIR=/data \
-              NEXROLL_PREROLL_PATH=/data/prerolls \
-              NEXROLL_SECRETS_DIR=/data \
-              PLEX_URL="" \
-              JELLYFIN_URL="" \
-              TZ=UTC
-
-          RUN apt-get update && \
-              apt-get install -y --no-install-recommends \
-                  ffmpeg \
-                  curl \
-                  tzdata \
-                  build-essential \
-                  rustc \
-                  cargo \
-                  pkg-config && \
-              rm -rf /var/lib/apt/lists/*
-
-          WORKDIR /app/NeXroll
-
-          COPY $REQ_PATH /app/NeXroll/requirements.txt
-          RUN pip install --no-cache-dir -r /app/NeXroll/requirements.txt
-          EOF
-
-          # Copy sources: prefer canonical; otherwise mirror legacy to both for import-compat
-          if [[ -n "$BE_CANON" ]]; then
-            echo "COPY $BE_CANON /app/NeXroll/nexroll_backend" >> Dockerfile.ci
-            if [[ -n "$BE_LEGACY" ]]; then
-              echo "COPY $BE_LEGACY /app/NeXroll/backend" >> Dockerfile.ci
-            fi
+          if [ "${{ github.event.inputs.version }}" != "" ]; then
+            VERSION="${{ github.event.inputs.version }}"
           else
-            echo "COPY $BE_LEGACY /app/NeXroll/backend" >> Dockerfile.ci
-            echo "COPY $BE_LEGACY /app/NeXroll/nexroll_backend" >> Dockerfile.ci
+            VERSION=$(grep -o 'version = "[^"]*"' NeXroll/version.py | cut -d'"' -f2)
           fi
+          echo "version=${VERSION}" >> $GITHUB_OUTPUT
+          echo "Building NeXroll version: ${VERSION}"
 
-          # Append frontend assets and runtime
-          cat >> Dockerfile.ci <<EOF
-          COPY --from=frontend-builder /build/frontend/build /app/NeXroll/frontend/build
-
-          RUN mkdir -p /data /data/prerolls
-          VOLUME ["/data"]
-
-          EXPOSE 9393
-
-          HEALTHCHECK --interval=30s --timeout=5s --retries=3 \
-            CMD curl -fsS http://localhost:\${NEXROLL_PORT:-9393}/health || exit 1
-
-          CMD ["sh", "-c", "uvicorn $MODULE --host 0.0.0.0 --port \${NEXROLL_PORT:-9393}"]
-          EOF
-
-          echo "DOCKERFILE=Dockerfile.ci" >> "$GITHUB_ENV"
-
-      - name: Build and push
-        uses: docker/build-push-action@v6
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v5
         with:
           context: .
-          file: ${{ env.DOCKERFILE }}
           platforms: linux/amd64,linux/arm64
           push: true
-          build-args: |
-            APP_VERSION=${{ steps.v.outputs.ver }}
           tags: |
-            jbrns/nexroll:${{ steps.v.outputs.ver }}
             jbrns/nexroll:latest
-            ghcr.io/${{ steps.meta.outputs.owner_lc }}/nexroll:${{ steps.v.outputs.ver }}
-            ghcr.io/${{ steps.meta.outputs.owner_lc }}/nexroll:latest
+            jbrns/nexroll:${{ steps.version.outputs.version }}
+          cache-from: type=registry,ref=jbrns/nexroll:buildcache
+          cache-to: type=registry,ref=jbrns/nexroll:buildcache,mode=max
+          build-args: |
+            APP_VERSION=${{ steps.version.outputs.version }}
+
+      - name: Image scan summary
+        run: |
+          echo "✅ Docker image successfully built and pushed"
+          echo "📦 Image tags:"
+          echo "  - jbrns/nexroll:latest"
+          echo "  - jbrns/nexroll:${{ steps.version.outputs.version }}"
+          echo ""
+          echo "🔍 Security scanning:"
+          echo "  Docker Hub will automatically scan the image for vulnerabilities"
+          echo "  Check results at: https://hub.docker.com/r/jbrns/nexroll"
