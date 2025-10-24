@@ -2,7 +2,7 @@ from sqlalchemy import Column, Integer, String, DateTime, Boolean, ForeignKey, T
 from sqlalchemy.orm import relationship
 from backend.database import Base
 import datetime
-from sqlalchemy import func
+import json
 
 # Association (many-to-many) between prerolls and categories
 preroll_categories = Table(
@@ -107,46 +107,6 @@ class CommunityTemplate(Base):
     created_at = Column(DateTime, default=datetime.datetime.utcnow)
     is_public = Column(Boolean, default=True)
 
-class PrerollPlay(Base):
-    __tablename__ = "preroll_plays"
-
-    id = Column(Integer, primary_key=True, index=True)
-    preroll_id = Column(Integer, ForeignKey("prerolls.id"), nullable=False)
-    category_id = Column(Integer, ForeignKey("categories.id"), nullable=True)  # Category that was active when played
-    played_at = Column(DateTime, default=datetime.datetime.utcnow, index=True)
-    trigger_type = Column(String, default="manual")  # 'manual', 'schedule', 'genre_auto', 'fallback'
-    rating_key = Column(String, nullable=True)  # Plex rating key that triggered the play (if available)
-    genre = Column(String, nullable=True)  # Genre that triggered the play (if genre_auto)
-
-    preroll = relationship("Preroll")
-    category = relationship("Category")
-
-class CategoryUsage(Base):
-    __tablename__ = "category_usage"
-
-    id = Column(Integer, primary_key=True, index=True)
-    category_id = Column(Integer, ForeignKey("categories.id"), nullable=False)
-    applied_at = Column(DateTime, default=datetime.datetime.utcnow, index=True)
-    trigger_type = Column(String, default="manual")  # 'manual', 'schedule', 'genre_auto', 'fallback'
-    duration_seconds = Column(Integer, nullable=True)  # How long this category was active
-    preroll_count = Column(Integer, default=0)  # Number of prerolls in the category at time of application
-
-    category = relationship("Category")
-
-class ScheduleExecution(Base):
-    __tablename__ = "schedule_executions"
-
-    id = Column(Integer, primary_key=True, index=True)
-    schedule_id = Column(Integer, ForeignKey("schedules.id"), nullable=False)
-    executed_at = Column(DateTime, default=datetime.datetime.utcnow, index=True)
-    success = Column(Boolean, default=True)
-    category_id = Column(Integer, ForeignKey("categories.id"), nullable=True)  # Category that was applied
-    preroll_count = Column(Integer, default=0)  # Number of prerolls applied
-    error_message = Column(Text, nullable=True)
-
-    schedule = relationship("Schedule")
-    category = relationship("Category")
-
 class Setting(Base):
     __tablename__ = "settings"
 
@@ -161,6 +121,7 @@ class Setting(Base):
     plex_server_name = Column(String, nullable=True)  # Server name (friendly)
     # App state
     active_category = Column(Integer, ForeignKey("categories.id"))
+    timezone = Column(String, default="UTC")  # User's timezone (e.g., "America/New_York")
     updated_at = Column(DateTime, default=datetime.datetime.utcnow)
     override_expires_at = Column(DateTime, nullable=True)
     path_mappings = Column(Text, nullable=True)  # JSON list of {"local": "...", "plex": "..."} path prefix mappings
@@ -168,5 +129,22 @@ class Setting(Base):
     genre_auto_apply = Column(Boolean, default=False)  # Enable/disable automatic genre-based preroll application
     genre_priority_mode = Column(String, default="schedules_override")  # "schedules_override" or "genres_override" - which takes priority when both are active
     genre_override_ttl_seconds = Column(Integer, default=10)  # TTL in seconds for genre override window (prevents re-applying same genre preroll)
-    # Dashboard widget customization
-    dashboard_layout = Column(Text, nullable=True)  # JSON structure for widget positions, visibility, and lock state
+    # Dashboard customization
+    dashboard_tile_order = Column(Text, nullable=True)  # JSON array of tile IDs for custom dashboard ordering
+    dashboard_layout = Column(Text, nullable=True)  # JSON dashboard section layout configuration
+    
+    def get_json_value(self, key):
+        """Get a JSON value from a column"""
+        try:
+            value = getattr(self, key, None)
+            return json.loads(value) if value else None
+        except:
+            return None
+            
+    def set_json_value(self, key, value):
+        """Set a JSON value for a column"""
+        try:
+            setattr(self, key, json.dumps(value) if value is not None else None)
+            return True
+        except:
+            return False
