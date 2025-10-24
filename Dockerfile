@@ -14,7 +14,7 @@ COPY NeXroll/frontend/ ./
 RUN npm run build
 
 # --- Backend runtime stage ---
-FROM python:3.12-slim
+FROM python:3.14-slim
 
 ARG APP_VERSION=dev
 LABEL org.opencontainers.image.title="NeXroll" \

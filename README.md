@@ -2,12 +2,14 @@
 <div align="center">
   <img src="NeXroll/frontend/NeXroll_Logo_WHT.png" alt="NeXroll Logo" width="500"/>
   <br>
- <a href="https://github.com/JFLXCLOUD/NeXroll/releases/latest"><img src="https://img.shields.io/github/downloads/jflxcloud/nexroll/total?color=DE7716" alt="Downloads"/></a> ▀ <a href="https://hub.docker.com/r/jbrns/nexroll"><img src="https://img.shields.io/docker/pulls/jbrns/nexroll" alt="Docker Pulls"/></a> ▀ <a href="https://github.com/JFLXCLOUD/NeXroll/releases/latest"><img src="https://img.shields.io/github/v/release/jflxcloud/nexroll?style=flat&color=DEDB16" alt="Latest Release"/></a>
+ <a href="https://hub.docker.com/r/jbrns/nexroll"><img src="https://img.shields.io/docker/pulls/jbrns/nexroll" alt="Docker Pulls"/></a> ▀ <a href="https://github.com/JFLXCLOUD/NeXroll/releases/latest"><img src="https://img.shields.io/github/v/release/jflxcloud/nexroll?style=flat&color=DEDB16" alt="Latest Release"/></a>
+    ▀  <a href="https://github.com/JFLXCLOUD/NeXroll/releases/latest"><img src="https://img.shields.io/github/downloads/jflxcloud/nexroll/total?color=DE7716" alt="Downloads"/></a>
+
 </div>
 
 ---
 
-NeXroll is a Windows-ready preroll management system with a modern web UI, an optional Windows Service, and a lightweight system tray app. All executables are self‑contained (no Python required on user machines), and a single installer configures everything end‑to‑end.
+NeXroll is a preroll manager for Plex and Jellyfin that makes setup effortless. It runs natively on Windows and works in Docker, featuring a clean web interface, optional background service, and lightweight tray app. Everything is self-contained, and a single installer gets you up and running in minutes.
 
 ---
 
@@ -25,13 +27,7 @@ NeXroll is a Windows-ready preroll management system with a modern web UI, an op
   - Flexible schedules with date/time ranges and recurrence
   - Optional fallback category when no schedule is active
   - Real‑time scheduler status
-- UI enhancements (v1.1.1)
-  - Sticky top navigation bar for persistent access to Dashboard, Schedules, Categories, Settings, and Connect
-  - Pagination for Prerolls: default 20 per page, adjustable up to 50
-  - Multi-select with bulk primary category update/move
-  - Inline category creation directly from Upload and Edit Preroll
-  - Storage usage card on the Dashboard showing total preroll storage used
-  - Long preroll title handling so Edit/Delete buttons remain visible in Grid and List views
+
 - Media Server integration
   - Connect to Plex or Jellyfin servers
   - Connect via URL/token or Stable Token (persistent)
@@ -45,7 +41,7 @@ NeXroll is a Windows-ready preroll management system with a modern web UI, an op
   - SQLite database storage under %ProgramData%\NeXroll
 - API
   - REST API with interactive docs at http://localhost:9393/docs
-## Download and Install (Users)
+## Download and Install
 
 1. Download the latest `NeXroll_Installer.exe` from GitHub Releases:
    https://github.com/JFLXCLOUD/NeXroll/releases
@@ -115,7 +111,7 @@ Tip: if a previous NeXroll instance is still running and occupying port 9393, th
 
 ---
 
-## Requirements (User machines)
+## Requirements
 
 - Windows 10/11 x64
 - FFmpeg for thumbnail generation (you can install it from the installer's optional components, or manually)
@@ -141,9 +137,9 @@ Tip: if a previous NeXroll instance is still running and occupying port 9393, th
 
 ---
 
-## Building From Source (Maintainers)
+## Building From Source
 
-See the full packaging guide in `NeXroll/Docs/PACKAGING.md` (excluded from repo).
+See the full packaging guide in `NeXroll/Docs/PACKAGING.md`.
 
 Prerequisites (build machine):
 - Python 3.10+ (build‑time only)
@@ -171,7 +167,7 @@ Outputs:
 ---
 
 
-## Project Structure (key files)
+## Project Structure
 
 - Backend (FastAPI): `NeXroll/backend/`
 - Packaged runtime backend: `NeXroll/backend/`
