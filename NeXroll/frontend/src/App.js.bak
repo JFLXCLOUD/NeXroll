@@ -1,7 +1,7 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect } from 'react';
 import { DndContext, closestCenter, PointerSensor, useSensor, useSensors } from '@dnd-kit/core';
-import { SortableContext, rectSortingStrategy, useSortable, arrayMove } from '@dnd-kit/sortable';
-import { CSS } from '@dnd-kit/utilities';
+import { SortableContext, rectSortingStrategy, arrayMove } from '@dnd-kit/sortable';
+import { DashboardSection, SectionVisibilityMenu } from './components/DashboardComponents';
 
 // API helpers that resolve the backend base dynamically (works in Docker and behind proxies)
 const apiBase = () => {
@@ -406,8 +406,147 @@ const CategoryPicker = ({ categories, primaryId, secondaryIds, onChange, onCreat
     </div>
   );
 };
+// Initial state setup
+const defaultDashboardSections = [
+  { id: 'plex', title: 'Plex Integration', visible: true },
+  { id: 'prerolls', title: 'Preroll Management', visible: true },
+  { id: 'schedules', title: 'Schedules', visible: true },
+  { id: 'categories', title: 'Categories', visible: true },
+  { id: 'holidays', title: 'Holiday Presets', visible: true },
+  { id: 'files', title: 'File Management', visible: true }
+];
+
 function App() {
   console.log('App component rendering');
+  
+  // Dashboard state
+  const [dashboardSections, setDashboardSections] = useState(() => {
+    const saved = localStorage.getItem('dashboardLayout');
+    return saved ? JSON.parse(saved) : defaultDashboardSections;
+  });
+
+  // Save dashboard layout changes
+  useEffect(() => {
+    localStorage.setItem('dashboardLayout', JSON.stringify(dashboardSections));
+  }, [dashboardSections]);
+
+  // Drag and drop setup
+  const sensors = useSensors(useSensor(PointerSensor));
+
+  const handleDragEnd = (event) => {
+    const { active, over } = event;
+    if (active.id !== over.id) {
+      setDashboardSections((sections) => {
+        const oldIndex = sections.findIndex((s) => s.id === active.id);
+        const newIndex = sections.findIndex((s) => s.id === over.id);
+        return arrayMove(sections, oldIndex, newIndex);
+      });
+    }
+  };
+
+  // State for section visibility toggle menu
+  const [visibilityMenu, setVisibilityMenu] = useState(false);
+
+  // Toggle section visibility
+  const toggleSectionVisibility = (sectionId) => {
+    setDashboardSections(sections =>
+      sections.map(section =>
+        section.id === sectionId
+          ? { ...section, visible: !section.visible }
+          : section
+      )
+    );
+  };
+  
+  const renderDashboard = () => {
+    return (
+      <div className="nx-dashboard">
+        <div className="nx-dashboard-header">
+          <h1>Dashboard</h1>
+          <button
+            className="nx-button"
+            onClick={() => setVisibilityMenu(!visibilityMenu)}
+          >
+            Customize Dashboard
+          </button>
+          {visibilityMenu && (
+            <SectionVisibilityMenu
+              sections={dashboardSections}
+              onToggle={toggleSectionVisibility}
+            />
+          )}
+        </div>
+
+        <DndContext
+          sensors={sensors}
+          collisionDetection={closestCenter}
+          onDragEnd={handleDragEnd}
+        >
+          <SortableContext
+            items={dashboardSections}
+            strategy={rectSortingStrategy}
+          >
+            <div className="nx-dashboard-grid">
+              {dashboardSections.map(section => {
+                if (!section.visible) return null;
+
+                return (
+                  <DashboardSection
+                    key={section.id}
+                    id={section.id}
+                    title={section.title}
+                  >
+                    {section.id === 'plex' && (
+                      <div>
+                        <div>Status: {plexStatus}</div>
+                        {plexServerInfo && (
+                          <div>
+                            <div>Server: {plexServerInfo.name}</div>
+                            <div>Version: {plexServerInfo.version}</div>
+                          </div>
+                        )}
+                      </div>
+                    )}
+                    {section.id === 'prerolls' && (
+                      <div>
+                        <div>Total Prerolls: {prerolls.length}</div>
+                        {/* Add preroll management UI here */}
+                      </div>
+                    )}
+                    {section.id === 'schedules' && (
+                      <div>
+                        <div>Active Schedules: {schedules.length}</div>
+                        {/* Add schedule management UI here */}
+                      </div>
+                    )}
+                    {section.id === 'categories' && (
+                      <div>
+                        <div>Categories: {categories.length}</div>
+                        {/* Add category management UI here */}
+                      </div>
+                    )}
+                    {section.id === 'holidays' && (
+                      <div>
+                        <div>Holiday Presets: {holidayPresets.length}</div>
+                        {/* Add holiday preset management UI here */}
+                      </div>
+                    )}
+                    {section.id === 'files' && (
+                      <div>
+                        <div>Files: {files.length}</div>
+                        {/* Add file management UI here */}
+                      </div>
+                    )}
+                  </DashboardSection>
+                );
+              })}
+            </div>
+          </SortableContext>
+        </DndContext>
+      </div>
+    );
+  };
+
   const [plexStatus, setPlexStatus] = useState('Disconnected');
   const [plexServerInfo, setPlexServerInfo] = useState(null);
   const [prerolls, setPrerolls] = useState([]);
@@ -497,12 +636,6 @@ function App() {
   const [mapRootLoading, setMapRootLoading] = useState(false);
   const [mapRootLoadingMsg, setMapRootLoadingMsg] = useState('');
 
-  // Timezone settings state
-  const [currentTimezone, setCurrentTimezone] = useState('UTC');
-  const [availableTimezones, setAvailableTimezones] = useState([]);
-  const [timezoneLoading, setTimezoneLoading] = useState(false);
-  const [timezoneSaving, setTimezoneSaving] = useState(false);
-
 // Genre mapping UI state
 const [genreMaps, setGenreMaps] = useState([]);
 const [genreMapsLoading, setGenreMapsLoading] = useState(false);
@@ -511,7 +644,6 @@ const [gmEditing, setGmEditing] = useState(null);
 const [genresTestInput, setGenresTestInput] = useState('');
 const [genresResolveResult, setGenresResolveResult] = useState(null);
 const [genresApplyLoading, setGenresApplyLoading] = useState(false);
-const [genreSettingsCollapsed, setGenreSettingsCollapsed] = useState(true); // Collapsed by default
 const [genreSettings, setGenreSettings] = useState({
 genre_auto_apply: true,
 genre_priority_mode: 'schedules_override',
@@ -603,31 +735,12 @@ const toLocalInputFromDate = (d) => {
   const [filterTags, setFilterTags] = useState('');
   const [filterCategory, setFilterCategory] = useState('');
   const [availableTags, setAvailableTags] = useState([]);
-  const [inputTagsValue, setInputTagsValue] = useState(''); // Local state for immediate input feedback
 
   // Keep latest filter values for stable fetchData callback
   const filterCategoryRef = React.useRef(filterCategory);
   const filterTagsRef = React.useRef(filterTags);
   React.useEffect(() => { filterCategoryRef.current = filterCategory; }, [filterCategory]);
   React.useEffect(() => { filterTagsRef.current = filterTags; }, [filterTags]);
-
-  // Debounce hook for tag search (300ms delay to reduce unnecessary state updates)
-  const filterTagsDebounceRef = useRef(null);
-  
-  const handleTagsChange = useCallback((value) => {
-    // Show typed value immediately in input
-    setInputTagsValue(value);
-    
-    // Clear any existing debounce timer
-    if (filterTagsDebounceRef.current) {
-      clearTimeout(filterTagsDebounceRef.current);
-    }
-    
-    // Set a new debounce timer (300ms) before updating filter state
-    filterTagsDebounceRef.current = setTimeout(() => {
-      setFilterTags(value);
-    }, 300);
-  }, []);
 
   // Preroll pagination and selection
   const [selectedPrerollIds, setSelectedPrerollIds] = useState([]);
@@ -773,58 +886,6 @@ const toLocalInputFromDate = (d) => {
     setDarkMode(!darkMode);
   };
 
-  // === Timezone settings helpers (must be before useEffect) ===
-  const loadTimezone = React.useCallback(async () => {
-    setTimezoneLoading(true);
-    try {
-      const res = await fetch(apiUrl('/settings/timezone'));
-      const data = await safeJson(res);
-      if (data && data.timezone) {
-        setCurrentTimezone(data.timezone);
-      }
-    } catch (e) {
-      console.error('Load timezone error:', e);
-      setCurrentTimezone('UTC');
-    } finally {
-      setTimezoneLoading(false);
-    }
-  }, []);
-
-  const loadAvailableTimezones = React.useCallback(async () => {
-    try {
-      const res = await fetch(apiUrl('/settings/timezones'));
-      const data = await safeJson(res);
-      if (data && Array.isArray(data.timezones)) {
-        setAvailableTimezones(data.timezones);
-      }
-    } catch (e) {
-      console.error('Load available timezones error:', e);
-      setAvailableTimezones([]);
-    }
-  }, []);
-
-  const saveTimezone = async (tz) => {
-    setTimezoneSaving(true);
-    try {
-      const res = await fetch(apiUrl('/settings/timezone'), {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ timezone: tz })
-      });
-      const data = await safeJson(res);
-      if (!res.ok) {
-        throw new Error(data?.detail || `HTTP ${res.status}`);
-      }
-      setCurrentTimezone(tz);
-      alert('Timezone updated successfully!');
-    } catch (e) {
-      console.error('Save timezone error:', e);
-      alert('Failed to update timezone: ' + (e?.message || e));
-    } finally {
-      setTimezoneSaving(false);
-    }
-  };
-
   // eslint-disable-next-line no-use-before-define
   const fetchData = React.useCallback(() => {
     const fc = String(filterCategoryRef.current || '');
@@ -866,19 +927,7 @@ const toLocalInputFromDate = (d) => {
         setSystemVersion(sysVersion || null);
         setFfmpegInfo(ffmpeg || null);
         setRecentGenreApplications(Array.isArray(recentGenreApps?.applications) ? recentGenreApps.applications : []);
-        // Debug: Log active category response
-        console.log('Active category API response:', activeCat);
-        console.log('Full response details:', JSON.stringify(activeCat));
-        if (activeCat?.__error) {
-          console.warn('Active category API error:', activeCat.status);
-          setActiveCategory(null);
-        } else if (activeCat?.active_category) {
-          console.log('Setting active category to:', activeCat.active_category);
-          setActiveCategory(activeCat.active_category);
-        } else {
-          console.warn('Active category response missing active_category property');
-          setActiveCategory(null);
-        }
+        setActiveCategory(activeCat?.active_category || null);
       }).catch(err => {
         console.error('Fetch error:', err);
         // Set default values on error
@@ -942,12 +991,6 @@ const toLocalInputFromDate = (d) => {
     );
     checkForUpdates(installed);
   }, [systemVersion, checkForUpdates]);
-
-  // Load timezone settings on component mount
-  useEffect(() => {
-    loadTimezone();
-    loadAvailableTimezones();
-  }, [loadTimezone, loadAvailableTimezones]);
 
   // PWA install prompt handling
   useEffect(() => {
@@ -1348,14 +1391,7 @@ const toLocalInputFromDate = (d) => {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(backupData)
         })
-          .then(res => {
-            if (!res.ok) {
-              return res.json().then(error => {
-                throw new Error(error.detail || `HTTP ${res.status}: Restore failed`);
-              });
-            }
-            return res.json();
-          })
+          .then(res => res.json())
           .then(data => {
             alert('Database restored successfully!');
             setBackupFile(null);
@@ -1932,7 +1968,7 @@ const toLocalInputFromDate = (d) => {
     }
   };
 // === Dashboard Customization (Drag &amp; Drop, 4x2 grid) ===
-const DASH_KEYS = ["servers","prerolls","storage","schedules","scheduler","current_category","upcoming"];
+const DASH_KEYS = ["servers","prerolls","storage","schedules","scheduler","current_category","upcoming","recent_genres"];
 
 const [dashLayout, setDashLayout] = useState({
   grid: { cols: 4, rows: 2 },
@@ -1950,23 +1986,6 @@ const visibleOrder = React.useMemo(
 const dashSensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 5 } }));
 
 const loadDashLayout = React.useCallback(async () => {
-  try {
-    // Try loading from localStorage first (primary storage)
-    const stored = localStorage.getItem('dashLayout');
-    if (stored) {
-      try {
-        const data = JSON.parse(stored);
-        if (data && data.grid && Array.isArray(data.order)) {
-          setDashLayout(data);
-          return;
-        }
-      } catch (e) {
-        console.warn('Failed to parse stored dashboard layout:', e);
-      }
-    }
-  } catch {}
-
-  // Fall back to backend if localStorage is empty or corrupted
   try {
     const res = await fetch(apiUrl('/settings/dashboard-layout'));
     const data = await safeJson(res);
@@ -1989,27 +2008,12 @@ const loadDashLayout = React.useCallback(async () => {
       return;
     }
   } catch {}
-  
-  // Use default layout if all else fails
   setDashLayout({ grid: { cols: 4, rows: 2 }, order: DASH_KEYS.slice(), hidden: [], locked: false });
 }, []);
 
 React.useEffect(() => { try { loadDashLayout(); } catch {} }, [loadDashLayout]);
 
-// Save to localStorage as primary storage (immediate persistence)
-const saveDashLayoutToStorage = React.useCallback((layout) => {
-  try {
-    localStorage.setItem('dashLayout', JSON.stringify(layout));
-  } catch (e) {
-    console.warn('Failed to save dashboard layout to localStorage:', e);
-  }
-}, []);
-
 const persistDashLayout = React.useCallback(async (next) => {
-  // First, save to localStorage for immediate persistence
-  saveDashLayoutToStorage(next);
-  
-  // Then try to sync to backend (non-blocking, doesn't affect user experience)
   setDashSaving(true);
   try {
     await fetch(apiUrl('/settings/dashboard-layout'), {
@@ -2023,20 +2027,9 @@ const persistDashLayout = React.useCallback(async (next) => {
         locked: next.locked
       })
     });
-  } catch (e) {
-    console.warn('Failed to persist dashboard layout to backend:', e);
-    // Not critical - localStorage is our fallback
-  }
+  } catch {}
   setDashSaving(false);
-}, [saveDashLayoutToStorage]);
-
-// Auto-persist dashboard layout changes with debounce (500ms delay)
-React.useEffect(() => {
-  const timer = setTimeout(() => {
-    persistDashLayout(dashLayout);
-  }, 500);
-  return () => clearTimeout(timer);
-}, [dashLayout, persistDashLayout]);
+}, []);
 
 const handleDashDragEnd = (event) => {
   if (dashLayout?.locked) return;
@@ -2060,6 +2053,7 @@ const handleDashDragEnd = (event) => {
 
   const next = { ...dashLayout, order: newOrder };
   setDashLayout(next);
+  persistDashLayout(next);
 };
 
 /* Visibility toggling removed: dashboard no longer supports hiding widgets (v1.5.0) */
@@ -2067,6 +2061,7 @@ const handleDashDragEnd = (event) => {
 const toggleDashLock = () => {
   const next = { ...dashLayout, locked: !dashLayout.locked };
   setDashLayout(next);
+  persistDashLayout(next);
 };
 
 const SortableTile = ({ id, disabled, children }) => {
@@ -2141,6 +2136,9 @@ const DashboardTiles = {
       <p style={{ fontSize: '0.9rem', color: 'var(--text-secondary, #666)' }}>
         {categories.filter(cat => prerolls.some(p => p.category_id === cat.id)).length} categories used
       </p>
+      <button onClick={handleReinitThumbnails} className="button" style={{ marginTop: '0.5rem' }}>
+        🔄 Reinitialize Thumbnails
+      </button>
     </div>
   ),
   storage: () => (
@@ -2158,7 +2156,7 @@ const DashboardTiles = {
   scheduler: () => (
     <div className="card">
       <h2>Scheduler</h2>
-      <p style={{ color: schedulerStatus.running ? 'var(--success-color, #28a745)' : 'var(--error-color, #dc3545)' }}>
+      <p style={{ color: schedulerStatus.running ? 'green' : 'red' }}>
         {schedulerStatus.running ? 'Running' : 'Stopped'}
       </p>
       <button onClick={toggleScheduler} className="button" style={{ marginTop: '0.5rem' }}>
@@ -2240,83 +2238,122 @@ const DashboardTiles = {
   ),
 };
 
-  const renderDashboard = () => (
-    <div>
-      <h1 className="header">NeXroll Dashboard</h1>
-
- 
-      <div className="card nx-dashboard-controls">
-        <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem', flexWrap: 'wrap' }}>
-          <label className="nx-rockerswitch" title={dashLayout.locked ? 'Unlock to rearrange' : 'Lock to finish'}>
-            <input
-              type="checkbox"
-              checked={dashLayout.locked}
-              onChange={toggleDashLock}
-              aria-label={dashLayout.locked ? 'Unlock layout' : 'Lock layout'}
-            />
-            <span className="nx-rockerswitch-slider"></span>
-          </label>
-          <span
-            className={`nx-lockstate ${dashLayout.locked ? 'is-locked' : 'is-editing'}`}
+  const renderDashboard = () => {
+    return (
+      <div className="nx-dashboard">
+        <div className="nx-dashboard-header">
+          <h1 className="header">NeXroll Dashboard</h1>
+          <button
+            className="nx-button"
+            onClick={() => setVisibilityMenu(!visibilityMenu)}
             style={{
-              display: 'inline-flex',
-              alignItems: 'center',
-              gap: '6px',
-              padding: '2px 8px',
-              border: '1px solid var(--border-color)',
-              borderRadius: '9999px',
-              fontSize: '0.8rem',
-              lineHeight: 1,
-              background: 'var(--header-bg)',
-              color: dashLayout.locked ? 'var(--text-secondary)' : 'var(--text-color)',
-              opacity: dashLayout.locked ? 0.9 : 1
+              padding: '8px 16px',
+              borderRadius: '4px',
+              background: 'var(--nx-primary)',
+              color: 'white',
+              border: 'none',
+              cursor: 'pointer'
             }}
-            aria-live="polite"
           >
-            {dashLayout.locked ? 'Locked' : 'Editing'}
-          </span>
-          {dashSaving && <span className="nx-spinner" aria-hidden="true" title="Saving layout…"></span>}
-          {!dashLayout.locked && (
-            <span
-              className="nx-dash-hint"
-              style={{ color: 'var(--text-secondary)', fontSize: '0.78rem', opacity: 0.72 }}
-            >
-              Drag to rearrange — lock to save
-            </span>
+            Customize Dashboard
+          </button>
+          {visibilityMenu && (
+            <SectionVisibilityMenu
+              sections={dashboardSections}
+              onToggle={toggleSectionVisibility}
+            />
           )}
-          <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: '0.6rem' }}>
-            <button
-              onClick={toggleTheme}
-              className="button"
-              title={darkMode ? 'Switch to Light Mode' : 'Switch to Dark Mode'}
-              style={{
-                padding: '6px 12px',
-                fontSize: '0.85rem',
-                minWidth: 'auto'
-              }}
-            >
-              {darkMode ? '☀️ Light' : '🌙 Dark'}
-            </button>
-          </div>
         </div>
+
+        <DndContext
+          sensors={sensors}
+          collisionDetection={closestCenter}
+          onDragEnd={handleDragEnd}
+        >
+          <SortableContext
+            items={dashboardSections}
+            strategy={rectSortingStrategy}
+          >
+            <div className="nx-dashboard-grid">
+              {dashboardSections.map(section => {
+                if (!section.visible) return null;
+
+                return (
+                  <DashboardSection
+                    key={section.id}
+                    id={section.id}
+                    title={section.title}
+                  >
+                    {section.id === 'plex' && (
+                      <div>
+                        <div>Status: {plexStatus}</div>
+                        {plexServerInfo && (
+                          <div>
+                            <div>Server: {plexServerInfo.name}</div>
+                            <div>Version: {plexServerInfo.version}</div>
+                          </div>
+                        )}
+                      </div>
+                    )}
+                    {section.id === 'prerolls' && (
+                      <div>
+                        <div>Total Prerolls: {prerolls.length}</div>
+                        {prerolls.slice(0, 5).map(preroll => (
+                          <div key={preroll.id} style={{ marginTop: '8px' }}>
+                            {preroll.display_name || preroll.filename}
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                    {section.id === 'schedules' && (
+                      <div>
+                        <div>Active Schedules: {schedules.length}</div>
+                        {schedules.slice(0, 5).map(schedule => (
+                          <div key={schedule.id} style={{ marginTop: '8px' }}>
+                            {schedule.name}
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                    {section.id === 'categories' && (
+                      <div>
+                        <div>Categories: {categories.length}</div>
+                        {categories.slice(0, 5).map(category => (
+                          <div key={category.id} style={{ marginTop: '8px' }}>
+                            {category.name}
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                    {section.id === 'holidays' && (
+                      <div>
+                        <div>Holiday Presets: {holidayPresets.length}</div>
+                        {holidayPresets.slice(0, 5).map(preset => (
+                          <div key={preset.id} style={{ marginTop: '8px' }}>
+                            {preset.name}
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                    {section.id === 'files' && (
+                      <div>
+                        <div>Files: {files.length}</div>
+                        {files.slice(0, 5).map((file, idx) => (
+                          <div key={idx} style={{ marginTop: '8px' }}>
+                            {file.name}
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </DashboardSection>
+                );
+              })}
+            </div>
+          </SortableContext>
+        </DndContext>
       </div>
-
-      <DndContext sensors={dashSensors} collisionDetection={closestCenter} onDragEnd={handleDashDragEnd}>
-        <SortableContext items={visibleOrder} strategy={rectSortingStrategy}>
-          <div className={`grid nx-dash-grid ${dashLayout.locked ? '' : 'editing'}`} style={{
-            display: 'grid',
-            gridTemplateColumns: `repeat(${dashLayout?.grid?.cols || 4}, 1fr)`,
-            gap: '1rem'
-          }}>
-            {visibleOrder.map((key) => (
-              <SortableTile key={key} id={key} disabled={dashLayout.locked}>
-                {DashboardTiles[key] ? DashboardTiles[key]() : null}
-              </SortableTile>
-            ))}
-          </div>
-        </SortableContext>
-      </DndContext>
-
+    );
+  };
       <div className="upload-section">
         <h2>Add Prerolls</h2>
 
@@ -2588,9 +2625,6 @@ services:
           <div className="prerolls-stats">
             <span className="stat-item">{prerolls.length} total</span>
             <span className="stat-item">{selectedPrerollIds.length} selected</span>
-            <button onClick={handleReinitThumbnails} className="button" style={{ marginLeft: '1rem' }} title="Reinitialize all preroll thumbnails">
-              🔄 Reinitialize Thumbnails
-            </button>
           </div>
         </div>
 
@@ -2639,8 +2673,8 @@ services:
                 <input
                   type="text"
                   placeholder="Search tags..."
-                  value={inputTagsValue}
-                  onChange={(e) => handleTagsChange(e.target.value)}
+                  value={filterTags}
+                  onChange={(e) => setFilterTags(e.target.value)}
                   className="search-input"
                 />
                 <span className="search-icon">🔍</span>
@@ -4820,13 +4854,10 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
         <summary style={{ cursor: 'pointer' }}>
           <h2 style={{ display: 'inline' }}>Plex Settings</h2>
         </summary>
-        <details className="card" open={!genreSettingsCollapsed} onToggle={(e) => setGenreSettingsCollapsed(!e.target.open)}>
-          <summary style={{ cursor: 'pointer' }}>
-            <h3 style={{ display: 'inline', margin: 0 }}>Genre-based Preroll Mapping {genreSettingsCollapsed ? '▶' : '▼'}</h3>
-          </summary>
+        <h3 style={{ marginTop: 0 }}>Genre-based Preroll Mapping</h3>
 
         {/* Master Toggle */}
-        <div style={{ marginBottom: '1rem', padding: '1rem', backgroundColor: 'var(--card-bg)', border: '1px solid var(--border-color)', borderRadius: '6px', marginTop: '1rem' }}>
+        <div style={{ marginBottom: '1rem', padding: '1rem', backgroundColor: 'var(--card-bg)', border: '1px solid var(--border-color)', borderRadius: '6px' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.5rem' }}>
             <label className="nx-rockerswitch">
               <input
@@ -5062,7 +5093,6 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
             Call GET <code>/genres/apply?genres=Horror,Thriller</code> when playback starts (e.g., via Tautulli webhook) to apply the mapped category to Plex automatically.
           </div>
         </details>
-        </details>
       {/* Path Mappings moved under Plex Settings */}
       <div style={{ marginTop: '1rem', borderTop: '1px solid var(--border-color)', paddingTop: '0.5rem' }}>
         <h3 style={{ marginTop: 0 }}>Path Mappings (Plex)</h3>
@@ -5143,54 +5173,6 @@ C:\\\\Media\\\\Prerolls\\\\summer\\\\beach.mp4`}
       </details>
 
 
-
-      <details className="card">
-        <summary style={{ cursor: 'pointer' }}>
-          <h2 style={{ display: 'inline' }}>Timezone Settings</h2>
-        </summary>
-        <p style={{ marginBottom: '1rem', color: 'var(--text-color)' }}>
-          Set your timezone to ensure schedules run at the correct local time.
-        </p>
-
-        <div style={{ display: 'flex', gap: '1rem', alignItems: 'flex-end', flexWrap: 'wrap' }}>
-          <div style={{ flex: 1, minWidth: '250px' }}>
-            <label style={{ display: 'block', marginBottom: '0.5rem', fontWeight: 'bold', color: 'var(--text-color)' }}>
-              Current Timezone:
-            </label>
-            <select
-              value={currentTimezone}
-              onChange={(e) => saveTimezone(e.target.value)}
-              disabled={timezoneLoading || timezoneSaving}
-              style={{
-                width: '100%',
-                padding: '0.5rem',
-                borderRadius: '0.25rem',
-                border: '2px solid var(--border-color)',
-                backgroundColor: darkMode ? '#2a2a2a' : '#ffffff',
-                color: darkMode ? '#ffffff' : '#000000',
-                cursor: timezoneSaving ? 'not-allowed' : 'pointer',
-                fontSize: '1rem',
-                opacity: timezoneLoading || timezoneSaving ? 0.6 : 1
-              }}
-            >
-              {availableTimezones.length === 0 ? (
-                <option value="UTC">Loading timezones...</option>
-              ) : (
-                availableTimezones.map((tz) => (
-                  <option key={tz.value} value={tz.value} style={{ backgroundColor: darkMode ? '#2a2a2a' : '#ffffff', color: darkMode ? '#ffffff' : '#000000' }}>
-                    {tz.label}
-                  </option>
-                ))
-              )}
-            </select>
-            <p style={{ fontSize: '0.85rem', color: darkMode ? '#999' : '#666', marginTop: '0.25rem' }}>
-              {timezoneLoading && 'Loading timezones...'}
-              {timezoneSaving && 'Saving...'}
-              {!timezoneLoading && !timezoneSaving && `Selected: ${currentTimezone}`}
-            </p>
-          </div>
-        </div>
-      </details>
 
       <details className="card">
         <summary style={{ cursor: 'pointer' }}>
