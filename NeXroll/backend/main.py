@@ -149,6 +149,10 @@ def ensure_schema() -> None:
             if not _sqlite_has_column("settings", "dashboard_tile_order"):
                 _sqlite_add_column("settings", "dashboard_tile_order TEXT")
             
+            # Settings: ensure dashboard layout column
+            if not _sqlite_has_column("settings", "dashboard_layout"):
+                _sqlite_add_column("settings", "dashboard_layout TEXT")
+            
             # Settings: ensure timezone column
             if not _sqlite_has_column("settings", "timezone"):
                 _sqlite_add_column("settings", "timezone TEXT DEFAULT 'UTC'")
