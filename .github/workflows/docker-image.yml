@@ -6,7 +6,7 @@ on:
       version:
         description: Version tag to publish (e.g. 1.4.6)
         required: true
-        default: 1.5.12
+        default: 1.4.6
 
 permissions:
   contents: read
@@ -112,7 +112,7 @@ jobs:
           WORKDIR /build/frontend
 
           COPY $FE_PATH/package*.json ./
-          RUN if [ -f package-lock.json ]; then npm ci --no-audit --no-fund; else npm install --no-audit --no-fund; fi
+          RUN npm install --no-audit --no-fund --legacy-peer-deps
 
           COPY $FE_PATH/ ./
           RUN npm run build
@@ -134,9 +134,8 @@ jobs:
               NEXROLL_PREROLL_PATH=/data/prerolls \
               NEXROLL_SECRETS_DIR=/data \
               PLEX_URL="" \
-              PLEX_TOKEN="" \
               JELLYFIN_URL="" \
-              JELLYFIN_API_KEY=""
+              TZ=UTC
 
           RUN apt-get update && \
               apt-get install -y --no-install-recommends \
