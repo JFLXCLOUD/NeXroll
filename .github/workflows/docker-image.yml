@@ -6,7 +6,7 @@ on:
       version:
         description: Version tag to publish (e.g. 1.4.6)
         required: true
-        default: 1.4.6
+        default: 1.5.12
 
 permissions:
   contents: read
