@@ -69,6 +69,6 @@ jobs:
           echo "  - jbrns/nexroll:latest"
           echo "  - jbrns/nexroll:${{ steps.version.outputs.version }}"
           echo ""
-          echo "🔍 Security scanning:"
+          echo "Security scanning:"
           echo "  Docker Hub will automatically scan the image for vulnerabilities"
           echo "  Check results at: https://hub.docker.com/r/jbrns/nexroll"
