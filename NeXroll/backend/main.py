@@ -2630,6 +2630,22 @@ def upload_preroll(
         db.rollback()
         _file_log(f"upload_preroll: final commit failed: {e}")
 
+    # Auto-apply to Plex/Jellyfin if primary category is already applied
+    auto_applied = False
+    if primary_category_id:
+        try:
+            category = db.query(models.Category).filter(models.Category.id == primary_category_id).first()
+            if category and getattr(category, "apply_to_plex", False):
+                _file_log(f"upload_preroll: Auto-applying category '{category.name}' (ID {category.id}) to Plex after upload")
+                ok = _apply_category_to_plex_and_track(db, category.id, ttl=15)
+                if ok:
+                    auto_applied = True
+                    _file_log(f"upload_preroll: Successfully auto-applied category '{category.name}' to Plex")
+                else:
+                    _file_log(f"upload_preroll: Failed to auto-apply category '{category.name}' to Plex")
+        except Exception as e:
+            _file_log(f"upload_preroll: Error auto-applying to Plex: {e}")
+
     return {
         "uploaded": True,
         "id": preroll.id,
@@ -2640,6 +2656,7 @@ def upload_preroll(
         "file_size": file_size,
         "category_id": preroll.category_id,
         "categories": [{"id": c.id, "name": c.name} for c in (preroll.categories or [])],
+        "auto_applied": auto_applied,
     }
 
 @app.post("/prerolls/upload-multiple")
@@ -2837,11 +2854,38 @@ def upload_multiple_prerolls(
                 "error": str(e)
             })
 
+    # Auto-apply to Plex/Jellyfin if primary category is already applied (after all uploads complete)
+    auto_applied = False
+    if successful_uploads > 0:
+        primary_category_id = None
+        if category_id and category_id.strip():
+            try:
+                primary_category_id = int(category_id)
+            except Exception:
+                pass
+        if primary_category_id is None and all_ids:
+            primary_category_id = all_ids[0]
+        
+        if primary_category_id:
+            try:
+                category = db.query(models.Category).filter(models.Category.id == primary_category_id).first()
+                if category and getattr(category, "apply_to_plex", False):
+                    _file_log(f"upload_multiple: Auto-applying category '{category.name}' (ID {category.id}) to Plex after {successful_uploads} uploads")
+                    ok = _apply_category_to_plex_and_track(db, category.id, ttl=15)
+                    if ok:
+                        auto_applied = True
+                        _file_log(f"upload_multiple: Successfully auto-applied category '{category.name}' to Plex")
+                    else:
+                        _file_log(f"upload_multiple: Failed to auto-apply category '{category.name}' to Plex")
+            except Exception as e:
+                _file_log(f"upload_multiple: Error auto-applying to Plex: {e}")
+
     return {
         "total_files": len(files),
         "successful_uploads": successful_uploads,
         "failed_uploads": len(files) - successful_uploads,
-        "results": results
+        "results": results,
+        "auto_applied": auto_applied,
     }
 
 @app.get("/prerolls")
@@ -3481,8 +3525,22 @@ def add_preroll_to_category(category_id: int, preroll_id: int, set_primary: bool
         db.rollback()
         raise HTTPException(status_code=500, detail=f"Failed to add preroll to category: {str(e)}")
 
+    # Auto-apply to Plex/Jellyfin if category is already applied
+    auto_applied = False
+    if getattr(cat, "apply_to_plex", False):
+        try:
+            _file_log(f"add_preroll_to_category: Auto-applying category '{cat.name}' (ID {cat.id}) to Plex after adding preroll {p.id}")
+            ok = _apply_category_to_plex_and_track(db, cat.id, ttl=15)
+            if ok:
+                auto_applied = True
+                _file_log(f"add_preroll_to_category: Successfully auto-applied category '{cat.name}' to Plex")
+            else:
+                _file_log(f"add_preroll_to_category: Failed to auto-apply category '{cat.name}' to Plex")
+        except Exception as e:
+            _file_log(f"add_preroll_to_category: Error auto-applying to Plex: {e}")
+
     return {
-        "message": "Preroll added to category" + (" and set as primary" if set_primary else ""),
+        "message": "Preroll added to category" + (" and set as primary" if set_primary else "") + (" and auto-applied to server" if auto_applied else ""),
         "category_id": category_id,
         "preroll_id": p.id,
         "primary_category_id": p.category_id,
@@ -8769,6 +8827,20 @@ def download_community_preroll(
         except Exception as e:
             _file_log(f"Community preroll DB commit error: {e}")
         
+        # Auto-apply to Plex/Jellyfin if category is already applied
+        auto_applied = False
+        if category and getattr(category, "apply_to_plex", False):
+            try:
+                _file_log(f"download_community_preroll: Auto-applying category '{category.name}' (ID {category.id}) to Plex after download")
+                ok = _apply_category_to_plex_and_track(db, category.id, ttl=15)
+                if ok:
+                    auto_applied = True
+                    _file_log(f"download_community_preroll: Successfully auto-applied category '{category.name}' to Plex")
+                else:
+                    _file_log(f"download_community_preroll: Failed to auto-apply category '{category.name}' to Plex")
+            except Exception as e:
+                _file_log(f"download_community_preroll: Error auto-applying to Plex: {e}")
+        
         return {
             "downloaded": True,
             "id": preroll.id,
@@ -8780,7 +8852,8 @@ def download_community_preroll(
             "duration": duration,
             "file_size": file_size,
             "source": "community_prerolls",
-            "credit": "https://typicalnerds.uk/"
+            "credit": "https://typicalnerds.uk/",
+            "auto_applied": auto_applied,
         }
     
     except HTTPException:
