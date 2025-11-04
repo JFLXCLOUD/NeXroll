@@ -1,71 +1,73 @@
-# syntax=docker/dockerfile:1
+# NeXroll Docker Image
+# Multi-stage build for optimized image size
 
-# --- Frontend build stage (build React app from source) ---
-FROM node:22-alpine AS frontend-builder
+# Stage 1: Build frontend
+FROM node:18-alpine AS frontend-builder
 
-WORKDIR /build/frontend
+WORKDIR /app/frontend
 
-# Install deps with good caching
-COPY NeXroll/frontend/package*.json ./
-RUN npm install --no-audit --no-fund --legacy-peer-deps
+# Copy frontend package files
+COPY frontend/package*.json ./
+RUN npm ci --only=production
 
-# Copy source and build
-COPY NeXroll/frontend/ ./
+# Copy frontend source
+COPY frontend/ ./
 RUN npm run build
 
-# --- Backend runtime stage ---
-FROM python:3.12-slim
+# Stage 2: Python runtime
+FROM python:3.11-slim
 
-ARG APP_VERSION=dev
-LABEL org.opencontainers.image.title="NeXroll" \
-      org.opencontainers.image.description="NeXroll preroll management system" \
-      org.opencontainers.image.version="${APP_VERSION}" \
-      org.opencontainers.image.licenses="MIT"
+LABEL maintainer="JFLXCLOUD"
+LABEL description="NeXroll - Advanced Preroll Management for Plex and Jellyfin"
+LABEL version="1.7.0"
 
-ENV PYTHONDONTWRITEBYTECODE=1 \
-    PYTHONUNBUFFERED=1 \
+# Set environment variables
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
     PIP_NO_CACHE_DIR=1 \
-    NEXROLL_PORT=9393 \
-    NEXROLL_DB_DIR=/data \
-    NEXROLL_PREROLL_PATH=/data/prerolls \
-    NEXROLL_SECRETS_DIR=/data \
-    PLEX_URL="" \
-    JELLYFIN_URL="" \
-    TZ=UTC
+    PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    DEBIAN_FRONTEND=noninteractive
 
-RUN apt-get update && \
-    apt-get upgrade -y && \
-    apt-get install -y --no-install-recommends \
-        ffmpeg \
-        curl \
-        tzdata \
-        build-essential \
-        rustc \
-        cargo \
-        pkg-config && \
-    rm -rf /var/lib/apt/lists/*
+# Install system dependencies
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ffmpeg \
+    ffprobe \
+    ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
 
-WORKDIR /app/NeXroll
+# Create app directory
+WORKDIR /app
 
-# Install Python deps
-COPY NeXroll/requirements.txt /app/NeXroll/requirements.txt
-RUN pip install --no-cache-dir -r /app/NeXroll/requirements.txt
+# Copy backend requirements and install Python dependencies
+COPY requirements.txt ./
+RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy backend
-COPY NeXroll/backend /app/NeXroll/backend
+# Copy backend source
+COPY backend/ ./backend/
+COPY version.py ./
+COPY scripts/ ./scripts/
 
-# Copy freshly built frontend assets from the builder stage
-COPY --from=frontend-builder /build/frontend/build /app/NeXroll/frontend/build
+# Copy built frontend from previous stage
+COPY --from=frontend-builder /app/frontend/build ./frontend/build
 
-# Prepare persistent data volume
-RUN mkdir -p /data /data/prerolls
-VOLUME ["/data"]
+# Create data directories
+RUN mkdir -p /app/data/prerolls \
+    && mkdir -p /app/data/logs \
+    && mkdir -p /app/data/db \
+    && mkdir -p /app/data/thumbnails
 
+# Create non-root user
+RUN useradd -m -u 1000 nexroll && \
+    chown -R nexroll:nexroll /app
+
+USER nexroll
+
+# Expose port
 EXPOSE 9393
 
-# Healthcheck: FastAPI health endpoint
-HEALTHCHECK --interval=30s --timeout=5s --retries=3 \
-  CMD curl -fsS http://localhost:${NEXROLL_PORT:-9393}/health || exit 1
+# Health check
+HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
+    CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:9393/system/version')" || exit 1
 
-# Start Uvicorn
-CMD ["sh", "-c", "uvicorn backend.main:app --host 0.0.0.0 --port ${NEXROLL_PORT:-9393}"]
+# Start command
+CMD ["python", "-m", "uvicorn", "backend.main:app", "--host", "0.0.0.0", "--port", "9393"]
