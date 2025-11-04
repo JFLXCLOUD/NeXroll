@@ -18,9 +18,12 @@ RUN npm run build
 # Stage 2: Python runtime
 FROM python:3.11-slim
 
+# Accept version as build argument (from git tag)
+ARG VERSION=latest
+
 LABEL maintainer="JFLXCLOUD"
 LABEL description="NeXroll - Advanced Preroll Management for Plex and Jellyfin"
-LABEL version="1.7.0"
+LABEL version="${VERSION}"
 
 # Set environment variables
 ENV PYTHONUNBUFFERED=1 \
@@ -47,8 +50,9 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copy backend source
 COPY backend/ ./backend/
 
-# Create version.py (since it's not in git)
-RUN echo "__version__ = '1.7.0'" > version.py && \
+# Create version.py dynamically using git tag (or 'latest' for non-tagged builds)
+ARG VERSION
+RUN echo "__version__ = '${VERSION}'" > version.py && \
     echo "def get_version():" >> version.py && \
     echo "    return __version__" >> version.py
 
