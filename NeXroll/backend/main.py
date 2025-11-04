@@ -8262,7 +8262,7 @@ def get_community_prerolls_index_status():
 
 
 @app.get("/community-prerolls/search")
-def search_community_prerolls(request: Request, query: str = "", category: str = "", platform: str = "", limit: int = 50):
+def search_community_prerolls(request: Request, query: str = "", category: str = "", platform: str = "", limit: int = 50, db: Session = Depends(get_db)):
     """
     Search the Typical Nerds preroll library (LOCAL INDEX PREFERRED - FAST!).
     
@@ -8275,7 +8275,17 @@ def search_community_prerolls(request: Request, query: str = "", category: str =
     
     NEW: Uses local index first for instant results (milliseconds).
     Fallback: If no index, falls back to slow remote scraping (rate limited).
+    
+    Requires Fair Use Policy acceptance to protect Typical Nerds community.
     """
+    # Check Fair Use Policy acceptance first
+    setting = db.query(models.Setting).first()
+    if not setting or not getattr(setting, "community_fair_use_accepted", False):
+        raise HTTPException(
+            status_code=403,
+            detail="You must accept the Fair Use Policy before searching community prerolls. Please accept the policy in the Community Prerolls tab."
+        )
+    
     import urllib.parse
     from urllib.parse import urljoin, urlparse
     from bs4 import BeautifulSoup
