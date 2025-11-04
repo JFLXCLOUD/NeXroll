@@ -114,7 +114,10 @@ class Setting(Base):
     plex_url = Column(String)  # Chosen Plex server base URL (e.g., http://192.168.1.x:32400)
     plex_token = Column(String)  # Plex auth token (manual/stable/OAuth)
     jellyfin_url = Column(String)  # Jellyfin base URL (e.g., http://192.168.1.x:8096)
-    # Plex.tv Connect (OAuth-style) metadata
+    jellyfin_api_key = Column(String, nullable=True)  # Jellyfin API key for auth
+    # Community Prerolls settings
+    community_fair_use_accepted = Column(Boolean, default=False)  # Whether user accepted Fair Use Policy
+    community_fair_use_accepted_at = Column(DateTime, nullable=True)  # Timestamp of acceptance
     plex_client_id = Column(String, nullable=True)  # X-Plex-Client-Identifier
     plex_server_base_url = Column(String, nullable=True)  # Best-resolved server URL (local preferred)
     plex_server_machine_id = Column(String, nullable=True)  # Server machineIdentifier
