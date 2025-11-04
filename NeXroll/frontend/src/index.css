@@ -374,7 +374,7 @@ body.dark {
 .nx-select,
 .nx-textarea {
   width: 100%;
-  padding: 0.5rem 0.6rem;
+  padding: 0.5rem 0.2rem;
   border: 1px solid var(--border-color);
   background: var(--card-bg);
   color: var(--text-color);
@@ -1761,6 +1761,15 @@ body.dark .react-grid-item.react-grid-placeholder {
   to {
     transform: translateY(0);
     opacity: 1;
+  }
+}
+
+@keyframes progressSlide {
+  0% {
+    background-position: 0% 0%;
+  }
+  100% {
+    background-position: 200% 0%;
   }
 }
 
