@@ -1,5 +1,6 @@
 # NeXroll Docker Image
 # Multi-stage build for optimized image size
+# This Dockerfile is for GitHub Actions builds (repository root context)
 
 # Stage 1: Build frontend
 FROM node:18-alpine AS frontend-builder
