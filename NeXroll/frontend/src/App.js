@@ -3579,33 +3579,62 @@ services:
       <div className="card">
         <h2>Active Schedules</h2>
         <div style={{ display: 'grid', gap: '1rem' }}>
-          {schedules.map(schedule => (
-            <div key={schedule.id} style={{ border: '1px solid var(--border-color)', padding: '1rem', borderRadius: '0.25rem', backgroundColor: 'var(--card-bg)' }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '0.5rem' }}>
-                <h3 style={{ margin: 0 }}>{schedule.name}</h3>
-                <div style={{ display: 'flex', gap: '0.5rem' }}>
-                  <button
-                    onClick={() => handleEditSchedule(schedule)}
-                    className="nx-iconbtn"
-                  >
-                    ✏️ Edit
-                  </button>
-                  <button
-                    onClick={() => handleDeleteSchedule(schedule.id)}
-                    className="nx-iconbtn nx-iconbtn--danger"
-                  >
-                    🗑️ Delete
-                  </button>
+          {schedules.map(schedule => {
+            const isCurrentlyActive = activeCategory && schedule.category_id === activeCategory.id;
+            return (
+              <div 
+                key={schedule.id} 
+                style={{ 
+                  border: isCurrentlyActive ? '2px solid #4CAF50' : '1px solid var(--border-color)', 
+                  padding: '1rem', 
+                  borderRadius: '0.25rem', 
+                  backgroundColor: isCurrentlyActive ? 'rgba(76, 175, 80, 0.1)' : 'var(--card-bg)',
+                  boxShadow: isCurrentlyActive ? '0 0 10px rgba(76, 175, 80, 0.3)' : 'none',
+                  position: 'relative'
+                }}
+              >
+                {isCurrentlyActive && (
+                  <div style={{
+                    position: 'absolute',
+                    top: '0.5rem',
+                    right: '0.5rem',
+                    backgroundColor: '#4CAF50',
+                    color: 'white',
+                    padding: '0.25rem 0.5rem',
+                    borderRadius: '0.25rem',
+                    fontSize: '0.75rem',
+                    fontWeight: 'bold',
+                    textTransform: 'uppercase'
+                  }}>
+                    Currently Running
+                  </div>
+                )}
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '0.5rem', marginTop: isCurrentlyActive ? '1.5rem' : '0' }}>
+                  <h3 style={{ margin: 0 }}>{schedule.name}</h3>
+                  <div style={{ display: 'flex', gap: '0.5rem' }}>
+                    <button
+                      onClick={() => handleEditSchedule(schedule)}
+                      className="nx-iconbtn"
+                    >
+                      ✏️ Edit
+                    </button>
+                    <button
+                      onClick={() => handleDeleteSchedule(schedule.id)}
+                      className="nx-iconbtn nx-iconbtn--danger"
+                    >
+                      🗑️ Delete
+                    </button>
+                  </div>
                 </div>
+                <p>Type: {schedule.type} | Category: {schedule.category?.name || 'N/A'}</p>
+                <p>Status: {schedule.is_active ? 'Active' : 'Inactive'}</p>
+                <p>Start: {toLocalDisplay(schedule.start_date)}{schedule.end_date ? ` | End: ${toLocalDisplay(schedule.end_date)}` : ''}</p>
+                <p>Shuffle: {schedule.shuffle ? 'Yes' : 'No'} | Playlist: {schedule.playlist ? 'Yes' : 'No'}</p>
+                {schedule.next_run && <p>Next Run: {toLocalDisplay(schedule.next_run)}</p>}
+                {schedule.last_run && <p>Last Run: {toLocalDisplay(schedule.last_run)}</p>}
               </div>
-              <p>Type: {schedule.type} | Category: {schedule.category?.name || 'N/A'}</p>
-              <p>Status: {schedule.is_active ? 'Active' : 'Inactive'}</p>
-              <p>Start: {toLocalDisplay(schedule.start_date)}{schedule.end_date ? ` | End: ${toLocalDisplay(schedule.end_date)}` : ''}</p>
-              <p>Shuffle: {schedule.shuffle ? 'Yes' : 'No'} | Playlist: {schedule.playlist ? 'Yes' : 'No'}</p>
-              {schedule.next_run && <p>Next Run: {toLocalDisplay(schedule.next_run)}</p>}
-              {schedule.last_run && <p>Last Run: {toLocalDisplay(schedule.last_run)}</p>}
-            </div>
-          ))}
+            );
+          })}
         </div>
       </div>
     </div>
