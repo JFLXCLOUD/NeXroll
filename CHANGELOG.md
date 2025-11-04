@@ -109,7 +109,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Fixed Plex status showing form values instead of server info
   - Fixed error messages returning generic responses
   - Fixed token source visibility
-  - Fixed category dropdown using CSS variables that don't work with <select> elements
+  - Fixed category dropdown using CSS variables that don't work with elements
 
 ### Security
 - All Plex tokens now stored in Windows Credential Manager
