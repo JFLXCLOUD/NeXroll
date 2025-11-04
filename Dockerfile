@@ -1,4 +1,4 @@
-# syntax=docker/dockerfile:1
+﻿# syntax=docker/dockerfile:1
 
 # --- Frontend build stage (build React app from source) ---
 FROM node:22-alpine AS frontend-builder
@@ -47,12 +47,15 @@ RUN apt-get update && \
 
 WORKDIR /app/NeXroll
 
-# Install Python deps
-COPY NeXroll/requirements.txt /app/NeXroll/requirements.txt
+# Install Python deps (use root requirements.txt with all dependencies)
+COPY requirements.txt /app/NeXroll/requirements.txt
 RUN pip install --no-cache-dir -r /app/NeXroll/requirements.txt
 
 # Copy backend
 COPY NeXroll/backend /app/NeXroll/backend
+
+# Copy version.py
+COPY NeXroll/version.py /app/NeXroll/version.py
 
 # Copy freshly built frontend assets from the builder stage
 COPY --from=frontend-builder /build/frontend/build /app/NeXroll/frontend/build
