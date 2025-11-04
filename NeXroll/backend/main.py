@@ -1,4 +1,4 @@
-from fastapi import FastAPI, Depends, File, UploadFile, HTTPException, Form, Request
+from fastapi import FastAPI, Depends, File, UploadFile, HTTPException, Form, Request, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, Response, StreamingResponse
@@ -18,6 +18,7 @@ import subprocess
 from pathlib import Path
 from urllib.parse import unquote
 import uuid
+import time
 
 class DashboardSection(BaseModel):
     id: str
@@ -47,16 +48,6 @@ from backend.scheduler import scheduler
 from backend import secure_store
 
 models.Base.metadata.create_all(bind=engine)
-
-app = FastAPI()
-
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
 
 # Lightweight runtime schema upgrades for older SQLite databases
 def _sqlite_has_column(table: str, column: str) -> bool:
@@ -167,6 +158,10 @@ def ensure_settings_schema_now() -> None:
     try:
         if not engine.url.drivername.startswith("sqlite"):
             return
+        
+        added_columns = []
+        skipped_columns = []
+        
         with engine.connect() as conn:
             cols = []
             try:
@@ -185,27 +180,43 @@ def ensure_settings_schema_now() -> None:
                 "path_mappings": "TEXT",
                 "override_expires_at": "DATETIME",
                 "jellyfin_url": "TEXT",
+                "jellyfin_api_key": "TEXT",
+                "community_fair_use_accepted": "BOOLEAN",
+                "community_fair_use_accepted_at": "DATETIME",
+                "genre_auto_apply": "BOOLEAN",
+                "genre_priority_mode": "TEXT",
+                "genre_override_ttl_seconds": "INTEGER",
+                "dashboard_tile_order": "TEXT",
+                "dashboard_layout": "TEXT",
             }
             for col, ddl in need.items():
                 if col not in cols:
                     try:
                         conn.exec_driver_sql(f"ALTER TABLE settings ADD COLUMN {col} {ddl}")
+                        added_columns.append(col)
                         try:
-                            _file_log(f"ensure_settings_schema_now: added settings.{col}")
+                            _file_log(f">>> SCHEMA MIGRATION: Added settings.{col} ({ddl})")
                         except Exception:
                             pass
                     except Exception as e:
+                        skipped_columns.append((col, str(e)))
                         try:
-                            _file_log(f"ensure_settings_schema_now: skip add settings.{col}: {e}")
+                            _file_log(f">>> SCHEMA MIGRATION: Skipped settings.{col}: {e}")
                         except Exception:
                             pass
+        
         try:
-            _file_log("ensure_settings_schema_now: completed")
+            if added_columns:
+                _file_log(f">>> SCHEMA MIGRATION COMPLETE: Added {len(added_columns)} column(s): {', '.join(added_columns)}")
+            elif skipped_columns:
+                _file_log(f">>> SCHEMA MIGRATION: No new columns added ({len(skipped_columns)} skipped)")
+            else:
+                _file_log(">>> SCHEMA MIGRATION: Database already up-to-date")
         except Exception:
             pass
     except Exception as e:
         try:
-            _file_log(f"ensure_settings_schema_now error: {e}")
+            _file_log(f">>> SCHEMA MIGRATION ERROR: {e}")
         except Exception:
             pass
 
@@ -447,44 +458,6 @@ def get_ffprobe_cmd() -> str:
 def _generate_placeholder(out_path: str, width: int = 426, height: int = 240):
     """
     Generate a placeholder JPEG thumbnail at out_path.
-    Prefer ffmpeg color source; fallback to an embedded tiny JPEG.
-    """
-    try:
-        # Attempt to generate with ffmpeg
-        res = _run_subprocess(
-            [get_ffmpeg_cmd(), "-f", "lavfi", "-i", f"color=c=gray:s={width}x{height}", "-vframes", "1", "-y", out_path],
-            capture_output=True,
-            text=True,
-        )
-        if os.path.exists(out_path):
-            return
-    except Exception:
-        pass
-    # Fallback: embedded 1x1 white JPEG
-    try:
-        import base64
-        _SMALL_JPEG = (
-            "/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAP//////////////////////////////////////////////////////////////////////////////////////"
-            "//////////////////////////////////////////////////////////////////////////////////////////////2wBDAf//////////////////////////////////////////////////////////////////////////////////////"
-            "//////////////////////////////////////////////////////////////////////////////////////////////wAARCAAQABADASIAAhEBAxEB/8QAFQABAQAAAAAAAAAAAAAAAAAAAAb/xAAUEAEAAAAAAAAAAAAAAAAAAAAA/8QAFQEBAQAAAAAAAAAAAAAAAAAAAgP/xAAUEQEAAAAAAAAAAAAAAAAAAAAA/9oADAMBAAIRAxEAPwC4A//Z"
-        )
-        data = base64.b64decode(_SMALL_JPEG)
-        try:
-            os.makedirs(os.path.dirname(out_path) or ".", exist_ok=True)
-        except Exception:
-            pass
-        with open(out_path, "wb") as f:
-            f.write(data)
-    except Exception:
-        try:
-            with open(out_path, "wb") as f:
-                f.write(b"")
-        except Exception:
-            pass
-
-def _generate_placeholder(out_path: str, width: int = 426, height: int = 240):
-    """
-    Generate a placeholder JPEG thumbnail at out_path.
     Prefer ffmpeg color source; fallback to an embedded 1x1 JPEG.
     """
     try:
@@ -547,24 +520,24 @@ class ScheduleCreate(BaseModel):
     playlist: bool = False
     recurrence_pattern: str = None
     preroll_ids: str = None
-    sequence: str | None = None
-    fallback_category_id: int | None = None
+    sequence: Optional[str] = None
+    fallback_category_id: Optional[int] = None
 
 class ScheduleResponse(BaseModel):
     id: int
     name: str
     type: str
     start_date: datetime.datetime
-    end_date: datetime.datetime | None = None
+    end_date: Optional[datetime.datetime] = None
     category_id: int
     shuffle: bool
     playlist: bool
     is_active: bool
-    last_run: datetime.datetime | None = None
-    next_run: datetime.datetime | None = None
-    recurrence_pattern: str | None = None
-    preroll_ids: str | None = None
-    sequence: str | None = None
+    last_run: Optional[datetime.datetime] = None
+    next_run: Optional[datetime.datetime] = None
+    recurrence_pattern: Optional[str] = None
+    preroll_ids: Optional[str] = None
+    sequence: Optional[str] = None
 
 class CategoryCreate(BaseModel):
     name: str
@@ -573,12 +546,12 @@ class CategoryCreate(BaseModel):
     plex_mode: str = "shuffle"
 
 class PrerollUpdate(BaseModel):
-    tags: str | list[str] | None = None
-    category_id: int | None = None                 # primary category (affects storage path and thumbnail folder)
-    category_ids: list[int] | None = None          # additional categories (many-to-many)
-    description: str | None = None
-    display_name: str | None = None                # UI display label
-    new_filename: str | None = None                # optional on-disk rename (basename; extension optional)
+    tags: Optional[str | list[str]] = None
+    category_id: Optional[int] = None                 # primary category (affects storage path and thumbnail folder)
+    category_ids: Optional[list[int]] = None          # additional categories (many-to-many)
+    description: Optional[str] = None
+    display_name: Optional[str] = None                # UI display label
+    new_filename: Optional[str] = None                # optional on-disk rename (basename; extension optional)
 
 class PathMapping(BaseModel):
     local: str
@@ -592,31 +565,31 @@ class TestTranslationRequest(BaseModel):
 
 class MapRootRequest(BaseModel):
     root_path: str
-    category_id: int | None = None
+    category_id: Optional[int] = None
     recursive: bool = True
-    extensions: list[str] | None = None
+    extensions: Optional[list[str]] = None
     dry_run: bool = True
     generate_thumbnails: bool = True
-    tags: list[str] | None = None
+    tags: Optional[list[str]] = None
 
 class PlexConnectRequest(BaseModel):
     url: str
     token: str
 
 class PlexStableConnectRequest(BaseModel):
-    url: str | None = None
-    token: str | None = None  # accepted but ignored for stable-token flow
-    stableToken: str | None = None  # alias some UIs might send
+    url: Optional[str] = None
+    token: Optional[str] = None  # accepted but ignored for stable-token flow
+    stableToken: Optional[str] = None  # alias some UIs might send
 
 class PlexTvConnectRequest(BaseModel):
-    id: str | None = None
-    token: str | None = None
+    id: Optional[str] = None
+    token: Optional[str] = None
     prefer_local: bool = True
     save_token: bool = True
 
 class PlexAutoConnectRequest(BaseModel):
-    token: str | None = None
-    urls: list[str] | None = None
+    token: Optional[str] = None
+    urls: Optional[list[str]] = None
     prefer_local: bool = True
 
 class GenreMapCreate(BaseModel):
@@ -629,6 +602,14 @@ class GenreMapUpdate(BaseModel):
 
 class ResolveGenresRequest(BaseModel):
     genres: list[str]
+
+class CommunityPrerollDownloadRequest(BaseModel):
+    preroll_id: str = ""
+    title: str = ""
+    url: str = ""
+    category_id: int | None = None
+    add_to_category: bool = False
+    tags: str = ""
 
 def _normalize_url(url: str) -> str:
     try:
@@ -845,15 +826,61 @@ def _bootstrap_plex_from_env() -> None:
 # Import version management
 import sys
 import os
-sys.path.append(os.path.dirname(os.path.dirname(__file__)))
 
+# Try multiple paths to find version.py (for both dev and PyInstaller builds)
+app_version = "1.7.0"  # Default fallback
 try:
+    sys.path.append(os.path.dirname(os.path.dirname(__file__)))
     from version import get_version
     app_version = get_version()
 except ImportError:
-    app_version = "1.5.12"
+    try:
+        # PyInstaller bundles version.py at the root level
+        import version
+        app_version = version.get_version()
+    except (ImportError, AttributeError):
+        pass  # Use fallback version
 
 app = FastAPI(title="NeXroll Backend", version=app_version)
+
+# Rate limiter for community prerolls to avoid triggering Cloudflare DDoS protection
+# Typical Nerds requested this to keep their site accessible
+community_search_rate_limit = {}  # {ip: last_search_time}
+COMMUNITY_SEARCH_COOLDOWN = 5  # seconds between searches per IP
+
+# Local index for Typical Nerds prerolls (faster than remote scraping)
+PREROLLS_INDEX_PATH = Path(os.environ.get("PROGRAMDATA", os.path.expanduser("~"))) / "NeXroll" / "prerolls_index.json"
+PREROLLS_INDEX_MAX_AGE = 7 * 24 * 3600  # 7 days in seconds (refresh weekly recommended)
+
+# Smart search synonym mapping - helps find related content
+SEARCH_SYNONYMS = {
+    "halloween": ["pumpkin", "scary", "ghost", "spooky", "witch", "haunted", "october", "trick", "treat", "monster", "zombie", "skeleton"],
+    "christmas": ["santa", "xmas", "holiday", "winter", "snow", "reindeer", "elf", "sleigh", "december", "festive", "merry"],
+    "thanksgiving": ["turkey", "autumn", "fall", "november", "harvest", "pilgrim", "feast"],
+    "turkey": ["thanksgiving", "november", "autumn", "fall", "harvest"],
+    "4th july": ["independence", "july", "fireworks", "patriotic", "america"],
+    "independence": ["4th july", "july", "fireworks", "patriotic", "america"],
+    "valentines": ["love", "heart", "romance", "cupid", "february"],
+    "easter": ["bunny", "egg", "spring", "april"],
+    "new year": ["nye", "celebration", "january", "countdown", "resolution"],
+    "summer": ["beach", "sun", "vacation", "june", "july", "august"],
+    "spring": ["flower", "bloom", "april", "may", "easter"],
+    "fall": ["autumn", "thanksgiving", "october", "november", "harvest", "leaves"],
+    "winter": ["snow", "christmas", "cold", "december", "january", "february"],
+    "birthday": ["party", "celebration", "cake", "celebrate"],
+    "scary": ["halloween", "horror", "spooky", "ghost", "monster", "zombie"],
+    "spooky": ["halloween", "scary", "ghost", "haunted"],
+    "pumpkin": ["halloween", "october", "autumn", "fall"],
+}
+
+# Add CORS middleware
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 # Ensure app.version attribute is set for runtime inspection (used by /system/version and headers)
 try:
@@ -861,6 +888,11 @@ try:
     setattr(app, 'version', app_version)
 except Exception:
     pass
+
+# TEST ENDPOINT - verify build includes endpoints after app declaration
+@app.get("/test-build-verification")
+def test_build_verification():
+    return {"status": "ok", "message": "Build verification successful - endpoints after app declaration are working", "version": app_version}
 
 # In-memory store for Plex.tv OAuth sessions
 OAUTH_SESSIONS: dict[str, dict] = {}
@@ -1677,6 +1709,7 @@ def connect_plex(request: PlexConnectRequest, db: Session = Depends(get_db)):
         url = f"http://{url}"
 
     try:
+        _file_log(f"/plex/connect: Testing connection to {url}")
         connector = PlexConnector(url, token)
         if connector.test_connection():
             # Save to settings (do not persist plaintext token)
@@ -1684,24 +1717,37 @@ def connect_plex(request: PlexConnectRequest, db: Session = Depends(get_db)):
             if not setting:
                 setting = models.Setting(plex_url=url, plex_token=None)
                 db.add(setting)
+                _file_log(f"/plex/connect: Created new settings record")
             else:
                 setting.plex_url = url
                 setting.plex_token = None
                 setting.updated_at = datetime.datetime.utcnow()
+                _file_log(f"/plex/connect: Updated existing settings")
 
             # Persist token in secure store
+            provider_name = "unknown"
             try:
-                secure_store.set_plex_token(token)
-            except Exception:
-                pass
+                if secure_store.set_plex_token(token):
+                    provider_name = secure_store.provider_info()[1]
+                    _file_log(f"/plex/connect: ✓ Token saved to secure store ({provider_name})")
+                else:
+                    _file_log(f"/plex/connect: ⚠ Failed to save token to secure store")
+                    raise HTTPException(status_code=500, detail="Failed to save token to secure storage. Please ensure Windows Credential Manager is available.")
+            except HTTPException:
+                raise
+            except Exception as e:
+                _file_log(f"/plex/connect: ⚠ Exception saving token: {e}")
+                raise HTTPException(status_code=500, detail=f"Failed to save token securely: {str(e)}")
 
             db.commit()
+            _file_log(f"/plex/connect: ✓ Connection successful - URL: {url}, Token storage: {provider_name}")
             return {
                 "connected": True,
                 "message": "Successfully connected to Plex server",
-                "token_storage": secure_store.provider_info()[1]
+                "token_storage": provider_name
             }
         else:
+            _file_log(f"/plex/connect: ✗ Connection test failed for {url}")
             raise HTTPException(status_code=422, detail="Failed to connect to Plex server. Please check your URL and token.")
     except Exception as e:
         raise HTTPException(status_code=422, detail=f"Connection error: {str(e)}")
@@ -1722,35 +1768,74 @@ def get_plex_status(db: Session = Depends(get_db)):
         # Resolve URL and token with secure-store fallback
         plex_url = getattr(setting, "plex_url", None) if setting else None
         token = None
+        token_source = None
         try:
             token = getattr(setting, "plex_token", None) if setting else None
+            if token:
+                token_source = "database"
         except Exception:
             token = None
         if not token:
             try:
                 token = secure_store.get_plex_token()
-            except Exception:
+                if token:
+                    token_source = "secure_store"
+                    _file_log(f"/plex/status: Using token from secure store (DB token was empty)")
+            except Exception as e:
+                _file_log(f"/plex/status: Could not access secure store: {e}")
                 token = None
 
-        # If either piece is missing, report disconnected but include useful hints
+        # If either piece is missing, report disconnected with detailed diagnostics
         if not plex_url or not token:
             out = {"connected": False}
             try:
                 out["url"] = plex_url
                 out["has_token"] = bool(token)
                 out["provider"] = secure_store.provider_info()[1]
-            except Exception:
+                
+                # Add detailed error messages for troubleshooting
+                if not plex_url and not token:
+                    out["error"] = "not_configured"
+                    out["message"] = "Plex server not configured. Please connect to your Plex server."
+                elif not plex_url:
+                    out["error"] = "missing_url"
+                    out["message"] = "Plex server URL not set. Please reconnect to your Plex server."
+                else:
+                    out["error"] = "missing_token"
+                    out["message"] = "Plex authentication token not found. Please reconnect to your Plex server."
+                
+                _file_log(f"/plex/status: Disconnected - URL: {bool(plex_url)}, Token: {bool(token)}")
+            except Exception as e:
+                _file_log(f"/plex/status: Error building disconnected response: {e}")
                 pass
             return out
 
         connector = PlexConnector(plex_url, token)
-        info = connector.get_server_info() or {}
+        try:
+            info = connector.get_server_info() or {}
+        except Exception as e:
+            _file_log(f"/plex/status: Connection test failed for {plex_url}: {e}")
+            return {
+                "connected": False,
+                "url": plex_url,
+                "has_token": True,
+                "error": "connection_failed",
+                "message": f"Could not connect to Plex server at {plex_url}. Please verify the URL and that the server is running."
+            }
+        
         if not isinstance(info, dict):
             info = {}
+        
+        is_connected = info.get("connected", False)
         info.setdefault("connected", False)
-        # Surface resolved URL for UI/diagnostics
+        
+        # Surface resolved URL and token source for diagnostics
         try:
             info.setdefault("url", plex_url)
+            if token_source:
+                info["token_source"] = token_source
+            if is_connected:
+                _file_log(f"/plex/status: Connected successfully (token from {token_source})")
         except Exception:
             pass
         return info
@@ -1760,25 +1845,37 @@ def get_plex_status(db: Session = Depends(get_db)):
     except OperationalError as oe:
         # Auto-migrate settings schema then retry once
         try:
-            _file_log(f"/plex/status OperationalError: {oe} (attempting schema ensure)")
+            _file_log(f"/plex/status OperationalError: {oe} (attempting schema migration)")
+            _file_log(">>> UPGRADE DETECTED: Migrating database schema for Plex settings...")
         except Exception:
             pass
         try:
             ensure_settings_schema_now()
-            return _do_fetch()
+            _file_log(">>> UPGRADE SUCCESS: Database schema migration completed")
+            result = _do_fetch()
+            _file_log(f">>> UPGRADE STATUS: Plex connection status after migration - connected: {result.get('connected', False)}")
+            return result
         except Exception as e2:
             try:
-                _file_log(f"/plex/status post-migration fetch failed: {e2}")
+                _file_log(f">>> UPGRADE FAILED: Post-migration fetch failed: {e2}")
             except Exception:
                 pass
-            return {"connected": False}
+            return {
+                "connected": False,
+                "error": "migration_failed",
+                "message": "Database migration failed. Please check logs or try reconnecting to Plex."
+            }
     except Exception as e:
         try:
             _file_log(f"/plex/status error: {e}")
         except Exception:
             pass
         # Never propagate error to the UI; keep the dashboard stable
-        return {"connected": False}
+        return {
+            "connected": False,
+            "error": "unknown",
+            "message": "An unexpected error occurred checking Plex status. Please try reconnecting."
+        }
 
 @app.post("/plex/disconnect")
 def disconnect_plex(db: Session = Depends(get_db)):
@@ -5553,21 +5650,44 @@ def get_preroll_video(category: str, filename: str, db: Session = Depends(get_db
         try:
             # Find category by name
             cat_obj = db.query(models.Category).filter(models.Category.name == category).first()
+            print(f"[PREROLL DEBUG] Looking up in database:")
+            print(f"  Category: {category}, Found cat_obj: {cat_obj.id if cat_obj else None}")
             if cat_obj:
                 # Find preroll by filename and category_id
                 preroll = db.query(models.Preroll).filter(
                     models.Preroll.filename == filename,
                     models.Preroll.category_id == cat_obj.id
                 ).first()
-                if preroll and getattr(preroll, "managed", True) == False:
-                    # Use the preroll's path directly
-                    video_path = preroll.path
-                    if not os.path.isabs(video_path):
-                        video_path = os.path.join(data_dir, video_path)
-        except Exception:
+                print(f"  Filename: {filename}, Found preroll: {preroll.id if preroll else None}")
+                if preroll:
+                    print(f"  Preroll.path: {preroll.path}")
+                    print(f"  Preroll.managed: {getattr(preroll, 'managed', 'N/A')}")
+                    # Use the preroll's path directly (whether managed or not)
+                    # If it's externally managed (managed=False), path is absolute
+                    # If it's managed (managed=True), path may be relative
+                    if hasattr(preroll, 'managed') and preroll.managed == False:
+                        video_path = preroll.path
+                        print(f"  Using external path: {video_path}")
+                    elif preroll.path and not os.path.isabs(preroll.path):
+                        video_path = os.path.join(data_dir, preroll.path)
+                        print(f"  Using relative path joined with data_dir: {video_path}")
+                    else:
+                        video_path = preroll.path
+                        print(f"  Using absolute path as-is: {video_path}")
+        except Exception as e:
+            print(f"Error checking database for preroll: {e}")
+            import traceback
+            traceback.print_exc()
             pass
 
     if not os.path.exists(video_path):
+        # Log for debugging
+        print(f"Video not found at: {video_path}")
+        print(f"  Category: {category}")
+        print(f"  Filename: {filename}")
+        print(f"  PREROLLS_DIR: {PREROLLS_DIR}")
+        print(f"  Category dir: {cat_dir}")
+        print(f"  Category dir exists: {os.path.isdir(cat_dir)}")
         raise HTTPException(status_code=404, detail="Video not found")
 
     # Detect mime type
@@ -7524,6 +7644,1411 @@ def remove_category_from_jellyfin(category_id: int, db: Session = Depends(get_db
         "supported": False,
         "message": "Jellyfin preroll removal is not applicable yet."
     }
+
+# --- Community Prerolls Feature ---
+
+@app.get("/community-prerolls/fair-use-policy")
+def get_community_fair_use_policy():
+    """
+    Return the Fair Use Policy text from Typical Nerds.
+    Fetched from: https://prerolls.typicalnerds.uk/%23%20FAIR%20USE%20POLICY%20-%20READ%20ME.txt
+    """
+    policy_text = """------------------------------------------------
+Fair Use Policy Disclosure
+------------------------------------------------
+
+We appreciate your interest in our community's assets, which are intended for informational and educational purposes only. We encourage their appropriate use within the boundaries of copyright law. Please read the following Fair Use Policy carefully before utilizing our assets:
+
+	1.	Ownership: All assets, including but not limited to text, images, videos, and audio files, available on our platform may be protected by copyright and belong to their respective owners. Ownership rights are not transferred or assigned to users.
+	2.	Permissible Use: Users are granted a non-exclusive, non-transferable, revocable license to use the assets provided on our platform for personal, non-commercial purposes, unless otherwise specified. Such use should be in compliance with applicable copyright laws.
+	3.	Prohibited Actions: Users must not copy, reproduce, distribute, modify, publicly display, or create derivative works from the assets without obtaining explicit permission from the creator. 
+	4.	Enforcement: We reserve the right to monitor and enforce compliance with this Fair Use Policy. We may take appropriate action, including but not limited to disabling access, removing content, and pursuing legal remedies against individuals or entities found to be infringing upon copyrights or violating this policy.
+	5.	Reporting Infringements: If you believe that any content on our platform infringes upon your copyright or violates this Fair Use Policy, please contact me immediately via email at contact@typicalnerds.uk. We will promptly investigate and take appropriate action.
+	6.	Disclaimer: This Fair Use Policy does not override or replace any additional terms or conditions that may apply to specific assets or services offered on our platform. Users are advised to review such terms and conditions in conjunction with this policy.
+
+By accessing and using these assets, you acknowledge that you have read, understood, and agreed to comply with this Fair Use Policy. Failure to adhere to this policy may result in the termination of your access to our assets and potential legal consequences.
+"""
+    return {
+        "policy": policy_text,
+        "source": "https://prerolls.typicalnerds.uk/",
+        "credit": "https://typicalnerds.uk/"
+    }
+
+@app.post("/community-prerolls/fair-use/accept")
+def accept_fair_use_policy(db: Session = Depends(get_db)):
+    """
+    Record user's acceptance of the Fair Use Policy.
+    Stored in settings so users only see the agreement once.
+    """
+    setting = db.query(models.Setting).first()
+    if not setting:
+        setting = models.Setting(plex_url=None, plex_token=None)
+        db.add(setting)
+        db.commit()
+        db.refresh(setting)
+    
+    try:
+        setting.community_fair_use_accepted = True
+        setting.community_fair_use_accepted_at = datetime.datetime.utcnow()
+        db.commit()
+        return {
+            "accepted": True,
+            "accepted_at": setting.community_fair_use_accepted_at.isoformat() + "Z",
+            "message": "Fair Use Policy accepted"
+        }
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"Failed to record acceptance: {str(e)}")
+
+@app.get("/community-prerolls/fair-use/status")
+def get_fair_use_status(db: Session = Depends(get_db)):
+    """
+    Check if user has accepted the Fair Use Policy.
+    Returns acceptance status and timestamp.
+    """
+    setting = db.query(models.Setting).first()
+    if not setting:
+        return {
+            "accepted": False,
+            "accepted_at": None
+        }
+    
+    accepted = getattr(setting, "community_fair_use_accepted", False)
+    accepted_at = getattr(setting, "community_fair_use_accepted_at", None)
+    
+    return {
+        "accepted": bool(accepted),
+        "accepted_at": accepted_at.isoformat() + "Z" if accepted_at else None
+    }
+
+@app.get("/community-prerolls/test-scrape")
+def test_community_scrape():
+    """Test endpoint to verify scraping works"""
+    try:
+        import requests
+        from bs4 import BeautifulSoup
+        
+        url = "https://prerolls.typicalnerds.uk/Holidays/Halloween/Carving%20Pumpkin%20-%20AwesomeAustn/"
+        response = requests.get(url, timeout=10)
+        soup = BeautifulSoup(response.text, 'html.parser')
+        
+        videos = []
+        for link in soup.find_all('a'):
+            href = link.get('href', '')
+            if href.endswith('.mp4'):
+                videos.append(href)
+        
+        return {
+            "status": "success",
+            "url": url,
+            "status_code": response.status_code,
+            "videos_found": len(videos),
+            "videos": videos
+        }
+    except Exception as e:
+        return {
+            "status": "error",
+            "error": str(e),
+            "traceback": str(__import__('traceback').format_exc())
+        }
+
+# ===== LOCAL INDEX SYSTEM FOR FASTER SEARCHES =====
+
+# Global progress tracking for index building
+_index_build_progress = {
+    "building": False,
+    "progress": 0,
+    "current_dir": "",
+    "files_found": 0,
+    "dirs_visited": 0,
+    "message": ""
+}
+
+def _build_prerolls_index(progress_callback=None) -> dict:
+    """
+    Build a complete index of Typical Nerds prerolls by scraping the directory.
+    This is a one-time operation that caches everything locally for fast searches.
+    Returns the index dict with metadata.
+    
+    Args:
+        progress_callback: Optional callback function for progress updates
+    """
+    import urllib.parse
+    from urllib.parse import urljoin
+    from bs4 import BeautifulSoup
+    import time
+    import json
+    
+    global _index_build_progress
+    _index_build_progress["building"] = True
+    _index_build_progress["progress"] = 0
+    _index_build_progress["message"] = "Starting index build..."
+    
+    _file_log("Building Typical Nerds prerolls index (this may take a few minutes)...")
+    
+    base_url = "https://prerolls.typicalnerds.uk"
+    headers = {
+        "Accept": "text/html,application/json",
+        "User-Agent": f"NeXroll/{app_version} (Index Builder; +https://github.com/JFLXCLOUD/NeXroll)"
+    }
+    
+    index_data = {
+        "version": "1.0",
+        "created_at": datetime.datetime.now().isoformat(),
+        "base_url": base_url,
+        "prerolls": []
+    }
+    
+    visited_urls = set()
+    prerolls = []
+    json_count = 0
+    html_count = 0
+    estimated_total_dirs = 400  # Rough estimate for progress calculation
+    
+    def update_progress():
+        """Update global progress state"""
+        dirs_done = len(visited_urls)
+        # Progress is 0-95% during scanning, then 95-100% for final processing
+        # Only update progress percentage if it hasn't been manually set higher
+        current_progress = _index_build_progress.get("progress", 0)
+        if current_progress < 95:
+            progress_pct = min(95, int((dirs_done / estimated_total_dirs) * 95))
+            _index_build_progress["progress"] = progress_pct
+        _index_build_progress["dirs_visited"] = dirs_done
+        _index_build_progress["files_found"] = len(prerolls)
+        
+        if progress_callback:
+            progress_callback(_index_build_progress.copy())
+    
+    def scrape_directory(url, depth=0, max_depth=999):
+        """Recursively scrape all directories for video files"""
+        url = url.rstrip('/') + '/'
+        
+        # Skip utility folders that don't contain prerolls
+        # Note: We DO index "prerolls.video - Archive" since it has content
+        skip_folders = ['site-assets', 'templates']
+        if any(skip in url.lower() for skip in skip_folders):
+            _file_log(f"⊘ Skipping utility folder: {url}")
+            return
+        
+        # Only check if already visited (no depth limit - scan everything!)
+        if url in visited_urls:
+            return
+        visited_urls.add(url)
+        
+        # Update progress
+        path_display = url.replace(base_url, '') or '/'
+        _index_build_progress["current_dir"] = path_display
+        update_progress()
+        
+        _file_log(f"{'  ' * depth}→ Indexing (depth={depth}): {path_display} [{len(prerolls)} files]")
+        
+        # Respectful delay between requests (0.15s = ~7 requests/sec)
+        time.sleep(0.15)
+        
+        try:
+            response = requests.get(url, headers=headers, timeout=10)
+            if response.status_code != 200:
+                _file_log(f"⚠ HTTP {response.status_code} for {url}")
+                return
+            
+            # Caddy can return either HTML or JSON depending on context
+            # We need to handle both formats!
+            content_type = response.headers.get('Content-Type', '')
+            
+            if 'application/json' in content_type:
+                # Parse JSON response from Caddy
+                nonlocal json_count
+                json_count += 1
+                try:
+                    items = json.loads(response.text)
+                    _file_log(f"  📋 JSON format detected, parsing {len(items)} items")
+                    
+                    for item in items:
+                        name = item.get('name', '')
+                        is_dir = item.get('is_dir', False)
+                        item_url = item.get('url', name)
+                        
+                        if not name or name in ['.', '..']:
+                            continue
+                        
+                        # Build full URL
+                        full_url = urljoin(url, item_url)
+                        
+                        if not full_url.startswith(base_url):
+                            continue
+                        
+                        # Recursively explore directories
+                        if is_dir:
+                            scrape_directory(full_url, depth + 1, max_depth)
+                        # Index video files
+                        elif any(name.lower().endswith(ext) for ext in ['.mp4', '.mkv', '.avi', '.mov', '.webm']):
+                            title = name
+                            
+                            # Extract category from path
+                            path_parts = full_url.replace(base_url, '').split('/')
+                            folder_category = path_parts[1] if len(path_parts) > 1 and path_parts[1] else "Community"
+                            
+                            # Extract creator from parent folder
+                            creator = "Typical Nerds"
+                            if len(path_parts) >= 2:
+                                try:
+                                    parent_folder = urllib.parse.unquote(path_parts[-2])
+                                    if ' - ' in parent_folder:
+                                        creator = parent_folder.split(' - ')[-1].strip()
+                                except:
+                                    pass
+                            
+                            # Create searchable keywords from path and title
+                            keywords = []
+                            for part in path_parts:
+                                decoded = urllib.parse.unquote(part).lower()
+                                # Split by common delimiters
+                                words = decoded.replace('_', ' ').replace('-', ' ').replace('/', ' ').split()
+                                keywords.extend(words)
+                            keywords.extend(title.lower().replace('_', ' ').replace('-', ' ').split())
+                            keywords = list(set([k for k in keywords if len(k) > 2]))  # Deduplicate and filter short words
+                            
+                            preroll_entry = {
+                                "id": full_url.replace(base_url, '').replace('/', '_').replace('.', '_'),
+                                "title": title.replace('.mp4', '').replace('.mkv', '').replace('_', ' ').replace('-', ' ').title(),
+                                "creator": creator,
+                                "category": folder_category,
+                                "url": full_url,
+                                "path": full_url.replace(base_url, ''),
+                                "keywords": keywords,  # For fast local searching
+                                "tags": folder_category.lower()
+                            }
+                            
+                            prerolls.append(preroll_entry)
+                            _file_log(f"  ✓ Found: {title[:60]}")
+                except json.JSONDecodeError as e:
+                    _file_log(f"✗ Failed to parse JSON from {url}: {e}")
+                    return
+            else:
+                # Parse HTML response with BeautifulSoup
+                nonlocal html_count
+                html_count += 1
+                soup = BeautifulSoup(response.text, 'html.parser')
+                
+                for link in soup.find_all('a'):
+                    href = link.get('href', '')
+                    text = link.get_text().strip()
+                    
+                    if not href or href.startswith('?') or href in ['../', './', '..', '.', '', '../']:
+                        continue
+                    
+                    if href == '../' or text in ['Up', '/', '..']:
+                        continue
+                    
+                    full_url = urljoin(url, href)
+                    
+                    if not full_url.startswith(base_url):
+                        continue
+                    
+                    # Recursively explore directories
+                    if href.endswith('/'):
+                        scrape_directory(full_url, depth + 1, max_depth)
+                    # Index video files
+                    elif any(href.lower().endswith(ext) for ext in ['.mp4', '.mkv', '.avi', '.mov', '.webm']):
+                        filename = href.split('/')[-1]
+                        title = text or filename
+                        
+                        # Extract category from path
+                        path_parts = full_url.replace(base_url, '').split('/')
+                        folder_category = path_parts[1] if len(path_parts) > 1 and path_parts[1] else "Community"
+                        
+                        # Extract creator from parent folder
+                        creator = "Typical Nerds"
+                        if len(path_parts) >= 2:
+                            try:
+                                parent_folder = urllib.parse.unquote(path_parts[-2])
+                                if ' - ' in parent_folder:
+                                    creator = parent_folder.split(' - ')[-1].strip()
+                            except:
+                                pass
+                        
+                        # Create searchable keywords from path and title
+                        keywords = []
+                        for part in path_parts:
+                            decoded = urllib.parse.unquote(part).lower()
+                            # Split by common delimiters
+                            words = decoded.replace('_', ' ').replace('-', ' ').replace('/', ' ').split()
+                            keywords.extend(words)
+                        keywords.extend(title.lower().replace('_', ' ').replace('-', ' ').split())
+                        keywords = list(set([k for k in keywords if len(k) > 2]))  # Deduplicate and filter short words
+                        
+                        preroll_entry = {
+                            "id": full_url.replace(base_url, '').replace('/', '_').replace('.', '_'),
+                            "title": title.replace('.mp4', '').replace('.mkv', '').replace('_', ' ').replace('-', ' ').title(),
+                            "creator": creator,
+                            "category": folder_category,
+                            "url": full_url,
+                            "path": full_url.replace(base_url, ''),
+                            "keywords": keywords,  # For fast local searching
+                            "tags": folder_category.lower()
+                        }
+                        
+                        prerolls.append(preroll_entry)
+                        _file_log(f"  ✓ Found: {title[:60]}")
+        except json.JSONDecodeError as e:
+            _file_log(f"✗ JSON parse error for {url}: {e}")
+        except Exception as e:
+            import traceback
+            _file_log(f"✗ Error indexing {url}: {e}")
+            _file_log(f"  Traceback: {traceback.format_exc()}")
+    
+    # Build the index by scraping from root to discover all folders
+    # No depth limit - scan all subdirectories recursively!
+    _file_log(f"{'='*60}")
+    _file_log(f"Starting comprehensive index from root: {base_url}")
+    _file_log(f"{'='*60}")
+    
+    _index_build_progress["message"] = "Scanning directories..."
+    scrape_directory(base_url, depth=0, max_depth=999)
+    
+    _index_build_progress["message"] = "Finalizing index..."
+    _index_build_progress["progress"] = 98
+    update_progress()
+    
+    index_data["prerolls"] = prerolls
+    index_data["total_prerolls"] = len(prerolls)
+    index_data["directories_visited"] = len(visited_urls)
+    
+    _index_build_progress["progress"] = 100
+    _index_build_progress["message"] = f"Complete! Found {len(prerolls)} prerolls"
+    _index_build_progress["building"] = False
+    update_progress()
+    
+    _file_log(f"{'='*60}")
+    _file_log(f"✓ Index building complete!")
+    _file_log(f"  Total prerolls indexed: {len(prerolls)}")
+    _file_log(f"  Directories scanned: {len(visited_urls)}")
+    _file_log(f"  HTML responses: {html_count}")
+    _file_log(f"  JSON responses: {json_count}")
+    _file_log(f"  Categories found: {len(set(p['category'] for p in prerolls))}")
+    _file_log(f"  Creators found: {len(set(p['creator'] for p in prerolls))}")
+    _file_log(f"{'='*60}")
+    
+    return index_data
+
+
+def _save_prerolls_index(index_data: dict) -> bool:
+    """Save the prerolls index to disk as JSON"""
+    try:
+        PREROLLS_INDEX_PATH.parent.mkdir(parents=True, exist_ok=True)
+        with open(PREROLLS_INDEX_PATH, 'w', encoding='utf-8') as f:
+            json.dump(index_data, f, indent=2, ensure_ascii=False)
+        _file_log(f"Saved prerolls index to: {PREROLLS_INDEX_PATH}")
+        return True
+    except Exception as e:
+        _file_log(f"Error saving prerolls index: {e}")
+        return False
+
+
+def _load_prerolls_index() -> Optional[dict]:
+    """Load the prerolls index from disk"""
+    try:
+        if not PREROLLS_INDEX_PATH.exists():
+            _file_log("No local prerolls index found")
+            return None
+        
+        # Check if index is too old
+        file_age = time.time() - PREROLLS_INDEX_PATH.stat().st_mtime
+        if file_age > PREROLLS_INDEX_MAX_AGE:
+            _file_log(f"Prerolls index is {file_age / 86400:.1f} days old (max {PREROLLS_INDEX_MAX_AGE / 86400} days)")
+            return None
+        
+        with open(PREROLLS_INDEX_PATH, 'r', encoding='utf-8') as f:
+            index_data = json.load(f)
+        
+        _file_log(f"Loaded prerolls index: {index_data.get('total_prerolls', 0)} prerolls (created {index_data.get('created_at', 'unknown')})")
+        return index_data
+    except Exception as e:
+        _file_log(f"Error loading prerolls index: {e}")
+        return None
+
+
+def _search_local_index(index_data: dict, query: str = "", category: str = "", platform: str = "", limit: int = 50) -> List[dict]:
+    """
+    Search the local prerolls index (FAST - milliseconds vs seconds)
+    
+    Args:
+        index_data: The loaded index dict
+        query: Search term to match against keywords
+        category: Filter by category
+        platform: Filter by platform name in title
+        limit: Maximum results to return
+    
+    Returns:
+        List of matching preroll dicts
+    """
+    prerolls = index_data.get("prerolls", [])
+    results = []
+    
+    query_lower = query.lower() if query else ""
+    category_lower = category.lower() if category else ""
+    platform_lower = platform.lower() if platform else ""
+    
+    # Build expanded search terms using synonyms
+    search_terms = [query_lower] if query_lower else []
+    if query_lower:
+        # Check if query matches any synonym groups
+        for key, synonyms in SEARCH_SYNONYMS.items():
+            if query_lower in key or key in query_lower:
+                # Add all related terms
+                search_terms.extend(synonyms)
+                search_terms.append(key)
+                break
+        # Remove duplicates
+        search_terms = list(set(search_terms))
+    
+    for preroll in prerolls:
+        # Apply filters
+        if search_terms:
+            # Check if ANY search term matches keywords or title
+            match_found = False
+            preroll_title = preroll.get("title", "").lower()
+            preroll_keywords = preroll.get("keywords", [])
+            
+            for term in search_terms:
+                # Check keywords
+                if any(term in keyword for keyword in preroll_keywords):
+                    match_found = True
+                    break
+                # Check title
+                if term in preroll_title:
+                    match_found = True
+                    break
+            
+            if not match_found:
+                continue
+        
+        if category_lower:
+            if category_lower not in preroll.get("category", "").lower():
+                continue
+        
+        if platform_lower:
+            title_lower = preroll.get("title", "").lower()
+            if platform_lower not in title_lower:
+                continue
+        
+        results.append(preroll)
+        
+        if len(results) >= limit:
+            break
+    
+    return results
+
+
+@app.get("/community-prerolls/build-index")
+def build_community_prerolls_index(request: Request):
+    """
+    Build the local prerolls index by scraping Typical Nerds directory.
+    This is a manual operation triggered by the user (e.g., "Refresh Index" button).
+    
+    WARNING: This may take several minutes and makes many HTTP requests.
+    Only use when needed (e.g., weekly or when new prerolls are added).
+    """
+    import time
+    
+    # Rate limiting: Only allow one build per IP every 10 minutes
+    client_ip = request.client.host if request.client else "unknown"
+    current_time = time.time()
+    
+    rate_limit_key = f"index_build_{client_ip}"
+    
+    if rate_limit_key in community_search_rate_limit:
+        last_build = community_search_rate_limit[rate_limit_key]
+        time_since_last = current_time - last_build
+        if time_since_last < 600:  # 10 minutes cooldown
+            remaining = int(600 - time_since_last)
+            raise HTTPException(
+                status_code=429,
+                detail=f"Please wait {remaining // 60} minutes {remaining % 60} seconds before rebuilding the index. Building the index is resource-intensive."
+            )
+    
+    community_search_rate_limit[rate_limit_key] = current_time
+    
+    try:
+        index_data = _build_prerolls_index()
+        success = _save_prerolls_index(index_data)
+        
+        if success:
+            return {
+                "status": "success",
+                "message": "Prerolls index built successfully",
+                "total_prerolls": index_data.get("total_prerolls", 0),
+                "directories_visited": index_data.get("directories_visited", 0),
+                "created_at": index_data.get("created_at"),
+                "index_path": str(PREROLLS_INDEX_PATH)
+            }
+        else:
+            raise HTTPException(status_code=500, detail="Failed to save index to disk")
+    except Exception as e:
+        _file_log(f"Error building prerolls index: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to build index: {str(e)}")
+
+
+@app.get("/community-prerolls/build-progress")
+async def get_build_progress():
+    """
+    Server-Sent Events endpoint for real-time index build progress
+    """
+    from starlette.responses import StreamingResponse
+    import asyncio
+    import json
+    
+    async def event_stream():
+        try:
+            while True:
+                # Send current progress state
+                progress_data = _index_build_progress.copy()
+                yield f"data: {json.dumps(progress_data)}\n\n"
+                
+                # Stop streaming when build is complete
+                # Send final message, wait to ensure delivery, then stop
+                if not progress_data.get("building", False) and progress_data.get("progress", 0) == 100:
+                    await asyncio.sleep(0.5)  # Give time for final message to be received
+                    break
+                
+                await asyncio.sleep(0.5)  # Update every 500ms
+        except Exception as e:
+            _file_log(f"Progress stream error: {e}")
+    
+    return StreamingResponse(event_stream(), media_type="text/event-stream")
+
+
+@app.get("/community-prerolls/index-status")
+def get_community_prerolls_index_status():
+    """
+    Get status of the local prerolls index (exists, age, size, etc.)
+    """
+    import time
+    
+    if not PREROLLS_INDEX_PATH.exists():
+        return {
+            "exists": False,
+            "message": "No local index found. Build it for faster searches!",
+            "index_path": str(PREROLLS_INDEX_PATH)
+        }
+    
+    try:
+        file_stats = PREROLLS_INDEX_PATH.stat()
+        file_age = time.time() - file_stats.st_mtime
+        file_size_mb = file_stats.st_size / (1024 * 1024)
+        
+        index_data = _load_prerolls_index()
+        
+        is_stale = file_age > PREROLLS_INDEX_MAX_AGE
+        
+        return {
+            "exists": True,
+            "is_stale": is_stale,
+            "age_days": file_age / 86400,
+            "max_age_days": PREROLLS_INDEX_MAX_AGE / 86400,
+            "size_mb": round(file_size_mb, 2),
+            "total_prerolls": index_data.get("total_prerolls", 0) if index_data else 0,
+            "created_at": index_data.get("created_at") if index_data else None,
+            "index_path": str(PREROLLS_INDEX_PATH),
+            "message": "Index is stale. Refresh recommended." if is_stale else "Index is up to date."
+        }
+    except Exception as e:
+        return {
+            "exists": True,
+            "error": str(e),
+            "index_path": str(PREROLLS_INDEX_PATH)
+        }
+
+
+@app.get("/community-prerolls/search")
+def search_community_prerolls(request: Request, query: str = "", category: str = "", platform: str = "", limit: int = 50):
+    """
+    Search the Typical Nerds preroll library (LOCAL INDEX PREFERRED - FAST!).
+    
+    Query: search term (title, description)
+    Category: filter by category (holiday, theme, etc.)
+    Platform: filter by platform (plex, jellyfin, emby, or empty for all)
+    Limit: max results (default 50, max 100)
+    
+    Returns list of prerolls with metadata and download URLs.
+    
+    NEW: Uses local index first for instant results (milliseconds).
+    Fallback: If no index, falls back to slow remote scraping (rate limited).
+    """
+    import urllib.parse
+    from urllib.parse import urljoin, urlparse
+    from bs4 import BeautifulSoup
+    import time
+    
+    if limit > 100:
+        limit = 100
+    
+    # ===== NEW: TRY LOCAL INDEX FIRST (FAST!) =====
+    _file_log(f"Community search: query='{query}' category='{category}' platform='{platform}' limit={limit}")
+    
+    index_data = _load_prerolls_index()
+    if index_data:
+        # LOCAL INDEX FOUND - Use it for instant search!
+        _file_log("Using local prerolls index for fast search")
+        results = _search_local_index(index_data, query, category, platform, limit)
+        
+        return {
+            "found": len(results),
+            "results": results,
+            "total": len(results),
+            "query": query,
+            "category": category,
+            "source": "local_index",
+            "index_created": index_data.get("created_at"),
+            "message": f"Searched {index_data.get('total_prerolls', 0)} prerolls from local index (instant!)"
+        }
+    
+    # ===== FALLBACK: NO INDEX - Use slow remote scraping =====
+    _file_log("No local index found - falling back to slow remote scraping")
+    _file_log("TIP: Build the index for much faster searches (Community Prerolls > Refresh Index button)")
+    
+    # Rate limiting for remote scraping only
+    client_ip = request.client.host if request.client else "unknown"
+    current_time = time.time()
+    
+    _file_log(f"Community search from IP: {client_ip}, last search: {community_search_rate_limit.get(client_ip, 'never')}")
+    
+    if client_ip in community_search_rate_limit:
+        last_search = community_search_rate_limit[client_ip]
+        time_since_last = current_time - last_search
+        _file_log(f"Time since last search: {time_since_last:.2f}s (cooldown: {COMMUNITY_SEARCH_COOLDOWN}s)")
+        if time_since_last < COMMUNITY_SEARCH_COOLDOWN:
+            remaining = int(COMMUNITY_SEARCH_COOLDOWN - time_since_last)
+            raise HTTPException(
+                status_code=429,
+                detail=f"Please wait {remaining} seconds before searching again. Build the local index for instant searches without cooldown!"
+            )
+    
+    community_search_rate_limit[client_ip] = current_time
+    
+    # Clean old entries (older than 1 hour) to prevent memory leak
+    cutoff = current_time - 3600
+    expired_ips = [ip for ip, ts in community_search_rate_limit.items() if ts < cutoff]
+    for ip in expired_ips:
+        del community_search_rate_limit[ip]
+    
+    try:
+        # Try to connect to the community library
+        base_url = "https://prerolls.typicalnerds.uk"
+        
+        headers = {
+            "Accept": "text/html,application/json",
+            "User-Agent": f"NeXroll/{app_version} (Rate-Limited Scraper; +https://github.com/JFLXCLOUD/NeXroll)"
+        }
+        
+        # First, try the API endpoint if it exists (unlikely)
+        search_url = f"{base_url}/api/search"
+        params = {
+            "q": query or "",
+            "category": category or "",
+            "limit": limit
+        }
+        
+        try:
+            # Attempt to query the live API (with short timeout since it likely doesn't exist)
+            response = requests.get(search_url, params=params, headers=headers, timeout=2)
+            if response.status_code == 200:
+                try:
+                    data = response.json()
+                    _file_log(f"Community preroll search (API): found {len(data.get('results', []))} results")
+                    return {
+                        "found": len(data.get("results", [])),
+                        "results": data.get("results", []),
+                        "total": data.get("total", 0),
+                        "query": query,
+                        "category": category,
+                        "source": "api"
+                    }
+                except:
+                    pass  # Not JSON, try directory listing
+        except Exception as api_err:
+            _file_log(f"Community preroll search API failed: {api_err}")
+        
+        # Try to scrape the directory listing - explore folders recursively
+        try:
+            _file_log(f"Starting directory scrape for query='{query}' category='{category}' platform='{platform}' limit={limit}")
+            _file_log(f"BeautifulSoup available: {BeautifulSoup is not None}")
+            
+            results = []
+            visited_urls = set()
+            
+            # Start with broad category paths for faster searching
+            # Starting from specific categories is faster than root
+            start_paths = [
+                f"{base_url}/Community/",
+                f"{base_url}/Holidays/",
+                f"{base_url}/Seasons/",
+                f"{base_url}/Clips/"
+            ]
+            
+            def scrape_directory(url, depth=0, max_depth=4):
+                """Recursively scrape directories for video files"""
+                # Normalize URL (using urljoin and urlparse from parent scope)
+                url = url.rstrip('/') + '/'
+                
+                # Early exit conditions for speed
+                if depth > max_depth or url in visited_urls or len(results) >= limit:
+                    return
+                visited_urls.add(url)
+                
+                _file_log(f"Scraping URL: {url} (depth={depth}, results so far={len(results)})")
+                
+                # Rate limiting: Reduced to 200ms for faster searches while still being respectful
+                # This is a balance between speed and not overwhelming the server
+                time.sleep(0.2)  # 200ms delay between requests (was 500ms)
+                
+                try:
+                    # Reduced timeout from 10s to 5s for faster failure on slow responses
+                    response = requests.get(url, headers=headers, timeout=5)
+                    if response.status_code != 200:
+                        return
+                    
+                    soup = BeautifulSoup(response.text, 'html.parser')
+                    
+                    for link in soup.find_all('a'):
+                        if len(results) >= limit:
+                            break
+                            
+                        href = link.get('href', '')
+                        text = link.get_text().strip()
+                        
+                        # Log first few links from each directory for debugging
+                        if depth >= 3:  # Only log deeper directories to reduce noise
+                            _file_log(f"  Link found: {href}")
+                        
+                        # Skip navigation links
+                        if not href or href.startswith('?') or href in ['../', './', '..', '.', '']:
+                            continue
+                        
+                        # Skip parent directory links
+                        if href == '../' or text in ['Up', '/', '..']:
+                            continue
+                        
+                        # Build full URL using urljoin to properly handle relative paths
+                        full_url = urljoin(url, href)
+                        
+                        # Skip if URL goes outside base domain
+                        if not full_url.startswith(base_url):
+                            continue
+                        
+                        # Check if it's a directory (ends with /)
+                        if href.endswith('/'):
+                            # Recursively explore ALL subdirectories
+                            # Query filtering happens at the file level, not directory level
+                            scrape_directory(full_url, depth + 1, max_depth)
+                        # Check if it's a video file
+                        elif any(href.lower().endswith(ext) for ext in ['.mp4', '.mkv', '.avi', '.mov', '.webm']):
+                            _file_log(f"Found video file: {href} at {url}")
+                            # Extract filename without extension for title
+                            filename = href.split('/')[-1]
+                            title = text or filename
+                            
+                            # Apply query filter
+                            # Check if query matches the URL path (including parent directories) OR the filename
+                            if query:
+                                query_lower = query.lower()
+                                url_lower = full_url.lower()
+                                title_lower = title.lower()
+                                
+                                # Extract the parent directory path to check if we're in a matching category
+                                # e.g., /Holidays/Christmas/ should match query "christmas"
+                                path_parts = url_lower.split('/')
+                                
+                                # Check if query matches:
+                                # 1. Any part of the directory path (e.g., /Christmas/)
+                                # 2. The filename itself
+                                matches = any(query_lower in part for part in path_parts) or query_lower in title_lower
+                                
+                                if not matches:
+                                    continue
+                                
+                                _file_log(f"✓ Matched '{query}': {title}")
+                            
+                            # Apply category filter
+                            if category:
+                                category_lower = category.lower()
+                                if category_lower not in full_url.lower() and category_lower not in title.lower():
+                                    continue
+                            
+                            # Apply platform filter
+                            if platform:
+                                platform_lower = platform.lower()
+                                # Check if title contains the platform name (e.g., "Plex", "Jellyfin", "Emby")
+                                if platform_lower not in title.lower() and platform_lower not in filename.lower():
+                                    continue
+                            
+                            # Extract category from folder path
+                            path_parts = full_url.replace(base_url, '').split('/')
+                            folder_category = path_parts[1] if len(path_parts) > 1 and path_parts[1] else "Community"
+                            
+                            # Extract creator from parent folder name
+                            # Format is typically: /Category/Theme/Title - Creator/video.mp4
+                            # So the creator is the last part after " - " in the parent folder
+                            creator = "Typical Nerds"
+                            if len(path_parts) >= 2:
+                                try:
+                                    parent_folder = urllib.parse.unquote(path_parts[-2])  # Decode URL encoding
+                                    if ' - ' in parent_folder:
+                                        creator = parent_folder.split(' - ')[-1].strip()
+                                except:
+                                    pass  # Keep default creator on any error
+                            
+                            results.append({
+                                "id": full_url.replace(base_url, '').replace('/', '_').replace('.', '_'),
+                                "title": title.replace('.mp4', '').replace('.mkv', '').replace('_', ' ').replace('-', ' ').title(),
+                                "creator": creator,
+                                "duration": None,
+                                "file_size": "Unknown",
+                                "category": folder_category,
+                                "thumbnail": None,
+                                "url": full_url,
+                                "tags": folder_category.lower(),
+                                "path": full_url.replace(base_url, '')
+                            })
+                except Exception as dir_err:
+                    pass  # Silently continue on errors
+            
+            # Start scraping from category paths (faster than root)
+            for start_path in start_paths:
+                if len(results) < limit:
+                    _file_log(f"Scraping path: {start_path}")
+                    scrape_directory(start_path, depth=0, max_depth=4)  # Max depth 4 to find nested content
+            
+            _file_log(f"Scraping completed: found {len(results)} results from {len(visited_urls)} directories")
+            
+            # Return results even if empty - this allows proper "no results" message instead of demo fallback
+            _file_log(f"Community preroll search (scrape): found {len(results)} results from {len(visited_urls)} directories")
+            return {
+                "found": len(results),
+                "results": results,
+                "total": len(results),
+                "query": query,
+                "category": category,
+                "source": "directory",
+                "message": f"Searched {len(visited_urls)} directories" if len(results) == 0 else None
+            }
+        except Exception as scrape_err:
+            import traceback
+            _file_log(f"Community preroll scrape error: {scrape_err}\n{traceback.format_exc()}")
+        
+        # Fallback: if API unavailable, return demo/sample prerolls
+        # This allows testing the UI without a live API
+        demo_results = []
+        
+        # Include demo results if search is empty or matches demo keywords
+        search_lower = (query or "").lower()
+        category_lower = (category or "").lower()
+        
+        if not query or "test" in search_lower or "demo" in search_lower or "sample" in search_lower:
+            demo_results = [
+                {
+                    "id": "demo_001",
+                    "title": "Classic Film Noir Intro",
+                    "creator": "Demo Creator",
+                    "duration": 15,
+                    "file_size": "2.3 MB",
+                    "category": "Movies",
+                    "thumbnail": "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='200' height='120'%3E%3Crect fill='%23333'/%3E%3Ctext x='100' y='60' text-anchor='middle' fill='%23fff' font-size='14'%3EFilm Noir%3C/text%3E%3C/svg%3E",
+                    "url": "https://example.com/demo1.mp4",
+                    "tags": "intro,movie,demo"
+                },
+                {
+                    "id": "demo_002",
+                    "title": "Sci-Fi Digital Intro",
+                    "creator": "Demo Creator",
+                    "duration": 12,
+                    "file_size": "1.8 MB",
+                    "category": "SciFi",
+                    "thumbnail": "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='200' height='120'%3E%3Crect fill='%23003366'/%3E%3Ctext x='100' y='60' text-anchor='middle' fill='%23fff' font-size='14'%3ESci-Fi%3C/text%3E%3C/svg%3E",
+                    "url": "https://example.com/demo2.mp4",
+                    "tags": "intro,scifi,demo"
+                },
+                {
+                    "id": "demo_003",
+                    "title": "Holiday Special Opener",
+                    "creator": "Demo Creator",
+                    "duration": 10,
+                    "file_size": "1.5 MB",
+                    "category": "Holiday",
+                    "thumbnail": "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='200' height='120'%3E%3Crect fill='%23008000'/%3E%3Ctext x='100' y='60' text-anchor='middle' fill='%23fff' font-size='14'%3EHoliday%3C/text%3E%3C/svg%3E",
+                    "url": "https://example.com/demo3.mp4",
+                    "tags": "holiday,seasonal,demo"
+                }
+            ]
+        
+        # Filter demo results based on search query/category
+        filtered_results = []
+        for preroll in demo_results:
+            matches_query = not query or (
+                query.lower() in preroll["title"].lower() or 
+                query.lower() in preroll.get("tags", "").lower()
+            )
+            matches_category = not category or category.lower() in preroll["category"].lower()
+            
+            if matches_query and matches_category:
+                filtered_results.append(preroll)
+        
+        _file_log(f"Community preroll demo search: query='{query}' category='{category}' found {len(filtered_results)} results")
+        
+        return {
+            "found": len(filtered_results),
+            "results": filtered_results[:limit],
+            "total": len(filtered_results),
+            "query": query,
+            "category": category,
+            "note": "API currently unavailable - showing demo results. Visit https://prerolls.typicalnerds.uk/ to browse the live library."
+        }
+        
+    except Exception as e:
+        _file_log(f"Community search exception: {e}")
+        raise HTTPException(status_code=500, detail=f"Search failed: {str(e)}")
+
+@app.post("/community-prerolls/download")
+def download_community_preroll(
+    request: CommunityPrerollDownloadRequest,
+    db: Session = Depends(get_db)
+):
+    """
+    Download a preroll from the community library and import into local storage.
+    
+    Downloads the file into PREROLLS_DIR and creates a Preroll database entry.
+    """
+    import urllib.request
+    import urllib.parse
+    
+    if not (request.preroll_id or request.url):
+        raise HTTPException(status_code=422, detail="Either preroll_id or url is required")
+    
+    # Determine download URL
+    download_url = request.url
+    if request.preroll_id and not request.url:
+        # Resolve from community library
+        download_url = f"https://prerolls.typicalnerds.uk/api/prerolls/{request.preroll_id}/download"
+    
+    if not download_url:
+        raise HTTPException(status_code=422, detail="No download URL available")
+    
+    try:
+        # Ensure directories exist
+        os.makedirs(PREROLLS_DIR, exist_ok=True)
+        os.makedirs(THUMBNAILS_DIR, exist_ok=True)
+        
+        # Resolve target category
+        category = None
+        if request.category_id:
+            category = db.query(models.Category).filter(models.Category.id == request.category_id).first()
+        if not category:
+            category = db.query(models.Category).filter(models.Category.name == "Default").first()
+            if not category:
+                category = models.Category(name="Default", description="Default category")
+                db.add(category)
+                db.commit()
+                db.refresh(category)
+        
+        category_dir = os.path.join(PREROLLS_DIR, category.name)
+        thumbnail_category_dir = os.path.join(THUMBNAILS_DIR, category.name)
+        os.makedirs(category_dir, exist_ok=True)
+        os.makedirs(thumbnail_category_dir, exist_ok=True)
+        
+        # Download the file
+        filename = request.title or "community_preroll"
+        if not filename.lower().endswith(('.mp4', '.mkv', '.mov', '.avi', '.m4v', '.webm')):
+            filename += ".mp4"
+        
+        file_path = os.path.join(category_dir, filename)
+        
+        # Avoid filename collisions
+        base, ext = os.path.splitext(filename)
+        counter = 1
+        while os.path.exists(file_path):
+            file_path = os.path.join(category_dir, f"{base}_{counter}{ext}")
+            counter += 1
+        
+        # Download file using requests for better timeout control
+        try:
+            response = requests.get(download_url, stream=True, timeout=60)
+            response.raise_for_status()
+            with open(file_path, 'wb') as f:
+                for chunk in response.iter_content(chunk_size=8192):
+                    if chunk:
+                        f.write(chunk)
+        except Exception as dl_err:
+            raise HTTPException(status_code=500, detail=f"Download failed: {str(dl_err)}")
+        
+        # Get file info
+        file_size = os.path.getsize(file_path)
+        duration = None
+        
+        # Probe duration
+        try:
+            result = _run_subprocess(
+                [get_ffprobe_cmd(), "-v", "quiet", "-print_format", "json", "-show_format", file_path],
+                capture_output=True,
+                text=True,
+                timeout=10
+            )
+            if result.returncode == 0 and result.stdout:
+                probe_data = json.loads(result.stdout)
+                duration = float(probe_data.get("format", {}).get("duration"))
+        except Exception:
+            duration = None
+        
+        # Community prerolls should have no tags by default
+        # Users can add their own tags later if desired
+        processed_tags = None
+        
+        # Create database record
+        preroll = models.Preroll(
+            filename=os.path.basename(file_path),
+            display_name=request.title or os.path.splitext(os.path.basename(file_path))[0],
+            path=file_path,
+            thumbnail=None,
+            tags=None,  # No auto-tagging for community prerolls
+            category_id=category.id,
+            description=f"Downloaded from Community Prerolls library",
+            duration=duration,
+            file_size=file_size,
+            managed=True
+        )
+        db.add(preroll)
+        db.commit()
+        db.refresh(preroll)
+        
+        # Generate thumbnail
+        thumbnail_path = None
+        try:
+            thumb_abs = os.path.join(thumbnail_category_dir, f"{preroll.id}_{os.path.basename(file_path)}.jpg")
+            tmp_thumb = thumb_abs + ".tmp.jpg"
+            res = _run_subprocess(
+                [get_ffmpeg_cmd(), "-v", "error", "-y", "-ss", "5", "-i", file_path, "-vframes", "1", "-q:v", "2", "-f", "mjpeg", tmp_thumb],
+                capture_output=True,
+                text=True,
+                timeout=30
+            )
+            if getattr(res, "returncode", 1) != 0 or not os.path.exists(tmp_thumb):
+                _generate_placeholder(tmp_thumb)
+            try:
+                if os.path.exists(thumb_abs):
+                    os.remove(thumb_abs)
+            except Exception:
+                pass
+            os.replace(tmp_thumb, thumb_abs)
+            thumbnail_path = os.path.relpath(thumb_abs, data_dir).replace("\\", "/")
+            preroll.thumbnail = thumbnail_path
+        except Exception as e:
+            _file_log(f"Community preroll thumbnail generation error: {e}")
+        
+        # Add to category if requested
+        if request.add_to_category and request.category_id:
+            try:
+                cat = db.query(models.Category).filter(models.Category.id == request.category_id).first()
+                if cat and cat not in (preroll.categories or []):
+                    preroll.categories = (preroll.categories or []) + [cat]
+            except Exception:
+                pass
+        
+        try:
+            db.commit()
+            db.refresh(preroll)
+        except Exception as e:
+            _file_log(f"Community preroll DB commit error: {e}")
+        
+        return {
+            "downloaded": True,
+            "id": preroll.id,
+            "filename": preroll.filename,
+            "display_name": preroll.display_name,
+            "category_id": preroll.category_id,
+            "category": {"id": category.id, "name": category.name},
+            "thumbnail": thumbnail_path,
+            "duration": duration,
+            "file_size": file_size,
+            "source": "community_prerolls",
+            "credit": "https://typicalnerds.uk/"
+        }
+    
+    except HTTPException:
+        raise
+    except Exception as e:
+        try:
+            db.rollback()
+        except Exception:
+            pass
+        raise HTTPException(status_code=500, detail=f"Download import failed: {str(e)}")
+
+@app.get("/community-prerolls/random")
+def get_random_community_preroll(
+    platform: str = Query("", description="Filter by platform (plex/emby/jellyfin)"),
+    category: str = Query("", description="Filter by category (optional)"),
+    db: Session = Depends(get_db)
+):
+    """
+    Get a random preroll from the community library.
+    Uses local index for instant selection when available, falls back to remote scraping.
+    Supports platform filtering (Plex/Emby/Jellyfin).
+    """
+    import random
+    
+    # Check Fair Use Policy acceptance
+    setting = db.query(models.Setting).first()
+    if not setting or not getattr(setting, "community_fair_use_accepted", False):
+        raise HTTPException(
+            status_code=403, 
+            detail="Fair Use Policy must be accepted before accessing community prerolls"
+        )
+    
+    try:
+        _file_log(f"Random community preroll request: platform='{platform}' category='{category}'")
+        
+        # TRY LOCAL INDEX FIRST (INSTANT!)
+        index_data = _load_prerolls_index()
+        if index_data:
+            _file_log("Using local index for random selection (instant)")
+            
+            # Get all prerolls from index and apply filters
+            all_prerolls = index_data.get("prerolls", [])
+            filtered_prerolls = []
+            
+            platform_lower = platform.lower() if platform else ""
+            category_lower = category.lower() if category else ""
+            
+            for preroll in all_prerolls:
+                # Apply platform filter
+                if platform_lower:
+                    title_lower = preroll.get("title", "").lower()
+                    if platform_lower not in title_lower:
+                        continue
+                
+                # Apply category filter
+                if category_lower:
+                    preroll_category = preroll.get("category", "").lower()
+                    if category_lower not in preroll_category:
+                        continue
+                
+                filtered_prerolls.append(preroll)
+            
+            if filtered_prerolls:
+                random_preroll = random.choice(filtered_prerolls)
+                _file_log(f"Random preroll selected from index: {random_preroll['title']}")
+                
+                return {
+                    "found": True,
+                    "result": random_preroll,
+                    "source": "local_index",
+                    "message": "⚡ Instant random selection from local index"
+                }
+            else:
+                _file_log(f"No matching prerolls in index for filters")
+                return {
+                    "found": False,
+                    "message": f"No prerolls found matching filters",
+                    "result": None
+                }
+        
+        # FALLBACK: Remote scraping (slow but works without index)
+        _file_log("No local index available, falling back to remote scraping for random selection")
+        
+        import requests
+        from bs4 import BeautifulSoup
+        from urllib.parse import urljoin, unquote
+        
+        base_url = "https://prerolls.typicalnerds.uk/"
+        start_paths = ["Community/", "Holidays/", "Seasons/", "Clips/"]
+        
+        # If category specified, focus on that category
+        if category:
+            if category.lower() in ["holidays", "holiday"]:
+                start_paths = ["Holidays/"]
+            elif category.lower() in ["seasons", "seasonal"]:
+                start_paths = ["Seasons/"]
+            elif category.lower() in ["clips", "clip"]:
+                start_paths = ["Clips/"]
+            else:
+                start_paths = ["Community/"]
+        
+        all_files = []
+        platform_lower = platform.lower() if platform else ""
+        
+        def scrape_directory(url, depth=0, max_depth=4):
+            """Recursively scrape directories to find all video files"""
+            if depth > max_depth:
+                return
+            
+            try:
+                response = requests.get(url, timeout=5)
+                if response.status_code != 200:
+                    return
+                
+                soup = BeautifulSoup(response.text, 'html.parser')
+                
+                for link in soup.find_all('a'):
+                    href = link.get('href', '')
+                    if not href or href.startswith('..'):
+                        continue
+                    
+                    full_url = urljoin(url, href)
+                    
+                    # Check if it's a directory
+                    if href.endswith('/'):
+                        scrape_directory(full_url, depth + 1, max_depth)
+                    # Check if it's a video file
+                    elif href.endswith('.mp4'):
+                        title = unquote(href.replace('.mp4', '').replace('%20', ' '))
+                        
+                        # Apply platform filter
+                        if platform_lower:
+                            title_lower = title.lower()
+                            if platform_lower not in title_lower:
+                                continue
+                        
+                        all_files.append({
+                            "id": f"random_{len(all_files)}",
+                            "title": title,
+                            "url": full_url,
+                            "creator": "Community",
+                            "category": url.split('/')[-2] if '/' in url else "Community",
+                            "thumbnail": "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='200' height='120'%3E%3Crect fill='%23444'/%3E%3Ctext x='100' y='60' text-anchor='middle' fill='%23fff' font-size='12'%3ERandom%3C/text%3E%3C/svg%3E"
+                        })
+                        
+                        # Stop after finding 50 files (for performance)
+                        if len(all_files) >= 50:
+                            return
+            
+            except Exception as e:
+                _file_log(f"Error scraping {url}: {e}")
+        
+        # Scrape directories
+        for start_path in start_paths:
+            start_url = urljoin(base_url, start_path)
+            scrape_directory(start_url, depth=0, max_depth=3)
+            
+            # Stop early if we have enough files
+            if len(all_files) >= 50:
+                break
+        
+        if not all_files:
+            _file_log(f"Random: No files found for platform='{platform}' category='{category}'")
+            return {
+                "found": False,
+                "message": f"No prerolls found for platform '{platform}'" if platform else "No prerolls found",
+                "result": None
+            }
+        
+        # Select random file
+        random_preroll = random.choice(all_files)
+        _file_log(f"Random preroll selected: {random_preroll['title']}")
+        
+        return {
+            "found": True,
+            "result": random_preroll
+        }
+    
+    except Exception as e:
+        _file_log(f"Random preroll exception: {e}")
+        raise HTTPException(status_code=500, detail=f"Random selection failed: {str(e)}")
+
+@app.get("/community-prerolls/top5")
+def get_top5_community_prerolls(
+    platform: str = Query("", description="Filter by platform (plex/emby/jellyfin)"),
+    db: Session = Depends(get_db)
+):
+    """
+    Get top 5 featured/popular prerolls from the community library.
+    These are curated selections from popular categories.
+    """
+    import requests
+    from bs4 import BeautifulSoup
+    from urllib.parse import urljoin, unquote
+    
+    # Check Fair Use Policy acceptance
+    setting = db.query(models.Setting).first()
+    if not setting or not getattr(setting, "community_fair_use_accepted", False):
+        raise HTTPException(
+            status_code=403, 
+            detail="Fair Use Policy must be accepted before accessing community prerolls"
+        )
+    
+    try:
+        _file_log(f"Top 5 community prerolls request: platform='{platform}'")
+        
+        base_url = "https://prerolls.typicalnerds.uk/"
+        
+        # Featured directories with popular content
+        featured_paths = [
+            "Community/Matrix/",
+            "Community/Star%20Wars%20Hyperspace%20Logo%20-%20AwesomeAustn/",
+            "Community/Marvel%20Studios%20-%20AwesomeAustn/",
+            "Community/Retrowave%202%20-%20AwesomeAustn/",
+            "Community/Neon%20-%20AwesomeAustn/",
+            "Community/Universal%20Pictures%20-%20AwesomeAustn/",
+            "Community/20th%20Century%20Fox%20-%20AwesomeAustn/"
+        ]
+        
+        top_prerolls = []
+        platform_lower = platform.lower() if platform else ""
+        
+        for path in featured_paths:
+            if len(top_prerolls) >= 5:
+                break
+            
+            try:
+                url = urljoin(base_url, path)
+                response = requests.get(url, timeout=5)
+                
+                if response.status_code != 200:
+                    continue
+                
+                soup = BeautifulSoup(response.text, 'html.parser')
+                
+                for link in soup.find_all('a'):
+                    href = link.get('href', '')
+                    if not href or not href.endswith('.mp4'):
+                        continue
+                    
+                    title = unquote(href.replace('.mp4', '').replace('%20', ' '))
+                    full_url = urljoin(url, href)
+                    
+                    # Apply platform filter
+                    if platform_lower:
+                        title_lower = title.lower()
+                        if platform_lower not in title_lower:
+                            continue
+                    
+                    category_name = unquote(path.split('/')[-2])
+                    
+                    top_prerolls.append({
+                        "id": f"top_{len(top_prerolls)}",
+                        "title": title,
+                        "url": full_url,
+                        "creator": category_name,
+                        "category": category_name,
+                        "thumbnail": "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='200' height='120'%3E%3Crect fill='%23FFD700'/%3E%3Ctext x='100' y='60' text-anchor='middle' fill='%23000' font-size='14'%3E⭐ Top 5%3C/text%3E%3C/svg%3E",
+                        "featured": True
+                    })
+                    
+                    if len(top_prerolls) >= 5:
+                        break
+            
+            except Exception as e:
+                _file_log(f"Error fetching from {path}: {e}")
+                continue
+        
+        _file_log(f"Top 5 prerolls found: {len(top_prerolls)}")
+        
+        return {
+            "found": len(top_prerolls),
+            "results": top_prerolls[:5]
+        }
+    
+    except Exception as e:
+        _file_log(f"Top 5 prerolls exception: {e}")
+        raise HTTPException(status_code=500, detail=f"Top 5 fetch failed: {str(e)}")
 
 # IMPORTANT: Generic /settings/{key} endpoints MUST come after specific /settings/* endpoints
 # to avoid FastAPI route matching the generic pattern first
