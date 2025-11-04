@@ -45,7 +45,11 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy backend source
 COPY backend/ ./backend/
-COPY version.py ./
+
+# Create version.py (since it's not in git)
+RUN echo "__version__ = '1.7.0'" > version.py && \
+    echo "def get_version():" >> version.py && \
+    echo "    return __version__" >> version.py
 
 # Copy built frontend from previous stage
 COPY --from=frontend-builder /app/frontend/build ./frontend/build
