@@ -2369,7 +2369,21 @@ const DashboardTiles = {
 
   const renderDashboard = () => (
     <div>
-      <h1 className="header">NeXroll Dashboard</h1>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '10px' }}>
+        <h1 className="header" style={{ margin: 0 }}>NeXroll Dashboard</h1>
+        <a 
+          href="https://github.com/JFLXCLOUD/NeXroll/stargazers" 
+          target="_blank" 
+          rel="noopener noreferrer"
+          style={{ textDecoration: 'none' }}
+        >
+          <img 
+            src="https://img.shields.io/github/stars/jflxcloud/nexroll?style=flat&color=grey&logo=github" 
+            alt="GitHub Stars"
+            style={{ height: '26px' }}
+          />
+        </a>
+      </div>
 
  
       <div className="card nx-dashboard-controls" style={{ marginBottom: '10px' }}>
