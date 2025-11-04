@@ -2630,19 +2630,29 @@ def upload_preroll(
         db.rollback()
         _file_log(f"upload_preroll: final commit failed: {e}")
 
-    # Auto-apply to Plex/Jellyfin if primary category is already applied
+    # Auto-apply to Plex/Jellyfin if primary category is already applied or currently active
     auto_applied = False
     if primary_category_id:
         try:
             category = db.query(models.Category).filter(models.Category.id == primary_category_id).first()
-            if category and getattr(category, "apply_to_plex", False):
-                _file_log(f"upload_preroll: Auto-applying category '{category.name}' (ID {category.id}) to Plex after upload")
-                ok = _apply_category_to_plex_and_track(db, category.id, ttl=15)
-                if ok:
-                    auto_applied = True
-                    _file_log(f"upload_preroll: Successfully auto-applied category '{category.name}' to Plex")
-                else:
-                    _file_log(f"upload_preroll: Failed to auto-apply category '{category.name}' to Plex")
+            if category:
+                should_apply = getattr(category, "apply_to_plex", False)
+                
+                # Also check if this category is currently active via scheduler
+                if not should_apply:
+                    setting = db.query(models.Setting).first()
+                    if setting and getattr(setting, "active_category", None) == category.id:
+                        should_apply = True
+                        _file_log(f"upload_preroll: Category '{category.name}' (ID {category.id}) is currently active via schedule")
+                
+                if should_apply:
+                    _file_log(f"upload_preroll: Auto-applying category '{category.name}' (ID {category.id}) to Plex after upload")
+                    ok = _apply_category_to_plex_and_track(db, category.id, ttl=15)
+                    if ok:
+                        auto_applied = True
+                        _file_log(f"upload_preroll: Successfully auto-applied category '{category.name}' to Plex")
+                    else:
+                        _file_log(f"upload_preroll: Failed to auto-apply category '{category.name}' to Plex")
         except Exception as e:
             _file_log(f"upload_preroll: Error auto-applying to Plex: {e}")
 
@@ -2854,7 +2864,7 @@ def upload_multiple_prerolls(
                 "error": str(e)
             })
 
-    # Auto-apply to Plex/Jellyfin if primary category is already applied (after all uploads complete)
+    # Auto-apply to Plex/Jellyfin if primary category is already applied or currently active (after all uploads complete)
     auto_applied = False
     if successful_uploads > 0:
         primary_category_id = None
@@ -2869,14 +2879,24 @@ def upload_multiple_prerolls(
         if primary_category_id:
             try:
                 category = db.query(models.Category).filter(models.Category.id == primary_category_id).first()
-                if category and getattr(category, "apply_to_plex", False):
-                    _file_log(f"upload_multiple: Auto-applying category '{category.name}' (ID {category.id}) to Plex after {successful_uploads} uploads")
-                    ok = _apply_category_to_plex_and_track(db, category.id, ttl=15)
-                    if ok:
-                        auto_applied = True
-                        _file_log(f"upload_multiple: Successfully auto-applied category '{category.name}' to Plex")
-                    else:
-                        _file_log(f"upload_multiple: Failed to auto-apply category '{category.name}' to Plex")
+                if category:
+                    should_apply = getattr(category, "apply_to_plex", False)
+                    
+                    # Also check if this category is currently active via scheduler
+                    if not should_apply:
+                        setting = db.query(models.Setting).first()
+                        if setting and getattr(setting, "active_category", None) == category.id:
+                            should_apply = True
+                            _file_log(f"upload_multiple: Category '{category.name}' (ID {category.id}) is currently active via schedule")
+                    
+                    if should_apply:
+                        _file_log(f"upload_multiple: Auto-applying category '{category.name}' (ID {category.id}) to Plex after {successful_uploads} uploads")
+                        ok = _apply_category_to_plex_and_track(db, category.id, ttl=15)
+                        if ok:
+                            auto_applied = True
+                            _file_log(f"upload_multiple: Successfully auto-applied category '{category.name}' to Plex")
+                        else:
+                            _file_log(f"upload_multiple: Failed to auto-apply category '{category.name}' to Plex")
             except Exception as e:
                 _file_log(f"upload_multiple: Error auto-applying to Plex: {e}")
 
@@ -3525,9 +3545,21 @@ def add_preroll_to_category(category_id: int, preroll_id: int, set_primary: bool
         db.rollback()
         raise HTTPException(status_code=500, detail=f"Failed to add preroll to category: {str(e)}")
 
-    # Auto-apply to Plex/Jellyfin if category is already applied
+    # Auto-apply to Plex/Jellyfin if category is already applied or currently active
     auto_applied = False
-    if getattr(cat, "apply_to_plex", False):
+    should_apply = getattr(cat, "apply_to_plex", False)
+    
+    # Also check if this category is currently active via scheduler
+    if not should_apply:
+        try:
+            setting = db.query(models.Setting).first()
+            if setting and getattr(setting, "active_category", None) == cat.id:
+                should_apply = True
+                _file_log(f"add_preroll_to_category: Category '{cat.name}' (ID {cat.id}) is currently active via schedule")
+        except Exception as e:
+            _file_log(f"add_preroll_to_category: Error checking active category: {e}")
+    
+    if should_apply:
         try:
             _file_log(f"add_preroll_to_category: Auto-applying category '{cat.name}' (ID {cat.id}) to Plex after adding preroll {p.id}")
             ok = _apply_category_to_plex_and_track(db, cat.id, ttl=15)
@@ -8827,19 +8859,32 @@ def download_community_preroll(
         except Exception as e:
             _file_log(f"Community preroll DB commit error: {e}")
         
-        # Auto-apply to Plex/Jellyfin if category is already applied
+        # Auto-apply to Plex/Jellyfin if category is already applied or currently active
         auto_applied = False
-        if category and getattr(category, "apply_to_plex", False):
-            try:
-                _file_log(f"download_community_preroll: Auto-applying category '{category.name}' (ID {category.id}) to Plex after download")
-                ok = _apply_category_to_plex_and_track(db, category.id, ttl=15)
-                if ok:
-                    auto_applied = True
-                    _file_log(f"download_community_preroll: Successfully auto-applied category '{category.name}' to Plex")
-                else:
-                    _file_log(f"download_community_preroll: Failed to auto-apply category '{category.name}' to Plex")
-            except Exception as e:
-                _file_log(f"download_community_preroll: Error auto-applying to Plex: {e}")
+        if category:
+            should_apply = getattr(category, "apply_to_plex", False)
+            
+            # Also check if this category is currently active via scheduler
+            if not should_apply:
+                try:
+                    setting = db.query(models.Setting).first()
+                    if setting and getattr(setting, "active_category", None) == category.id:
+                        should_apply = True
+                        _file_log(f"download_community_preroll: Category '{category.name}' (ID {category.id}) is currently active via schedule")
+                except Exception as e:
+                    _file_log(f"download_community_preroll: Error checking active category: {e}")
+            
+            if should_apply:
+                try:
+                    _file_log(f"download_community_preroll: Auto-applying category '{category.name}' (ID {category.id}) to Plex after download")
+                    ok = _apply_category_to_plex_and_track(db, category.id, ttl=15)
+                    if ok:
+                        auto_applied = True
+                        _file_log(f"download_community_preroll: Successfully auto-applied category '{category.name}' to Plex")
+                    else:
+                        _file_log(f"download_community_preroll: Failed to auto-apply category '{category.name}' to Plex")
+                except Exception as e:
+                    _file_log(f"download_community_preroll: Error auto-applying to Plex: {e}")
         
         return {
             "downloaded": True,
