@@ -1,4 +1,4 @@
-name: Docker Image Build and Push
+name: Docker Image Build and Push (Development)
 
 on:
   push:
@@ -11,9 +11,9 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: 'Image version tag (default: latest)'
+        description: 'Image version tag (default: dev)'
         required: false
-        default: 'latest'
+        default: 'dev'
 
 jobs:
   build:
@@ -28,14 +28,17 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
       - name: Log in to Docker Hub
         uses: docker/login-action@v3
         with:
-          username: ${{ secrets.DOCKER_USERNAME }}
-          password: ${{ secrets.DOCKER_PASSWORD }}
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
 
       - name: Get version
         id: version
@@ -43,7 +46,8 @@ jobs:
           if [ "${{ github.event.inputs.version }}" != "" ]; then
             VERSION="${{ github.event.inputs.version }}"
           else
-            VERSION=$(grep -o 'version = "[^"]*"' NeXroll/version.py | cut -d'"' -f2)
+            # Use commit SHA for dev builds
+            VERSION="dev-$(git rev-parse --short HEAD)"
           fi
           echo "version=${VERSION}" >> $GITHUB_OUTPUT
           echo "Building NeXroll version: ${VERSION}"
@@ -52,21 +56,22 @@ jobs:
         uses: docker/build-push-action@v5
         with:
           context: .
+          file: ./Dockerfile
           platforms: linux/amd64,linux/arm64
           push: true
           tags: |
-            jbrns/nexroll:latest
+            jbrns/nexroll:dev
             jbrns/nexroll:${{ steps.version.outputs.version }}
-          cache-from: type=registry,ref=jbrns/nexroll:buildcache
-          cache-to: type=registry,ref=jbrns/nexroll:buildcache,mode=max
           build-args: |
             APP_VERSION=${{ steps.version.outputs.version }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
 
       - name: Image scan summary
         run: |
           echo "Docker image successfully built and pushed"
           echo "Image tags:"
-          echo "  - jbrns/nexroll:latest"
+          echo "  - jbrns/nexroll:dev"
           echo "  - jbrns/nexroll:${{ steps.version.outputs.version }}"
           echo ""
           echo "Security scanning:"
