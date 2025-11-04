@@ -26,7 +26,8 @@ ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     PIP_NO_CACHE_DIR=1 \
     PIP_DISABLE_PIP_VERSION_CHECK=1 \
-    DEBIAN_FRONTEND=noninteractive
+    DEBIAN_FRONTEND=noninteractive \
+    NEXROLL_DB_DIR=/app/data
 
 # Install system dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends \
