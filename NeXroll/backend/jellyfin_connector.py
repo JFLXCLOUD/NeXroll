@@ -354,3 +354,83 @@ class JellyfinConnector:
             return getattr(r, "status_code", 0) in (200, 202, 204)
         except Exception:
             return False
+
+    def get_item(self, item_id: str) -> Optional[dict]:
+        """
+        GET /Items/{itemId}
+        Returns the full item metadata.
+        """
+        try:
+            if not item_id:
+                return None
+            r = self._request("GET", f"/Items/{item_id}", timeout=10)
+            if getattr(r, "status_code", 0) == 200 and getattr(r, "content", None) is not None:
+                try:
+                    j = r.json()
+                    return j if isinstance(j, dict) else None
+                except Exception:
+                    return None
+            return None
+        except Exception:
+            return None
+
+    def set_item_intros(self, item_id: str, intro_data: dict) -> bool:
+        """
+        POST /Items/{itemId}/Intros
+        Set intro timestamps for an item.
+        intro_data should have 'IntroStartTicks' and 'IntroEndTicks'.
+        Returns True on success (HTTP 200/204).
+        """
+        try:
+            if not item_id or not intro_data:
+                return False
+            r = self._request("POST", f"/Items/{item_id}/Intros", json=intro_data, timeout=12)
+            return getattr(r, "status_code", 0) in (200, 204)
+        except Exception:
+            return False
+
+    def get_item_intros(self, item_id: str) -> Optional[dict]:
+        """
+        GET /Items/{itemId}/Intros
+        Get existing intro timestamps for an item.
+        """
+        try:
+            if not item_id:
+                return None
+            r = self._request("GET", f"/Items/{item_id}/Intros", timeout=10)
+            if getattr(r, "status_code", 0) == 200 and getattr(r, "content", None) is not None:
+                try:
+                    j = r.json()
+                    return j if isinstance(j, dict) else None
+                except Exception:
+                    return None
+            return None
+        except Exception:
+            return None
+
+    def search_items_by_name(self, search_term: str, item_type: str = None) -> Optional[list]:
+        """
+        GET /Search/Hints?searchTerm={term}
+        Search for items by name.
+        Optionally filter by item_type (e.g., 'Series', 'Movie').
+        Returns list of matching items or None on error.
+        """
+        try:
+            if not search_term:
+                return None
+            params = {"searchTerm": search_term, "limit": 100}
+            if item_type:
+                params["includeItemTypes"] = item_type
+            
+            r = self._request("GET", "/Search/Hints", params=params, timeout=10)
+            if getattr(r, "status_code", 0) == 200 and getattr(r, "content", None) is not None:
+                try:
+                    data = r.json()
+                    if isinstance(data, dict) and "SearchHints" in data:
+                        return data["SearchHints"]
+                    return None
+                except Exception:
+                    return None
+            return None
+        except Exception:
+            return None

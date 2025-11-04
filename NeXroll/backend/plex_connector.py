@@ -5,6 +5,7 @@ import urllib.parse
 import ipaddress
 from typing import Optional
 from pathlib import Path
+from datetime import datetime
 from backend import secure_store
 
 def _is_dir_writable(p: str) -> bool:
@@ -102,7 +103,7 @@ def _infer_tls_verify(url: Optional[str]) -> bool:
     return True
 
 class PlexConnector:
-    def __init__(self, url: str, token: str = None):
+    def __init__(self, url: Optional[str], token: Optional[str] = None):
         self.url = url.rstrip('/') if url else None
         self.token = token
         # Look for config file in current directory first, then parent directory
@@ -158,7 +159,7 @@ class PlexConnector:
             if tok:
                 self.token = tok
                 self.headers = {'X-Plex-Token': self.token}
-                print("Loaded Plex token from secure store")
+                print("✓ Loaded Plex token from secure store (Windows Credential Manager)")
                 return True
 
             # 2) Legacy fallback and one-time migration from plex_config.json
@@ -167,27 +168,38 @@ class PlexConnector:
                     cfg = json.load(f)
                 legacy = cfg.get('plex_token')
                 if legacy:
+                    print(f">>> UPGRADE DETECTED: Found legacy Plex token in {self.config_file}")
+                    print(f">>> MIGRATING: Moving token to secure store (Windows Credential Manager)...")
                     if secure_store.set_plex_token(legacy):
                         # Rewrite legacy file without the plaintext token
                         try:
                             cfg.pop('plex_token', None)
                             cfg['token_migrated'] = True
+                            cfg['migration_date'] = datetime.utcnow().isoformat() + "Z"
                             cfg['token_length'] = len(legacy)
                             cfg.setdefault('note', 'Token migrated to secure store; file contains no secrets')
                             with open(self.config_file, 'w', encoding='utf-8') as wf:
                                 json.dump(cfg, wf, indent=2)
-                        except Exception:
+                            print(f">>> MIGRATION SUCCESS: Token securely stored in Windows Credential Manager")
+                            print(f">>> CONFIG UPDATED: Sanitized {self.config_file} (no plaintext secrets)")
+                        except Exception as e:
+                            print(f">>> MIGRATION WARNING: Token migrated but config rewrite failed: {e}")
                             pass
                         self.token = legacy
                         self.headers = {'X-Plex-Token': self.token}
-                        print(f"Migrated Plex token from {self.config_file} to secure store")
+                        return True
+                    else:
+                        print(f">>> MIGRATION FAILED: Could not access secure store. Token remains in {self.config_file}")
+                        # Fall back to using the legacy token
+                        self.token = legacy
+                        self.headers = {'X-Plex-Token': self.token}
                         return True
                 else:
-                    print("No token present in legacy plex_config.json")
+                    print(f"ℹ No token found in {self.config_file} (already migrated or not configured)")
             else:
-                print("No plex_config.json; expecting secure token or manual entry")
+                print("ℹ No plex_config.json found; token should be in secure store or needs manual entry")
         except Exception as e:
-            print(f"Error loading Plex token: {e}")
+            print(f"⚠ Error loading Plex token: {e}")
 
         return False
 

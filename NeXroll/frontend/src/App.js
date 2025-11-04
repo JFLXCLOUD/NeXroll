@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { DndContext, closestCenter, PointerSensor, useSensor, useSensors } from '@dnd-kit/core';
 import { SortableContext, rectSortingStrategy, useSortable, arrayMove } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
+import RetroProgressBar from './components/RetroProgressBar';
 
 // API helpers that resolve the backend base dynamically (works in Docker and behind proxies)
 const apiBase = () => {
@@ -468,6 +469,30 @@ function App() {
   const [updateInfo, setUpdateInfo] = useState(null);
   const [showUpdateBanner, setShowUpdateBanner] = useState(false);
   const [activeCategory, setActiveCategory] = useState(null);
+  
+  // Community Prerolls UI state
+  const [communityFairUseStatus, setCommunityFairUseStatus] = useState(null);
+  const [communityPolicyText, setCommunityPolicyText] = useState(null);
+  const [communitySearchQuery, setCommunitySearchQuery] = useState('');
+  const [communitySearchCategory, setCommunitySearchCategory] = useState('');
+  const [communitySearchPlatform, setCommunitySearchPlatform] = useState('');
+  const [communitySearchResults, setCommunitySearchResults] = useState([]);
+  const [communityIsSearching, setCommunityIsSearching] = useState(false);
+  const [communityIsDownloading, setCommunityIsDownloading] = useState({});
+  const [communityBuildProgress, setCommunityBuildProgress] = useState(null);
+  const [communitySelectedCategory, setCommunitySelectedCategory] = useState(null);
+  const [communityShowAddToCategory, setCommunityShowAddToCategory] = useState({});
+  const [communityResultLimit, setCommunityResultLimit] = useState(50);
+  const [communityTotalResults, setCommunityTotalResults] = useState(0);
+  const [communityPreviewingPreroll, setCommunityPreviewingPreroll] = useState(null);
+  const [communityTop5Prerolls, setCommunityTop5Prerolls] = useState([]);
+  const [communityRandomPreroll, setCommunityRandomPreroll] = useState(null);
+  const [communityIsLoadingRandom, setCommunityIsLoadingRandom] = useState(false);
+  const [communityIsLoadingTop5, setCommunityIsLoadingTop5] = useState(false);
+  // Index status for local fast search
+  const [communityIndexStatus, setCommunityIndexStatus] = useState(null);
+  const [communityIsBuilding, setCommunityIsBuilding] = useState(false);
+  
   // Docker Quick Connect UI state
   const [prerollView, setPrerollView] = useState(() => {
     try { return localStorage.getItem('prerollView') || 'grid'; } catch { return 'grid'; }
@@ -981,6 +1006,74 @@ const toLocalInputFromDate = (d) => {
     };
   }, []);
  
+  // Check Community Prerolls Fair Use status when tab is active
+  useEffect(() => {
+    if (activeTab === 'community-prerolls' && communityFairUseStatus === null) {
+      const checkFairUseStatus = async () => {
+        try {
+          console.log('Checking Community Fair Use status...');
+          const response = await fetch(apiUrl('community-prerolls/fair-use/status'));
+          const data = await response.json();
+          console.log('Fair Use status response:', data);
+          setCommunityFairUseStatus(data);
+          
+          // If not accepted, fetch the policy text
+          if (!data.accepted) {
+            console.log('Not accepted - fetching policy text...');
+            try {
+              const policyResponse = await fetch(apiUrl('community-prerolls/fair-use-policy'));
+              const policyData = await policyResponse.json();
+              console.log('Policy text fetched, length:', policyData.policy?.length);
+              setCommunityPolicyText(policyData.policy);
+            } catch (policyError) {
+              console.error('Failed to fetch policy text:', policyError);
+            }
+          } else {
+            // If accepted, load Top 5 prerolls and index status
+            console.log('Fair Use accepted - loading Top 5 prerolls...');
+            loadTop5Prerolls();
+            
+            // Load index status for fast search feature
+            const loadIndexStatus = async () => {
+              try {
+                const indexResponse = await fetch(apiUrl('community-prerolls/index-status'));
+                const indexData = await indexResponse.json();
+                setCommunityIndexStatus(indexData);
+              } catch (indexError) {
+                console.error('Failed to load index status:', indexError);
+              }
+            };
+            loadIndexStatus();
+          }
+        } catch (error) {
+          console.error('Failed to check Community Fair Use status:', error);
+          setCommunityFairUseStatus({ accepted: false, accepted_at: null });
+        }
+      };
+      
+      checkFairUseStatus();
+    }
+  }, [activeTab, communityFairUseStatus]);
+
+  // Function to load Top 5 prerolls
+  const loadTop5Prerolls = async () => {
+    if (communityTop5Prerolls.length > 0) return; // Already loaded
+    
+    setCommunityIsLoadingTop5(true);
+    try {
+      const response = await fetch(apiUrl('community-prerolls/top5'));
+      const data = await response.json();
+      
+      if (data.found && data.results) {
+        setCommunityTop5Prerolls(data.results);
+      }
+    } catch (error) {
+      console.error('Failed to load Top 5 prerolls:', error);
+    } finally {
+      setCommunityIsLoadingTop5(false);
+    }
+  };
+ 
   // fetchData moved above initial effect
 
   const handleUpload = async (e) => {
@@ -1160,6 +1253,14 @@ const toLocalInputFromDate = (d) => {
             // rotation_info removed from UI per feedback
           }
           alert(successMessage);
+          
+          // Immediately update the active category in the UI
+          const appliedCategory = categories.find(cat => cat.id === categoryId);
+          if (appliedCategory) {
+            setActiveCategory(appliedCategory);
+            console.log(`[DEBUG] Immediately set activeCategory to: ${appliedCategory.name}`);
+          }
+          
           fetchData();
         })
         .catch(error => {
@@ -1221,6 +1322,14 @@ const toLocalInputFromDate = (d) => {
             `${message || `Injected ${cnt} folder${cnt === 1 ? '' : 's'} into ${pluginName}${updatedKey}.`}` +
             (previewList ? `\n\nPreview:\n${previewList}` : '')
           );
+          
+          // Immediately update the active category in the UI
+          const appliedCategory = categories.find(cat => cat.id === categoryId);
+          if (appliedCategory) {
+            setActiveCategory(appliedCategory);
+            console.log(`[DEBUG] Immediately set activeCategory to: ${appliedCategory.name}`);
+          }
+          
           try { fetchData(); } catch {}
           return;
         }
@@ -2191,21 +2300,39 @@ const DashboardTiles = {
       <h2>Upcoming Schedules</h2>
       {(() => {
         const now = new Date();
-        const upcoming = schedules
-          .filter(s => s.is_active && s.next_run && new Date(s.next_run) > now)
-          .sort((a, b) => new Date(a.next_run) - new Date(b.next_run))
-          .slice(0, 3);
-        return upcoming.length > 0 ? (
+        // Get all schedules that haven't ended yet (excluding past schedules)
+        const upcomingSchedules = schedules
+          .filter(s => {
+            // Must have a next_run or start_date
+            const runTime = s.next_run ? new Date(s.next_run) : (s.start_date ? new Date(s.start_date) : null);
+            if (!runTime) return false;
+            
+            // If schedule has end_date, it must not have passed yet
+            if (s.end_date) {
+              return new Date(s.end_date) > now;
+            }
+            // If no end_date, it's an ongoing schedule - include it
+            return true;
+          })
+          .sort((a, b) => {
+            const aTime = a.next_run ? new Date(a.next_run) : new Date(a.start_date);
+            const bTime = b.next_run ? new Date(b.next_run) : new Date(b.start_date);
+            return aTime - bTime;
+          })
+          .slice(0, 2);
+        
+        return upcomingSchedules.length > 0 ? (
           <div style={{ display: 'grid', gap: '0.5rem' }}>
-            {upcoming.map(schedule => {
+            {upcomingSchedules.map(schedule => {
               const category = categories.find(c => c.id === schedule.category_id);
+              const displayTime = schedule.next_run || schedule.start_date;
               return (
                 <div key={schedule.id} style={{ fontSize: '0.9rem', padding: '0.5rem', backgroundColor: 'var(--card-bg)', borderRadius: '4px' }}>
                   <div style={{ fontWeight: 'bold', color: '#007bff' }}>
                     {schedule.name}
                   </div>
                   <div style={{ color: 'var(--text-secondary, #666)' }}>
-                    {toLocalDisplay(schedule.next_run)} → {category?.name || 'Unknown'}
+                    {toLocalDisplay(displayTime)} → {category?.name || 'Unknown'}
                   </div>
                 </div>
               );
@@ -2245,7 +2372,7 @@ const DashboardTiles = {
       <h1 className="header">NeXroll Dashboard</h1>
 
  
-      <div className="card nx-dashboard-controls">
+      <div className="card nx-dashboard-controls" style={{ marginBottom: '10px' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem', flexWrap: 'wrap' }}>
           <label className="nx-rockerswitch" title={dashLayout.locked ? 'Unlock to rearrange' : 'Lock to finish'}>
             <input
@@ -2350,6 +2477,7 @@ const DashboardTiles = {
                 accept="video/*"
                 required
                 className="nx-input"
+                style={{ width: '100%' }}
               />
               {files.length > 0 && (
                 <div style={{ marginTop: '0.5rem', fontSize: '0.9rem', color: '#666' }}>
@@ -2379,6 +2507,7 @@ const DashboardTiles = {
                 value={uploadForm.tags}
                 onChange={(e) => setUploadForm({...uploadForm, tags: e.target.value})}
                 className="nx-input"
+                style={{ width: '100%' }}
               />
               <CategoryPicker
                 categories={categories}
@@ -4327,8 +4456,31 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
         <h2>Plex Status</h2>
         <div style={{ display: 'grid', gap: '0.5rem' }}>
           <div><strong>Connection:</strong> <span className={`nx-chip nx-status ${plexStatus === 'Connected' ? 'ok' : 'bad'}`}>{plexStatus}</span></div>
-          <div><strong>Server URL:</strong> {plexConfig.url || 'Not configured'}</div>
-          <div><strong>Token:</strong> {plexConfig.token ? '••••••••' : 'Not configured'}</div>
+          <div><strong>Server URL:</strong> {plexServerInfo?.url || 'Not configured'}</div>
+          <div><strong>Token:</strong> {plexServerInfo?.has_token ? '••••••••' : 'Not configured'}</div>
+          {plexServerInfo?.token_source && (
+            <div><strong>Token Source:</strong> {plexServerInfo.token_source === 'secure_store' ? 'Secure Store (Windows Credential Manager)' : plexServerInfo.token_source === 'database' ? 'Database' : plexServerInfo.token_source}</div>
+          )}
+          {plexServerInfo?.provider && (
+            <div><strong>Storage Provider:</strong> {plexServerInfo.provider}</div>
+          )}
+          {plexServerInfo?.friendlyName && (
+            <div><strong>Server Name:</strong> {plexServerInfo.friendlyName}</div>
+          )}
+          {plexServerInfo?.version && (
+            <div><strong>Server Version:</strong> {plexServerInfo.version}</div>
+          )}
+          {plexServerInfo?.message && !plexServerInfo.connected && (
+            <div style={{ marginTop: '0.5rem', padding: '0.75rem', backgroundColor: 'rgba(255, 193, 7, 0.1)', borderRadius: '8px', border: '1px solid rgba(255, 193, 7, 0.3)' }}>
+              <strong>⚠️ Status:</strong> {plexServerInfo.message}
+            </div>
+          )}
+          {plexServerInfo?.error && (
+            <div style={{ marginTop: '0.5rem', padding: '0.75rem', backgroundColor: 'rgba(244, 67, 54, 0.1)', borderRadius: '8px', border: '1px solid rgba(244, 67, 54, 0.3)' }}>
+              <strong>Error Type:</strong> {plexServerInfo.error}<br />
+              {plexServerInfo.message && <span>{plexServerInfo.message}</span>}
+            </div>
+          )}
         </div>
         {plexStatus === 'Connected' && (
           <div style={{ marginTop: '1rem', paddingTop: '1rem', borderTop: '1px solid var(--border-color)' }}>
@@ -5340,8 +5492,7 @@ C:\\\\Media\\\\Prerolls\\\\summer\\\\beach.mp4`}
           <div><strong>Community Templates:</strong> {communityTemplates.length}</div>
           <div><strong>Scheduler Status:</strong> {schedulerStatus.running ? 'Running' : 'Stopped'}</div>
           <div><strong>Theme:</strong> {darkMode ? 'Dark' : 'Light'}</div>
-          <div><strong>Version (API):</strong> {systemVersion?.api_version || 'unknown'}</div>
-          <div><strong>Version (Installed):</strong> {systemVersion?.registry_version || 'n/a'}</div>
+          <div><strong>Installed Version:</strong> {systemVersion?.api_version || 'unknown'}</div>
           {systemVersion?.install_dir && <div><strong>Install Dir:</strong> {systemVersion.install_dir}</div>}
           <div><strong>FFmpeg:</strong> {ffmpegInfo ? (ffmpegInfo.ffmpeg_present ? ffmpegInfo.ffmpeg_version : 'Not found') : 'Detecting...'}</div>
           <div><strong>FFprobe:</strong> {ffmpegInfo ? (ffmpegInfo.ffprobe_present ? ffmpegInfo.ffprobe_version : 'Not found') : 'Detecting...'}</div>
@@ -5350,6 +5501,59 @@ C:\\\\Media\\\\Prerolls\\\\summer\\\\beach.mp4`}
           <button onClick={recheckFfmpeg} className="button">🔎 Re-check FFmpeg</button>
           <button onClick={handleShowSystemPaths} className="button" style={{ marginLeft: '0.5rem' }}>📂 Show Resolved Paths</button>
           <button onClick={handleDownloadDiagnostics} className="button" style={{ marginLeft: '0.5rem' }}>🧰 Download Diagnostics</button>
+        </div>
+      </div>
+
+      {/* GitHub Issues Section */}
+      <div className="card">
+        <h2>🐛 Report Issues & Request Features</h2>
+        <p style={{ marginBottom: '1rem', color: 'var(--text-color)' }}>
+          Found a bug or have a feature request? Please submit it to our GitHub Issues page.
+        </p>
+        <div style={{ 
+          padding: '1rem', 
+          backgroundColor: 'var(--card-bg)', 
+          border: '1px solid var(--border-color)', 
+          borderRadius: '8px',
+          marginBottom: '1rem'
+        }}>
+          <h3 style={{ marginTop: 0, marginBottom: '0.75rem' }}>📋 Before Reporting</h3>
+          <ol style={{ fontSize: '0.9rem', color: 'var(--text-secondary)', paddingLeft: '1.5rem', margin: 0 }}>
+            <li>Download diagnostics using the button above (🧰 Download Diagnostics)</li>
+            <li>Check existing issues to avoid duplicates</li>
+            <li>Include your NeXroll version: <strong>{systemVersion?.api_version || 'unknown'}</strong></li>
+            <li>Attach the diagnostics bundle to your issue</li>
+            <li>Describe steps to reproduce the problem</li>
+          </ol>
+        </div>
+        <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
+          <a 
+            href="https://github.com/JFLXCLOUD/NeXroll/issues/new?template=bug_report.md&labels=bug" 
+            target="_blank" 
+            rel="noopener noreferrer"
+            className="button"
+            style={{ textDecoration: 'none', backgroundColor: '#dc3545' }}
+          >
+            🐛 Report a Bug
+          </a>
+          <a 
+            href="https://github.com/JFLXCLOUD/NeXroll/issues/new?template=feature_request.md&labels=enhancement" 
+            target="_blank" 
+            rel="noopener noreferrer"
+            className="button"
+            style={{ textDecoration: 'none', backgroundColor: '#28a745' }}
+          >
+            💡 Request a Feature
+          </a>
+          <a 
+            href="https://github.com/JFLXCLOUD/NeXroll/issues" 
+            target="_blank" 
+            rel="noopener noreferrer"
+            className="button"
+            style={{ textDecoration: 'none' }}
+          >
+            📖 View All Issues
+          </a>
         </div>
       </div>
     </div>
@@ -5563,6 +5767,1026 @@ C:\\\\Media\\\\Prerolls\\\\summer\\\\beach.mp4`}
       </div>
     </div>
   );
+
+  const renderCommunityPrerolls = () => {
+    // Handle Fair Use acceptance
+    const handleAcceptFairUse = async () => {
+      try {
+        const response = await fetch(apiUrl('community-prerolls/fair-use/accept'), {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' }
+        });
+        const data = await response.json();
+        setCommunityFairUseStatus(data);
+        // Load initial data after accepting policy
+        loadTop5Prerolls();
+        loadIndexStatus();
+      } catch (error) {
+        alert(`Failed to accept Fair Use Policy: ${error.message}`);
+      }
+    };
+
+    // Load index status
+    const loadIndexStatus = async () => {
+      try {
+        const response = await fetch(apiUrl('community-prerolls/index-status'));
+        const data = await response.json();
+        setCommunityIndexStatus(data);
+      } catch (error) {
+        console.error('Failed to load index status:', error);
+      }
+    };
+
+    // Build/Refresh index with real-time progress
+    const handleBuildIndex = async () => {
+      if (communityIsBuilding) return;
+      
+      const confirmed = window.confirm(
+        'Building the index will take 3-5 minutes and scan the entire Typical Nerds library.\n\n' +
+        'This will make future searches MUCH faster (milliseconds instead of seconds).\n\n' +
+        'Continue?'
+      );
+      
+      if (!confirmed) return;
+      
+      setCommunityIsBuilding(true);
+      setCommunityBuildProgress({
+        progress: 0,
+        current_dir: '',
+        files_found: 0,
+        dirs_visited: 0,
+        message: 'Starting...'
+      });
+      
+      // Start listening to progress updates via SSE
+      const eventSource = new EventSource(apiUrl('community-prerolls/build-progress'));
+      
+      eventSource.onmessage = (event) => {
+        const data = JSON.parse(event.data);
+        setCommunityBuildProgress(data);
+        
+        // Close connection when done and hide progress bar after showing 100%
+        if (!data.building && data.progress === 100) {
+          eventSource.close();
+          // Show 100% briefly, then hide the progress bar
+          setTimeout(() => {
+            setCommunityBuildProgress(null);
+          }, 1000);
+        }
+      };
+      
+      eventSource.onerror = (error) => {
+        console.error('SSE error:', error);
+        eventSource.close();
+        setCommunityBuildProgress(null);
+        setCommunityIsBuilding(false);
+      };
+      
+      try {
+        // Trigger the build (this will run async on the server)
+        const response = await fetch(apiUrl('community-prerolls/build-index'));
+        
+        if (response.status === 429) {
+          const error = await response.json();
+          alert(error.detail || 'Please wait before rebuilding the index.');
+          eventSource.close();
+          setCommunityBuildProgress(null);
+          setCommunityIsBuilding(false);
+          return;
+        }
+        
+        const data = await response.json();
+        
+        // Wait for progress bar to finish displaying, then show alert
+        setTimeout(() => {
+          setCommunityIsBuilding(false);
+          alert(
+            `Index built successfully!\n\n` +
+            `Total prerolls: ${data.total_prerolls}\n` +
+            `Directories scanned: ${data.directories_visited}\n\n` +
+            `Searches will now be instant!`
+          );
+          loadIndexStatus();
+        }, 1500);
+        
+      } catch (error) {
+        alert(`Failed to build index: ${error.message}`);
+        setCommunityBuildProgress(null);
+        eventSource.close();
+        setCommunityIsBuilding(false);
+      }
+    };
+
+    // Clean up display text - remove URL encoding and file extensions
+    const cleanDisplayText = (text) => {
+      if (!text) return text;
+      
+      // Decode URL encoding (%20 -> space, etc.)
+      let cleaned = decodeURIComponent(text);
+      
+      // Remove leading ./ if present
+      cleaned = cleaned.replace(/^\.\//, '');
+      
+      // Remove file extensions
+      cleaned = cleaned.replace(/\.(mp4|mkv|avi|mov)$/i, '');
+      
+      // Clean up common patterns
+      cleaned = cleaned
+        .replace(/%2C/g, ',')  // Decode commas
+        .replace(/%20/g, ' ')  // Decode spaces (backup)
+        .replace(/,\s*The\s*-\s*AwesomeAustn/gi, '') // Remove "The - AwesomeAustn"
+        .replace(/\s*-\s*AwesomeAustn/gi, '') // Remove "- AwesomeAustn"
+        .replace(/_/g, ' ')    // Replace underscores with spaces
+        .replace(/\s+/g, ' ')  // Collapse multiple spaces
+        .trim();
+      
+      return cleaned;
+    };
+
+    // Handle search submission
+    const handleSearch = async () => {
+      if (!communitySearchQuery.trim() && !communitySearchPlatform.trim()) {
+        alert('Please enter a search query or choose a platform');
+        return;
+      }
+
+      setCommunityIsSearching(true);
+      try {
+        const params = new URLSearchParams();
+        if (communitySearchQuery.trim()) params.append('query', communitySearchQuery.trim());
+        if (communitySearchPlatform.trim()) params.append('platform', communitySearchPlatform.trim());
+        params.append('limit', communityResultLimit);
+
+        const response = await fetch(apiUrl(`community-prerolls/search?${params.toString()}`));
+        
+        if (response.status === 429) {
+          const error = await response.json();
+          alert(error.detail || 'Rate limit exceeded. Please wait before searching again.');
+          return;
+        }
+        
+        const data = await response.json();
+        
+        setCommunitySearchResults(data.results || []);
+        setCommunityTotalResults(data.total || 0);
+        
+        // Show message if available (even with results)
+        if (data.message) {
+          console.log(`Community Prerolls: ${data.message}`);
+        }
+      } catch (error) {
+        alert(`Search failed: ${error.message}`);
+        setCommunitySearchResults([]);
+      } finally {
+        setCommunityIsSearching(false);
+      }
+    };
+
+    // Handle random preroll fetch
+    const handleRandomPreroll = async () => {
+      setCommunityIsLoadingRandom(true);
+      setCommunityRandomPreroll(null);
+      try {
+        const params = new URLSearchParams();
+        if (communitySearchPlatform.trim()) params.append('platform', communitySearchPlatform.trim());
+
+        const response = await fetch(apiUrl(`community-prerolls/random?${params.toString()}`));
+        const data = await response.json();
+        
+        if (data.found && data.result) {
+          setCommunityRandomPreroll(data.result);
+        } else {
+          alert(data.message || 'No random preroll found');
+        }
+      } catch (error) {
+        alert(`Random fetch failed: ${error.message}`);
+      } finally {
+        setCommunityIsLoadingRandom(false);
+      }
+    };
+
+    // Handle top 5 prerolls fetch
+    const handleTop5Prerolls = async () => {
+      setCommunityIsLoadingTop5(true);
+      try {
+        const params = new URLSearchParams();
+        if (communitySearchPlatform.trim()) params.append('platform', communitySearchPlatform.trim());
+
+        const response = await fetch(apiUrl(`community-prerolls/top5?${params.toString()}`));
+        const data = await response.json();
+        
+        if (data.found && data.results) {
+          setCommunityTop5Prerolls(data.results);
+        } else {
+          setCommunityTop5Prerolls([]);
+        }
+      } catch (error) {
+        console.error('Top 5 fetch failed:', error);
+        setCommunityTop5Prerolls([]);
+      } finally {
+        setCommunityIsLoadingTop5(false);
+      }
+    };
+
+    // Handle preroll download and import
+    const handleDownload = async (preroll) => {
+      if (!communitySelectedCategory && communityShowAddToCategory[preroll.id]) {
+        alert('Please select a category');
+        return;
+      }
+
+      setCommunityIsDownloading(prev => ({ ...prev, [preroll.id]: 'downloading' }));
+      try {
+        const response = await fetch(apiUrl('community-prerolls/download'), {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            preroll_id: preroll.id,
+            title: preroll.title,
+            url: preroll.url || preroll.download_url,
+            category_id: communitySelectedCategory || null,
+            add_to_category: communityShowAddToCategory[preroll.id] || false,
+            tags: ''  // Always send empty tags - no auto-tagging
+          })
+        });
+
+        if (!response.ok) {
+          const error = await response.json();
+          throw new Error(error.detail || 'Download failed');
+        }
+
+        const result = await response.json();
+        
+        // Show processing status
+        setCommunityIsDownloading(prev => ({ ...prev, [preroll.id]: 'processing' }));
+        await new Promise(resolve => setTimeout(resolve, 500)); // Brief pause to show processing
+        
+        alert(`✅ Successfully downloaded "${result.display_name || result.filename}"!`);
+        
+        // Reset form
+        setCommunityShowAddToCategory(prev => ({ ...prev, [preroll.id]: false }));
+        setCommunitySelectedCategory(null);
+        
+      } catch (error) {
+        alert(`❌ Download failed: ${error.message}`);
+      } finally {
+        setCommunityIsDownloading(prev => ({ ...prev, [preroll.id]: false }));
+      }
+    };
+
+    // If Fair Use policy not accepted, show modal
+    if (communityFairUseStatus && !communityFairUseStatus.accepted && communityPolicyText) {
+      return (
+        <Modal title="Community Prerolls - Fair Use Agreement Required" onClose={() => setActiveTab('dashboard')}>
+          <div style={{ marginBottom: '1rem' }}>
+            <p style={{ marginBottom: '1rem', fontWeight: '500' }}>
+              Before accessing the Community Prerolls library, please read and accept the Fair Use Policy:
+            </p>
+            
+            <div style={{
+              backgroundColor: 'var(--card-bg)',
+              color: 'var(--text-color)',
+              padding: '1rem',
+              borderRadius: '4px',
+              maxHeight: '400px',
+              overflow: 'auto',
+              border: '1px solid var(--border-color)',
+              fontSize: '0.9rem',
+              lineHeight: '1.6',
+              whiteSpace: 'pre-wrap',
+              wordWrap: 'break-word'
+            }}>
+              {communityPolicyText}
+            </div>
+
+            <div style={{ marginTop: '1rem', display: 'flex', gap: '0.5rem', justifyContent: 'flex-end' }}>
+              <button
+                className="button"
+                onClick={handleAcceptFairUse}
+                style={{ padding: '0.5rem 1rem' }}
+              >
+                ✓ Accept & Continue
+              </button>
+              <button
+                className="button-secondary"
+                onClick={() => setActiveTab('dashboard')}
+                style={{ padding: '0.5rem 1rem' }}
+              >
+                ✕ Decline
+              </button>
+            </div>
+          </div>
+        </Modal>
+      );
+    }
+
+    // Loading state
+    if (communityFairUseStatus === null) {
+      return (
+        <div className="card" style={{ padding: '2rem', textAlign: 'center' }}>
+          <p>Loading Community Prerolls...</p>
+        </div>
+      );
+    }
+
+    // Main Community Prerolls interface
+    return (
+      <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+        <div className="card">
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
+            <h2 style={{ marginTop: 0, marginBottom: 0 }}>Search Community Prerolls Library</h2>
+            <button
+              onClick={async () => {
+                // Re-show Fair Use Policy - fetch policy text if not already loaded
+                if (!communityPolicyText) {
+                  try {
+                    const policyResponse = await fetch(apiUrl('community-prerolls/fair-use-policy'));
+                    const policyData = await policyResponse.json();
+                    setCommunityPolicyText(policyData.policy);
+                  } catch (error) {
+                    console.error('Failed to fetch policy text:', error);
+                  }
+                }
+                setCommunityFairUseStatus({ accepted: false });
+              }}
+              className="button-secondary"
+              style={{ padding: '0.4rem 0.8rem', fontSize: '0.85rem' }}
+              title="View Fair Use Policy"
+            >
+              📋 Fair Use Policy
+            </button>
+          </div>
+          
+          {/* Index Status & Build Button */}
+          {communityIndexStatus && (
+            <div style={{
+              padding: '0.75rem',
+              backgroundColor: communityIndexStatus.exists 
+                ? (communityIndexStatus.is_stale ? 'rgba(245, 158, 11, 0.1)' : 'rgba(34, 197, 94, 0.1)')
+                : 'rgba(239, 68, 68, 0.1)',
+              border: `1px solid ${communityIndexStatus.exists 
+                ? (communityIndexStatus.is_stale ? 'rgba(245, 158, 11, 0.3)' : 'rgba(34, 197, 94, 0.3)')
+                : 'rgba(239, 68, 68, 0.3)'}`,
+              borderRadius: '4px',
+              marginBottom: '1rem',
+              fontSize: '0.9rem',
+              display: 'flex',
+              justifyContent: 'space-between',
+              alignItems: 'center'
+            }}>
+              <div>
+                {communityIndexStatus.exists ? (
+                  <>
+                    {communityIndexStatus.is_stale ? (
+                      <span>⚠️ <strong>Local index is stale</strong> (last updated {Math.round(communityIndexStatus.age_days)} days ago) - Searches may be slower</span>
+                    ) : (
+                      <span>✨ <strong>Fast search enabled!</strong> {communityIndexStatus.total_prerolls} prerolls indexed - Searches are instant ⚡</span>
+                    )}
+                  </>
+                ) : (
+                  <span>💡 <strong>Build local index for instant searches!</strong> Currently using slow remote scraping (5s cooldown)</span>
+                )}
+              </div>
+              <button
+                onClick={handleBuildIndex}
+                disabled={communityIsBuilding}
+                className="button-secondary"
+                style={{ 
+                  padding: '0.4rem 0.8rem', 
+                  fontSize: '0.85rem',
+                  whiteSpace: 'nowrap',
+                  marginLeft: '1rem'
+                }}
+                title={communityIndexStatus.exists ? 'Refresh index to get latest prerolls' : 'Build index for instant searches'}
+              >
+                {communityIsBuilding ? '⏳ Building...' : (communityIndexStatus.exists ? '🔄 Refresh Index' : '⚡ Build Index')}
+              </button>
+            </div>
+          )}
+
+          {/* Retro Progress Bar */}
+          {communityBuildProgress && (
+            <RetroProgressBar
+              progress={communityBuildProgress.progress}
+              currentDir={communityBuildProgress.current_dir}
+              filesFound={communityBuildProgress.files_found}
+              dirsVisited={communityBuildProgress.dirs_visited}
+              message={communityBuildProgress.message}
+            />
+          )}
+
+          {/* Search Controls */}
+          <div style={{ marginBottom: '1.5rem' }}>
+            {/* Search Bar - 60% Width */}
+            <div style={{ marginBottom: '1rem', width: '60%' }}>
+              <div style={{ position: 'relative' }}>
+                <div style={{
+                  position: 'absolute',
+                  left: '14px',
+                  top: '50%',
+                  transform: 'translateY(-50%)',
+                  color: '#888',
+                  pointerEvents: 'none',
+                  fontSize: '18px',
+                  zIndex: 1
+                }}>
+                  🔍
+                </div>
+                <input
+                  type="text"
+                  placeholder="Search for prerolls... (e.g., Halloween, Christmas, Scary, Turkey)"
+                  value={communitySearchQuery}
+                  onChange={(e) => setCommunitySearchQuery(e.target.value)}
+                  onKeyPress={(e) => e.key === 'Enter' && !communityIsSearching && handleSearch()}
+                  style={{
+                    width: '100%',
+                    padding: '16px 16px 16px 48px',
+                    border: '2px solid transparent',
+                    borderRadius: '12px',
+                    backgroundColor: 'rgba(255, 255, 255, 0.05)',
+                    color: 'var(--text-color)',
+                    fontSize: '16px',
+                    transition: 'all 0.2s ease',
+                    outline: 'none',
+                    boxShadow: '0 2px 8px rgba(0, 0, 0, 0.1)'
+                  }}
+                  onFocus={(e) => {
+                    e.target.style.borderColor = '#4f46e5';
+                    e.target.style.backgroundColor = 'rgba(255, 255, 255, 0.08)';
+                    e.target.style.boxShadow = '0 4px 12px rgba(79, 70, 229, 0.2)';
+                  }}
+                  onBlur={(e) => {
+                    e.target.style.borderColor = 'transparent';
+                    e.target.style.backgroundColor = 'rgba(255, 255, 255, 0.05)';
+                    e.target.style.boxShadow = '0 2px 8px rgba(0, 0, 0, 0.1)';
+                  }}
+                />
+              </div>
+            </div>
+
+            {/* Filters and Search Button Row */}
+            <div style={{
+              display: 'grid',
+              gridTemplateColumns: '1fr 1fr 200px',
+              gap: '12px',
+              alignItems: 'end'
+            }}>
+              {/* Platform Dropdown */}
+              <div>
+                <label style={{ display: 'block', marginBottom: '8px', fontWeight: '500', fontSize: '13px', color: '#aaa' }}>
+                  Platform
+                </label>
+                <select
+                  value={communitySearchPlatform}
+                  onChange={(e) => setCommunitySearchPlatform(e.target.value)}
+                  style={{
+                    width: '100%',
+                    padding: '14px',
+                    border: '2px solid transparent',
+                    borderRadius: '12px',
+                    backgroundColor: 'rgba(255, 255, 255, 0.05)',
+                    color: 'var(--text-color)',
+                    fontSize: '15px',
+                    cursor: 'pointer',
+                    outline: 'none',
+                    boxShadow: '0 2px 8px rgba(0, 0, 0, 0.1)',
+                    transition: 'all 0.2s ease'
+                  }}
+                  onFocus={(e) => {
+                    e.target.style.borderColor = '#4f46e5';
+                    e.target.style.backgroundColor = 'rgba(255, 255, 255, 0.08)';
+                    e.target.style.boxShadow = '0 4px 12px rgba(79, 70, 229, 0.2)';
+                  }}
+                  onBlur={(e) => {
+                    e.target.style.borderColor = 'transparent';
+                    e.target.style.backgroundColor = 'rgba(255, 255, 255, 0.05)';
+                    e.target.style.boxShadow = '0 2px 8px rgba(0, 0, 0, 0.1)';
+                  }}
+                >
+                  <option value="" style={{ backgroundColor: '#2a2a2a', color: '#ffffff' }}>All Platforms</option>
+                  <option value="plex" style={{ backgroundColor: '#2a2a2a', color: '#ffffff' }}>Plex</option>
+                  <option value="jellyfin" style={{ backgroundColor: '#2a2a2a', color: '#ffffff' }}>Jellyfin</option>
+                  <option value="emby" style={{ backgroundColor: '#2a2a2a', color: '#ffffff' }}>Emby</option>
+                </select>
+              </div>
+
+              {/* Limit Dropdown */}
+              <div>
+                <label style={{ display: 'block', marginBottom: '8px', fontWeight: '500', fontSize: '13px', color: '#aaa' }}>
+                  Results Limit
+                </label>
+                <select
+                  value={communityResultLimit}
+                  onChange={(e) => setCommunityResultLimit(Number(e.target.value))}
+                  style={{
+                    width: '100%',
+                    padding: '14px',
+                    border: '2px solid transparent',
+                    borderRadius: '12px',
+                    backgroundColor: 'rgba(255, 255, 255, 0.05)',
+                    color: 'var(--text-color)',
+                    fontSize: '15px',
+                    cursor: 'pointer',
+                    outline: 'none',
+                    boxShadow: '0 2px 8px rgba(0, 0, 0, 0.1)',
+                    transition: 'all 0.2s ease'
+                  }}
+                  onFocus={(e) => {
+                    e.target.style.borderColor = '#4f46e5';
+                    e.target.style.backgroundColor = 'rgba(255, 255, 255, 0.08)';
+                    e.target.style.boxShadow = '0 4px 12px rgba(79, 70, 229, 0.2)';
+                  }}
+                  onBlur={(e) => {
+                    e.target.style.borderColor = 'transparent';
+                    e.target.style.backgroundColor = 'rgba(255, 255, 255, 0.05)';
+                    e.target.style.boxShadow = '0 2px 8px rgba(0, 0, 0, 0.1)';
+                  }}
+                >
+                  <option value={10} style={{ backgroundColor: '#2a2a2a', color: '#ffffff' }}>10 Results</option>
+                  <option value={20} style={{ backgroundColor: '#2a2a2a', color: '#ffffff' }}>20 Results</option>
+                  <option value={50} style={{ backgroundColor: '#2a2a2a', color: '#ffffff' }}>50 Results</option>
+                  <option value={100} style={{ backgroundColor: '#2a2a2a', color: '#ffffff' }}>100 Results</option>
+                </select>
+              </div>
+
+              {/* Search Button */}
+              <button
+                onClick={handleSearch}
+                disabled={communityIsSearching}
+                style={{
+                  padding: '14px 24px',
+                  border: 'none',
+                  borderRadius: '12px',
+                  backgroundColor: '#4f46e5',
+                  color: '#ffffff',
+                  fontSize: '15px',
+                  fontWeight: '600',
+                  cursor: communityIsSearching ? 'not-allowed' : 'pointer',
+                  outline: 'none',
+                  boxShadow: '0 2px 8px rgba(79, 70, 229, 0.3)',
+                  transition: 'all 0.2s ease',
+                  opacity: communityIsSearching ? 0.6 : 1,
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  gap: '8px',
+                  height: '52px'
+                }}
+                onMouseEnter={(e) => {
+                  if (!communityIsSearching) {
+                    e.target.style.backgroundColor = '#4338ca';
+                    e.target.style.boxShadow = '0 4px 12px rgba(79, 70, 229, 0.4)';
+                    e.target.style.transform = 'translateY(-1px)';
+                  }
+                }}
+                onMouseLeave={(e) => {
+                  e.target.style.backgroundColor = '#4f46e5';
+                  e.target.style.boxShadow = '0 2px 8px rgba(79, 70, 229, 0.3)';
+                  e.target.style.transform = 'translateY(0)';
+                }}
+              >
+                <span style={{ fontSize: '18px' }}>{communityIsSearching ? '⏳' : '🔍'}</span>
+                <span>{communityIsSearching ? 'Searching...' : 'Search'}</span>
+              </button>
+            </div>
+          </div>
+
+          {/* Search progress bar */}
+          {communityIsSearching && (
+            <div style={{
+              marginBottom: '1rem',
+              padding: '1rem',
+              backgroundColor: 'var(--card-bg)',
+              border: '1px solid var(--border-color)',
+              borderRadius: '6px'
+            }}>
+              <div style={{ marginBottom: '0.5rem', fontSize: '0.9rem', color: 'var(--text-secondary)' }}>
+                🔍 Searching Typical Nerds library...
+              </div>
+              <div style={{
+                width: '100%',
+                height: '4px',
+                backgroundColor: 'var(--input-bg)',
+                borderRadius: '2px',
+                overflow: 'hidden'
+              }}>
+                <div style={{
+                  width: '100%',
+                  height: '100%',
+                  background: 'linear-gradient(90deg, #3b82f6, #10b981, #3b82f6)',
+                  backgroundSize: '200% 100%',
+                  animation: 'progressSlide 1.5s ease-in-out infinite'
+                }} />
+              </div>
+            </div>
+          )}
+
+          {/* Results count */}
+          {communityTotalResults > 0 && (
+            <div style={{
+              padding: '0.5rem',
+              backgroundColor: 'rgba(102, 200, 145, 0.1)',
+              borderRadius: '4px',
+              marginBottom: '1rem',
+              fontSize: '0.9rem',
+              color: 'var(--text-secondary)'
+            }}>
+              Found {communityTotalResults} preroll{communityTotalResults !== 1 ? 's' : ''} • Showing {communitySearchResults.length} results
+            </div>
+          )}
+        </div>
+
+        {/* Results List */}
+        {communitySearchResults.length > 0 && (
+          <div className="card">
+            <h3 style={{ marginTop: 0, marginBottom: '1rem' }}>
+              Results ({communitySearchResults.length})
+            </h3>
+
+            <div style={{
+              display: 'flex',
+              flexDirection: 'column',
+              gap: '0.75rem'
+            }}>
+              {communitySearchResults.map(preroll => (
+                <div
+                  key={preroll.id}
+                  style={{
+                    backgroundColor: 'var(--card-bg)',
+                    border: '1px solid var(--border-color)',
+                    borderRadius: '6px',
+                    overflow: 'hidden',
+                    display: 'flex',
+                    flexDirection: 'row',
+                    transition: 'transform 0.2s, box-shadow 0.2s',
+                    padding: '0.75rem',
+                    alignItems: 'center',
+                    gap: '1rem'
+                  }}
+                  onMouseEnter={(e) => {
+                    e.currentTarget.style.transform = 'translateX(2px)';
+                    e.currentTarget.style.boxShadow = '0 2px 8px rgba(0,0,0,0.15)';
+                  }}
+                  onMouseLeave={(e) => {
+                    e.currentTarget.style.transform = 'translateX(0)';
+                    e.currentTarget.style.boxShadow = 'none';
+                  }}
+                >
+                  {/* Icon */}
+                  <div style={{
+                    width: '60px',
+                    height: '60px',
+                    flexShrink: 0,
+                    backgroundColor: 'rgba(100,100,100,0.2)',
+                    borderRadius: '6px',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    color: 'var(--text-secondary)',
+                    fontSize: '2rem'
+                  }}>
+                    🎬
+                  </div>
+
+                  {/* Content */}
+                  <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minWidth: 0 }}>
+                    <h4 style={{
+                      margin: '0 0 0.25rem 0',
+                      fontSize: '1rem',
+                      fontWeight: '600',
+                      lineHeight: '1.3',
+                      color: 'var(--text-color)',
+                      overflow: 'hidden',
+                      textOverflow: 'ellipsis',
+                      whiteSpace: 'nowrap'
+                    }}>
+                      {cleanDisplayText(preroll.title)}
+                    </h4>
+
+                    <div style={{ display: 'flex', gap: '1rem', flexWrap: 'wrap', fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
+                      {preroll.creator && (
+                        <span>👤 {cleanDisplayText(preroll.creator)}</span>
+                      )}
+                      {preroll.category && (
+                        <span>📁 {cleanDisplayText(preroll.category)}</span>
+                      )}
+                      {preroll.duration && (
+                        <span>⏱️ {preroll.duration}s</span>
+                      )}
+                      {preroll.file_size && preroll.file_size !== 'Unknown' && (
+                        <span>📦 {preroll.file_size}</span>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Actions column */}
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', minWidth: '200px' }}>
+                    {/* Category selector */}
+                    {communityShowAddToCategory[preroll.id] && (
+                      <select
+                        value={communitySelectedCategory || ''}
+                        onChange={(e) => setCommunitySelectedCategory(e.target.value || null)}
+                        style={{
+                          width: '100%',
+                          padding: '0.4rem',
+                          fontSize: '0.85rem',
+                          border: '1px solid var(--border-color)',
+                          borderRadius: '4px',
+                          backgroundColor: '#2a2a2a',
+                          color: '#ffffff',
+                          cursor: 'pointer'
+                        }}
+                      >
+                        <option value="" style={{ backgroundColor: '#2a2a2a', color: '#ffffff' }}>Select category...</option>
+                        {categories.map(cat => (
+                          <option key={cat.id} value={cat.id} style={{ backgroundColor: '#2a2a2a', color: '#ffffff' }}>
+                            {cat.name}
+                          </option>
+                        ))}
+                      </select>
+                    )}
+
+                    {/* Action buttons */}
+                    <div style={{ display: 'flex', gap: '0.5rem' }}>
+                      <button
+                        onClick={() => setCommunityPreviewingPreroll(preroll)}
+                        className="button-secondary"
+                        style={{
+                          padding: '0.5rem',
+                          fontSize: '0.8rem',
+                          minWidth: '60px'
+                        }}
+                        title="Preview video"
+                      >
+                        ▶️ Preview
+                      </button>
+                      <button
+                        onClick={() => handleDownload(preroll)}
+                        disabled={communityIsDownloading[preroll.id] || (communityShowAddToCategory[preroll.id] && !communitySelectedCategory)}
+                        className="button"
+                        style={{
+                          flex: 1,
+                          padding: '0.5rem',
+                          fontSize: '0.8rem',
+                          opacity: communityIsDownloading[preroll.id] ? 0.6 : 1
+                        }}
+                      >
+                        {communityIsDownloading[preroll.id] === 'downloading' ? '⬇️ Downloading...' : 
+                         communityIsDownloading[preroll.id] === 'processing' ? '⚙️ Processing...' : 
+                         '⬇️ Download'}
+                      </button>
+                      <button
+                        onClick={() => setCommunityShowAddToCategory(prev => ({
+                          ...prev,
+                          [preroll.id]: !prev[preroll.id]
+                        }))}
+                        className="button-secondary"
+                        style={{
+                          padding: '0.5rem',
+                          fontSize: '0.8rem',
+                          minWidth: '80px',
+                          backgroundColor: communityShowAddToCategory[preroll.id] ? 'rgba(102, 200, 145, 0.3)' : 'transparent'
+                        }}
+                      >
+                        {communityShowAddToCategory[preroll.id] ? '✓ Category' : '+ Category'}
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* Empty state */}
+        {communitySearchResults.length === 0 && !communityIsSearching && (
+          <div className="card" style={{
+            textAlign: 'center',
+            padding: '3rem 1rem',
+            backgroundColor: 'var(--input-bg)',
+            borderRadius: '6px'
+          }}>
+            <div style={{ fontSize: '3rem', marginBottom: '1rem' }}>🎬</div>
+            <p style={{ margin: '0 0 0.5rem 0', color: 'var(--text-secondary)' }}>
+              {communityTotalResults === 0 && communitySearchQuery ? 
+                `No results found for "${communitySearchQuery}". Try different keywords or browse by category.` :
+                'No results yet. Start searching or browse by category and platform!'}
+            </p>
+            <p style={{ margin: '0.5rem 0 0 0', fontSize: '0.85rem', color: 'var(--text-secondary)', opacity: 0.7 }}>
+              💡 Tip: Search by theme, holiday, genre, or franchise (e.g., "halloween", "thanksgiving", "christmas", "marvel", "star wars")
+            </p>
+          </div>
+        )}
+
+        {/* Random Preroll Section - Always Visible */}
+        <div className="card">
+          <h3 style={{ marginTop: 0, marginBottom: '1rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+            🎲 Random Preroll
+          </h3>
+          
+          {/* Random Button */}
+          <div style={{ marginBottom: '1rem', textAlign: 'center' }}>
+            <button
+              onClick={handleRandomPreroll}
+              disabled={communityIsLoadingRandom}
+              className="button"
+              style={{
+                padding: '0.75rem 1.5rem',
+                fontSize: '1rem',
+                backgroundColor: '#9333ea',
+                minWidth: '200px'
+              }}
+            >
+              <span style={{
+                display: 'inline-block',
+                animation: communityIsLoadingRandom ? 'diceRoll 0.8s ease-in-out infinite' : 'none'
+              }}>
+                🎲
+              </span>
+              {' '}
+              {communityIsLoadingRandom ? 'Finding...' : 'Random Preroll'}
+            </button>
+          </div>
+
+          {/* Dice Roll Animation CSS */}
+          <style>{`
+            @keyframes diceRoll {
+              0% {
+                transform: rotateX(0deg) rotateY(0deg) rotateZ(0deg);
+              }
+              25% {
+                transform: rotateX(180deg) rotateY(90deg) rotateZ(45deg);
+              }
+              50% {
+                transform: rotateX(360deg) rotateY(180deg) rotateZ(90deg);
+              }
+              75% {
+                transform: rotateX(540deg) rotateY(270deg) rotateZ(135deg);
+              }
+              100% {
+                transform: rotateX(720deg) rotateY(360deg) rotateZ(180deg);
+              }
+            }
+          `}</style>
+
+          {/* Show result if exists, placeholder if not */}
+          {communityRandomPreroll ? (
+            <div style={{
+              backgroundColor: 'var(--card-bg)',
+              border: '2px solid #9333ea',
+              borderRadius: '8px',
+              padding: '1.5rem',
+              display: 'flex',
+              flexDirection: 'row',
+              gap: '1.5rem',
+              alignItems: 'center'
+            }}>
+              <div style={{
+                width: '80px',
+                height: '80px',
+                flexShrink: 0,
+                backgroundColor: 'rgba(147,51,234,0.2)',
+                borderRadius: '8px',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                fontSize: '3rem'
+              }}>
+                🎬
+              </div>
+              
+              <div style={{ flex: 1 }}>
+                <div style={{ fontSize: '1.2rem', fontWeight: '600', marginBottom: '0.5rem', color: 'var(--text-color)' }}>
+                  {cleanDisplayText(communityRandomPreroll.title)}
+                </div>
+                <div style={{ fontSize: '0.9rem', color: 'var(--text-secondary)', marginBottom: '1rem' }}>
+                  {cleanDisplayText(communityRandomPreroll.category)}
+                </div>
+                
+                <div style={{ display: 'flex', gap: '0.75rem' }}>
+                  <button
+                    onClick={() => setCommunityPreviewingPreroll(communityRandomPreroll)}
+                    className="button"
+                    style={{
+                      padding: '0.5rem 1rem',
+                      backgroundColor: '#3b82f6'
+                    }}
+                  >
+                    👁️ Preview
+                  </button>
+                  <button
+                    onClick={() => {
+                      setCommunityShowAddToCategory(prev => ({ ...prev, [communityRandomPreroll.id]: true }));
+                    }}
+                    className="button"
+                    style={{
+                      padding: '0.5rem 1rem',
+                      backgroundColor: '#10b981'
+                    }}
+                  >
+                    ⬇️ Download
+                  </button>
+                  <button
+                    onClick={() => setCommunityRandomPreroll(null)}
+                    className="button"
+                    style={{
+                      padding: '0.5rem 1rem',
+                      backgroundColor: '#6b7280'
+                    }}
+                  >
+                    ✕ Clear
+                  </button>
+                </div>
+                
+                {/* Download section */}
+                {communityShowAddToCategory[communityRandomPreroll.id] && (
+                  <div style={{ marginTop: '1rem', padding: '1rem', backgroundColor: 'rgba(0,0,0,0.2)', borderRadius: '4px' }}>
+                    <select
+                      value={communitySelectedCategory || ''}
+                      onChange={(e) => setCommunitySelectedCategory(e.target.value ? Number(e.target.value) : null)}
+                      className="form-select"
+                      style={{
+                        width: '100%',
+                        padding: '0.5rem',
+                        marginBottom: '0.75rem',
+                        borderRadius: '4px',
+                        fontSize: '1rem'
+                      }}
+                    >
+                      <option value="">Select Category</option>
+                      {categories.map(cat => (
+                        <option key={cat.id} value={cat.id}>{cat.name}</option>
+                      ))}
+                    </select>
+                    <button
+                      onClick={() => handleDownload(communityRandomPreroll)}
+                      disabled={communityIsDownloading[communityRandomPreroll.id]}
+                      className="button"
+                      style={{
+                        width: '100%',
+                        padding: '0.5rem',
+                        backgroundColor: '#10b981',
+                        opacity: communityIsDownloading[communityRandomPreroll.id] ? 0.6 : 1
+                      }}
+                    >
+                      {communityIsDownloading[communityRandomPreroll.id] === 'downloading' ? '⏳ Downloading...' : 
+                       communityIsDownloading[communityRandomPreroll.id] === 'success' ? '✅ Downloaded!' : 
+                       '⬇️ Confirm Download'}
+                    </button>
+                  </div>
+                )}
+              </div>
+            </div>
+          ) : (
+            <div style={{
+              textAlign: 'center',
+              padding: '2rem',
+              color: 'var(--text-secondary)',
+              backgroundColor: 'rgba(147,51,234,0.1)',
+              borderRadius: '8px',
+              border: '1px dashed rgba(147,51,234,0.3)'
+            }}>
+              Click the button above to discover a random preroll from the community library!
+            </div>
+          )}
+        </div>
+
+        {/* Attribution Footer */}
+        <div style={{
+          padding: '1rem',
+          backgroundColor: 'var(--card-bg)',
+          border: '1px solid var(--border-color)',
+          borderRadius: '6px',
+          textAlign: 'center',
+          fontSize: '0.85rem',
+          color: 'var(--text-secondary)'
+        }}>
+          <p style={{ margin: '0.25rem 0' }}>
+            Community prerolls powered by{' '}
+            <a
+              href="https://typicalnerds.uk/"
+              target="_blank"
+              rel="noopener noreferrer"
+              style={{
+                color: '#f6685e',
+                textDecoration: 'none',
+                fontWeight: '600',
+                transition: 'opacity 0.2s'
+              }}
+              onMouseEnter={(e) => e.target.style.opacity = '0.8'}
+              onMouseLeave={(e) => e.target.style.opacity = '1'}
+            >
+              Typical Nerds
+            </a>
+          </p>
+          <p style={{ margin: '0.25rem 0', fontSize: '0.8rem' }}>
+            Fair Use Policy applies. See above for details.
+          </p>
+        </div>
+      </div>
+    );
+  };
+
   return (
     <div className="app-container">
       {/* Tab Navigation with right-aligned logo */}
@@ -5600,6 +6824,12 @@ C:\\\\Media\\\\Prerolls\\\\summer\\\\beach.mp4`}
             onClick={() => setActiveTab('connect')}
           >
             Connect
+          </button>
+          <button
+            className={`tab-button ${activeTab === 'community-prerolls' ? 'active' : ''}`}
+            onClick={() => setActiveTab('community-prerolls')}
+          >
+            Community Prerolls
           </button>
         </div>
         <div className="tabbar-right" style={{ display: 'flex', alignItems: 'center', paddingRight: '48px' }}>
@@ -5714,6 +6944,7 @@ C:\\\\Media\\\\Prerolls\\\\summer\\\\beach.mp4`}
        {activeTab === 'categories' && renderCategories()}
        {activeTab === 'settings' && renderSettings()}
        {activeTab === 'connect' && renderConnect()}
+       {activeTab === 'community-prerolls' && renderCommunityPrerolls()}
      </div>
 
      {/* Video Preview Modal */}
@@ -5769,6 +7000,98 @@ C:\\\\Media\\\\Prerolls\\\\summer\\\\beach.mp4`}
        </div>
      )}
 
+     {/* Community Prerolls Video Preview Modal */}
+     {communityPreviewingPreroll && (
+       <div 
+         style={{
+           position: 'fixed',
+           top: 0,
+           left: 0,
+           right: 0,
+           bottom: 0,
+           backgroundColor: 'rgba(0,0,0,0.8)',
+           display: 'flex',
+           alignItems: 'center',
+           justifyContent: 'center',
+           zIndex: 9999
+         }}
+         onClick={() => setCommunityPreviewingPreroll(null)}
+       >
+         <div 
+           style={{
+             backgroundColor: 'var(--card-bg)',
+             padding: '20px',
+             borderRadius: '8px',
+             maxWidth: '90%',
+             maxHeight: '90%',
+             position: 'relative'
+           }}
+           onClick={(e) => e.stopPropagation()}
+         >
+           <div style={{ 
+             display: 'flex', 
+             justifyContent: 'space-between', 
+             alignItems: 'center',
+             marginBottom: '1rem'
+           }}>
+             <h3 style={{ margin: 0, color: 'var(--text-color)' }}>
+               {communityPreviewingPreroll.title}
+             </h3>
+             <button 
+               onClick={() => setCommunityPreviewingPreroll(null)}
+               style={{
+                 background: 'transparent',
+                 border: 'none',
+                 fontSize: '1.5rem',
+                 cursor: 'pointer',
+                 color: 'var(--text-color)',
+                 padding: '0.25rem 0.5rem'
+               }}
+               title="Close preview"
+             >
+               ✕
+             </button>
+           </div>
+           <div>
+             <video
+               controls
+               autoPlay
+               style={{ 
+                 width: '100%', 
+                 maxHeight: '70vh',
+                 borderRadius: '4px'
+               }}
+               onError={(e) => {
+                 console.error('Community preroll video error:', e);
+                 alert('Failed to load video. The file may not be accessible.');
+               }}
+             >
+               <source src={communityPreviewingPreroll.url} type="video/mp4" />
+               Your browser does not support the video tag.
+             </video>
+           </div>
+           <div style={{ 
+             marginTop: '1rem', 
+             fontSize: '0.85rem', 
+             color: 'var(--text-secondary)',
+             display: 'flex',
+             gap: '1rem',
+             flexWrap: 'wrap'
+           }}>
+             {communityPreviewingPreroll.creator && (
+               <span>👤 Creator: {communityPreviewingPreroll.creator}</span>
+             )}
+             {communityPreviewingPreroll.category && (
+               <span>📁 Category: {communityPreviewingPreroll.category}</span>
+             )}
+             {communityPreviewingPreroll.duration && (
+               <span>⏱️ Duration: {communityPreviewingPreroll.duration}s</span>
+             )}
+           </div>
+         </div>
+       </div>
+     )}
+
      <footer
         className="nx-footer"
         aria-label="Site footer"
@@ -5792,7 +7115,7 @@ C:\\\\Media\\\\Prerolls\\\\summer\\\\beach.mp4`}
           }}
         >
           <div className="nx-footer-left" style={{ fontSize: '0.85rem', color: 'var(--text-muted, #888)' }}>
-            NeXroll {systemVersion?.registry_version ? `v${systemVersion.registry_version}` : (systemVersion?.api_version ? `v${systemVersion.api_version}` : '')}
+            NeXroll {systemVersion?.api_version ? `v${systemVersion.api_version}` : ''}
           </div>
           <div className="nx-footer-links" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
             <a

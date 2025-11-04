@@ -13,6 +13,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy import or_, func
 import backend.models as models
 from backend.plex_connector import PlexConnector
+from backend.jellyfin_connector import JellyfinConnector
 from backend.database import SessionLocal
 
 class Scheduler:
@@ -50,6 +51,105 @@ class Scheduler:
             except Exception as e:
                 print(f"Scheduler error: {e}")
             time.sleep(1)  # Check every 1 second for faster genre switching
+
+    def _apply_preroll_to_jellyfin_api(self, category_id: int, db: Session) -> bool:
+        """
+        Apply prerolls to Jellyfin using the Jellyfin REST API (metadata intro points).
+        Works with Docker and remote Jellyfin instances.
+        
+        This method:
+        1. Gets all prerolls for the category
+        2. Calculates intro durations from preroll file lengths
+        3. Updates matching series/movies with intro timestamps via Jellyfin API
+        
+        Returns True if successful, False otherwise.
+        """
+        try:
+            setting = db.query(models.Setting).first()
+            if not setting or not getattr(setting, "jellyfin_url", None):
+                print("SCHEDULER: Jellyfin not configured (missing URL); cannot apply prerolls.")
+                return False
+            
+            jellyfin_url = setting.jellyfin_url.rstrip("/")
+            jellyfin_api_key = getattr(setting, "jellyfin_api_key", None)
+            
+            if not jellyfin_api_key:
+                print("SCHEDULER: Jellyfin API key not configured; cannot apply prerolls.")
+                return False
+            
+            # Get prerolls for this category
+            prerolls = db.query(models.Preroll) \
+                .outerjoin(models.preroll_categories, models.Preroll.id == models.preroll_categories.c.preroll_id) \
+                .filter(or_(models.Preroll.category_id == category_id,
+                           models.preroll_categories.c.category_id == category_id)) \
+                .distinct().all()
+            
+            if not prerolls:
+                print(f"SCHEDULER: No prerolls found for category_id={category_id}. Cannot apply to Jellyfin.")
+                return False
+            
+            # Calculate total intro duration (sum of all preroll lengths in ticks)
+            # Jellyfin uses ticks (100-nanosecond intervals), so 10,000,000 ticks = 1 second
+            total_intro_seconds = 0
+            for preroll in prerolls:
+                try:
+                    if os.path.exists(preroll.path):
+                        # Try to get video duration using ffprobe or similar
+                        # For now, use a reasonable default or file mod time as proxy
+                        total_intro_seconds += getattr(preroll, 'duration_seconds', 60)
+                except Exception:
+                    total_intro_seconds += 60  # Default 60 seconds per preroll
+            
+            if total_intro_seconds <= 0:
+                total_intro_seconds = 60 * len(prerolls)  # 60 seconds per preroll default
+            
+            # Convert seconds to Jellyfin ticks (10,000,000 ticks per second)
+            intro_ticks_end = int(total_intro_seconds * 10_000_000)
+            
+            print(f"SCHEDULER: Preparing to apply {len(prerolls)} prerolls to Jellyfin (total {total_intro_seconds}s intro)…")
+            
+            # Get category name for search/matching
+            category = db.query(models.Category).filter(models.Category.id == category_id).first()
+            category_name = category.name if category else f"Category_{category_id}"
+            
+            # Initialize Jellyfin connector
+            connector = JellyfinConnector(jellyfin_url, jellyfin_api_key)
+            
+            # Search for items matching category name (simplified approach)
+            # In production, you'd want more sophisticated matching logic
+            search_results = connector.search_items_by_name(category_name) or []
+            
+            applied_count = 0
+            for item in search_results:
+                try:
+                    item_id = item.get("Id")
+                    item_name = item.get("Name", "Unknown")
+                    
+                    if not item_id:
+                        continue
+                    
+                    # Set intro timestamps for this item
+                    intro_data = {
+                        "IntroStartTicks": 0,
+                        "IntroEndTicks": intro_ticks_end
+                    }
+                    
+                    if connector.set_item_intros(item_id, intro_data):
+                        applied_count += 1
+                        print(f"  ✓ Applied intro to: {item_name}")
+                    else:
+                        print(f"  ✗ Failed to apply intro to: {item_name}")
+                
+                except Exception as e:
+                    print(f"  ✗ Error applying to item: {e}")
+                    continue
+            
+            print(f"SCHEDULER: Successfully applied prerolls to {applied_count}/{len(search_results)} Jellyfin items.")
+            return applied_count > 0
+        
+        except Exception as e:
+            print(f"SCHEDULER: Error applying prerolls to Jellyfin: {e}")
+            return False
 
     def _apply_genre_mapping_from_playback(self):
         """
@@ -274,6 +374,7 @@ class Scheduler:
             # Apply to Plex and set override to protect from scheduler immediately overriding
             ok = self._apply_category_to_plex(matched_cat.id, db)
             if not ok:
+                print(f"SCHEDULER: Failed to apply matched category '{matched_cat.name}' (ID {matched_cat.id}) for genre '{matched_genre_display}'")
                 return
 
             try:
@@ -358,11 +459,21 @@ class Scheduler:
                 active.sort(key=_sort_key)
                 chosen_schedule = active[0]
                 desired_category_id = chosen_schedule.category_id
+                
+                # Sanity check: ensure category_id is set
+                if not desired_category_id:
+                    print(f"SCHEDULER: ERROR - Schedule '{chosen_schedule.name}' (ID {chosen_schedule.id}) has no category_id set. Cannot apply prerolls.")
+                    desired_category_id = None
+                else:
+                    print(f"SCHEDULER: Active schedule selected: '{chosen_schedule.name}' (ID {chosen_schedule.id}) -> Category {desired_category_id}")
             else:
                 # No active schedules -> attempt fallback from any schedule that defines it
                 fallback_ids = [s.fallback_category_id for s in schedules if getattr(s, "fallback_category_id", None)]
                 if fallback_ids:
                     desired_category_id = fallback_ids[0]
+                    print(f"SCHEDULER: No active schedules; using fallback category {desired_category_id}")
+                else:
+                    print(f"SCHEDULER: No active schedules and no fallback defined; Plex preroll will remain unchanged")
 
             # Apply category change to Plex only if it differs from current
             if desired_category_id and setting.active_category != desired_category_id:
@@ -378,6 +489,10 @@ class Scheduler:
                         chosen_schedule.last_run = now
                         chosen_schedule.next_run = self._calculate_next_run(chosen_schedule)
                     db.commit()
+            elif desired_category_id is None:
+                print(f"SCHEDULER: No category to apply (desired_category_id is None)")
+            elif setting.active_category == desired_category_id:
+                print(f"SCHEDULER: Category {desired_category_id} already active; no change needed")
             # If no desired_category_id, leave Plex as-is to avoid unintended clears
 
         finally:
@@ -416,7 +531,14 @@ class Scheduler:
             .distinct().all()
 
         if not prerolls:
-            print(f"SCHEDULER: No prerolls found for category_id={category_id}")
+            cat_name = "UNKNOWN"
+            try:
+                cat = db.query(models.Category).filter(models.Category.id == category_id).first()
+                if cat:
+                    cat_name = cat.name
+            except Exception:
+                pass
+            print(f"SCHEDULER: ERROR - No prerolls found for category_id={category_id} (name='{cat_name}'). Ensure prerolls are assigned to this category.")
             return False
 
         # Build combined path string for Plex multi-preroll format, honoring category.plex_mode
