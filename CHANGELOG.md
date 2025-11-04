@@ -23,7 +23,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Auto-Apply to Server**
   - Categories automatically reapply to Plex/Jellyfin when new prerolls are added
   - Works for all add methods: upload, community download, drag-and-drop
-  - Only applies if category is already applied to server
+  - Works for both manually applied categories AND scheduled categories
+  - Detects active scheduled categories and updates them automatically
   - Prevents need to manually click "Apply" after adding prerolls
 
 - **Enhanced Plex Connection**
