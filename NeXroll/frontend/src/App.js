@@ -6775,15 +6775,15 @@ C:\\\\Media\\\\Prerolls\\\\summer\\\\beach.mp4`}
                           fontSize: '0.85rem',
                           border: '1px solid var(--border-color)',
                           borderRadius: '4px',
-                          backgroundColor: '#2a2a2a',
-                          color: '#ffffff',
+                          backgroundColor: 'var(--background-color)',
+                          color: 'var(--text-color)',
                           cursor: 'pointer',
                           marginBottom: '0.5rem'
                         }}
                       >
-                        <option value="" style={{ backgroundColor: '#2a2a2a', color: '#ffffff' }}>Select category...</option>
+                        <option value="">Select category...</option>
                         {categories.map(cat => (
-                          <option key={cat.id} value={cat.id} style={{ backgroundColor: '#2a2a2a', color: '#ffffff' }}>
+                          <option key={cat.id} value={cat.id}>
                             {cat.name}
                           </option>
                         ))}
@@ -6829,7 +6829,8 @@ C:\\\\Media\\\\Prerolls\\\\summer\\\\beach.mp4`}
                         style={{
                           padding: '0.5rem',
                           fontSize: '0.8rem',
-                          backgroundColor: communityShowAddToCategory[preroll.id] ? 'rgba(102, 200, 145, 0.3)' : 'transparent'
+                          backgroundColor: communityShowAddToCategory[preroll.id] ? 'rgba(102, 200, 145, 0.3)' : undefined,
+                          border: communityShowAddToCategory[preroll.id] ? '1px solid rgba(102, 200, 145, 0.6)' : undefined
                         }}
                       >
                         {communityShowAddToCategory[preroll.id] ? '✓ Category Selected' : '+ Add to Category'}

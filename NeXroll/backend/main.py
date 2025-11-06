@@ -9178,6 +9178,84 @@ def get_top5_community_prerolls(
         _file_log(f"Top 5 prerolls exception: {e}")
         raise HTTPException(status_code=500, detail=f"Top 5 fetch failed: {str(e)}")
 
+def _fetch_movie_poster(title: str) -> str:
+    """
+    Fetch movie/TV show poster from free APIs based on title.
+    Returns poster URL or None if not found.
+    Uses TVMaze API (free, no key needed) and falls back to placeholder.
+    """
+    try:
+        # Clean up title - remove common patterns
+        clean_title = title.lower()
+        
+        # Remove platform indicators
+        for platform in ['plex', 'jellyfin', 'emby', '- plex', '- jellyfin', '- emby']:
+            clean_title = clean_title.replace(platform, '')
+        
+        # Remove creator names and common patterns
+        patterns_to_remove = [
+            'awesomeaustn', 'the -', 'studios', 'pictures', 'entertainment',
+            'intro', 'bumper', 'logo', 'opening', 'trailer',
+            '(', ')', '[', ']', '  '
+        ]
+        for pattern in patterns_to_remove:
+            clean_title = clean_title.replace(pattern, ' ')
+        
+        # Clean up whitespace
+        clean_title = ' '.join(clean_title.split()).strip()
+        
+        if not clean_title or len(clean_title) < 3:
+            return None
+        
+        _file_log(f"Searching for poster: '{title}' -> '{clean_title}'")
+        
+        # Try TVMaze API first (free, no key needed, great for TV shows and movies)
+        try:
+            search_url = f"https://api.tvmaze.com/search/shows?q={requests.utils.quote(clean_title)}"
+            response = requests.get(search_url, timeout=3)
+            
+            if response.status_code == 200:
+                results = response.json()
+                if results and len(results) > 0:
+                    show = results[0].get("show", {})
+                    image = show.get("image", {})
+                    poster_url = image.get("original") or image.get("medium")
+                    
+                    if poster_url:
+                        _file_log(f"✅ Found TVMaze poster for '{clean_title}': {poster_url}")
+                        return poster_url
+        except Exception as e:
+            _file_log(f"TVMaze search failed for '{clean_title}': {e}")
+        
+        # Try extracting just the main title (first few words)
+        # E.g., "Star Wars The Empire Strikes Back" -> "Star Wars"
+        words = clean_title.split()
+        if len(words) > 2:
+            short_title = ' '.join(words[:2])
+            try:
+                search_url = f"https://api.tvmaze.com/search/shows?q={requests.utils.quote(short_title)}"
+                response = requests.get(search_url, timeout=3)
+                
+                if response.status_code == 200:
+                    results = response.json()
+                    if results and len(results) > 0:
+                        show = results[0].get("show", {})
+                        image = show.get("image", {})
+                        poster_url = image.get("original") or image.get("medium")
+                        
+                        if poster_url:
+                            _file_log(f"✅ Found TVMaze poster with short title '{short_title}': {poster_url}")
+                            return poster_url
+            except Exception as e:
+                _file_log(f"TVMaze short search failed: {e}")
+        
+        _file_log(f"❌ No poster found for '{clean_title}'")
+        return None
+        
+    except Exception as e:
+        _file_log(f"Error fetching poster for '{title}': {e}")
+        return None
+
 @app.get("/community-prerolls/latest")
 def get_latest_community_prerolls(
     limit: int = Query(6, description="Number of latest prerolls to return (default 6)"),
@@ -9240,11 +9318,18 @@ def get_latest_community_prerolls(
         # Take only the requested limit
         latest_prerolls = sorted_prerolls[:limit]
         
-        # Generate placeholder thumbnails for each preroll (SVG with base64 encoding)
+        # Try to fetch movie posters for each preroll, fallback to gradients
         import base64
         for idx, preroll in enumerate(latest_prerolls):
-            if "thumbnail" not in preroll or not preroll["thumbnail"]:
-                # Create a colorful SVG placeholder with gradient
+            # Try to get movie poster from OMDb
+            poster_url = _fetch_movie_poster(preroll.get("title", ""))
+            
+            if poster_url:
+                # Use the movie poster
+                preroll["thumbnail"] = poster_url
+                _file_log(f"Using movie poster for: {preroll.get('title')}")
+            elif "thumbnail" not in preroll or not preroll["thumbnail"]:
+                # Fallback to colorful SVG placeholder with gradient
                 colors = [
                     ("#667eea", "#764ba2"),  # Purple gradient
                     ("#f093fb", "#f5576c"),  # Pink gradient
