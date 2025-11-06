@@ -9178,6 +9178,108 @@ def get_top5_community_prerolls(
         _file_log(f"Top 5 prerolls exception: {e}")
         raise HTTPException(status_code=500, detail=f"Top 5 fetch failed: {str(e)}")
 
+@app.get("/community-prerolls/latest")
+def get_latest_community_prerolls(
+    limit: int = Query(6, description="Number of latest prerolls to return (default 6)"),
+    platform: str = Query("", description="Filter by platform (plex/emby/jellyfin)"),
+    db: Session = Depends(get_db)
+):
+    """
+    Get the latest/newest prerolls from the community library.
+    Uses local index to find recently added prerolls sorted by modification time.
+    Returns prerolls with thumbnail support for discovery section.
+    """
+    # Check Fair Use Policy acceptance
+    setting = db.query(models.Setting).first()
+    if not setting or not getattr(setting, "community_fair_use_accepted", False):
+        raise HTTPException(
+            status_code=403, 
+            detail="Fair Use Policy must be accepted before accessing community prerolls"
+        )
+    
+    try:
+        _file_log(f"Latest community prerolls request: limit={limit}, platform='{platform}'")
+        
+        # Load local index (required for latest prerolls - no fallback)
+        index_data = _load_prerolls_index()
+        if not index_data:
+            _file_log("No local index available for latest prerolls")
+            return {
+                "found": False,
+                "results": [],
+                "message": "⚠️ Build local index to see latest prerolls",
+                "needs_index": True
+            }
+        
+        _file_log("Using local index for latest prerolls")
+        
+        # Get all prerolls from index
+        all_prerolls = index_data.get("prerolls", [])
+        
+        # Apply platform filter if specified
+        platform_lower = platform.lower() if platform else ""
+        filtered_prerolls = []
+        
+        for preroll in all_prerolls:
+            # Apply platform filter
+            if platform_lower:
+                title_lower = preroll.get("title", "").lower()
+                if platform_lower not in title_lower:
+                    continue
+            
+            filtered_prerolls.append(preroll)
+        
+        # Sort by modified_time (newest first) - the index stores this timestamp
+        # If modified_time is not available, use creation order
+        sorted_prerolls = sorted(
+            filtered_prerolls,
+            key=lambda x: x.get("modified_time", 0),
+            reverse=True
+        )
+        
+        # Take only the requested limit
+        latest_prerolls = sorted_prerolls[:limit]
+        
+        # Generate placeholder thumbnails for each preroll (SVG data URL)
+        for idx, preroll in enumerate(latest_prerolls):
+            if "thumbnail" not in preroll or not preroll["thumbnail"]:
+                # Create a colorful SVG placeholder with gradient
+                colors = [
+                    ("#667eea", "#764ba2"),  # Purple gradient
+                    ("#f093fb", "#f5576c"),  # Pink gradient
+                    ("#4facfe", "#00f2fe"),  # Blue gradient
+                    ("#43e97b", "#38f9d7"),  # Green gradient
+                    ("#fa709a", "#fee140"),  # Yellow-Pink gradient
+                    ("#30cfd0", "#330867"),  # Teal gradient
+                ]
+                color_pair = colors[idx % len(colors)]
+                
+                preroll["thumbnail"] = (
+                    f"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='300' height='180'%3E"
+                    f"%3Cdefs%3E%3ClinearGradient id='grad{idx}' x1='0%25' y1='0%25' x2='100%25' y2='100%25'%3E"
+                    f"%3Cstop offset='0%25' style='stop-color:{color_pair[0].replace('#', '%23')};stop-opacity:1' /%3E"
+                    f"%3Cstop offset='100%25' style='stop-color:{color_pair[1].replace('#', '%23')};stop-opacity:1' /%3E"
+                    f"%3C/linearGradient%3E%3C/defs%3E"
+                    f"%3Crect width='300' height='180' fill='url(%23grad{idx})'/%3E"
+                    f"%3Ctext x='150' y='90' text-anchor='middle' fill='%23fff' font-size='20' font-weight='bold'%3E🎬%3C/text%3E"
+                    f"%3Ctext x='150' y='115' text-anchor='middle' fill='%23fff' font-size='12' opacity='0.9'%3ENEW%3C/text%3E"
+                    f"%3C/svg%3E"
+                )
+        
+        _file_log(f"Latest prerolls found: {len(latest_prerolls)}")
+        
+        return {
+            "found": True,
+            "results": latest_prerolls,
+            "total": len(latest_prerolls),
+            "message": f"✨ Showing {len(latest_prerolls)} latest prerolls",
+            "source": "local_index"
+        }
+    
+    except Exception as e:
+        _file_log(f"Latest prerolls exception: {e}")
+        raise HTTPException(status_code=500, detail=f"Latest prerolls fetch failed: {str(e)}")
+
 # IMPORTANT: Generic /settings/{key} endpoints MUST come after specific /settings/* endpoints
 # to avoid FastAPI route matching the generic pattern first
 @app.get("/settings/{key}")

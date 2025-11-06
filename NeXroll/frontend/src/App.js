@@ -489,6 +489,8 @@ function App() {
   const [communityRandomPreroll, setCommunityRandomPreroll] = useState(null);
   const [communityIsLoadingRandom, setCommunityIsLoadingRandom] = useState(false);
   const [communityIsLoadingTop5, setCommunityIsLoadingTop5] = useState(false);
+  const [communityLatestPrerolls, setCommunityLatestPrerolls] = useState([]);
+  const [communityIsLoadingLatest, setCommunityIsLoadingLatest] = useState(false);
   // Index status for local fast search
   const [communityIndexStatus, setCommunityIndexStatus] = useState(null);
   const [communityIsBuilding, setCommunityIsBuilding] = useState(false);
@@ -1032,6 +1034,7 @@ const toLocalInputFromDate = (d) => {
             // If accepted, load Top 5 prerolls and index status
             console.log('Fair Use accepted - loading Top 5 prerolls...');
             loadTop5Prerolls();
+            loadLatestPrerolls();
             
             // Load index status for fast search feature
             const loadIndexStatus = async () => {
@@ -1071,6 +1074,25 @@ const toLocalInputFromDate = (d) => {
       console.error('Failed to load Top 5 prerolls:', error);
     } finally {
       setCommunityIsLoadingTop5(false);
+    }
+  };
+
+  // Function to load Latest prerolls for Discovery section
+  const loadLatestPrerolls = async () => {
+    if (communityLatestPrerolls.length > 0) return; // Already loaded
+    
+    setCommunityIsLoadingLatest(true);
+    try {
+      const response = await fetch(apiUrl('community-prerolls/latest?limit=6'));
+      const data = await response.json();
+      
+      if (data.found && data.results) {
+        setCommunityLatestPrerolls(data.results);
+      }
+    } catch (error) {
+      console.error('Failed to load latest prerolls:', error);
+    } finally {
+      setCommunityIsLoadingLatest(false);
     }
   };
  
@@ -5823,6 +5845,7 @@ C:\\\\Media\\\\Prerolls\\\\summer\\\\beach.mp4`}
         setCommunityFairUseStatus(data);
         // Load initial data after accepting policy
         loadTop5Prerolls();
+        loadLatestPrerolls();
         loadIndexStatus();
       } catch (error) {
         alert(`Failed to accept Fair Use Policy: ${error.message}`);
@@ -6620,6 +6643,177 @@ C:\\\\Media\\\\Prerolls\\\\summer\\\\beach.mp4`}
             </p>
           </div>
         )}
+
+        {/* Discovery: Latest Prerolls Section */}
+        <div className="card">
+          <h3 style={{ 
+            marginTop: 0, 
+            marginBottom: '1rem', 
+            display: 'flex', 
+            alignItems: 'center', 
+            gap: '0.5rem',
+            fontSize: '1.3rem'
+          }}>
+            ✨ Discovery: Latest Prerolls
+          </h3>
+          
+          {communityIsLoadingLatest ? (
+            <div style={{ 
+              textAlign: 'center', 
+              padding: '2rem',
+              color: 'var(--text-secondary)'
+            }}>
+              <div style={{ fontSize: '2rem', marginBottom: '0.5rem' }}>⏳</div>
+              <p>Loading latest prerolls...</p>
+            </div>
+          ) : communityLatestPrerolls.length > 0 ? (
+            <div style={{
+              display: 'grid',
+              gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))',
+              gap: '1.5rem',
+              marginBottom: '1rem'
+            }}>
+              {communityLatestPrerolls.map((preroll, idx) => (
+                <div
+                  key={preroll.id}
+                  style={{
+                    backgroundColor: 'var(--card-bg)',
+                    border: '1px solid var(--border-color)',
+                    borderRadius: '8px',
+                    overflow: 'hidden',
+                    transition: 'transform 0.2s, box-shadow 0.2s',
+                    cursor: 'pointer'
+                  }}
+                  onMouseEnter={(e) => {
+                    e.currentTarget.style.transform = 'translateY(-4px)';
+                    e.currentTarget.style.boxShadow = '0 8px 16px rgba(0,0,0,0.2)';
+                  }}
+                  onMouseLeave={(e) => {
+                    e.currentTarget.style.transform = 'translateY(0)';
+                    e.currentTarget.style.boxShadow = 'none';
+                  }}
+                >
+                  {/* Thumbnail */}
+                  <div style={{
+                    width: '100%',
+                    height: '160px',
+                    backgroundColor: '#1a1a1a',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    position: 'relative',
+                    overflow: 'hidden'
+                  }}>
+                    <img
+                      src={preroll.thumbnail}
+                      alt={preroll.title}
+                      style={{
+                        width: '100%',
+                        height: '100%',
+                        objectFit: 'cover'
+                      }}
+                    />
+                    {/* NEW badge overlay */}
+                    <div style={{
+                      position: 'absolute',
+                      top: '8px',
+                      right: '8px',
+                      backgroundColor: '#10b981',
+                      color: '#ffffff',
+                      padding: '4px 12px',
+                      borderRadius: '12px',
+                      fontSize: '0.75rem',
+                      fontWeight: 'bold',
+                      boxShadow: '0 2px 4px rgba(0,0,0,0.3)'
+                    }}>
+                      NEW
+                    </div>
+                  </div>
+                  
+                  {/* Content */}
+                  <div style={{ padding: '1rem' }}>
+                    <h4 style={{
+                      margin: '0 0 0.5rem 0',
+                      fontSize: '0.95rem',
+                      fontWeight: '600',
+                      lineHeight: '1.3',
+                      color: 'var(--text-color)',
+                      overflow: 'hidden',
+                      textOverflow: 'ellipsis',
+                      display: '-webkit-box',
+                      WebkitLineClamp: 2,
+                      WebkitBoxOrient: 'vertical',
+                      minHeight: '2.6em'
+                    }}>
+                      {cleanDisplayText(preroll.title)}
+                    </h4>
+
+                    <div style={{ 
+                      display: 'flex', 
+                      gap: '0.75rem', 
+                      flexWrap: 'wrap', 
+                      fontSize: '0.8rem', 
+                      color: 'var(--text-secondary)',
+                      marginBottom: '0.75rem'
+                    }}>
+                      {preroll.category && (
+                        <span>📁 {cleanDisplayText(preroll.category)}</span>
+                      )}
+                      {preroll.duration && (
+                        <span>⏱️ {preroll.duration}s</span>
+                      )}
+                    </div>
+
+                    {/* Action buttons */}
+                    <div style={{ display: 'flex', gap: '0.5rem' }}>
+                      <button
+                        onClick={() => setCommunityPreviewingPreroll(preroll)}
+                        className="button-secondary"
+                        style={{
+                          flex: 1,
+                          padding: '0.5rem',
+                          fontSize: '0.8rem'
+                        }}
+                      >
+                        ▶️ Preview
+                      </button>
+                      <button
+                        onClick={() => handleDownload(preroll)}
+                        disabled={communityIsDownloading[preroll.id]}
+                        className="button"
+                        style={{
+                          flex: 1,
+                          padding: '0.5rem',
+                          fontSize: '0.8rem',
+                          opacity: communityIsDownloading[preroll.id] ? 0.6 : 1
+                        }}
+                      >
+                        {communityIsDownloading[preroll.id] === 'downloading' ? '⬇️ Downloading...' : 
+                         communityIsDownloading[preroll.id] === 'processing' ? '⚙️ Processing...' : 
+                         '⬇️ Download'}
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div style={{ 
+              textAlign: 'center', 
+              padding: '2rem',
+              backgroundColor: 'var(--input-bg)',
+              borderRadius: '6px'
+            }}>
+              <div style={{ fontSize: '2.5rem', marginBottom: '0.5rem' }}>📦</div>
+              <p style={{ margin: '0 0 0.5rem 0', color: 'var(--text-secondary)' }}>
+                No latest prerolls available yet
+              </p>
+              <p style={{ margin: '0', fontSize: '0.85rem', color: 'var(--text-secondary)', opacity: 0.7 }}>
+                💡 Build the local index to see the newest prerolls
+              </p>
+            </div>
+          )}
+        </div>
 
         {/* Random Preroll Section - Always Visible */}
         <div className="card">
