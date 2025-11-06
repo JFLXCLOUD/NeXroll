@@ -6764,33 +6764,75 @@ C:\\\\Media\\\\Prerolls\\\\summer\\\\beach.mp4`}
                       )}
                     </div>
 
+                    {/* Category selector */}
+                    {communityShowAddToCategory[preroll.id] && (
+                      <select
+                        value={communitySelectedCategory || ''}
+                        onChange={(e) => setCommunitySelectedCategory(e.target.value || null)}
+                        style={{
+                          width: '100%',
+                          padding: '0.4rem',
+                          fontSize: '0.85rem',
+                          border: '1px solid var(--border-color)',
+                          borderRadius: '4px',
+                          backgroundColor: '#2a2a2a',
+                          color: '#ffffff',
+                          cursor: 'pointer',
+                          marginBottom: '0.5rem'
+                        }}
+                      >
+                        <option value="" style={{ backgroundColor: '#2a2a2a', color: '#ffffff' }}>Select category...</option>
+                        {categories.map(cat => (
+                          <option key={cat.id} value={cat.id} style={{ backgroundColor: '#2a2a2a', color: '#ffffff' }}>
+                            {cat.name}
+                          </option>
+                        ))}
+                      </select>
+                    )}
+
                     {/* Action buttons */}
-                    <div style={{ display: 'flex', gap: '0.5rem' }}>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+                      <div style={{ display: 'flex', gap: '0.5rem' }}>
+                        <button
+                          onClick={() => setCommunityPreviewingPreroll(preroll)}
+                          className="button-secondary"
+                          style={{
+                            flex: 1,
+                            padding: '0.5rem',
+                            fontSize: '0.8rem'
+                          }}
+                        >
+                          ▶️ Preview
+                        </button>
+                        <button
+                          onClick={() => handleDownload(preroll)}
+                          disabled={communityIsDownloading[preroll.id] || (communityShowAddToCategory[preroll.id] && !communitySelectedCategory)}
+                          className="button"
+                          style={{
+                            flex: 1,
+                            padding: '0.5rem',
+                            fontSize: '0.8rem',
+                            opacity: communityIsDownloading[preroll.id] ? 0.6 : 1
+                          }}
+                        >
+                          {communityIsDownloading[preroll.id] === 'downloading' ? '⬇️ Downloading...' : 
+                           communityIsDownloading[preroll.id] === 'processing' ? '⚙️ Processing...' : 
+                           '⬇️ Download'}
+                        </button>
+                      </div>
                       <button
-                        onClick={() => setCommunityPreviewingPreroll(preroll)}
+                        onClick={() => setCommunityShowAddToCategory(prev => ({
+                          ...prev,
+                          [preroll.id]: !prev[preroll.id]
+                        }))}
                         className="button-secondary"
                         style={{
-                          flex: 1,
-                          padding: '0.5rem',
-                          fontSize: '0.8rem'
-                        }}
-                      >
-                        ▶️ Preview
-                      </button>
-                      <button
-                        onClick={() => handleDownload(preroll)}
-                        disabled={communityIsDownloading[preroll.id]}
-                        className="button"
-                        style={{
-                          flex: 1,
                           padding: '0.5rem',
                           fontSize: '0.8rem',
-                          opacity: communityIsDownloading[preroll.id] ? 0.6 : 1
+                          backgroundColor: communityShowAddToCategory[preroll.id] ? 'rgba(102, 200, 145, 0.3)' : 'transparent'
                         }}
                       >
-                        {communityIsDownloading[preroll.id] === 'downloading' ? '⬇️ Downloading...' : 
-                         communityIsDownloading[preroll.id] === 'processing' ? '⚙️ Processing...' : 
-                         '⬇️ Download'}
+                        {communityShowAddToCategory[preroll.id] ? '✓ Category Selected' : '+ Add to Category'}
                       </button>
                     </div>
                   </div>

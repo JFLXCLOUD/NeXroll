@@ -9240,7 +9240,8 @@ def get_latest_community_prerolls(
         # Take only the requested limit
         latest_prerolls = sorted_prerolls[:limit]
         
-        # Generate placeholder thumbnails for each preroll (SVG data URL)
+        # Generate placeholder thumbnails for each preroll (SVG with base64 encoding)
+        import base64
         for idx, preroll in enumerate(latest_prerolls):
             if "thumbnail" not in preroll or not preroll["thumbnail"]:
                 # Create a colorful SVG placeholder with gradient
@@ -9254,17 +9255,23 @@ def get_latest_community_prerolls(
                 ]
                 color_pair = colors[idx % len(colors)]
                 
-                preroll["thumbnail"] = (
-                    f"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='300' height='180'%3E"
-                    f"%3Cdefs%3E%3ClinearGradient id='grad{idx}' x1='0%25' y1='0%25' x2='100%25' y2='100%25'%3E"
-                    f"%3Cstop offset='0%25' style='stop-color:{color_pair[0].replace('#', '%23')};stop-opacity:1' /%3E"
-                    f"%3Cstop offset='100%25' style='stop-color:{color_pair[1].replace('#', '%23')};stop-opacity:1' /%3E"
-                    f"%3C/linearGradient%3E%3C/defs%3E"
-                    f"%3Crect width='300' height='180' fill='url(%23grad{idx})'/%3E"
-                    f"%3Ctext x='150' y='90' text-anchor='middle' fill='%23fff' font-size='20' font-weight='bold'%3E🎬%3C/text%3E"
-                    f"%3Ctext x='150' y='115' text-anchor='middle' fill='%23fff' font-size='12' opacity='0.9'%3ENEW%3C/text%3E"
-                    f"%3C/svg%3E"
-                )
+                # Create SVG with proper encoding
+                svg_content = f"""<svg xmlns='http://www.w3.org/2000/svg' width='300' height='180'>
+                    <defs>
+                        <linearGradient id='grad{idx}' x1='0%' y1='0%' x2='100%' y2='100%'>
+                            <stop offset='0%' style='stop-color:{color_pair[0]};stop-opacity:1' />
+                            <stop offset='100%' style='stop-color:{color_pair[1]};stop-opacity:1' />
+                        </linearGradient>
+                    </defs>
+                    <rect width='300' height='180' fill='url(#grad{idx})'/>
+                    <text x='150' y='80' text-anchor='middle' fill='#fff' font-size='40' font-weight='bold' opacity='0.9'>🎬</text>
+                    <text x='150' y='110' text-anchor='middle' fill='#fff' font-size='16' font-weight='bold' opacity='0.8'>NEW</text>
+                    <text x='150' y='130' text-anchor='middle' fill='#fff' font-size='12' opacity='0.7'>Latest Addition</text>
+                </svg>"""
+                
+                # Base64 encode the SVG
+                svg_base64 = base64.b64encode(svg_content.encode('utf-8')).decode('utf-8')
+                preroll["thumbnail"] = f"data:image/svg+xml;base64,{svg_base64}"
         
         _file_log(f"Latest prerolls found: {len(latest_prerolls)}")
         
