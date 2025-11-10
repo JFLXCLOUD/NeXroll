@@ -6769,21 +6769,23 @@ C:\\\\Media\\\\Prerolls\\\\summer\\\\beach.mp4`}
                       <select
                         value={communitySelectedCategory || ''}
                         onChange={(e) => setCommunitySelectedCategory(e.target.value || null)}
+                        className="category-select"
                         style={{
                           width: '100%',
                           padding: '0.4rem',
                           fontSize: '0.85rem',
-                          border: '1px solid var(--border-color)',
+                          border: '2px solid var(--border-color)',
                           borderRadius: '4px',
-                          backgroundColor: 'var(--background-color)',
-                          color: 'var(--text-color)',
+                          backgroundColor: darkMode ? '#2d2d2d' : 'white',
+                          color: darkMode ? '#e0e0e0' : '#333',
                           cursor: 'pointer',
-                          marginBottom: '0.5rem'
+                          marginBottom: '0.5rem',
+                          outline: 'none'
                         }}
                       >
-                        <option value="">Select category...</option>
+                        <option value="" style={{backgroundColor: darkMode ? '#2d2d2d' : 'white', color: darkMode ? '#e0e0e0' : '#333'}}>Select category...</option>
                         {categories.map(cat => (
-                          <option key={cat.id} value={cat.id}>
+                          <option key={cat.id} value={cat.id} style={{backgroundColor: darkMode ? '#2d2d2d' : 'white', color: darkMode ? '#e0e0e0' : '#333'}}>
                             {cat.name}
                           </option>
                         ))}
