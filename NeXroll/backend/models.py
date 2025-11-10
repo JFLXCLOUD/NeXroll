@@ -135,6 +135,8 @@ class Setting(Base):
     # Dashboard customization
     dashboard_tile_order = Column(Text, nullable=True)  # JSON array of tile IDs for custom dashboard ordering
     dashboard_layout = Column(Text, nullable=True)  # JSON dashboard section layout configuration
+    # Version tracking for changelog display
+    last_seen_version = Column(String, nullable=True)  # Last version user has seen (for changelog display)
     
     def get_json_value(self, key):
         """Get a JSON value from a column"""

@@ -108,6 +108,7 @@ def ensure_schema() -> None:
                 ("path_mappings", "path_mappings TEXT"),
                 ("override_expires_at", "override_expires_at DATETIME"),
                 ("jellyfin_url", "jellyfin_url TEXT"),
+                ("last_seen_version", "last_seen_version TEXT"),
             ]:
                 if not _sqlite_has_column("settings", col):
                     _sqlite_add_column("settings", ddl)
@@ -828,7 +829,7 @@ import sys
 import os
 
 # Try multiple paths to find version.py (for both dev and PyInstaller builds)
-app_version = "1.7.2"  # Default fallback
+app_version = "1.7.4"  # Default fallback
 try:
     sys.path.append(os.path.dirname(os.path.dirname(__file__)))
     from version import get_version
@@ -1239,6 +1240,76 @@ def system_version():
         "registry_version": reg_version,
         "install_dir": install_dir,
     }
+
+
+@app.get("/system/changelog")
+def get_changelog(db: Session = Depends(get_db)):
+    """
+    Returns the changelog content and whether it should be displayed.
+    Also returns the current version and last seen version.
+    """
+    current_version = getattr(app, "version", "unknown")
+    
+    # Get last seen version from settings
+    settings = db.query(models.Setting).first()
+    last_seen_version = settings.last_seen_version if settings else None
+    
+    # Determine if changelog should be shown (version changed)
+    show_changelog = (last_seen_version is None or last_seen_version != current_version)
+    
+    # Read changelog content
+    changelog_content = ""
+    try:
+        # Try multiple possible locations for CHANGELOG.md
+        possible_paths = []
+        
+        # Check if running from PyInstaller bundle
+        if getattr(sys, '_MEIPASS', None):
+            # Running from PyInstaller - check extracted temp directory
+            possible_paths.append(os.path.join(sys._MEIPASS, 'CHANGELOG.md'))
+        
+        # Add source directory paths
+        possible_paths.extend([
+            os.path.join(os.path.dirname(__file__), "..", "..", "CHANGELOG.md"),
+            os.path.join(os.path.dirname(__file__), "..", "..", "..", "CHANGELOG.md"),
+            "CHANGELOG.md"
+        ])
+        
+        for path in possible_paths:
+            abs_path = os.path.abspath(path)
+            if os.path.exists(abs_path):
+                with open(abs_path, 'r', encoding='utf-8') as f:
+                    changelog_content = f.read()
+                break
+    except Exception as e:
+        logger.error(f"Failed to read CHANGELOG.md: {e}")
+        changelog_content = "Changelog not available."
+    
+    return {
+        "current_version": current_version,
+        "last_seen_version": last_seen_version,
+        "show_changelog": show_changelog,
+        "changelog": changelog_content
+    }
+
+
+@app.post("/system/changelog/mark-seen")
+def mark_changelog_seen(db: Session = Depends(get_db)):
+    """
+    Mark the current version as seen by the user.
+    Called when user dismisses the changelog modal.
+    """
+    current_version = getattr(app, "version", "unknown")
+    
+    settings = db.query(models.Setting).first()
+    if not settings:
+        settings = models.Setting()
+        db.add(settings)
+    
+    settings.last_seen_version = current_version
+    db.commit()
+    
+    return {"success": True, "version": current_version}
 
 
 @app.get("/system/db-introspect")
@@ -3864,21 +3935,32 @@ def create_schedule(schedule: ScheduleCreate, db: Session = Depends(get_db)):
     end_date = None
 
     try:
-        # Normalize to UTC (naive) for consistent server-side scheduling
+        # For yearly/holiday schedules, keep the naive datetime as-is (month/day is what matters)
+        # For other schedules, normalize to UTC for consistent server-side scheduling
         if schedule.start_date:
             sd = schedule.start_date
             dt = datetime.datetime.fromisoformat(sd.replace('Z', '+00:00'))
-            if dt.tzinfo is None:
-                local_tz = datetime.datetime.now().astimezone().tzinfo
-                dt = dt.replace(tzinfo=local_tz)
-            start_date = dt.astimezone(datetime.timezone.utc).replace(tzinfo=None)
+            if schedule.type in ('yearly', 'holiday'):
+                # Keep naive datetime - we only care about month/day
+                start_date = dt.replace(tzinfo=None) if dt.tzinfo else dt
+            else:
+                # Convert to UTC for time-based scheduling
+                if dt.tzinfo is None:
+                    local_tz = datetime.datetime.now().astimezone().tzinfo
+                    dt = dt.replace(tzinfo=local_tz)
+                start_date = dt.astimezone(datetime.timezone.utc).replace(tzinfo=None)
         if schedule.end_date:
             ed = schedule.end_date
             dt2 = datetime.datetime.fromisoformat(ed.replace('Z', '+00:00'))
-            if dt2.tzinfo is None:
-                local_tz = datetime.datetime.now().astimezone().tzinfo
-                dt2 = dt2.replace(tzinfo=local_tz)
-            end_date = dt2.astimezone(datetime.timezone.utc).replace(tzinfo=None)
+            if schedule.type in ('yearly', 'holiday'):
+                # Keep naive datetime - we only care about month/day
+                end_date = dt2.replace(tzinfo=None) if dt2.tzinfo else dt2
+            else:
+                # Convert to UTC for time-based scheduling
+                if dt2.tzinfo is None:
+                    local_tz = datetime.datetime.now().astimezone().tzinfo
+                    dt2 = dt2.replace(tzinfo=local_tz)
+                end_date = dt2.astimezone(datetime.timezone.utc).replace(tzinfo=None)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=f"Invalid date format: {str(e)}")
 
@@ -3959,21 +4041,32 @@ def update_schedule(schedule_id: int, schedule: ScheduleCreate, db: Session = De
     end_date = None
 
     try:
-        # Normalize to UTC (naive) for consistent server-side scheduling
+        # For yearly/holiday schedules, keep the naive datetime as-is (month/day is what matters)
+        # For other schedules, normalize to UTC for consistent server-side scheduling
         if schedule.start_date:
             sd = schedule.start_date
             dt = datetime.datetime.fromisoformat(sd.replace('Z', '+00:00'))
-            if dt.tzinfo is None:
-                local_tz = datetime.datetime.now().astimezone().tzinfo
-                dt = dt.replace(tzinfo=local_tz)
-            start_date = dt.astimezone(datetime.timezone.utc).replace(tzinfo=None)
+            if schedule.type in ('yearly', 'holiday'):
+                # Keep naive datetime - we only care about month/day
+                start_date = dt.replace(tzinfo=None) if dt.tzinfo else dt
+            else:
+                # Convert to UTC for time-based scheduling
+                if dt.tzinfo is None:
+                    local_tz = datetime.datetime.now().astimezone().tzinfo
+                    dt = dt.replace(tzinfo=local_tz)
+                start_date = dt.astimezone(datetime.timezone.utc).replace(tzinfo=None)
         if schedule.end_date:
             ed = schedule.end_date
             dt2 = datetime.datetime.fromisoformat(ed.replace('Z', '+00:00'))
-            if dt2.tzinfo is None:
-                local_tz = datetime.datetime.now().astimezone().tzinfo
-                dt2 = dt2.replace(tzinfo=local_tz)
-            end_date = dt2.astimezone(datetime.timezone.utc).replace(tzinfo=None)
+            if schedule.type in ('yearly', 'holiday'):
+                # Keep naive datetime - we only care about month/day
+                end_date = dt2.replace(tzinfo=None) if dt2.tzinfo else dt2
+            else:
+                # Convert to UTC for time-based scheduling
+                if dt2.tzinfo is None:
+                    local_tz = datetime.datetime.now().astimezone().tzinfo
+                    dt2 = dt2.replace(tzinfo=local_tz)
+                end_date = dt2.astimezone(datetime.timezone.utc).replace(tzinfo=None)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=f"Invalid date format: {str(e)}")
 
