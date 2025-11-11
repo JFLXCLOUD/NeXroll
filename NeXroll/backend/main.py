@@ -3,7 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, Response, StreamingResponse
 from sqlalchemy.orm import Session, joinedload
-from sqlalchemy import or_, select, func
+from sqlalchemy import or_, select, func, text
 from sqlalchemy.exc import IntegrityError, OperationalError
 from pydantic import BaseModel
 from typing import List, Optional
@@ -829,7 +829,7 @@ import sys
 import os
 
 # Try multiple paths to find version.py (for both dev and PyInstaller builds)
-app_version = "1.7.5"  # Default fallback
+app_version = "1.7.7"  # Default fallback
 try:
     sys.path.append(os.path.dirname(os.path.dirname(__file__)))
     from version import get_version
@@ -1261,19 +1261,11 @@ def get_changelog(db: Session = Depends(get_db)):
     changelog_content = ""
     try:
         # Try multiple possible locations for CHANGELOG.md
-        possible_paths = []
-        
-        # Check if running from PyInstaller bundle
-        if getattr(sys, '_MEIPASS', None):
-            # Running from PyInstaller - check extracted temp directory
-            possible_paths.append(os.path.join(sys._MEIPASS, 'CHANGELOG.md'))
-        
-        # Add source directory paths
-        possible_paths.extend([
+        possible_paths = [
             os.path.join(os.path.dirname(__file__), "..", "..", "CHANGELOG.md"),
             os.path.join(os.path.dirname(__file__), "..", "..", "..", "CHANGELOG.md"),
             "CHANGELOG.md"
-        ])
+        ]
         
         for path in possible_paths:
             abs_path = os.path.abspath(path)
@@ -3935,32 +3927,19 @@ def create_schedule(schedule: ScheduleCreate, db: Session = Depends(get_db)):
     end_date = None
 
     try:
-        # For yearly/holiday schedules, keep the naive datetime as-is (month/day is what matters)
-        # For other schedules, normalize to UTC for consistent server-side scheduling
+        # All schedules: Keep naive datetime as-is (no UTC conversion)
+        # Schedule times represent the user's local time and should not be timezone-adjusted
+        # This prevents date/time shifting when saving/updating schedules (Issue #9)
         if schedule.start_date:
             sd = schedule.start_date
             dt = datetime.datetime.fromisoformat(sd.replace('Z', '+00:00'))
-            if schedule.type in ('yearly', 'holiday'):
-                # Keep naive datetime - we only care about month/day
-                start_date = dt.replace(tzinfo=None) if dt.tzinfo else dt
-            else:
-                # Convert to UTC for time-based scheduling
-                if dt.tzinfo is None:
-                    local_tz = datetime.datetime.now().astimezone().tzinfo
-                    dt = dt.replace(tzinfo=local_tz)
-                start_date = dt.astimezone(datetime.timezone.utc).replace(tzinfo=None)
+            # Strip timezone info if present, store as naive datetime
+            start_date = dt.replace(tzinfo=None) if dt.tzinfo else dt
         if schedule.end_date:
             ed = schedule.end_date
             dt2 = datetime.datetime.fromisoformat(ed.replace('Z', '+00:00'))
-            if schedule.type in ('yearly', 'holiday'):
-                # Keep naive datetime - we only care about month/day
-                end_date = dt2.replace(tzinfo=None) if dt2.tzinfo else dt2
-            else:
-                # Convert to UTC for time-based scheduling
-                if dt2.tzinfo is None:
-                    local_tz = datetime.datetime.now().astimezone().tzinfo
-                    dt2 = dt2.replace(tzinfo=local_tz)
-                end_date = dt2.astimezone(datetime.timezone.utc).replace(tzinfo=None)
+            # Strip timezone info if present, store as naive datetime
+            end_date = dt2.replace(tzinfo=None) if dt2.tzinfo else dt2
     except ValueError as e:
         raise HTTPException(status_code=400, detail=f"Invalid date format: {str(e)}")
 
@@ -4041,32 +4020,19 @@ def update_schedule(schedule_id: int, schedule: ScheduleCreate, db: Session = De
     end_date = None
 
     try:
-        # For yearly/holiday schedules, keep the naive datetime as-is (month/day is what matters)
-        # For other schedules, normalize to UTC for consistent server-side scheduling
+        # All schedules: Keep naive datetime as-is (no UTC conversion)
+        # Schedule times represent the user's local time and should not be timezone-adjusted
+        # This prevents date/time shifting when saving/updating schedules (Issue #9)
         if schedule.start_date:
             sd = schedule.start_date
             dt = datetime.datetime.fromisoformat(sd.replace('Z', '+00:00'))
-            if schedule.type in ('yearly', 'holiday'):
-                # Keep naive datetime - we only care about month/day
-                start_date = dt.replace(tzinfo=None) if dt.tzinfo else dt
-            else:
-                # Convert to UTC for time-based scheduling
-                if dt.tzinfo is None:
-                    local_tz = datetime.datetime.now().astimezone().tzinfo
-                    dt = dt.replace(tzinfo=local_tz)
-                start_date = dt.astimezone(datetime.timezone.utc).replace(tzinfo=None)
+            # Strip timezone info if present, store as naive datetime
+            start_date = dt.replace(tzinfo=None) if dt.tzinfo else dt
         if schedule.end_date:
             ed = schedule.end_date
             dt2 = datetime.datetime.fromisoformat(ed.replace('Z', '+00:00'))
-            if schedule.type in ('yearly', 'holiday'):
-                # Keep naive datetime - we only care about month/day
-                end_date = dt2.replace(tzinfo=None) if dt2.tzinfo else dt2
-            else:
-                # Convert to UTC for time-based scheduling
-                if dt2.tzinfo is None:
-                    local_tz = datetime.datetime.now().astimezone().tzinfo
-                    dt2 = dt2.replace(tzinfo=local_tz)
-                end_date = dt2.astimezone(datetime.timezone.utc).replace(tzinfo=None)
+            # Strip timezone info if present, store as naive datetime
+            end_date = dt2.replace(tzinfo=None) if dt2.tzinfo else dt2
     except ValueError as e:
         raise HTTPException(status_code=400, detail=f"Invalid date format: {str(e)}")
 
@@ -4980,10 +4946,16 @@ def backup_files():
 def restore_database(backup_data: dict, db: Session = Depends(get_db)):
     """Import database from JSON backup (restores categories, prerolls with multi-category links, schedules, and holidays)"""
     try:
-        # Clear existing data
-        db.query(models.Preroll).delete()
-        db.query(models.Category).delete()
+        # Clear existing data in correct order to avoid foreign key constraint errors
+        # 1. Delete junction table entries first (many-to-many relationships)
+        db.execute(text("DELETE FROM preroll_categories"))
+        # 2. Delete schedules (references categories)
         db.query(models.Schedule).delete()
+        # 3. Delete prerolls (references categories via category_id)
+        db.query(models.Preroll).delete()
+        # 4. Delete categories (now safe, no foreign keys referencing them)
+        db.query(models.Category).delete()
+        # 5. Delete holiday presets (independent table)
         db.query(models.HolidayPreset).delete()
         db.commit()
 
