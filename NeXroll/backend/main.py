@@ -829,7 +829,7 @@ import sys
 import os
 
 # Try multiple paths to find version.py (for both dev and PyInstaller builds)
-app_version = "1.7.4"  # Default fallback
+app_version = "1.7.5"  # Default fallback
 try:
     sys.path.append(os.path.dirname(os.path.dirname(__file__)))
     from version import get_version

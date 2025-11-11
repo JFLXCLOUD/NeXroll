@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { DndContext, closestCenter, PointerSensor, useSensor, useSensors } from '@dnd-kit/core';
 import { SortableContext, rectSortingStrategy, useSortable, arrayMove } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
+import ReactMarkdown from 'react-markdown';
 import RetroProgressBar from './components/RetroProgressBar';
 
 // API helpers that resolve the backend base dynamically (works in Docker and behind proxies)
@@ -141,7 +142,7 @@ const extractVersionFromRelease = (data) => {
   return normalizeVersionString(tag || name);
 };
 
-const Modal = ({ title, onClose, children, width = 700 }) => {
+const Modal = ({ title, onClose, children, width = 700, zIndex = 1000, allowBackgroundInteraction = false }) => {
   React.useEffect(() => {
     const onEsc = (e) => { if (e.key === 'Escape') onClose && onClose(); };
     document.addEventListener('keydown', onEsc);
@@ -149,8 +150,16 @@ const Modal = ({ title, onClose, children, width = 700 }) => {
   }, [onClose]);
 
   return (
-    <div className="nx-modal-overlay" onMouseDown={(e) => { if (e.target.classList.contains('nx-modal-overlay')) onClose && onClose(); }}>
-      <div className="nx-modal" style={{ maxWidth: width }}>
+    <div 
+      className="nx-modal-overlay" 
+      style={{ 
+        zIndex, 
+        pointerEvents: allowBackgroundInteraction ? 'none' : 'auto',
+        backgroundColor: allowBackgroundInteraction ? 'transparent' : undefined
+      }} 
+      onClick={(e) => { if (e.target.classList.contains('nx-modal-overlay')) onClose && onClose(); }}
+    >
+      <div className="nx-modal" style={{ maxWidth: width, position: 'relative', zIndex: 1, pointerEvents: 'auto' }} onClick={(e) => e.stopPropagation()}>
         <div className="nx-modal-header">
           <h3 className="nx-modal-title">{title}</h3>
           <button className="nx-modal-close" type="button" onClick={onClose} aria-label="Close">✕</button>
@@ -470,6 +479,11 @@ function App() {
   const [showUpdateBanner, setShowUpdateBanner] = useState(false);
   const [activeCategory, setActiveCategory] = useState(null);
   
+  // Changelog modal state
+  const [showChangelogModal, setShowChangelogModal] = useState(false);
+  const [changelogContent, setChangelogContent] = useState('');
+  const [changelogCurrentVersion, setChangelogCurrentVersion] = useState('');
+  
   // Community Prerolls UI state
   const [communityFairUseStatus, setCommunityFairUseStatus] = useState(null);
   const [communityPolicyText, setCommunityPolicyText] = useState(null);
@@ -491,6 +505,9 @@ function App() {
   const [communityIsLoadingTop5, setCommunityIsLoadingTop5] = useState(false);
   const [communityLatestPrerolls, setCommunityLatestPrerolls] = useState([]);
   const [communityIsLoadingLatest, setCommunityIsLoadingLatest] = useState(false);
+  // Rename preroll before download
+  const [communityRenamingPreroll, setCommunityRenamingPreroll] = useState(null);
+  const [communityNewPrerollName, setCommunityNewPrerollName] = useState('');
   // Index status for local fast search
   const [communityIndexStatus, setCommunityIndexStatus] = useState(null);
   const [communityIsBuilding, setCommunityIsBuilding] = useState(false);
@@ -561,7 +578,14 @@ const [calendarYear, setCalendarYear] = useState(() => {
   const d = new Date();
   return d.getFullYear();
 });
-const [calendarMode, setCalendarMode] = useState('month'); // 'month' | 'year'
+const [calendarMode, setCalendarMode] = useState('year'); // 'month' | 'week' | 'year' - default to year view
+const [calendarMonthView, setCalendarMonthView] = useState('timeline'); // 'grid' | 'timeline'
+const [calendarWeekStart, setCalendarWeekStart] = useState(() => {
+  const d = new Date();
+  const day = d.getDay();
+  const diff = d.getDate() - day; // Get to Sunday
+  return new Date(d.getFullYear(), d.getMonth(), diff);
+});
 
 // Date/time helpers: treat backend datetimes as UTC and format for local display/inputs
 const ensureUtcIso = (s) => {
@@ -668,6 +692,22 @@ const toLocalInputFromDate = (d) => {
     }
   });
   const [bulkCategoryId, setBulkCategoryId] = useState('');
+
+  // Helper function to handle fetch errors with proper error message extraction
+  const handleFetchResponse = async (response) => {
+    if (!response.ok) {
+      try {
+        const errorData = await response.json();
+        throw new Error(errorData.detail || `HTTP error! status: ${response.status}`);
+      } catch (e) {
+        if (e.message && e.message !== `HTTP error! status: ${response.status}`) {
+          throw e;
+        }
+        throw new Error(`HTTP error! status: ${response.status}`);
+      }
+    }
+    return response.json();
+  };
 
   // Load theme preference from localStorage
   useEffect(() => {
@@ -926,6 +966,27 @@ const toLocalInputFromDate = (d) => {
         setRecentGenreApplications([]);
         setActiveCategory(null);
       });
+  }, []);
+
+  // Check for changelog on first load
+  useEffect(() => {
+    const checkChangelog = async () => {
+      try {
+        const response = await fetch('http://localhost:9393/system/changelog');
+        const data = await response.json();
+        
+        if (data.show_changelog && data.changelog) {
+          setChangelogContent(data.changelog);
+          setChangelogCurrentVersion(data.current_version);
+          setShowChangelogModal(true);
+        }
+      } catch (err) {
+        console.error('Failed to check changelog:', err);
+      }
+    };
+    
+    // Check changelog after a short delay to let the app load
+    setTimeout(checkChangelog, 1000);
   }, []);
 
   useEffect(() => {
@@ -1596,12 +1657,7 @@ const toLocalInputFromDate = (d) => {
     fetch(`http://localhost:9393/schedules/${scheduleId}`, {
       method: 'DELETE'
     })
-      .then(res => {
-        if (!res.ok) {
-          throw new Error(`HTTP error! status: ${res.status}`);
-        }
-        return res.json();
-      })
+      .then(handleFetchResponse)
       .then(data => {
         alert('Schedule deleted successfully!');
         fetchData();
@@ -1648,12 +1704,7 @@ const toLocalInputFromDate = (d) => {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(scheduleData)
     })
-      .then(res => {
-        if (!res.ok) {
-          throw new Error(`HTTP error! status: ${res.status}`);
-        }
-        return res.json();
-      })
+      .then(handleFetchResponse)
       .then(data => {
         alert('Schedule updated successfully!');
         setEditingSchedule(null);
@@ -1675,12 +1726,7 @@ const toLocalInputFromDate = (d) => {
     fetch(`http://localhost:9393/prerolls/${prerollId}`, {
       method: 'DELETE'
     })
-      .then(res => {
-        if (!res.ok) {
-          throw new Error(`HTTP error! status: ${res.status}`);
-        }
-        return res.json();
-      })
+      .then(handleFetchResponse)
       .then(data => {
         alert('Preroll deleted successfully!');
         fetchData();
@@ -1734,12 +1780,7 @@ const toLocalInputFromDate = (d) => {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload)
     })
-      .then(res => {
-        if (!res.ok) {
-          throw new Error(`HTTP error! status: ${res.status}`);
-        }
-        return res.json();
-      })
+      .then(handleFetchResponse)
       .then(() => {
         alert('Preroll updated successfully!');
         setEditingPreroll(null);
@@ -1760,7 +1801,12 @@ const toLocalInputFromDate = (d) => {
     })
       .then(res => {
         if (!res.ok) {
-          throw new Error(`HTTP error! status: ${res.status}`);
+          // Try to extract error detail from response
+          return res.json().then(errData => {
+            throw new Error(errData.detail || `HTTP error! status: ${res.status}`);
+          }).catch(() => {
+            throw new Error(`HTTP error! status: ${res.status}`);
+          });
         }
         return res.json();
       })
@@ -2675,78 +2721,6 @@ services:
         )}
       </div>
 
-      {editingPreroll && (
-        <Modal
-          title="Edit Preroll"
-          onClose={() => { setEditingPreroll(null); setEditForm({ display_name: '', new_filename: '', tags: '', category_id: '', category_ids: [], description: '' }); }}
-        >
-          <form onSubmit={handleUpdatePreroll}>
-            <div className="nx-form-grid">
-              <div className="nx-field">
-                <label className="nx-label">Display Name</label>
-                <input
-                  className="nx-input"
-                  type="text"
-                  placeholder="Optional friendly name"
-                  value={editForm.display_name}
-                  onChange={(e) => setEditForm({ ...editForm, display_name: e.target.value })}
-                />
-              </div>
-              <div className="nx-field">
-                <label className="nx-label">New File Name</label>
-                <input
-                  className="nx-input"
-                  type="text"
-                  placeholder="Optional rename on disk (extension optional)"
-                  value={editForm.new_filename}
-                  onChange={(e) => setEditForm({ ...editForm, new_filename: e.target.value })}
-                />
-              </div>
-              <div className="nx-field nx-span-2">
-                <CategoryPicker
-                  categories={categories}
-                  primaryId={editForm.category_id}
-                  secondaryIds={editForm.category_ids}
-                  onChange={(primary, secondary) => setEditForm({ ...editForm, category_id: primary, category_ids: secondary })}
-                  onCreateCategory={createCategoryInline}
-                  label="Categories"
-                  placeholder="Search categories…"
-                />
-              </div>
-              <div className="nx-field">
-                <label className="nx-label">Tags</label>
-                <input
-                  className="nx-input"
-                  type="text"
-                  placeholder="Comma separated"
-                  value={editForm.tags}
-                  onChange={(e) => setEditForm({ ...editForm, tags: e.target.value })}
-                />
-              </div>
-              <div className="nx-field nx-span-2">
-                <label className="nx-label">Description</label>
-                <textarea
-                  className="nx-textarea"
-                  placeholder="Optional details"
-                  value={editForm.description}
-                  onChange={(e) => setEditForm({ ...editForm, description: e.target.value })}
-                  rows="4"
-                />
-              </div>
-            </div>
-            <div className="nx-actions">
-              <button type="submit" className="button">Save Changes</button>
-              <button
-                type="button"
-                className="button-secondary"
-                onClick={() => { setEditingPreroll(null); setEditForm({ display_name: '', new_filename: '', tags: '', category_id: '', category_ids: [], description: '' }); }}
-              >
-                Cancel
-              </button>
-            </div>
-          </form>
-        </Modal>
-      )}
       <div className="card">
         <div className="prerolls-header">
           <h2>Prerolls</h2>
@@ -3100,49 +3074,54 @@ services:
   <div className="toolbar-group">
     <label className="control-label">View</label>
     <select className="nx-select" value={calendarMode} onChange={(e) => setCalendarMode(e.target.value)}>
+      <option value="week">Week</option>
       <option value="month">Month</option>
       <option value="year">Year</option>
     </select>
   </div>
 
-  {calendarMode === 'month' && (
+  {calendarMode === 'week' && (
     <>
-      <div className="toolbar-group">
-        <label className="control-label">Month</label>
-        <select className="nx-select" value={calendarMonth} onChange={(e) => setCalendarMonth(parseInt(e.target.value, 10))}>
-          {[1,2,3,4,5,6,7,8,9,10,11,12].map(m => (
-            <option key={m} value={m}>{new Date(2000, m - 1, 1).toLocaleString(undefined, { month: 'long' })}</option>
-          ))}
-        </select>
-      </div>
-
-      <div className="toolbar-group">
-        <label className="control-label">Year</label>
-        <input
-          className="nx-input"
-          type="number"
-          value={calendarYear}
-          onChange={(e) => setCalendarYear(parseInt(e.target.value, 10) || calendarYear)}
-          style={{ width: 110 }}
-        />
-      </div>
-
       <div className="toolbar-group">
         <div className="view-toggle">
           <button
             type="button"
             className="view-btn"
-            onClick={() => { let m = calendarMonth - 1; let y = calendarYear; if (m < 1) { m = 12; y--; } setCalendarMonth(m); setCalendarYear(y); }}
-            title="Previous Month"
+            onClick={() => { 
+              const prev = new Date(calendarWeekStart);
+              prev.setDate(prev.getDate() - 7);
+              setCalendarWeekStart(prev);
+            }}
+            title="Previous Week"
+            style={{ padding: '0.5rem 1rem', fontWeight: 500 }}
           >
             <span className="view-icon">◀</span>
-            Prev
+            Previous
+          </button>
+          <button
+            type="button"
+            className="button"
+            onClick={() => { 
+              const now = new Date();
+              const day = now.getDay();
+              const diff = now.getDate() - day;
+              setCalendarWeekStart(new Date(now.getFullYear(), now.getMonth(), diff));
+            }}
+            title="Go to Current Week"
+            style={{ padding: '0.5rem 1.5rem', fontWeight: 600, minWidth: '120px' }}
+          >
+            This Week
           </button>
           <button
             type="button"
             className="view-btn"
-            onClick={() => { let m = calendarMonth + 1; let y = calendarYear; if (m > 12) { m = 1; y++; } setCalendarMonth(m); setCalendarYear(y); }}
-            title="Next Month"
+            onClick={() => { 
+              const next = new Date(calendarWeekStart);
+              next.setDate(next.getDate() + 7);
+              setCalendarWeekStart(next);
+            }}
+            title="Next Week"
+            style={{ padding: '0.5rem 1rem', fontWeight: 500 }}
           >
             Next
             <span className="view-icon">▶</span>
@@ -3152,21 +3131,477 @@ services:
     </>
   )}
 
+  {calendarMode === 'month' && (
+    <>
+      <div className="toolbar-group">
+        <div className="view-toggle">
+          <button
+            type="button"
+            className="view-btn"
+            onClick={() => { let m = calendarMonth - 1; let y = calendarYear; if (m < 1) { m = 12; y--; } setCalendarMonth(m); setCalendarYear(y); }}
+            title="Previous Month"
+            style={{ padding: '0.5rem 1rem', fontWeight: 500 }}
+          >
+            <span className="view-icon">◀</span>
+            Previous
+          </button>
+          <button
+            type="button"
+            className="button"
+            onClick={() => { 
+              const now = new Date(); 
+              setCalendarMonth(now.getMonth() + 1); 
+              setCalendarYear(now.getFullYear()); 
+            }}
+            title="Go to Current Month"
+            style={{ padding: '0.5rem 1.5rem', fontWeight: 600, minWidth: '120px' }}
+          >
+            Today
+          </button>
+          <button
+            type="button"
+            className="view-btn"
+            onClick={() => { let m = calendarMonth + 1; let y = calendarYear; if (m > 12) { m = 1; y++; } setCalendarMonth(m); setCalendarYear(y); }}
+            title="Next Month"
+            style={{ padding: '0.5rem 1rem', fontWeight: 500 }}
+          >
+            Next
+            <span className="view-icon">▶</span>
+          </button>
+        </div>
+      </div>
+
+      <div className="toolbar-group" style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+          <label className="control-label" style={{ fontSize: '0.75rem', fontWeight: 600 }}>Month</label>
+          <select 
+            className="nx-select" 
+            value={calendarMonth} 
+            onChange={(e) => setCalendarMonth(parseInt(e.target.value, 10))}
+            style={{ minWidth: '150px', padding: '0.5rem' }}
+          >
+            {[1,2,3,4,5,6,7,8,9,10,11,12].map(m => (
+              <option key={m} value={m}>{new Date(2000, m - 1, 1).toLocaleString(undefined, { month: 'long' })}</option>
+            ))}
+          </select>
+        </div>
+
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+          <label className="control-label" style={{ fontSize: '0.75rem', fontWeight: 600 }}>Year</label>
+          <input
+            className="nx-input"
+            type="number"
+            value={calendarYear}
+            onChange={(e) => setCalendarYear(parseInt(e.target.value, 10) || calendarYear)}
+            style={{ width: 110, padding: '0.5rem' }}
+          />
+        </div>
+
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+          <label className="control-label" style={{ fontSize: '0.75rem', fontWeight: 600 }}>Display</label>
+          <select 
+            className="nx-select" 
+            value={calendarMonthView} 
+            onChange={(e) => setCalendarMonthView(e.target.value)}
+            style={{ minWidth: '120px', padding: '0.5rem' }}
+          >
+            <option value="timeline">Timeline</option>
+            <option value="grid">Grid</option>
+          </select>
+        </div>
+      </div>
+    </>
+  )}
+
   {calendarMode === 'year' && (
-    <div className="toolbar-group">
-      <label className="control-label">Year</label>
-      <input
-        className="nx-input"
-        type="number"
-        value={calendarYear}
-        onChange={(e) => setCalendarYear(parseInt(e.target.value, 10) || calendarYear)}
-        style={{ width: 110 }}
-      />
+    <div className="toolbar-group" style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
+      <div className="view-toggle">
+        <button
+          type="button"
+          className="view-btn"
+          onClick={() => setCalendarYear(calendarYear - 1)}
+          title="Previous Year"
+          style={{ padding: '0.5rem 1rem', fontWeight: 500 }}
+        >
+          <span className="view-icon">◀</span>
+          {calendarYear - 1}
+        </button>
+        <button
+          type="button"
+          className="button"
+          onClick={() => setCalendarYear(new Date().getFullYear())}
+          title="Go to Current Year"
+          style={{ padding: '0.5rem 1.5rem', fontWeight: 600, minWidth: '120px' }}
+        >
+          {new Date().getFullYear()}
+        </button>
+        <button
+          type="button"
+          className="view-btn"
+          onClick={() => setCalendarYear(calendarYear + 1)}
+          title="Next Year"
+          style={{ padding: '0.5rem 1rem', fontWeight: 500 }}
+        >
+          {calendarYear + 1}
+          <span className="view-icon">▶</span>
+        </button>
+      </div>
+
+      <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+        <label className="control-label" style={{ fontSize: '0.75rem', fontWeight: 600 }}>Custom Year</label>
+        <input
+          className="nx-input"
+          type="number"
+          value={calendarYear}
+          onChange={(e) => setCalendarYear(parseInt(e.target.value, 10) || calendarYear)}
+          style={{ width: 110, padding: '0.5rem' }}
+        />
+      </div>
     </div>
   )}
 </div>
 <div style={{ display: showCalendar ? 'block' : 'none' }}>
-  {calendarMode === 'month' ? (() => {
+  {calendarMode === 'week' ? (() => {
+    // Week view with continuous schedule bars
+    const days = [];
+    for (let i = 0; i < 7; i++) {
+      const d = new Date(calendarWeekStart);
+      d.setDate(calendarWeekStart.getDate() + i);
+      days.push(d);
+    }
+
+    const palette = ['#f94144','#f3722c','#f8961e','#f9844a','#f9c74f','#90be6d','#43aa8b','#577590','#9b5de5','#f15bb5'];
+    const catMap = new Map((categories || []).map((c, idx) => [c.id, { name: c.name, color: palette[idx % palette.length] }]));
+
+    const normalizeDay = (iso) => {
+      if (!iso) return null;
+      const d = new Date(ensureUtcIso(iso));
+      return new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
+    };
+
+    const isScheduleActiveOnDay = (schedule, dayTime) => {
+      if (!schedule.start_date) return false;
+      const dayDate = new Date(dayTime);
+      
+      if (schedule.type === 'yearly' || schedule.type === 'holiday') {
+        const startDateStr = schedule.start_date.includes('T') ? schedule.start_date.split('T')[0] : schedule.start_date;
+        const endDateStr = schedule.end_date ? (schedule.end_date.includes('T') ? schedule.end_date.split('T')[0] : schedule.end_date) : startDateStr;
+        const [startYear, startMonth, startDay] = startDateStr.split('-').map(Number);
+        const [endYear, endMonth, endDay] = endDateStr.split('-').map(Number);
+        const schedStartMonth = startMonth - 1;
+        const schedStartDay = startDay;
+        const schedEndMonth = endMonth - 1;
+        const schedEndDay = endDay;
+        const dayMonth = dayDate.getMonth();
+        const dayDay = dayDate.getDate();
+        
+        if (schedStartMonth === schedEndMonth) {
+          return dayMonth === schedStartMonth && dayDay >= schedStartDay && dayDay <= schedEndDay;
+        } else {
+          return (dayMonth === schedStartMonth && dayDay >= schedStartDay) ||
+                 (dayMonth === schedEndMonth && dayDay <= schedEndDay) ||
+                 (schedStartMonth < schedEndMonth && dayMonth > schedStartMonth && dayMonth < schedEndMonth) ||
+                 (schedStartMonth > schedEndMonth && (dayMonth > schedStartMonth || dayMonth < schedEndMonth));
+        }
+      }
+      
+      const sDay = normalizeDay(schedule.start_date);
+      const eDay = schedule.end_date ? normalizeDay(schedule.end_date) : sDay;
+      return dayTime >= sDay && dayTime <= eDay;
+    };
+
+    const scheds = (schedules || []).map(s => ({
+      ...s,
+      cat: catMap.get(s.category_id) || { name: (s.category?.name || 'Unknown'), color: '#6c757d' }
+    }));
+
+    const todayTime = new Date(new Date().getFullYear(), new Date().getMonth(), new Date().getDate()).getTime();
+
+    return (
+      <div className="card" style={{ padding: '1.5rem' }}>
+        <h2 style={{ 
+          marginTop: 0, 
+          marginBottom: '1.5rem',
+          fontSize: '1.8rem',
+          fontWeight: 600,
+          color: 'var(--text-color)'
+        }}>
+          Week of {days[0].toLocaleDateString(undefined, { month: 'long', day: 'numeric', year: 'numeric' })}
+        </h2>
+        
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+          {scheds.map((sched, idx) => {
+            // Find continuous spans for this schedule across the week
+            const spans = [];
+            let currentSpan = null;
+            
+            days.forEach((day, dayIdx) => {
+              const t = new Date(day.getFullYear(), day.getMonth(), day.getDate()).getTime();
+              const isActive = isScheduleActiveOnDay(sched, t);
+              
+              if (isActive) {
+                if (!currentSpan) {
+                  currentSpan = { start: dayIdx, end: dayIdx };
+                } else {
+                  currentSpan.end = dayIdx;
+                }
+              } else {
+                if (currentSpan) {
+                  spans.push(currentSpan);
+                  currentSpan = null;
+                }
+              }
+            });
+            if (currentSpan) spans.push(currentSpan);
+            
+            if (spans.length === 0) return null;
+            
+            return (
+              <div key={idx} style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                <div style={{ 
+                  minWidth: '150px', 
+                  fontWeight: 500, 
+                  fontSize: '0.9rem',
+                  color: 'var(--text-color)'
+                }}>{sched.name}</div>
+                <div style={{ flex: 1, position: 'relative', height: '32px', display: 'flex' }}>
+                  {days.map((day, dayIdx) => (
+                    <div key={dayIdx} style={{ 
+                      flex: 1, 
+                      borderLeft: dayIdx === 0 ? 'none' : '1px solid var(--border-color)',
+                      position: 'relative'
+                    }} />
+                  ))}
+                  {spans.map((span, spanIdx) => {
+                    const width = ((span.end - span.start + 1) / 7) * 100;
+                    const left = (span.start / 7) * 100;
+                    return (
+                      <div key={spanIdx} style={{
+                        position: 'absolute',
+                        left: `${left}%`,
+                        width: `${width}%`,
+                        height: '100%',
+                        backgroundColor: sched.cat.color,
+                        borderRadius: '4px',
+                        padding: '4px 8px',
+                        color: '#fff',
+                        fontSize: '0.75rem',
+                        fontWeight: 500,
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        boxShadow: '0 2px 4px rgba(0,0,0,0.2)'
+                      }}>
+                        {sched.cat.name}
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            );
+          }).filter(Boolean)}
+        </div>
+        
+        {/* Day labels at bottom */}
+        <div style={{ 
+          display: 'grid', 
+          gridTemplateColumns: 'repeat(7, 1fr)', 
+          gap: '8px', 
+          marginTop: '1rem',
+          marginLeft: '158px'
+        }}>
+          {days.map((day, idx) => {
+            const isToday = new Date(day.getFullYear(), day.getMonth(), day.getDate()).getTime() === todayTime;
+            return (
+              <div key={idx} style={{ 
+                textAlign: 'center',
+                fontWeight: isToday ? 700 : 500,
+                fontSize: '0.85rem',
+                color: isToday ? 'var(--button-bg)' : 'var(--text-color)',
+                padding: '8px',
+                borderRadius: '4px',
+                backgroundColor: isToday ? (darkMode ? 'rgba(59, 130, 246, 0.15)' : 'rgba(59, 130, 246, 0.1)') : 'transparent'
+              }}>
+                <div>{day.toLocaleDateString(undefined, { weekday: 'short' })}</div>
+                <div style={{ fontSize: '0.75rem', opacity: 0.7 }}>{day.getDate()}</div>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    );
+  })() : calendarMode === 'month' ? (calendarMonthView === 'timeline' ? (() => {
+    // Timeline view for month - shows continuous bars like week view
+    const monthIndex = calendarMonth - 1;
+    const daysInMonth = new Date(calendarYear, monthIndex + 1, 0).getDate();
+    const days = [];
+    for (let i = 1; i <= daysInMonth; i++) {
+      days.push(new Date(calendarYear, monthIndex, i));
+    }
+
+    const palette = ['#f94144','#f3722c','#f8961e','#f9844a','#f9c74f','#90be6d','#43aa8b','#577590','#9b5de5','#f15bb5'];
+    const catMap = new Map((categories || []).map((c, idx) => [c.id, { name: c.name, color: palette[idx % palette.length] }]));
+
+    const normalizeDay = (iso) => {
+      if (!iso) return null;
+      const d = new Date(ensureUtcIso(iso));
+      return new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
+    };
+
+    const isScheduleActiveOnDay = (schedule, dayTime) => {
+      if (!schedule.start_date) return false;
+      const dayDate = new Date(dayTime);
+      
+      if (schedule.type === 'yearly' || schedule.type === 'holiday') {
+        const startDateStr = schedule.start_date.includes('T') ? schedule.start_date.split('T')[0] : schedule.start_date;
+        const endDateStr = schedule.end_date ? (schedule.end_date.includes('T') ? schedule.end_date.split('T')[0] : schedule.end_date) : startDateStr;
+        const [startYear, startMonth, startDay] = startDateStr.split('-').map(Number);
+        const [endYear, endMonth, endDay] = endDateStr.split('-').map(Number);
+        const schedStartMonth = startMonth - 1;
+        const schedStartDay = startDay;
+        const schedEndMonth = endMonth - 1;
+        const schedEndDay = endDay;
+        const dayMonth = dayDate.getMonth();
+        const dayDay = dayDate.getDate();
+        
+        if (schedStartMonth === schedEndMonth) {
+          return dayMonth === schedStartMonth && dayDay >= schedStartDay && dayDay <= schedEndDay;
+        } else {
+          return (dayMonth === schedStartMonth && dayDay >= schedStartDay) ||
+                 (dayMonth === schedEndMonth && dayDay <= schedEndDay) ||
+                 (schedStartMonth < schedEndMonth && dayMonth > schedStartMonth && dayMonth < schedEndMonth) ||
+                 (schedStartMonth > schedEndMonth && (dayMonth > schedStartMonth || dayMonth < schedEndMonth));
+        }
+      }
+      
+      const sDay = normalizeDay(schedule.start_date);
+      const eDay = schedule.end_date ? normalizeDay(schedule.end_date) : sDay;
+      return dayTime >= sDay && dayTime <= eDay;
+    };
+
+    const scheds = (schedules || []).map(s => ({
+      ...s,
+      cat: catMap.get(s.category_id) || { name: (s.category?.name || 'Unknown'), color: '#6c757d' }
+    }));
+
+    const todayTime = new Date(new Date().getFullYear(), new Date().getMonth(), new Date().getDate()).getTime();
+    const monthName = new Date(calendarYear, monthIndex, 1).toLocaleString(undefined, { month: 'long' });
+
+    return (
+      <div className="card" style={{ padding: '1.5rem' }}>
+        <h2 style={{ 
+          marginTop: 0, 
+          marginBottom: '1.5rem',
+          fontSize: '1.8rem',
+          fontWeight: 600,
+          color: 'var(--text-color)'
+        }}>
+          {monthName} {calendarYear}
+        </h2>
+        
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+          {scheds.map((sched, idx) => {
+            // Find continuous spans for this schedule across the month
+            const spans = [];
+            let currentSpan = null;
+            
+            days.forEach((day, dayIdx) => {
+              const t = new Date(day.getFullYear(), day.getMonth(), day.getDate()).getTime();
+              const isActive = isScheduleActiveOnDay(sched, t);
+              
+              if (isActive) {
+                if (!currentSpan) {
+                  currentSpan = { start: dayIdx, end: dayIdx };
+                } else {
+                  currentSpan.end = dayIdx;
+                }
+              } else {
+                if (currentSpan) {
+                  spans.push(currentSpan);
+                  currentSpan = null;
+                }
+              }
+            });
+            if (currentSpan) spans.push(currentSpan);
+            
+            if (spans.length === 0) return null;
+            
+            return (
+              <div key={idx} style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                <div style={{ 
+                  minWidth: '150px', 
+                  fontWeight: 500, 
+                  fontSize: '0.9rem',
+                  color: 'var(--text-color)'
+                }}>{sched.name}</div>
+                <div style={{ flex: 1, position: 'relative', height: '32px', display: 'flex', border: '1px solid var(--border-color)', borderRadius: '4px' }}>
+                  {days.map((day, dayIdx) => (
+                    <div key={dayIdx} style={{ 
+                      flex: 1, 
+                      borderLeft: dayIdx === 0 ? 'none' : '1px solid var(--border-color)',
+                      position: 'relative'
+                    }} />
+                  ))}
+                  {spans.map((span, spanIdx) => {
+                    const width = ((span.end - span.start + 1) / daysInMonth) * 100;
+                    const left = (span.start / daysInMonth) * 100;
+                    return (
+                      <div key={spanIdx} style={{
+                        position: 'absolute',
+                        left: `${left}%`,
+                        width: `${width}%`,
+                        height: '100%',
+                        backgroundColor: sched.cat.color,
+                        borderRadius: '4px',
+                        padding: '4px 8px',
+                        color: '#fff',
+                        fontSize: '0.75rem',
+                        fontWeight: 500,
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        boxShadow: '0 2px 4px rgba(0,0,0,0.2)'
+                      }}>
+                        {sched.cat.name}
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            );
+          }).filter(Boolean)}
+        </div>
+        
+        {/* Day labels at bottom - show every 5th day */}
+        <div style={{ 
+          display: 'flex',
+          justifyContent: 'space-between',
+          marginTop: '1rem',
+          marginLeft: '158px',
+          paddingRight: '8px'
+        }}>
+          {[1, 5, 10, 15, 20, 25, daysInMonth].map((dayNum) => {
+            const day = new Date(calendarYear, monthIndex, dayNum);
+            const isToday = new Date(day.getFullYear(), day.getMonth(), day.getDate()).getTime() === todayTime;
+            return (
+              <div key={dayNum} style={{ 
+                textAlign: 'center',
+                fontWeight: isToday ? 700 : 500,
+                fontSize: '0.75rem',
+                color: isToday ? 'var(--button-bg)' : 'var(--text-secondary)',
+                padding: '4px',
+                borderRadius: '4px',
+                backgroundColor: isToday ? (darkMode ? 'rgba(59, 130, 246, 0.15)' : 'rgba(59, 130, 246, 0.1)') : 'transparent'
+              }}>
+                {dayNum}
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    );
+  })() : (() => {
+    // Grid view for month - original implementation with conflict indicators
     const monthIndex = calendarMonth - 1;
     const startOfMonth = new Date(calendarYear, monthIndex, 1);
     const start = new Date(startOfMonth);
@@ -3188,142 +3623,668 @@ services:
       return new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
     };
 
+    // Helper to check if a day matches a schedule, accounting for yearly repeats
+    const isScheduleActiveOnDay = (schedule, dayTime) => {
+      if (!schedule.start_date) return false;
+      
+      const dayDate = new Date(dayTime);
+      
+      // For yearly/holiday schedules, check if the month/day matches
+      if (schedule.type === 'yearly' || schedule.type === 'holiday') {
+        // Parse dates using UTC to avoid timezone issues
+        const startDateStr = schedule.start_date.includes('T') ? schedule.start_date.split('T')[0] : schedule.start_date;
+        const endDateStr = schedule.end_date ? (schedule.end_date.includes('T') ? schedule.end_date.split('T')[0] : schedule.end_date) : startDateStr;
+        
+        const [startYear, startMonth, startDay] = startDateStr.split('-').map(Number);
+        const [endYear, endMonth, endDay] = endDateStr.split('-').map(Number);
+        
+        // Use 0-indexed months for comparison (JavaScript Date uses 0-11)
+        const schedStartMonth = startMonth - 1;
+        const schedStartDay = startDay;
+        const schedEndMonth = endMonth - 1;
+        const schedEndDay = endDay;
+        
+        const dayMonth = dayDate.getMonth();
+        const dayDay = dayDate.getDate();
+        
+        // Check if day falls within the recurring month/day range
+        if (schedStartMonth === schedEndMonth) {
+          // Same month: simple day range check
+          return dayMonth === schedStartMonth && dayDay >= schedStartDay && dayDay <= schedEndDay;
+        } else {
+          // Cross-month range (e.g., Dec 20 - Jan 5)
+          return (dayMonth === schedStartMonth && dayDay >= schedStartDay) ||
+                 (dayMonth === schedEndMonth && dayDay <= schedEndDay) ||
+                 (schedStartMonth < schedEndMonth && dayMonth > schedStartMonth && dayMonth < schedEndMonth) ||
+                 (schedStartMonth > schedEndMonth && (dayMonth > schedStartMonth || dayMonth < schedEndMonth));
+        }
+      }
+      
+      // For non-repeating schedules, use standard date range check
+      const sDay = normalizeDay(schedule.start_date);
+      const eDay = schedule.end_date ? normalizeDay(schedule.end_date) : sDay;
+      return dayTime >= sDay && dayTime <= eDay;
+    };
+
     const scheds = (schedules || []).map(s => ({
       ...s,
-      sDay: normalizeDay(s.start_date),
-      eDay: normalizeDay(s.end_date) ?? normalizeDay(s.start_date),
       cat: catMap.get(s.category_id) || { name: (s.category?.name || 'Unknown'), color: '#6c757d' }
     }));
 
-    const byDay = new Map(); // dayTime -> Set of cat ids
+    // Track both schedules and their categories per day
+    const byDay = new Map(); // dayTime -> { schedules: Set<schedule>, isFallback: boolean, hasConflict: boolean }
     days.forEach(d => {
       const t = new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
-      byDay.set(t, new Set());
+      byDay.set(t, { schedules: new Set(), isFallback: false, hasConflict: false });
     });
 
+    // Map schedules to days, accounting for yearly repeats
     for (const s of scheds) {
-      if (s.sDay == null || s.eDay == null) continue;
+      if (!s.start_date) continue;
       for (const d of days) {
         const t = new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
-        if (t >= s.sDay && t <= s.eDay) {
-          const set = byDay.get(t);
-          if (set) set.add(s.category_id);
+        if (isScheduleActiveOnDay(s, t)) {
+          const dayData = byDay.get(t);
+          if (dayData) dayData.schedules.add(s);
         }
+      }
+    }
+    
+    // Detect conflicts - multiple non-fallback schedules on same day
+    for (const [dayTime, dayData] of byDay.entries()) {
+      const nonFallbackSchedules = Array.from(dayData.schedules).filter(s => !s.fallback_category_id);
+      if (nonFallbackSchedules.length > 1) {
+        dayData.hasConflict = true;
+      }
+    }
+    
+    // Show fallback categories on days with no active schedules
+    const fallbackSchedules = (schedules || []).filter(s => s.fallback_category_id);
+    
+    for (const [dayTime, dayData] of byDay.entries()) {
+      if (dayData.schedules.size === 0 && fallbackSchedules.length > 0) {
+        // No active schedules on this day, show fallbacks
+        dayData.isFallback = true;
+        fallbackSchedules.forEach(s => {
+          // Create pseudo-schedule for fallback
+          const fallbackSched = {
+            ...s,
+            category_id: s.fallback_category_id,
+            name: `${s.name} (Fallback)`,
+            cat: catMap.get(s.fallback_category_id) || { name: 'Fallback', color: '#6c757d' }
+          };
+          dayData.schedules.add(fallbackSched);
+        });
       }
     }
 
     const monthName = startOfMonth.toLocaleString(undefined, { month: 'long', year: 'numeric' });
+    const today = new Date();
+    const todayTime = new Date(today.getFullYear(), today.getMonth(), today.getDate()).getTime();
 
     return (
-      <div className="card" style={{ marginBottom: '1rem' }}>
-        <h2 style={{ marginTop: 0 }}>{monthName}</h2>
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', gap: '4px' }}>
-          {['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].map(dow => (
-            <div key={dow} style={{ fontWeight: 'bold', textAlign: 'center', padding: '4px 0' }}>{dow}</div>
+      <div className="card" style={{ marginBottom: '1rem', padding: '1.5rem' }}>
+        <h2 style={{ 
+          marginTop: 0, 
+          marginBottom: '1.5rem',
+          fontSize: '1.8rem',
+          fontWeight: 600,
+          color: 'var(--text-color)',
+          borderBottom: '2px solid var(--border-color)',
+          paddingBottom: '0.75rem'
+        }}>{monthName}</h2>
+        
+        {/* Day of week headers */}
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', gap: '8px', marginBottom: '8px' }}>
+          {['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'].map(dow => (
+            <div key={dow} style={{ 
+              fontWeight: 600, 
+              textAlign: 'center', 
+              padding: '10px 0',
+              fontSize: '0.85rem',
+              color: 'var(--text-secondary)',
+              textTransform: 'uppercase',
+              letterSpacing: '0.5px'
+            }}>{dow.slice(0, 3)}</div>
           ))}
+        </div>
+        
+        {/* Calendar grid */}
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', gap: '8px' }}>
           {days.map((d, idx) => {
             const inMonth = d.getMonth() === monthIndex;
             const t = new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
-            const cats = Array.from(byDay.get(t) || []);
+            const dayData = byDay.get(t) || { schedules: new Set(), isFallback: false, hasConflict: false };
+            const schedArray = Array.from(dayData.schedules);
+            const isToday = t === todayTime;
+            const isWeekend = d.getDay() === 0 || d.getDay() === 6;
+            
+            // Get unique categories for this day
+            const uniqueCats = new Map();
+            schedArray.forEach(s => {
+              if (!uniqueCats.has(s.category_id)) {
+                uniqueCats.set(s.category_id, { cat: s.cat, schedules: [] });
+              }
+              uniqueCats.get(s.category_id).schedules.push(s.name);
+            });
+            const catEntries = Array.from(uniqueCats.entries());
+            
+            // Determine which schedule would win in a conflict (mimics backend logic)
+            const nonFallbackSchedules = schedArray.filter(s => !s.fallback_category_id && s.start_date);
+            let winningSchedule = null;
+            if (nonFallbackSchedules.length > 0) {
+              // Sort by: ends soonest, then started earliest, then lowest ID
+              const sorted = [...nonFallbackSchedules].sort((a, b) => {
+                const endA = a.end_date ? new Date(a.end_date).getTime() : Number.MAX_SAFE_INTEGER;
+                const endB = b.end_date ? new Date(b.end_date).getTime() : Number.MAX_SAFE_INTEGER;
+                if (endA !== endB) return endA - endB;
+                
+                const startA = new Date(a.start_date).getTime();
+                const startB = new Date(b.start_date).getTime();
+                if (startA !== startB) return startA - startB;
+                
+                return a.id - b.id;
+              });
+              winningSchedule = sorted[0];
+            }
+            
             return (
               <div key={idx} style={{
-                border: '1px solid var(--border-color)',
-                backgroundColor: inMonth ? 'var(--card-bg)' : 'rgba(0,0,0,0.03)',
-                minHeight: 72,
-                padding: '4px',
-                borderRadius: '4px',
+                border: isToday 
+                  ? '2px solid var(--button-bg)' 
+                  : (dayData.hasConflict 
+                      ? '2px solid #ff9800' 
+                      : '1px solid var(--border-color)'),
+                backgroundColor: inMonth 
+                  ? (isWeekend 
+                      ? (darkMode ? 'rgba(255,255,255,0.03)' : 'rgba(0,0,0,0.03)') 
+                      : 'var(--card-bg)')
+                  : (darkMode ? 'rgba(255,255,255,0.02)' : 'rgba(0,0,0,0.02)'),
+                minHeight: 100,
+                padding: '8px',
+                borderRadius: '8px',
                 position: 'relative',
-                overflow: 'hidden'
+                overflow: 'hidden',
+                transition: 'all 0.2s ease',
+                cursor: 'default',
+                boxShadow: isToday 
+                  ? '0 0 12px rgba(59, 130, 246, 0.3)' 
+                  : (dayData.hasConflict ? '0 0 8px rgba(255, 152, 0, 0.3)' : 'none')
+              }}
+              onMouseEnter={(e) => {
+                if (inMonth) {
+                  e.currentTarget.style.transform = 'translateY(-2px)';
+                  e.currentTarget.style.boxShadow = '0 4px 12px var(--shadow)';
+                }
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.transform = 'translateY(0)';
+                e.currentTarget.style.boxShadow = isToday ? '0 0 12px rgba(59, 130, 246, 0.3)' : 'none';
               }}>
-                <div style={{ position: 'absolute', top: 4, right: 6, fontSize: '0.8rem', color: '#666' }}>{d.getDate()}</div>
-                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px', marginTop: '18px' }}>
-                  {cats.slice(0, 4).map((cid, i) => {
-                    const cat = catMap.get(cid) || { name: 'Unknown', color: '#6c757d' };
+                {/* Conflict warning indicator */}
+                {dayData.hasConflict && (
+                  <div 
+                    title={`⚠️ Schedule Conflict\nMultiple schedules active on this day.\nWinning schedule: ${winningSchedule?.name || 'Unknown'}`}
+                    style={{ 
+                      position: 'absolute', 
+                      top: 8, 
+                      left: 8, 
+                      fontSize: '1rem',
+                      color: '#ff9800',
+                      fontWeight: 700,
+                      cursor: 'help',
+                      textShadow: darkMode ? '0 1px 3px rgba(0,0,0,0.5)' : '0 1px 2px rgba(0,0,0,0.3)'
+                    }}>⚠️</div>
+                )}
+                
+                <div style={{ 
+                  position: 'absolute', 
+                  top: 8, 
+                  right: 8, 
+                  fontSize: '0.95rem', 
+                  fontWeight: isToday ? 700 : 600,
+                  color: isToday ? 'var(--button-bg)' : (inMonth ? 'var(--text-color)' : 'var(--text-muted)'),
+                  backgroundColor: isToday ? (darkMode ? 'rgba(59, 130, 246, 0.15)' : 'rgba(59, 130, 246, 0.1)') : 'transparent',
+                  padding: isToday ? '4px 8px' : '0',
+                  borderRadius: isToday ? '12px' : '0',
+                  minWidth: isToday ? '28px' : 'auto',
+                  textAlign: 'center'
+                }}>{d.getDate()}</div>
+                
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', marginTop: '32px' }}>
+                  {catEntries.slice(0, 3).map(([catId, data], i) => {
+                    const scheduleNames = data.schedules.join(', ');
+                    // Check if any of these schedules is the winning one
+                    const isWinner = winningSchedule && data.schedules.some(name => 
+                      name === winningSchedule.name || name === `${winningSchedule.name} (Fallback)`
+                    );
+                    
+                    let tooltipText = `${data.cat.name}${dayData.isFallback ? ' (Fallback)' : ''}\nSchedules: ${scheduleNames}`;
+                    if (dayData.hasConflict && isWinner) {
+                      tooltipText += '\n👑 This schedule takes priority';
+                    } else if (dayData.hasConflict && !dayData.isFallback) {
+                      tooltipText += '\n⚠️ Overridden by higher priority schedule';
+                    }
+                    
                     return (
-                      <span key={cid + '_' + i} title={cat.name} style={{
-                        backgroundColor: cat.color, color: '#fff', borderRadius: '3px',
-                        padding: '2px 4px', fontSize: '0.72rem', maxWidth: '100%', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis'
+                      <div 
+                        key={catId + '_' + i} 
+                        title={tooltipText} 
+                        style={{
+                        backgroundColor: dayData.isFallback ? 'transparent' : data.cat.color,
+                        border: dayData.isFallback ? `2px dashed ${data.cat.color}` : 'none',
+                        color: dayData.isFallback ? data.cat.color : '#fff', 
+                        borderRadius: '4px',
+                        padding: '4px 6px', 
+                        fontSize: '0.75rem',
+                        fontWeight: isWinner ? 600 : 500,
+                        whiteSpace: 'nowrap', 
+                        overflow: 'hidden', 
+                        textOverflow: 'ellipsis',
+                        boxShadow: dayData.isFallback 
+                          ? 'none' 
+                          : (isWinner && dayData.hasConflict 
+                              ? '0 2px 6px rgba(0,0,0,0.3), 0 0 0 2px rgba(255, 215, 0, 0.4)' 
+                              : '0 1px 3px rgba(0,0,0,0.2)'),
+                        opacity: dayData.isFallback 
+                          ? 0.8 
+                          : (dayData.hasConflict && !isWinner ? 0.6 : 1),
+                        position: 'relative'
                       }}>
-                        {cat.name}
-                      </span>
+                        {isWinner && dayData.hasConflict && <span style={{ marginRight: '4px' }}>👑</span>}
+                        {data.cat.name}
+                      </div>
                     );
                   })}
-                  {cats.length > 4 && (
-                    <span style={{ fontSize: '0.72rem', color: '#666' }}>+{cats.length - 4} more</span>
+                  {catEntries.length > 3 && (
+                    <div style={{ 
+                      fontSize: '0.7rem', 
+                      color: 'var(--text-muted)',
+                      fontWeight: 500,
+                      padding: '2px 6px',
+                      textAlign: 'center'
+                    }}>+{catEntries.length - 3} more</div>
                   )}
                 </div>
               </div>
             );
           })}
         </div>
-        <div style={{ marginTop: '8px', display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
-          {(categories || []).map((c, idx) => (
-            <span key={c.id} style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', fontSize: '0.85rem' }}>
-              <span style={{ width: 12, height: 12, backgroundColor: palette[idx % palette.length], display: 'inline-block', borderRadius: 2 }} />
-              {c.name}
-            </span>
-          ))}
+        
+        {/* Legend */}
+        <div style={{ 
+          marginTop: '1.5rem', 
+          paddingTop: '1.5rem',
+          borderTop: '1px solid var(--border-color)'
+        }}>
+          <div style={{ 
+            fontSize: '0.75rem', 
+            fontWeight: 600, 
+            textTransform: 'uppercase', 
+            letterSpacing: '0.5px',
+            color: 'var(--text-secondary)',
+            marginBottom: '0.75rem'
+          }}>Category Legend</div>
+          <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap' }}>
+            {(categories || []).map((c, idx) => (
+              <span key={c.id} style={{ 
+                display: 'inline-flex', 
+                alignItems: 'center', 
+                gap: '8px', 
+                fontSize: '0.875rem',
+                padding: '6px 12px',
+                borderRadius: '6px',
+                backgroundColor: darkMode ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.03)',
+                border: '1px solid var(--border-color)'
+              }}>
+                <span style={{ 
+                  width: 14, 
+                  height: 14, 
+                  backgroundColor: palette[idx % palette.length], 
+                  display: 'inline-block', 
+                  borderRadius: 3,
+                  boxShadow: '0 1px 3px rgba(0,0,0,0.3)'
+                }} />
+                <span style={{ fontWeight: 500 }}>{c.name}</span>
+              </span>
+            ))}
+          </div>
+          
+          {/* Legend indicators */}
+          <div style={{ marginTop: '1rem', display: 'flex', gap: '20px', flexWrap: 'wrap', fontSize: '0.8rem', color: 'var(--text-secondary)' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <div style={{ 
+                width: 40, 
+                height: 16, 
+                backgroundColor: palette[0],
+                borderRadius: 3
+              }} />
+              <span>Active Schedule</span>
+            </div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <div style={{ 
+                width: 40, 
+                height: 16, 
+                border: `2px dashed ${palette[0]}`,
+                borderRadius: 3,
+                backgroundColor: 'transparent'
+              }} />
+              <span>Fallback Category</span>
+            </div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <div style={{ 
+                width: 16, 
+                height: 16, 
+                backgroundColor: darkMode ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.05)',
+                borderRadius: 3
+              }} />
+              <span>Weekend</span>
+            </div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <div style={{ 
+                width: 16, 
+                height: 16, 
+                border: '2px solid var(--button-bg)',
+                borderRadius: 3,
+                backgroundColor: darkMode ? 'rgba(59, 130, 246, 0.15)' : 'rgba(59, 130, 246, 0.1)'
+              }} />
+              <span>Today</span>
+            </div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <div style={{ 
+                width: 16, 
+                height: 16, 
+                border: '2px solid #ff9800',
+                borderRadius: 3,
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                fontSize: '0.7rem'
+              }}>⚠️</div>
+              <span>Schedule Conflict (👑 = Active)</span>
+            </div>
+          </div>
         </div>
       </div>
     );
-  })() : (() => {
+  })()) : (() => {
+    // Year view
     const palette = ['#f94144','#f3722c','#f8961e','#f9844a','#f9c74f','#90be6d','#43aa8b','#577590','#9b5de5','#f15bb5'];
     const catMap = new Map((categories || []).map((c, idx) => [c.id, { name: c.name, color: palette[idx % palette.length] }]));
 
-    // Count scheduled days per month
-    const counts = Array.from({ length: 12 }, (_, m) => ({ month: m, cats: new Map() }));
+    // Count scheduled days per month and track conflicts
+    const counts = Array.from({ length: 12 }, (_, m) => ({ month: m, cats: new Map(), conflictDays: 0 }));
     const normalizeDay = (iso) => {
       if (!iso) return null;
       const d = new Date(ensureUtcIso(iso));
       return new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
     };
-    const yearStart = new Date(calendarYear, 0, 1).getTime();
-    const yearEnd = new Date(calendarYear, 11, 31).getTime();
-
-    for (const s of (schedules || [])) {
-      const sDay = normalizeDay(s.start_date);
-      const eDay = normalizeDay(s.end_date) ?? sDay;
-      if (sDay == null || eDay == null) continue;
-
-      // intersect with chosen year
-      const from = Math.max(sDay, yearStart);
-      const to = Math.min(eDay, yearEnd);
-      if (from > to) continue;
-
-      const catId = s.category_id;
-      for (let t = from; t <= to; t += 86400000) {
-        const d = new Date(t);
-        const m = d.getMonth();
+    
+    // Helper to check if a day matches a schedule (handles yearly repeats)
+    const isScheduleActiveOnDay = (schedule, dayTime) => {
+      if (!schedule.start_date) return false;
+      
+      const dayDate = new Date(dayTime);
+      
+      // For yearly/holiday schedules, check if the month/day matches
+      if (schedule.type === 'yearly' || schedule.type === 'holiday') {
+        // Parse dates using UTC to avoid timezone issues
+        const startDateStr = schedule.start_date.includes('T') ? schedule.start_date.split('T')[0] : schedule.start_date;
+        const endDateStr = schedule.end_date ? (schedule.end_date.includes('T') ? schedule.end_date.split('T')[0] : schedule.end_date) : startDateStr;
+        
+        const [startYear, startMonth, startDay] = startDateStr.split('-').map(Number);
+        const [endYear, endMonth, endDay] = endDateStr.split('-').map(Number);
+        
+        // Use 0-indexed months for comparison (JavaScript Date uses 0-11)
+        const schedStartMonth = startMonth - 1;
+        const schedStartDay = startDay;
+        const schedEndMonth = endMonth - 1;
+        const schedEndDay = endDay;
+        
+        const dayMonth = dayDate.getMonth();
+        const dayDay = dayDate.getDate();
+        
+        // Check if day falls within the recurring month/day range
+        if (schedStartMonth === schedEndMonth) {
+          // Same month: simple day range check
+          return dayMonth === schedStartMonth && dayDay >= schedStartDay && dayDay <= schedEndDay;
+        } else {
+          // Cross-month range (e.g., Dec 20 - Jan 5)
+          return (dayMonth === schedStartMonth && dayDay >= schedStartDay) ||
+                 (dayMonth === schedEndMonth && dayDay <= schedEndDay) ||
+                 (schedStartMonth < schedEndMonth && dayMonth > schedStartMonth && dayMonth < schedEndMonth) ||
+                 (schedStartMonth > schedEndMonth && (dayMonth > schedStartMonth || dayMonth < schedEndMonth));
+        }
+      }
+      
+      // For non-repeating schedules, use standard date range check
+      const sDay = normalizeDay(schedule.start_date);
+      const eDay = schedule.end_date ? normalizeDay(schedule.end_date) : sDay;
+      return dayTime >= sDay && dayTime <= eDay;
+    };
+    
+    // Iterate through each day of the year using proper date construction
+    for (let month = 0; month < 12; month++) {
+      const daysInMonth = new Date(calendarYear, month + 1, 0).getDate();
+      const map = counts[month].cats;
+      
+      for (let day = 1; day <= daysInMonth; day++) {
+        const d = new Date(calendarYear, month, day);
+        const t = d.getTime();
+        
+        let activeSchedulesForDay = 0;
+        
+        // Check each schedule to see if it's active on this day
+        for (const s of (schedules || [])) {
+          if (!s.start_date || !s.category_id) continue;
+          
+          const isActive = isScheduleActiveOnDay(s, t);
+          
+          if (isActive) {
+            map.set(s.category_id, (map.get(s.category_id) || 0) + 1);
+            // Only count non-fallback schedules for conflicts
+            if (!s.fallback_category_id) {
+              activeSchedulesForDay++;
+            }
+          }
+        }
+        
+        // Track if this day has conflicts (multiple active non-fallback schedules)
+        if (activeSchedulesForDay > 1) {
+          counts[month].conflictDays++;
+        }
+      }
+    }
+    
+    // Add fallback categories for days with no active schedules
+    const fallbackCats = new Set((schedules || [])
+      .map(s => s.fallback_category_id)
+      .filter(Boolean));
+    
+    if (fallbackCats.size > 0) {
+      for (let m = 0; m < 12; m++) {
+        const monthStart = new Date(calendarYear, m, 1).getTime();
+        const monthEnd = new Date(calendarYear, m + 1, 0).getTime();
         const map = counts[m].cats;
-        map.set(catId, (map.get(catId) || 0) + 1);
+        
+        let daysWithSchedules = 0;
+        for (const [catId, count] of map.entries()) {
+          if (!fallbackCats.has(catId)) {
+            daysWithSchedules += count;
+          }
+        }
+        
+        const daysInMonth = new Date(calendarYear, m + 1, 0).getDate();
+        const fallbackDays = daysInMonth - daysWithSchedules;
+        
+        if (fallbackDays > 0) {
+          fallbackCats.forEach(fcid => {
+            map.set(fcid, (map.get(fcid) || 0) + fallbackDays);
+          });
+        }
       }
     }
 
+    const currentMonth = new Date().getMonth();
+    const isCurrentYear = calendarYear === new Date().getFullYear();
+
     return (
-      <div className="card">
-        <h2 style={{ marginTop: 0 }}>{calendarYear}</h2>
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '8px' }}>
+      <div className="card" style={{ padding: '1.5rem' }}>
+        <h2 style={{ 
+          marginTop: 0, 
+          marginBottom: '1.5rem',
+          fontSize: '1.8rem',
+          fontWeight: 600,
+          color: 'var(--text-color)',
+          borderBottom: '2px solid var(--border-color)',
+          paddingBottom: '0.75rem'
+        }}>{calendarYear} Overview</h2>
+        
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: '16px' }}>
           {counts.map((entry) => {
             const monthName = new Date(calendarYear, entry.month, 1).toLocaleString(undefined, { month: 'long' });
-            const topCats = Array.from(entry.cats.entries()).sort((a, b) => b[1] - a[1]).slice(0, 3);
+            const topCats = Array.from(entry.cats.entries()).sort((a, b) => b[1] - a[1]).slice(0, 4);
+            const isCurrentMonth = isCurrentYear && entry.month === currentMonth;
+            const totalDays = Array.from(entry.cats.values()).reduce((sum, count) => sum + count, 0);
+            const daysInMonth = new Date(calendarYear, entry.month + 1, 0).getDate();
+            
             return (
-              <div key={entry.month} style={{ border: '1px solid var(--border-color)', borderRadius: 6, padding: 8, background: 'var(--card-bg)' }}>
-                <div style={{ fontWeight: 'bold', marginBottom: 6 }}>{monthName}</div>
-                {topCats.length === 0 ? (
-                  <div style={{ fontSize: '0.85rem', color: '#666' }}>No scheduled days</div>
-                ) : (
-                  <div style={{ display: 'grid', gap: 4 }}>
-                    {topCats.map(([cid, cnt], i) => {
-                      const cat = catMap.get(cid) || { name: 'Unknown', color: '#6c757d' };
-                      return (
-                        <div key={cid} style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: '0.85rem' }}>
-                          <span style={{ width: 12, height: 12, backgroundColor: cat.color, display: 'inline-block', borderRadius: 2 }} />
-                          <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{cat.name}</span>
-                          <span style={{ color: '#666' }}>{cnt}d</span>
-                        </div>
-                      );
-                    })}
+              <div key={entry.month} 
+                style={{ 
+                  border: isCurrentMonth ? '2px solid var(--button-bg)' : '1px solid var(--border-color)', 
+                  borderRadius: 8, 
+                  padding: '16px', 
+                  background: 'var(--card-bg)',
+                  transition: 'all 0.2s ease',
+                  cursor: 'pointer',
+                  boxShadow: isCurrentMonth ? '0 0 12px rgba(59, 130, 246, 0.3)' : 'none'
+                }}
+                onMouseEnter={(e) => {
+                  e.currentTarget.style.transform = 'translateY(-4px)';
+                  e.currentTarget.style.boxShadow = '0 6px 20px var(--shadow)';
+                }}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.transform = 'translateY(0)';
+                  e.currentTarget.style.boxShadow = isCurrentMonth ? '0 0 12px rgba(59, 130, 246, 0.3)' : 'none';
+                }}
+                onClick={() => {
+                  setCalendarMonth(entry.month + 1);
+                  setCalendarMode('month');
+                }}
+              >
+                <div style={{ 
+                  display: 'flex', 
+                  justifyContent: 'space-between', 
+                  alignItems: 'center',
+                  marginBottom: 12
+                }}>
+                  <div style={{ 
+                    fontWeight: 700, 
+                    fontSize: '1.1rem',
+                    color: isCurrentMonth ? 'var(--button-bg)' : 'var(--text-color)',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '8px'
+                  }}>
+                    {monthName}
+                    {entry.conflictDays > 0 && (
+                      <span 
+                        title={`⚠️ ${entry.conflictDays} day${entry.conflictDays > 1 ? 's' : ''} with schedule conflicts`}
+                        style={{ 
+                          fontSize: '0.9rem',
+                          color: '#ff9800',
+                          cursor: 'help'
+                        }}>⚠️</span>
+                    )}
                   </div>
+                  {isCurrentMonth && (
+                    <div style={{
+                      fontSize: '0.65rem',
+                      fontWeight: 600,
+                      textTransform: 'uppercase',
+                      backgroundColor: 'var(--button-bg)',
+                      color: '#fff',
+                      padding: '3px 8px',
+                      borderRadius: '12px',
+                      letterSpacing: '0.5px'
+                    }}>Current</div>
+                  )}
+                </div>
+                
+                {topCats.length === 0 ? (
+                  <div style={{ 
+                    fontSize: '0.85rem', 
+                    color: 'var(--text-muted)',
+                    textAlign: 'center',
+                    padding: '20px 0',
+                    fontStyle: 'italic'
+                  }}>No scheduled days</div>
+                ) : (
+                  <>
+                    <div style={{ 
+                      fontSize: '0.75rem', 
+                      color: 'var(--text-secondary)',
+                      marginBottom: 10,
+                      fontWeight: 500
+                    }}>{totalDays} of {daysInMonth} days scheduled</div>
+                    <div style={{ display: 'grid', gap: 8 }}>
+                      {topCats.map(([cid, cnt], i) => {
+                        const cat = catMap.get(cid) || { name: 'Unknown', color: '#6c757d' };
+                        const percentage = Math.round((cnt / daysInMonth) * 100);
+                        return (
+                          <div key={cid} style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: '0.875rem' }}>
+                              <span style={{ 
+                                width: 14, 
+                                height: 14, 
+                                backgroundColor: cat.color, 
+                                display: 'inline-block', 
+                                borderRadius: 3,
+                                boxShadow: '0 1px 3px rgba(0,0,0,0.3)',
+                                flexShrink: 0
+                              }} />
+                              <span style={{ 
+                                flex: 1, 
+                                overflow: 'hidden', 
+                                textOverflow: 'ellipsis', 
+                                whiteSpace: 'nowrap',
+                                fontWeight: 500,
+                                color: 'var(--text-color)'
+                              }}>{cat.name}</span>
+                              <span style={{ 
+                                color: 'var(--text-secondary)',
+                                fontSize: '0.8rem',
+                                fontWeight: 600,
+                                minWidth: '45px',
+                                textAlign: 'right'
+                              }}>{cnt}d ({percentage}%)</span>
+                            </div>
+                            <div style={{
+                              height: 4,
+                              backgroundColor: darkMode ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.1)',
+                              borderRadius: 2,
+                              overflow: 'hidden'
+                            }}>
+                              <div style={{
+                                height: '100%',
+                                width: `${percentage}%`,
+                                backgroundColor: cat.color,
+                                transition: 'width 0.3s ease'
+                              }} />
+                            </div>
+                          </div>
+                        );
+                      })}
+                      {entry.cats.size > 4 && (
+                        <div style={{ 
+                          fontSize: '0.75rem', 
+                          color: 'var(--text-muted)',
+                          fontStyle: 'italic',
+                          marginTop: 4
+                        }}>+{entry.cats.size - 4} more categories</div>
+                      )}
+                    </div>
+                  </>
                 )}
               </div>
             );
@@ -3353,6 +4314,8 @@ services:
               onChange={(e) => setScheduleForm({...scheduleForm, type: e.target.value})}
               style={{ padding: '0.5rem' }}
             >
+              <option value="daily">Daily</option>
+              <option value="weekly">Weekly</option>
               <option value="monthly">Monthly</option>
               <option value="yearly">Yearly</option>
               <option value="holiday">Holiday</option>
@@ -3418,7 +4381,7 @@ services:
                       name: `${preset.name} Schedule`,
                       type: 'holiday',
                       start_date: toLocalInputFromDate(startDate),
-                      end_date: endDate.toISOString().slice(0, 16),
+                      end_date: toLocalInputFromDate(endDate),
                       category_id: preset.category_id.toString()
                     });
                   }
@@ -3505,6 +4468,8 @@ services:
                   value={scheduleForm.type}
                   onChange={(e) => setScheduleForm({...scheduleForm, type: e.target.value})}
                 >
+                  <option value="daily">Daily</option>
+                  <option value="weekly">Weekly</option>
                   <option value="monthly">Monthly</option>
                   <option value="yearly">Yearly</option>
                   <option value="holiday">Holiday</option>
@@ -3750,6 +4715,8 @@ services:
           title="Edit Category"
           onClose={() => { setEditingCategory(null); setNewCategory({ name: '', description: '' }); }}
           width={820}
+          zIndex={1000}
+          allowBackgroundInteraction={!!editingPreroll}
         >
           <form onSubmit={handleUpdateCategory}>
             <div className="nx-form-grid">
@@ -3842,6 +4809,7 @@ services:
                           </span>
                           <div>
                             <button
+                              type="button"
                               onClick={() => handleEditPreroll(p)}
                               className="nx-iconbtn"
                               style={{ marginRight: '0.25rem' }}
@@ -3850,6 +4818,7 @@ services:
                               ✏️
                             </button>
                             <button
+                              type="button"
                               onClick={() => handleCategoryRemovePreroll(editingCategory.id, p)}
                               className={`nx-iconbtn ${p.category_id === editingCategory.id ? 'nx-iconbtn--muted' : 'nx-iconbtn--danger'}`}
                               disabled={p.category_id === editingCategory.id}
@@ -3906,7 +4875,6 @@ services:
           </div>
         </Modal>
       )}
-
 
       {false && (<div className="upload-section">
         <h2>Holiday Presets</h2>
@@ -4587,6 +5555,23 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
       .then(res => res.json())
       .then(data => setFfmpegInfo(data))
       .catch(() => setFfmpegInfo(null));
+  };
+
+  const handleViewChangelog = async () => {
+    try {
+      const response = await fetch('http://localhost:9393/system/changelog');
+      const data = await response.json();
+      if (data.changelog) {
+        setChangelogContent(data.changelog);
+        setChangelogCurrentVersion(data.current_version);
+        setShowChangelogModal(true);
+      } else {
+        alert('No changelog available');
+      }
+    } catch (err) {
+      console.error('Failed to fetch changelog:', err);
+      alert('Failed to load changelog');
+    }
   };
 
   const handleReinitThumbnails = async () => {
@@ -5566,6 +6551,7 @@ C:\\\\Media\\\\Prerolls\\\\summer\\\\beach.mp4`}
           <button onClick={recheckFfmpeg} className="button">🔎 Re-check FFmpeg</button>
           <button onClick={handleShowSystemPaths} className="button" style={{ marginLeft: '0.5rem' }}>📂 Show Resolved Paths</button>
           <button onClick={handleDownloadDiagnostics} className="button" style={{ marginLeft: '0.5rem' }}>🧰 Download Diagnostics</button>
+          <button onClick={handleViewChangelog} className="button" style={{ marginLeft: '0.5rem' }}>📋 View Changelog</button>
         </div>
       </div>
 
@@ -6061,18 +7047,35 @@ C:\\\\Media\\\\Prerolls\\\\summer\\\\beach.mp4`}
         return;
       }
 
+      // Show rename dialog
+      setCommunityRenamingPreroll(preroll);
+      // Default name removes the bug number prefix if present
+      const defaultName = preroll.title.replace(/^\d+\s*-\s*/, '').trim();
+      setCommunityNewPrerollName(defaultName);
+    };
+
+    const handleConfirmDownload = async () => {
+      const preroll = communityRenamingPreroll;
+      if (!preroll) return;
+
+      const customName = communityNewPrerollName.trim() || preroll.title.replace(/^\d+\s*-\s*/, '').trim();
+
       setCommunityIsDownloading(prev => ({ ...prev, [preroll.id]: 'downloading' }));
+      setCommunityRenamingPreroll(null);
+      setCommunityNewPrerollName('');
+
       try {
         const response = await fetch(apiUrl('community-prerolls/download'), {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             preroll_id: preroll.id,
-            title: preroll.title,
+            title: customName,
             url: preroll.url || preroll.download_url,
             category_id: communitySelectedCategory || null,
             add_to_category: communityShowAddToCategory[preroll.id] || false,
-            tags: ''  // Always send empty tags - no auto-tagging
+            tags: '',  // Always send empty tags - no auto-tagging
+            description: `Community Preroll ID: ${preroll.id}`  // Add bug number to description
           })
         });
 
@@ -6099,6 +7102,78 @@ C:\\\\Media\\\\Prerolls\\\\summer\\\\beach.mp4`}
         setCommunityIsDownloading(prev => ({ ...prev, [preroll.id]: false }));
       }
     };
+
+    // Rename modal before download
+    if (communityRenamingPreroll) {
+      return (
+        <Modal
+          title="Name Your Preroll"
+          onClose={() => {
+            setCommunityRenamingPreroll(null);
+            setCommunityNewPrerollName('');
+          }}
+          width={600}
+        >
+          <div style={{ marginBottom: '1rem' }}>
+            <p style={{ marginBottom: '1rem', color: 'var(--text-secondary)' }}>
+              Customize the name for this preroll before downloading:
+            </p>
+            
+            <div style={{ marginBottom: '1rem' }}>
+              <label style={{ display: 'block', marginBottom: '0.5rem', fontWeight: '500' }}>
+                Preroll Name:
+              </label>
+              <input
+                type="text"
+                value={communityNewPrerollName}
+                onChange={(e) => setCommunityNewPrerollName(e.target.value)}
+                placeholder="Enter custom name"
+                style={{
+                  width: '100%',
+                  padding: '0.5rem',
+                  borderRadius: '4px',
+                  border: '1px solid var(--border-color)',
+                  backgroundColor: 'var(--input-bg)',
+                  color: 'var(--text-color)',
+                  fontSize: '1rem'
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    handleConfirmDownload();
+                  }
+                }}
+                autoFocus
+              />
+              <div style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginTop: '0.5rem' }}>
+                Original: <strong>{communityRenamingPreroll.title}</strong>
+                <br />
+                Community ID #{communityRenamingPreroll.id} will be added to description for reference.
+              </div>
+            </div>
+
+            <div style={{ display: 'flex', gap: '0.5rem', justifyContent: 'flex-end' }}>
+              <button
+                className="button"
+                onClick={handleConfirmDownload}
+                style={{ padding: '0.5rem 1.5rem' }}
+              >
+                ⬇️ Download
+              </button>
+              <button
+                className="button-secondary"
+                onClick={() => {
+                  setCommunityRenamingPreroll(null);
+                  setCommunityNewPrerollName('');
+                }}
+                style={{ padding: '0.5rem 1.5rem' }}
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        </Modal>
+      );
+    }
 
     // If Fair Use policy not accepted, show modal
     if (communityFairUseStatus && !communityFairUseStatus.accepted && communityPolicyText) {
@@ -7229,6 +8304,82 @@ C:\\\\Media\\\\Prerolls\\\\summer\\\\beach.mp4`}
        {activeTab === 'community-prerolls' && renderCommunityPrerolls()}
      </div>
 
+     {/* Edit Preroll Modal - Global (can be triggered from any tab) */}
+     {editingPreroll && (
+       <Modal
+         title="Edit Preroll"
+         onClose={() => { setEditingPreroll(null); setEditForm({ display_name: '', new_filename: '', tags: '', category_id: '', category_ids: [], description: '' }); }}
+         zIndex={1100}
+         allowBackgroundInteraction={false}
+       >
+         <form onSubmit={handleUpdatePreroll}>
+           <div className="nx-form-grid">
+             <div className="nx-field">
+               <label className="nx-label">Display Name</label>
+               <input
+                 className="nx-input"
+                 type="text"
+                 placeholder="Optional friendly name"
+                 value={editForm.display_name}
+                 onChange={(e) => setEditForm({ ...editForm, display_name: e.target.value })}
+               />
+             </div>
+             <div className="nx-field">
+               <label className="nx-label">New File Name</label>
+               <input
+                 className="nx-input"
+                 type="text"
+                 placeholder="Optional rename on disk (extension optional)"
+                 value={editForm.new_filename}
+                 onChange={(e) => setEditForm({ ...editForm, new_filename: e.target.value })}
+               />
+             </div>
+             <div className="nx-field nx-span-2">
+               <CategoryPicker
+                 categories={categories}
+                 primaryId={editForm.category_id}
+                 secondaryIds={editForm.category_ids}
+                 onChange={(primary, secondary) => setEditForm({ ...editForm, category_id: primary, category_ids: secondary })}
+                 onCreateCategory={createCategoryInline}
+                 label="Categories"
+                 placeholder="Search categories…"
+               />
+             </div>
+             <div className="nx-field">
+               <label className="nx-label">Tags</label>
+               <input
+                 className="nx-input"
+                 type="text"
+                 placeholder="Comma separated"
+                 value={editForm.tags}
+                 onChange={(e) => setEditForm({ ...editForm, tags: e.target.value })}
+               />
+             </div>
+             <div className="nx-field nx-span-2">
+               <label className="nx-label">Description</label>
+               <textarea
+                 className="nx-textarea"
+                 placeholder="Optional details"
+                 value={editForm.description}
+                 onChange={(e) => setEditForm({ ...editForm, description: e.target.value })}
+                 rows="4"
+               />
+             </div>
+           </div>
+           <div className="nx-actions">
+             <button type="submit" className="button">Save Changes</button>
+             <button
+               type="button"
+               className="button-secondary"
+               onClick={() => { setEditingPreroll(null); setEditForm({ display_name: '', new_filename: '', tags: '', category_id: '', category_ids: [], description: '' }); }}
+             >
+               Cancel
+             </button>
+           </div>
+         </form>
+       </Modal>
+     )}
+
      {/* Video Preview Modal */}
      {previewingPreroll && (
        <div style={{
@@ -7372,6 +8523,70 @@ C:\\\\Media\\\\Prerolls\\\\summer\\\\beach.mp4`}
            </div>
          </div>
        </div>
+     )}
+
+     {/* Changelog Modal - shown on first launch after update */}
+     {showChangelogModal && (
+       <Modal
+         title={`What's New in NeXroll ${changelogCurrentVersion}`}
+         onClose={async () => {
+           setShowChangelogModal(false);
+           // Mark this version as seen
+           try {
+             await fetch('http://localhost:9393/system/changelog/mark-seen', {
+               method: 'POST',
+               headers: { 'Content-Type': 'application/json' }
+             });
+           } catch (err) {
+             console.error('Failed to mark changelog as seen:', err);
+           }
+         }}
+         width={900}
+       >
+         <div style={{
+           maxHeight: '70vh',
+           overflowY: 'auto',
+           padding: '1rem',
+           fontSize: '0.95rem',
+           lineHeight: '1.6',
+           backgroundColor: 'var(--bg-secondary)',
+           borderRadius: '4px'
+         }}>
+           <ReactMarkdown
+             components={{
+               h1: ({node, ...props}) => <h1 style={{ fontSize: '1.8rem', marginBottom: '1rem', color: 'var(--text-primary)' }} {...props} />,
+               h2: ({node, ...props}) => <h2 style={{ fontSize: '1.5rem', marginTop: '1.5rem', marginBottom: '0.75rem', color: 'var(--text-primary)', borderBottom: '2px solid var(--primary-color)' }} {...props} />,
+               h3: ({node, ...props}) => <h3 style={{ fontSize: '1.2rem', marginTop: '1rem', marginBottom: '0.5rem', color: 'var(--primary-color)' }} {...props} />,
+               ul: ({node, ...props}) => <ul style={{ marginLeft: '1.5rem', marginBottom: '0.75rem' }} {...props} />,
+               li: ({node, ...props}) => <li style={{ marginBottom: '0.25rem' }} {...props} />,
+               code: ({node, inline, ...props}) => inline 
+                 ? <code style={{ backgroundColor: 'rgba(0,0,0,0.3)', padding: '0.2rem 0.4rem', borderRadius: '3px', fontFamily: 'monospace' }} {...props} />
+                 : <code style={{ display: 'block', backgroundColor: 'rgba(0,0,0,0.3)', padding: '0.75rem', borderRadius: '4px', fontFamily: 'monospace', overflow: 'auto' }} {...props} />
+             }}
+           >
+             {changelogContent}
+           </ReactMarkdown>
+         </div>
+         <div style={{ marginTop: '1rem', textAlign: 'right' }}>
+           <button
+             onClick={async () => {
+               setShowChangelogModal(false);
+               try {
+                 await fetch('http://localhost:9393/system/changelog/mark-seen', {
+                   method: 'POST',
+                   headers: { 'Content-Type': 'application/json' }
+                 });
+               } catch (err) {
+                 console.error('Failed to mark changelog as seen:', err);
+               }
+             }}
+             className="button"
+             style={{ padding: '0.5rem 1.5rem' }}
+           >
+             Got it!
+           </button>
+         </div>
+       </Modal>
      )}
 
      <footer
