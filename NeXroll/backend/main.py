@@ -8,6 +8,7 @@ from sqlalchemy.exc import IntegrityError, OperationalError
 from pydantic import BaseModel
 from typing import List, Optional
 import datetime
+import pytz
 import os
 import json
 import random
@@ -1261,11 +1262,19 @@ def get_changelog(db: Session = Depends(get_db)):
     changelog_content = ""
     try:
         # Try multiple possible locations for CHANGELOG.md
-        possible_paths = [
+        possible_paths = []
+        
+        # Check if running from PyInstaller bundle
+        if getattr(sys, '_MEIPASS', None):
+            # Running from PyInstaller - check extracted temp directory
+            possible_paths.append(os.path.join(sys._MEIPASS, 'CHANGELOG.md'))
+        
+        # Add source directory paths
+        possible_paths.extend([
             os.path.join(os.path.dirname(__file__), "..", "..", "CHANGELOG.md"),
             os.path.join(os.path.dirname(__file__), "..", "..", "..", "CHANGELOG.md"),
             "CHANGELOG.md"
-        ]
+        ])
         
         for path in possible_paths:
             abs_path = os.path.abspath(path)
@@ -3922,24 +3931,42 @@ def create_schedule(schedule: ScheduleCreate, db: Session = Depends(get_db)):
     if not category:
         raise HTTPException(status_code=404, detail="Category not found")
 
+    # Get user's timezone for conversion
+    settings = db.query(models.Setting).first()
+    user_tz_str = settings.timezone if settings and settings.timezone else "UTC"
+    try:
+        user_tz = pytz.timezone(user_tz_str)
+    except:
+        user_tz = pytz.UTC
+
     # Parse dates from strings
     start_date = None
     end_date = None
 
     try:
-        # All schedules: Keep naive datetime as-is (no UTC conversion)
-        # Schedule times represent the user's local time and should not be timezone-adjusted
-        # This prevents date/time shifting when saving/updating schedules (Issue #9)
+        # Frontend sends times in user's local timezone (without timezone info)
+        # We need to convert them to UTC for storage
         if schedule.start_date:
             sd = schedule.start_date
+            print(f"DEBUG CREATE: Raw start_date from frontend: {sd}")
+            # Parse as naive datetime (local time)
             dt = datetime.datetime.fromisoformat(sd.replace('Z', '+00:00'))
-            # Strip timezone info if present, store as naive datetime
-            start_date = dt.replace(tzinfo=None) if dt.tzinfo else dt
+            print(f"DEBUG CREATE: Parsed datetime: {dt}")
+            # If it has timezone info, strip it. Then treat as user's local time
+            naive_dt = dt.replace(tzinfo=None) if dt.tzinfo else dt
+            # Localize to user's timezone, then convert to UTC
+            local_dt = user_tz.localize(naive_dt)
+            start_date = local_dt.astimezone(pytz.UTC)
+            print(f"DEBUG CREATE: Converted to UTC: {start_date}")
         if schedule.end_date:
             ed = schedule.end_date
+            print(f"DEBUG CREATE: Raw end_date from frontend: {ed}")
             dt2 = datetime.datetime.fromisoformat(ed.replace('Z', '+00:00'))
-            # Strip timezone info if present, store as naive datetime
-            end_date = dt2.replace(tzinfo=None) if dt2.tzinfo else dt2
+            print(f"DEBUG CREATE: Parsed datetime: {dt2}")
+            naive_dt2 = dt2.replace(tzinfo=None) if dt2.tzinfo else dt2
+            local_dt2 = user_tz.localize(naive_dt2)
+            end_date = local_dt2.astimezone(pytz.UTC)
+            print(f"DEBUG CREATE: Converted to UTC: {end_date}")
     except ValueError as e:
         raise HTTPException(status_code=400, detail=f"Invalid date format: {str(e)}")
 
@@ -3989,25 +4016,60 @@ def create_schedule(schedule: ScheduleCreate, db: Session = Depends(get_db)):
 
 @app.get("/schedules")
 def get_schedules(db: Session = Depends(get_db)):
+    # Get user's timezone for conversion
+    settings = db.query(models.Setting).first()
+    user_tz_str = settings.timezone if settings and settings.timezone else "UTC"
+    try:
+        user_tz = pytz.timezone(user_tz_str)
+    except:
+        user_tz = pytz.UTC
+    
     schedules = db.query(models.Schedule).options(joinedload(models.Schedule.category)).all()
-    return [{
-        "id": s.id,
-        "name": s.name,
-        "type": s.type,
-        "start_date": s.start_date.isoformat() + "Z" if s.start_date else None,
-        "end_date": s.end_date.isoformat() + "Z" if s.end_date else None,
-        "category_id": s.category_id,
-        "category": {"id": s.category.id, "name": s.category.name} if s.category else None,
-        "shuffle": s.shuffle,
-        "playlist": s.playlist,
-        "is_active": s.is_active,
-        "last_run": s.last_run.isoformat() + "Z" if s.last_run else None,
-        "next_run": s.next_run.isoformat() + "Z" if s.next_run else None,
-        "recurrence_pattern": s.recurrence_pattern,
-        "preroll_ids": s.preroll_ids,
-        "fallback_category_id": getattr(s, "fallback_category_id", None),
-        "sequence": getattr(s, "sequence", None)
-    } for s in schedules]
+    result = []
+    for s in schedules:
+        # Convert times from UTC back to user's local timezone for display
+        start_iso = None
+        end_iso = None
+        
+        if s.start_date:
+            # Assume times stored in DB are UTC (though may be naive if from old data)
+            if s.start_date.tzinfo is None:
+                # If naive, assume UTC
+                utc_dt = pytz.UTC.localize(s.start_date)
+            else:
+                utc_dt = s.start_date
+            # Convert to user's timezone
+            local_dt = utc_dt.astimezone(user_tz)
+            start_iso = local_dt.isoformat()
+        
+        if s.end_date:
+            if s.end_date.tzinfo is None:
+                utc_dt = pytz.UTC.localize(s.end_date)
+            else:
+                utc_dt = s.end_date
+            local_dt = utc_dt.astimezone(user_tz)
+            end_iso = local_dt.isoformat()
+        
+        result.append({
+            "id": s.id,
+            "name": s.name,
+            "type": s.type,
+            "start_date": start_iso,
+            "end_date": end_iso,
+            "category_id": s.category_id,
+            "category": {"id": s.category.id, "name": s.category.name} if s.category else None,
+            "shuffle": s.shuffle,
+            "playlist": s.playlist,
+            "is_active": s.is_active,
+            "last_run": s.last_run.isoformat() + "Z" if s.last_run else None,
+            "next_run": s.next_run.isoformat() + "Z" if s.next_run else None,
+            "recurrence_pattern": s.recurrence_pattern,
+            "preroll_ids": s.preroll_ids,
+            "fallback_category_id": getattr(s, "fallback_category_id", None),
+            "sequence": getattr(s, "sequence", None)
+        })
+    
+    return result
 
 @app.put("/schedules/{schedule_id}")
 def update_schedule(schedule_id: int, schedule: ScheduleCreate, db: Session = Depends(get_db)):
@@ -4015,24 +4077,39 @@ def update_schedule(schedule_id: int, schedule: ScheduleCreate, db: Session = De
     if not db_schedule:
         raise HTTPException(status_code=404, detail="Schedule not found")
 
+    # Get user's timezone for conversion
+    settings = db.query(models.Setting).first()
+    user_tz_str = settings.timezone if settings and settings.timezone else "UTC"
+    try:
+        user_tz = pytz.timezone(user_tz_str)
+    except:
+        user_tz = pytz.UTC
+
     # Parse dates from strings
     start_date = None
     end_date = None
 
     try:
-        # All schedules: Keep naive datetime as-is (no UTC conversion)
-        # Schedule times represent the user's local time and should not be timezone-adjusted
-        # This prevents date/time shifting when saving/updating schedules (Issue #9)
+        # Frontend sends times in user's local timezone (without timezone info)
+        # We need to convert them to UTC for storage
         if schedule.start_date:
             sd = schedule.start_date
+            print(f"DEBUG UPDATE: Raw start_date from frontend: {sd}")
             dt = datetime.datetime.fromisoformat(sd.replace('Z', '+00:00'))
-            # Strip timezone info if present, store as naive datetime
-            start_date = dt.replace(tzinfo=None) if dt.tzinfo else dt
+            print(f"DEBUG UPDATE: Parsed datetime: {dt}")
+            naive_dt = dt.replace(tzinfo=None) if dt.tzinfo else dt
+            local_dt = user_tz.localize(naive_dt)
+            start_date = local_dt.astimezone(pytz.UTC)
+            print(f"DEBUG UPDATE: Converted to UTC: {start_date}")
         if schedule.end_date:
             ed = schedule.end_date
+            print(f"DEBUG UPDATE: Raw end_date from frontend: {ed}")
             dt2 = datetime.datetime.fromisoformat(ed.replace('Z', '+00:00'))
-            # Strip timezone info if present, store as naive datetime
-            end_date = dt2.replace(tzinfo=None) if dt2.tzinfo else dt2
+            print(f"DEBUG UPDATE: Parsed datetime: {dt2}")
+            naive_dt2 = dt2.replace(tzinfo=None) if dt2.tzinfo else dt2
+            local_dt2 = user_tz.localize(naive_dt2)
+            end_date = local_dt2.astimezone(pytz.UTC)
+            print(f"DEBUG UPDATE: Converted to UTC: {end_date}")
     except ValueError as e:
         raise HTTPException(status_code=400, detail=f"Invalid date format: {str(e)}")
 
@@ -4946,27 +5023,57 @@ def backup_files():
 def restore_database(backup_data: dict, db: Session = Depends(get_db)):
     """Import database from JSON backup (restores categories, prerolls with multi-category links, schedules, and holidays)"""
     try:
+        print("RESTORE: Starting deletion sequence...")
         # Clear existing data in correct order to avoid foreign key constraint errors
         # 1. Delete junction table entries first (many-to-many relationships)
-        db.execute(text("DELETE FROM preroll_categories"))
-        # 2. Delete schedules (references categories)
-        db.query(models.Schedule).delete()
-        # 3. Delete prerolls (references categories via category_id)
-        db.query(models.Preroll).delete()
-        # 4. Delete categories (now safe, no foreign keys referencing them)
-        db.query(models.Category).delete()
-        # 5. Delete holiday presets (independent table)
-        db.query(models.HolidayPreset).delete()
+        print("RESTORE: Deleting preroll_categories junction table...")
+        result = db.execute(text("DELETE FROM preroll_categories"))
+        print(f"RESTORE: Deleted {result.rowcount} rows from preroll_categories")
+        db.flush()
+        
+        # 2. Delete genre maps (has FK to categories)
+        print("RESTORE: Deleting genre maps...")
+        db.query(models.GenreMap).delete(synchronize_session=False)
+        
+        # 3. Clear active_category from settings (has FK to categories)
+        print("RESTORE: Clearing active_category from settings...")
+        db.execute(text("UPDATE settings SET active_category = NULL"))
+        db.flush()
+        
+        # 4. Delete schedules (has FK to categories via category_id and fallback_category_id)
+        print("RESTORE: Deleting schedules...")
+        db.query(models.Schedule).delete(synchronize_session=False)
+        
+        # 5. Delete holiday presets (has FK to categories)
+        print("RESTORE: Deleting holiday presets...")
+        db.query(models.HolidayPreset).delete(synchronize_session=False)
+        
+        # 6. Delete prerolls (has FK to categories via category_id)
+        print("RESTORE: Deleting prerolls...")
+        db.query(models.Preroll).delete(synchronize_session=False)
+        
+        # 7. Finally delete categories (all FKs cleared)
+        print("RESTORE: Deleting categories...")
+        db.query(models.Category).delete(synchronize_session=False)
+        
         db.commit()
+        print("RESTORE: All deletions committed successfully")
 
         # Restore categories first (needed for foreign keys)
+        print("RESTORE: Restoring categories...")
+        old_id_to_new_id = {}  # Map old category IDs to new IDs
         for cat_data in backup_data.get("categories", []):
             try:
+                old_id = cat_data.get("id")
                 category = models.Category(
                     name=cat_data.get("name"),
                     description=cat_data.get("description")
                 )
                 db.add(category)
+                db.flush()  # Get the new ID
+                if old_id:
+                    old_id_to_new_id[old_id] = category.id
+                print(f"RESTORE: Category '{category.name}' - old ID {old_id} -> new ID {category.id}")
             except Exception as cat_err:
                 print(f"Error adding category: {cat_err}")
                 db.rollback()
@@ -4987,13 +5094,17 @@ def restore_database(backup_data: dict, db: Session = Depends(get_db)):
                     except (ValueError, TypeError):
                         upload_date = None
                 
+                # Map old category_id to new category_id
+                old_cat_id = preroll_data.get("category_id")
+                new_cat_id = old_id_to_new_id.get(old_cat_id) if old_cat_id else None
+                
                 p = models.Preroll(
                     filename=preroll_data.get("filename"),
                     display_name=preroll_data.get("display_name"),
                     path=preroll_data.get("path"),
                     thumbnail=preroll_data.get("thumbnail"),
                     tags=preroll_data.get("tags"),
-                    category_id=preroll_data.get("category_id"),
+                    category_id=new_cat_id,
                     description=preroll_data.get("description"),
                     upload_date=upload_date,
                     managed=preroll_data.get("managed", True)
@@ -5037,12 +5148,19 @@ def restore_database(backup_data: dict, db: Session = Depends(get_db)):
                     except (ValueError, TypeError):
                         end_date = None
                 
+                # Map old category IDs to new category IDs
+                old_cat_id = schedule_data.get("category_id")
+                new_cat_id = old_id_to_new_id.get(old_cat_id) if old_cat_id else None
+                old_fallback_id = schedule_data.get("fallback_category_id")
+                new_fallback_id = old_id_to_new_id.get(old_fallback_id) if old_fallback_id else None
+                
                 schedule = models.Schedule(
                     name=schedule_data.get("name"),
                     type=schedule_data.get("type"),
                     start_date=start_date,
                     end_date=end_date,
-                    category_id=schedule_data.get("category_id"),
+                    category_id=new_cat_id,
+                    fallback_category_id=new_fallback_id,
                     shuffle=schedule_data.get("shuffle", False),
                     playlist=schedule_data.get("playlist", False),
                     is_active=schedule_data.get("is_active", True),
@@ -5058,12 +5176,16 @@ def restore_database(backup_data: dict, db: Session = Depends(get_db)):
         # Restore holiday presets
         for holiday_data in backup_data.get("holiday_presets", []):
             try:
+                # Map old category_id to new category_id
+                old_cat_id = holiday_data.get("category_id")
+                new_cat_id = old_id_to_new_id.get(old_cat_id) if old_cat_id else None
+                
                 holiday = models.HolidayPreset(
                     name=holiday_data.get("name"),
                     description=holiday_data.get("description"),
                     month=holiday_data.get("month"),
                     day=holiday_data.get("day"),
-                    category_id=holiday_data.get("category_id")
+                    category_id=new_cat_id
                 )
                 db.add(holiday)
             except Exception as holiday_err:
@@ -5072,9 +5194,11 @@ def restore_database(backup_data: dict, db: Session = Depends(get_db)):
                 continue
 
         db.commit()
-        return {"message": "Database restored successfully"}
+        return {"message": "Database restored successfully (v1.7.7-FIXED)", "version": "1.7.7"}
     except Exception as e:
         print(f"Critical restore error: {str(e)}")
+        import traceback
+        traceback.print_exc()
         db.rollback()
         raise HTTPException(status_code=500, detail=f"Restore failed: {str(e)}")
 
