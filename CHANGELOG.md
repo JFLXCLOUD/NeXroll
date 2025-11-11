@@ -1,11 +1,79 @@
 # Changelog
 
-All notable changes to NeXroll will be documented in this file.
+## [1.7.5] - 11-10-2025
 
-The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
-and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+### Added
+- **Community Prerolls - Rename Before Download** ([#8](https://github.com/JFLXCLOUD/NeXroll/issues/8))
+  - New rename dialog appears before downloading community prerolls
+  - Automatically removes bug number prefix from default name
+  - Community preroll ID now stored in description field for reference
+  - Press Enter to quickly confirm download with custom name
 
-## [1.7.0] - 2025-11-03
+### Fixed
+- **Edit Preroll Modal Rendering**
+  - Fixed modal not appearing when clicking edit button on prerolls from non-Categories tabs
+  - Edit Preroll modal now renders globally and appears immediately regardless of active tab
+  - Improved modal architecture for better cross-tab functionality
+- **Improved Error Messages**
+  - Delete category now shows specific error: "Cannot delete category that is in use"
+  - Delete schedule errors now display detailed backend messages
+  - Delete preroll errors now show clear explanations
+  - Update operations display helpful error details instead of generic HTTP status codes
+- **Installer - Documents Folder** 
+  - Changed default preroll storage from `Documents\NeXroll\Prerolls` to `%ProgramData%\NeXroll\Prerolls`
+  - Prevents creation of unused empty folders in user Documents directory
+  - Existing installations continue using their configured path from registry
+
+## [1.7.4] - 11-09-2025
+
+### Added
+- **Enhanced Calendar Views**
+  - Added **Week View** with timeline visualization showing schedules as continuous colored bars across 7 days
+  - Added **Timeline View for Month** - alternative to grid view showing schedules as continuous spans
+  - Month view now includes Display toggle button to switch between Timeline and Grid views
+  - Week view includes Previous Week / This Week / Next Week navigation buttons
+  - Timeline views show schedule duration with colored bars and day markers at bottom
+
+- **New Schedule Types**
+  - Added **Daily** schedule frequency option for repeating prerolls every day
+  - Added **Weekly** schedule frequency option for repeating prerolls every week
+  - Both options available in Create Schedule and Edit Schedule forms
+
+- **Improved Calendar Navigation**
+  - View dropdown now includes: Week, Month, Year
+  - Seamless switching between different calendar perspectives
+  - Timeline visualizations make it easier to see schedule overlaps and duration
+
+### Fixed
+- **Category Management Modal Issues** ([#7](https://github.com/JFLXCLOUD/NeXroll/issues/7))
+  - Fixed Edit and Remove buttons not responding in Edit Category modal
+  - Edit Preroll modal now properly appears on top when opened from Edit Category
+  - Fixed modal overlay blocking clicks to nested modals
+  - Improved modal stacking with proper z-index management
+
+## [1.7.3] - 11-08-2025
+
+### Fixed
+- **Calendar & Schedule Issues**
+  - Fixed yearly/holiday schedules not repeating annually in calendar view
+  - Fixed fallback categories not displaying in calendar when no other schedule is active
+  - Fixed holiday preset dates being shifted to wrong month due to timezone conversion
+  - Backend now preserves naive datetime for yearly/holiday schedules (only month/day matters)
+  - Fixed timezone issue where January 31st 23:59 was being stored as February 1st 04:59 UTC
+
+### Added
+- **Enhanced Calendar Visualization**
+  - Year view now shows as default when opening calendar
+  - Larger calendar cells with improved spacing and readability
+  - Schedule name tooltips on hover showing all active schedules for each day
+  - Fallback category visual indicator with dashed borders
+  - Weekend shading for better day-of-week orientation
+  - Today highlighting with blue border and colored badge
+  - Visual legend explaining all calendar indicators
+  - Smooth hover animations with elevation effects
+  - Click month cards in year view to drill down to detailed month view
+
+## [1.7.0] - 11-03-2025
 
 ### Added
 - **Community Prerolls Integration**
@@ -109,7 +177,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Fixed Plex status showing form values instead of server info
   - Fixed error messages returning generic responses
   - Fixed token source visibility
-  - Fixed category dropdown using CSS variables that don't work with elements
+  - Fixed category dropdown using CSS variables that don't work with <select> elements
 
 ### Security
 - All Plex tokens now stored in Windows Credential Manager
@@ -117,7 +185,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Automatic migration of legacy tokens to secure storage
 - Sanitized config files with metadata only
 
-## [1.6.0] - 2025-10-XX
+## [1.6.0] - 10-XX-2025
 
 ### Added
 - Genre-based preroll mapping (experimental)
@@ -131,7 +199,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 - Various bug fixes and improvements
 
-## [1.5.12] - 2025-09-XX
+## [1.5.12] - 09-XX-2025
 
 ### Added
 - Basic Plex integration
