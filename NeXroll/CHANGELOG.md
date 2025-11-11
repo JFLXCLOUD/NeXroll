@@ -1,5 +1,64 @@
 # Changelog
 
+## [1.7.7] - 11-11-2025
+
+### Changed
+- **Schedule Playback Mode Selection**
+  - Replaced dual checkboxes with single dropdown selector for Random/Sequential mode
+  - Now mutually exclusive - prevents accidentally selecting both modes simultaneously
+  - Cleaner UI with clear single selection control
+- **Installer Optimization**
+  - Reduced installer size from ~48MB to 44.73MB (~3MB smaller)
+  - Removed redundant `resources/` and `frontend/` folders from installation directory
+  - Frontend assets now bundled inside NeXroll.exe (extracted to temp at runtime)
+  - Icons embedded directly in executables
+  - Installer automatically cleans up legacy folders from previous versions during upgrade
+  - Installation directory now contains only executables and batch file
+
+### Fixed
+- **Schedule Date/Time Display** ([#9](https://github.com/JFLXCLOUD/NeXroll/issues/9))
+  - Fixed "Invalid Date" appearing after schedule creation when page refreshes
+  - Corrected timezone offset handling in frontend date parser
+  - Frontend now properly recognizes both positive (+) and negative (-) timezone offsets
+  - Schedule dates remain stable and display correctly after 30-second polling interval
+- **Schedule Date/Time Shifting** ([#9](https://github.com/JFLXCLOUD/NeXroll/issues/9))
+  - Fixed schedule dates/times randomly shifting when saving or updating
+  - Schedule dates are now stored as naive datetime (local time) instead of UTC
+  - Eliminated 6-hour time jumps caused by incorrect timezone conversion
+  - Dates entered in schedules now remain exactly as set (e.g., Oct 31 5am stays Oct 31 5am)
+- **Backup Restore Foreign Key Error** ([#10](https://github.com/JFLXCLOUD/NeXroll/issues/10))
+  - Fixed database restore failing with "FOREIGN KEY constraint failed" error
+  - Corrected deletion order to clear junction tables before dependent tables
+  - Restore now deletes: preroll_categories → schedules → prerolls → categories → holidays
+  - Backup restore operations now complete successfully without constraint violations
+- **Executable Icons**
+  - Fixed NeXrollService.exe and setup_plex_token.exe displaying generic Python icons
+  - All executables now properly display NeXroll branding icons
+
+## [1.7.5] - 11-10-2025 (UNRELEASED)
+
+### Added
+- **Community Prerolls - Rename Before Download** ([#8](https://github.com/JFLXCLOUD/NeXroll/issues/8))
+  - New rename dialog appears before downloading community prerolls
+  - Automatically removes bug number prefix from default name
+  - Community preroll ID now stored in description field for reference
+  - Press Enter to quickly confirm download with custom name
+
+### Fixed
+- **Edit Preroll Modal Rendering**
+  - Fixed modal not appearing when clicking edit button on prerolls from non-Categories tabs
+  - Edit Preroll modal now renders globally and appears immediately regardless of active tab
+  - Improved modal architecture for better cross-tab functionality
+- **Improved Error Messages**
+  - Delete category now shows specific error: "Cannot delete category that is in use"
+  - Delete schedule errors now display detailed backend messages
+  - Delete preroll errors now show clear explanations
+  - Update operations display helpful error details instead of generic HTTP status codes
+- **Installer - Documents Folder** 
+  - Changed default preroll storage from `Documents\NeXroll\Prerolls` to `%ProgramData%\NeXroll\Prerolls`
+  - Prevents creation of unused empty folders in user Documents directory
+  - Existing installations continue using their configured path from registry
+
 ## [1.7.4] - 11-09-2025
 
 ### Added

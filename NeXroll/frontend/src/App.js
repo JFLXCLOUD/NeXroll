@@ -590,7 +590,10 @@ const [calendarWeekStart, setCalendarWeekStart] = useState(() => {
 // Date/time helpers: treat backend datetimes as UTC and format for local display/inputs
 const ensureUtcIso = (s) => {
   if (!s || typeof s !== 'string') return s;
-  return (s.endsWith('Z') || s.includes('+')) ? s : (s + 'Z');
+  // Check if already has timezone info (Z, +offset, or -offset)
+  // Must check for timezone offset pattern to avoid matching negative years or times
+  const hasTimezone = s.endsWith('Z') || /[+-]\d{2}:\d{2}$/.test(s);
+  return hasTimezone ? s : (s + 'Z');
 };
 const toLocalInputValue = (isoOrNaive) => {
   if (!isoOrNaive) return '';
@@ -4397,23 +4400,20 @@ services:
               </select>
             </div>
           </div>
-          <div className="nx-checkrow">
-            <label className="nx-check">
-              <input
-                type="checkbox"
-                checked={scheduleForm.shuffle}
-                onChange={(e) => setScheduleForm({ ...scheduleForm, shuffle: e.target.checked })}
-              />
-              <span>Random</span>
-            </label>
-            <label className="nx-check">
-              <input
-                type="checkbox"
-                checked={scheduleForm.playlist}
-                onChange={(e) => setScheduleForm({ ...scheduleForm, playlist: e.target.checked })}
-              />
-              <span>Sequential</span>
-            </label>
+          <div className="nx-field">
+            <label className="nx-label">Playback Mode</label>
+            <select
+              className="nx-select"
+              value={scheduleForm.shuffle ? 'random' : 'sequential'}
+              onChange={(e) => setScheduleForm({
+                ...scheduleForm,
+                shuffle: e.target.value === 'random',
+                playlist: e.target.value === 'sequential'
+              })}
+            >
+              <option value="random">Random</option>
+              <option value="sequential">Sequential</option>
+            </select>
           </div>
           <div style={{ marginBottom: '1rem', padding: '1rem', backgroundColor: 'var(--card-bg)', borderRadius: '0.25rem' }}>
             <h3 style={{ marginBottom: '0.5rem', fontSize: '1rem' }}>Fallback Category</h3>
@@ -4523,24 +4523,19 @@ services:
                 </select>
               </div>
               <div className="nx-field nx-span-2">
-                <div className="nx-checkrow">
-                  <label className="nx-check">
-                    <input
-                      type="checkbox"
-                      checked={scheduleForm.shuffle}
-                      onChange={(e) => setScheduleForm({ ...scheduleForm, shuffle: e.target.checked })}
-                    />
-                    <span>Random</span>
-                  </label>
-                  <label className="nx-check">
-                    <input
-                      type="checkbox"
-                      checked={scheduleForm.playlist}
-                      onChange={(e) => setScheduleForm({ ...scheduleForm, playlist: e.target.checked })}
-                    />
-                    <span>Sequential</span>
-                  </label>
-                </div>
+                <label className="nx-label">Playback Mode</label>
+                <select
+                  className="nx-select"
+                  value={scheduleForm.shuffle ? 'random' : 'sequential'}
+                  onChange={(e) => setScheduleForm({
+                    ...scheduleForm,
+                    shuffle: e.target.value === 'random',
+                    playlist: e.target.value === 'sequential'
+                  })}
+                >
+                  <option value="random">Random</option>
+                  <option value="sequential">Sequential</option>
+                </select>
               </div>
             </div>
             <div className="nx-actions">

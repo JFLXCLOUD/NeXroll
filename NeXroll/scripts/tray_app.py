@@ -8,6 +8,7 @@ import ctypes
 import socket
 import urllib.request
 import json
+from typing import Optional
 
 # Third-party (packaged into the EXE)
 from PIL import Image, ImageDraw
@@ -19,6 +20,31 @@ GITHUB_URL = "https://github.com/JFLXCLOUD/NeXroll"
 LATEST_RELEASE_API = "https://api.github.com/repos/JFLXCLOUD/NeXroll/releases/latest"
 LATEST_RELEASE_URL = "https://github.com/JFLXCLOUD/NeXroll/releases/latest"
 APP_NAME = "NeXroll"
+
+def _get_install_dir():
+    """Get the NeXroll installation directory."""
+    try:
+        # Try registry first
+        install_dir = _reg_get_value("Software\\NeXroll", "InstallDir")
+        if install_dir and os.path.exists(install_dir):
+            return install_dir
+            
+        # Then try executable directory
+        if getattr(sys, "frozen", False):
+            exe_dir = os.path.dirname(sys.executable)
+            if os.path.exists(os.path.join(exe_dir, "NeXroll.exe")):
+                return exe_dir
+                
+        # Finally try Program Files
+        program_files = os.environ.get("PROGRAMFILES", r"C:\Program Files")
+        nexroll_dir = os.path.join(program_files, "NeXroll")
+        if os.path.exists(os.path.join(nexroll_dir, "NeXroll.exe")):
+            return nexroll_dir
+            
+    except Exception as e:
+        _log_tray(f"Error getting install dir: {e}")
+    
+    return os.path.dirname(sys.executable)
 
 def _tray_log_dir():
     try:
@@ -80,7 +106,7 @@ def _message_box(title: str, text: str):
             pass
 
 
-def _reg_get_value(subkey: str, value_name: str) -> str | None:
+def _reg_get_value(subkey: str, value_name: str) -> Optional[str]:
     """Read a registry value from HKLM in both 64-bit and 32-bit views (handles NSIS x86 writes)."""
     try:
         if not sys.platform.startswith("win"):
@@ -107,7 +133,7 @@ def _reg_get_value(subkey: str, value_name: str) -> str | None:
     return None
 
 
-def _reg_install_dir() -> str | None:
+def _reg_install_dir() -> Optional[str]:
     return _reg_get_value(r"Software\NeXroll", "InstallDir")
 
 
@@ -234,7 +260,7 @@ def ensure_backend_running():
         _log_tray("ensure_backend_running: portable app did not reach healthy state")
 
 
-def start_service(icon: object | None = None, item: object | None = None) -> None:
+def start_service(icon: Optional[object] = None, item: Optional[object] = None) -> None:
     _log_tray("start_service: invoked")
     ok = _start_service_blocking()
     if ok:
@@ -250,7 +276,7 @@ def start_service(icon: object | None = None, item: object | None = None) -> Non
         _log_tray("start_service: portable app reported healthy")
 
 
-def stop_service(icon: object | None = None, item: object | None = None) -> None:
+def stop_service(icon: Optional[object] = None, item: Optional[object] = None) -> None:
     _log_tray("stop_service: invoked")
     inst, svc, _ = _paths()
     if not os.path.exists(svc):
@@ -265,14 +291,14 @@ def stop_service(icon: object | None = None, item: object | None = None) -> None
         _message_box("NeXroll Service", f"Failed to stop service: {e}")
 
 
-def restart_service(icon: object | None = None, item: object | None = None) -> None:
+def restart_service(icon: Optional[object] = None, item: Optional[object] = None) -> None:
     _log_tray("restart_service: invoked")
     stop_service()
     time.sleep(1.5)
     start_service()
 
 
-def start_app(icon: object | None = None, item: object | None = None) -> None:
+def start_app(icon: Optional[object] = None, item: Optional[object] = None) -> None:
     _log_tray("start_app: invoked")
     if not _start_app_blocking():
         _log_tray("start_app: failed to start portable app")
@@ -281,7 +307,7 @@ def start_app(icon: object | None = None, item: object | None = None) -> None:
         _log_tray("start_app: portable app reported healthy")
 
 
-def open_app(icon: object | None = None, item: object | None = None) -> None:
+def open_app(icon: Optional[object] = None, item: Optional[object] = None) -> None:
     try:
         _log_tray(f"open_app: opening {APP_URL}")
         webbrowser.open(APP_URL)
@@ -290,7 +316,7 @@ def open_app(icon: object | None = None, item: object | None = None) -> None:
         _message_box("Open NeXroll", f"Could not open {APP_URL}")
 
 
-def open_github(icon: object | None = None, item: object | None = None) -> None:
+def open_github(icon: Optional[object] = None, item: Optional[object] = None) -> None:
     try:
         _log_tray(f"open_github: opening {GITHUB_URL}")
         webbrowser.open(GITHUB_URL)
@@ -299,7 +325,7 @@ def open_github(icon: object | None = None, item: object | None = None) -> None:
         _message_box("Open GitHub", f"Could not open {GITHUB_URL}")
 
 
-def rebuild_thumbnails(icon: object | None = None, item: object | None = None) -> None:
+def rebuild_thumbnails(icon: Optional[object] = None, item: Optional[object] = None) -> None:
     _log_tray("rebuild_thumbnails: POST /thumbnails/rebuild?force=true")
     try:
         req = urllib.request.Request(f"{APP_URL}/thumbnails/rebuild?force=true", method="POST")
@@ -318,12 +344,12 @@ def rebuild_thumbnails(icon: object | None = None, item: object | None = None) -
         _log_tray(f"rebuild_thumbnails: error: {e}")
     _message_box("Rebuild Thumbnails", msg)
 
-def _reg_version() -> str | None:
+def _reg_version() -> Optional[str]:
     # Read HKLM\Software\NeXroll\Version from both 64-bit and 32-bit views
     return _reg_get_value(r"Software\NeXroll", "Version")
 
 
-def _backend_version() -> str | None:
+def _backend_version() -> Optional[str]:
     """Fallback: query the backend /system/version endpoint for installed/api version."""
     try:
         req = urllib.request.Request(
@@ -363,7 +389,7 @@ def _parse_version(s: str) -> tuple[int, int, int]:
         return (0, 0, 0)
 
 
-def check_for_updates(icon: object | None = None, item: object | None = None) -> None:
+def check_for_updates(icon: Optional[object] = None, item: Optional[object] = None) -> None:
     # Prefer registry version, then backend-reported version, else 0.0.0
     current = _reg_version() or _backend_version() or "0.0.0"
     latest_tag = None
@@ -403,7 +429,7 @@ def check_for_updates(icon: object | None = None, item: object | None = None) ->
         _message_box("NeXroll Update", f"You are up to date.\nInstalled: {current}\nLatest: {latest_tag}")
 
 
-def about(icon: object | None = None, item: object | None = None) -> None:
+def about(icon: Optional[object] = None, item: Optional[object] = None) -> None:
     _message_box(
         "About NeXroll",
         "NeXroll\n\nPlex Preroll Management System\n\n"
@@ -412,10 +438,11 @@ def about(icon: object | None = None, item: object | None = None) -> None:
     )
 
 
-def on_exit(icon: object | None = None, item: object | None = None) -> None:
+def on_exit(icon: Optional[object] = None, item: Optional[object] = None) -> None:
     try:
-        icon.visible = False
-        icon.stop()
+        if icon:
+            icon.visible = False  # type: ignore
+            icon.stop()  # type: ignore
     except Exception:
         pass
     time.sleep(0.2)
@@ -424,7 +451,7 @@ def on_exit(icon: object | None = None, item: object | None = None) -> None:
 
 def _build_icon_image():
     size = (16, 16)
-    img = Image.new("RGBA", size, (0, 0, 0, 0))
+    img = Image.new("RGBA", size, color=(0, 0, 0, 0))  # type: ignore
     draw = ImageDraw.Draw(img)
     draw.ellipse((0, 0, 15, 15), fill=(30, 144, 255, 255))
     draw.line((4, 11, 4, 4), fill=(255, 255, 255, 255), width=2)
@@ -440,39 +467,127 @@ def resource_path(rel_path: str) -> str:
 
 def get_tray_image():
     try:
-        # Prefer packaged dedicated icons if present
-        try:
-            icon_dir = resource_path("NeXroll_ICON")
+        install_dir = _get_install_dir()
+        _log_tray(f"Looking for icon in install directory: {install_dir}")
+        
+        # First try the bundled resources directory (packaged with exe)
+        if getattr(sys, "frozen", False):
+            # When frozen, check the _MEIPASS directory for bundled resources
+            resource_dir = getattr(sys, '_MEIPASS', os.path.dirname(sys.executable))
+            icon_path = os.path.join(resource_dir, "resources", "icon_1758297097_16x16.ico")
+            _log_tray(f"Checking bundled icon at: {icon_path}")
+            if os.path.exists(icon_path):
+                _log_tray(f"Found bundled icon at: {icon_path}")
+                img = Image.open(icon_path).convert("RGBA")
+                return img
+        
+        # Try the embedded icon (when running as packaged exe)
+        if getattr(sys, "frozen", False):
+            try:
+                import win32api
+                import win32con
+                import win32gui
+                
+                # Always use the current executable (NeXrollTray.exe)
+                exe_path = sys.executable
+                    
+                _log_tray(f"Extracting icon from: {exe_path}")
+                large_icons, small_icons = win32api.ExtractIconEx(exe_path, 0)  # type: ignore
+
+                if small_icons:
+                    hicon = small_icons[0]
+                    import win32ui
+                    from PIL import ImageWin
+
+                    dc = win32ui.CreateDCFromHandle(win32gui.GetDC(0))
+                    bmp = win32ui.CreateBitmap()
+                    bmp.CreateCompatibleBitmap(dc, 16, 16)
+                    memdc = dc.CreateCompatibleDC()
+                    memdc.SelectObject(bmp)
+                    memdc.DrawIcon((0, 0), hicon)
+
+                    bmpinfo = bmp.GetInfo()
+                    bmpstr = bmp.GetBitmapBits(True)
+                    img = Image.frombuffer(
+                        'RGB',
+                        (bmpinfo['bmWidth'], bmpinfo['bmHeight']),
+                        bmpstr, 'raw', 'BGRX', 0, 1
+                    )
+                    img = img.convert("RGBA")
+                    _log_tray("Successfully extracted icon from exe")
+                    return img
+            except Exception as e:
+                _log_tray(f"Failed to extract embedded icon: {e}")
+        
+        # Try the resources directory
+        tray_icon = os.path.join(install_dir, "resources", "tray.ico")
+        if os.path.exists(tray_icon):
+            _log_tray(f"Found tray icon at: {tray_icon}")
+            img = Image.open(tray_icon).convert("RGBA")
+            if max(img.size) > 32:
+                img = img.resize((16, 16))
+            return img
+            
+        # Next try the packaged executable's embedded icon (fallback)
+        if getattr(sys, "frozen", False):
+            try:
+                import win32api
+                import win32con
+                import win32gui
+                
+                # Use current executable as fallback
+                exe_path = sys.executable
+                    
+                _log_tray(f"Extracting icon from: {exe_path} (fallback)")
+                large_icons, small_icons = win32api.ExtractIconEx(exe_path, 0)  # type: ignore
+
+                if small_icons:
+                    hicon = small_icons[0]
+                    import win32ui
+                    from PIL import ImageWin
+
+                    dc = win32ui.CreateDCFromHandle(win32gui.GetDC(0))
+                    bmp = win32ui.CreateBitmap()
+                    bmp.CreateCompatibleBitmap(dc, 16, 16)
+                    memdc = dc.CreateCompatibleDC()
+                    memdc.SelectObject(bmp)
+                    memdc.DrawIcon((0, 0), hicon)
+
+                    bmpinfo = bmp.GetInfo()
+                    bmpstr = bmp.GetBitmapBits(True)
+                    img = Image.frombuffer(
+                        'RGB',
+                        (bmpinfo['bmWidth'], bmpinfo['bmHeight']),
+                        bmpstr, 'raw', 'BGRX', 0, 1
+                    )
+                    img = img.convert("RGBA")
+                    _log_tray("Successfully extracted icon from exe")
+                    return img
+            except Exception as e:
+                _log_tray(f"Failed to extract embedded icon: {e}")
+
+        # Try NeXroll_ICON directory
+        icon_paths = [
+            os.path.join(install_dir, "NeXroll_ICON"),  # Installed location
+            os.path.join(os.path.dirname(install_dir), "NeXroll_ICON"),  # Parent of install dir
+            resource_path("NeXroll_ICON")  # Resource path
+        ]
+        
+        for icon_dir in icon_paths:
+            _log_tray(f"Checking icon directory: {icon_dir}")
             if os.path.isdir(icon_dir):
-                # Prefer specific sizes first, then any .ico
-                ordered = []
-                for fname in os.listdir(icon_dir):
-                    fn = fname.lower()
-                    if fn.endswith("16x16.ico"):
-                        ordered.append(os.path.join(icon_dir, fname))
-                for fname in os.listdir(icon_dir):
-                    fn = fname.lower()
-                    if fn.endswith("32x32.ico"):
-                        ordered.append(os.path.join(icon_dir, fname))
-                for fname in os.listdir(icon_dir):
-                    fn = fname.lower()
-                    if fn.endswith("64x64.ico"):
-                        ordered.append(os.path.join(icon_dir, fname))
-                for fname in os.listdir(icon_dir):
-                    fn = fname.lower()
-                    if fn.endswith(".ico") and os.path.join(icon_dir, fname) not in ordered:
-                        ordered.append(os.path.join(icon_dir, fname))
+                # Try icon files in order of preference
+                for size in ["16x16", "32x32", "64x64"]:
+                    for ext in [".ico", ".png"]:
+                        icon_path = os.path.join(icon_dir, f"icon_1758297097_{size}{ext}")
+                        if os.path.exists(icon_path):
+                            _log_tray(f"Found icon at: {icon_path}")
+                            img = Image.open(icon_path).convert("RGBA")
+                            if max(img.size) > 32:
+                                img = img.resize((16, 16))
+                            return img
 
-                for p in ordered:
-                    if os.path.exists(p):
-                        img = Image.open(p).convert("RGBA")
-                        if max(img.size) > 32:
-                            img = img.resize((16, 16))
-                        return img
-        except Exception:
-            pass
-
-        # Fallbacks (packaged resources)
+        # Fallbacks
         candidates = [
             resource_path(os.path.join("frontend", "favicon.ico")),
             resource_path("favicon.ico"),
@@ -484,22 +599,6 @@ def get_tray_image():
                 if max(img.size) > 32:
                     img = img.resize((16, 16))
                 return img
-
-        # Also check alongside the installed executable (e.g., C:\ProgramData or Program Files\NeXroll)
-        try:
-            exe_dir = os.path.dirname(sys.executable)
-            extra = [
-                os.path.join(exe_dir, "favicon.ico"),
-                os.path.join(exe_dir, "NeXroll.ico"),
-            ]
-            for p in extra:
-                if os.path.exists(p):
-                    img = Image.open(p).convert("RGBA")
-                    if max(img.size) > 32:
-                        img = img.resize((16, 16))
-                    return img
-        except Exception:
-            pass
     except Exception:
         pass
     return _build_icon_image()

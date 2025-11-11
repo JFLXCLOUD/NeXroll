@@ -6,49 +6,164 @@ import socket
 import subprocess
 from urllib.request import urlopen, Request
 from urllib.error import URLError, HTTPError
+# Import win32timezone directly from the package
+from win32timezone import TimeZoneInfo
 import win32event
 import win32service
 import win32serviceutil
 import servicemanager
+import pywintypes
 
 
 class NeXrollService(win32serviceutil.ServiceFramework):
     _svc_name_ = "NeXrollService"
     _svc_display_name_ = "NeXroll Background Service"
     _svc_description_ = "Runs the NeXroll FastAPI backend as a Windows service."
+    _svc_deps_ = []  # No dependencies required
 
     def __init__(self, args):
-        super().__init__(args)
-        # Event to listen for stop requests
-        self.hWaitStop = win32event.CreateEvent(None, 0, 0, None)
-        self.proc = None
-        self.stopping = False
-        self.startup_checkpoint = 0
-        self.log_dir = self._get_log_dir()
         try:
-            os.makedirs(self.log_dir, exist_ok=True)
-        except Exception:
-            pass
-        # Install global logging early so any startup exceptions are captured
-        try:
-            self._install_global_logging()
-        except Exception:
-            pass
-        self._log("info", f"Service initialized. log_dir={self.log_dir}, install_dir={self._get_install_dir()}")
+            super().__init__(args)
+            # Event to listen for stop requests
+            self.hWaitStop = win32event.CreateEvent(None, 0, 0, None)
+            self.proc = None
+            self.stopping = False
+            self.startup_checkpoint = 0
+            # track recent restart timestamps to avoid rapid thrashing
+            self._restart_history = []
+            self.log_dir = self._get_log_dir()
+            try:
+                os.makedirs(self.log_dir, exist_ok=True)
+            except Exception:
+                pass
+            # Install global logging early so any startup exceptions are captured
+            try:
+                self._install_global_logging()
+            except Exception:
+                pass
+            self._log("info", f"Service initialized. log_dir={self.log_dir}, install_dir={self._get_install_dir()}")
+        except Exception as e:
+            import traceback
+            print(f"Service init error: {e}\n{traceback.format_exc()}", file=sys.stderr)
+            raise
 
     def _get_install_dir(self) -> str:
-        # When frozen by PyInstaller, sys.executable is the service exe path
-        if getattr(sys, "frozen", False):
-            return os.path.dirname(sys.executable)
-        # Else, use this script's directory
-        return os.path.dirname(os.path.abspath(__file__))
+        """Get the installation directory with frontend path validation."""
+        try:
+            # Start with service executable directory
+            if getattr(sys, "frozen", False):
+                service_dir = os.path.dirname(sys.executable)
+                self._log("info", f"Service executable directory: {service_dir}")
+                
+                # Look for frontend in various locations relative to service
+                frontend_paths = [
+                    os.path.join(service_dir, "frontend", "build"),
+                    os.path.join(os.path.dirname(service_dir), "frontend", "build"),
+                    os.path.join(service_dir, "frontend", "build", "static"),
+                ]
+                
+                for path in frontend_paths:
+                    self._log("info", f"Checking frontend path: {path}")
+                    if os.path.exists(os.path.join(path, "index.html")):
+                        self._log("info", f"Found frontend build at: {path}")
+                        return os.path.dirname(os.path.dirname(path))  # Return NeXroll root dir
+                
+            # Check standard Program Files location
+            program_files = os.environ.get("PROGRAMFILES", r"C:\Program Files")
+            nexroll_dir = os.path.join(program_files, "NeXroll")
+            
+            if os.path.exists(os.path.join(nexroll_dir, "frontend", "build", "index.html")):
+                self._log("info", f"Found NeXroll in Program Files: {nexroll_dir}")
+                return nexroll_dir
+            
+            # Development/fallback paths
+            paths_to_check = [
+                os.path.dirname(os.path.abspath(__file__)),  # Script directory
+                os.getcwd(),  # Current working directory
+                os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."),  # Parent of script dir
+            ]
+            
+            for path in paths_to_check:
+                frontend_build = os.path.join(path, "frontend", "build", "index.html")
+                if os.path.exists(frontend_build):
+                    self._log("info", f"Found frontend in development path: {path}")
+                    return path
+                
+            self._log("warning", "No frontend build found in any expected location")
+            return service_dir if getattr(sys, "frozen", False) else os.getcwd()
+            
+        except Exception as e:
+            self._log("error", f"Error in _get_install_dir: {e}")
+            return os.getcwd()
+
+    def _get_log_dir(self) -> str:
+        try:
+            # First, try programdata location
+            prog_data = os.environ.get("ProgramData", "")
+            if prog_data:
+                log_dir = os.path.join(prog_data, "NeXroll", "logs")
+                try:
+                    os.makedirs(log_dir, exist_ok=True)
+                    return log_dir
+                except Exception:
+                    pass
+
+            # Fallback: temp directory
+            temp = os.environ.get("TEMP", os.environ.get("TMP", ""))
+            if temp:
+                log_dir = os.path.join(temp, "NeXroll", "logs")
+                try:
+                    os.makedirs(log_dir, exist_ok=True)
+                    return log_dir
+                except Exception:
+                    pass
+
+            # Last resort: next to the exe
+            exe_dir = self._get_install_dir()
+            log_dir = os.path.join(exe_dir, "logs")
+            try:
+                os.makedirs(log_dir, exist_ok=True)
+            except Exception:
+                pass
+            return log_dir
+        except Exception as e:
+            print(f"Error getting log dir: {e}", file=sys.stderr)
+            return os.getcwd()
+
+    def _install_global_logging(self):
+        """Install a global excepthook and tee stdout/stderr into the service log."""
+        def log_error(msg):
+            self._log("error", msg)
+        servicemanager.LogErrorMsg = log_error
+        
+        # Install exception hook
+        try:
+            import traceback
+            def _hook(exc_type, exc, tb):
+                try:
+                    lines = "".join(traceback.format_exception(exc_type, exc, tb))
+                    self._log("error", f"Unhandled exception: {lines}")
+                except Exception:
+                    pass
+            sys.excepthook = _hook
+        except Exception:
+            pass
+            
+        # Redirect std streams as best-effort
+        try:
+            self._redirect_std_streams()
+        except Exception:
+            pass
 
     def _build_launch_command(self):
         inst_dir = self._get_install_dir()
         nexroll_exe = os.path.join(inst_dir, "NeXroll.exe")
 
+        self._log("info", f"Looking for NeXroll.exe in: {nexroll_exe}")
+        
         # Prefer the packaged executable
         if os.path.exists(nexroll_exe):
+            self._log("info", f"Found NeXroll.exe at {nexroll_exe}")
             return {"cmd": [nexroll_exe], "cwd": inst_dir}
 
         # Fall back to Python (system) if available
@@ -92,29 +207,6 @@ class NeXrollService(win32serviceutil.ServiceFramework):
 
         # If nothing found, return None
         return None
-
-    def _get_log_dir(self) -> str:
-        base = os.environ.get("PROGRAMDATA") or os.environ.get("ALLUSERSPROFILE") or self._get_install_dir()
-        return os.path.join(base, "NeXroll", "logs")
-
-    def _install_global_logging(self):
-        """Install a global excepthook and tee stdout/stderr into the service log."""
-        try:
-            import traceback
-            def _hook(exc_type, exc, tb):
-                try:
-                    lines = "".join(traceback.format_exception(exc_type, exc, tb))
-                    self._log("error", f"Unhandled exception: {lines}")
-                except Exception:
-                    pass
-            sys.excepthook = _hook
-        except Exception:
-            pass
-        # Redirect std streams as best-effort
-        try:
-            self._redirect_std_streams()
-        except Exception:
-            pass
 
     def _redirect_std_streams(self):
         try:
@@ -181,11 +273,18 @@ class NeXrollService(win32serviceutil.ServiceFramework):
         except Exception:
             return False
 
+    def _get_port(self) -> int:
+        try:
+            return int(os.environ.get("NEXROLL_PORT", "9393"))
+        except Exception:
+            return 9393
+
     def _wait_for_health(self, timeout: int = 60) -> bool:
         """Wait until the backend reports healthy or port 9393 is open."""
         start = time.time()
         last_log = 0.0
-        url = "http://127.0.0.1:9393/health"
+        port = self._get_port()
+        url = f"http://127.0.0.1:{port}/health"
 
         while not self.stopping and (time.time() - start) < timeout:
             # Try HTTP health
@@ -198,14 +297,14 @@ class NeXrollService(win32serviceutil.ServiceFramework):
                 pass
 
             # Fallback to port check
-            if self._is_port_open("127.0.0.1", 9393, timeout=1.0):
+            if self._is_port_open("127.0.0.1", port, timeout=1.0):
                 return True
 
             # Periodically tell SCM we're still starting
             self.ReportServiceStatus(win32service.SERVICE_START_PENDING)
             # Log every 5 seconds while waiting
             if time.time() - last_log > 5.0:
-                self._log("info", "Waiting for backend health on http://127.0.0.1:9393/health ...")
+                self._log("info", f"Waiting for backend health on {url} ...")
                 last_log = time.time()
 
             # Wait or break if stop requested
@@ -220,6 +319,42 @@ class NeXrollService(win32serviceutil.ServiceFramework):
         if not launch:
             self._log("error", "No suitable runtime found to start NeXroll (missing NeXroll.exe and Python).")
             return None
+
+        # Verify frontend build assets exist when running from packaged install
+        try:
+            inst_dir = self._get_install_dir()
+            frontend_build = os.path.join(inst_dir, 'frontend', 'build', 'index.html')
+            if not os.path.exists(frontend_build):
+                self._log("warning", f"Frontend build not found at {frontend_build}. The web UI may be unavailable. Ensure frontend/build is packaged into the installer.")
+        except Exception:
+            pass
+
+        # Prevent starting if the configured port is already in use. This avoids
+        # multiple concurrent backends fighting for the same socket and rapid
+        # restart loops that make SCM unable to start the service.
+        port = self._get_port()
+        try:
+            if self._is_port_open("127.0.0.1", port):
+                self._log("error", f"Port {port} already in use; will not start backend. Ensure no other NeXroll instance is running.")
+                return None
+        except Exception:
+            pass
+
+        # If another NeXroll.exe is already running, do not launch another one.
+        try:
+            # Use tasklist to detect running image name on Windows
+            if sys.platform.startswith("win"):
+                try:
+                    completed = subprocess.run(["tasklist", "/FI", "IMAGENAME eq NeXroll.exe", "/FO", "CSV"], capture_output=True, text=True)
+                    out = (completed.stdout or "").strip().splitlines()
+                    # tasklist returns header and possibly rows. If more than 1 line, there are matches.
+                    if len(out) > 1:
+                        self._log("info", f"Detected existing NeXroll.exe processes; skipping launch ({len(out)-1} instances found).")
+                        return None
+                except Exception:
+                    pass
+        except Exception:
+            pass
 
         creationflags = 0
         try:
@@ -250,12 +385,14 @@ class NeXrollService(win32serviceutil.ServiceFramework):
 
         healthy = False
         attempts = 0
-        max_attempts = 2
+        max_attempts = 3
 
         while attempts < max_attempts and not self.stopping:
             if attempts > 0:
                 self._log("info", f"Retrying backend start (attempt {attempts + 1}/{max_attempts})...")
-                time.sleep(2)
+                # back off a bit longer between attempts to allow any leftover
+                # sockets to be released and to avoid hot loops
+                time.sleep(5)
 
             self.proc = self._start_backend()
             if not self.proc:
@@ -292,8 +429,19 @@ class NeXrollService(win32serviceutil.ServiceFramework):
                 # If child exited unexpectedly while not stopping, attempt a restart
                 if self.proc and self.proc.poll() is not None and not self.stopping:
                     exit_code = self.proc.returncode
+                    now = time.time()
+                    # record this restart attempt
+                    self._restart_history.append(now)
+                    # keep only recent history (last 60s)
+                    window = 60.0
+                    self._restart_history = [t for t in self._restart_history if now - t <= window]
+                    if len(self._restart_history) > 5:
+                        self._log("error", f"Backend restart rate too high ({len(self._restart_history)} restarts in {int(window)}s); aborting to avoid thrash.")
+                        break
+
                     self._log("error", f"Backend exited unexpectedly with code {exit_code}. Attempting restart...")
-                    time.sleep(2)
+                    # short backoff before restart
+                    time.sleep(3)
                     self.proc = self._start_backend()
                     if not self.proc:
                         self._log("error", "Restart failed; stopping service loop.")
@@ -310,22 +458,50 @@ class NeXrollService(win32serviceutil.ServiceFramework):
     def _terminate_backend(self):
         if not self.proc:
             return
+            
         try:
-            # Try graceful termination
+            # Store pid before termination attempts
+            proc_pid = self.proc.pid
+            
+            # Log termination attempt
+            self._log("info", f"Attempting to terminate backend process {proc_pid}")
+            
+            # Try graceful termination first
             self.proc.terminate()
-        except Exception:
-            pass
-
-        # Wait briefly
-        try:
-            self.proc.wait(timeout=10)
-        except Exception:
+            
+            # Give the process a chance to exit gracefully
             try:
-                self.proc.kill()
-            except Exception:
-                pass
+                if self.proc.wait(timeout=5) is not None:
+                    self._log("info", f"Backend process {proc_pid} terminated gracefully")
+                    self.proc = None
+                    return
+            except subprocess.TimeoutExpired:
+                self._log("warning", f"Backend process {proc_pid} did not terminate gracefully, forcing kill")
+                
+            # If still running, force kill
+            try:
+                if self.proc:  # Check if proc still exists
+                    self.proc.kill()
+                    self.proc.wait(timeout=5)
+                    self._log("info", f"Backend process {proc_pid} was forcefully terminated")
+            except Exception as e:
+                self._log("error", f"Failed to kill backend process {proc_pid}: {e}")
+        except Exception as e:
+            self._log("error", f"Error during backend process termination: {e}")
         finally:
             self.proc = None
+            
+        # Double check for any leftover NeXroll processes
+        try:
+            if sys.platform.startswith("win"):
+                subprocess.run(
+                    ["taskkill", "/F", "/IM", "NeXroll.exe"],
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    creationflags=subprocess.CREATE_NO_WINDOW
+                )
+        except Exception:
+            pass
 
     def SvcStop(self):
         self._log("info", "Stop requested.")

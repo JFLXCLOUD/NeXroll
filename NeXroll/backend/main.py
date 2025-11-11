@@ -540,6 +540,11 @@ class ScheduleResponse(BaseModel):
     recurrence_pattern: Optional[str] = None
     preroll_ids: Optional[str] = None
     sequence: Optional[str] = None
+    
+    class Config:
+        json_encoders = {
+            datetime.datetime: lambda v: v.isoformat() if v else None
+        }
 
 class CategoryCreate(BaseModel):
     name: str
