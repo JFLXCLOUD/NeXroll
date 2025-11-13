@@ -162,17 +162,19 @@ def migrate_legacy_community_prerolls() -> None:
     """
     try:
         db = SessionLocal()
-        
+
+        # Check if column exists before querying (handles old DB schemas)
+        if not _sqlite_has_column("prerolls", "community_preroll_id"):
+            return
+
         # Find prerolls that were downloaded from community but don't have an ID yet
         legacy_prerolls = db.query(models.Preroll).filter(
             models.Preroll.description.like("%Downloaded from Community Prerolls%"),
             models.Preroll.community_preroll_id.is_(None)
         ).all()
-        
+
         if not legacy_prerolls:
-            return
-        
-        import requests
+            return        import requests
         matched_count = 0
         
         for preroll in legacy_prerolls:
@@ -9211,18 +9213,20 @@ def get_downloaded_community_preroll_ids(db: Session = Depends(get_db)):
     Used by the frontend to mark community prerolls as "Downloaded".
     """
     try:
+        # Check if column exists before querying (handles old DB schemas)
+        if not _sqlite_has_column("prerolls", "community_preroll_id"):
+            return {"downloaded_ids": []}
+        
         downloaded = db.query(models.Preroll.community_preroll_id).filter(
             models.Preroll.community_preroll_id.isnot(None)
         ).all()
-        
+
         # Extract IDs and convert to list (removing duplicates)
         ids = list(set([str(row[0]) for row in downloaded if row[0]]))
-        
+
         return {"downloaded_ids": ids}
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to get downloaded IDs: {str(e)}")
-
-@app.post("/community-prerolls/migrate-legacy")
+        raise HTTPException(status_code=500, detail=f"Failed to get downloaded IDs: {str(e)}")@app.post("/community-prerolls/migrate-legacy")
 def migrate_legacy_community_prerolls_endpoint(db: Session = Depends(get_db)):
     """
     Manually trigger migration of legacy community prerolls (those downloaded before ID tracking).
@@ -9230,12 +9234,16 @@ def migrate_legacy_community_prerolls_endpoint(db: Session = Depends(get_db)):
     Returns count of matched prerolls.
     """
     try:
+        # Check if column exists before querying (handles old DB schemas)
+        if not _sqlite_has_column("prerolls", "community_preroll_id"):
+            return {"matched": 0, "message": "Database schema too old, community_preroll_id column not present"}
+        
         # Find prerolls that were downloaded from community but don't have an ID yet
         legacy_prerolls = db.query(models.Preroll).filter(
             models.Preroll.description.like("%Downloaded from Community Prerolls%"),
             models.Preroll.community_preroll_id.is_(None)
         ).all()
-        
+
         if not legacy_prerolls:
             return {"matched": 0, "message": "No legacy community prerolls found"}
         

@@ -1,5 +1,14 @@
 # Changelog
 
+## [1.7.11] - 11-13-2025
+
+### Fixed
+- **Additional Docker Query Fixes**
+  - Fixed `get_downloaded_community_preroll_ids` endpoint crashing when `community_preroll_id` column doesn't exist
+  - Fixed legacy migration functions querying non-existent columns in old databases
+  - Added column existence checks before all database queries involving `community_preroll_id`
+  - Resolves remaining 500 errors when using Docker with pre-v1.7.9 databases
+
 ## [1.7.10] - 11-13-2025
 
 ### Fixed
