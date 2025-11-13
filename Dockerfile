@@ -1,4 +1,4 @@
-﻿# syntax=docker/dockerfile:1
+# syntax=docker/dockerfile:1
 
 # --- Frontend build stage (build React app from source) ---
 FROM node:22-alpine AS frontend-builder
@@ -57,6 +57,9 @@ COPY NeXroll/backend /app/NeXroll/backend
 # Copy version.py
 COPY NeXroll/version.py /app/NeXroll/version.py
 
+# Copy CHANGELOG
+COPY NeXroll/CHANGELOG.md /app/NeXroll/CHANGELOG.md
+
 # Copy freshly built frontend assets from the builder stage
 COPY --from=frontend-builder /build/frontend/build /app/NeXroll/frontend/build
 
@@ -72,3 +75,4 @@ HEALTHCHECK --interval=30s --timeout=5s --retries=3 \
 
 # Start Uvicorn
 CMD ["sh", "-c", "uvicorn backend.main:app --host 0.0.0.0 --port ${NEXROLL_PORT:-9393}"]
+
