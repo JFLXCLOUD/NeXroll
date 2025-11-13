@@ -9216,8 +9216,8 @@ def get_downloaded_community_preroll_ids(db: Session = Depends(get_db)):
     Used by the frontend to mark community prerolls as "Downloaded".
     """
     try:
-        # Check if column exists before querying (handles old DB schemas)
-        if not _sqlite_has_column("prerolls", "community_preroll_id"):
+        # Check if model has the attribute (handles old schemas + pre-restart state)
+        if not hasattr(models.Preroll, 'community_preroll_id'):
             return {"downloaded_ids": []}
         
         downloaded = db.query(models.Preroll.community_preroll_id).filter(
@@ -9239,8 +9239,8 @@ def migrate_legacy_community_prerolls_endpoint(db: Session = Depends(get_db)):
     Returns count of matched prerolls.
     """
     try:
-        # Check if column exists before querying (handles old DB schemas)
-        if not _sqlite_has_column("prerolls", "community_preroll_id"):
+        # Check if model has the attribute (handles old schemas + pre-restart state)
+        if not hasattr(models.Preroll, 'community_preroll_id'):
             return {"matched": 0, "message": "Database schema too old, community_preroll_id column not present"}
         
         # Find prerolls that were downloaded from community but don't have an ID yet
