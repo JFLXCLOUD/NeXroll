@@ -174,7 +174,9 @@ def migrate_legacy_community_prerolls() -> None:
         ).all()
 
         if not legacy_prerolls:
-            return        import requests
+            return
+
+        import requests
         matched_count = 0
         
         for preroll in legacy_prerolls:
