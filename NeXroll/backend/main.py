@@ -9202,6 +9202,10 @@ def download_community_preroll(
     except HTTPException:
         raise
     except Exception as e:
+        import traceback
+        error_details = traceback.format_exc()
+        _file_log(f"DOWNLOAD ERROR: {error_details}")
+        print(f"DOWNLOAD ERROR: {error_details}", flush=True)
         try:
             db.rollback()
         except Exception:
