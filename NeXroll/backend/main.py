@@ -120,6 +120,9 @@ def ensure_schema() -> None:
             # Prerolls: ensure managed flag to indicate external/mapped files (no moves/deletes)
             if not _sqlite_has_column("prerolls", "managed"):
                 _sqlite_add_column("prerolls", "managed BOOLEAN DEFAULT 1")
+            # Prerolls: ensure community_preroll_id for tracking downloaded community prerolls
+            if not _sqlite_has_column("prerolls", "community_preroll_id"):
+                _sqlite_add_column("prerolls", "community_preroll_id TEXT")
 
             # Genre maps: ensure canonical normalized key for robust matching/synonyms
             if not _sqlite_has_column("genre_maps", "genre_norm"):
@@ -151,6 +154,66 @@ def ensure_schema() -> None:
                 _sqlite_add_column("settings", "timezone TEXT DEFAULT 'UTC'")
     except Exception as e:
         print(f"Schema ensure error: {e}")
+
+def migrate_legacy_community_prerolls() -> None:
+    """
+    One-time migration to match legacy community prerolls (downloaded before ID tracking)
+    with their community library IDs by searching the community API by title.
+    """
+    try:
+        db = SessionLocal()
+        
+        # Find prerolls that were downloaded from community but don't have an ID yet
+        legacy_prerolls = db.query(models.Preroll).filter(
+            models.Preroll.description.like("%Downloaded from Community Prerolls%"),
+            models.Preroll.community_preroll_id.is_(None)
+        ).all()
+        
+        if not legacy_prerolls:
+            return
+        
+        import requests
+        matched_count = 0
+        
+        for preroll in legacy_prerolls:
+            try:
+                # Try to find this preroll in the community library by searching its display name or filename
+                search_title = preroll.display_name or preroll.filename.replace('.mp4', '').replace('.mkv', '')
+                
+                # Search community API
+                response = requests.get(
+                    'https://prerolls.typicalnerds.uk/api/search',
+                    params={'query': search_title, 'limit': 5},
+                    timeout=5
+                )
+                
+                if response.ok:
+                    results = response.json().get('results', [])
+                    
+                    # Look for exact or very close title match
+                    for result in results:
+                        import re
+                        result_title = re.sub(r'^\d+\s*-\s*', '', result.get('title', '')).strip().lower()
+                        search_lower = search_title.lower().strip()
+                        
+                        # Match if titles are very similar
+                        if result_title == search_lower or search_lower in result_title or result_title in search_lower:
+                            preroll.community_preroll_id = str(result.get('id'))
+                            matched_count += 1
+                            print(f"Matched legacy preroll '{preroll.display_name}' to community ID {result.get('id')}")
+                            break
+                
+            except Exception as e:
+                print(f"Failed to match preroll {preroll.id}: {e}")
+                continue
+        
+        if matched_count > 0:
+            db.commit()
+            print(f"Legacy community preroll migration: matched {matched_count} prerolls")
+        
+        db.close()
+    except Exception as e:
+        print(f"Legacy community preroll migration error: {e}")
 
 def ensure_settings_schema_now() -> None:
     """
@@ -224,6 +287,11 @@ def ensure_settings_schema_now() -> None:
 
 # Run schema upgrades early so requests won't hit missing columns
 ensure_schema()
+
+# Run legacy community preroll migration in background (one-time, safe to call multiple times)
+import threading
+threading.Thread(target=migrate_legacy_community_prerolls, daemon=True).start()
+
 # Simple file logger to ProgramData\NeXroll\logs for frozen builds
 def _ensure_log_dir():
     r"""
@@ -2986,7 +3054,7 @@ def upload_multiple_prerolls(
     }
 
 @app.get("/prerolls")
-def get_prerolls(db: Session = Depends(get_db), category_id: str = "", tags: str = ""):
+def get_prerolls(db: Session = Depends(get_db), category_id: str = "", tags: str = "", search: str = ""):
     # Base query
     query = db.query(models.Preroll)
 
@@ -3005,11 +3073,19 @@ def get_prerolls(db: Session = Depends(get_db), category_id: str = "", tags: str
         except ValueError:
             pass  # Invalid category_id, ignore filter
 
-    # Handle tag filtering (contains string; tags stored as JSON)
-    if tags and tags.strip():
-        tag_list = [tag.strip() for tag in tags.split(',') if tag.strip()]
-        for tag in tag_list:
-            query = query.filter(models.Preroll.tags.contains(tag))
+    # Handle search (searches tags, filename, and display_name)
+    search_term = (search or tags).strip()
+    if search_term:
+        search_terms = [term.strip() for term in search_term.split(',') if term.strip()]
+        for term in search_terms:
+            search_pattern = f"%{term}%"
+            query = query.filter(
+                or_(
+                    models.Preroll.tags.ilike(search_pattern),
+                    models.Preroll.filename.ilike(search_pattern),
+                    models.Preroll.display_name.ilike(search_pattern)
+                )
+            )
 
     prerolls = query.options(joinedload(models.Preroll.category)).distinct().all()
     result = []
@@ -9008,7 +9084,8 @@ def download_community_preroll(
             description=f"Downloaded from Community Prerolls library",
             duration=duration,
             file_size=file_size,
-            managed=True
+            managed=True,
+            community_preroll_id=str(request.preroll_id) if request.preroll_id else None
         )
         db.add(preroll)
         db.commit()
@@ -9103,6 +9180,104 @@ def download_community_preroll(
         except Exception:
             pass
         raise HTTPException(status_code=500, detail=f"Download import failed: {str(e)}")
+
+@app.get("/community-prerolls/downloaded-ids")
+def get_downloaded_community_preroll_ids(db: Session = Depends(get_db)):
+    """
+    Get a list of community preroll IDs that have been downloaded.
+    Used by the frontend to mark community prerolls as "Downloaded".
+    """
+    try:
+        downloaded = db.query(models.Preroll.community_preroll_id).filter(
+            models.Preroll.community_preroll_id.isnot(None)
+        ).all()
+        
+        # Extract IDs and convert to list (removing duplicates)
+        ids = list(set([str(row[0]) for row in downloaded if row[0]]))
+        
+        return {"downloaded_ids": ids}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to get downloaded IDs: {str(e)}")
+
+@app.post("/community-prerolls/migrate-legacy")
+def migrate_legacy_community_prerolls_endpoint(db: Session = Depends(get_db)):
+    """
+    Manually trigger migration of legacy community prerolls (those downloaded before ID tracking).
+    Attempts to match them with community library by searching by title.
+    Returns count of matched prerolls.
+    """
+    try:
+        # Find prerolls that were downloaded from community but don't have an ID yet
+        legacy_prerolls = db.query(models.Preroll).filter(
+            models.Preroll.description.like("%Downloaded from Community Prerolls%"),
+            models.Preroll.community_preroll_id.is_(None)
+        ).all()
+        
+        if not legacy_prerolls:
+            return {"matched": 0, "message": "No legacy community prerolls found"}
+        
+        import requests
+        import re
+        matched_count = 0
+        failed_titles = []
+        
+        for preroll in legacy_prerolls:
+            try:
+                # Try to find this preroll in the community library by searching its display name or filename
+                search_title = preroll.display_name or preroll.filename.replace('.mp4', '').replace('.mkv', '').replace('.avi', '')
+                
+                # Search community API
+                response = requests.get(
+                    'https://prerolls.typicalnerds.uk/api/search',
+                    params={'query': search_title, 'limit': 10},
+                    timeout=10
+                )
+                
+                if response.ok:
+                    results = response.json().get('results', [])
+                    
+                    # Look for exact or very close title match
+                    matched = False
+                    for result in results:
+                        result_title = re.sub(r'^\d+\s*-\s*', '', result.get('title', '')).strip().lower()
+                        search_lower = search_title.lower().strip()
+                        
+                        # Match if titles are very similar (exact match or one contains the other with >80% overlap)
+                        if result_title == search_lower:
+                            preroll.community_preroll_id = str(result.get('id'))
+                            matched_count += 1
+                            matched = True
+                            break
+                        elif len(search_lower) > 5 and (search_lower in result_title or result_title in search_lower):
+                            # Additional check: titles must be at least 80% similar in length
+                            len_ratio = min(len(search_lower), len(result_title)) / max(len(search_lower), len(result_title))
+                            if len_ratio >= 0.8:
+                                preroll.community_preroll_id = str(result.get('id'))
+                                matched_count += 1
+                                matched = True
+                                break
+                    
+                    if not matched:
+                        failed_titles.append(search_title)
+                
+            except Exception as e:
+                _file_log(f"Failed to match preroll {preroll.id}: {e}")
+                failed_titles.append(search_title)
+                continue
+        
+        if matched_count > 0:
+            db.commit()
+        
+        return {
+            "matched": matched_count,
+            "total_legacy": len(legacy_prerolls),
+            "failed": len(failed_titles),
+            "failed_titles": failed_titles[:10] if failed_titles else [],
+            "message": f"Successfully matched {matched_count} out of {len(legacy_prerolls)} legacy community prerolls"
+        }
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Migration failed: {str(e)}")
 
 @app.get("/community-prerolls/random")
 def get_random_community_preroll(

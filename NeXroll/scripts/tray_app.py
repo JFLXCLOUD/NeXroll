@@ -608,14 +608,17 @@ def run_tray():
     _log_tray("NeXrollTray starting")
     menu = pystray.Menu(
         pystray.MenuItem("Open", open_app, default=True),
+        pystray.Menu.SEPARATOR,
         pystray.MenuItem("Start Service", start_service),
         pystray.MenuItem("Stop Service", stop_service),
         pystray.MenuItem("Restart Service", restart_service),
-        pystray.MenuItem("Start App (portable)", start_app),
+        pystray.Menu.SEPARATOR,
         pystray.MenuItem("Rebuild Thumbnails", rebuild_thumbnails),
         pystray.MenuItem("Check for updates", check_for_updates),
+        pystray.Menu.SEPARATOR,
         pystray.MenuItem("About", about),
         pystray.MenuItem("GitHub: JFLXCLOUD/NeXroll", open_github),
+        pystray.Menu.SEPARATOR,
         pystray.MenuItem("Exit", on_exit)
     )
 

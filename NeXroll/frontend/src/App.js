@@ -511,6 +511,8 @@ function App() {
   // Index status for local fast search
   const [communityIndexStatus, setCommunityIndexStatus] = useState(null);
   const [communityIsBuilding, setCommunityIsBuilding] = useState(false);
+  // Downloaded community preroll IDs (for marking as "Downloaded")
+  const [downloadedCommunityIds, setDownloadedCommunityIds] = useState([]);
   
   // Docker Quick Connect UI state
   const [prerollView, setPrerollView] = useState(() => {
@@ -903,7 +905,7 @@ const toLocalInputFromDate = (d) => {
     Promise.all([
       fetch('http://localhost:9393/plex/status'),
       fetch('http://localhost:9393/jellyfin/status'),
-      fetch(`http://localhost:9393/prerolls?category_id=${fc}&tags=${ft}`),
+      fetch(`http://localhost:9393/prerolls?category_id=${fc}&search=${ft}`),
       fetch('http://localhost:9393/schedules'),
       fetch('http://localhost:9393/categories'),
       fetch('http://localhost:9393/holiday-presets'),
@@ -1099,6 +1101,7 @@ const toLocalInputFromDate = (d) => {
             console.log('Fair Use accepted - loading Top 5 prerolls...');
             loadTop5Prerolls();
             loadLatestPrerolls();
+            loadDownloadedCommunityIds(); // Load downloaded IDs for marking
             
             // Load index status for fast search feature
             const loadIndexStatus = async () => {
@@ -1138,6 +1141,20 @@ const toLocalInputFromDate = (d) => {
       console.error('Failed to load Top 5 prerolls:', error);
     } finally {
       setCommunityIsLoadingTop5(false);
+    }
+  };
+
+  // Function to load downloaded community preroll IDs
+  const loadDownloadedCommunityIds = async () => {
+    try {
+      const response = await fetch(apiUrl('community-prerolls/downloaded-ids'));
+      const data = await response.json();
+      
+      if (data.downloaded_ids) {
+        setDownloadedCommunityIds(data.downloaded_ids);
+      }
+    } catch (error) {
+      console.error('Failed to load downloaded community IDs:', error);
     }
   };
 
@@ -2780,7 +2797,7 @@ services:
               <div className="search-input-wrapper">
                 <input
                   type="text"
-                  placeholder="Search tags..."
+                  placeholder="Search prerolls (tags, filenames, titles)..."
                   value={inputTagsValue}
                   onChange={(e) => handleTagsChange(e.target.value)}
                   className="search-input"
@@ -7035,6 +7052,63 @@ C:\\\\Media\\\\Prerolls\\\\summer\\\\beach.mp4`}
       }
     };
 
+    // Check if a community preroll is already downloaded
+    const isPrerollAlreadyDownloaded = (communityPreroll) => {
+      if (!communityPreroll || !communityPreroll.id) return false;
+      
+      // Method 1: Check if this community preroll's ID is in our downloaded IDs list (for new downloads)
+      if (downloadedCommunityIds.includes(String(communityPreroll.id))) {
+        return true;
+      }
+      
+      // Method 2: Check by title matching for legacy downloads (before ID tracking was implemented)
+      if (!prerolls || prerolls.length === 0) return false;
+      
+      // Clean the community title (remove bug number prefix, normalize separators, remove extensions)
+      const communityTitle = communityPreroll.title
+        .replace(/^\d+\s*-\s*/, '')  // Remove bug number prefix
+        .replace(/\.(mp4|mkv|avi|mov|webm)$/i, '')  // Remove extension if present
+        .replace(/[_\-]/g, ' ')  // Normalize underscores and dashes to spaces
+        .replace(/\s+/g, ' ')  // Normalize multiple spaces to single space
+        .trim()
+        .toLowerCase();
+      
+      // Check if any local preroll with "Downloaded from Community Prerolls" has a similar title
+      return prerolls.some(p => {
+        // Only check prerolls that were downloaded from community (legacy ones without ID)
+        const isCommunityPreroll = p.description && p.description.includes('Downloaded from Community Prerolls');
+        if (!isCommunityPreroll) return false;
+        
+        // Clean local title the same way
+        const localTitle = (p.display_name || p.filename || '')
+          .replace(/\.(mp4|mkv|avi|mov|webm)$/i, '')
+          .replace(/[_\-]/g, ' ')
+          .replace(/\s+/g, ' ')
+          .trim()
+          .toLowerCase();
+        
+        if (!localTitle) return false;
+        
+        // Only use exact match or very strict substring match
+        // Method A: Exact match after normalization
+        if (localTitle === communityTitle) return true;
+        
+        // Method B: STRICT substring match - only if one FULLY contains the other AND they're very similar in length
+        if (localTitle.length >= 5 && communityTitle.length >= 5) {
+          const lengthRatio = Math.min(localTitle.length, communityTitle.length) / Math.max(localTitle.length, communityTitle.length);
+          
+          // Must be >90% similar in length to avoid false positives (e.g., "Christmas" matching "Christmas Marvel Studios 2024")
+          if (lengthRatio >= 0.9) {
+            if (localTitle.includes(communityTitle) || communityTitle.includes(localTitle)) {
+              return true;
+            }
+          }
+        }
+        
+        return false;
+      });
+    };
+
     // Handle preroll download and import
     const handleDownload = async (preroll) => {
       if (!communitySelectedCategory && communityShowAddToCategory[preroll.id]) {
@@ -7086,6 +7160,9 @@ C:\\\\Media\\\\Prerolls\\\\summer\\\\beach.mp4`}
         await new Promise(resolve => setTimeout(resolve, 500)); // Brief pause to show processing
         
         alert(`✅ Successfully downloaded "${result.display_name || result.filename}"!`);
+        
+        // Refresh downloaded IDs to update the UI
+        await loadDownloadedCommunityIds();
         
         // Reset form
         setCommunityShowAddToCategory(prev => ({ ...prev, [preroll.id]: false }));
@@ -7656,21 +7733,43 @@ C:\\\\Media\\\\Prerolls\\\\summer\\\\beach.mp4`}
                       >
                         ▶️ Preview
                       </button>
-                      <button
-                        onClick={() => handleDownload(preroll)}
-                        disabled={communityIsDownloading[preroll.id] || (communityShowAddToCategory[preroll.id] && !communitySelectedCategory)}
-                        className="button"
-                        style={{
-                          flex: 1,
-                          padding: '0.5rem',
-                          fontSize: '0.8rem',
-                          opacity: communityIsDownloading[preroll.id] ? 0.6 : 1
-                        }}
-                      >
-                        {communityIsDownloading[preroll.id] === 'downloading' ? '⬇️ Downloading...' : 
-                         communityIsDownloading[preroll.id] === 'processing' ? '⚙️ Processing...' : 
-                         '⬇️ Download'}
-                      </button>
+                      {isPrerollAlreadyDownloaded(preroll) ? (
+                        <div
+                          className="button"
+                          style={{
+                            flex: 1,
+                            padding: '0.5rem',
+                            fontSize: '0.8rem',
+                            backgroundColor: 'rgba(102, 200, 145, 0.2)',
+                            border: '1px solid rgba(102, 200, 145, 0.4)',
+                            color: '#66c891',
+                            cursor: 'default',
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            gap: '0.3rem'
+                          }}
+                          title="This preroll is already in your collection"
+                        >
+                          ✓ Downloaded
+                        </div>
+                      ) : (
+                        <button
+                          onClick={() => handleDownload(preroll)}
+                          disabled={communityIsDownloading[preroll.id] || (communityShowAddToCategory[preroll.id] && !communitySelectedCategory)}
+                          className="button"
+                          style={{
+                            flex: 1,
+                            padding: '0.5rem',
+                            fontSize: '0.8rem',
+                            opacity: communityIsDownloading[preroll.id] ? 0.6 : 1
+                          }}
+                        >
+                          {communityIsDownloading[preroll.id] === 'downloading' ? '⬇️ Downloading...' : 
+                           communityIsDownloading[preroll.id] === 'processing' ? '⚙️ Processing...' : 
+                           '⬇️ Download'}
+                        </button>
+                      )}
                       <button
                         onClick={() => setCommunityShowAddToCategory(prev => ({
                           ...prev,
@@ -7876,21 +7975,43 @@ C:\\\\Media\\\\Prerolls\\\\summer\\\\beach.mp4`}
                         >
                           ▶️ Preview
                         </button>
-                        <button
-                          onClick={() => handleDownload(preroll)}
-                          disabled={communityIsDownloading[preroll.id] || (communityShowAddToCategory[preroll.id] && !communitySelectedCategory)}
-                          className="button"
-                          style={{
-                            flex: 1,
-                            padding: '0.5rem',
-                            fontSize: '0.8rem',
-                            opacity: communityIsDownloading[preroll.id] ? 0.6 : 1
-                          }}
-                        >
-                          {communityIsDownloading[preroll.id] === 'downloading' ? '⬇️ Downloading...' : 
-                           communityIsDownloading[preroll.id] === 'processing' ? '⚙️ Processing...' : 
-                           '⬇️ Download'}
-                        </button>
+                        {isPrerollAlreadyDownloaded(preroll) ? (
+                          <div
+                            className="button"
+                            style={{
+                              flex: 1,
+                              padding: '0.5rem',
+                              fontSize: '0.8rem',
+                              backgroundColor: 'rgba(102, 200, 145, 0.2)',
+                              border: '1px solid rgba(102, 200, 145, 0.4)',
+                              color: '#66c891',
+                              cursor: 'default',
+                              display: 'flex',
+                              alignItems: 'center',
+                              justifyContent: 'center',
+                              gap: '0.3rem'
+                            }}
+                            title="This preroll is already in your collection"
+                          >
+                            ✓ Downloaded
+                          </div>
+                        ) : (
+                          <button
+                            onClick={() => handleDownload(preroll)}
+                            disabled={communityIsDownloading[preroll.id] || (communityShowAddToCategory[preroll.id] && !communitySelectedCategory)}
+                            className="button"
+                            style={{
+                              flex: 1,
+                              padding: '0.5rem',
+                              fontSize: '0.8rem',
+                              opacity: communityIsDownloading[preroll.id] ? 0.6 : 1
+                            }}
+                          >
+                            {communityIsDownloading[preroll.id] === 'downloading' ? '⬇️ Downloading...' : 
+                             communityIsDownloading[preroll.id] === 'processing' ? '⚙️ Processing...' : 
+                             '⬇️ Download'}
+                          </button>
+                        )}
                       </div>
                       <button
                         onClick={() => setCommunityShowAddToCategory(prev => ({
