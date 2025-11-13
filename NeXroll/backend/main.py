@@ -1342,21 +1342,35 @@ def get_changelog(db: Session = Depends(get_db)):
             # Running from PyInstaller - check extracted temp directory
             possible_paths.append(os.path.join(sys._MEIPASS, 'CHANGELOG.md'))
         
-        # Add source directory paths
+        # Docker: Check /app directory (typical Docker working directory)
+        possible_paths.append('/app/CHANGELOG.md')
+        possible_paths.append('/app/NeXroll/CHANGELOG.md')
+        
+        # Add source directory paths (for development)
         possible_paths.extend([
+            os.path.join(os.path.dirname(__file__), "..", "CHANGELOG.md"),
             os.path.join(os.path.dirname(__file__), "..", "..", "CHANGELOG.md"),
             os.path.join(os.path.dirname(__file__), "..", "..", "..", "CHANGELOG.md"),
-            "CHANGELOG.md"
+            "CHANGELOG.md",
+            "./CHANGELOG.md"
         ])
         
+        _file_log(f"Searching for CHANGELOG.md in {len(possible_paths)} locations...")
         for path in possible_paths:
             abs_path = os.path.abspath(path)
             if os.path.exists(abs_path):
                 with open(abs_path, 'r', encoding='utf-8') as f:
                     changelog_content = f.read()
+                _file_log(f"✓ Found CHANGELOG.md at: {abs_path}")
                 break
+            else:
+                _file_log(f"  ✗ Not found: {abs_path}")
+        
+        if not changelog_content:
+            _file_log("⚠ CHANGELOG.md not found in any location")
     except Exception as e:
         logger.error(f"Failed to read CHANGELOG.md: {e}")
+        _file_log(f"Changelog read error: {e}")
         changelog_content = "Changelog not available."
     
     return {
@@ -9074,19 +9088,28 @@ def download_community_preroll(
         processed_tags = None
         
         # Create database record
-        preroll = models.Preroll(
-            filename=os.path.basename(file_path),
-            display_name=request.title or os.path.splitext(os.path.basename(file_path))[0],
-            path=file_path,
-            thumbnail=None,
-            tags=None,  # No auto-tagging for community prerolls
-            category_id=category.id,
-            description=f"Downloaded from Community Prerolls library",
-            duration=duration,
-            file_size=file_size,
-            managed=True,
-            community_preroll_id=str(request.preroll_id) if request.preroll_id else None
-        )
+        # Build kwargs conditionally to handle old DBs without community_preroll_id column
+        preroll_kwargs = {
+            "filename": os.path.basename(file_path),
+            "display_name": request.title or os.path.splitext(os.path.basename(file_path))[0],
+            "path": file_path,
+            "thumbnail": None,
+            "tags": None,  # No auto-tagging for community prerolls
+            "category_id": category.id,
+            "description": f"Downloaded from Community Prerolls library",
+            "duration": duration,
+            "file_size": file_size,
+            "managed": True,
+        }
+        
+        # Only add community_preroll_id if the column exists (handles old DB schemas)
+        try:
+            if _sqlite_has_column("prerolls", "community_preroll_id") and request.preroll_id:
+                preroll_kwargs["community_preroll_id"] = str(request.preroll_id)
+        except Exception:
+            pass  # Column doesn't exist yet, will be added on next restart
+        
+        preroll = models.Preroll(**preroll_kwargs)
         db.add(preroll)
         db.commit()
         db.refresh(preroll)
