@@ -1,5 +1,19 @@
 # Changelog
 
+## [1.7.10] - 11-13-2025
+
+### Fixed
+- **Docker Compatibility**
+  - Fixed `'community_preroll_id' is an invalid keyword argument for Preroll` error when downloading community prerolls
+  - Added conditional kwargs handling for databases created before v1.7.9 column migration
+  - Now gracefully handles both old and new database schemas
+  
+- **Changelog Display in Docker**
+  - Fixed "No changelog available" message in Docker containers
+  - Added Docker-specific paths (`/app/CHANGELOG.md`, `/app/NeXroll/CHANGELOG.md`)
+  - Improved path search with logging across 10+ possible locations
+  - Now works correctly in PyInstaller bundles, Docker, and development environments
+
 ## [1.7.9] - 11-13-2025
 
 ### Added
