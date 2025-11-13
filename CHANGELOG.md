@@ -1,26 +1,57 @@
 # Changelog
 
-## [1.7.7] - 11-11-2025
-
-### Changed
-- **Schedule Playback Mode Selection**
-  - Replaced dual checkboxes with single dropdown selector for Random/Sequential mode
-  - Now mutually exclusive - prevents accidentally selecting both modes simultaneously
-  - Cleaner UI with clear single selection control
-- **Installer Optimization**
-  - Reduced installer size from ~48MB to 44.73MB (~3MB smaller)
-  - Removed redundant `resources/` and `frontend/` folders from installation directory
-  - Frontend assets now bundled inside NeXroll.exe (extracted to temp at runtime)
-  - Icons embedded directly in executables
-  - Installer automatically cleans up legacy folders from previous versions during upgrade
-  - Installation directory now contains only executables and batch file
+## [1.7.10] - 11-13-2025
 
 ### Fixed
-- **Schedule Date/Time Display** ([#9](https://github.com/JFLXCLOUD/NeXroll/issues/9))
-  - Fixed "Invalid Date" appearing after schedule creation when page refreshes
-  - Corrected timezone offset handling in frontend date parser
-  - Frontend now properly recognizes both positive (+) and negative (-) timezone offsets
-  - Schedule dates remain stable and display correctly after 30-second polling interval
+- **Docker Compatibility**
+  - Fixed `'community_preroll_id' is an invalid keyword argument for Preroll` error when downloading community prerolls
+  - Added conditional kwargs handling for databases created before v1.7.9 column migration
+  - Now gracefully handles both old and new database schemas
+  
+- **Changelog Display in Docker**
+  - Fixed "No changelog available" message in Docker containers
+  - Added Docker-specific paths (`/app/CHANGELOG.md`, `/app/NeXroll/CHANGELOG.md`)
+  - Improved path search with logging across 10+ possible locations
+  - Now works correctly in PyInstaller bundles, Docker, and development environments
+
+## [1.7.9] - 11-13-2025
+
+### Added
+- **Enhanced Community Prerolls Search**
+  - Search now includes tags, filenames, AND display names (previously only tags)
+  - More comprehensive search results across all preroll metadata
+  
+- **Download Tracking System**
+  - "✓ Downloaded" indicator on community prerolls you already have in your collection
+  - Green checkmark replaces download button for prerolls you've already downloaded
+  - ID-based tracking ensures 100% accuracy for new downloads
+  - Automatic background migration attempts to detect legacy downloaded prerolls
+  
+- **Legacy Preroll Support**
+  - Hybrid matching system supports prerolls downloaded before tracking was implemented
+  - Title-based detection with strict 90% similarity threshold prevents false positives
+  - Manual migration endpoint available: `/community-prerolls/migrate-legacy`
+
+### Changed
+- **Strict Matching Algorithm**
+  - Tightened legacy preroll matching from 70% to 90% length similarity threshold
+  - Removed word-based matching to eliminate false positives
+  - Only exact matches or near-identical titles (90%+ similar) qualify as matches
+
+- **System Tray Menu Improvements**
+  - Removed "Start App (portable)" option as it was redundant
+  - Added separator lines between menu sections for better organization
+  - Menu now grouped into logical sections: Main Action, Service Controls, Maintenance, Info & Links, and Exit
+
+### Fixed
+- **False Positive Prevention**
+  - Fixed issue where searching terms like "Christmas" incorrectly marked all prerolls as downloaded
+  - Word-based matching removed - no longer matches prerolls sharing common words
+  - Significantly improved accuracy for legacy preroll detection
+
+## [1.7.7] - 11-10-2025
+
+### Fixed
 - **Schedule Date/Time Shifting** ([#9](https://github.com/JFLXCLOUD/NeXroll/issues/9))
   - Fixed schedule dates/times randomly shifting when saving or updating
   - Schedule dates are now stored as naive datetime (local time) instead of UTC
@@ -31,33 +62,6 @@
   - Corrected deletion order to clear junction tables before dependent tables
   - Restore now deletes: preroll_categories → schedules → prerolls → categories → holidays
   - Backup restore operations now complete successfully without constraint violations
-- **Executable Icons**
-  - Fixed NeXrollService.exe and setup_plex_token.exe displaying generic Python icons
-  - All executables now properly display NeXroll branding icons
-
-## [1.7.5] - 11-10-2025 (UNRELEASED)
-
-### Added
-- **Community Prerolls - Rename Before Download** ([#8](https://github.com/JFLXCLOUD/NeXroll/issues/8))
-  - New rename dialog appears before downloading community prerolls
-  - Automatically removes bug number prefix from default name
-  - Community preroll ID now stored in description field for reference
-  - Press Enter to quickly confirm download with custom name
-
-### Fixed
-- **Edit Preroll Modal Rendering**
-  - Fixed modal not appearing when clicking edit button on prerolls from non-Categories tabs
-  - Edit Preroll modal now renders globally and appears immediately regardless of active tab
-  - Improved modal architecture for better cross-tab functionality
-- **Improved Error Messages**
-  - Delete category now shows specific error: "Cannot delete category that is in use"
-  - Delete schedule errors now display detailed backend messages
-  - Delete preroll errors now show clear explanations
-  - Update operations display helpful error details instead of generic HTTP status codes
-- **Installer - Documents Folder** 
-  - Changed default preroll storage from `Documents\NeXroll\Prerolls` to `%ProgramData%\NeXroll\Prerolls`
-  - Prevents creation of unused empty folders in user Documents directory
-  - Existing installations continue using their configured path from registry
 
 ## [1.7.4] - 11-09-2025
 
