@@ -9106,12 +9106,9 @@ def download_community_preroll(
             "managed": True,
         }
         
-        # Only add community_preroll_id if the column exists (handles old DB schemas)
-        try:
-            if _sqlite_has_column("prerolls", "community_preroll_id") and request.preroll_id:
-                preroll_kwargs["community_preroll_id"] = str(request.preroll_id)
-        except Exception:
-            pass  # Column doesn't exist yet, will be added on next restart
+        # Only add community_preroll_id if the model has the attribute (handles old schemas + pre-restart state)
+        if hasattr(models.Preroll, 'community_preroll_id') and request.preroll_id:
+            preroll_kwargs["community_preroll_id"] = str(request.preroll_id)
         
         preroll = models.Preroll(**preroll_kwargs)
         db.add(preroll)
@@ -9232,7 +9229,9 @@ def get_downloaded_community_preroll_ids(db: Session = Depends(get_db)):
 
         return {"downloaded_ids": ids}
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to get downloaded IDs: {str(e)}")@app.post("/community-prerolls/migrate-legacy")
+        raise HTTPException(status_code=500, detail=f"Failed to get downloaded IDs: {str(e)}")
+
+@app.post("/community-prerolls/migrate-legacy")
 def migrate_legacy_community_prerolls_endpoint(db: Session = Depends(get_db)):
     """
     Manually trigger migration of legacy community prerolls (those downloaded before ID tracking).
