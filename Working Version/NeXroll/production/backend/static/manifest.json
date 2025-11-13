@@ -1,0 +1,53 @@
+{
+  "short_name": "NeXroll",
+  "name": "NeXroll - Plex Preroll Management",
+  "description": "Comprehensive Plex preroll management system with web interface",
+  "icons": [
+    {
+      "src": "favicon.ico",
+      "sizes": "64x64 32x32 24x24 16x16",
+      "type": "image/x-icon"
+    },
+    {
+      "src": "NeXroll_Logo_BLK.png",
+      "type": "image/png",
+      "sizes": "192x192",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "NeXroll_Logo_WHT.png",
+      "type": "image/png",
+      "sizes": "512x512",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "NeXroll_Logo_BLK.png",
+      "type": "image/png",
+      "sizes": "192x192",
+      "purpose": "any"
+    },
+    {
+      "src": "NeXroll_Logo_WHT.png",
+      "type": "image/png",
+      "sizes": "512x512",
+      "purpose": "any"
+    }
+  ],
+  "start_url": "/",
+  "display": "standalone",
+  "orientation": "portrait-primary",
+  "theme_color": "#1a1a1a",
+  "background_color": "#ffffff",
+  "categories": ["productivity", "utilities", "entertainment"],
+  "lang": "en-US",
+  "dir": "ltr",
+  "scope": "/",
+  "screenshots": [
+    {
+      "src": "screenshot-dashboard.png",
+      "sizes": "1280x720",
+      "type": "image/png",
+      "label": "NeXroll Dashboard showing preroll management interface"
+    }
+  ]
+}

@@ -1,0 +1,130 @@
+/* Dashboard Section Styles */
+.nx-app {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+
+.nx-content {
+  flex: 1;
+  padding: 1rem;
+}
+.nx-dashboard {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  padding: 20px;
+  max-width: 1400px;
+  margin: 0 auto;
+}
+
+.nx-dashboard-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 20px;
+  padding: 0 0.5rem;
+}
+
+.nx-dashboard-header h1 {
+  margin: 0;
+  font-size: 1.8rem;
+  font-weight: 600;
+  color: var(--text-color);
+}
+
+.nx-section-visibility-menu {
+  position: absolute;
+  right: 20px;
+  top: 60px;
+  background: var(--surface-color, white);
+  border: 1px solid var(--border-color, #ddd);
+  border-radius: 8px;
+  padding: 12px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.1);
+  z-index: 100;
+  min-width: 200px;
+}
+
+.nx-section-visibility-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  cursor: pointer;
+  border-radius: 4px;
+  transition: background-color 0.2s;
+}
+
+.nx-section-visibility-item:hover {
+  background: var(--hover-color, #f5f5f5);
+}
+
+.nx-section-visibility-item input[type="checkbox"] {
+  margin: 0;
+}
+
+.nx-dashboard-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(400px, 1fr));
+  gap: 20px;
+  padding: 0.5rem;
+}
+
+.nx-dashboard-section {
+  background: var(--surface-color, white);
+  border: 1px solid var(--border-color, #ddd);
+  border-radius: 12px;
+  padding: 20px;
+  height: 100%;
+  min-height: 200px;
+  cursor: grab;
+  user-select: none;
+  transition: transform 0.2s, box-shadow 0.2s;
+  display: flex;
+  flex-direction: column;
+}
+
+.nx-dashboard-section[data-dragging="true"] {
+  cursor: grabbing;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12);
+  opacity: 0.9;
+  transform: scale(1.02);
+  z-index: 10;
+}
+
+.nx-dashboard-section-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 16px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--border-color, #ddd);
+}
+
+.nx-dashboard-section-title {
+  margin: 0;
+  font-size: 1.2rem;
+  font-weight: 500;
+  color: var(--text-color);
+}
+
+.nx-dashboard-section-content {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  overflow: hidden;
+}
+@media (max-width: 768px) {
+  .nx-dashboard-grid {
+    grid-template-columns: 1fr;
+  }
+  
+  .nx-dashboard-section {
+    min-height: 180px;
+  }
+}
+
+/* Prerolls UI styles are centralized in index.css for consistency.
+   Duplicate rules removed to prevent precedence conflicts. */
