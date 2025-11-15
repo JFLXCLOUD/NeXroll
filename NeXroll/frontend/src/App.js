@@ -513,6 +513,11 @@ function App() {
   const [communityIsBuilding, setCommunityIsBuilding] = useState(false);
   // Downloaded community preroll IDs (for marking as "Downloaded")
   const [downloadedCommunityIds, setDownloadedCommunityIds] = useState([]);
+  // Migration state
+  const [communityIsMigrating, setCommunityIsMigrating] = useState(false);
+  const [communityMigrationResult, setCommunityMigrationResult] = useState(null);
+  const [communityMigrationProgress, setCommunityMigrationProgress] = useState(null);
+  const [communityMatchedCount, setCommunityMatchedCount] = useState(0);
   
   // Docker Quick Connect UI state
   const [prerollView, setPrerollView] = useState(() => {
@@ -581,7 +586,7 @@ const [calendarYear, setCalendarYear] = useState(() => {
   return d.getFullYear();
 });
 const [calendarMode, setCalendarMode] = useState('year'); // 'month' | 'week' | 'year' - default to year view
-const [calendarMonthView, setCalendarMonthView] = useState('timeline'); // 'grid' | 'timeline'
+const [calendarMonthView, setCalendarMonthView] = useState('grid'); // 'grid' | 'timeline' - default to grid view
 const [calendarWeekStart, setCalendarWeekStart] = useState(() => {
   const d = new Date();
   const day = d.getDay();
@@ -636,7 +641,8 @@ const toLocalInputFromDate = (d) => {
     category_id: '',
     shuffle: false,
     playlist: false,
-    fallback_category_id: ''
+    fallback_category_id: '',
+    color: ''
   });
 
   // Upload form state
@@ -1099,21 +1105,47 @@ const toLocalInputFromDate = (d) => {
           } else {
             // If accepted, load Top 5 prerolls and index status
             console.log('Fair Use accepted - loading Top 5 prerolls...');
-            loadTop5Prerolls();
-            loadLatestPrerolls();
-            loadDownloadedCommunityIds(); // Load downloaded IDs for marking
             
-            // Load index status for fast search feature
-            const loadIndexStatus = async () => {
+            try {
+              console.log('About to call loadTop5Prerolls');
+              loadTop5Prerolls();
+              console.log('After loadTop5Prerolls');
+            } catch (e) {
+              console.error('Error calling loadTop5Prerolls:', e);
+            }
+            
+            try {
+              console.log('About to call loadLatestPrerolls');
+              loadLatestPrerolls();
+              console.log('After loadLatestPrerolls');
+            } catch (e) {
+              console.error('Error calling loadLatestPrerolls:', e);
+            }
+            
+            try {
+              console.log('About to call loadDownloadedCommunityIds');
+              loadDownloadedCommunityIds();
+              console.log('After loadDownloadedCommunityIds');
+            } catch (e) {
+              console.error('Error calling loadDownloadedCommunityIds:', e);
+            }
+            
+            // Load index status for fast search feature (inline to avoid hoisting issues)
+            console.log('About to load index status...');
+            (async () => {
               try {
+                console.log('Inside async IIFE - Loading index status...');
                 const indexResponse = await fetch(apiUrl('community-prerolls/index-status'));
+                console.log('Index status response status:', indexResponse.status);
                 const indexData = await indexResponse.json();
+                console.log('Index status data:', indexData);
                 setCommunityIndexStatus(indexData);
+                console.log('Index status state set!');
               } catch (indexError) {
                 console.error('Failed to load index status:', indexError);
               }
-            };
-            loadIndexStatus();
+            })();
+            console.log('After defining async IIFE');
           }
         } catch (error) {
           console.error('Failed to check Community Fair Use status:', error);
@@ -1152,6 +1184,8 @@ const toLocalInputFromDate = (d) => {
       
       if (data.downloaded_ids) {
         setDownloadedCommunityIds(data.downloaded_ids);
+        // Update the matched count (IDs with community_preroll_id)
+        setCommunityMatchedCount(data.downloaded_ids.length);
       }
     } catch (error) {
       console.error('Failed to load downloaded community IDs:', error);
@@ -1284,7 +1318,8 @@ const toLocalInputFromDate = (d) => {
       end_date: scheduleForm.end_date || null,
       category_id: categoryId,
       shuffle: scheduleForm.shuffle,
-      playlist: scheduleForm.playlist
+      playlist: scheduleForm.playlist,
+      color: scheduleForm.color || null
     };
     if (scheduleForm.fallback_category_id) {
       scheduleData.fallback_category_id = parseInt(scheduleForm.fallback_category_id);
@@ -1307,7 +1342,7 @@ const toLocalInputFromDate = (d) => {
         alert('Schedule created successfully!');
         setScheduleForm({
           name: '', type: 'monthly', start_date: '', end_date: '',
-          category_id: '', shuffle: false, playlist: false
+          category_id: '', shuffle: false, playlist: false, fallback_category_id: '', color: ''
         });
         // Add the new schedule to the state immediately with category info
         if (data.category) {
@@ -1698,7 +1733,8 @@ const toLocalInputFromDate = (d) => {
       category_id: schedule.category_id || '',
       shuffle: schedule.shuffle,
       playlist: schedule.playlist,
-      fallback_category_id: schedule.fallback_category_id || ''
+      fallback_category_id: schedule.fallback_category_id || '',
+      color: schedule.color || ''
     });
  };
 
@@ -1713,7 +1749,8 @@ const toLocalInputFromDate = (d) => {
       end_date: scheduleForm.end_date || null,
       category_id: parseInt(scheduleForm.category_id),
       shuffle: scheduleForm.shuffle,
-      playlist: scheduleForm.playlist
+      playlist: scheduleForm.playlist,
+      color: scheduleForm.color || null
     };
     if (scheduleForm.fallback_category_id) {
       scheduleData.fallback_category_id = parseInt(scheduleForm.fallback_category_id);
@@ -1730,7 +1767,7 @@ const toLocalInputFromDate = (d) => {
         setEditingSchedule(null);
         setScheduleForm({
           name: '', type: 'monthly', start_date: '', end_date: '',
-          category_id: '', shuffle: false, playlist: false
+          category_id: '', shuffle: false, playlist: false, fallback_category_id: '', color: ''
         });
         fetchData();
       })
@@ -1772,7 +1809,7 @@ const toLocalInputFromDate = (d) => {
     const primaryId = preroll.category_id || (preroll.category?.id || '');
     const assocIds = Array.isArray(preroll.categories) ? preroll.categories.map(c => String(c.id)) : [];
     setEditForm({
-      display_name: preroll.display_name || '',
+      display_name: preroll.display_name || preroll.filename || '',
       new_filename: '',
       tags: tagsStr,
       category_id: primaryId ? String(primaryId) : '',
@@ -3401,7 +3438,7 @@ services:
                         left: `${left}%`,
                         width: `${width}%`,
                         height: '100%',
-                        backgroundColor: sched.cat.color,
+                        backgroundColor: sched.color || sched.cat.color,
                         borderRadius: '4px',
                         padding: '4px 8px',
                         color: '#fff',
@@ -3571,7 +3608,7 @@ services:
                         left: `${left}%`,
                         width: `${width}%`,
                         height: '100%',
-                        backgroundColor: sched.cat.color,
+                        backgroundColor: sched.color || sched.cat.color,
                         borderRadius: '4px',
                         padding: '4px 8px',
                         color: '#fff',
@@ -3783,9 +3820,10 @@ services:
             const uniqueCats = new Map();
             schedArray.forEach(s => {
               if (!uniqueCats.has(s.category_id)) {
-                uniqueCats.set(s.category_id, { cat: s.cat, schedules: [] });
+                uniqueCats.set(s.category_id, { cat: s.cat, schedules: [], schedObjs: [] });
               }
               uniqueCats.get(s.category_id).schedules.push(s.name);
+              uniqueCats.get(s.category_id).schedObjs.push(s);
             });
             const catEntries = Array.from(uniqueCats.entries());
             
@@ -3879,6 +3917,19 @@ services:
                       name === winningSchedule.name || name === `${winningSchedule.name} (Fallback)`
                     );
                     
+                    // Determine schedule color - use winning schedule's color if available, otherwise first schedule's color
+                    let scheduleColor = data.cat.color; // Default to category color
+                    if (data.schedObjs && data.schedObjs.length > 0) {
+                      if (winningSchedule) {
+                        const winner = data.schedObjs.find(s => s.name === winningSchedule.name);
+                        if (winner && winner.color) {
+                          scheduleColor = winner.color;
+                        }
+                      } else if (data.schedObjs[0].color) {
+                        scheduleColor = data.schedObjs[0].color;
+                      }
+                    }
+                    
                     let tooltipText = `${data.cat.name}${dayData.isFallback ? ' (Fallback)' : ''}\nSchedules: ${scheduleNames}`;
                     if (dayData.hasConflict && isWinner) {
                       tooltipText += '\n👑 This schedule takes priority';
@@ -3891,9 +3942,9 @@ services:
                         key={catId + '_' + i} 
                         title={tooltipText} 
                         style={{
-                        backgroundColor: dayData.isFallback ? 'transparent' : data.cat.color,
-                        border: dayData.isFallback ? `2px dashed ${data.cat.color}` : 'none',
-                        color: dayData.isFallback ? data.cat.color : '#fff', 
+                        backgroundColor: dayData.isFallback ? 'transparent' : scheduleColor,
+                        border: dayData.isFallback ? `2px dashed ${scheduleColor}` : 'none',
+                        color: dayData.isFallback ? scheduleColor : '#fff', 
                         borderRadius: '4px',
                         padding: '4px 6px', 
                         fontSize: '0.75rem',
@@ -3944,30 +3995,41 @@ services:
             letterSpacing: '0.5px',
             color: 'var(--text-secondary)',
             marginBottom: '0.75rem'
-          }}>Category Legend</div>
+          }}>Schedule Legend</div>
           <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap' }}>
-            {(categories || []).map((c, idx) => (
-              <span key={c.id} style={{ 
-                display: 'inline-flex', 
-                alignItems: 'center', 
-                gap: '8px', 
-                fontSize: '0.875rem',
-                padding: '6px 12px',
-                borderRadius: '6px',
-                backgroundColor: darkMode ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.03)',
-                border: '1px solid var(--border-color)'
-              }}>
-                <span style={{ 
-                  width: 14, 
-                  height: 14, 
-                  backgroundColor: palette[idx % palette.length], 
-                  display: 'inline-block', 
-                  borderRadius: 3,
-                  boxShadow: '0 1px 3px rgba(0,0,0,0.3)'
-                }} />
-                <span style={{ fontWeight: 500 }}>{c.name}</span>
-              </span>
-            ))}
+            {(schedules || []).filter(s => {
+              // Only show schedules active in this month
+              const monthStart = new Date(calendarYear, monthIndex, 1);
+              const monthEnd = new Date(calendarYear, monthIndex + 1, 0);
+              return Array.from(byDay.values()).some(dayData => 
+                Array.from(dayData.schedules).some(sched => sched.id === s.id || sched.name === s.name)
+              );
+            }).map((s) => {
+              const cat = catMap.get(s.category_id) || { name: 'Unknown', color: '#6c757d' };
+              const schedColor = s.color || cat.color;
+              return (
+                <span key={s.id} style={{ 
+                  display: 'inline-flex', 
+                  alignItems: 'center', 
+                  gap: '8px', 
+                  fontSize: '0.875rem',
+                  padding: '6px 12px',
+                  borderRadius: '6px',
+                  backgroundColor: darkMode ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.03)',
+                  border: '1px solid var(--border-color)'
+                }}>
+                  <span style={{ 
+                    width: 14, 
+                    height: 14, 
+                    backgroundColor: schedColor, 
+                    display: 'inline-block', 
+                    borderRadius: 3,
+                    boxShadow: '0 1px 3px rgba(0,0,0,0.3)'
+                  }} />
+                  <span style={{ fontWeight: 500 }}>{s.name}</span>
+                </span>
+              );
+            })}
           </div>
           
           {/* Legend indicators */}
@@ -4248,61 +4310,102 @@ services:
                       fontWeight: 500
                     }}>{totalDays} of {daysInMonth} days scheduled</div>
                     <div style={{ display: 'grid', gap: 8 }}>
-                      {topCats.map(([cid, cnt], i) => {
-                        const cat = catMap.get(cid) || { name: 'Unknown', color: '#6c757d' };
-                        const percentage = Math.round((cnt / daysInMonth) * 100);
-                        return (
-                          <div key={cid} style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-                            <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: '0.875rem' }}>
-                              <span style={{ 
-                                width: 14, 
-                                height: 14, 
-                                backgroundColor: cat.color, 
-                                display: 'inline-block', 
-                                borderRadius: 3,
-                                boxShadow: '0 1px 3px rgba(0,0,0,0.3)',
-                                flexShrink: 0
-                              }} />
-                              <span style={{ 
-                                flex: 1, 
-                                overflow: 'hidden', 
-                                textOverflow: 'ellipsis', 
-                                whiteSpace: 'nowrap',
-                                fontWeight: 500,
-                                color: 'var(--text-color)'
-                              }}>{cat.name}</span>
-                              <span style={{ 
-                                color: 'var(--text-secondary)',
-                                fontSize: '0.8rem',
-                                fontWeight: 600,
-                                minWidth: '45px',
-                                textAlign: 'right'
-                              }}>{cnt}d ({percentage}%)</span>
-                            </div>
-                            <div style={{
-                              height: 4,
-                              backgroundColor: darkMode ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.1)',
-                              borderRadius: 2,
-                              overflow: 'hidden'
-                            }}>
+                      {/* Show schedules with their custom colors instead of categories */}
+                      {(() => {
+                        // Count days per schedule for this month
+                        const schedCounts = new Map();
+                        const monthStart = new Date(calendarYear, entry.month, 1).getTime();
+                        const monthEnd = new Date(calendarYear, entry.month + 1, 0).getTime();
+                        
+                        for (let day = 1; day <= daysInMonth; day++) {
+                          const d = new Date(calendarYear, entry.month, day);
+                          const t = d.getTime();
+                          
+                          for (const s of (schedules || [])) {
+                            if (!s.start_date || !s.category_id) continue;
+                            if (isScheduleActiveOnDay(s, t)) {
+                              schedCounts.set(s.id, {
+                                schedule: s,
+                                count: (schedCounts.get(s.id)?.count || 0) + 1
+                              });
+                            }
+                          }
+                        }
+                        
+                        // Sort by count and take top 4
+                        const topScheds = Array.from(schedCounts.values())
+                          .sort((a, b) => b.count - a.count)
+                          .slice(0, 4);
+                        
+                        return topScheds.map(({ schedule: s, count: cnt }) => {
+                          const cat = catMap.get(s.category_id) || { name: 'Unknown', color: '#6c757d' };
+                          const schedColor = s.color || cat.color;
+                          const percentage = Math.round((cnt / daysInMonth) * 100);
+                          return (
+                            <div key={s.id} style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: '0.875rem' }}>
+                                <span style={{ 
+                                  width: 14, 
+                                  height: 14, 
+                                  backgroundColor: schedColor, 
+                                  display: 'inline-block', 
+                                  borderRadius: 3,
+                                  boxShadow: '0 1px 3px rgba(0,0,0,0.3)',
+                                  flexShrink: 0
+                                }} />
+                                <span style={{ 
+                                  flex: 1, 
+                                  overflow: 'hidden', 
+                                  textOverflow: 'ellipsis', 
+                                  whiteSpace: 'nowrap',
+                                  fontWeight: 500,
+                                  color: 'var(--text-color)'
+                                }}>{s.name}</span>
+                                <span style={{ 
+                                  color: 'var(--text-secondary)',
+                                  fontSize: '0.8rem',
+                                  fontWeight: 600,
+                                  minWidth: '45px',
+                                  textAlign: 'right'
+                                }}>{cnt}d ({percentage}%)</span>
+                              </div>
                               <div style={{
-                                height: '100%',
-                                width: `${percentage}%`,
-                                backgroundColor: cat.color,
-                                transition: 'width 0.3s ease'
-                              }} />
+                                height: 4,
+                                backgroundColor: darkMode ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.1)',
+                                borderRadius: 2,
+                                overflow: 'hidden'
+                              }}>
+                                <div style={{
+                                  height: '100%',
+                                  width: `${percentage}%`,
+                                  backgroundColor: schedColor,
+                                  transition: 'width 0.3s ease'
+                                }} />
+                              </div>
                             </div>
-                          </div>
+                          );
+                        });
+                      })()}
+                      {(() => {
+                        // Count total schedules active in this month
+                        const totalScheds = (schedules || []).filter(s => {
+                          if (!s.start_date || !s.category_id) return false;
+                          for (let day = 1; day <= daysInMonth; day++) {
+                            const d = new Date(calendarYear, entry.month, day);
+                            if (isScheduleActiveOnDay(s, d.getTime())) return true;
+                          }
+                          return false;
+                        }).length;
+                        
+                        return totalScheds > 4 && (
+                          <div style={{ 
+                            fontSize: '0.75rem', 
+                            color: 'var(--text-muted)',
+                            fontStyle: 'italic',
+                            marginTop: 4
+                          }}>+{totalScheds - 4} more schedules</div>
                         );
-                      })}
-                      {entry.cats.size > 4 && (
-                        <div style={{ 
-                          fontSize: '0.75rem', 
-                          color: 'var(--text-muted)',
-                          fontStyle: 'italic',
-                          marginTop: 4
-                        }}>+{entry.cats.size - 4} more categories</div>
-                      )}
+                      })()}
                     </div>
                   </>
                 )}
@@ -4449,6 +4552,38 @@ services:
               ))}
             </select>
           </div>
+          <div style={{ marginBottom: '1rem', padding: '1rem', backgroundColor: 'var(--card-bg)', borderRadius: '0.25rem' }}>
+            <h3 style={{ marginBottom: '0.5rem', fontSize: '1rem' }}>Calendar Color (Optional)</h3>
+            <p style={{ fontSize: '0.9rem', color: '#666', marginBottom: '0.5rem' }}>
+              Choose a custom color for this schedule on the calendar. If not set, the category's color will be used.
+            </p>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
+              <input
+                type="color"
+                value={scheduleForm.color || '#3b82f6'}
+                onChange={(e) => setScheduleForm({...scheduleForm, color: e.target.value})}
+                style={{ width: '60px', height: '40px', border: '1px solid var(--border-color)', borderRadius: '4px', cursor: 'pointer' }}
+              />
+              <input
+                className="nx-input"
+                type="text"
+                placeholder="#3b82f6"
+                value={scheduleForm.color || ''}
+                onChange={(e) => setScheduleForm({...scheduleForm, color: e.target.value})}
+                style={{ padding: '0.5rem', width: '120px', fontFamily: 'monospace' }}
+              />
+              {scheduleForm.color && (
+                <button
+                  type="button"
+                  className="button"
+                  onClick={() => setScheduleForm({...scheduleForm, color: ''})}
+                  style={{ padding: '0.5rem 1rem', backgroundColor: '#dc3545' }}
+                >
+                  Clear
+                </button>
+              )}
+            </div>
+          </div>
           <button type="submit" className="button">{editingSchedule ? 'Update Schedule' : 'Create Schedule'}</button>
           {/* edit handled via modal */}
         </form>
@@ -4554,6 +4689,38 @@ services:
                   <option value="sequential">Sequential</option>
                 </select>
               </div>
+              <div className="nx-field nx-span-2">
+                <label className="nx-label">Calendar Color (Optional)</label>
+                <p style={{ fontSize: '0.85rem', color: '#666', marginBottom: '0.5rem' }}>
+                  Custom color for calendar display. Leave empty to use category color.
+                </p>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                  <input
+                    type="color"
+                    value={scheduleForm.color || '#3b82f6'}
+                    onChange={(e) => setScheduleForm({...scheduleForm, color: e.target.value})}
+                    style={{ width: '50px', height: '35px', border: '1px solid var(--border-color)', borderRadius: '4px', cursor: 'pointer' }}
+                  />
+                  <input
+                    className="nx-input"
+                    type="text"
+                    placeholder="#3b82f6"
+                    value={scheduleForm.color || ''}
+                    onChange={(e) => setScheduleForm({...scheduleForm, color: e.target.value})}
+                    style={{ flex: 1, fontFamily: 'monospace' }}
+                  />
+                  {scheduleForm.color && (
+                    <button
+                      type="button"
+                      className="button-secondary"
+                      onClick={() => setScheduleForm({...scheduleForm, color: ''})}
+                      style={{ padding: '0.5rem 0.75rem' }}
+                    >
+                      Clear
+                    </button>
+                  )}
+                </div>
+              </div>
             </div>
             <div className="nx-actions">
               <button type="submit" className="button">Update Schedule</button>
@@ -4564,7 +4731,7 @@ services:
                   setEditingSchedule(null);
                   setScheduleForm({
                     name: '', type: 'monthly', start_date: '', end_date: '',
-                    category_id: '', shuffle: false, playlist: false, fallback_category_id: ''
+                    category_id: '', shuffle: false, playlist: false, fallback_category_id: '', color: ''
                   });
                 }}
               >
@@ -6941,6 +7108,146 @@ C:\\\\Media\\\\Prerolls\\\\summer\\\\beach.mp4`}
       }
     };
 
+    // Handle rematching all prerolls (clears existing matches first)
+    const handleRematchAll = async () => {
+      if (communityIsMigrating) return;
+      
+      const confirmMessage = 
+        '⚠️ This will CLEAR all existing community preroll links and rematch them with the improved matching algorithm.\n\n' +
+        'Use this if:\n' +
+        '• Previous matches were incorrect\n' +
+        '• You want to take advantage of improved matching\n' +
+        '• You have many mismatched prerolls\n\n' +
+        '⚠️ WARNING: This will reset ALL community preroll connections!\n\n' +
+        'Your preroll files will NOT be modified or deleted.\n\n' +
+        'Continue?';
+      
+      const confirmed = window.confirm(confirmMessage);
+      if (!confirmed) return;
+      
+      setCommunityIsMigrating(true);
+      setCommunityMigrationResult(null);
+      setCommunityMigrationProgress({ status: 'Clearing existing matches...', scanned: 0, matched: 0 });
+      
+      try {
+        // First, clear all existing matches
+        const clearResponse = await fetch(apiUrl('community-prerolls/clear-matches'), {
+          method: 'POST'
+        });
+        
+        if (!clearResponse.ok) {
+          throw new Error('Failed to clear existing matches');
+        }
+        
+        setCommunityMigrationProgress({ status: 'Rematching prerolls...', scanned: 0, matched: 0 });
+        
+        // Then rematch with match_all=true
+        const params = new URLSearchParams();
+        params.append('match_all', 'true');
+        
+        const response = await fetch(apiUrl(`community-prerolls/migrate-legacy?${params.toString()}`), {
+          method: 'POST'
+        });
+        
+        const data = await response.json();
+        
+        if (data.success !== false) {
+          setCommunityMigrationResult(data);
+          setCommunityMigrationProgress({ 
+            status: 'Complete!', 
+            scanned: data.total_scanned, 
+            matched: data.matched 
+          });
+          
+          setCommunityMatchedCount(data.matched);
+          await loadDownloadedCommunityIds();
+          
+          const message = data.matched > 0
+            ? `✓ Successfully rematched ${data.matched} out of ${data.total_scanned} prerolls!\n\n` +
+              (data.failed > 0 ? `${data.failed} prerolls couldn't be matched automatically.` : 'All scanned prerolls were matched!')
+            : `No matches found.\n\nScanned ${data.total_scanned} prerolls but couldn't find matching titles in the community library.`;
+          
+          alert(message);
+          
+          setTimeout(() => setCommunityMigrationProgress(null), 5000);
+        } else {
+          alert(data.message || 'Rematch failed');
+          setCommunityMigrationProgress(null);
+        }
+      } catch (error) {
+        alert(`Failed to rematch prerolls: ${error.message}`);
+        setCommunityMigrationProgress(null);
+      } finally {
+        setCommunityIsMigrating(false);
+      }
+    };
+
+    // Handle matching existing prerolls to community library
+    const handleMatchExisting = async (matchAll = false) => {
+      if (communityIsMigrating) return;
+      
+      const confirmMessage = matchAll
+        ? 'This will attempt to match ALL your existing prerolls to the community library.\n\n' +
+          'This is useful if you manually downloaded community prerolls before using NeXroll.\n\n' +
+          'Note: Only prerolls with matching titles will be marked as downloaded.\n\n' +
+          'Continue?'
+        : 'This will match prerolls that were downloaded from the community library but don\'t have tracking IDs yet.\n\n' +
+          'This is a safe operation and won\'t modify your preroll files.\n\n' +
+          'Continue?';
+      
+      const confirmed = window.confirm(confirmMessage);
+      if (!confirmed) return;
+      
+      setCommunityIsMigrating(true);
+      setCommunityMigrationResult(null);
+      setCommunityMigrationProgress({ status: 'Starting...', scanned: 0, matched: 0 });
+      
+      try {
+        const params = new URLSearchParams();
+        if (matchAll) params.append('match_all', 'true');
+        
+        const response = await fetch(apiUrl(`community-prerolls/migrate-legacy?${params.toString()}`), {
+          method: 'POST'
+        });
+        
+        const data = await response.json();
+        
+        if (data.success !== false) {
+          setCommunityMigrationResult(data);
+          setCommunityMigrationProgress({ 
+            status: 'Complete!', 
+            scanned: data.total_scanned, 
+            matched: data.matched 
+          });
+          
+          // Update matched count for persistent display
+          setCommunityMatchedCount(data.matched);
+          
+          // Refresh downloaded IDs to update UI
+          await loadDownloadedCommunityIds();
+          
+          // Show success message
+          const message = data.matched > 0
+            ? `✓ Successfully matched ${data.matched} out of ${data.total_scanned} prerolls!\n\n` +
+              (data.failed > 0 ? `${data.failed} prerolls couldn't be matched automatically.` : 'All scanned prerolls were matched!')
+            : `No matches found.\n\nScanned ${data.total_scanned} prerolls but couldn't find matching titles in the community library.`;
+          
+          alert(message);
+          
+          // Clear progress after a delay
+          setTimeout(() => setCommunityMigrationProgress(null), 5000);
+        } else {
+          alert(data.message || 'Migration failed');
+          setCommunityMigrationProgress(null);
+        }
+      } catch (error) {
+        alert(`Failed to match existing prerolls: ${error.message}`);
+        setCommunityMigrationProgress(null);
+      } finally {
+        setCommunityIsMigrating(false);
+      }
+    };
+
     // Clean up display text - remove URL encoding and file extensions
     const cleanDisplayText = (text) => {
       if (!text) return text;
@@ -7347,33 +7654,96 @@ C:\\\\Media\\\\Prerolls\\\\summer\\\\beach.mp4`}
               justifyContent: 'space-between',
               alignItems: 'center'
             }}>
-              <div>
-                {communityIndexStatus.exists ? (
-                  <>
-                    {communityIndexStatus.is_stale ? (
-                      <span>⚠️ <strong>Local index is stale</strong> (last updated {Math.round(communityIndexStatus.age_days)} days ago) - Searches may be slower</span>
-                    ) : (
-                      <span>✨ <strong>Fast search enabled!</strong> {communityIndexStatus.total_prerolls} prerolls indexed - Searches are instant ⚡</span>
-                    )}
-                  </>
-                ) : (
-                  <span>💡 <strong>Build local index for instant searches!</strong> Currently using slow remote scraping (5s cooldown)</span>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap' }}>
+                {/* Status Message */}
+                <div>
+                  {communityIndexStatus.exists ? (
+                    <>
+                      {communityIndexStatus.is_stale ? (
+                        <span>⚠️ <strong>Index is stale</strong> (last updated {Math.round(communityIndexStatus.age_days)} days ago)</span>
+                      ) : (
+                        <span>✨ <strong>Fast search enabled</strong></span>
+                      )}
+                    </>
+                  ) : (
+                    <span>💡 <strong>Build local index for instant searches</strong></span>
+                  )}
+                </div>
+                
+                {/* Indexed Prerolls Badge */}
+                {communityIndexStatus.exists && communityIndexStatus.total_prerolls > 0 && (
+                  <div style={{
+                    padding: '0.3rem 0.6rem',
+                    backgroundColor: 'rgba(34, 197, 94, 0.1)',
+                    border: '1px solid rgba(34, 197, 94, 0.3)',
+                    borderRadius: '4px',
+                    fontSize: '0.85rem',
+                    whiteSpace: 'nowrap'
+                  }}>
+                    📚 <strong>{communityIndexStatus.total_prerolls}</strong> indexed
+                  </div>
+                )}
+                
+                {/* Matched Prerolls Badge */}
+                {communityMatchedCount > 0 && (
+                  <div style={{
+                    padding: '0.3rem 0.6rem',
+                    backgroundColor: 'rgba(59, 130, 246, 0.1)',
+                    border: '1px solid rgba(59, 130, 246, 0.3)',
+                    borderRadius: '4px',
+                    fontSize: '0.85rem',
+                    whiteSpace: 'nowrap'
+                  }}>
+                    🔗 <strong>{communityMatchedCount}</strong> matched
+                  </div>
                 )}
               </div>
-              <button
-                onClick={handleBuildIndex}
-                disabled={communityIsBuilding}
-                className="button-secondary"
-                style={{ 
-                  padding: '0.4rem 0.8rem', 
-                  fontSize: '0.85rem',
-                  whiteSpace: 'nowrap',
-                  marginLeft: '1rem'
-                }}
-                title={communityIndexStatus.exists ? 'Refresh index to get latest prerolls' : 'Build index for instant searches'}
-              >
-                {communityIsBuilding ? '⏳ Building...' : (communityIndexStatus.exists ? '🔄 Refresh Index' : '⚡ Build Index')}
-              </button>
+              <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
+                <button
+                  onClick={handleBuildIndex}
+                  disabled={communityIsBuilding}
+                  className="button-secondary"
+                  style={{ 
+                    padding: '0.4rem 0.8rem', 
+                    fontSize: '0.85rem',
+                    whiteSpace: 'nowrap'
+                  }}
+                  title={communityIndexStatus.exists ? 'Refresh index to get latest prerolls' : 'Build index for instant searches'}
+                >
+                  {communityIsBuilding ? '⏳ Building...' : (communityIndexStatus.exists ? '🔄 Refresh Index' : '⚡ Build Index')}
+                </button>
+                <button
+                  onClick={() => handleMatchExisting(true)}
+                  disabled={communityIsMigrating}
+                  className="button-secondary"
+                  style={{ 
+                    padding: '0.4rem 0.8rem', 
+                    fontSize: '0.85rem',
+                    whiteSpace: 'nowrap'
+                  }}
+                  title="Match your existing prerolls to the community library"
+                >
+                  {communityIsMigrating ? '⏳ Matching...' : '🔗 Match Existing Prerolls'}
+                </button>
+                {communityIndexStatus.exists && (
+                  <button
+                    onClick={handleRematchAll}
+                    disabled={communityIsMigrating}
+                    className="button-secondary"
+                    style={{ 
+                      padding: '0.4rem 0.8rem', 
+                      fontSize: '0.85rem',
+                      whiteSpace: 'nowrap',
+                      backgroundColor: darkMode ? 'rgba(245, 158, 11, 0.1)' : 'rgba(245, 158, 11, 0.15)',
+                      border: darkMode ? '1px solid rgba(245, 158, 11, 0.3)' : '1px solid rgba(245, 158, 11, 0.4)',
+                      color: darkMode ? 'rgba(245, 158, 11, 0.9)' : '#b45309'
+                    }}
+                    title="Clear all existing matches and rematch with improved algorithm"
+                  >
+                    {communityIsMigrating ? '⏳ Rematching...' : '🔄 Rematch All'}
+                  </button>
+                )}
+              </div>
             </div>
           )}
 
@@ -7386,6 +7756,39 @@ C:\\\\Media\\\\Prerolls\\\\summer\\\\beach.mp4`}
               dirsVisited={communityBuildProgress.dirs_visited}
               message={communityBuildProgress.message}
             />
+          )}
+
+          {/* Match Existing Progress Bar */}
+          {communityMigrationProgress && (
+            <div style={{
+              marginBottom: '1rem',
+              padding: '1rem',
+              backgroundColor: 'var(--card-bg, #f0f0f0)',
+              border: '2px solid var(--border-color, #ddd)',
+              borderRadius: '8px',
+              fontFamily: "'Courier New', monospace"
+            }}>
+              <div style={{ 
+                fontSize: '0.9rem', 
+                marginBottom: '0.5rem',
+                color: 'var(--text-color, #333)',
+                fontWeight: 'bold'
+              }}>
+                🔗 Matching Prerolls to Community Library
+              </div>
+              <div style={{
+                backgroundColor: 'var(--bg-color, #fff)',
+                border: '1px solid var(--border-color, #ddd)',
+                borderRadius: '4px',
+                padding: '0.5rem',
+                fontSize: '0.85rem',
+                color: 'var(--text-color, #333)'
+              }}>
+                <div>Status: {communityMigrationProgress.status}</div>
+                <div>Scanned: {communityMigrationProgress.scanned} prerolls</div>
+                <div>Matched: {communityMigrationProgress.matched} prerolls</div>
+              </div>
+            </div>
           )}
 
           {/* Search Controls */}
@@ -7705,14 +8108,14 @@ C:\\\\Media\\\\Prerolls\\\\summer\\\\beach.mp4`}
                           fontSize: '0.85rem',
                           border: '1px solid var(--border-color)',
                           borderRadius: '4px',
-                          backgroundColor: '#2a2a2a',
-                          color: '#ffffff',
+                          backgroundColor: darkMode ? '#2a2a2a' : 'white',
+                          color: darkMode ? '#ffffff' : '#333',
                           cursor: 'pointer'
                         }}
                       >
-                        <option value="" style={{ backgroundColor: '#2a2a2a', color: '#ffffff' }}>Select category...</option>
+                        <option value="" style={{ backgroundColor: darkMode ? '#2a2a2a' : 'white', color: darkMode ? '#ffffff' : '#333' }}>Select category...</option>
                         {categories.map(cat => (
-                          <option key={cat.id} value={cat.id} style={{ backgroundColor: '#2a2a2a', color: '#ffffff' }}>
+                          <option key={cat.id} value={cat.id} style={{ backgroundColor: darkMode ? '#2a2a2a' : 'white', color: darkMode ? '#ffffff' : '#333' }}>
                             {cat.name}
                           </option>
                         ))}
@@ -7780,7 +8183,9 @@ C:\\\\Media\\\\Prerolls\\\\summer\\\\beach.mp4`}
                           padding: '0.5rem',
                           fontSize: '0.8rem',
                           minWidth: '80px',
-                          backgroundColor: communityShowAddToCategory[preroll.id] ? 'rgba(102, 200, 145, 0.3)' : 'transparent'
+                          backgroundColor: communityShowAddToCategory[preroll.id] ? 'rgba(102, 200, 145, 0.2)' : undefined,
+                          border: communityShowAddToCategory[preroll.id] ? '1px solid rgba(102, 200, 145, 0.4)' : undefined,
+                          color: communityShowAddToCategory[preroll.id] ? '#66c891' : 'white'
                         }}
                       >
                         {communityShowAddToCategory[preroll.id] ? '✓ Category' : '+ Category'}
@@ -8023,7 +8428,8 @@ C:\\\\Media\\\\Prerolls\\\\summer\\\\beach.mp4`}
                           padding: '0.5rem',
                           fontSize: '0.8rem',
                           backgroundColor: communityShowAddToCategory[preroll.id] ? 'rgba(102, 200, 145, 0.3)' : undefined,
-                          border: communityShowAddToCategory[preroll.id] ? '1px solid rgba(102, 200, 145, 0.6)' : undefined
+                          border: communityShowAddToCategory[preroll.id] ? '1px solid rgba(102, 200, 145, 0.6)' : undefined,
+                          color: darkMode ? undefined : (communityShowAddToCategory[preroll.id] ? '#047857' : undefined)
                         }}
                       >
                         {communityShowAddToCategory[preroll.id] ? '✓ Category Selected' : '+ Add to Category'}
@@ -8429,6 +8835,24 @@ C:\\\\Media\\\\Prerolls\\\\summer\\\\beach.mp4`}
          allowBackgroundInteraction={false}
        >
          <form onSubmit={handleUpdatePreroll}>
+           {editingPreroll.filename && (
+             <div style={{ 
+               marginBottom: '1rem', 
+               padding: '0.75rem', 
+               backgroundColor: 'var(--card-bg, #f0f0f0)', 
+               border: '1px solid var(--border-color, #ddd)',
+               borderRadius: '4px', 
+               fontSize: '0.9rem',
+               color: 'var(--text-color, #333)'
+             }}>
+               <div><strong>Current file:</strong> {editingPreroll.filename}</div>
+               {editingPreroll.category?.name && (
+                 <div style={{ marginTop: '0.5rem', fontSize: '0.85rem', opacity: 0.8 }}>
+                   <strong>Category:</strong> {editingPreroll.category.name}
+                 </div>
+               )}
+             </div>
+           )}
            <div className="nx-form-grid">
              <div className="nx-field">
                <label className="nx-label">Display Name</label>

@@ -1,5 +1,46 @@
 # Changelog
 
+## [1.7.15] - 11-14-2025
+
+### Changed
+- **Calendar View Default**
+  - Monthly calendar now defaults to grid view instead of timeline view
+  - Provides immediate visual overview of schedule distribution across the month
+
+### Fixed
+- **Custom Schedule Colors Display**
+  - Fixed grid view legend to show individual schedules with custom colors instead of categories
+  - Fixed yearly overview to display schedules with custom colors instead of categories
+  - Fallback schedule borders now respect custom colors for better visual consistency
+
+## [1.7.12] - 11-14-2025
+
+### Added
+- **Custom Schedule Colors** 🎨
+  - Users can now assign custom hex colors to individual schedules
+  - Color picker UI with visual selector, hex input field, and clear button
+  - Custom colors override category colors in all calendar views (Week, Month, Year)
+  - Optional feature - schedules without custom colors continue using category colors
+
+- **Preroll Matching & Verification**
+  - "Match Existing Prerolls" button to associate uploaded prerolls with categories based on tags/keywords
+  - "Rematch Prerolls" button to re-run matching algorithm on existing prerolls
+  - Automatic matching suggestions when uploading new prerolls
+  - Improved matching accuracy with keyword-based category association
+
+### Fixed
+- **Plex Preroll Verification**
+  - Fixed verification system to properly confirm prerolls were applied to Plex
+  - Added retry logic when verification fails on first attempt
+  - Improved error reporting when preroll application fails
+  - Better handling of Plex API response validation
+
+### Technical
+- Added `color` column to schedules table with automatic migration
+- Updated schedule API endpoints (POST/PUT/GET) to handle color field
+- Enhanced calendar rendering logic across all calendar modes
+- Seamless database migration for existing installations
+
 ## [1.7.11] - 11-13-2025
 
 ### Fixed
