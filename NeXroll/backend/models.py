@@ -27,6 +27,7 @@ class Preroll(Base):
     file_size = Column(Integer, nullable=True)  # File size in bytes
     managed = Column(Boolean, default=True)  # True = uploaded/managed by NeXroll; False = externally mapped
     upload_date = Column(DateTime, default=datetime.datetime.utcnow)
+    community_preroll_id = Column(String, nullable=True, index=True)  # ID from community prerolls library
 
     category = relationship("Category")
     # Additional categories (many-to-many via preroll_categories)
@@ -71,6 +72,7 @@ class Schedule(Base):
     recurrence_pattern = Column(String, nullable=True)  # For cron-like patterns
     preroll_ids = Column(Text, nullable=True)  # JSON array of preroll IDs for playlists
     sequence = Column(Text, nullable=True)  # JSON describing stacked prerolls (e.g., random blocks + fixed)
+    color = Column(String, nullable=True)  # Custom color for calendar display (hex format)
 
     category = relationship("Category", foreign_keys=[category_id])
     fallback_category = relationship("Category", foreign_keys=[fallback_category_id])
