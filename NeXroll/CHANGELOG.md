@@ -1,5 +1,37 @@
 # Changelog
 
+## [1.7.16] - 11-16-2025
+
+### Fixed
+- **Docker Upload Bug** 
+  - Fixed file uploads failing in Docker environments due to hardcoded localhost URLs
+  - Converted 40+ fetch() calls to use dynamic API URL resolution via apiUrl() helper
+  - Upload now works correctly in Docker, remote deployments, and localhost
+
+- **Scheduler Interval**
+  - Fixed scheduler logging every 1 second causing log spam
+  - Changed default scheduler check interval from 1 second to 60 seconds
+  - Added configurable SCHEDULER_INTERVAL environment variable (default: 60 seconds)
+  - Genre-based auto-switching still responds quickly (separate check)
+
+- **Timezone Auto-Detection**
+  - Added support for TZ environment variable in Docker deployments
+  - Timezone now auto-detected on first startup from TZ environment variable
+  - Eliminates need for manual timezone configuration in Docker
+  - Validates timezone using pytz before applying to database
+
+- **Secondary Category Auto-Apply**
+  - Fixed prerolls added to secondary categories not being auto-applied to Plex
+  - When adding preroll to non-primary category with active schedule, Plex now updates immediately
+  - Added db.expire_all() to clear SQLAlchemy session cache before querying for prerolls
+  - Ensures newly committed associations are visible in subsequent queries
+
+### Technical
+- Created automated script (`scripts/fix_hardcoded_urls.py`) for URL conversion
+- Updated `testing/backend/scheduler.py` with configurable interval support
+- Updated `testing/backend/main.py` with TZ environment variable detection
+- All executables rebuilt with fixes (NeXroll.exe, NeXrollTray.exe, NeXrollService.exe)
+
 ## [1.7.15] - 11-14-2025
 
 ### Changed
@@ -16,7 +48,7 @@
 ## [1.7.12] - 11-14-2025
 
 ### Added
-- **Custom Schedule Colors** 🎨
+- **Custom Schedule Colors** 
   - Users can now assign custom hex colors to individual schedules
   - Color picker UI with visual selector, hex input field, and clear button
   - Custom colors override category colors in all calendar views (Week, Month, Year)

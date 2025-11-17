@@ -1197,6 +1197,20 @@ def startup_env_bootstrap():
             db.add(setting)
             db.commit()
             _file_log("Created default Setting record on startup")
+        
+        # Auto-detect timezone from TZ environment variable (Docker support)
+        if setting and not setting.timezone or setting.timezone == 'UTC':
+            tz_env = os.environ.get('TZ')
+            if tz_env:
+                try:
+                    # Validate timezone using pytz
+                    pytz.timezone(tz_env)
+                    setting.timezone = tz_env
+                    db.commit()
+                    _file_log(f"Auto-detected timezone from TZ environment variable: {tz_env}")
+                except Exception as tz_err:
+                    _file_log(f"Invalid TZ environment variable '{tz_env}': {tz_err}")
+        
         db.close()
     except Exception as e:
         try:
@@ -3766,6 +3780,8 @@ def add_preroll_to_category(category_id: int, preroll_id: int, set_primary: bool
     
     if should_apply:
         try:
+            # Expire all cached objects to ensure fresh query results include the new association
+            db.expire_all()
             _file_log(f"add_preroll_to_category: Auto-applying category '{cat.name}' (ID {cat.id}) to Plex after adding preroll {p.id}")
             ok = _apply_category_to_plex_and_track(db, cat.id, ttl=15)
             if ok:
@@ -9998,10 +10014,6 @@ if getattr(sys, "frozen", False):
         _file_log(f"Uvicorn failed: {e}")
         raise
 
-if __name__ == "__main__" and not getattr(sys, "frozen", False):
-    import uvicorn
-    port = int(os.environ.get("NEXROLL_PORT", "9393"))
-    uvicorn.run(app, host="0.0.0.0", port=port, log_config=None)
 def _bootstrap_jellyfin_from_env() -> None:
     """
     Best-effort auto-connect for Jellyfin:
@@ -10070,3 +10082,8 @@ def _bootstrap_jellyfin_from_env() -> None:
     except Exception:
         # keep server healthy regardless of failures here
         pass
+
+if __name__ == "__main__" and not getattr(sys, "frozen", False):
+    import uvicorn
+    port = int(os.environ.get("NEXROLL_PORT", "9393"))
+    uvicorn.run(app, host="0.0.0.0", port=port, log_config=None)

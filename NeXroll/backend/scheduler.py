@@ -23,6 +23,14 @@ class Scheduler:
         # Recent per-item apply dedupe and override TTL (seconds)
         self._last_applied: dict[str, datetime.datetime] = {}
         self._default_genre_override_ttl_seconds: float = 10.0  # Default if not configured
+        # Track last logged state to prevent duplicate log spam
+        self._last_logged_state = None
+        self._last_logged_time = None
+        # Track last verification time to prevent constant Plex API calls
+        self._last_verification_time: Optional[datetime.datetime] = None
+        self._verification_interval_seconds: float = 300.0  # Check every 5 minutes
+        # Configurable scheduler check interval (seconds) - default 60s, can be overridden via SCHEDULER_INTERVAL env var
+        self._scheduler_check_interval: float = float(os.environ.get('SCHEDULER_INTERVAL', '60.0'))
 
     def start(self):
         """Start the scheduler in a background thread"""
@@ -39,7 +47,7 @@ class Scheduler:
             self.thread.join()
 
     def _run_scheduler(self):
-        """Main scheduler loop - runs every ~5 seconds for better responsiveness"""
+        """Main scheduler loop - runs based on SCHEDULER_INTERVAL (default 60s)"""
         while self.running:
             try:
                 # Auto-apply mapped category from currently playing Plex item (genre-based)
@@ -50,7 +58,13 @@ class Scheduler:
                 self._check_and_execute_schedules()
             except Exception as e:
                 print(f"Scheduler error: {e}")
-            time.sleep(1)  # Check every 1 second for faster genre switching
+            try:
+                # Periodically verify Plex has the correct prerolls set
+                self._verify_and_reapply_if_needed()
+            except Exception as e:
+                print(f"Scheduler verification error: {e}")
+            # Use configurable interval (default 60s, set via SCHEDULER_INTERVAL env var)
+            time.sleep(self._scheduler_check_interval)
 
     def _apply_preroll_to_jellyfin_api(self, category_id: int, db: Session) -> bool:
         """
@@ -441,7 +455,12 @@ class Scheduler:
             if ovr is not None:
                 try:
                     if now < ovr:
-                        print(f"SCHEDULER: override active until {ovr.isoformat()}Z; skipping schedule apply")
+                        # Only log override once per minute to avoid spam
+                        state_key = f"override:{ovr.isoformat()}"
+                        if self._last_logged_state != state_key or (self._last_logged_time and (now - self._last_logged_time).total_seconds() > 60):
+                            print(f"SCHEDULER: override active until {ovr.isoformat()}Z; skipping schedule apply")
+                            self._last_logged_state = state_key
+                            self._last_logged_time = now
                         return
                 except Exception:
                     # If comparison fails for any reason, ignore override
@@ -462,18 +481,35 @@ class Scheduler:
                 
                 # Sanity check: ensure category_id is set
                 if not desired_category_id:
-                    print(f"SCHEDULER: ERROR - Schedule '{chosen_schedule.name}' (ID {chosen_schedule.id}) has no category_id set. Cannot apply prerolls.")
+                    state_key = f"error:no_category:{chosen_schedule.id}"
+                    if self._last_logged_state != state_key:
+                        print(f"SCHEDULER: ERROR - Schedule '{chosen_schedule.name}' (ID {chosen_schedule.id}) has no category_id set. Cannot apply prerolls.")
+                        self._last_logged_state = state_key
+                        self._last_logged_time = now
                     desired_category_id = None
                 else:
-                    print(f"SCHEDULER: Active schedule selected: '{chosen_schedule.name}' (ID {chosen_schedule.id}) -> Category {desired_category_id}")
+                    # Use a consistent state key that works with the "already active" check below
+                    state_key = f"schedule_active:{chosen_schedule.id}:{desired_category_id}"
+                    if self._last_logged_state != state_key:
+                        print(f"SCHEDULER: Active schedule selected: '{chosen_schedule.name}' (ID {chosen_schedule.id}) -> Category {desired_category_id}")
+                        self._last_logged_state = state_key
+                        self._last_logged_time = now
             else:
                 # No active schedules -> attempt fallback from any schedule that defines it
                 fallback_ids = [s.fallback_category_id for s in schedules if getattr(s, "fallback_category_id", None)]
                 if fallback_ids:
                     desired_category_id = fallback_ids[0]
-                    print(f"SCHEDULER: No active schedules; using fallback category {desired_category_id}")
+                    state_key = f"fallback:{desired_category_id}"
+                    if self._last_logged_state != state_key:
+                        print(f"SCHEDULER: No active schedules; using fallback category {desired_category_id}")
+                        self._last_logged_state = state_key
+                        self._last_logged_time = now
                 else:
-                    print(f"SCHEDULER: No active schedules and no fallback defined; Plex preroll will remain unchanged")
+                    state_key = "no_schedules"
+                    if self._last_logged_state != state_key:
+                        print(f"SCHEDULER: No active schedules and no fallback defined; Plex preroll will remain unchanged")
+                        self._last_logged_state = state_key
+                        self._last_logged_time = now
 
             # Apply category change to Plex only if it differs from current
             if desired_category_id and setting.active_category != desired_category_id:
@@ -490,11 +526,152 @@ class Scheduler:
                         chosen_schedule.next_run = self._calculate_next_run(chosen_schedule)
                     db.commit()
             elif desired_category_id is None:
-                print(f"SCHEDULER: No category to apply (desired_category_id is None)")
+                state_key = "no_category_to_apply"
+                if self._last_logged_state != state_key:
+                    print(f"SCHEDULER: No category to apply (desired_category_id is None)")
+                    self._last_logged_state = state_key
+                    self._last_logged_time = now
             elif setting.active_category == desired_category_id:
-                print(f"SCHEDULER: Category {desired_category_id} already active; no change needed")
+                # Only log if state changed OR if we haven't logged this schedule in 5 minutes
+                state_key = f"schedule_active:{chosen_schedule.id if chosen_schedule else 'none'}:{desired_category_id}"
+                if self._last_logged_state != state_key:
+                    # State changed (different schedule/category) - log immediately
+                    print(f"SCHEDULER: Category {desired_category_id} already active; no change needed")
+                    self._last_logged_state = state_key
+                    self._last_logged_time = now
+                elif self._last_logged_time and (now - self._last_logged_time).total_seconds() > 300:
+                    # Same state but 5 minutes passed - log for status visibility
+                    print(f"SCHEDULER: Category {desired_category_id} still active")
+                    self._last_logged_time = now
             # If no desired_category_id, leave Plex as-is to avoid unintended clears
 
+        finally:
+            db.close()
+
+    def _verify_and_reapply_if_needed(self):
+        """
+        Periodically verify that Plex has the correct prerolls set.
+        If there's a mismatch, reapply the current active category.
+        This ensures scheduled prerolls remain active even if manually changed or API calls fail.
+        """
+        now = datetime.datetime.utcnow()
+        
+        # Check if enough time has passed since last verification
+        if self._last_verification_time:
+            elapsed = (now - self._last_verification_time).total_seconds()
+            if elapsed < self._verification_interval_seconds:
+                return  # Too soon to check again
+        
+        # Get database session
+        db = SessionLocal()
+        try:
+            # Get current settings
+            setting = db.query(models.Setting).first()
+            if not setting:
+                return
+            
+            # Only verify if we have an active category
+            if not setting.active_category:
+                return
+            
+            # Get the expected prerolls for the active category
+            prerolls = (
+                db.query(models.Preroll)
+                .filter(models.Preroll.category_id == setting.active_category)
+                .all()
+            )
+            
+            if not prerolls:
+                return  # No prerolls to verify
+            
+            # Build expected preroll paths using the same logic as _apply_category_to_plex
+            preroll_paths_local = [os.path.abspath(p.path) for p in prerolls]
+            
+            # Get path mappings from settings
+            mappings = []
+            try:
+                raw = getattr(setting, "path_mappings", None)
+                if raw:
+                    data = json.loads(raw)
+                    if isinstance(data, list):
+                        mappings = [m for m in data if isinstance(m, dict) and m.get("local") and m.get("plex")]
+            except Exception:
+                mappings = []
+            
+            # Translate local paths to Plex paths using the same function as scheduler
+            def _translate_for_plex(local_path: str) -> str:
+                try:
+                    lp = os.path.normpath(local_path)
+                    best = None
+                    best_src = None
+                    best_len = -1
+                    for m in mappings:
+                        src = os.path.normpath(str(m.get("local")))
+                        if sys.platform.startswith("win"):
+                            if lp.lower().startswith(src.lower()) and len(src) > best_len:
+                                best = m
+                                best_src = src
+                                best_len = len(src)
+                        else:
+                            if lp.startswith(src) and len(src) > best_len:
+                                best = m
+                                best_src = src
+                                best_len = len(src)
+                    if best:
+                        dst_prefix = str(best.get("plex"))
+                        rest = lp[len(best_src):].lstrip("\\/")
+                        try:
+                            if ("/" in dst_prefix) and ("\\" not in dst_prefix):
+                                out = dst_prefix.rstrip("/") + "/" + rest.replace("\\", "/")
+                            elif "\\" in dst_prefix:
+                                out = dst_prefix.rstrip("\\") + "\\" + rest.replace("/", "\\")
+                            else:
+                                out = dst_prefix.rstrip("/") + "/" + rest.replace("\\", "/")
+                        except Exception:
+                            out = dst_prefix + (("/" if not dst_prefix.endswith(("/", "\\")) else "") + rest)
+                        return out
+                except Exception:
+                    pass
+                return local_path
+            
+            expected_paths = [_translate_for_plex(p) for p in preroll_paths_local]
+            
+            # Determine separator based on category's plex_mode
+            try:
+                cat = db.query(models.Category).filter(models.Category.id == setting.active_category).first()
+                mode = getattr(cat, "plex_mode", "shuffle") if cat else "shuffle"
+            except Exception:
+                mode = "shuffle"
+            separator = "," if isinstance(mode, str) and mode.lower() == "playlist" else ";"
+            expected_preroll_string = separator.join(expected_paths)
+            
+            # Get actual preroll setting from Plex
+            plex_connector = PlexConnector(setting.plex_url, setting.plex_token)
+            actual_preroll_string = plex_connector.get_preroll()
+            
+            # Normalize for comparison (strip whitespace, handle empty strings)
+            expected_normalized = expected_preroll_string.strip()
+            actual_normalized = actual_preroll_string.strip()
+            
+            # Compare expected vs actual
+            if expected_normalized != actual_normalized:
+                print(f"SCHEDULER VERIFICATION: Plex preroll mismatch detected!")
+                print(f"  Expected: {expected_normalized}")
+                print(f"  Actual:   {actual_normalized}")
+                print(f"  Reapplying category {setting.active_category}...")
+                
+                # Reapply the current category
+                success = self._apply_category_to_plex(setting.active_category, db)
+                if success:
+                    print(f"SCHEDULER VERIFICATION: Successfully reapplied prerolls")
+                else:
+                    print(f"SCHEDULER VERIFICATION: Failed to reapply prerolls")
+            
+            # Update last verification time
+            self._last_verification_time = now
+            
+        except Exception as e:
+            print(f"Verification error: {e}")
         finally:
             db.close()
 
