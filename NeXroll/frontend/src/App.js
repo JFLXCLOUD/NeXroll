@@ -1846,10 +1846,24 @@ const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
 
   const handleInitHolidays = () => {
     fetch(apiUrl('holiday-presets/init'), { method: 'POST' })
-      .then(res => res.json())
+      .then(res => {
+        if (!res.ok) {
+          return res.json().then(err => {
+            throw new Error(err.detail || 'Failed to initialize holiday presets');
+          });
+        }
+        return res.json();
+      })
       .then(data => {
-        alert('Holiday presets initialized!');
+        const msg = data.categories_created > 0 
+          ? `Holiday categories created successfully!\n\n✓ ${data.categories_created} new categories\n✓ ${data.presets_created} new presets\n✓ ${data.total_categories} total categories available\n\nThe categories should now appear in your list.`
+          : `Holiday categories already exist!\n\n✓ ${data.total_categories} categories available\n\nNo new categories were created.`;
+        alert(msg);
         fetchData();
+      })
+      .catch(error => {
+        console.error('Holiday preset initialization error:', error);
+        alert('Failed to initialize holiday presets: ' + error.message);
       });
   };
 

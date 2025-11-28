@@ -5112,6 +5112,9 @@ def delete_saved_sequence(sequence_id: int, db: Session = Depends(get_db)):
 # Holiday presets
 @app.post("/holiday-presets/init")
 def initialize_holiday_presets(db: Session = Depends(get_db)):
+    categories_created = 0
+    presets_created = 0
+    
     # Create default category for holidays if it doesn't exist
     holiday_category = db.query(models.Category).filter(models.Category.name == "Holidays").first()
     if not holiday_category:
@@ -5119,6 +5122,7 @@ def initialize_holiday_presets(db: Session = Depends(get_db)):
         db.add(holiday_category)
         db.commit()
         db.refresh(holiday_category)
+        categories_created += 1
 
     # Add common holiday presets with month-long date ranges
     holidays = [
@@ -5168,10 +5172,12 @@ def initialize_holiday_presets(db: Session = Depends(get_db)):
             db.add(cat)
             db.commit()
             db.refresh(cat)
+            categories_created += 1
 
         # Upsert holiday preset bound to that category
         existing = db.query(models.HolidayPreset).filter(models.HolidayPreset.name == holiday["name"]).first()
         if not existing:
+            presets_created += 1
             preset = models.HolidayPreset(
                 name=holiday["name"],
                 description=holiday["description"],
@@ -5198,7 +5204,12 @@ def initialize_holiday_presets(db: Session = Depends(get_db)):
             existing.category_id = cat.id
 
     db.commit()
-    return {"message": "Holiday presets initialized"}
+    return {
+        "message": "Holiday presets initialized",
+        "categories_created": categories_created,
+        "presets_created": presets_created,
+        "total_categories": len(holidays) + 1  # Including the "Holidays" category
+    }
 
 @app.get("/holiday-presets")
 def get_holiday_presets(db: Session = Depends(get_db)):
