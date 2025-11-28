@@ -4,6 +4,9 @@ import { SortableContext, rectSortingStrategy, useSortable, arrayMove } from '@d
 import { CSS } from '@dnd-kit/utilities';
 import ReactMarkdown from 'react-markdown';
 import RetroProgressBar from './components/RetroProgressBar';
+import TestSequenceBuilder from './TestSequenceBuilder';
+import SequenceBuilder from './components/SequenceBuilder';
+import { validateSequence, stringifySequence, parseSequence, cloneSequenceWithIds } from './utils/sequenceValidator';
 
 // API helpers that resolve the backend base dynamically (works in Docker and behind proxies)
 const apiBase = () => {
@@ -417,7 +420,6 @@ const CategoryPicker = ({ categories, primaryId, secondaryIds, onChange, onCreat
   );
 };
 function App() {
-  console.log('App component rendering');
   const [plexStatus, setPlexStatus] = useState('Disconnected');
   const [plexServerInfo, setPlexServerInfo] = useState(null);
   const [prerolls, setPrerolls] = useState([]);
@@ -427,6 +429,7 @@ function App() {
   const [files, setFiles] = useState([]);
   const [uploadProgress, setUploadProgress] = useState({});
   const [activeTab, setActiveTab] = useState('dashboard');
+  const [openDropdown, setOpenDropdown] = useState(null); // For dropdown navigation
   const [plexConfig, setPlexConfig] = useState({
     url: '',
     token: '',
@@ -472,12 +475,15 @@ function App() {
   const oauthPollRef = React.useRef(null);
   // Stable token management (optional advanced)
   const [showStableTokenSave, setShowStableTokenSave] = useState(false);
+  // File upload ref for clearing input
+  const fileInputRef = React.useRef(null);
   const [stableTokenInput, setStableTokenInput] = useState('');
   const [systemVersion, setSystemVersion] = useState(null);
   const [ffmpegInfo, setFfmpegInfo] = useState(null);
   const [updateInfo, setUpdateInfo] = useState(null);
   const [showUpdateBanner, setShowUpdateBanner] = useState(false);
   const [activeCategory, setActiveCategory] = useState(null);
+  const [activeScheduleIds, setActiveScheduleIds] = useState([]);
   
   // Changelog modal state
   const [showChangelogModal, setShowChangelogModal] = useState(false);
@@ -523,6 +529,35 @@ function App() {
   const [prerollView, setPrerollView] = useState(() => {
     try { return localStorage.getItem('prerollView') || 'grid'; } catch { return 'grid'; }
   });
+  
+  const [categoryView, setCategoryView] = useState(() => {
+    try { return localStorage.getItem('categoryView') || 'list'; } catch { return 'list'; }
+  });
+  const [categorySearchQuery, setCategorySearchQuery] = useState('');
+  const [categorySortField, setCategorySortField] = useState('name');
+  const [categorySortDirection, setCategorySortDirection] = useState('asc');
+  const [showCreateCategoryModal, setShowCreateCategoryModal] = useState(false);
+  
+  // Bulk selection state
+  const [selectedCategoryIds, setSelectedCategoryIds] = useState([]);
+  const [bulkActionMode, setBulkActionMode] = useState(false);
+  
+  // Advanced filters
+  const [categoryFilter, setCategoryFilter] = useState('all'); // 'all', 'active', 'hasPrerolls', 'empty'
+  
+  // Category colors (like schedules)
+  const [categoryColors, setCategoryColors] = useState({}); // {categoryId: '#hexcolor'}
+  
+  // Templates
+  const [showTemplateModal, setShowTemplateModal] = useState(false);
+  const [categoryTemplates, setCategoryTemplates] = useState([]);
+  
+  // Quick actions menu
+  const [categoryMenuOpen, setCategoryMenuOpen] = useState(null); // categoryId or null
+  
+  // Export/Import
+  const [showExportModal, setShowExportModal] = useState(false);
+  const [showImportModal, setShowImportModal] = useState(false);
 
   // Upload/Import mode for dashboard
   const [uploadMode, setUploadMode] = useState('upload'); // 'upload' or 'import'
@@ -571,6 +606,20 @@ genre_override_ttl_seconds: 10
 const [recentGenreApplications, setRecentGenreApplications] = useState([]);
 const [genreSettingsLoading, setGenreSettingsLoading] = useState(false);
 const [applyingToServer, setApplyingToServer] = useState(false);
+  // Verbose logging state
+  const [verboseLogging, setVerboseLogging] = useState(false);
+  const [verboseLoggingLoading, setVerboseLoggingLoading] = useState(false);
+
+  // UI Preferences state (stored in localStorage)
+  const [confirmDeletions, setConfirmDeletions] = useState(() => {
+    try { return JSON.parse(localStorage.getItem('confirmDeletions') || 'true'); } catch { return true; }
+  });
+  const [showNotifications, setShowNotifications] = useState(() => {
+    try { return JSON.parse(localStorage.getItem('showNotifications') || 'true'); } catch { return true; }
+  });
+  const [weekStartsOnSunday, setWeekStartsOnSunday] = useState(() => {
+    try { return JSON.parse(localStorage.getItem('weekStartsOnSunday') || 'true'); } catch { return true; }
+  });
   // Category preroll management UI state
   const [categoryPrerolls, setCategoryPrerolls] = useState({});
   const [categoryPrerollsLoading, setCategoryPrerollsLoading] = useState({});
@@ -632,6 +681,70 @@ const toLocalInputFromDate = (d) => {
   const mi = pad(d.getMinutes());
   return `${yyyy}-${mm}-${dd}T${hh}:${mi}`;
 };
+
+// Helper function to check if a schedule is active on a specific day
+const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
+  if (!schedule.start_date) return false;
+  const dayDate = new Date(dayTime);
+  
+  // Check if the day is within the schedule's overall date range
+  const sDay = normalizeDay(schedule.start_date);
+  const eDay = schedule.end_date ? normalizeDay(schedule.end_date) : Infinity;
+  if (dayTime < sDay || dayTime > eDay) return false;
+  
+  // Check recurrence pattern for monthly, weekly, daily schedules
+  if (schedule.recurrence_pattern) {
+    try {
+      const pattern = JSON.parse(schedule.recurrence_pattern);
+      
+      // Monthly: Check if day of month matches
+      if (schedule.type === 'monthly' && pattern.monthDays && pattern.monthDays.length > 0) {
+        const dayOfMonth = dayDate.getDate();
+        return pattern.monthDays.includes(dayOfMonth);
+      }
+      
+      // Weekly: Check if day of week matches
+      if (schedule.type === 'weekly' && pattern.weekDays && pattern.weekDays.length > 0) {
+        const dayOfWeek = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'][dayDate.getDay()];
+        return pattern.weekDays.includes(dayOfWeek);
+      }
+      
+      // Daily: Always true if within date range (time-of-day check would be backend's job)
+      if (schedule.type === 'daily') {
+        return true;
+      }
+    } catch (e) {
+      console.error('Failed to parse recurrence pattern:', e);
+    }
+  }
+  
+  // Yearly/Holiday schedules - check month/day match
+  if (schedule.type === 'yearly' || schedule.type === 'holiday') {
+    const startDateStr = schedule.start_date.includes('T') ? schedule.start_date.split('T')[0] : schedule.start_date;
+    const endDateStr = schedule.end_date ? (schedule.end_date.includes('T') ? schedule.end_date.split('T')[0] : schedule.end_date) : startDateStr;
+    const [startYear, startMonth, startDay] = startDateStr.split('-').map(Number);
+    const [endYear, endMonth, endDay] = endDateStr.split('-').map(Number);
+    const schedStartMonth = startMonth - 1;
+    const schedStartDay = startDay;
+    const schedEndMonth = endMonth - 1;
+    const schedEndDay = endDay;
+    const dayMonth = dayDate.getMonth();
+    const dayDay = dayDate.getDate();
+    
+    if (schedStartMonth === schedEndMonth) {
+      return dayMonth === schedStartMonth && dayDay >= schedStartDay && dayDay <= schedEndDay;
+    } else {
+      return (dayMonth === schedStartMonth && dayDay >= schedStartDay) ||
+             (dayMonth === schedEndMonth && dayDay <= schedEndDay) ||
+             (schedStartMonth < schedEndMonth && dayMonth > schedStartMonth && dayMonth < schedEndMonth) ||
+             (schedStartMonth > schedEndMonth && (dayMonth > schedStartMonth || dayMonth < schedEndMonth));
+    }
+  }
+  
+  // Default: schedule is active if day is within start/end date range
+  return dayTime >= sDay && dayTime <= eDay;
+};
+
   // Schedule form state
   const [scheduleForm, setScheduleForm] = useState({
     name: '',
@@ -644,6 +757,27 @@ const toLocalInputFromDate = (d) => {
     fallback_category_id: '',
     color: ''
   });
+
+  // Sequence Builder state
+  const [scheduleMode, setScheduleMode] = useState('simple'); // 'simple' or 'advanced'
+  const [sequenceBlocks, setSequenceBlocks] = useState([]);
+  const [savedSequences, setSavedSequences] = useState([]);
+  const [sequencesLoading, setSequencesLoading] = useState(false);
+  const [editingSequenceId, setEditingSequenceId] = useState(null); // Track which sequence is being edited
+  const [editingSequenceName, setEditingSequenceName] = useState(''); // Track sequence name when editing
+  const [editingSequenceDescription, setEditingSequenceDescription] = useState(''); // Track description when editing
+
+  // Recurrence pattern state
+  const [weekDays, setWeekDays] = useState([]);  // For weekly: ['monday', 'wednesday', 'friday']
+  const [monthDays, setMonthDays] = useState([]); // For monthly: [1, 15, 30]
+  const [timeRange, setTimeRange] = useState({ start: '', end: '' }); // For daily time ranges
+
+  // Active Schedules display state
+  const [scheduleSearchQuery, setScheduleSearchQuery] = useState('');
+  const [scheduleFilterType, setScheduleFilterType] = useState('all'); // 'all', 'daily', 'weekly', 'monthly', 'yearly', 'holiday'
+  const [scheduleViewMode, setScheduleViewMode] = useState('compact'); // 'compact' or 'detailed'
+  const [scheduleCurrentPage, setScheduleCurrentPage] = useState(1);
+  const schedulesPerPage = 10;
 
   // Upload form state
   const [uploadForm, setUploadForm] = useState({
@@ -658,12 +792,18 @@ const toLocalInputFromDate = (d) => {
     tags: '',
     category_id: '',
     category_ids: [],
-    description: ''
+    description: '',
+    exclude_from_matching: false
   });
+
+  // Auto-match state
+  const [autoMatchLoading, setAutoMatchLoading] = useState(false);
+  const [similarMatches, setSimilarMatches] = useState([]);
 
   // Filter state
   const [filterTags, setFilterTags] = useState('');
   const [filterCategory, setFilterCategory] = useState('');
+  const [filterMatchStatus, setFilterMatchStatus] = useState(''); // Filter by community match status
   const [availableTags, setAvailableTags] = useState([]);
   const [inputTagsValue, setInputTagsValue] = useState(''); // Local state for immediate input feedback
 
@@ -737,11 +877,63 @@ const toLocalInputFromDate = (d) => {
   useEffect(() => {
     try { localStorage.setItem('prerollView', prerollView); } catch {}
   }, [prerollView]);
+  
+  useEffect(() => {
+    try { localStorage.setItem('categoryView', categoryView); } catch {}
+  }, [categoryView]);
 
   // Persist and clamp preroll pagination
   useEffect(() => {
     try { localStorage.setItem('prerollPageSize', String(pageSize)); } catch {}
   }, [pageSize]);
+
+  // Persist UI preferences
+  useEffect(() => {
+    try { localStorage.setItem('confirmDeletions', JSON.stringify(confirmDeletions)); } catch {}
+  }, [confirmDeletions]);
+
+  useEffect(() => {
+    try { localStorage.setItem('showNotifications', JSON.stringify(showNotifications)); } catch {}
+  }, [showNotifications]);
+
+  useEffect(() => {
+    try { localStorage.setItem('weekStartsOnSunday', JSON.stringify(weekStartsOnSunday)); } catch {}
+  }, [weekStartsOnSunday]);
+
+  // Helper functions that respect user preferences
+  const showConfirm = (message) => {
+    if (!confirmDeletions) return true; // Skip confirmation if disabled
+    return window.confirm(message);
+  };
+
+  // Store original alert function to avoid recursion
+  const originalAlert = useRef(window.alert).current;
+  
+  const showAlert = (message, type = 'info') => {
+    // Determine if this is an error message
+    const isError = type === 'error' || 
+                    (typeof message === 'string' && (
+                      message.toLowerCase().includes('error') ||
+                      message.toLowerCase().includes('failed') ||
+                      message.toLowerCase().includes('cannot')
+                    ));
+    
+    // Always show errors, but respect showNotifications for success/info messages
+    if (isError || showNotifications) {
+      originalAlert(message);
+    }
+  };
+
+  // Override global alert to respect notifications setting
+  useEffect(() => {
+    const origAlert = window.alert;
+    window.alert = (message) => {
+      showAlert(message, 'info');
+    };
+    return () => {
+      window.alert = origAlert;
+    };
+  }, [showNotifications]); // Re-bind when setting changes
 
   useEffect(() => {
     const totalPages = Math.max(1, Math.ceil((prerolls || []).length / pageSize));
@@ -761,6 +953,34 @@ const toLocalInputFromDate = (d) => {
       }
     } catch {}
   }, []);
+
+  // Close category menu when clicking outside
+  useEffect(() => {
+    const handleClickOutside = (e) => {
+      if (categoryMenuOpen !== null) {
+        setCategoryMenuOpen(null);
+      }
+    };
+    
+    if (categoryMenuOpen !== null) {
+      document.addEventListener('click', handleClickOutside);
+      return () => document.removeEventListener('click', handleClickOutside);
+    }
+  }, [categoryMenuOpen]);
+
+  // Close dropdown menu when clicking outside
+  useEffect(() => {
+    const handleClickOutside = (e) => {
+      if (openDropdown !== null) {
+        setOpenDropdown(null);
+      }
+    };
+    
+    if (openDropdown !== null) {
+      document.addEventListener('click', handleClickOutside);
+      return () => document.removeEventListener('click', handleClickOutside);
+    }
+  }, [openDropdown]);
 
   // Safe JSON parser to prevent UI breakage if an endpoint returns non-JSON or HTTP 500/HTML
   const safeJson = async (r) => {
@@ -903,28 +1123,108 @@ const toLocalInputFromDate = (d) => {
     }
   };
 
+  // === Shared toggle schedule handler (DRY - used by both compact and detailed views) ===
+  const handleToggleSchedule = React.useCallback(async (schedule, viewName = '') => {
+    console.log(`Toggle clicked (${viewName}) - Current is_active:`, schedule.is_active, 'Schedule ID:', schedule.id);
+    
+    // Store the original state for reverting if needed
+    const originalActiveState = schedule.is_active;
+    const newActiveState = !originalActiveState;
+    
+    // Optimistically update the UI
+    setSchedules(prevSchedules => 
+      prevSchedules.map(s => 
+        s.id === schedule.id ? { ...s, is_active: newActiveState } : s
+      )
+    );
+    
+    try {
+      // Format dates correctly for backend
+      const formatDateForBackend = (dateStr) => {
+        if (!dateStr) return '';
+        try {
+          const d = new Date(dateStr);
+          return d.toISOString().slice(0, 16);
+        } catch {
+          return '';
+        }
+      };
+      
+      const requestData = {
+        name: schedule.name,
+        type: schedule.type,
+        start_date: formatDateForBackend(schedule.start_date),
+        end_date: formatDateForBackend(schedule.end_date),
+        category_id: schedule.category_id,
+        shuffle: schedule.shuffle || false,
+        playlist: schedule.playlist || false,
+        recurrence_pattern: schedule.recurrence_pattern || '',
+        preroll_ids: schedule.preroll_ids || '',
+        fallback_category_id: schedule.fallback_category_id || null,
+        sequence: typeof schedule.sequence === 'object' ? JSON.stringify(schedule.sequence) : (schedule.sequence || ''),
+        color: schedule.color || '',
+        is_active: newActiveState
+      };
+      
+      console.log(`Toggle request (${viewName}):`, requestData);
+      
+      const response = await fetch(apiUrl(`schedules/${schedule.id}`), {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(requestData)
+      });
+      
+      if (response.ok) {
+        console.log('Toggle success! State updated.');
+        // Give backend a moment to persist, then sync
+        setTimeout(() => fetchData(), 500);
+      } else {
+        // Revert optimistic update on failure
+        setSchedules(prevSchedules => 
+          prevSchedules.map(s => 
+            s.id === schedule.id ? { ...s, is_active: originalActiveState } : s
+          )
+        );
+        const errorText = await response.text();
+        console.error('Toggle failed - Status:', response.status);
+        console.error('Toggle failed - Response:', errorText);
+        alert('Failed to update schedule: ' + errorText);
+      }
+    } catch (err) {
+      // Revert optimistic update on error
+      setSchedules(prevSchedules => 
+        prevSchedules.map(s => 
+          s.id === schedule.id ? { ...s, is_active: originalActiveState } : s
+        )
+      );
+      console.error('Error toggling schedule:', err);
+      alert('Error updating schedule: ' + err.message);
+    }
+  }, []);
+
   // eslint-disable-next-line no-use-before-define
   const fetchData = React.useCallback(() => {
-    const fc = String(filterCategoryRef.current || '');
-    const ft = String(filterTagsRef.current || '');
-    // Fetch all data
-    Promise.all([
-      fetch('http://localhost:9393/plex/status'),
-      fetch('http://localhost:9393/jellyfin/status'),
-      fetch(`http://localhost:9393/prerolls?category_id=${fc}&search=${ft}`),
-      fetch('http://localhost:9393/schedules'),
-      fetch('http://localhost:9393/categories'),
-      fetch('http://localhost:9393/holiday-presets'),
-      fetch('http://localhost:9393/scheduler/status'),
-      fetch('http://localhost:9393/tags'),
-      fetch('http://localhost:9393/community-templates'),
-      fetch('http://localhost:9393/plex/stable-token/status'),
-      fetch('http://localhost:9393/system/version'),
-      fetch('http://localhost:9393/system/ffmpeg-info'),
-      fetch('http://localhost:9393/genres/recent-applications'),
-      fetch('http://localhost:9393/settings/active-category')
+    // Always fetch all prerolls (no filter) for global state, filter in dashboard UI only
+    return Promise.all([
+      fetch(apiUrl('plex/status')),
+      fetch(apiUrl('jellyfin/status')),
+      fetch(apiUrl('prerolls')),
+      fetch(apiUrl('schedules')),
+      fetch(apiUrl('categories')),
+      fetch(apiUrl('holiday-presets')),
+      fetch(apiUrl('scheduler/status')),
+      fetch(apiUrl('tags')),
+      fetch(apiUrl('community-templates')),
+      fetch(apiUrl('plex/stable-token/status')),
+      fetch(apiUrl('system/version')),
+      fetch(apiUrl('system/ffmpeg-info')),
+      fetch(apiUrl('genres/recent-applications')),
+      fetch(apiUrl('settings/active-category')),
+      fetch(apiUrl('scheduler/active-schedule-ids')),
+      fetch(apiUrl('community-prerolls/index-status')),
+      fetch(apiUrl('community-prerolls/downloaded-ids'))
     ]).then(responses => Promise.all(responses.map(safeJson)))
-      .then(([plex, jellyfin, prerolls, schedules, categories, holidays, scheduler, tags, templates, stableToken, sysVersion, ffmpeg, recentGenreApps, activeCat]) => {
+      .then(([plex, jellyfin, prerolls, schedules, categories, holidays, scheduler, tags, templates, stableToken, sysVersion, ffmpeg, recentGenreApps, activeCat, activeScheduleIdsData, communityIndex, communityDownloaded]) => {
         setPlexStatus(plex.connected ? 'Connected' : 'Disconnected');
         setPlexServerInfo(plex);
         setJellyfinStatus(jellyfin.connected ? 'Connected' : 'Disconnected');
@@ -944,18 +1244,28 @@ const toLocalInputFromDate = (d) => {
         setSystemVersion(sysVersion || null);
         setFfmpegInfo(ffmpeg || null);
         setRecentGenreApplications(Array.isArray(recentGenreApps?.applications) ? recentGenreApps.applications : []);
-        // Debug: Log active category response
-        console.log('Active category API response:', activeCat);
-        console.log('Full response details:', JSON.stringify(activeCat));
+        // Set active category
         if (activeCat?.__error) {
-          console.warn('Active category API error:', activeCat.status);
           setActiveCategory(null);
         } else if (activeCat?.active_category) {
-          console.log('Setting active category to:', activeCat.active_category);
           setActiveCategory(activeCat.active_category);
         } else {
-          console.warn('Active category response missing active_category property');
           setActiveCategory(null);
+        }
+        // Set active schedule IDs
+        if (activeScheduleIdsData?.active_schedule_ids) {
+          setActiveScheduleIds(activeScheduleIdsData.active_schedule_ids);
+        } else {
+          setActiveScheduleIds([]);
+        }
+        // Set community preroll index status (for dashboard tile)
+        if (communityIndex && !communityIndex.__error) {
+          setCommunityIndexStatus(communityIndex);
+        }
+        // Set community matched count (for dashboard tile)
+        if (communityDownloaded?.downloaded_ids) {
+          setCommunityMatchedCount(communityDownloaded.downloaded_ids.length);
+          setDownloadedCommunityIds(communityDownloaded.downloaded_ids);
         }
       }).catch(err => {
         console.error('Fetch error:', err);
@@ -983,7 +1293,7 @@ const toLocalInputFromDate = (d) => {
   useEffect(() => {
     const checkChangelog = async () => {
       try {
-        const response = await fetch('http://localhost:9393/system/changelog');
+        const response = await fetch(apiUrl('system/changelog'));
         const data = await response.json();
         
         if (data.show_changelog && data.changelog) {
@@ -1226,8 +1536,59 @@ const toLocalInputFromDate = (d) => {
     // Reset progress
     setUploadProgress({});
 
+    // Check for duplicates first
+    const duplicateChecks = [];
     for (let i = 0; i < files.length; i++) {
       const file = files[i];
+      const checkFormData = new FormData();
+      checkFormData.append('file', file);
+      
+      try {
+        const checkResponse = await fetch(apiUrl('prerolls/check-duplicate'), {
+          method: 'POST',
+          body: checkFormData
+        });
+        const checkData = await checkResponse.json();
+        duplicateChecks.push({
+          file,
+          isDuplicate: checkData.is_duplicate,
+          existingPreroll: checkData.existing_preroll,
+          fileHash: checkData.file_hash
+        });
+      } catch (error) {
+        console.error(`Duplicate check error for ${file.name}:`, error);
+        // If check fails, assume not duplicate and continue
+        duplicateChecks.push({
+          file,
+          isDuplicate: false,
+          fileHash: null
+        });
+      }
+    }
+
+    // Find duplicates
+    const duplicates = duplicateChecks.filter(check => check.isDuplicate);
+    
+    // If there are duplicates, ask user what to do
+    let duplicateAction = 'allow'; // Default: allow duplicates
+    if (duplicates.length > 0) {
+      const duplicateNames = duplicates.map(d => `  • ${d.file.name}`).join('\n');
+      const message = `⚠️ DUPLICATE FILES DETECTED ⚠️\n\nThe following ${duplicates.length} file(s) already exist in your library:\n\n${duplicateNames}\n\n━━━━━━━━━━━━━━━━━━━━━━━━━\n\nClick OK to SKIP these duplicates\nClick Cancel to UPLOAD them anyway`;
+      
+      const userChoice = window.confirm(message);
+      
+      if (userChoice) {
+        duplicateAction = 'skip';
+        alert(`✓ Skipping ${duplicates.length} duplicate file(s). Only new files will be uploaded.`);
+      } else {
+        alert(`✓ Allowing duplicates. All ${files.length} file(s) will be uploaded.`);
+      }
+    }
+
+    for (let i = 0; i < files.length; i++) {
+      const file = files[i];
+      const checkInfo = duplicateChecks[i];
+      
       try {
         const formData = new FormData();
         formData.append('file', file);
@@ -1238,8 +1599,16 @@ const toLocalInputFromDate = (d) => {
           if (ids.length > 0) formData.append('category_ids', JSON.stringify(ids));
         }
         if (uploadForm.description.trim()) formData.append('description', uploadForm.description.trim());
+        
+        // Add duplicate action and hash
+        if (checkInfo.isDuplicate && duplicateAction === 'skip') {
+          formData.append('duplicate_action', 'skip');
+        }
+        if (checkInfo.fileHash) {
+          formData.append('file_hash', checkInfo.fileHash);
+        }
 
-        const response = await fetch('http://localhost:9393/prerolls/upload', {
+        const response = await fetch(apiUrl('prerolls/upload'), {
           method: 'POST',
           body: formData
         });
@@ -1249,13 +1618,20 @@ const toLocalInputFromDate = (d) => {
         }
 
         const data = await response.json();
-        results.push({ file: file.name, success: true, data });
-
-        // Update progress
-        setUploadProgress(prev => ({
-          ...prev,
-          [file.name]: { status: 'completed', progress: 100 }
-        }));
+        
+        if (data.skipped) {
+          results.push({ file: file.name, success: true, skipped: true, data });
+          setUploadProgress(prev => ({
+            ...prev,
+            [file.name]: { status: 'skipped', progress: 100 }
+          }));
+        } else {
+          results.push({ file: file.name, success: true, data });
+          setUploadProgress(prev => ({
+            ...prev,
+            [file.name]: { status: 'completed', progress: 100 }
+          }));
+        }
 
       } catch (error) {
         console.error(`Upload error for ${file.name}:`, error);
@@ -1270,24 +1646,44 @@ const toLocalInputFromDate = (d) => {
     }
 
     // Show summary
-    const successful = results.filter(r => r.success).length;
+    const successful = results.filter(r => r.success && !r.skipped).length;
+    const skippedResults = results.filter(r => r.success && r.skipped);
+    const skipped = skippedResults.length;
     const failed = results.filter(r => !r.success).length;
 
-    if (failed === 0) {
-      alert(`All ${totalFiles} files uploaded successfully!`);
-    } else if (successful === 0) {
-      alert(`Failed to upload any files. Please check the errors.`);
+    let message = '';
+    if (failed === 0 && skipped === 0) {
+      message = `✓ All ${totalFiles} files uploaded successfully!`;
+    } else if (successful === 0 && skipped > 0 && failed === 0) {
+      const skippedNames = skippedResults.map(r => `  • ${r.file}`).join('\n');
+      message = `ℹ️ All ${totalFiles} file(s) were skipped (duplicates):\n\n${skippedNames}`;
+    } else if (successful === 0 && failed > 0) {
+      message = `❌ Failed to upload any files. Please check the errors.`;
     } else {
-      alert(`${successful} files uploaded successfully, ${failed} failed.`);
+      const parts = [];
+      if (successful > 0) parts.push(`${successful} uploaded`);
+      if (skipped > 0) parts.push(`${skipped} skipped (duplicates)`);
+      if (failed > 0) parts.push(`${failed} failed`);
+      message = `Upload complete: ${parts.join(', ')}.`;
+      
+      if (skipped > 0) {
+        const skippedNames = skippedResults.map(r => r.file).join(', ');
+        message += `\n\nSkipped: ${skippedNames}`;
+      }
     }
+    alert(message);
 
     // Clear files and form
     setFiles([]);
     setUploadForm({ tags: '', category_id: '', category_ids: [], description: '' });
+    // Clear the file input element
+    if (fileInputRef.current) {
+      fileInputRef.current.value = '';
+    }
     fetchData();
   };
 
-  const handleCreateSchedule = (e) => {
+  const handleCreateSchedule = async (e) => {
     e.preventDefault();
 
     // Validate required fields
@@ -1299,33 +1695,117 @@ const toLocalInputFromDate = (d) => {
       alert('Start date is required');
       return;
     }
-    if (!scheduleForm.category_id) {
-      alert('Please select a category');
+
+    // Validate recurrence patterns
+    if (scheduleForm.type === 'daily' && !timeRange.start) {
+      alert('Please select at least a start time for daily schedules');
+      return;
+    }
+    if (scheduleForm.type === 'weekly' && weekDays.length === 0) {
+      alert('Please select at least one day of the week for weekly schedules');
+      return;
+    }
+    if (scheduleForm.type === 'monthly' && monthDays.length === 0) {
+      alert('Please select at least one day of the month for monthly schedules');
       return;
     }
 
-    // Ensure category_id is valid
-    const categoryId = parseInt(scheduleForm.category_id);
-    if (isNaN(categoryId) || categoryId <= 0) {
-      alert('Please select a valid category');
-      return;
+    // Advanced mode: validate sequence and save to library
+    if (scheduleMode === 'advanced') {
+      // Ensure sequenceBlocks is an array
+      const blocks = Array.isArray(sequenceBlocks) ? sequenceBlocks : [];
+      console.log('Schedule Mode:', scheduleMode);
+      console.log('Sequence Blocks (raw):', sequenceBlocks);
+      console.log('Sequence Blocks (validated):', blocks);
+      console.log('Blocks length:', blocks.length);
+      
+      if (blocks.length === 0) {
+        alert('Please add at least one block to the sequence before creating the schedule.\n\nUse the "Add Random Block" or "Add Fixed Block" buttons in the Sequence Builder section above to create your sequence.');
+        return;
+      }
+      const validation = validateSequence(blocks, categories, prerolls);
+      console.log('Validation result:', validation);
+      
+      if (!validation.valid) {
+        alert('Sequence validation failed:\n' + validation.errors.join('\n'));
+        return;
+      }
+
+      // Save sequence to library
+      try {
+        const sequenceName = scheduleForm.name.trim() + ' Sequence';
+        const sequenceDescription = `Sequence for schedule "${scheduleForm.name.trim()}"`;
+        console.log('Saving sequence to library:', sequenceName);
+        await saveSequence(sequenceName, sequenceDescription);
+      } catch (error) {
+        console.error('Failed to save sequence to library:', error);
+        // Continue anyway - sequence will still be saved in the schedule
+      }
+    } else {
+      // Simple mode: validate category
+      if (!scheduleForm.category_id) {
+        alert('Please select a category');
+        return;
+      }
+
+      // Ensure category_id is valid
+      const categoryId = parseInt(scheduleForm.category_id);
+      if (isNaN(categoryId) || categoryId <= 0) {
+        alert('Please select a valid category');
+        return;
+      }
     }
 
     const scheduleData = {
       name: scheduleForm.name.trim(),
       type: scheduleForm.type,
       start_date: scheduleForm.start_date,
-      end_date: scheduleForm.end_date || null,
-      category_id: categoryId,
       shuffle: scheduleForm.shuffle,
-      playlist: scheduleForm.playlist,
-      color: scheduleForm.color || null
+      playlist: scheduleForm.playlist
     };
+
+    // Only add end_date if it has a value
+    if (scheduleForm.end_date && scheduleForm.end_date.trim()) {
+      scheduleData.end_date = scheduleForm.end_date;
+    }
+
+    // Only add color if it has a value
+    if (scheduleForm.color && scheduleForm.color.trim()) {
+      scheduleData.color = scheduleForm.color;
+    }
+
+    // Add recurrence pattern based on schedule type
+    const recurrencePattern = {};
+    if (scheduleForm.type === 'daily' && timeRange.start) {
+      recurrencePattern.timeRange = timeRange;
+    }
+    if (scheduleForm.type === 'weekly' && weekDays.length > 0) {
+      recurrencePattern.weekDays = weekDays;
+    }
+    if (scheduleForm.type === 'monthly' && monthDays.length > 0) {
+      recurrencePattern.monthDays = monthDays;
+    }
+    if (Object.keys(recurrencePattern).length > 0) {
+      scheduleData.recurrence_pattern = JSON.stringify(recurrencePattern);
+    }
+
+    // Add category_id for simple mode, sequence for advanced mode
+    if (scheduleMode === 'simple') {
+      scheduleData.category_id = parseInt(scheduleForm.category_id);
+    } else {
+      // Use validated blocks array
+      const blocks = Array.isArray(sequenceBlocks) ? sequenceBlocks : [];
+      scheduleData.sequence = stringifySequence(blocks);
+      // Backend expects category_id, so we'll use first category from sequence or null
+      const firstCategory = blocks.find(b => b.type === 'random')?.category_id;
+      scheduleData.category_id = firstCategory || null;
+    }
+
     if (scheduleForm.fallback_category_id) {
       scheduleData.fallback_category_id = parseInt(scheduleForm.fallback_category_id);
     }
 
-    fetch('http://localhost:9393/schedules', {
+    fetch(apiUrl('schedules'), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(scheduleData)
@@ -1344,6 +1824,11 @@ const toLocalInputFromDate = (d) => {
           name: '', type: 'monthly', start_date: '', end_date: '',
           category_id: '', shuffle: false, playlist: false, fallback_category_id: '', color: ''
         });
+        setScheduleMode('simple');
+        setSequenceBlocks([]);
+        setWeekDays([]);
+        setMonthDays([]);
+        setTimeRange({ start: '', end: '' });
         // Add the new schedule to the state immediately with category info
         if (data.category) {
           setSchedules(prev => [...prev, data]);
@@ -1360,7 +1845,7 @@ const toLocalInputFromDate = (d) => {
 
 
   const handleInitHolidays = () => {
-    fetch('http://localhost:9393/holiday-presets/init', { method: 'POST' })
+    fetch(apiUrl('holiday-presets/init'), { method: 'POST' })
       .then(res => res.json())
       .then(data => {
         alert('Holiday presets initialized!');
@@ -1368,10 +1853,21 @@ const toLocalInputFromDate = (d) => {
       });
   };
 
+  const handleCategorySortChange = (field) => {
+    if (categorySortField === field) {
+      // Toggle direction if clicking the same field
+      setCategorySortDirection(categorySortDirection === 'asc' ? 'desc' : 'asc');
+    } else {
+      // New field, default to ascending
+      setCategorySortField(field);
+      setCategorySortDirection('asc');
+    }
+  };
+
   const handleApplyCategoryToPlex = (categoryId, categoryName) => {
     const message = `Apply category "${categoryName}" to Plex?\n\nThis will send ALL prerolls from this category to Plex.`;
     if (window.confirm(message)) {
-      fetch(`http://localhost:9393/categories/${categoryId}/apply-to-plex`, { method: 'POST' })
+      fetch(apiUrl(`categories/${categoryId}/apply-to-plex`), { method: 'POST' })
         .then(res => {
           if (!res.ok) {
             return res.json().then(err => {
@@ -1410,7 +1906,7 @@ const toLocalInputFromDate = (d) => {
 
   const handleRemoveCategoryFromPlex = (categoryId, categoryName) => {
     if (window.confirm(`Remove category "${categoryName}" from Plex?`)) {
-      fetch(`http://localhost:9393/categories/${categoryId}/remove-from-plex`, { method: 'POST' })
+      fetch(apiUrl(`categories/${categoryId}/remove-from-plex`), { method: 'POST' })
         .then(res => res.json())
         .then(data => {
           alert('Category removed from Plex!');
@@ -1520,9 +2016,168 @@ const toLocalInputFromDate = (d) => {
     alert('No media server connected. Connect to Plex or Jellyfin first.');
   };
 
+  // ========== Category Management Advanced Features ==========
+  
+  // Calculate category statistics
+  const getCategoryStats = (category) => {
+    const categoryPrerollsList = prerolls.filter(p => p.category_id === category.id);
+    const associatedPrerolls = prerolls.filter(p => 
+      p.category_associations && 
+      p.category_associations.some(assoc => assoc.category_id === category.id)
+    );
+    const totalPrerolls = categoryPrerollsList.length + associatedPrerolls.length;
+    
+    // Calculate total duration
+    const totalDuration = [...categoryPrerollsList, ...associatedPrerolls].reduce((sum, p) => {
+      return sum + (p.duration || 0);
+    }, 0);
+    
+    // Check if category has active schedules
+    const activeSchedules = schedules.filter(s => s.category_id === category.id);
+    const hasActiveSchedules = activeSchedules.length > 0;
+    
+    // Last used (most recent schedule start_date)
+    const lastUsed = activeSchedules.length > 0 
+      ? new Date(Math.max(...activeSchedules.map(s => new Date(s.start_date))))
+      : null;
+    
+    return {
+      totalPrerolls,
+      totalDuration,
+      activeSchedules: activeSchedules.length,
+      hasActiveSchedules,
+      lastUsed,
+      scheduleNames: activeSchedules.map(s => s.name)
+    };
+  };
+
+  // Bulk selection handlers
+  const toggleSelectCategory = (categoryId) => {
+    setSelectedCategoryIds(prev => 
+      prev.includes(categoryId) 
+        ? prev.filter(id => id !== categoryId)
+        : [...prev, categoryId]
+    );
+  };
+
+  const toggleSelectAll = () => {
+    const filteredIds = getFilteredCategories().map(c => c.id);
+    if (selectedCategoryIds.length === filteredIds.length) {
+      setSelectedCategoryIds([]);
+    } else {
+      setSelectedCategoryIds(filteredIds);
+    }
+  };
+
+  const handleBulkDelete = async () => {
+    if (selectedCategoryIds.length === 0) {
+      alert('No categories selected');
+      return;
+    }
+    
+    const confirmMsg = `Delete ${selectedCategoryIds.length} selected categories?\n\nThis will also remove all associated schedules and preroll assignments.`;
+    if (!window.confirm(confirmMsg)) return;
+    
+    try {
+      await Promise.all(
+        selectedCategoryIds.map(id => 
+          fetch(apiUrl(`categories/${id}`), { method: 'DELETE' })
+        )
+      );
+      alert(`Successfully deleted ${selectedCategoryIds.length} categories!`);
+      setSelectedCategoryIds([]);
+      setBulkActionMode(false);
+      fetchData();
+    } catch (error) {
+      alert('Failed to delete some categories: ' + error.message);
+    }
+  };
+
+  const handleBulkApplyToPlex = async () => {
+    if (selectedCategoryIds.length === 0) {
+      alert('No categories selected');
+      return;
+    }
+    
+    const server = getActiveConnectedServer();
+    if (!server || server === 'conflict') {
+      alert('No media server connected or multiple servers connected');
+      return;
+    }
+    
+    const confirmMsg = `Apply ${selectedCategoryIds.length} selected categories to ${server === 'plex' ? 'Plex' : 'Jellyfin'}?`;
+    if (!window.confirm(confirmMsg)) return;
+    
+    try {
+      const endpoint = server === 'plex' ? 'apply-to-plex' : 'apply-to-jellyfin';
+      await Promise.all(
+        selectedCategoryIds.map(id => 
+          fetch(apiUrl(`categories/${id}/${endpoint}`), { method: 'POST' })
+        )
+      );
+      alert(`Successfully applied ${selectedCategoryIds.length} categories!`);
+      setSelectedCategoryIds([]);
+      setBulkActionMode(false);
+      fetchData();
+    } catch (error) {
+      alert('Failed to apply some categories: ' + error.message);
+    }
+  };
+
+  // Get filtered categories based on active filter
+  const getFilteredCategories = () => {
+    let filtered = categories;
+    
+    // Apply category filter
+    switch (categoryFilter) {
+      case 'active':
+        filtered = filtered.filter(c => {
+          const hasSchedules = schedules.some(s => s.category_id === c.id);
+          return hasSchedules;
+        });
+        break;
+      case 'hasPrerolls':
+        filtered = filtered.filter(c => {
+          const stats = getCategoryStats(c);
+          return stats.totalPrerolls > 0;
+        });
+        break;
+      case 'empty':
+        filtered = filtered.filter(c => {
+          const stats = getCategoryStats(c);
+          return stats.totalPrerolls === 0;
+        });
+        break;
+      default: // 'all'
+        break;
+    }
+    
+    // Apply search query
+    if (categorySearchQuery) {
+      const query = categorySearchQuery.toLowerCase();
+      filtered = filtered.filter(c => 
+        c.name.toLowerCase().includes(query) || 
+        (c.description && c.description.toLowerCase().includes(query))
+      );
+    }
+    
+    return filtered;
+  };
+
+  // Format duration helper
+  const formatDuration = (seconds) => {
+    if (!seconds) return '0s';
+    const mins = Math.floor(seconds / 60);
+    const secs = Math.floor(seconds % 60);
+    if (mins > 0) {
+      return `${mins}m ${secs}s`;
+    }
+    return `${secs}s`;
+  };
+
   const toggleScheduler = () => {
     const action = schedulerStatus.running ? 'stop' : 'start';
-    fetch(`http://localhost:9393/scheduler/${action}`, { method: 'POST' })
+    fetch(apiUrl(`scheduler/${action}`), { method: 'POST' })
       .then(res => res.json())
       .then(data => {
         alert(`Scheduler ${action}ed!`);
@@ -1531,7 +2186,7 @@ const toLocalInputFromDate = (d) => {
   };
 
   const handleBackupDatabase = () => {
-    fetch('http://localhost:9393/backup/database')
+    fetch(apiUrl('backup/database'))
       .then(res => res.json())
       .then(data => {
         const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
@@ -1552,7 +2207,7 @@ const toLocalInputFromDate = (d) => {
   };
 
   const handleBackupFiles = () => {
-    fetch('http://localhost:9393/backup/files', {
+    fetch(apiUrl('backup/files'), {
       method: 'POST'
     })
       .then(res => {
@@ -1590,7 +2245,7 @@ const toLocalInputFromDate = (d) => {
     reader.onload = (e) => {
       try {
         const backupData = JSON.parse(e.target.result);
-        fetch('http://localhost:9393/restore/database', {
+        fetch(apiUrl('restore/database'), {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(backupData)
@@ -1627,7 +2282,7 @@ const toLocalInputFromDate = (d) => {
 
     const formData = new FormData();
     formData.append('file', backupFile);
-    fetch('http://localhost:9393/restore/files', {
+    fetch(apiUrl('restore/files'), {
       method: 'POST',
       body: formData
     })
@@ -1643,7 +2298,7 @@ const toLocalInputFromDate = (d) => {
   };
 
   const handleInitTemplates = () => {
-    fetch('http://localhost:9393/community-templates/init', { method: 'POST' })
+    fetch(apiUrl('community-templates/init'), { method: 'POST' })
       .then(res => res.json())
       .then(data => {
         alert('Community templates initialized!');
@@ -1656,7 +2311,7 @@ const toLocalInputFromDate = (d) => {
   };
 
   const handleImportTemplate = (templateId) => {
-    fetch(`http://localhost:9393/community-templates/${templateId}/import`, { method: 'POST' })
+    fetch(apiUrl(`community-templates/${templateId}/import`), { method: 'POST' })
       .then(res => res.json())
       .then(data => {
         alert(`Template imported! ${data.imported_schedules} schedules created.`);
@@ -1689,7 +2344,7 @@ const toLocalInputFromDate = (d) => {
       tags: JSON.stringify(['user-created'])
     };
 
-    fetch('http://localhost:9393/community-templates', {
+    fetch(apiUrl('community-templates'), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(templateData)
@@ -1707,9 +2362,9 @@ const toLocalInputFromDate = (d) => {
   };
 
   const handleDeleteSchedule = (scheduleId) => {
-    if (!window.confirm('Are you sure you want to delete this schedule?')) return;
+    if (!showConfirm('Are you sure you want to delete this schedule?')) return;
 
-    fetch(`http://localhost:9393/schedules/${scheduleId}`, {
+    fetch(apiUrl(`schedules/${scheduleId}`), {
       method: 'DELETE'
     })
       .then(handleFetchResponse)
@@ -1736,39 +2391,208 @@ const toLocalInputFromDate = (d) => {
       fallback_category_id: schedule.fallback_category_id || '',
       color: schedule.color || ''
     });
+
+    // Parse recurrence pattern
+    if (schedule.recurrence_pattern && typeof schedule.recurrence_pattern === 'string') {
+      try {
+        const pattern = JSON.parse(schedule.recurrence_pattern);
+        if (pattern.timeRange) setTimeRange(pattern.timeRange);
+        if (pattern.weekDays) setWeekDays(pattern.weekDays);
+        if (pattern.monthDays) setMonthDays(pattern.monthDays);
+      } catch (error) {
+        console.error('Failed to parse recurrence pattern:', error);
+        setTimeRange({ start: '', end: '' });
+        setWeekDays([]);
+        setMonthDays([]);
+      }
+    } else {
+      setTimeRange({ start: '', end: '' });
+      setWeekDays([]);
+      setMonthDays([]);
+    }
+
+    // Check if schedule has a sequence
+    console.log('Editing schedule:', schedule);
+    console.log('Schedule sequence:', schedule.sequence);
+    console.log('Sequence type:', typeof schedule.sequence);
+    
+    if (schedule.sequence && typeof schedule.sequence === 'string' && schedule.sequence.trim()) {
+      try {
+        console.log('Attempting to parse sequence...');
+        const parsedSequence = parseSequence(schedule.sequence);
+        console.log('Parsed sequence:', parsedSequence);
+        if (parsedSequence && parsedSequence.length > 0) {
+          console.log('Setting advanced mode with sequence blocks');
+          // Add unique IDs to blocks for the UI
+          const blocksWithIds = cloneSequenceWithIds(parsedSequence);
+          console.log('Blocks with IDs:', blocksWithIds);
+          setScheduleMode('advanced');
+          setSequenceBlocks(blocksWithIds);
+          // Reset dashboard filters when opening Sequence Builder
+          setFilterCategory('');
+          setFilterTags('');
+        } else {
+          console.log('No sequence blocks, setting simple mode');
+          setScheduleMode('simple');
+          setSequenceBlocks([]);
+        }
+      } catch (error) {
+        console.error('Failed to parse sequence:', error);
+  setScheduleMode('simple');
+  setSequenceBlocks([]);
+  // Reset dashboard filters when switching back to simple mode
+  setFilterCategory('');
+  setFilterTags('');
+      }
+    } else {
+      console.log('No sequence found, setting simple mode');
+      setScheduleMode('simple');
+      setSequenceBlocks([]);
+    }
  };
 
   const handleUpdateSchedule = (e) => {
     e.preventDefault();
+    console.log('Update schedule clicked');
+    console.log('Editing schedule:', editingSchedule);
+    console.log('Schedule mode:', scheduleMode);
+    console.log('Sequence blocks:', sequenceBlocks);
+    
     if (!editingSchedule) return;
+
+    // Validate recurrence patterns
+    if (scheduleForm.type === 'daily' && !timeRange.start) {
+      alert('Please select at least a start time for daily schedules');
+      return;
+    }
+    if (scheduleForm.type === 'weekly' && weekDays.length === 0) {
+      alert('Please select at least one day of the week for weekly schedules');
+      return;
+    }
+    if (scheduleForm.type === 'monthly' && monthDays.length === 0) {
+      alert('Please select at least one day of the month for monthly schedules');
+      return;
+    }
+
+    // Validate based on mode
+    if (scheduleMode === 'advanced') {
+      console.log('In advanced mode, validating sequence...');
+      
+      // Ensure sequenceBlocks is an array
+      const blocks = Array.isArray(sequenceBlocks) ? sequenceBlocks : [];
+      console.log('Sequence blocks to validate:', blocks);
+      
+      if (blocks.length === 0) {
+        alert('Please add at least one block to the sequence before creating the schedule.');
+        return;
+      }
+      const validation = validateSequence(blocks, categories, prerolls);
+      console.log('Validation result:', validation);
+      if (!validation.valid) {
+        alert('Sequence validation failed:\n' + validation.errors.join('\n'));
+        return;
+      }
+    }
 
     const scheduleData = {
       name: scheduleForm.name.trim(),
       type: scheduleForm.type,
       start_date: scheduleForm.start_date,
-      end_date: scheduleForm.end_date || null,
-      category_id: parseInt(scheduleForm.category_id),
       shuffle: scheduleForm.shuffle,
-      playlist: scheduleForm.playlist,
-      color: scheduleForm.color || null
+      playlist: scheduleForm.playlist
     };
+
+    // Only add end_date if it has a value
+    if (scheduleForm.end_date && scheduleForm.end_date.trim()) {
+      scheduleData.end_date = scheduleForm.end_date;
+    }
+
+    // Only add color if it has a value
+    if (scheduleForm.color && scheduleForm.color.trim()) {
+      scheduleData.color = scheduleForm.color;
+    }
+
+    // Add recurrence pattern based on schedule type
+    const recurrencePattern = {};
+    if (scheduleForm.type === 'daily' && timeRange.start) {
+      recurrencePattern.timeRange = timeRange;
+    }
+    if (scheduleForm.type === 'weekly' && weekDays.length > 0) {
+      recurrencePattern.weekDays = weekDays;
+    }
+    if (scheduleForm.type === 'monthly' && monthDays.length > 0) {
+      recurrencePattern.monthDays = monthDays;
+    }
+    if (Object.keys(recurrencePattern).length > 0) {
+      scheduleData.recurrence_pattern = JSON.stringify(recurrencePattern);
+    } else {
+      scheduleData.recurrence_pattern = null; // Clear if not applicable
+    }
+
+    // Add category_id for simple mode, sequence for advanced mode
+    if (scheduleMode === 'simple') {
+      scheduleData.category_id = parseInt(scheduleForm.category_id);
+      scheduleData.sequence = ''; // Clear sequence if switching to simple
+      scheduleData.preroll_ids = '';
+    } else {
+      // Use validated blocks array
+      const blocks = Array.isArray(sequenceBlocks) ? sequenceBlocks : [];
+      scheduleData.sequence = stringifySequence(blocks);
+      console.log('Stringified sequence:', scheduleData.sequence);
+      // Backend expects category_id, so we'll use first category from sequence or keep existing
+      const firstCategory = blocks.find(b => b.type === 'random')?.category_id;
+      scheduleData.category_id = firstCategory || parseInt(scheduleForm.category_id) || editingSchedule.category_id || 1;
+      scheduleData.preroll_ids = '';
+    }
+
     if (scheduleForm.fallback_category_id) {
       scheduleData.fallback_category_id = parseInt(scheduleForm.fallback_category_id);
     }
 
-    fetch(`http://localhost:9393/schedules/${editingSchedule.id}`, {
+    console.log('Sending schedule data:', scheduleData);
+    console.log('Making fetch request to:', apiUrl(`schedules/${editingSchedule.id}`));
+
+    fetch(apiUrl(`schedules/${editingSchedule.id}`), {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(scheduleData)
     })
-      .then(handleFetchResponse)
+      .then(async response => {
+        console.log('Received response!');
+        console.log('Response status:', response.status);
+        console.log('Response ok:', response.ok);
+        
+        if (!response.ok) {
+          const errorText = await response.text();
+          console.log('Error response:', errorText);
+          try {
+            const errorData = JSON.parse(errorText);
+            console.log('Error detail:', errorData.detail);
+            throw new Error(errorData.detail || `HTTP error! status: ${response.status}`);
+          } catch(e) {
+            if (e.message && !e.message.startsWith('HTTP error')) {
+              throw e;
+            }
+            throw new Error(`HTTP error! status: ${response.status}`);
+          }
+        }
+        
+        // Response is OK, parse the JSON
+        return response.json();
+      })
       .then(data => {
+        console.log('Update successful, response data:', data);
         alert('Schedule updated successfully!');
         setEditingSchedule(null);
         setScheduleForm({
           name: '', type: 'monthly', start_date: '', end_date: '',
           category_id: '', shuffle: false, playlist: false, fallback_category_id: '', color: ''
         });
+        setScheduleMode('simple');
+        setSequenceBlocks([]);
+        setWeekDays([]);
+        setMonthDays([]);
+        setTimeRange({ start: '', end: '' });
         fetchData();
       })
       .catch(error => {
@@ -1778,9 +2602,9 @@ const toLocalInputFromDate = (d) => {
   };
 
   const handleDeletePreroll = (prerollId) => {
-    if (!window.confirm('Are you sure you want to delete this preroll?')) return;
+    if (!showConfirm('Are you sure you want to delete this preroll?')) return;
 
-    fetch(`http://localhost:9393/prerolls/${prerollId}`, {
+    fetch(apiUrl(`prerolls/${prerollId}`), {
       method: 'DELETE'
     })
       .then(handleFetchResponse)
@@ -1814,7 +2638,8 @@ const toLocalInputFromDate = (d) => {
       tags: tagsStr,
       category_id: primaryId ? String(primaryId) : '',
       category_ids: assocIds,
-      description: preroll.description || ''
+      description: preroll.description || '',
+      exclude_from_matching: preroll.exclude_from_matching || false
     });
   };
 
@@ -1831,29 +2656,164 @@ const toLocalInputFromDate = (d) => {
     if (editForm.description && editForm.description.trim()) payload.description = editForm.description.trim();
     if (typeof editForm.display_name === 'string') payload.display_name = editForm.display_name.trim();
     if (editForm.new_filename && editForm.new_filename.trim()) payload.new_filename = editForm.new_filename.trim();
+    payload.exclude_from_matching = editForm.exclude_from_matching;
 
-    fetch(`http://localhost:9393/prerolls/${editingPreroll.id}`, {
+    console.log('[RENAME] Submitting preroll update with payload:', payload);
+    if (payload.new_filename) {
+      console.log('[RENAME] New filename requested:', payload.new_filename);
+    }
+
+    fetch(apiUrl(`prerolls/${editingPreroll.id}`), {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload)
     })
       .then(handleFetchResponse)
-      .then(() => {
-        alert('Preroll updated successfully!');
+      .then((result) => {
+        console.log('[RENAME] Preroll update response:', result);
+        if (payload.new_filename) {
+          console.log('[RENAME] File rename completed successfully');
+        }
+        
+        // Show warning if present (e.g., for external file renames)
+        if (result.warning) {
+          alert('⚠️ ' + result.warning + '\n\nPreroll updated successfully.');
+        } else {
+          alert('Preroll updated successfully!');
+        }
+        
         setEditingPreroll(null);
-        setEditForm({ display_name: '', new_filename: '', tags: '', category_id: '', category_ids: [], description: '' });
+        setEditForm({ display_name: '', new_filename: '', tags: '', category_id: '', category_ids: [], description: '', exclude_from_matching: false });
         fetchData();
       })
       .catch(error => {
-        console.error('Update preroll error:', error);
+        console.error('[RENAME] Update preroll error:', error);
         alert('Failed to update preroll: ' + error.message);
       });
   };
 
-  const handleDeleteCategory = (categoryId) => {
-    if (!window.confirm('Are you sure you want to delete this category? This may affect associated schedules and prerolls.')) return;
+  const handleAutoMatchPreroll = async () => {
+    if (!editingPreroll || autoMatchLoading) return;
+    
+    const confirmed = window.confirm(
+      `Attempt to automatically match "${editingPreroll.display_name || editingPreroll.filename}" to the Community Prerolls library?\n\n` +
+      'This will search for a matching title using fuzzy matching.\n\n' +
+      'Continue?'
+    );
+    
+    if (!confirmed) return;
+    
+    setAutoMatchLoading(true);
+    setSimilarMatches([]);
+    
+    try {
+      const response = await fetch(apiUrl(`prerolls/${editingPreroll.id}/auto-match`), {
+        method: 'POST'
+      });
+      
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`);
+      }
+      
+      const data = await response.json();
+      
+      if (data.excluded) {
+        alert(`⊘ This preroll is excluded from community matching\n\n${data.message || 'This preroll has been marked to be excluded from automatic matching.'}`);
+        return;
+      }
+      
+      if (data.matched) {
+        if (data.already_matched) {
+          alert(`✓ This preroll is already matched to the Community Prerolls library!\n\nCommunity ID: ${data.community_preroll_id}`);
+        } else {
+          const matchInfo = data.match_type === 'exact' 
+            ? '(exact match)' 
+            : `(fuzzy match - ${data.match_score * 100}% confidence)`;
+          
+          alert(`✓ Successfully matched!\n\nMatched to: ${data.matched_title}\n${matchInfo}\n\nThe preroll will now show the community match indicator.`);
+          
+          // Update the editing preroll state to reflect the new match
+          setEditingPreroll({
+            ...editingPreroll,
+            community_preroll_id: data.community_preroll_id
+          });
+          
+          // Refresh the preroll list
+          await fetchData();
+        }
+      } else {
+        // No confident match - show similar matches if available
+        console.log('Auto-match response data:', data);
+        console.log('Similar matches:', data.similar_matches);
+        console.log('Similar matches length:', data.similar_matches?.length);
+        
+        if (data.similar_matches && data.similar_matches.length > 0) {
+          console.log('Setting similar matches:', data.similar_matches);
+          setSimilarMatches(data.similar_matches);
+        } else {
+          console.log('No similar matches found');
+          alert(
+            `✗ No match found\n\n` +
+            `Could not find any matching prerolls in the Community Prerolls library.\n\n` +
+            `Suggestions:\n` +
+            `• Try adjusting the filename to match the community title\n` +
+            `• Check if the preroll exists in the Community Prerolls library`
+          );
+        }
+      }
+    } catch (error) {
+      console.error('Auto-match error:', error);
+      alert(`Failed to auto-match preroll: ${error.message}`);
+    } finally {
+      setAutoMatchLoading(false);
+    }
+  };
 
-    fetch(`http://localhost:9393/categories/${categoryId}`, {
+  const handleSelectSimilarMatch = async (communityId, title) => {
+    if (!editingPreroll) return;
+    
+    const confirmed = window.confirm(
+      `Link this preroll to:\n\n"${title}"\n\nFrom the Community Prerolls library?`
+    );
+    
+    if (!confirmed) return;
+    
+    try {
+      const response = await fetch(apiUrl(`prerolls/${editingPreroll.id}/link-community/${communityId}`), {
+        method: 'POST'
+      });
+      
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`);
+      }
+      
+      const data = await response.json();
+      
+      if (data.success) {
+        alert(`✓ Successfully linked to: ${title}\n\nThe preroll will now show the community match indicator.`);
+        
+        // Update the editing preroll state
+        setEditingPreroll({
+          ...editingPreroll,
+          community_preroll_id: communityId
+        });
+        
+        // Clear similar matches
+        setSimilarMatches([]);
+        
+        // Refresh the preroll list
+        await fetchData();
+      }
+    } catch (error) {
+      console.error('Link error:', error);
+      alert(`Failed to link preroll: ${error.message}`);
+    }
+  };
+
+  const handleDeleteCategory = (categoryId) => {
+    if (!showConfirm('Are you sure you want to delete this category? This may affect associated schedules and prerolls.')) return;
+
+    fetch(apiUrl(`categories/${categoryId}`), {
       method: 'DELETE'
     })
       .then(res => {
@@ -1879,7 +2839,7 @@ const toLocalInputFromDate = (d) => {
 
   const handleEditCategory = (category) => {
     setEditingCategory(category);
-    setNewCategory({ name: category.name, description: category.description || '', plex_mode: (category.plex_mode || 'shuffle') });
+    setNewCategory({ name: category.name, description: category.description || '' });
     try { loadCategoryPrerolls(category.id); } catch (e) {}
   };
 
@@ -1895,10 +2855,10 @@ const toLocalInputFromDate = (d) => {
     }
 
     try {
-      const res = await fetch(`http://localhost:9393/categories/${editingCategory.id}`, {
+      const res = await fetch(apiUrl(`categories/${editingCategory.id}`), {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name, description, plex_mode: newCategory.plex_mode || 'shuffle' })
+        body: JSON.stringify({ name, description })
       });
       const text = await res.text();
       let data = null;
@@ -1936,10 +2896,10 @@ const toLocalInputFromDate = (d) => {
     }
 
     try {
-      const res = await fetch(`http://localhost:9393/categories/${editingCategory.id}`, {
+      const res = await fetch(apiUrl(`categories/${editingCategory.id}`), {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name, description, plex_mode: newCategory.plex_mode || 'shuffle' })
+        body: JSON.stringify({ name, description })
       });
       const text = await res.text();
       let data = null;
@@ -1959,7 +2919,7 @@ const toLocalInputFromDate = (d) => {
 
       const server = getActiveConnectedServer();
       if (server === 'plex') {
-        const resApply = await fetch(`http://localhost:9393/categories/${idToApply}/apply-to-plex`, { method: 'POST' });
+        const resApply = await fetch(apiUrl(`categories/${idToApply}/apply-to-plex`), { method: 'POST' });
         const applyText = await resApply.text();
         let applyData = null;
         try { applyData = applyText ? JSON.parse(applyText) : null; } catch {}
@@ -1998,7 +2958,7 @@ const toLocalInputFromDate = (d) => {
   const loadCategoryPrerolls = async (categoryId) => {
     setCategoryPrerollsLoading(prev => ({ ...prev, [categoryId]: true }));
     try {
-      const res = await fetch(`http://localhost:9393/categories/${categoryId}/prerolls`);
+      const res = await fetch(apiUrl(`categories/${categoryId}/prerolls`));
       const data = await safeJson(res);
       setCategoryPrerolls(prev => ({ ...prev, [categoryId]: Array.isArray(data) ? data : [] }));
     } catch (e) {
@@ -2013,12 +2973,12 @@ const toLocalInputFromDate = (d) => {
   const handleCategoryRemovePreroll = async (categoryId, preroll) => {
     if (!preroll) return;
     if (preroll.category_id === categoryId) {
-      alert('Cannot remove the primary category here. Use "Edit Preroll" to change the primary category.');
+      showAlert('Cannot remove the primary category here. Use "Edit Preroll" to change the primary category.', 'error');
       return;
     }
-    if (!window.confirm(`Remove "${preroll.display_name || preroll.filename}" from this category?`)) return;
+    if (!showConfirm(`Remove "${preroll.display_name || preroll.filename}" from this category?`)) return;
     try {
-      const res = await fetch(`http://localhost:9393/categories/${categoryId}/prerolls/${preroll.id}`, { method: 'DELETE' });
+      const res = await fetch(apiUrl(`categories/${categoryId}/prerolls/${preroll.id}`), { method: 'DELETE' });
       if (!res.ok) {
         const text = await res.text();
         throw new Error(text || `HTTP ${res.status}`);
@@ -2042,7 +3002,7 @@ const toLocalInputFromDate = (d) => {
       return;
     }
     try {
-      const res = await fetch(`http://localhost:9393/categories/${categoryId}/prerolls/${prerollId}?set_primary=${sel.setPrimary ? 'true' : 'false'}`, { method: 'POST' });
+      const res = await fetch(apiUrl(`categories/${categoryId}/prerolls/${prerollId}?set_primary=${sel.setPrimary ? 'true' : 'false'}`), { method: 'POST' });
       if (!res.ok) {
         const text = await res.text();
         throw new Error(text || `HTTP ${res.status}`);
@@ -2075,12 +3035,49 @@ const toLocalInputFromDate = (d) => {
   };
   const totalStorageBytes = prerolls.reduce((sum, p) => sum + (Number(p.file_size) || 0), 0);
 
-  const totalPrerolls = prerolls.length;
+  // Apply client-side filters in order: category/tags first, then match status
+  const filteredPrerolls = React.useMemo(() => {
+    let filtered = prerolls;
+    
+    // 1. Filter by category
+    if (filterCategory) {
+      const catId = parseInt(filterCategory);
+      filtered = filtered.filter(p => {
+        if (p.category_id === catId) return true;
+        if (p.categories && p.categories.some(c => c.id === catId)) return true;
+        return false;
+      });
+    }
+    
+    // 2. Filter by tags
+    if (filterTags && filterTags.trim()) {
+      const searchTerms = filterTags.split(',').map(t => t.trim().toLowerCase()).filter(Boolean);
+      filtered = filtered.filter(p => {
+        const prerollTags = (p.tags || '').toLowerCase();
+        const filename = (p.filename || '').toLowerCase();
+        const displayName = (p.display_name || '').toLowerCase();
+        return searchTerms.some(term => 
+          prerollTags.includes(term) || filename.includes(term) || displayName.includes(term)
+        );
+      });
+    }
+    
+    // 3. Filter by match status
+    if (filterMatchStatus === 'matched') {
+      filtered = filtered.filter(p => p.community_preroll_id);
+    } else if (filterMatchStatus === 'unmatched') {
+      filtered = filtered.filter(p => !p.community_preroll_id);
+    }
+    
+    return filtered;
+  }, [prerolls, filterCategory, filterTags, filterMatchStatus]);
+
+  const totalPrerolls = filteredPrerolls.length;
   const totalPages = Math.max(1, Math.ceil(totalPrerolls / pageSize));
   const currentPageClamped = Math.min(currentPage, totalPages);
   const pageStartIndex = (currentPageClamped - 1) * pageSize;
   const pageEndIndex = Math.min(pageStartIndex + pageSize, totalPrerolls);
-  const visiblePrerolls = prerolls.slice(pageStartIndex, pageEndIndex);
+  const visiblePrerolls = filteredPrerolls.slice(pageStartIndex, pageEndIndex);
   const visibleIds = visiblePrerolls.map(p => p.id);
   const allSelectedOnPage = visibleIds.length > 0 && visibleIds.every(id => selectedPrerollIds.includes(id));
 
@@ -2102,13 +3099,13 @@ const toLocalInputFromDate = (d) => {
 
   const handleBulkSetPrimary = async (categoryId) => {
     const cid = parseInt(categoryId, 10);
-    if (!cid || isNaN(cid)) { alert('Select a target category'); return; }
-    if (selectedPrerollIds.length === 0) { alert('No prerolls selected'); return; }
-    if (!window.confirm(`Change primary category for ${selectedPrerollIds.length} preroll(s)? This will move files on disk.`)) return;
+    if (!cid || isNaN(cid)) { showAlert('Select a target category', 'error'); return; }
+    if (selectedPrerollIds.length === 0) { showAlert('No prerolls selected', 'error'); return; }
+    if (!showConfirm(`Change primary category for ${selectedPrerollIds.length} preroll(s)? This will move files on disk.`)) return;
     let ok = 0, fail = 0;
     for (const id of selectedPrerollIds) {
       try {
-        const res = await fetch(`http://localhost:9393/prerolls/${id}`, {
+        const res = await fetch(apiUrl(`prerolls/${id}`), {
           method: 'PUT',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ category_id: cid })
@@ -2124,12 +3121,12 @@ const toLocalInputFromDate = (d) => {
 
   const handleBulkDeleteSelected = async () => {
     const count = selectedPrerollIds.length;
-    if (count === 0) { alert('No prerolls selected'); return; }
-    if (!window.confirm(`Delete ${count} selected preroll(s)?\n\nManaged files may be deleted from disk. External mapped files are protected and will not be removed.`)) return;
+    if (count === 0) { showAlert('No prerolls selected', 'error'); return; }
+    if (!showConfirm(`Delete ${count} selected preroll(s)?\n\nManaged files may be deleted from disk. External mapped files are protected and will not be removed.`)) return;
     let ok = 0, fail = 0;
     for (const id of selectedPrerollIds) {
       try {
-        const res = await fetch(`http://localhost:9393/prerolls/${id}`, { method: 'DELETE' });
+        const res = await fetch(apiUrl(`prerolls/${id}`), { method: 'DELETE' });
         if (!res.ok) fail++; else ok++;
       } catch {
         fail++;
@@ -2144,7 +3141,7 @@ const toLocalInputFromDate = (d) => {
     const n = String(name || '').trim();
     if (!n) return null;
     try {
-      const res = await fetch('http://localhost:9393/categories', {
+      const res = await fetch(apiUrl('categories'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ name: n, description: '', plex_mode: 'shuffle' })
@@ -2166,7 +3163,7 @@ const toLocalInputFromDate = (d) => {
     }
   };
 // === Dashboard Customization (Drag &amp; Drop, 4x2 grid) ===
-const DASH_KEYS = ["servers","prerolls","storage","schedules","scheduler","current_category","upcoming"];
+const DASH_KEYS = ["servers","prerolls","storage","schedules","scheduler","current_category","upcoming","community"];
 
 const [dashLayout, setDashLayout] = useState({
   grid: { cols: 4, rows: 2 },
@@ -2425,9 +3422,12 @@ const DashboardTiles = {
       <h2>Upcoming Schedules</h2>
       {(() => {
         const now = new Date();
-        // Get all schedules that haven't ended yet (excluding past schedules)
+        // Get all schedules that haven't ended yet (excluding past schedules and disabled schedules)
         const upcomingSchedules = schedules
           .filter(s => {
+            // Must be active/enabled
+            if (!s.is_active) return false;
+            
             // Must have a next_run or start_date
             const runTime = s.next_run ? new Date(s.next_run) : (s.start_date ? new Date(s.start_date) : null);
             if (!runTime) return false;
@@ -2447,16 +3447,16 @@ const DashboardTiles = {
           .slice(0, 2);
         
         return upcomingSchedules.length > 0 ? (
-          <div style={{ display: 'grid', gap: '0.5rem' }}>
+          <div style={{ display: 'grid', gap: '0.35rem' }}>
             {upcomingSchedules.map(schedule => {
               const category = categories.find(c => c.id === schedule.category_id);
               const displayTime = schedule.next_run || schedule.start_date;
               return (
-                <div key={schedule.id} style={{ fontSize: '0.9rem', padding: '0.5rem', backgroundColor: 'var(--card-bg)', borderRadius: '4px' }}>
-                  <div style={{ fontWeight: 'bold', color: '#007bff' }}>
+                <div key={schedule.id} style={{ fontSize: '0.8rem', padding: '0.35rem 0.5rem', backgroundColor: 'var(--card-bg)', borderRadius: '4px' }}>
+                  <div style={{ fontWeight: 'bold', color: '#007bff', fontSize: '0.85rem' }}>
                     {schedule.name}
                   </div>
-                  <div style={{ color: 'var(--text-secondary, #666)' }}>
+                  <div style={{ color: 'var(--text-secondary, #666)', fontSize: '0.75rem', marginTop: '0.1rem' }}>
                     {toLocalDisplay(displayTime)} → {category?.name || 'Unknown'}
                   </div>
                 </div>
@@ -2464,7 +3464,7 @@ const DashboardTiles = {
             })}
           </div>
         ) : (
-          <p style={{ color: 'var(--text-secondary, #666)' }}>No upcoming schedules</p>
+          <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary, #666)', margin: 0 }}>No upcoming schedules</p>
         );
       })()}
     </div>
@@ -2490,6 +3490,36 @@ const DashboardTiles = {
       )}
     </div>
   ),
+  community: () => {
+    const indexedCount = communityIndexStatus?.total_prerolls || 0;
+    const matchedCount = communityMatchedCount || 0;
+    
+    return (
+      <div className="card">
+        <h2>Community Prerolls</h2>
+        {indexedCount > 0 || matchedCount > 0 ? (
+          <div style={{ display: 'grid', gap: '0.5rem' }}>
+            {indexedCount > 0 && (
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <span style={{ fontSize: '0.9rem', color: 'var(--text-secondary, #666)' }}>📚 Indexed:</span>
+                <span style={{ fontWeight: 'bold', color: '#22c55e' }}>{indexedCount}</span>
+              </div>
+            )}
+            {matchedCount > 0 && (
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <span style={{ fontSize: '0.9rem', color: 'var(--text-secondary, #666)' }}>🔗 Matched:</span>
+                <span style={{ fontWeight: 'bold', color: '#3b82f6' }}>{matchedCount}</span>
+              </div>
+            )}
+          </div>
+        ) : (
+          <p style={{ fontSize: '0.9rem', color: 'var(--text-secondary, #666)' }}>
+            No community files indexed yet
+          </p>
+        )}
+      </div>
+    );
+  },
 };
 
   const renderDashboard = () => (
@@ -2610,6 +3640,7 @@ const DashboardTiles = {
           <form onSubmit={handleUpload}>
             <div style={{ display: 'grid', gap: '1rem', marginBottom: '1rem' }}>
               <input
+                ref={fileInputRef}
                 type="file"
                 multiple
                 onChange={(e) => setFiles(Array.from(e.target.files))}
@@ -2831,6 +3862,16 @@ services:
                   <option key={cat.id} value={cat.id}>{cat.name}</option>
                 ))}
               </select>
+              <select
+                value={filterMatchStatus}
+                onChange={(e) => setFilterMatchStatus(e.target.value)}
+                className="filter-select"
+                title="Filter by community match status"
+              >
+                <option value="">All Prerolls</option>
+                <option value="matched">✅ Matched Only</option>
+                <option value="unmatched">⚠️ Unmatched Only</option>
+              </select>
               <div className="search-input-wrapper">
                 <input
                   type="text"
@@ -2940,7 +3981,9 @@ services:
                     onChange={() => toggleSelectPreroll(preroll.id)}
                     title="Select preroll"
                   />
-                  <p className="preroll-title" style={{ fontWeight: 'bold', margin: 0 }}>{preroll.display_name || preroll.filename}</p>
+                  <p className="preroll-title" style={{ fontWeight: 'bold', margin: 0, display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                    <span>{preroll.display_name || preroll.filename}</span>
+                  </p>
                 </div>
                 <div className="preroll-actions">
                   <button
@@ -2989,6 +4032,35 @@ services:
                   }}
                 />
               )}
+              {preroll.community_preroll_id && (
+                <p style={{ 
+                  fontSize: '0.75rem', 
+                  color: 'var(--text-color)',
+                  display: 'inline-block',
+                  backgroundColor: 'rgba(16, 185, 129, 0.15)',
+                  padding: '0.2rem 0.5rem',
+                  borderRadius: '4px',
+                  fontWeight: '500',
+                  marginBottom: '0.5rem'
+                }}>
+                  ✅ Matched to Community
+                </p>
+              )}
+              {preroll.exclude_from_matching && (
+                <p style={{ 
+                  fontSize: '0.75rem', 
+                  color: 'var(--text-color)',
+                  display: 'inline-block',
+                  backgroundColor: 'rgba(245, 158, 11, 0.15)',
+                  padding: '0.2rem 0.5rem',
+                  borderRadius: '4px',
+                  fontWeight: '500',
+                  marginBottom: '0.5rem',
+                  marginLeft: '0.5rem'
+                }}>
+                  🚫 Excluded from Matching
+                </p>
+              )}
               {preroll.category && <p style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>Primary: {preroll.category.name}</p>}
               {Array.isArray(preroll.categories) && preroll.categories.filter(c => !preroll.category || c.id !== preroll.category.id).length > 0 && (
                 <p style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>
@@ -2999,9 +4071,43 @@ services:
                 </p>
               )}
               {preroll.tags && (
-                <p style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>
-                  Tags: {Array.isArray(preroll.tags) ? preroll.tags.join(', ') : preroll.tags}
-                </p>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.25rem', marginTop: '0.5rem' }}>
+                  {(() => {
+                    let tagList = [];
+                    try {
+                      // Handle JSON array strings like '["Halloween", "ghost"]'
+                      if (typeof preroll.tags === 'string' && preroll.tags.trim().startsWith('[')) {
+                        tagList = JSON.parse(preroll.tags);
+                      } else if (Array.isArray(preroll.tags)) {
+                        tagList = preroll.tags;
+                      } else {
+                        tagList = preroll.tags.split(',');
+                      }
+                    } catch (e) {
+                      // Fallback to comma split if JSON parse fails
+                      tagList = typeof preroll.tags === 'string' ? preroll.tags.split(',') : [];
+                    }
+                    
+                    return tagList.filter(t => t && String(t).trim()).map((tag, idx) => (
+                      <span
+                        key={idx}
+                        style={{
+                          fontSize: '0.7rem',
+                          padding: '0.2rem 0.5rem',
+                          borderRadius: '12px',
+                          backgroundColor: 'rgba(99, 102, 241, 0.15)',
+                          color: 'var(--text-color)',
+                          border: '1px solid rgba(99, 102, 241, 0.3)',
+                          fontWeight: '500',
+                          display: 'inline-flex',
+                          alignItems: 'center'
+                        }}
+                      >
+                        {String(tag).trim()}
+                      </span>
+                    ));
+                  })()}
+                </div>
               )}
               {preroll.description && <p style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>{preroll.description}</p>}
               {preroll.duration && <p style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>Duration: {Math.round(preroll.duration)}s</p>}
@@ -3052,7 +4158,38 @@ services:
              />
            )}
            <div style={{ flex: 1, minWidth: 0 }}>
-             <div className="preroll-row-title" style={{ fontWeight: 'bold' }}>{preroll.display_name || preroll.filename}</div>
+             <div className="preroll-row-title" style={{ fontWeight: 'bold', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+               <span>{preroll.display_name || preroll.filename}</span>
+             </div>
+             {preroll.community_preroll_id && (
+               <div style={{ 
+                 fontSize: '0.75rem', 
+                 color: 'var(--text-color)',
+                 display: 'inline-block',
+                 backgroundColor: 'rgba(16, 185, 129, 0.15)',
+                 padding: '0.2rem 0.5rem',
+                 borderRadius: '4px',
+                 fontWeight: '500',
+                 marginBottom: '0.5rem'
+               }}>
+                 ✅ Matched to Community
+               </div>
+             )}
+             {preroll.exclude_from_matching && (
+               <div style={{ 
+                 fontSize: '0.75rem', 
+                 color: 'var(--text-color)',
+                 display: 'inline-block',
+                 backgroundColor: 'rgba(245, 158, 11, 0.15)',
+                 padding: '0.2rem 0.5rem',
+                 borderRadius: '4px',
+                 fontWeight: '500',
+                 marginBottom: '0.5rem',
+                 marginLeft: '0.5rem'
+               }}>
+                 🚫 Excluded from Matching
+               </div>
+             )}
              {preroll.category && <div style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>Primary: {preroll.category.name}</div>}
              {Array.isArray(preroll.categories) && preroll.categories.filter(c => !preroll.category || c.id !== preroll.category.id).length > 0 && (
                <div style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
@@ -3063,8 +4200,42 @@ services:
                </div>
              )}
              {preroll.tags && (
-               <div style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
-                 Tags: {Array.isArray(preroll.tags) ? preroll.tags.join(', ') : preroll.tags}
+               <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.25rem', marginTop: '0.5rem' }}>
+                 {(() => {
+                   let tagList = [];
+                   try {
+                     // Handle JSON array strings like '["Halloween", "ghost"]'
+                     if (typeof preroll.tags === 'string' && preroll.tags.trim().startsWith('[')) {
+                       tagList = JSON.parse(preroll.tags);
+                     } else if (Array.isArray(preroll.tags)) {
+                       tagList = preroll.tags;
+                     } else {
+                       tagList = preroll.tags.split(',');
+                     }
+                   } catch (e) {
+                     // Fallback to comma split if JSON parse fails
+                     tagList = typeof preroll.tags === 'string' ? preroll.tags.split(',') : [];
+                   }
+                   
+                   return tagList.filter(t => t && String(t).trim()).map((tag, idx) => (
+                     <span
+                       key={idx}
+                       style={{
+                         fontSize: '0.7rem',
+                         padding: '0.2rem 0.5rem',
+                         borderRadius: '12px',
+                         backgroundColor: 'rgba(99, 102, 241, 0.15)',
+                         color: 'var(--text-color)',
+                         border: '1px solid rgba(99, 102, 241, 0.3)',
+                         fontWeight: '500',
+                         display: 'inline-flex',
+                         alignItems: 'center'
+                       }}
+                     >
+                       {String(tag).trim()}
+                     </span>
+                   ));
+                 })()}
                </div>
              )}
              {preroll.description && <div style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>{preroll.description}</div>}
@@ -3118,16 +4289,174 @@ services:
     </div>
   );
 
-  const renderSchedules = () => (
-    <div>
-      <h1 className="header">Schedule Management</h1>
-<div className="card nx-toolbar">
-  <div className="toolbar-group">
-    <button className="button" onClick={() => setShowCalendar(!showCalendar)}>
-      {showCalendar ? 'Hide Calendar' : 'Show Calendar'}
-    </button>
-  </div>
+  // Persistent sub-navigation for all schedule pages
+  const renderScheduleSubNav = () => {
+    const tabs = [
+      { 
+        id: 'schedules', 
+        icon: '📋', 
+        label: 'My Schedules', 
+        description: 'View and manage all your schedules'
+      },
+      { 
+        id: 'schedules/create', 
+        icon: '➕', 
+        label: 'Create New', 
+        description: 'Schedule a category or custom sequence'
+      },
+      { 
+        id: 'schedules/calendar', 
+        icon: '📅', 
+        label: 'Calendar View', 
+        description: 'Visual calendar of active schedules'
+      },
+      { 
+        id: 'schedules/builder', 
+        icon: '🎬', 
+        label: 'Sequence Builder', 
+        description: 'Create custom preroll sequences'
+      },
+      { 
+        id: 'schedules/library', 
+        icon: '📚', 
+        label: 'Saved Sequences', 
+        description: 'Your sequence library'
+      }
+    ];
 
+    return (
+      <div style={{ marginBottom: '1.5rem' }}>
+        {/* Main Tab Bar */}
+        <div style={{ 
+          borderBottom: '2px solid var(--border-color)',
+          display: 'flex',
+          gap: '0.25rem',
+          marginBottom: '0.75rem'
+        }}>
+          {tabs.map(tab => (
+            <button
+              key={tab.id}
+              onClick={() => setActiveTab(tab.id)}
+              style={{
+                padding: '0.875rem 1.25rem',
+                border: 'none',
+                borderBottom: activeTab === tab.id ? '3px solid var(--button-bg)' : '3px solid transparent',
+                backgroundColor: activeTab === tab.id ? 'var(--bg-color)' : 'transparent',
+                color: activeTab === tab.id ? 'var(--button-bg)' : 'var(--text-color)',
+                cursor: 'pointer',
+                fontSize: '0.9rem',
+                fontWeight: activeTab === tab.id ? 600 : 400,
+                transition: 'all 0.2s',
+                marginBottom: '-2px',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '0.5rem',
+                borderRadius: '8px 8px 0 0'
+              }}
+              onMouseEnter={(e) => {
+                if (activeTab !== tab.id) {
+                  e.currentTarget.style.backgroundColor = 'var(--bg-color)';
+                  e.currentTarget.style.color = 'var(--button-bg)';
+                }
+              }}
+              onMouseLeave={(e) => {
+                if (activeTab !== tab.id) {
+                  e.currentTarget.style.backgroundColor = 'transparent';
+                  e.currentTarget.style.color = 'var(--text-color)';
+                }
+              }}
+              title={tab.description}
+            >
+              <span style={{ fontSize: '1.1rem' }}>{tab.icon}</span>
+              <span>{tab.label}</span>
+            </button>
+          ))}
+        </div>
+
+        {/* Context Bar - Shows description of current tab */}
+        <div style={{
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          padding: '0.75rem 1rem',
+          backgroundColor: 'var(--bg-color)',
+          borderRadius: '8px',
+          border: '1px solid var(--border-color)'
+        }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+            <span style={{ fontSize: '1.5rem' }}>
+              {tabs.find(t => t.id === activeTab)?.icon || '📋'}
+            </span>
+            <div>
+              <div style={{ fontSize: '0.95rem', fontWeight: 600, color: 'var(--text-color)' }}>
+                {tabs.find(t => t.id === activeTab)?.label || 'My Schedules'}
+              </div>
+              <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', marginTop: '0.15rem' }}>
+                {tabs.find(t => t.id === activeTab)?.description || ''}
+              </div>
+            </div>
+          </div>
+
+          {/* Quick Action Buttons based on active tab */}
+          <div style={{ display: 'flex', gap: '0.5rem' }}>
+            {activeTab === 'schedules' && (
+              <button
+                onClick={() => setActiveTab('schedules/create')}
+                className="button"
+                style={{
+                  padding: '0.5rem 1rem',
+                  fontSize: '0.85rem',
+                  backgroundColor: '#28a745',
+                  borderColor: '#28a745',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '0.5rem'
+                }}
+              >
+                <span>+</span> New Schedule
+              </button>
+            )}
+            {activeTab === 'schedules/library' && (
+              <button
+                onClick={() => setActiveTab('schedules/builder')}
+                className="button"
+                style={{
+                  padding: '0.5rem 1rem',
+                  fontSize: '0.85rem',
+                  backgroundColor: '#28a745',
+                  borderColor: '#28a745',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '0.5rem'
+                }}
+              >
+                <span>+</span> New Sequence
+              </button>
+            )}
+            {(activeTab === 'schedules/builder' || activeTab === 'schedules/create') && (
+              <button
+                onClick={() => setActiveTab('schedules')}
+                className="button"
+                style={{
+                  padding: '0.5rem 1rem',
+                  fontSize: '0.85rem',
+                  backgroundColor: '#6c757d',
+                  borderColor: '#6c757d'
+                }}
+              >
+                ← Back to Schedules
+              </button>
+            )}
+          </div>
+        </div>
+      </div>
+    );
+  };
+
+  // Calendar page - separate view
+  const renderCalendarPage = () => (
+    <div>
+      <div className="card nx-toolbar">
   <div className="toolbar-group">
     <label className="control-label">View</label>
     <select className="nx-select" value={calendarMode} onChange={(e) => setCalendarMode(e.target.value)}>
@@ -3317,7 +4646,6 @@ services:
     </div>
   )}
 </div>
-<div style={{ display: showCalendar ? 'block' : 'none' }}>
   {calendarMode === 'week' ? (() => {
     // Week view with continuous schedule bars
     const days = [];
@@ -3336,40 +4664,9 @@ services:
       return new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
     };
 
-    const isScheduleActiveOnDay = (schedule, dayTime) => {
-      if (!schedule.start_date) return false;
-      const dayDate = new Date(dayTime);
-      
-      if (schedule.type === 'yearly' || schedule.type === 'holiday') {
-        const startDateStr = schedule.start_date.includes('T') ? schedule.start_date.split('T')[0] : schedule.start_date;
-        const endDateStr = schedule.end_date ? (schedule.end_date.includes('T') ? schedule.end_date.split('T')[0] : schedule.end_date) : startDateStr;
-        const [startYear, startMonth, startDay] = startDateStr.split('-').map(Number);
-        const [endYear, endMonth, endDay] = endDateStr.split('-').map(Number);
-        const schedStartMonth = startMonth - 1;
-        const schedStartDay = startDay;
-        const schedEndMonth = endMonth - 1;
-        const schedEndDay = endDay;
-        const dayMonth = dayDate.getMonth();
-        const dayDay = dayDate.getDate();
-        
-        if (schedStartMonth === schedEndMonth) {
-          return dayMonth === schedStartMonth && dayDay >= schedStartDay && dayDay <= schedEndDay;
-        } else {
-          return (dayMonth === schedStartMonth && dayDay >= schedStartDay) ||
-                 (dayMonth === schedEndMonth && dayDay <= schedEndDay) ||
-                 (schedStartMonth < schedEndMonth && dayMonth > schedStartMonth && dayMonth < schedEndMonth) ||
-                 (schedStartMonth > schedEndMonth && (dayMonth > schedStartMonth || dayMonth < schedEndMonth));
-        }
-      }
-      
-      const sDay = normalizeDay(schedule.start_date);
-      const eDay = schedule.end_date ? normalizeDay(schedule.end_date) : sDay;
-      return dayTime >= sDay && dayTime <= eDay;
-    };
-
-    const scheds = (schedules || []).map(s => ({
+    const scheds = (schedules || []).filter(s => s.is_active).map(s => ({
       ...s,
-      cat: catMap.get(s.category_id) || { name: (s.category?.name || 'Unknown'), color: '#6c757d' }
+      cat: catMap.get(s.category_id) || { name: (s.sequence ? s.name : (s.category?.name || 'Unknown')), color: s.color || (s.category?.color || '#6c757d') }
     }));
 
     const todayTime = new Date(new Date().getFullYear(), new Date().getMonth(), new Date().getDate()).getTime();
@@ -3394,7 +4691,7 @@ services:
             
             days.forEach((day, dayIdx) => {
               const t = new Date(day.getFullYear(), day.getMonth(), day.getDate()).getTime();
-              const isActive = isScheduleActiveOnDay(sched, t);
+              const isActive = isScheduleActiveOnDay(sched, t, normalizeDay);
               
               if (isActive) {
                 if (!currentSpan) {
@@ -3449,7 +4746,7 @@ services:
                         justifyContent: 'center',
                         boxShadow: '0 2px 4px rgba(0,0,0,0.2)'
                       }}>
-                        {sched.cat.name}
+                        {sched.name}
                       </div>
                     );
                   })}
@@ -3505,40 +4802,9 @@ services:
       return new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
     };
 
-    const isScheduleActiveOnDay = (schedule, dayTime) => {
-      if (!schedule.start_date) return false;
-      const dayDate = new Date(dayTime);
-      
-      if (schedule.type === 'yearly' || schedule.type === 'holiday') {
-        const startDateStr = schedule.start_date.includes('T') ? schedule.start_date.split('T')[0] : schedule.start_date;
-        const endDateStr = schedule.end_date ? (schedule.end_date.includes('T') ? schedule.end_date.split('T')[0] : schedule.end_date) : startDateStr;
-        const [startYear, startMonth, startDay] = startDateStr.split('-').map(Number);
-        const [endYear, endMonth, endDay] = endDateStr.split('-').map(Number);
-        const schedStartMonth = startMonth - 1;
-        const schedStartDay = startDay;
-        const schedEndMonth = endMonth - 1;
-        const schedEndDay = endDay;
-        const dayMonth = dayDate.getMonth();
-        const dayDay = dayDate.getDate();
-        
-        if (schedStartMonth === schedEndMonth) {
-          return dayMonth === schedStartMonth && dayDay >= schedStartDay && dayDay <= schedEndDay;
-        } else {
-          return (dayMonth === schedStartMonth && dayDay >= schedStartDay) ||
-                 (dayMonth === schedEndMonth && dayDay <= schedEndDay) ||
-                 (schedStartMonth < schedEndMonth && dayMonth > schedStartMonth && dayMonth < schedEndMonth) ||
-                 (schedStartMonth > schedEndMonth && (dayMonth > schedStartMonth || dayMonth < schedEndMonth));
-        }
-      }
-      
-      const sDay = normalizeDay(schedule.start_date);
-      const eDay = schedule.end_date ? normalizeDay(schedule.end_date) : sDay;
-      return dayTime >= sDay && dayTime <= eDay;
-    };
-
-    const scheds = (schedules || []).map(s => ({
+    const scheds = (schedules || []).filter(s => s.is_active).map(s => ({
       ...s,
-      cat: catMap.get(s.category_id) || { name: (s.category?.name || 'Unknown'), color: '#6c757d' }
+      cat: catMap.get(s.category_id) || { name: (s.sequence ? s.name : (s.category?.name || 'Unknown')), color: s.color || (s.category?.color || '#6c757d') }
     }));
 
     const todayTime = new Date(new Date().getFullYear(), new Date().getMonth(), new Date().getDate()).getTime();
@@ -3564,7 +4830,7 @@ services:
             
             days.forEach((day, dayIdx) => {
               const t = new Date(day.getFullYear(), day.getMonth(), day.getDate()).getTime();
-              const isActive = isScheduleActiveOnDay(sched, t);
+              const isActive = isScheduleActiveOnDay(sched, t, normalizeDay);
               
               if (isActive) {
                 if (!currentSpan) {
@@ -3619,7 +4885,7 @@ services:
                         justifyContent: 'center',
                         boxShadow: '0 2px 4px rgba(0,0,0,0.2)'
                       }}>
-                        {sched.cat.name}
+                        {sched.name}
                       </div>
                     );
                   })}
@@ -3680,53 +4946,13 @@ services:
       return new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
     };
 
-    // Helper to check if a day matches a schedule, accounting for yearly repeats
-    const isScheduleActiveOnDay = (schedule, dayTime) => {
-      if (!schedule.start_date) return false;
-      
-      const dayDate = new Date(dayTime);
-      
-      // For yearly/holiday schedules, check if the month/day matches
-      if (schedule.type === 'yearly' || schedule.type === 'holiday') {
-        // Parse dates using UTC to avoid timezone issues
-        const startDateStr = schedule.start_date.includes('T') ? schedule.start_date.split('T')[0] : schedule.start_date;
-        const endDateStr = schedule.end_date ? (schedule.end_date.includes('T') ? schedule.end_date.split('T')[0] : schedule.end_date) : startDateStr;
-        
-        const [startYear, startMonth, startDay] = startDateStr.split('-').map(Number);
-        const [endYear, endMonth, endDay] = endDateStr.split('-').map(Number);
-        
-        // Use 0-indexed months for comparison (JavaScript Date uses 0-11)
-        const schedStartMonth = startMonth - 1;
-        const schedStartDay = startDay;
-        const schedEndMonth = endMonth - 1;
-        const schedEndDay = endDay;
-        
-        const dayMonth = dayDate.getMonth();
-        const dayDay = dayDate.getDate();
-        
-        // Check if day falls within the recurring month/day range
-        if (schedStartMonth === schedEndMonth) {
-          // Same month: simple day range check
-          return dayMonth === schedStartMonth && dayDay >= schedStartDay && dayDay <= schedEndDay;
-        } else {
-          // Cross-month range (e.g., Dec 20 - Jan 5)
-          return (dayMonth === schedStartMonth && dayDay >= schedStartDay) ||
-                 (dayMonth === schedEndMonth && dayDay <= schedEndDay) ||
-                 (schedStartMonth < schedEndMonth && dayMonth > schedStartMonth && dayMonth < schedEndMonth) ||
-                 (schedStartMonth > schedEndMonth && (dayMonth > schedStartMonth || dayMonth < schedEndMonth));
-        }
-      }
-      
-      // For non-repeating schedules, use standard date range check
-      const sDay = normalizeDay(schedule.start_date);
-      const eDay = schedule.end_date ? normalizeDay(schedule.end_date) : sDay;
-      return dayTime >= sDay && dayTime <= eDay;
-    };
-
-    const scheds = (schedules || []).map(s => ({
-      ...s,
-      cat: catMap.get(s.category_id) || { name: (s.category?.name || 'Unknown'), color: '#6c757d' }
-    }));
+    // Filter to only active schedules for calendar display and conflict detection
+    const scheds = (schedules || [])
+      .filter(s => s.is_active) // Only show active schedules
+      .map(s => ({
+        ...s,
+        cat: catMap.get(s.category_id) || { name: (s.sequence ? s.name : (s.category?.name || 'Unknown')), color: s.color || (s.category?.color || '#6c757d') }
+      }));
 
     // Track both schedules and their categories per day
     const byDay = new Map(); // dayTime -> { schedules: Set<schedule>, isFallback: boolean, hasConflict: boolean }
@@ -3740,7 +4966,7 @@ services:
       if (!s.start_date) continue;
       for (const d of days) {
         const t = new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
-        if (isScheduleActiveOnDay(s, t)) {
+        if (isScheduleActiveOnDay(s, t, normalizeDay)) {
           const dayData = byDay.get(t);
           if (dayData) dayData.schedules.add(s);
         }
@@ -3864,10 +5090,21 @@ services:
                 position: 'relative',
                 overflow: 'hidden',
                 transition: 'all 0.2s ease',
-                cursor: 'default',
+                cursor: inMonth ? 'pointer' : 'default',
                 boxShadow: isToday 
                   ? '0 0 12px rgba(59, 130, 246, 0.3)' 
                   : (dayData.hasConflict ? '0 0 8px rgba(255, 152, 0, 0.3)' : 'none')
+              }}
+              onClick={() => {
+                if (inMonth) {
+                  // Calculate the start of the week (Sunday) for this day
+                  const clickedDate = new Date(d);
+                  const dayOfWeek = clickedDate.getDay();
+                  const weekStart = new Date(clickedDate);
+                  weekStart.setDate(clickedDate.getDate() - dayOfWeek);
+                  setCalendarWeekStart(weekStart);
+                  setCalendarMode('week');
+                }
               }}
               onMouseEnter={(e) => {
                 if (inMonth) {
@@ -3930,12 +5167,15 @@ services:
                       }
                     }
                     
-                    let tooltipText = `${data.cat.name}${dayData.isFallback ? ' (Fallback)' : ''}\nSchedules: ${scheduleNames}`;
+                    let tooltipText = `${scheduleNames}${dayData.isFallback ? ' (Fallback)' : ''}\nCategory: ${data.cat.name}`;
                     if (dayData.hasConflict && isWinner) {
                       tooltipText += '\n👑 This schedule takes priority';
                     } else if (dayData.hasConflict && !dayData.isFallback) {
                       tooltipText += '\n⚠️ Overridden by higher priority schedule';
                     }
+                    
+                    // Show first schedule name, or combined names if multiple
+                    const displayName = data.schedules.length === 1 ? data.schedules[0] : scheduleNames;
                     
                     return (
                       <div 
@@ -3963,7 +5203,7 @@ services:
                         position: 'relative'
                       }}>
                         {isWinner && dayData.hasConflict && <span style={{ marginRight: '4px' }}>👑</span>}
-                        {data.cat.name}
+                        {displayName}
                       </div>
                     );
                   })}
@@ -4157,8 +5397,9 @@ services:
         let activeSchedulesForDay = 0;
         
         // Check each schedule to see if it's active on this day
+        // Only consider schedules that are enabled (is_active = true)
         for (const s of (schedules || [])) {
-          if (!s.start_date || !s.category_id) continue;
+          if (!s.start_date || !s.category_id || !s.is_active) continue; // Skip disabled schedules
           
           const isActive = isScheduleActiveOnDay(s, t);
           
@@ -4322,7 +5563,7 @@ services:
                           const t = d.getTime();
                           
                           for (const s of (schedules || [])) {
-                            if (!s.start_date || !s.category_id) continue;
+                            if (!s.start_date || !s.category_id || !s.is_active) continue;
                             if (isScheduleActiveOnDay(s, t)) {
                               schedCounts.set(s.id, {
                                 schedule: s,
@@ -4389,7 +5630,7 @@ services:
                       {(() => {
                         // Count total schedules active in this month
                         const totalScheds = (schedules || []).filter(s => {
-                          if (!s.start_date || !s.category_id) return false;
+                          if (!s.start_date || !s.category_id || !s.is_active) return false;
                           for (let day = 1; day <= daysInMonth; day++) {
                             const d = new Date(calendarYear, entry.month, day);
                             if (isScheduleActiveOnDay(s, d.getTime())) return true;
@@ -4416,178 +5657,1150 @@ services:
       </div>
     );
   })()}
-</div>
+    </div>
+  );
 
-      <div className="upload-section">
-        <h2>Create New Schedule</h2>
+  // Create Schedule page - separate view  
+  const renderCreateSchedulePage = () => (
+    <div>
+      <div className="upload-section" style={{ maxWidth: '1200px', margin: '30px auto' }}>
+        {/* Header with Progress Steps */}
+        <div style={{ marginBottom: '2rem' }}>
+          <h2 style={{ margin: '0 0 1rem 0', fontSize: '1.8rem', fontWeight: 700 }}>Create New Schedule</h2>
+          
+          {/* Visual Step Progress Indicator */}
+          <div style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: '1rem',
+            padding: '1rem',
+            backgroundColor: 'var(--bg-color)',
+            borderRadius: '8px',
+            border: '1px solid var(--border-color)'
+          }}>
+            {[
+              { num: 1, label: 'Mode', icon: '🎯' },
+              { num: 2, label: 'Details', icon: '📝' },
+              { num: 3, label: scheduleMode === 'simple' ? 'Category' : 'Sequence', icon: scheduleMode === 'simple' ? '📁' : '🎬' },
+              { num: 4, label: 'Review', icon: '✅' }
+            ].map((step, index, arr) => (
+              <React.Fragment key={step.num}>
+                <div style={{
+                  flex: 1,
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '0.5rem'
+                }}>
+                  <div style={{
+                    width: '32px',
+                    height: '32px',
+                    borderRadius: '50%',
+                    backgroundColor: 'var(--button-bg)',
+                    color: 'white',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    fontWeight: 600,
+                    fontSize: '0.9rem'
+                  }}>
+                    {step.num}
+                  </div>
+                  <div style={{ flex: 1 }}>
+                    <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>Step {step.num}</div>
+                    <div style={{ fontSize: '0.9rem', fontWeight: 600, color: 'var(--text-color)' }}>
+                      <span style={{ marginRight: '0.25rem' }}>{step.icon}</span>
+                      {step.label}
+                    </div>
+                  </div>
+                </div>
+                {index < arr.length - 1 && (
+                  <div style={{
+                    width: '40px',
+                    height: '2px',
+                    backgroundColor: 'var(--border-color)'
+                  }} />
+                )}
+              </React.Fragment>
+            ))}
+          </div>
+        </div>
+        
         <form onSubmit={handleCreateSchedule}>
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem', marginBottom: '1rem' }}>
-            <input
-              className="nx-input"
-              type="text"
-              placeholder="Schedule Name"
-              value={scheduleForm.name}
-              onChange={(e) => setScheduleForm({...scheduleForm, name: e.target.value})}
-              required
-              style={{ padding: '0.5rem' }}
-            />
-            <select
-              className="nx-select"
-              value={scheduleForm.type}
-              onChange={(e) => setScheduleForm({...scheduleForm, type: e.target.value})}
-              style={{ padding: '0.5rem' }}
-            >
-              <option value="daily">Daily</option>
-              <option value="weekly">Weekly</option>
-              <option value="monthly">Monthly</option>
-              <option value="yearly">Yearly</option>
-              <option value="holiday">Holiday</option>
-              <option value="custom">Custom</option>
-            </select>
-            <div>
-              <label style={{ display: 'block', marginBottom: '0.25rem', fontSize: '0.9rem' }}>Start Date & Time</label>
-              <input
-                className="nx-input"
-                type="datetime-local"
-                value={scheduleForm.start_date}
-                onChange={(e) => setScheduleForm({...scheduleForm, start_date: e.target.value})}
-                required
-                style={{ padding: '0.5rem', width: '100%' }}
-              />
+          {/* Step 1: Mode Selection */}
+          <div style={{ 
+            marginBottom: '2rem', 
+            padding: '1.5rem', 
+            backgroundColor: 'var(--card-bg)', 
+            borderRadius: '12px', 
+            border: '2px solid var(--border-color)',
+            boxShadow: '0 2px 8px rgba(0,0,0,0.08)'
+          }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', marginBottom: '1.25rem' }}>
+              <div style={{ 
+                display: 'flex', 
+                alignItems: 'center', 
+                justifyContent: 'center',
+                width: '32px', 
+                height: '32px', 
+                borderRadius: '50%', 
+                backgroundColor: 'var(--button-bg)',
+                color: 'white',
+                fontWeight: 700,
+                fontSize: '1rem'
+              }}>1</div>
+              <h3 style={{ margin: 0, fontSize: '1.2rem', fontWeight: 600 }}>Schedule Mode</h3>
             </div>
-            <div>
-              <label style={{ display: 'block', marginBottom: '0.25rem', fontSize: '0.9rem' }}>End Date & Time (Optional)</label>
-              <input
-                className="nx-input"
-                type="datetime-local"
-                value={scheduleForm.end_date}
-                onChange={(e) => setScheduleForm({...scheduleForm, end_date: e.target.value})}
-                style={{ padding: '0.5rem', width: '100%' }}
-              />
+            
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem', marginBottom: '1rem' }}>
+              <label style={{ 
+                display: 'flex', 
+                flexDirection: 'column',
+                cursor: 'pointer', 
+                padding: '1.25rem', 
+                backgroundColor: scheduleMode === 'simple' ? 'var(--button-bg)' : 'var(--bg-color)', 
+                color: scheduleMode === 'simple' ? 'white' : 'var(--text-color)', 
+                borderRadius: '8px', 
+                border: '3px solid ' + (scheduleMode === 'simple' ? 'var(--button-bg)' : 'var(--border-color)'), 
+                transition: 'all 0.2s',
+                position: 'relative'
+              }}>
+                <div style={{ display: 'flex', alignItems: 'center', marginBottom: '0.5rem' }}>
+                  <input
+                    type="radio"
+                    value="simple"
+                    checked={scheduleMode === 'simple'}
+                    onChange={(e) => setScheduleMode(e.target.value)}
+                    style={{ marginRight: '0.75rem', width: '18px', height: '18px' }}
+                  />
+                  <span style={{ fontSize: '1.5rem', marginRight: '0.5rem' }}>📁</span>
+                  <span style={{ fontSize: '1.1rem', fontWeight: 600 }}>Simple Mode</span>
+                </div>
+                <p style={{ margin: '0 0 0 2.25rem', fontSize: '0.9rem', opacity: 0.9 }}>
+                  Select a single category with random or sequential playback. Perfect for basic scheduling needs.
+                </p>
+              </label>
+              
+              <label style={{ 
+                display: 'flex', 
+                flexDirection: 'column',
+                cursor: 'pointer', 
+                padding: '1.25rem', 
+                backgroundColor: scheduleMode === 'advanced' ? 'var(--button-bg)' : 'var(--bg-color)', 
+                color: scheduleMode === 'advanced' ? 'white' : 'var(--text-color)', 
+                borderRadius: '8px', 
+                border: '3px solid ' + (scheduleMode === 'advanced' ? 'var(--button-bg)' : 'var(--border-color)'), 
+                transition: 'all 0.2s',
+                position: 'relative'
+              }}>
+                <div style={{ display: 'flex', alignItems: 'center', marginBottom: '0.5rem' }}>
+                  <input
+                    type="radio"
+                    value="advanced"
+                    checked={scheduleMode === 'advanced'}
+                    onChange={(e) => setScheduleMode(e.target.value)}
+                    style={{ marginRight: '0.75rem', width: '18px', height: '18px' }}
+                  />
+                  <span style={{ fontSize: '1.5rem', marginRight: '0.5rem' }}>🎬</span>
+                  <span style={{ fontSize: '1.1rem', fontWeight: 600 }}>Sequence Mode</span>
+                </div>
+                <p style={{ margin: '0 0 0 2.25rem', fontSize: '0.9rem', opacity: 0.9 }}>
+                  Build custom sequences with multiple categories and fixed prerolls. Full creative control.
+                </p>
+              </label>
             </div>
-            <select
-              className="nx-select"
-              value={scheduleForm.category_id}
-              onChange={(e) => setScheduleForm({...scheduleForm, category_id: e.target.value})}
-              required
-              style={{ padding: '0.5rem' }}
-            >
-              <option value="">Select Category</option>
-              {categories.map(cat => (
-                <option key={cat.id} value={cat.id}>{cat.name}</option>
-              ))}
-            </select>
-            <div>
-              <label style={{ display: 'block', marginBottom: '0.25rem', fontSize: '0.9rem' }}>Holiday Preset (Optional)</label>
-              <select
-                className="nx-select"
-                value=""
-                onChange={(e) => {
-                  const preset = holidayPresets.find(p => p.id === parseInt(e.target.value));
-                  if (preset) {
-                    const currentYear = new Date().getFullYear();
 
-                    // Use date range fields if available, otherwise fall back to single day
-                    let startDate, endDate;
-                    if (preset.start_month && preset.start_day && preset.end_month && preset.end_day) {
-                      // Use the new date range fields
-                      startDate = new Date(currentYear, preset.start_month - 1, preset.start_day, 0, 0, 0);
-                      endDate = new Date(currentYear, preset.end_month - 1, preset.end_day, 23, 59, 59);
-                    } else {
-                      // Fall back to old single day format for backward compatibility
-                      startDate = new Date(currentYear, preset.month - 1, preset.day, 12, 0, 0);
-                      endDate = new Date(currentYear, preset.month - 1, preset.day, 23, 59, 59);
-                    }
-
-                    setScheduleForm({
-                      ...scheduleForm,
-                      name: `${preset.name} Schedule`,
-                      type: 'holiday',
-                      start_date: toLocalInputFromDate(startDate),
-                      end_date: toLocalInputFromDate(endDate),
-                      category_id: preset.category_id.toString()
-                    });
-                  }
-                }}
-                style={{ padding: '0.5rem', width: '100%' }}
-              >
-                <option value="">Choose Holiday Preset</option>
-                {holidayPresets.map(preset => (
-                  <option key={preset.id} value={preset.id}>
-                    {preset.name} ({preset.start_month ? `${preset.start_month}/${preset.start_day} - ${preset.end_month}/${preset.end_day}` : `${preset.month}/${preset.day}`})
-                  </option>
-                ))}
-              </select>
+            {/* Helpful comparison guide */}
+            <div style={{
+              marginTop: '1rem',
+              padding: '1rem',
+              backgroundColor: 'rgba(59, 130, 246, 0.05)',
+              borderRadius: '8px',
+              border: '1px solid rgba(59, 130, 246, 0.2)'
+            }}>
+              <div style={{ display: 'flex', alignItems: 'flex-start', gap: '0.75rem' }}>
+                <span style={{ fontSize: '1.25rem' }}>ℹ️</span>
+                <div style={{ flex: 1 }}>
+                  <strong style={{ fontSize: '0.9rem', color: 'var(--text-color)' }}>When to use each mode:</strong>
+                  <ul style={{ margin: '0.5rem 0 0 0', paddingLeft: '1.25rem', fontSize: '0.85rem', color: 'var(--text-secondary)', lineHeight: '1.6' }}>
+                    <li><strong>Simple Mode:</strong> Quick setup for basic needs - "Play all prerolls from my Holiday category during December"</li>
+                    <li><strong>Sequence Mode:</strong> Advanced control - "Play Studio Logo + Random Trailer + Holiday Message in that exact order"</li>
+                  </ul>
+                </div>
+              </div>
             </div>
           </div>
-          <div className="nx-field">
-            <label className="nx-label">Playback Mode</label>
-            <select
-              className="nx-select"
-              value={scheduleForm.shuffle ? 'random' : 'sequential'}
-              onChange={(e) => setScheduleForm({
-                ...scheduleForm,
-                shuffle: e.target.value === 'random',
-                playlist: e.target.value === 'sequential'
-              })}
-            >
-              <option value="random">Random</option>
-              <option value="sequential">Sequential</option>
-            </select>
-          </div>
-          <div style={{ marginBottom: '1rem', padding: '1rem', backgroundColor: 'var(--card-bg)', borderRadius: '0.25rem' }}>
-            <h3 style={{ marginBottom: '0.5rem', fontSize: '1rem' }}>Fallback Category</h3>
-            <p style={{ fontSize: '0.9rem', color: '#666', marginBottom: '0.5rem' }}>
-              When no schedule is active, this category will be used as the default for preroll selection.
-            </p>
-            <select
-              className="nx-select"
-              value={scheduleForm.fallback_category_id || ''}
-              onChange={(e) => setScheduleForm({...scheduleForm, fallback_category_id: e.target.value})}
-              style={{ padding: '0.5rem', width: '200px' }}
-            >
-              <option value="">No Fallback</option>
-              {categories.map(cat => (
-                <option key={cat.id} value={cat.id}>{cat.name}</option>
-              ))}
-            </select>
-          </div>
-          <div style={{ marginBottom: '1rem', padding: '1rem', backgroundColor: 'var(--card-bg)', borderRadius: '0.25rem' }}>
-            <h3 style={{ marginBottom: '0.5rem', fontSize: '1rem' }}>Calendar Color (Optional)</h3>
-            <p style={{ fontSize: '0.9rem', color: '#666', marginBottom: '0.5rem' }}>
-              Choose a custom color for this schedule on the calendar. If not set, the category's color will be used.
-            </p>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
-              <input
-                type="color"
-                value={scheduleForm.color || '#3b82f6'}
-                onChange={(e) => setScheduleForm({...scheduleForm, color: e.target.value})}
-                style={{ width: '60px', height: '40px', border: '1px solid var(--border-color)', borderRadius: '4px', cursor: 'pointer' }}
-              />
-              <input
-                className="nx-input"
-                type="text"
-                placeholder="#3b82f6"
-                value={scheduleForm.color || ''}
-                onChange={(e) => setScheduleForm({...scheduleForm, color: e.target.value})}
-                style={{ padding: '0.5rem', width: '120px', fontFamily: 'monospace' }}
-              />
-              {scheduleForm.color && (
-                <button
-                  type="button"
-                  className="button"
-                  onClick={() => setScheduleForm({...scheduleForm, color: ''})}
-                  style={{ padding: '0.5rem 1rem', backgroundColor: '#dc3545' }}
+
+          {/* Step 2: Basic Information */}
+          <div style={{ 
+            marginBottom: '2rem', 
+            padding: '1.5rem', 
+            backgroundColor: 'var(--card-bg)', 
+            borderRadius: '12px', 
+            border: '2px solid var(--border-color)',
+            boxShadow: '0 2px 8px rgba(0,0,0,0.08)'
+          }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', marginBottom: '1.25rem' }}>
+              <div style={{ 
+                display: 'flex', 
+                alignItems: 'center', 
+                justifyContent: 'center',
+                width: '32px', 
+                height: '32px', 
+                borderRadius: '50%', 
+                backgroundColor: 'var(--button-bg)',
+                color: 'white',
+                fontWeight: 700,
+                fontSize: '1rem'
+              }}>2</div>
+              <h3 style={{ margin: 0, fontSize: '1.2rem', fontWeight: 600 }}>Basic Information</h3>
+            </div>
+            
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1.25rem' }}>
+              <div>
+                <label style={{ display: 'block', marginBottom: '0.5rem', fontSize: '0.95rem', fontWeight: 600, color: 'var(--text-color)' }}>
+                  Schedule Name <span style={{ color: '#dc3545' }}>*</span>
+                </label>
+                <input
+                  className="nx-input"
+                  type="text"
+                  placeholder="e.g., Weekend Movie Night"
+                  value={scheduleForm.name}
+                  onChange={(e) => setScheduleForm({...scheduleForm, name: e.target.value})}
+                  required
+                  style={{ 
+                    padding: '0.75rem', 
+                    fontSize: '1rem',
+                    border: '2px solid var(--border-color)',
+                    borderRadius: '6px',
+                    width: '90%'
+                  }}
+                />
+              </div>
+              
+              <div>
+                <label style={{ display: 'block', marginBottom: '0.5rem', fontSize: '0.95rem', fontWeight: 600, color: 'var(--text-color)' }}>
+                  Schedule Type <span style={{ color: '#dc3545' }}>*</span>
+                </label>
+                <select
+                  className="nx-select"
+                  value={scheduleForm.type}
+                  onChange={(e) => setScheduleForm({...scheduleForm, type: e.target.value})}
+                  style={{ 
+                    padding: '0.75rem', 
+                    fontSize: '1rem',
+                    border: '2px solid var(--border-color)',
+                    borderRadius: '6px',
+                    width: '95%'
+                  }}
                 >
-                  Clear
-                </button>
-              )}
+                  <option value="daily">📅 Daily</option>
+                  <option value="weekly">📆 Weekly</option>
+                  <option value="monthly">🗓️ Monthly</option>
+                  <option value="yearly">📋 Yearly</option>
+                  <option value="holiday">🎉 Holiday</option>
+                  <option value="custom">⚙️ Custom</option>
+                </select>
+              </div>
+              
+              <div>
+                <label style={{ display: 'block', marginBottom: '0.5rem', fontSize: '0.95rem', fontWeight: 600, color: 'var(--text-color)' }}>
+                  Start Date & Time <span style={{ color: '#dc3545' }}>*</span>
+                </label>
+                <input
+                  className="nx-input"
+                  type="datetime-local"
+                  value={scheduleForm.start_date}
+                  onChange={(e) => setScheduleForm({...scheduleForm, start_date: e.target.value})}
+                  required
+                  style={{ 
+                    padding: '0.75rem', 
+                    fontSize: '1rem',
+                    border: '2px solid var(--border-color)',
+                    borderRadius: '6px',
+                    width: '90%'
+                  }}
+                />
+              </div>
+              
+              <div>
+                <label style={{ display: 'block', marginBottom: '0.5rem', fontSize: '0.95rem', fontWeight: 600, color: 'var(--text-color)' }}>
+                  End Date & Time <span style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>(Optional)</span>
+                </label>
+                <input
+                  className="nx-input"
+                  type="datetime-local"
+                  value={scheduleForm.end_date}
+                  onChange={(e) => setScheduleForm({...scheduleForm, end_date: e.target.value})}
+                  style={{ 
+                    padding: '0.75rem', 
+                    fontSize: '1rem',
+                    border: '2px solid var(--border-color)',
+                    borderRadius: '6px',
+                    width: '90%'
+                  }}
+                />
+                <p style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', margin: '0.25rem 0 0 0' }}>
+                  Leave blank for indefinite schedule
+                </p>
+              </div>
             </div>
           </div>
-          <button type="submit" className="button">{editingSchedule ? 'Update Schedule' : 'Create Schedule'}</button>
+
+          {/* Step 3: Recurrence Pattern - Daily */}
+          {scheduleForm.type === 'daily' && (
+            <div style={{ 
+              marginBottom: '2rem', 
+              padding: '1.5rem', 
+              backgroundColor: 'var(--card-bg)', 
+              borderRadius: '12px', 
+              border: '2px solid var(--border-color)',
+              boxShadow: '0 2px 8px rgba(0,0,0,0.08)'
+            }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', marginBottom: '1.25rem' }}>
+                <div style={{ 
+                  display: 'flex', 
+                  alignItems: 'center', 
+                  justifyContent: 'center',
+                  width: '32px', 
+                  height: '32px', 
+                  borderRadius: '50%', 
+                  backgroundColor: 'var(--button-bg)',
+                  color: 'white',
+                  fontWeight: 700,
+                  fontSize: '1rem'
+                }}>3</div>
+                <h3 style={{ margin: 0, fontSize: '1.2rem', fontWeight: 600 }}>⏰ Daily Recurrence</h3>
+              </div>
+              
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1.25rem' }}>
+                <div>
+                  <label style={{ display: 'block', marginBottom: '0.5rem', fontSize: '0.95rem', fontWeight: 600, color: 'var(--text-color)' }}>
+                    Start Time <span style={{ color: '#dc3545' }}>*</span>
+                  </label>
+                  <input
+                    type="time"
+                    className="nx-input"
+                    value={timeRange.start || ''}
+                    onChange={(e) => setTimeRange({...timeRange, start: e.target.value})}
+                    style={{ 
+                      padding: '0.75rem', 
+                      fontSize: '1rem',
+                      border: '2px solid var(--border-color)',
+                      borderRadius: '6px',
+                      width: '100%'
+                    }}
+                  />
+                  <p style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', margin: '0.25rem 0 0 0' }}>
+                    When should this schedule activate?
+                  </p>
+                </div>
+                
+                <div>
+                  <label style={{ display: 'block', marginBottom: '0.5rem', fontSize: '0.95rem', fontWeight: 600, color: 'var(--text-color)' }}>
+                    End Time <span style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>(Optional)</span>
+                  </label>
+                  <input
+                    type="time"
+                    className="nx-input"
+                    value={timeRange.end || ''}
+                    onChange={(e) => setTimeRange({...timeRange, end: e.target.value})}
+                    style={{ 
+                      padding: '0.75rem', 
+                      fontSize: '1rem',
+                      border: '2px solid var(--border-color)',
+                      borderRadius: '6px',
+                      width: '100%'
+                    }}
+                  />
+                  <p style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', margin: '0.25rem 0 0 0' }}>
+                    Leave blank for specific time trigger
+                  </p>
+                </div>
+              </div>
+              
+              <div style={{ 
+                marginTop: '1rem', 
+                padding: '0.75rem 1rem', 
+                backgroundColor: timeRange.start ? 'rgba(40, 167, 69, 0.1)' : 'rgba(220, 53, 69, 0.1)', 
+                borderRadius: '6px',
+                border: '1px solid ' + (timeRange.start ? 'rgba(40, 167, 69, 0.3)' : 'rgba(220, 53, 69, 0.3)')
+              }}>
+                <p style={{ fontSize: '0.9rem', color: timeRange.start ? '#28a745' : '#dc3545', margin: 0, display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                  <span style={{ fontSize: '1.2rem' }}>{timeRange.start ? '✓' : '⚠️'}</span>
+                  {timeRange.start 
+                    ? `Schedule will run daily ${timeRange.end ? `from ${timeRange.start} to ${timeRange.end}` : `at ${timeRange.start}`}`
+                    : 'Please select at least a start time to continue'}
+                </p>
+              </div>
+            </div>
+          )}
+
+          {/* Step 3: Recurrence Pattern - Weekly */}
+          {scheduleForm.type === 'weekly' && (
+            <div style={{ 
+              marginBottom: '2rem', 
+              padding: '1.5rem', 
+              backgroundColor: 'var(--card-bg)', 
+              borderRadius: '12px', 
+              border: '2px solid var(--border-color)',
+              boxShadow: '0 2px 8px rgba(0,0,0,0.08)'
+            }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', marginBottom: '1.25rem' }}>
+                <div style={{ 
+                  display: 'flex', 
+                  alignItems: 'center', 
+                  justifyContent: 'center',
+                  width: '32px', 
+                  height: '32px', 
+                  borderRadius: '50%', 
+                  backgroundColor: 'var(--button-bg)',
+                  color: 'white',
+                  fontWeight: 700,
+                  fontSize: '1rem'
+                }}>3</div>
+                <h3 style={{ margin: 0, fontSize: '1.2rem', fontWeight: 600 }}>📆 Weekly Recurrence</h3>
+              </div>
+              
+              <label style={{ display: 'block', marginBottom: '1rem', fontSize: '0.95rem', fontWeight: 600, color: 'var(--text-color)' }}>
+                Select Days of the Week <span style={{ color: '#dc3545' }}>*</span>
+              </label>
+              
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: '0.75rem' }}>
+                {['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'].map((day, index) => {
+                  const dayLower = day.toLowerCase();
+                  const isSelected = weekDays.includes(dayLower);
+                  const dayEmojis = ['☀️', '🌙', '💼', '📚', '⚡', '🎉', '🌟'];
+                  return (
+                    <label
+                      key={day}
+                      style={{
+                        display: 'flex',
+                        flexDirection: 'column',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        padding: '1rem',
+                        backgroundColor: isSelected ? 'var(--button-bg)' : 'var(--bg-color)',
+                        color: isSelected ? 'white' : 'var(--text-color)',
+                        borderRadius: '8px',
+                        border: '3px solid ' + (isSelected ? 'var(--button-bg)' : 'var(--border-color)'),
+                        cursor: 'pointer',
+                        transition: 'all 0.2s',
+                        userSelect: 'none',
+                        fontWeight: isSelected ? 600 : 500
+                      }}
+                      onMouseEnter={(e) => !isSelected && (e.currentTarget.style.borderColor = 'var(--button-bg)', e.currentTarget.style.transform = 'translateY(-2px)')}
+                      onMouseLeave={(e) => !isSelected && (e.currentTarget.style.borderColor = 'var(--border-color)', e.currentTarget.style.transform = 'translateY(0)')}
+                    >
+                      <input
+                        type="checkbox"
+                        checked={isSelected}
+                        onChange={(e) => {
+                          if (e.target.checked) {
+                            setWeekDays([...weekDays, dayLower]);
+                          } else {
+                            setWeekDays(weekDays.filter(d => d !== dayLower));
+                          }
+                        }}
+                        style={{ position: 'absolute', opacity: 0 }}
+                      />
+                      <span style={{ fontSize: '1.5rem', marginBottom: '0.25rem' }}>{dayEmojis[index]}</span>
+                      <span style={{ fontSize: '0.95rem' }}>{day.substring(0, 3)}</span>
+                    </label>
+                  );
+                })}
+              </div>
+              
+              <div style={{ 
+                marginTop: '1rem', 
+                padding: '0.75rem 1rem', 
+                backgroundColor: weekDays.length > 0 ? 'rgba(40, 167, 69, 0.1)' : 'rgba(220, 53, 69, 0.1)', 
+                borderRadius: '6px',
+                border: '1px solid ' + (weekDays.length > 0 ? 'rgba(40, 167, 69, 0.3)' : 'rgba(220, 53, 69, 0.3)')
+              }}>
+                <p style={{ fontSize: '0.9rem', color: weekDays.length > 0 ? '#28a745' : '#dc3545', margin: 0, display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                  <span style={{ fontSize: '1.2rem' }}>{weekDays.length > 0 ? '✓' : '⚠️'}</span>
+                  {weekDays.length > 0 
+                    ? `Schedule will run every ${weekDays.map(d => d.charAt(0).toUpperCase() + d.slice(1, 3)).join(', ')}`
+                    : 'Please select at least one day of the week'}
+                </p>
+              </div>
+            </div>
+          )}
+
+          {/* Step 3: Recurrence Pattern - Monthly */}
+          {scheduleForm.type === 'monthly' && (
+            <div style={{ 
+              marginBottom: '2rem', 
+              padding: '1.5rem', 
+              backgroundColor: 'var(--card-bg)', 
+              borderRadius: '12px', 
+              border: '2px solid var(--border-color)',
+              boxShadow: '0 2px 8px rgba(0,0,0,0.08)'
+            }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', marginBottom: '1.25rem' }}>
+                <div style={{ 
+                  display: 'flex', 
+                  alignItems: 'center', 
+                  justifyContent: 'center',
+                  width: '32px', 
+                  height: '32px', 
+                  borderRadius: '50%', 
+                  backgroundColor: 'var(--button-bg)',
+                  color: 'white',
+                  fontWeight: 700,
+                  fontSize: '1rem'
+                }}>3</div>
+                <h3 style={{ margin: 0, fontSize: '1.2rem', fontWeight: 600 }}>🗓️ Monthly Recurrence</h3>
+              </div>
+              
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
+                <label style={{ fontSize: '0.95rem', fontWeight: 600, color: 'var(--text-color)' }}>
+                  Select Days of the Month <span style={{ color: '#dc3545' }}>*</span>
+                </label>
+                <div style={{ display: 'flex', gap: '0.5rem' }}>
+                  <button
+                    type="button"
+                    onClick={() => setMonthDays(Array.from({length: 31}, (_, i) => i + 1))}
+                    style={{
+                      padding: '0.5rem 1rem',
+                      fontSize: '0.85rem',
+                      backgroundColor: '#28a745',
+                      color: 'white',
+                      border: 'none',
+                      borderRadius: '6px',
+                      cursor: 'pointer',
+                      fontWeight: 600,
+                      transition: 'all 0.2s'
+                    }}
+                    onMouseEnter={(e) => e.currentTarget.style.backgroundColor = '#218838'}
+                    onMouseLeave={(e) => e.currentTarget.style.backgroundColor = '#28a745'}
+                  >
+                    ✓ Select All
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setMonthDays([])}
+                    style={{
+                      padding: '0.5rem 1rem',
+                      fontSize: '0.85rem',
+                      backgroundColor: '#6c757d',
+                      color: 'white',
+                      border: 'none',
+                      borderRadius: '6px',
+                      cursor: 'pointer',
+                      fontWeight: 600,
+                      transition: 'all 0.2s'
+                    }}
+                    onMouseEnter={(e) => e.currentTarget.style.backgroundColor = '#5a6268'}
+                    onMouseLeave={(e) => e.currentTarget.style.backgroundColor = '#6c757d'}
+                  >
+                    ✗ Clear All
+                  </button>
+                </div>
+              </div>
+              
+              <div style={{ 
+                display: 'grid', 
+                gridTemplateColumns: 'repeat(7, 1fr)', 
+                gap: '0.5rem',
+                padding: '1rem',
+                backgroundColor: 'var(--bg-color)',
+                borderRadius: '8px',
+                border: '2px solid var(--border-color)'
+              }}>
+                {Array.from({length: 31}, (_, i) => i + 1).map((day) => {
+                  const isSelected = monthDays.includes(day);
+                  return (
+                    <button
+                      key={day}
+                      type="button"
+                      onClick={() => {
+                        if (isSelected) {
+                          setMonthDays(monthDays.filter(d => d !== day));
+                        } else {
+                          setMonthDays([...monthDays, day].sort((a, b) => a - b));
+                        }
+                      }}
+                      style={{
+                        padding: '0.75rem',
+                        backgroundColor: isSelected ? 'var(--button-bg)' : 'var(--card-bg)',
+                        color: isSelected ? 'white' : 'var(--text-color)',
+                        border: '2px solid ' + (isSelected ? 'var(--button-bg)' : 'var(--border-color)'),
+                        borderRadius: '6px',
+                        cursor: 'pointer',
+                        fontSize: '1rem',
+                        fontWeight: isSelected ? 700 : 500,
+                        transition: 'all 0.2s',
+                        minHeight: '45px'
+                      }}
+                      onMouseEnter={(e) => !isSelected && (e.currentTarget.style.borderColor = 'var(--button-bg)', e.currentTarget.style.transform = 'scale(1.05)')}
+                      onMouseLeave={(e) => !isSelected && (e.currentTarget.style.borderColor = 'var(--border-color)', e.currentTarget.style.transform = 'scale(1)')}
+                    >
+                      {day}
+                    </button>
+                  );
+                })}
+              </div>
+              
+              <div style={{ 
+                marginTop: '1rem', 
+                padding: '0.75rem 1rem', 
+                backgroundColor: monthDays.length > 0 ? 'rgba(40, 167, 69, 0.1)' : 'rgba(220, 53, 69, 0.1)', 
+                borderRadius: '6px',
+                border: '1px solid ' + (monthDays.length > 0 ? 'rgba(40, 167, 69, 0.3)' : 'rgba(220, 53, 69, 0.3)')
+              }}>
+                <p style={{ fontSize: '0.9rem', color: monthDays.length > 0 ? '#28a745' : '#dc3545', margin: 0, display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                  <span style={{ fontSize: '1.2rem' }}>{monthDays.length > 0 ? '✓' : '⚠️'}</span>
+                  {monthDays.length > 0 
+                    ? `Schedule will run on day${monthDays.length > 1 ? 's' : ''} ${monthDays.join(', ')} of each month`
+                    : 'Please select at least one day of the month'}
+                </p>
+              </div>
+            </div>
+          )}
+
+          {/* Step 4: Content Configuration */}
+          <div style={{ 
+            marginBottom: '2rem', 
+            padding: '1.5rem', 
+            backgroundColor: 'var(--card-bg)', 
+            borderRadius: '12px', 
+            border: '2px solid var(--border-color)',
+            boxShadow: '0 2px 8px rgba(0,0,0,0.08)'
+          }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', marginBottom: '1.25rem' }}>
+              <div style={{ 
+                display: 'flex', 
+                alignItems: 'center', 
+                justifyContent: 'center',
+                width: '32px', 
+                height: '32px', 
+                borderRadius: '50%', 
+                backgroundColor: 'var(--button-bg)',
+                color: 'white',
+                fontWeight: 700,
+                fontSize: '1rem'
+              }}>4</div>
+              <h3 style={{ margin: 0, fontSize: '1.2rem', fontWeight: 600 }}>
+                {scheduleMode === 'simple' ? '📁 Content Selection' : '🎬 Sequence Builder'}
+              </h3>
+            </div>
+            
+            {/* Simple Mode: Category Selection */}
+            {scheduleMode === 'simple' && (
+              <>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1.25rem', marginBottom: '1.5rem' }}>
+                  <div>
+                    <label style={{ display: 'block', marginBottom: '0.5rem', fontSize: '0.95rem', fontWeight: 600, color: 'var(--text-color)' }}>
+                      Category <span style={{ color: '#dc3545' }}>*</span>
+                    </label>
+                    <select
+                      className="nx-select"
+                      value={scheduleForm.category_id}
+                      onChange={(e) => setScheduleForm({...scheduleForm, category_id: e.target.value})}
+                      required
+                      style={{ 
+                        padding: '0.75rem', 
+                        fontSize: '1rem',
+                        border: '2px solid var(--border-color)',
+                        borderRadius: '6px',
+                        width: '100%'
+                      }}
+                    >
+                      <option value="">Select a Category</option>
+                      {categories.map(cat => (
+                        <option key={cat.id} value={cat.id}>{cat.name}</option>
+                      ))}
+                    </select>
+                  </div>
+                  
+                  <div>
+                    <label style={{ display: 'block', marginBottom: '0.5rem', fontSize: '0.95rem', fontWeight: 600, color: 'var(--text-color)' }}>
+                      Holiday Preset <span style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>(Optional)</span>
+                    </label>
+                    <select
+                      className="nx-select"
+                      value=""
+                      onChange={(e) => {
+                        const preset = holidayPresets.find(p => p.id === parseInt(e.target.value));
+                        if (preset) {
+                          const currentYear = new Date().getFullYear();
+
+                          // Use date range fields if available, otherwise fall back to single day
+                          let startDate, endDate;
+                          if (preset.start_month && preset.start_day && preset.end_month && preset.end_day) {
+                            // Use the new date range fields
+                            startDate = new Date(currentYear, preset.start_month - 1, preset.start_day, 0, 0, 0);
+                            endDate = new Date(currentYear, preset.end_month - 1, preset.end_day, 23, 59, 59);
+                          } else {
+                            // Fall back to old single day format for backward compatibility
+                            startDate = new Date(currentYear, preset.month - 1, preset.day, 12, 0, 0);
+                            endDate = new Date(currentYear, preset.month - 1, preset.day, 23, 59, 59);
+                          }
+
+                          setScheduleForm({
+                            ...scheduleForm,
+                            name: `${preset.name} Schedule`,
+                            type: 'holiday',
+                            start_date: toLocalInputFromDate(startDate),
+                            end_date: toLocalInputFromDate(endDate),
+                            category_id: preset.category_id.toString()
+                          });
+                        }
+                      }}
+                      style={{ 
+                        padding: '0.75rem', 
+                        fontSize: '1rem',
+                        border: '2px solid var(--border-color)',
+                        borderRadius: '6px',
+                        width: '100%'
+                      }}
+                    >
+                      <option value="">🎉 Choose Holiday Preset</option>
+                      {holidayPresets.map(preset => (
+                        <option key={preset.id} value={preset.id}>
+                          {preset.name} ({preset.start_month ? `${preset.start_month}/${preset.start_day} - ${preset.end_month}/${preset.end_day}` : `${preset.month}/${preset.day}`})
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
+                
+                <div>
+                  <label style={{ display: 'block', marginBottom: '0.75rem', fontSize: '0.95rem', fontWeight: 600, color: 'var(--text-color)' }}>
+                    Playback Mode <span style={{ color: '#dc3545' }}>*</span>
+                  </label>
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
+                    <label style={{
+                      display: 'flex',
+                      flexDirection: 'column',
+                      cursor: 'pointer',
+                      padding: '1rem',
+                      backgroundColor: (scheduleForm.shuffle || (!scheduleForm.shuffle && !scheduleForm.playlist)) ? 'var(--button-bg)' : 'var(--bg-color)',
+                      color: (scheduleForm.shuffle || (!scheduleForm.shuffle && !scheduleForm.playlist)) ? 'white' : 'var(--text-color)',
+                      borderRadius: '8px',
+                      border: '3px solid ' + ((scheduleForm.shuffle || (!scheduleForm.shuffle && !scheduleForm.playlist)) ? 'var(--button-bg)' : 'var(--border-color)'),
+                      transition: 'all 0.2s'
+                    }}>
+                      <div style={{ display: 'flex', alignItems: 'center', marginBottom: '0.5rem' }}>
+                        <input
+                          type="radio"
+                          name="playback"
+                          checked={scheduleForm.shuffle || (!scheduleForm.shuffle && !scheduleForm.playlist)}
+                          onChange={() => setScheduleForm({
+                            ...scheduleForm,
+                            shuffle: true,
+                            playlist: false
+                          })}
+                          style={{ marginRight: '0.75rem', width: '18px', height: '18px' }}
+                        />
+                        <span style={{ fontSize: '1.5rem', marginRight: '0.5rem' }}>🔀</span>
+                        <span style={{ fontSize: '1.05rem', fontWeight: 600 }}>Random</span>
+                      </div>
+                      <p style={{ margin: '0 0 0 2.25rem', fontSize: '0.85rem', opacity: 0.9 }}>
+                        Shuffle prerolls in random order
+                      </p>
+                    </label>
+                    
+                    <label style={{
+                      display: 'flex',
+                      flexDirection: 'column',
+                      cursor: 'pointer',
+                      padding: '1rem',
+                      backgroundColor: scheduleForm.playlist ? 'var(--button-bg)' : 'var(--bg-color)',
+                      color: scheduleForm.playlist ? 'white' : 'var(--text-color)',
+                      borderRadius: '8px',
+                      border: '3px solid ' + (scheduleForm.playlist ? 'var(--button-bg)' : 'var(--border-color)'),
+                      transition: 'all 0.2s'
+                    }}>
+                      <div style={{ display: 'flex', alignItems: 'center', marginBottom: '0.5rem' }}>
+                        <input
+                          type="radio"
+                          name="playback"
+                          checked={scheduleForm.playlist}
+                          onChange={() => setScheduleForm({
+                            ...scheduleForm,
+                            shuffle: false,
+                            playlist: true
+                          })}
+                          style={{ marginRight: '0.75rem', width: '18px', height: '18px' }}
+                        />
+                        <span style={{ fontSize: '1.5rem', marginRight: '0.5rem' }}>📝</span>
+                        <span style={{ fontSize: '1.05rem', fontWeight: 600 }}>Sequential</span>
+                      </div>
+                      <p style={{ margin: '0 0 0 2.25rem', fontSize: '0.85rem', opacity: 0.9 }}>
+                        Play prerolls in order
+                      </p>
+                    </label>
+                  </div>
+                </div>
+              </>
+            )}
+
+            {/* Advanced Mode: Load Saved Sequence or Build New */}
+            {scheduleMode === 'advanced' && (
+              <>
+                {/* Saved Sequences Dropdown */}
+                <div style={{ 
+                  marginBottom: '1.5rem',
+                  padding: '1.25rem',
+                  backgroundColor: 'var(--hover-bg)',
+                  borderRadius: '8px',
+                  border: '1px solid var(--border-color)'
+                }}>
+                  <label style={{ display: 'block', marginBottom: '0.75rem', fontSize: '1rem', fontWeight: 600, color: 'var(--text-color)' }}>
+                    📚 Load Saved Sequence (Optional)
+                  </label>
+                  <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'center' }}>
+                    <select
+                      className="nx-select"
+                      value=""
+                      onChange={(e) => {
+                        if (e.target.value) {
+                          const selectedSeq = savedSequences.find(s => s.id === parseInt(e.target.value));
+                          if (selectedSeq) {
+                            setSequenceBlocks(selectedSeq.blocks || []);
+                            showAlert(`Loaded sequence: ${selectedSeq.name}`, 'success');
+                            e.target.value = ''; // Reset dropdown
+                          }
+                        }
+                      }}
+                      style={{ 
+                        flex: 1,
+                        padding: '0.75rem', 
+                        fontSize: '0.95rem',
+                        border: '2px solid var(--border-color)',
+                        borderRadius: '6px'
+                      }}
+                    >
+                      <option value="">-- Select a saved sequence --</option>
+                      {savedSequences.map(seq => (
+                        <option key={seq.id} value={seq.id}>
+                          {seq.name} ({seq.blocks?.length || 0} blocks)
+                        </option>
+                      ))}
+                    </select>
+                    {sequenceBlocks.length > 0 && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setSequenceBlocks([]);
+                          showAlert('Sequence cleared', 'info');
+                        }}
+                        className="button"
+                        style={{ 
+                          padding: '0.75rem 1.25rem',
+                          backgroundColor: '#dc3545',
+                          whiteSpace: 'nowrap'
+                        }}
+                      >
+                        🗑️ Clear Sequence
+                      </button>
+                    )}
+                  </div>
+                  <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', margin: '0.5rem 0 0 0' }}>
+                    {savedSequences.length === 0 ? (
+                      <>No saved sequences. Go to <a href="#" onClick={(e) => { e.preventDefault(); setActiveTab('schedules/builder'); }} style={{ color: 'var(--button-bg)', textDecoration: 'underline' }}>Sequence Builder</a> to create one.</>
+                    ) : (
+                      `Select a sequence from your library or build a custom one below. Current: ${sequenceBlocks.length} blocks`
+                    )}
+                  </p>
+                </div>
+
+                {/* Sequence Builder */}
+                <SequenceBuilder
+                  blocks={sequenceBlocks}
+                  categories={categories}
+                  prerolls={prerolls}
+                  scheduleId={null}
+                  apiUrl={apiUrl}
+                  onBlocksChange={setSequenceBlocks}
+                  onSave={(name, description) => {
+                    console.log('Sequence info:', name, description);
+                  }}
+                  onCancel={() => {
+                    console.log('Sequence builder cancelled');
+                  }}
+                />
+              </>
+            )}
+          </div>
+          {/* Step 5: Optional Settings */}
+          <div style={{ 
+            marginBottom: '2rem', 
+            padding: '1.5rem', 
+            backgroundColor: 'var(--card-bg)', 
+            borderRadius: '12px', 
+            border: '2px solid var(--border-color)',
+            boxShadow: '0 2px 8px rgba(0,0,0,0.08)'
+          }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', marginBottom: '1.25rem' }}>
+              <div style={{ 
+                display: 'flex', 
+                alignItems: 'center', 
+                justifyContent: 'center',
+                width: '32px', 
+                height: '32px', 
+                borderRadius: '50%', 
+                backgroundColor: '#6c757d',
+                color: 'white',
+                fontWeight: 700,
+                fontSize: '1rem'
+              }}>5</div>
+              <h3 style={{ margin: 0, fontSize: '1.2rem', fontWeight: 600 }}>⚙️ Optional Settings</h3>
+            </div>
+            
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1.5rem' }}>
+              <div>
+                <label style={{ display: 'block', marginBottom: '0.5rem', fontSize: '0.95rem', fontWeight: 600, color: 'var(--text-color)' }}>
+                  Fallback Category
+                </label>
+                <select
+                  className="nx-select"
+                  value={scheduleForm.fallback_category_id || ''}
+                  onChange={(e) => setScheduleForm({...scheduleForm, fallback_category_id: e.target.value})}
+                  style={{ 
+                    padding: '0.75rem', 
+                    fontSize: '1rem',
+                    border: '2px solid var(--border-color)',
+                    borderRadius: '6px',
+                    width: '100%'
+                  }}
+                >
+                  <option value="">No Fallback</option>
+                  {categories.map(cat => (
+                    <option key={cat.id} value={cat.id}>{cat.name}</option>
+                  ))}
+                </select>
+                <p style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', margin: '0.25rem 0 0 0' }}>
+                  Used when no schedule is active
+                </p>
+              </div>
+              
+              <div>
+                <label style={{ display: 'block', marginBottom: '0.5rem', fontSize: '0.95rem', fontWeight: 600, color: 'var(--text-color)' }}>
+                  Calendar Color
+                </label>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+                  <input
+                    type="color"
+                    value={scheduleForm.color || '#3b82f6'}
+                    onChange={(e) => setScheduleForm({...scheduleForm, color: e.target.value})}
+                    style={{ 
+                      width: '60px', 
+                      height: '48px', 
+                      border: '2px solid var(--border-color)', 
+                      borderRadius: '6px', 
+                      cursor: 'pointer',
+                      padding: '4px'
+                    }}
+                  />
+                  <input
+                    className="nx-input"
+                    type="text"
+                    placeholder="#3b82f6"
+                    value={scheduleForm.color || ''}
+                    onChange={(e) => setScheduleForm({...scheduleForm, color: e.target.value})}
+                    style={{ 
+                      padding: '0.75rem', 
+                      flex: 1,
+                      fontFamily: 'monospace',
+                      fontSize: '0.95rem',
+                      border: '2px solid var(--border-color)',
+                      borderRadius: '6px'
+                    }}
+                  />
+                  {scheduleForm.color && (
+                    <button
+                      type="button"
+                      className="button"
+                      onClick={() => setScheduleForm({...scheduleForm, color: ''})}
+                      style={{ 
+                        padding: '0.75rem 1rem', 
+                        backgroundColor: '#dc3545',
+                        borderRadius: '6px',
+                        fontWeight: 600
+                      }}
+                    >
+                      Clear
+                    </button>
+                  )}
+                </div>
+                <p style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', margin: '0.25rem 0 0 0' }}>
+                  Custom color for calendar display
+                </p>
+              </div>
+            </div>
+          </div>
+          
+          {/* Submit Button */}
+          <div style={{ 
+            display: 'flex', 
+            justifyContent: 'flex-end', 
+            gap: '1rem',
+            paddingTop: '1rem',
+            borderTop: '2px solid var(--border-color)'
+          }}>
+            <button 
+              type="button" 
+              className="button"
+              onClick={() => {
+                setScheduleForm({
+                  name: '', type: 'monthly', start_date: '', end_date: '',
+                  category_id: '', shuffle: false, playlist: false, fallback_category_id: ''
+                });
+                setScheduleMode('simple');
+                setSequenceBlocks([]);
+                setWeekDays([]);
+                setMonthDays([]);
+                setTimeRange({ start: '', end: '' });
+              }}
+              style={{ 
+                padding: '1rem 2rem', 
+                backgroundColor: '#6c757d',
+                fontSize: '1.05rem',
+                fontWeight: 600,
+                borderRadius: '8px',
+                minWidth: '150px'
+              }}
+            >
+              Cancel
+            </button>
+            <button 
+              type="submit" 
+              className="button"
+              style={{ 
+                padding: '1rem 2rem', 
+                backgroundColor: 'var(--button-bg)',
+                fontSize: '1.05rem',
+                fontWeight: 600,
+                borderRadius: '8px',
+                minWidth: '200px',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                gap: '0.5rem'
+              }}
+            >
+              <span>
+                {editingSchedule 
+                  ? '💾 Update Schedule' 
+                  : scheduleMode === 'advanced' 
+                    ? '✅ Create Custom Schedule' 
+                    : '✅ Create Schedule'}
+              </span>
+            </button>
+          </div>
           {/* edit handled via modal */}
         </form>
       </div>
+    </div>
+  );
+
+  // Schedule List page (default view)
+  const renderScheduleListPage = () => (
+    <div>
+      {/* Quick Start Guide - Show only when no schedules exist */}
+      {schedules.length === 0 && (
+        <div style={{
+          marginBottom: '2rem',
+          padding: '2rem',
+          backgroundColor: 'var(--card-bg)',
+          borderRadius: '12px',
+          border: '2px solid var(--button-bg)',
+          boxShadow: '0 4px 12px rgba(0,0,0,0.1)'
+        }}>
+          <div style={{ textAlign: 'center', marginBottom: '1.5rem' }}>
+            <span style={{ fontSize: '3rem', marginBottom: '0.5rem', display: 'block' }}>🎬</span>
+            <h2 style={{ margin: '0 0 0.5rem 0', fontSize: '1.5rem', fontWeight: 700 }}>
+              Welcome to NeXroll Scheduling!
+            </h2>
+            <p style={{ color: 'var(--text-secondary)', fontSize: '1rem', margin: 0 }}>
+              Get started by creating your first schedule in just a few clicks
+            </p>
+          </div>
+
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1.5rem', marginBottom: '1.5rem' }}>
+            <div style={{
+              padding: '1.5rem',
+              backgroundColor: 'var(--bg-color)',
+              borderRadius: '8px',
+              border: '1px solid var(--border-color)'
+            }}>
+              <div style={{ fontSize: '2rem', marginBottom: '0.75rem' }}>📁</div>
+              <h3 style={{ margin: '0 0 0.5rem 0', fontSize: '1.1rem', fontWeight: 600 }}>
+                Simple Scheduling
+              </h3>
+              <p style={{ fontSize: '0.9rem', color: 'var(--text-secondary)', marginBottom: '1rem', lineHeight: '1.5' }}>
+                Perfect for beginners. Select a category and set when it should play. NeXroll handles the rest!
+              </p>
+              <button
+                onClick={() => {
+                  setScheduleMode('simple');
+                  setActiveTab('schedules/create');
+                }}
+                className="button"
+                style={{
+                  width: '100%',
+                  padding: '0.75rem',
+                  fontSize: '0.95rem',
+                  backgroundColor: '#28a745',
+                  borderColor: '#28a745'
+                }}
+              >
+                Create Simple Schedule →
+              </button>
+            </div>
+
+            <div style={{
+              padding: '1.5rem',
+              backgroundColor: 'var(--bg-color)',
+              borderRadius: '8px',
+              border: '1px solid var(--border-color)'
+            }}>
+              <div style={{ fontSize: '2rem', marginBottom: '0.75rem' }}>🎨</div>
+              <h3 style={{ margin: '0 0 0.5rem 0', fontSize: '1.1rem', fontWeight: 600 }}>
+                Custom Sequences
+              </h3>
+              <p style={{ fontSize: '0.9rem', color: 'var(--text-secondary)', marginBottom: '1rem', lineHeight: '1.5' }}>
+                For advanced users. Build custom playlists mixing categories and specific prerolls in any order.
+              </p>
+              <button
+                onClick={() => {
+                  setScheduleMode('advanced');
+                  setActiveTab('schedules/create');
+                }}
+                className="button"
+                style={{
+                  width: '100%',
+                  padding: '0.75rem',
+                  fontSize: '0.95rem'
+                }}
+              >
+                Build Custom Sequence →
+              </button>
+            </div>
+          </div>
+
+          <div style={{
+            padding: '1rem',
+            backgroundColor: 'rgba(59, 130, 246, 0.1)',
+            borderRadius: '8px',
+            border: '1px solid rgba(59, 130, 246, 0.3)'
+          }}>
+            <div style={{ display: 'flex', alignItems: 'flex-start', gap: '0.75rem' }}>
+              <span style={{ fontSize: '1.5rem' }}>💡</span>
+              <div>
+                <strong style={{ fontSize: '0.95rem' }}>Pro Tip:</strong>
+                <p style={{ margin: '0.25rem 0 0 0', fontSize: '0.875rem', color: 'var(--text-secondary)', lineHeight: '1.5' }}>
+                  Start with a simple schedule to get familiar, then explore the Sequence Builder for advanced customization. 
+                  You can always switch between modes later!
+                </p>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       {editingSchedule && (
         <Modal
@@ -4598,9 +6811,46 @@ services:
               name: '', type: 'monthly', start_date: '', end_date: '',
               category_id: '', shuffle: false, playlist: false, fallback_category_id: ''
             });
+            setScheduleMode('simple');
+            setSequenceBlocks([]);
+            setWeekDays([]);
+            setMonthDays([]);
+            setTimeRange({ start: '', end: '' });
           }}
         >
           <form onSubmit={handleUpdateSchedule}>
+            {/* Mode Toggle */}
+            <div style={{ marginBottom: '1.5rem', padding: '1rem', backgroundColor: 'var(--card-bg)', borderRadius: '0.5rem', border: '1px solid var(--border-color)' }}>
+              <label style={{ display: 'block', marginBottom: '0.75rem', fontWeight: 600, fontSize: '1rem' }}>Schedule Mode</label>
+              <div style={{ display: 'flex', gap: '1rem', marginBottom: '0.5rem' }}>
+                <label style={{ display: 'flex', alignItems: 'center', cursor: 'pointer', padding: '0.5rem 1rem', backgroundColor: scheduleMode === 'simple' ? 'var(--button-bg)' : 'var(--bg-color)', color: scheduleMode === 'simple' ? 'white' : 'var(--text-color)', borderRadius: '0.25rem', border: '2px solid var(--border-color)', transition: 'all 0.2s' }}>
+                  <input
+                    type="radio"
+                    value="simple"
+                    checked={scheduleMode === 'simple'}
+                    onChange={(e) => setScheduleMode(e.target.value)}
+                    style={{ marginRight: '0.5rem' }}
+                  />
+                  <span>Simple (Single Category)</span>
+                </label>
+                <label style={{ display: 'flex', alignItems: 'center', cursor: 'pointer', padding: '0.5rem 1rem', backgroundColor: scheduleMode === 'advanced' ? 'var(--button-bg)' : 'var(--bg-color)', color: scheduleMode === 'advanced' ? 'white' : 'var(--text-color)', borderRadius: '0.25rem', border: '2px solid var(--border-color)', transition: 'all 0.2s' }}>
+                  <input
+                    type="radio"
+                    value="advanced"
+                    checked={scheduleMode === 'advanced'}
+                    onChange={(e) => setScheduleMode(e.target.value)}
+                    style={{ marginRight: '0.5rem' }}
+                  />
+                  <span>Advanced (Sequence Builder)</span>
+                </label>
+              </div>
+              <p style={{ fontSize: '0.85rem', color: '#666', margin: 0 }}>
+                {scheduleMode === 'simple' 
+                  ? 'Select a single category with random or sequential playback.' 
+                  : 'Build a custom sequence with multiple categories and fixed prerolls.'}
+              </p>
+            </div>
+
             <div className="nx-form-grid">
               <div className="nx-field">
                 <label className="nx-label">Name</label>
@@ -4647,20 +6897,190 @@ services:
                   onChange={(e) => setScheduleForm({...scheduleForm, end_date: e.target.value})}
                 />
               </div>
-              <div className="nx-field">
-                <label className="nx-label">Category</label>
-                <select
-                  className="nx-select"
-                  value={scheduleForm.category_id}
-                  onChange={(e) => setScheduleForm({...scheduleForm, category_id: e.target.value})}
-                  required
-                >
-                  <option value="">Select Category</option>
-                  {categories.map(cat => (
-                    <option key={cat.id} value={cat.id}>{cat.name}</option>
-                  ))}
-                </select>
-              </div>
+
+              {/* Daily Schedule: Time Selector */}
+              {scheduleForm.type === 'daily' && (
+                <div className="nx-field nx-span-2" style={{ padding: '1rem', backgroundColor: 'var(--card-bg)', borderRadius: '0.5rem', border: '1px solid var(--border-color)' }}>
+                  <label className="nx-label" style={{ marginBottom: '0.75rem', fontWeight: 600 }}>Run At Time</label>
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
+                    <div>
+                      <label style={{ display: 'block', marginBottom: '0.5rem', fontSize: '0.9rem', color: '#666' }}>Start Time</label>
+                      <input
+                        type="time"
+                        className="nx-input"
+                        value={timeRange.start || ''}
+                        onChange={(e) => setTimeRange({...timeRange, start: e.target.value})}
+                        style={{ width: '100%' }}
+                      />
+                    </div>
+                    <div>
+                      <label style={{ display: 'block', marginBottom: '0.5rem', fontSize: '0.9rem', color: '#666' }}>End Time (Optional)</label>
+                      <input
+                        type="time"
+                        className="nx-input"
+                        value={timeRange.end || ''}
+                        onChange={(e) => setTimeRange({...timeRange, end: e.target.value})}
+                        style={{ width: '100%' }}
+                      />
+                    </div>
+                  </div>
+                  <p style={{ fontSize: '0.85rem', color: '#666', marginTop: '0.5rem', marginBottom: 0 }}>
+                    💡 Leave end time empty to run at a specific time, or set both to create a time window
+                  </p>
+                  {!timeRange.start && (
+                    <p style={{ fontSize: '0.85rem', color: '#dc3545', marginTop: '0.5rem', marginBottom: 0 }}>
+                      ⚠️ Please select at least a start time
+                    </p>
+                  )}
+                </div>
+              )}
+
+              {/* Weekly Schedule: Day of Week Selector */}
+              {scheduleForm.type === 'weekly' && (
+                <div className="nx-field nx-span-2">
+                  <label className="nx-label">Repeat On</label>
+                  <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap', marginTop: '0.5rem' }}>
+                    {['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'].map((day) => {
+                      const dayLower = day.toLowerCase();
+                      const isSelected = weekDays.includes(dayLower);
+                      return (
+                        <label
+                          key={day}
+                          style={{
+                            display: 'flex',
+                            alignItems: 'center',
+                            padding: '0.5rem 0.75rem',
+                            backgroundColor: isSelected ? 'var(--button-bg)' : 'var(--bg-color)',
+                            color: isSelected ? 'white' : 'var(--text-color)',
+                            borderRadius: '0.25rem',
+                            border: '2px solid ' + (isSelected ? 'var(--button-bg)' : 'var(--border-color)'),
+                            cursor: 'pointer',
+                            fontSize: '0.9rem',
+                            transition: 'all 0.2s',
+                            userSelect: 'none'
+                          }}
+                        >
+                          <input
+                            type="checkbox"
+                            checked={isSelected}
+                            onChange={(e) => {
+                              if (e.target.checked) {
+                                setWeekDays([...weekDays, dayLower]);
+                              } else {
+                                setWeekDays(weekDays.filter(d => d !== dayLower));
+                              }
+                            }}
+                            style={{ marginRight: '0.5rem' }}
+                          />
+                          <span>{day.substring(0, 3)}</span>
+                        </label>
+                      );
+                    })}
+                  </div>
+                  {weekDays.length === 0 && (
+                    <p style={{ fontSize: '0.85rem', color: '#dc3545', marginTop: '0.5rem', marginBottom: 0 }}>
+                      ⚠️ Select at least one day
+                    </p>
+                  )}
+                </div>
+              )}
+
+              {/* Monthly Schedule: Day of Month Selector */}
+              {scheduleForm.type === 'monthly' && (
+                <div className="nx-field nx-span-2">
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem' }}>
+                    <label className="nx-label" style={{ margin: 0 }}>On Day(s) of Month</label>
+                    <div style={{ display: 'flex', gap: '0.5rem' }}>
+                      <button
+                        type="button"
+                        onClick={() => setMonthDays(Array.from({length: 31}, (_, i) => i + 1))}
+                        style={{
+                          padding: '0.35rem 0.75rem',
+                          fontSize: '0.8rem',
+                          backgroundColor: 'var(--button-bg)',
+                          color: 'white',
+                          border: 'none',
+                          borderRadius: '0.25rem',
+                          cursor: 'pointer',
+                          fontWeight: 500
+                        }}
+                      >
+                        Select All
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setMonthDays([])}
+                        style={{
+                          padding: '0.35rem 0.75rem',
+                          fontSize: '0.8rem',
+                          backgroundColor: '#6c757d',
+                          color: 'white',
+                          border: 'none',
+                          borderRadius: '0.25rem',
+                          cursor: 'pointer',
+                          fontWeight: 500
+                        }}
+                      >
+                        Deselect All
+                      </button>
+                    </div>
+                  </div>
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', gap: '0.5rem', marginTop: '0.5rem' }}>
+                    {Array.from({length: 31}, (_, i) => i + 1).map((day) => {
+                      const isSelected = monthDays.includes(day);
+                      return (
+                        <button
+                          key={day}
+                          type="button"
+                          onClick={() => {
+                            if (isSelected) {
+                              setMonthDays(monthDays.filter(d => d !== day));
+                            } else {
+                              setMonthDays([...monthDays, day].sort((a, b) => a - b));
+                            }
+                          }}
+                          style={{
+                            padding: '0.5rem',
+                            backgroundColor: isSelected ? 'var(--button-bg)' : 'var(--bg-color)',
+                            color: isSelected ? 'white' : 'var(--text-color)',
+                            border: '2px solid ' + (isSelected ? 'var(--button-bg)' : 'var(--border-color)'),
+                            borderRadius: '0.25rem',
+                            cursor: 'pointer',
+                            fontSize: '0.85rem',
+                            fontWeight: isSelected ? 600 : 400,
+                            transition: 'all 0.2s'
+                          }}
+                        >
+                          {day}
+                        </button>
+                      );
+                    })}
+                  </div>
+                  {monthDays.length === 0 && (
+                    <p style={{ fontSize: '0.85rem', color: '#dc3545', marginTop: '0.5rem', marginBottom: 0 }}>
+                      ⚠️ Select at least one day
+                    </p>
+                  )}
+                </div>
+              )}
+              
+              {/* Simple Mode: Category Selection */}
+              {scheduleMode === 'simple' && (
+                <div className="nx-field">
+                  <label className="nx-label">Category</label>
+                  <select
+                    className="nx-select"
+                    value={scheduleForm.category_id}
+                    onChange={(e) => setScheduleForm({...scheduleForm, category_id: e.target.value})}
+                    required
+                  >
+                    <option value="">Select Category</option>
+                    {categories.map(cat => (
+                      <option key={cat.id} value={cat.id}>{cat.name}</option>
+                    ))}
+                  </select>
+                </div>
+              )}
               <div className="nx-field">
                 <label className="nx-label">Fallback Category</label>
                 <select
@@ -4674,21 +7094,45 @@ services:
                   ))}
                 </select>
               </div>
-              <div className="nx-field nx-span-2">
-                <label className="nx-label">Playback Mode</label>
-                <select
-                  className="nx-select"
-                  value={scheduleForm.shuffle ? 'random' : 'sequential'}
-                  onChange={(e) => setScheduleForm({
-                    ...scheduleForm,
-                    shuffle: e.target.value === 'random',
-                    playlist: e.target.value === 'sequential'
-                  })}
-                >
-                  <option value="random">Random</option>
-                  <option value="sequential">Sequential</option>
-                </select>
-              </div>
+              
+              {/* Simple Mode: Playback Mode */}
+              {scheduleMode === 'simple' && (
+                <div className="nx-field nx-span-2">
+                  <label className="nx-label">Playback Mode</label>
+                  <select
+                    className="nx-select"
+                    value={scheduleForm.shuffle ? 'random' : 'sequential'}
+                    onChange={(e) => setScheduleForm({
+                      ...scheduleForm,
+                      shuffle: e.target.value === 'random',
+                      playlist: e.target.value === 'sequential'
+                    })}
+                  >
+                    <option value="random">Random</option>
+                    <option value="sequential">Sequential</option>
+                  </select>
+                </div>
+              )}
+
+              {/* Advanced Mode: Sequence Builder */}
+              {scheduleMode === 'advanced' && (
+                <div className="nx-field nx-span-2" style={{ marginTop: '1rem' }}>
+                  <SequenceBuilder
+                    initialSequence={sequenceBlocks}
+                    categories={categories}
+                    prerolls={prerolls}
+                    scheduleId={editingSchedule?.id || null}
+                    apiUrl={apiUrl}
+                    onSave={(blocks) => {
+                      setSequenceBlocks(blocks);
+                      console.log('Sequence updated:', blocks);
+                    }}
+                    onCancel={() => {
+                      console.log('Sequence builder cancelled');
+                    }}
+                  />
+                </div>
+              )}
               <div className="nx-field nx-span-2">
                 <label className="nx-label">Calendar Color (Optional)</label>
                 <p style={{ fontSize: '0.85rem', color: '#666', marginBottom: '0.5rem' }}>
@@ -4733,6 +7177,11 @@ services:
                     name: '', type: 'monthly', start_date: '', end_date: '',
                     category_id: '', shuffle: false, playlist: false, fallback_category_id: '', color: ''
                   });
+                  setScheduleMode('simple');
+                  setSequenceBlocks([]);
+                  setWeekDays([]);
+                  setMonthDays([]);
+                  setTimeRange({ start: '', end: '' });
                 }}
               >
                 Cancel
@@ -4743,70 +7192,707 @@ services:
       )}
 
       <div className="card">
-        <h2>Active Schedules</h2>
-        <div style={{ display: 'grid', gap: '1rem' }}>
-          {schedules.map(schedule => {
-            const isCurrentlyActive = activeCategory && schedule.category_id === activeCategory.id;
-            return (
-              <div 
-                key={schedule.id} 
-                style={{ 
-                  border: isCurrentlyActive ? '2px solid #4CAF50' : '1px solid var(--border-color)', 
-                  padding: '1rem', 
-                  borderRadius: '0.25rem', 
-                  backgroundColor: isCurrentlyActive ? 'rgba(76, 175, 80, 0.1)' : 'var(--card-bg)',
-                  boxShadow: isCurrentlyActive ? '0 0 10px rgba(76, 175, 80, 0.3)' : 'none',
-                  position: 'relative'
+        <div style={{ 
+          display: 'flex', 
+          justifyContent: 'space-between', 
+          alignItems: 'center', 
+          marginBottom: '1.5rem',
+          paddingBottom: '1rem',
+          borderBottom: '2px solid var(--border-color)'
+        }}>
+          <h2 style={{ margin: 0 }}>Active Schedules</h2>
+          <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'center' }}>
+            {/* View Mode Toggle */}
+            <div style={{ 
+              display: 'flex', 
+              gap: '0.25rem', 
+              backgroundColor: 'var(--bg-color)', 
+              padding: '0.25rem', 
+              borderRadius: '0.375rem',
+              border: '1px solid var(--border-color)'
+            }}>
+              <button
+                onClick={() => setScheduleViewMode('compact')}
+                style={{
+                  padding: '0.5rem 1rem',
+                  backgroundColor: scheduleViewMode === 'compact' ? 'var(--button-bg)' : 'transparent',
+                  color: scheduleViewMode === 'compact' ? 'white' : 'var(--text-color)',
+                  border: 'none',
+                  borderRadius: '0.25rem',
+                  fontSize: '0.875rem',
+                  fontWeight: 600,
+                  cursor: 'pointer',
+                  transition: 'all 0.2s',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '0.25rem'
                 }}
               >
-                {isCurrentlyActive && (
-                  <div style={{
-                    position: 'absolute',
-                    top: '0.5rem',
-                    right: '0.5rem',
-                    backgroundColor: '#4CAF50',
-                    color: 'white',
-                    padding: '0.25rem 0.5rem',
-                    borderRadius: '0.25rem',
-                    fontSize: '0.75rem',
-                    fontWeight: 'bold',
-                    textTransform: 'uppercase'
-                  }}>
-                    Currently Running
+                📋 Compact
+              </button>
+              <button
+                onClick={() => setScheduleViewMode('detailed')}
+                style={{
+                  padding: '0.5rem 1rem',
+                  backgroundColor: scheduleViewMode === 'detailed' ? 'var(--button-bg)' : 'transparent',
+                  color: scheduleViewMode === 'detailed' ? 'white' : 'var(--text-color)',
+                  border: 'none',
+                  borderRadius: '0.25rem',
+                  fontSize: '0.875rem',
+                  fontWeight: 600,
+                  cursor: 'pointer',
+                  transition: 'all 0.2s',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '0.25rem'
+                }}
+              >
+                📝 Detailed
+              </button>
+            </div>
+            <span style={{ color: 'var(--text-secondary)', fontSize: '0.9rem' }}>
+              {schedules.length} schedule{schedules.length !== 1 ? 's' : ''}
+            </span>
+          </div>
+        </div>
+
+        {/* Search and Filter */}
+        <div style={{ 
+          display: 'grid', 
+          gridTemplateColumns: '2fr 1fr', 
+          gap: '1rem', 
+          marginBottom: '1.5rem'
+        }}>
+          <div>
+            <input
+              type="text"
+              placeholder="🔍 Search schedules by name..."
+              value={scheduleSearchQuery}
+              onChange={(e) => {
+                setScheduleSearchQuery(e.target.value);
+                setScheduleCurrentPage(1); // Reset to first page on search
+              }}
+              style={{
+                width: '70%',
+                padding: '0.75rem 1rem',
+                fontSize: '0.95rem',
+                border: '2px solid var(--border-color)',
+                borderRadius: '0.5rem',
+                backgroundColor: 'var(--bg-color)',
+                color: 'var(--text-color)'
+              }}
+            />
+          </div>
+          <div>
+            <select
+              value={scheduleFilterType}
+              onChange={(e) => {
+                setScheduleFilterType(e.target.value);
+                setScheduleCurrentPage(1); // Reset to first page on filter change
+              }}
+              style={{
+                width: '100%',
+                padding: '0.75rem 1rem',
+                fontSize: '0.95rem',
+                border: '2px solid var(--border-color)',
+                borderRadius: '0.5rem',
+                backgroundColor: 'var(--bg-color)',
+                color: 'var(--text-color)',
+                cursor: 'pointer'
+              }}
+            >
+              <option value="all">All Types</option>
+              <option value="daily">📅 Daily Only</option>
+              <option value="weekly">📆 Weekly Only</option>
+              <option value="monthly">🗓️ Monthly Only</option>
+              <option value="yearly">📋 Yearly Only</option>
+              <option value="holiday">🎉 Holiday Only</option>
+              <option value="custom">⚙️ Custom Only</option>
+            </select>
+          </div>
+        </div>
+
+        <div style={{ display: 'grid', gap: '1rem' }}>
+          {(() => {
+            // Filter schedules based on search query and filter type
+            let filteredSchedules = schedules.filter(schedule => {
+              const matchesSearch = schedule.name.toLowerCase().includes(scheduleSearchQuery.toLowerCase());
+              const matchesType = scheduleFilterType === 'all' || schedule.type === scheduleFilterType;
+              return matchesSearch && matchesType;
+            });
+
+            // Calculate pagination
+            const totalPages = Math.ceil(filteredSchedules.length / schedulesPerPage);
+            const startIndex = (scheduleCurrentPage - 1) * schedulesPerPage;
+            const endIndex = startIndex + schedulesPerPage;
+            const paginatedSchedules = filteredSchedules.slice(startIndex, endIndex);
+
+            // Show message if no schedules found
+            if (filteredSchedules.length === 0) {
+              return (
+                <div style={{ 
+                  textAlign: 'center', 
+                  padding: '3rem', 
+                  color: 'var(--text-secondary)',
+                  backgroundColor: 'var(--bg-color)',
+                  borderRadius: '0.5rem',
+                  border: '2px dashed var(--border-color)'
+                }}>
+                  <div style={{ fontSize: '3rem', marginBottom: '1rem' }}>📭</div>
+                  <div style={{ fontSize: '1.1rem', fontWeight: 600, marginBottom: '0.5rem' }}>
+                    No schedules found
                   </div>
-                )}
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '0.5rem', marginTop: isCurrentlyActive ? '1.5rem' : '0' }}>
-                  <h3 style={{ margin: 0 }}>{schedule.name}</h3>
-                  <div style={{ display: 'flex', gap: '0.5rem' }}>
+                  <div style={{ fontSize: '0.9rem' }}>
+                    {scheduleSearchQuery ? `Try adjusting your search or filter` : `Create your first schedule above`}
+                  </div>
+                </div>
+              );
+            }
+
+            return (
+              <>
+                {paginatedSchedules.map(schedule => {
+            // Check if schedule is currently active using server-determined IDs
+            // This ensures accuracy since the server knows exactly which schedules are active
+            const isCurrentlyActive = activeScheduleIds.includes(schedule.id);
+            
+            const hasSequence = schedule.sequence && schedule.sequence.trim();
+            const scheduleMode = hasSequence ? 'sequence' : 'simple';
+            
+            // Parse sequence to count blocks
+            let sequenceBlockCount = 0;
+            if (hasSequence) {
+              try {
+                const parsed = JSON.parse(schedule.sequence);
+                sequenceBlockCount = Array.isArray(parsed) ? parsed.length : 0;
+              } catch (e) {
+                sequenceBlockCount = 0;
+              }
+            }
+
+            // Parse recurrence pattern for display
+            let recurrenceText = '';
+            if (schedule.recurrence_pattern) {
+              try {
+                const pattern = JSON.parse(schedule.recurrence_pattern);
+                if (pattern.timeRange) {
+                  const formatTime = (time) => {
+                    if (!time) return '';
+                    const [hours, minutes] = time.split(':');
+                    const hour = parseInt(hours);
+                    const ampm = hour >= 12 ? 'PM' : 'AM';
+                    const displayHour = hour % 12 || 12;
+                    return `${displayHour}:${minutes} ${ampm}`;
+                  };
+                  if (pattern.timeRange.start && pattern.timeRange.end) {
+                    recurrenceText = `Time: ${formatTime(pattern.timeRange.start)} - ${formatTime(pattern.timeRange.end)}`;
+                  } else if (pattern.timeRange.start) {
+                    recurrenceText = `Time: ${formatTime(pattern.timeRange.start)}`;
+                  }
+                }
+                if (pattern.weekDays && pattern.weekDays.length > 0) {
+                  const days = pattern.weekDays.map(d => d.charAt(0).toUpperCase() + d.slice(1, 3)).join(', ');
+                  recurrenceText = `Repeats: ${days}`;
+                }
+                if (pattern.monthDays && pattern.monthDays.length > 0) {
+                  const days = pattern.monthDays.join(', ');
+                  recurrenceText = `Days: ${days}`;
+                }
+              } catch (e) {
+                recurrenceText = '';
+              }
+            }
+
+            // Render Compact or Detailed View
+            if (scheduleViewMode === 'compact') {
+              return (
+                <div 
+                  key={schedule.id} 
+                  style={{ 
+                    border: isCurrentlyActive ? '2px solid #4CAF50' : '1px solid var(--border-color)', 
+                    padding: '0.75rem 1rem', 
+                    borderRadius: '0.375rem', 
+                    backgroundColor: isCurrentlyActive ? 'rgba(76, 175, 80, 0.1)' : 'var(--card-bg)',
+                    boxShadow: isCurrentlyActive ? '0 2px 8px rgba(76, 175, 80, 0.15)' : 'none',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'space-between',
+                    gap: '1rem',
+                    transition: 'all 0.2s ease'
+                  }}
+                >
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '1rem', flex: 1, minWidth: 0 }}>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem', flex: 1, minWidth: 0 }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
+                        <h4 style={{ margin: 0, fontSize: '1rem', fontWeight: 600, color: 'var(--text-color)' }}>
+                          {schedule.name}
+                        </h4>
+                        {isCurrentlyActive && (
+                          <span style={{
+                            backgroundColor: '#4CAF50',
+                            color: 'white',
+                            padding: '0.15rem 0.5rem',
+                            borderRadius: '0.75rem',
+                            fontSize: '0.7rem',
+                            fontWeight: 600,
+                            textTransform: 'uppercase'
+                          }}>
+                            ● Active
+                          </span>
+                        )}
+                      </div>
+                      <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap', alignItems: 'center', fontSize: '0.75rem' }}>
+                        <span style={{
+                          backgroundColor: scheduleMode === 'sequence' ? '#3b82f6' : '#6366f1',
+                          color: 'white',
+                          padding: '0.15rem 0.5rem',
+                          borderRadius: '0.25rem',
+                          fontWeight: 600
+                        }}>
+                          {scheduleMode === 'sequence' ? '🎬' : '📁'} {scheduleMode === 'sequence' ? `${sequenceBlockCount} blocks` : 'Simple'}
+                        </span>
+                        <span style={{
+                          color: 'var(--text-secondary)',
+                          fontWeight: 500
+                        }}>
+                          📅 {schedule.type.charAt(0).toUpperCase() + schedule.type.slice(1)}
+                        </span>
+                        {recurrenceText && (
+                          <span style={{ color: '#3b82f6', fontWeight: 500 }}>{recurrenceText}</span>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                  
+                  <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+                    <label 
+                      className="nx-rockerswitch" 
+                      title={schedule.is_active ? 'Disable schedule' : 'Enable schedule'}
+                      style={{ margin: 0 }}
+                      key={`toggle-compact-${schedule.id}-${schedule.is_active}`}
+                    >
+                      <input
+                        type="checkbox"
+                        checked={schedule.is_active}
+                        onChange={() => handleToggleSchedule(schedule, 'compact view')}
+                        aria-label={schedule.is_active ? 'Disable schedule' : 'Enable schedule'}
+                      />
+                      <span className="nx-rockerswitch-slider"></span>
+                    </label>
                     <button
                       onClick={() => handleEditSchedule(schedule)}
-                      className="nx-iconbtn"
+                      style={{
+                        padding: '0.5rem 0.75rem',
+                        backgroundColor: 'var(--button-bg)',
+                        color: 'white',
+                        border: 'none',
+                        borderRadius: '0.25rem',
+                        fontSize: '0.8rem',
+                        fontWeight: 600,
+                        cursor: 'pointer',
+                        whiteSpace: 'nowrap'
+                      }}
                     >
                       ✏️ Edit
                     </button>
                     <button
                       onClick={() => handleDeleteSchedule(schedule.id)}
-                      className="nx-iconbtn nx-iconbtn--danger"
+                      style={{
+                        padding: '0.5rem 0.75rem',
+                        backgroundColor: '#dc3545',
+                        color: 'white',
+                        border: 'none',
+                        borderRadius: '0.25rem',
+                        fontSize: '0.8rem',
+                        fontWeight: 600,
+                        cursor: 'pointer'
+                      }}
                     >
-                      🗑️ Delete
+                      🗑️
                     </button>
                   </div>
                 </div>
-                <p>Type: {schedule.type} | Category: {schedule.category?.name || 'N/A'}</p>
-                <p>Status: {schedule.is_active ? 'Active' : 'Inactive'}</p>
-                <p>Start: {toLocalDisplay(schedule.start_date)}{schedule.end_date ? ` | End: ${toLocalDisplay(schedule.end_date)}` : ''}</p>
-                <p>Shuffle: {schedule.shuffle ? 'Yes' : 'No'} | Playlist: {schedule.playlist ? 'Yes' : 'No'}</p>
-                {schedule.next_run && <p>Next Run: {toLocalDisplay(schedule.next_run)}</p>}
-                {schedule.last_run && <p>Last Run: {toLocalDisplay(schedule.last_run)}</p>}
+              );
+            }
+
+            // Detailed View
+            return (
+              <div 
+                key={schedule.id} 
+                style={{ 
+                  border: isCurrentlyActive ? '2px solid #4CAF50' : '1px solid var(--border-color)', 
+                  padding: '1.25rem', 
+                  borderRadius: '0.5rem', 
+                  backgroundColor: isCurrentlyActive ? 'rgba(76, 175, 80, 0.1)' : 'var(--card-bg)',
+                  boxShadow: isCurrentlyActive ? '0 4px 12px rgba(76, 175, 80, 0.2)' : '0 2px 4px rgba(0,0,0,0.1)',
+                  position: 'relative',
+                  transition: 'all 0.2s ease'
+                }}
+              >
+                {/* Status Badge - Top Right */}
+                <div style={{ position: 'absolute', top: '1rem', right: '1rem', display: 'flex', gap: '0.5rem', flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+                  {isCurrentlyActive && (
+                    <span style={{
+                      backgroundColor: '#4CAF50',
+                      color: 'white',
+                      padding: '0.35rem 0.75rem',
+                      borderRadius: '1rem',
+                      fontSize: '0.75rem',
+                      fontWeight: 600,
+                      textTransform: 'uppercase',
+                      letterSpacing: '0.5px',
+                      boxShadow: '0 2px 4px rgba(0,0,0,0.2)'
+                    }}>
+                      ● Active Now
+                    </span>
+                  )}
+                  {!schedule.is_active && (
+                    <span style={{
+                      backgroundColor: '#999',
+                      color: 'white',
+                      padding: '0.35rem 0.75rem',
+                      borderRadius: '1rem',
+                      fontSize: '0.75rem',
+                      fontWeight: 600,
+                      textTransform: 'uppercase',
+                      letterSpacing: '0.5px'
+                    }}>
+                      Paused
+                    </span>
+                  )}
+                </div>
+
+                {/* Title & Badges */}
+                <div style={{ marginBottom: '1rem', marginRight: '140px' }}>
+                  <h3 style={{ margin: '0 0 0.75rem 0', fontSize: '1.3rem', fontWeight: 600, color: 'var(--text-color)' }}>
+                    {schedule.name}
+                  </h3>
+                  
+                  {/* Badge Row */}
+                  <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap', alignItems: 'center' }}>
+                    {/* Mode Badge */}
+                    <span style={{
+                      backgroundColor: scheduleMode === 'sequence' ? '#3b82f6' : '#6366f1',
+                      color: 'white',
+                      padding: '0.25rem 0.75rem',
+                      borderRadius: '0.25rem',
+                      fontSize: '0.8rem',
+                      fontWeight: 600,
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      gap: '0.25rem'
+                    }}>
+                      {scheduleMode === 'sequence' ? '🎬' : '📁'} {scheduleMode === 'sequence' ? `Sequence (${sequenceBlockCount} blocks)` : 'Simple'}
+                    </span>
+
+                    {/* Type Badge */}
+                    <span style={{
+                      backgroundColor: 'var(--card-bg)',
+                      color: 'var(--text-color)',
+                      padding: '0.25rem 0.75rem',
+                      borderRadius: '0.25rem',
+                      fontSize: '0.8rem',
+                      fontWeight: 500,
+                      border: '1px solid var(--border-color)'
+                    }}>
+                      📅 {schedule.type.charAt(0).toUpperCase() + schedule.type.slice(1)}
+                    </span>
+
+                    {/* Category Badge - Only for Simple Mode */}
+                    {scheduleMode === 'simple' && schedule.category && (
+                      <span style={{
+                        backgroundColor: schedule.color || schedule.category.color || '#6366f1',
+                        color: 'white',
+                        padding: '0.25rem 0.75rem',
+                        borderRadius: '0.25rem',
+                        fontSize: '0.8rem',
+                        fontWeight: 500
+                      }}>
+                        {schedule.category.name}
+                      </span>
+                    )}
+
+                    {/* Playback Mode Badge */}
+                    {schedule.shuffle && (
+                      <span style={{
+                        backgroundColor: '#f59e0b',
+                        color: 'white',
+                        padding: '0.25rem 0.75rem',
+                        borderRadius: '0.25rem',
+                        fontSize: '0.8rem',
+                        fontWeight: 500
+                      }}>
+                        🎲 Random
+                      </span>
+                    )}
+                    {schedule.playlist && (
+                      <span style={{
+                        backgroundColor: '#8b5cf6',
+                        color: 'white',
+                        padding: '0.25rem 0.75rem',
+                        borderRadius: '0.25rem',
+                        fontSize: '0.8rem',
+                        fontWeight: 500
+                      }}>
+                        🎵 Sequential
+                      </span>
+                    )}
+                  </div>
+                </div>
+
+                {/* Schedule Details */}
+                <div style={{ 
+                  display: 'grid', 
+                  gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', 
+                  gap: '0.75rem', 
+                  marginBottom: '1rem',
+                  fontSize: '0.9rem',
+                  color: '#666'
+                }}>
+                  <div>
+                    <div style={{ fontWeight: 600, color: 'var(--text-color)', marginBottom: '0.25rem' }}>📆 Schedule</div>
+                    <div>Start: {new Date(schedule.start_date).toLocaleDateString()} {new Date(schedule.start_date).toLocaleTimeString([], {hour: '2-digit', minute: '2-digit'})}</div>
+                    {schedule.end_date && (
+                      <div>End: {new Date(schedule.end_date).toLocaleDateString()} {new Date(schedule.end_date).toLocaleTimeString([], {hour: '2-digit', minute: '2-digit'})}</div>
+                    )}
+                    {recurrenceText && (
+                      <div style={{ color: '#3b82f6', fontWeight: 500, marginTop: '0.25rem' }}>{recurrenceText}</div>
+                    )}
+                  </div>
+
+                  {schedule.next_run && (
+                    <div>
+                      <div style={{ fontWeight: 600, color: 'var(--text-color)', marginBottom: '0.25rem' }}>⏰ Next Run</div>
+                      <div>{new Date(schedule.next_run).toLocaleDateString()} {new Date(schedule.next_run).toLocaleTimeString([], {hour: '2-digit', minute: '2-digit'})}</div>
+                    </div>
+                  )}
+
+                  {schedule.last_run && (
+                    <div>
+                      <div style={{ fontWeight: 600, color: 'var(--text-color)', marginBottom: '0.25rem' }}>✓ Last Run</div>
+                      <div>{new Date(schedule.last_run).toLocaleDateString()} {new Date(schedule.last_run).toLocaleTimeString([], {hour: '2-digit', minute: '2-digit'})}</div>
+                    </div>
+                  )}
+
+                  {schedule.fallback_category && (
+                    <div>
+                      <div style={{ fontWeight: 600, color: 'var(--text-color)', marginBottom: '0.25rem' }}>🔄 Fallback</div>
+                      <div>{schedule.fallback_category.name}</div>
+                    </div>
+                  )}
+                </div>
+
+                {/* Action Buttons */}
+                <div style={{ display: 'flex', gap: '0.5rem', borderTop: '1px solid var(--border-color)', paddingTop: '1rem', alignItems: 'center' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                    <label 
+                      key={`toggle-detailed-${schedule.id}-${schedule.is_active}`}
+                      className="nx-rockerswitch" 
+                      title={schedule.is_active ? 'Disable schedule' : 'Enable schedule'}
+                      style={{ margin: 0 }}
+                    >
+                      <input
+                        type="checkbox"
+                        checked={schedule.is_active}
+                        onChange={() => handleToggleSchedule(schedule, 'detailed view')}
+                        aria-label={schedule.is_active ? 'Disable schedule' : 'Enable schedule'}
+                      />
+                      <span className="nx-rockerswitch-slider"></span>
+                    </label>
+                    <span style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', fontWeight: 500 }}>
+                      {schedule.is_active ? 'Enabled' : 'Disabled'}
+                    </span>
+                  </div>
+                  <button
+                    onClick={() => handleEditSchedule(schedule)}
+                    style={{
+                      flex: 1,
+                      padding: '0.6rem 1rem',
+                      backgroundColor: 'var(--button-bg)',
+                      color: 'white',
+                      border: 'none',
+                      borderRadius: '0.25rem',
+                      fontSize: '0.9rem',
+                      fontWeight: 500,
+                      cursor: 'pointer',
+                      transition: 'all 0.2s',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      gap: '0.5rem'
+                    }}
+                    onMouseEnter={(e) => e.currentTarget.style.opacity = '0.9'}
+                    onMouseLeave={(e) => e.currentTarget.style.opacity = '1'}
+                  >
+                    ✏️ Edit Schedule
+                  </button>
+                  <button
+                    onClick={() => handleDeleteSchedule(schedule.id)}
+                    style={{
+                      padding: '0.6rem 1rem',
+                      backgroundColor: '#dc3545',
+                      color: 'white',
+                      border: 'none',
+                      borderRadius: '0.25rem',
+                      fontSize: '0.9rem',
+                      fontWeight: 500,
+                      cursor: 'pointer',
+                      transition: 'all 0.2s',
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '0.5rem'
+                    }}
+                    onMouseEnter={(e) => e.currentTarget.style.opacity = '0.9'}
+                    onMouseLeave={(e) => e.currentTarget.style.opacity = '1'}
+                  >
+                    🗑️ Delete
+                  </button>
+                </div>
               </div>
             );
           })}
+
+                {/* Pagination Controls */}
+                {totalPages > 1 && (
+                  <div style={{ 
+                    display: 'flex', 
+                    justifyContent: 'center', 
+                    alignItems: 'center', 
+                    gap: '0.5rem',
+                    marginTop: '2rem',
+                    paddingTop: '1.5rem',
+                    borderTop: '1px solid var(--border-color)'
+                  }}>
+                    <button
+                      onClick={() => setScheduleCurrentPage(p => Math.max(1, p - 1))}
+                      disabled={scheduleCurrentPage === 1}
+                      style={{
+                        padding: '0.5rem 1rem',
+                        backgroundColor: scheduleCurrentPage === 1 ? 'var(--bg-color)' : 'var(--button-bg)',
+                        color: scheduleCurrentPage === 1 ? 'var(--text-secondary)' : 'white',
+                        border: '1px solid var(--border-color)',
+                        borderRadius: '0.375rem',
+                        fontSize: '0.9rem',
+                        fontWeight: 600,
+                        cursor: scheduleCurrentPage === 1 ? 'not-allowed' : 'pointer',
+                        opacity: scheduleCurrentPage === 1 ? 0.5 : 1
+                      }}
+                    >
+                      ← Previous
+                    </button>
+                    
+                    <div style={{ display: 'flex', gap: '0.25rem' }}>
+                      {Array.from({ length: totalPages }, (_, i) => i + 1).map(page => (
+                        <button
+                          key={page}
+                          onClick={() => setScheduleCurrentPage(page)}
+                          style={{
+                            padding: '0.5rem 0.75rem',
+                            backgroundColor: scheduleCurrentPage === page ? 'var(--button-bg)' : 'var(--bg-color)',
+                            color: scheduleCurrentPage === page ? 'white' : 'var(--text-color)',
+                            border: '1px solid var(--border-color)',
+                            borderRadius: '0.375rem',
+                            fontSize: '0.9rem',
+                            fontWeight: 600,
+                            cursor: 'pointer',
+                            minWidth: '40px'
+                          }}
+                        >
+                          {page}
+                        </button>
+                      ))}
+                    </div>
+                    
+                    <button
+                      onClick={() => setScheduleCurrentPage(p => Math.min(totalPages, p + 1))}
+                      disabled={scheduleCurrentPage === totalPages}
+                      style={{
+                        padding: '0.5rem 1rem',
+                        backgroundColor: scheduleCurrentPage === totalPages ? 'var(--bg-color)' : 'var(--button-bg)',
+                        color: scheduleCurrentPage === totalPages ? 'var(--text-secondary)' : 'white',
+                        border: '1px solid var(--border-color)',
+                        borderRadius: '0.375rem',
+                        fontSize: '0.9rem',
+                        fontWeight: 600,
+                        cursor: scheduleCurrentPage === totalPages ? 'not-allowed' : 'pointer',
+                        opacity: scheduleCurrentPage === totalPages ? 0.5 : 1
+                      }}
+                    >
+                      Next →
+                    </button>
+                    
+                    <div style={{ 
+                      marginLeft: '1rem', 
+                      fontSize: '0.9rem', 
+                      color: 'var(--text-secondary)',
+                      fontWeight: 500
+                    }}>
+                      Page {scheduleCurrentPage} of {totalPages} ({filteredSchedules.length} total)
+                    </div>
+                  </div>
+                )}
+              </>
+            );
+          })()}
         </div>
       </div>
     </div>
   );
 
-  const [newCategory, setNewCategory] = useState({ name: '', description: '', plex_mode: 'shuffle' });
+  // Main renderSchedules with routing logic
+  const renderSchedules = () => {
+    // Route based on activeTab
+    if (activeTab === 'schedules/create') {
+      return (
+        <div>
+          <h1 className="header">Schedule Management</h1>
+          {renderScheduleSubNav()}
+          {renderCreateSchedulePage()}
+        </div>
+      );
+    }
+
+    if (activeTab === 'schedules/calendar') {
+      return (
+        <div>
+          <h1 className="header">Schedule Management</h1>
+          {renderScheduleSubNav()}
+          {renderCalendarPage()}
+        </div>
+      );
+    }
+
+    if (activeTab === 'schedules/builder') {
+      return (
+        <div>
+          <h1 className="header">Schedule Management</h1>
+          {renderScheduleSubNav()}
+          {renderSequenceBuilder()}
+        </div>
+      );
+    }
+
+    if (activeTab === 'schedules/library') {
+      return (
+        <div>
+          <h1 className="header">Schedule Management</h1>
+          {renderScheduleSubNav()}
+          {renderSequenceLibrary()}
+        </div>
+      );
+    }
+
+    // Default: Schedule List
+    return (
+      <div>
+        <h1 className="header">Schedule Management</h1>
+        {renderScheduleSubNav()}
+        {renderScheduleListPage()}
+      </div>
+    );
+  };
+
+  const [newCategory, setNewCategory] = useState({ name: '', description: '' });
 
   const handleCreateCategory = async (e) => {
     e.preventDefault();
@@ -4819,10 +7905,10 @@ services:
     }
 
     try {
-      const res = await fetch('http://localhost:9393/categories', {
+      const res = await fetch(apiUrl('categories'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name, description, plex_mode: newCategory.plex_mode || 'shuffle' })
+        body: JSON.stringify({ name, description })
       });
 
       const text = await res.text();
@@ -4851,43 +7937,6 @@ services:
   const renderCategories = () => (
     <div>
       <h1 className="header">Category Management</h1>
-      <div className="card" style={{ marginBottom: '1rem' }}>
-        <button onClick={handleInitHolidays} className="button">Load Holiday Categories</button>
-      </div>
-
-      <div className="upload-section">
-        <h2>Create New Category</h2>
-        <form onSubmit={handleCreateCategory}>
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 2fr', gap: '1rem', marginBottom: '1rem' }}>
-            <input
-              type="text"
-              placeholder="Category Name"
-              value={newCategory.name}
-              onChange={(e) => setNewCategory({...newCategory, name: e.target.value})}
-              required
-              className="nx-input"
-            />
-            <input
-              type="text"
-              placeholder="Description (Optional)"
-              value={newCategory.description}
-              onChange={(e) => setNewCategory({...newCategory, description: e.target.value})}
-              className="nx-input"
-            />
-            <select
-              className="nx-select"
-              value={newCategory.plex_mode}
-              onChange={(e) => setNewCategory({ ...newCategory, plex_mode: e.target.value })}
-              style={{ padding: '0.5rem' }}
-            >
-              <option value="shuffle">Random</option>
-              <option value="playlist">Sequential</option>
-            </select>
-          </div>
-          <button type="submit" className="button">{editingCategory ? 'Update Category' : 'Create Category'}</button>
-          {/* edit handled via modal */}
-        </form>
-      </div>
 
       {editingCategory && (
         <Modal
@@ -5084,74 +8133,878 @@ services:
 
       <div className="card">
         <h2>Categories</h2>
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(250px, 1fr))', gap: '1rem' }}>
-          {categories.map(category => (
-            <div key={category.id} style={{ border: '1px solid var(--border-color)', padding: '1rem', borderRadius: '0.25rem', backgroundColor: 'var(--card-bg)' }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '0.5rem' }}>
-                <h3 style={{ margin: 0 }}>{category.name}</h3>
-                <div style={{ display: 'flex', gap: '0.25rem' }}>
-                  <button
-                    onClick={() => handleEditCategory(category)}
-                    className="nx-iconbtn"
-                    title="Edit category"
-                  >
-                    ✏️
-                  </button>
-                  <button
-                    onClick={() => handleDeleteCategory(category.id)}
-                    className="nx-iconbtn nx-iconbtn--danger"
-                    title="Delete category"
-                  >
-                    🗑️
-                  </button>
-                </div>
-              </div>
-              <p style={{ fontSize: '0.9rem', marginBottom: '0.5rem' }}>{category.description || 'No description'}</p>
-              <p style={{ fontSize: '0.8rem', color: '#666' }}>Preroll Mode: {category.plex_mode === 'playlist' ? 'Sequential' : 'Random'}</p>
+        
+        {/* Action Buttons */}
+        <div style={{ display: 'flex', gap: '1rem', marginBottom: '1.5rem', flexWrap: 'wrap' }}>
+          <button 
+            type="button"
+            onClick={() => setShowCreateCategoryModal(true)} 
+            className="button" 
+            style={{ 
+              backgroundColor: '#28a745', 
+              borderColor: '#28a745',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '0.5rem'
+            }}
+          >
+            <span style={{ fontSize: '1.2rem', fontWeight: 'bold' }}>+</span>
+            Create Category
+          </button>
+          <button 
+            type="button"
+            onClick={handleInitHolidays} 
+            className="button" 
+            style={{ 
+              backgroundColor: '#dc3545', 
+              borderColor: '#dc3545',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '0.5rem'
+            }}
+          >
+            🎄 Load Holiday Categories
+          </button>
+          <button 
+            type="button"
+            onClick={() => setBulkActionMode(!bulkActionMode)} 
+            className="button" 
+            style={{ 
+              backgroundColor: bulkActionMode ? '#ffc107' : '#6c757d', 
+              borderColor: bulkActionMode ? '#ffc107' : '#6c757d',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '0.5rem'
+            }}
+          >
+            {bulkActionMode ? '✓' : '☑'} {bulkActionMode ? 'Exit' : 'Bulk Select'}
+          </button>
+          {bulkActionMode && selectedCategoryIds.length > 0 && (
+            <>
+              <button 
+                type="button"
+                onClick={handleBulkApplyToPlex} 
+                className="button" 
+                style={{ 
+                  backgroundColor: '#007bff', 
+                  borderColor: '#007bff',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '0.5rem'
+                }}
+              >
+                📤 Apply Selected ({selectedCategoryIds.length})
+              </button>
+              <button 
+                type="button"
+                onClick={handleBulkDelete} 
+                className="button" 
+                style={{ 
+                  backgroundColor: '#dc3545', 
+                  borderColor: '#dc3545',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '0.5rem'
+                }}
+              >
+                🗑️ Delete Selected ({selectedCategoryIds.length})
+              </button>
+            </>
+          )}
+        </div>
+        
+        {/* Search, Filter and View Controls */}
+        <div style={{ 
+          display: 'flex', 
+          gap: '1rem', 
+          marginBottom: '1.5rem', 
+          alignItems: 'center',
+          backgroundColor: 'var(--card-bg)',
+          padding: '1rem',
+          borderRadius: '0.5rem',
+          border: '1px solid var(--border-color)'
+        }}>
+          {/* Search Bar - 65% width */}
+          <input
+            type="text"
+            placeholder="🔍 Search categories by name or description..."
+            value={categorySearchQuery}
+            onChange={(e) => setCategorySearchQuery(e.target.value)}
+            style={{
+              width: '65%',
+              padding: '0.75rem 1rem',
+              fontSize: '0.95rem',
+              border: '2px solid var(--border-color)',
+              borderRadius: '0.5rem',
+              backgroundColor: 'var(--bg-color)',
+              color: 'var(--text-color)',
+              boxSizing: 'border-box'
+            }}
+          />
 
-              {/* Apply to Server */}
-              <div style={{ borderTop: '1px solid var(--border-color)', paddingTop: '0.5rem', marginTop: '0.5rem' }}>
-                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                  {/* Status indicator removed per UX simplification */}
-                  <div style={{ display: 'flex', gap: '0.25rem' }}>
-                    <button
-                      onClick={() => handleApplyCategoryToActiveServer(category.id, category.name)}
-                      className="button"
-                      style={{ fontSize: '0.7rem', padding: '0.25rem 0.5rem' }}
-                      disabled={(() => { const s = getActiveConnectedServer(); return !s || s === 'conflict'; })() || applyingToServer}
-                      title={applyingToServer ? "Applying to server..." : "Apply this category to the connected server"}
-                    >
-                      {applyingToServer ? '⏳ Applying...' : '🎬 Apply to Server'}
-                    </button>
-                    {plexStatus === 'Connected' && category.apply_to_plex && (
-                      <button
-                        onClick={() => handleRemoveCategoryFromPlex(category.id, category.name)}
-                        className="button"
-                        style={{ fontSize: '0.7rem', padding: '0.25rem 0.5rem', backgroundColor: '#6c757d' }}
-                        title="Remove from Plex"
+          {/* Filter Dropdown - 20% width */}
+          <select
+            value={categoryFilter}
+            onChange={(e) => setCategoryFilter(e.target.value)}
+            style={{
+              width: '20%',
+              padding: '0.75rem',
+              fontSize: '0.95rem',
+              border: '2px solid var(--border-color)',
+              borderRadius: '0.5rem',
+              backgroundColor: 'var(--bg-color)',
+              color: 'var(--text-color)',
+              cursor: 'pointer',
+              boxSizing: 'border-box'
+            }}
+          >
+            <option value="all">All Categories</option>
+            <option value="active">Active Only</option>
+            <option value="hasPrerolls">Has Prerolls</option>
+            <option value="empty">Empty</option>
+          </select>
+
+          {/* View Toggle */}
+          <div className="view-toggle" style={{ marginLeft: 'auto' }}>
+              <button
+                type="button"
+                className={`view-btn ${categoryView === 'grid' ? 'active' : ''}`}
+                onClick={() => setCategoryView('grid')}
+                title="Grid view"
+              >
+                <span className="view-icon">⊞</span>
+                Grid
+              </button>
+              <button
+                type="button"
+                className={`view-btn ${categoryView === 'list' ? 'active' : ''}`}
+                onClick={() => setCategoryView('list')}
+                title="List view"
+              >
+                <span className="view-icon">☰</span>
+                List
+              </button>
+            </div>
+        </div>
+        
+        {/* Bulk Selection Info */}
+        {bulkActionMode && (
+          <div style={{
+            backgroundColor: '#fff3cd',
+            border: '1px solid #ffc107',
+            borderRadius: '0.5rem',
+            padding: '0.75rem 1rem',
+            marginBottom: '1rem',
+            color: '#856404',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between'
+          }}>
+            <span>
+              💡 <strong>Bulk Selection Mode:</strong> Click categories to select them, then use the action buttons above.
+              {selectedCategoryIds.length > 0 && ` (${selectedCategoryIds.length} selected)`}
+            </span>
+            {getFilteredCategories().length > 0 && (
+              <button
+                type="button"
+                onClick={toggleSelectAll}
+                className="button"
+                style={{
+                  padding: '0.25rem 0.75rem',
+                  fontSize: '0.85rem',
+                  backgroundColor: '#6c757d',
+                  borderColor: '#6c757d'
+                }}
+              >
+                {selectedCategoryIds.length === getFilteredCategories().length ? 'Deselect All' : 'Select All'}
+              </button>
+            )}
+          </div>
+        )}
+        
+        {/* Grid View */}
+        <div style={{ display: categoryView === 'grid' ? 'grid' : 'none', gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))', gap: '1rem' }}>
+          {(() => {
+            const filtered = getFilteredCategories();
+            
+            if (filtered.length === 0) {
+              return (
+                <div style={{ gridColumn: '1 / -1', textAlign: 'center', padding: '3rem 1rem', color: 'var(--text-secondary)' }}>
+                  {categorySearchQuery ? (
+                    <>
+                      <div style={{ fontSize: '3rem', marginBottom: '1rem' }}>🔍</div>
+                      <div style={{ fontSize: '1.1rem', marginBottom: '0.5rem', color: 'var(--text-color)' }}>
+                        No categories found matching "{categorySearchQuery}"
+                      </div>
+                      <div style={{ fontSize: '0.9rem' }}>
+                        Try adjusting your search or create a new category below
+                      </div>
+                    </>
+                  ) : (
+                    <>
+                      <div style={{ fontSize: '3rem', marginBottom: '1rem' }}>📁</div>
+                      <div style={{ fontSize: '1.1rem', marginBottom: '0.5rem', color: 'var(--text-color)' }}>
+                        No categories yet
+                      </div>
+                      <div style={{ fontSize: '0.9rem' }}>
+                        Create your first category below to organize your prerolls
+                      </div>
+                    </>
+                  )}
+                </div>
+              );
+            }
+            
+            return filtered.map(category => {
+            // Calculate statistics for this category
+            const stats = getCategoryStats(category);
+            const isSelected = selectedCategoryIds.includes(category.id);
+            
+            return (
+            <div 
+              key={category.id} 
+              onClick={() => bulkActionMode && toggleSelectCategory(category.id)}
+              style={{ 
+                border: `2px solid ${isSelected && bulkActionMode ? '#ffc107' : 'var(--border-color)'}`, 
+                padding: '1.25rem', 
+                borderRadius: '8px', 
+                backgroundColor: isSelected && bulkActionMode ? 'rgba(255, 193, 7, 0.1)' : 'var(--card-bg)',
+                boxShadow: isSelected && bulkActionMode ? '0 4px 12px rgba(255, 193, 7, 0.3)' : '0 2px 4px rgba(0,0,0,0.1)',
+                transition: 'all 0.2s',
+                cursor: bulkActionMode ? 'pointer' : 'default',
+                position: 'relative'
+              }}
+              onMouseEnter={(e) => {
+                if (!bulkActionMode) {
+                  e.currentTarget.style.transform = 'translateY(-2px)';
+                  e.currentTarget.style.boxShadow = '0 4px 8px rgba(0,0,0,0.15)';
+                }
+              }}
+              onMouseLeave={(e) => {
+                if (!bulkActionMode) {
+                  e.currentTarget.style.transform = 'translateY(0)';
+                  e.currentTarget.style.boxShadow = '0 2px 4px rgba(0,0,0,0.1)';
+                }
+              }}
+            >
+              {/* Bulk Selection Checkbox */}
+              {bulkActionMode && (
+                <div style={{
+                  position: 'absolute',
+                  top: '0.5rem',
+                  left: '0.5rem',
+                  width: '1.5rem',
+                  height: '1.5rem',
+                  borderRadius: '4px',
+                  backgroundColor: isSelected ? '#ffc107' : 'var(--bg-color)',
+                  border: '2px solid ' + (isSelected ? '#ffc107' : 'var(--border-color)'),
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  fontSize: '1rem',
+                  fontWeight: 'bold',
+                  color: isSelected ? 'white' : 'transparent'
+                }}>
+                  ✓
+                </div>
+              )}
+              
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '0.75rem' }}>
+                <div style={{ flex: 1 }}>
+                  <h3 style={{ margin: '0 0 0.5rem 0', fontSize: '1.1rem', color: 'var(--text-color)' }}>{category.name}</h3>
+                  
+                  {/* Statistics Badges */}
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.4rem', marginBottom: '0.5rem' }}>
+                    <div style={{ 
+                      display: 'inline-block',
+                      fontSize: '0.75rem', 
+                      padding: '0.2rem 0.5rem',
+                      borderRadius: '12px',
+                      backgroundColor: stats.totalPrerolls > 0 ? '#28a745' : '#6c757d',
+                      color: 'white',
+                      fontWeight: '600'
+                    }}>
+                      📹 {stats.totalPrerolls} preroll{stats.totalPrerolls !== 1 ? 's' : ''}
+                    </div>
+                    {stats.totalDuration > 0 && (
+                      <div style={{ 
+                        display: 'inline-block',
+                        fontSize: '0.75rem', 
+                        padding: '0.2rem 0.5rem',
+                        borderRadius: '12px',
+                        backgroundColor: '#17a2b8',
+                        color: 'white',
+                        fontWeight: '600'
+                      }}>
+                        ⏱️ {formatDuration(stats.totalDuration)}
+                      </div>
+                    )}
+                    {stats.hasActiveSchedules && (
+                      <div style={{ 
+                        display: 'inline-block',
+                        fontSize: '0.75rem', 
+                        padding: '0.2rem 0.5rem',
+                        borderRadius: '12px',
+                        backgroundColor: '#ffc107',
+                        color: '#000',
+                        fontWeight: '600'
+                      }}
+                      title={`Active Schedules: ${stats.scheduleNames.join(', ')}`}
                       >
-                        ❌ Remove
-                      </button>
+                        📅 {stats.activeSchedules} schedule{stats.activeSchedules !== 1 ? 's' : ''}
+                      </div>
                     )}
                   </div>
                 </div>
+                
+                {/* Quick Actions Menu */}
+                {!bulkActionMode && (
+                  <div style={{ position: 'relative' }}>
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setCategoryMenuOpen(categoryMenuOpen === category.id ? null : category.id);
+                      }}
+                      className="nx-iconbtn"
+                      title="More actions"
+                      style={{ fontSize: '1.2rem' }}
+                    >
+                      ⋮
+                    </button>
+                    
+                    {/* Dropdown Menu */}
+                    {categoryMenuOpen === category.id && (
+                      <div
+                        style={{
+                          position: 'absolute',
+                          right: 0,
+                          top: '100%',
+                          marginTop: '0.25rem',
+                          backgroundColor: 'var(--card-bg)',
+                          border: '2px solid var(--border-color)',
+                          borderRadius: '8px',
+                          boxShadow: '0 4px 12px rgba(0,0,0,0.15)',
+                          zIndex: 1000,
+                          minWidth: '180px',
+                          overflow: 'hidden'
+                        }}
+                        onClick={(e) => e.stopPropagation()}
+                      >
+                        <button
+                          onClick={() => {
+                            handleEditCategory(category);
+                            setCategoryMenuOpen(null);
+                          }}
+                          style={{
+                            width: '100%',
+                            padding: '0.75rem 1rem',
+                            border: 'none',
+                            backgroundColor: 'transparent',
+                            textAlign: 'left',
+                            cursor: 'pointer',
+                            fontSize: '0.9rem',
+                            color: 'var(--text-color)',
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: '0.5rem'
+                          }}
+                          onMouseEnter={(e) => e.currentTarget.style.backgroundColor = 'var(--hover-bg)'}
+                          onMouseLeave={(e) => e.currentTarget.style.backgroundColor = 'transparent'}
+                        >
+                          ✏️ Edit
+                        </button>
+                        <button
+                          onClick={() => {
+                            handleApplyCategoryToActiveServer(category.id, category.name);
+                            setCategoryMenuOpen(null);
+                          }}
+                          style={{
+                            width: '100%',
+                            padding: '0.75rem 1rem',
+                            border: 'none',
+                            backgroundColor: 'transparent',
+                            textAlign: 'left',
+                            cursor: 'pointer',
+                            fontSize: '0.9rem',
+                            color: 'var(--text-color)',
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: '0.5rem'
+                          }}
+                          onMouseEnter={(e) => e.currentTarget.style.backgroundColor = 'var(--hover-bg)'}
+                          onMouseLeave={(e) => e.currentTarget.style.backgroundColor = 'transparent'}
+                        >
+                          🎬 Apply to Server
+                        </button>
+                        <button
+                          onClick={() => {
+                            navigator.clipboard.writeText(JSON.stringify({
+                              name: category.name,
+                              description: category.description,
+                              plex_mode: category.plex_mode
+                            }, null, 2));
+                            alert('Category details copied to clipboard!');
+                            setCategoryMenuOpen(null);
+                          }}
+                          style={{
+                            width: '100%',
+                            padding: '0.75rem 1rem',
+                            border: 'none',
+                            backgroundColor: 'transparent',
+                            textAlign: 'left',
+                            cursor: 'pointer',
+                            fontSize: '0.9rem',
+                            color: 'var(--text-color)',
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: '0.5rem'
+                          }}
+                          onMouseEnter={(e) => e.currentTarget.style.backgroundColor = 'var(--hover-bg)'}
+                          onMouseLeave={(e) => e.currentTarget.style.backgroundColor = 'transparent'}
+                        >
+                          📋 Copy Details
+                        </button>
+                        <div style={{ borderTop: '1px solid var(--border-color)', margin: '0.25rem 0' }} />
+                        <button
+                          onClick={() => {
+                            handleDeleteCategory(category.id);
+                            setCategoryMenuOpen(null);
+                          }}
+                          style={{
+                            width: '100%',
+                            padding: '0.75rem 1rem',
+                            border: 'none',
+                            backgroundColor: 'transparent',
+                            textAlign: 'left',
+                            cursor: 'pointer',
+                            fontSize: '0.9rem',
+                            color: '#dc3545',
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: '0.5rem'
+                          }}
+                          onMouseEnter={(e) => e.currentTarget.style.backgroundColor = 'rgba(220, 53, 69, 0.1)'}
+                          onMouseLeave={(e) => e.currentTarget.style.backgroundColor = 'transparent'}
+                        >
+                          🗑️ Delete
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                )}
               </div>
+              
+              <p style={{ fontSize: '0.9rem', marginBottom: '0.75rem', color: 'var(--text-secondary)', minHeight: '1.2em' }}>
+                {category.description || <em style={{ opacity: 0.6 }}>No description</em>}
+              </p>
 
-              {/* Manage Prerolls */}
-              <div style={{ borderTop: '1px dashed var(--border-color)', paddingTop: '0.5rem', marginTop: '0.5rem' }}>
+              {/* Apply to Server */}
+              <div style={{ 
+                borderTop: '1px solid var(--border-color)', 
+                paddingTop: '0.75rem', 
+                marginTop: '0.75rem',
+                display: 'flex',
+                flexDirection: 'column',
+                gap: '0.5rem'
+              }}>
+                <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
+                  <button
+                    onClick={() => handleApplyCategoryToActiveServer(category.id, category.name)}
+                    className="button"
+                    style={{ 
+                      fontSize: '0.8rem', 
+                      padding: '0.4rem 0.75rem',
+                      flex: '1 1 auto',
+                      minWidth: 'fit-content'
+                    }}
+                    disabled={(() => { const s = getActiveConnectedServer(); return !s || s === 'conflict'; })() || applyingToServer}
+                    title={applyingToServer ? "Applying to server..." : "Apply this category to the connected server"}
+                  >
+                    {applyingToServer ? '⏳ Applying...' : '🎬 Apply to Server'}
+                  </button>
+                  {plexStatus === 'Connected' && category.apply_to_plex && (
+                    <button
+                      onClick={() => handleRemoveCategoryFromPlex(category.id, category.name)}
+                      className="button"
+                      style={{ 
+                        fontSize: '0.8rem', 
+                        padding: '0.4rem 0.75rem', 
+                        backgroundColor: '#6c757d',
+                        flex: '0 1 auto'
+                      }}
+                      title="Remove from Plex"
+                    >
+                      ❌ Remove
+                    </button>
+                  )}
+                </div>
+
+                {/* Manage Prerolls */}
                 <button
                   onClick={() => handleEditCategory(category)}
                   className="button"
-                  style={{ fontSize: '0.8rem', padding: '0.25rem 0.5rem', backgroundColor: '#17a2b8' }}
+                  style={{ 
+                    fontSize: '0.8rem', 
+                    padding: '0.4rem 0.75rem', 
+                    backgroundColor: '#17a2b8',
+                    width: '100%'
+                  }}
                   title="Manage prerolls in this category"
                 >
-                  Manage Prerolls
+                  📁 Manage Prerolls
                 </button>
               </div>
             </div>
-          ))}
+          );
+            });
+          })()}
+        </div>
+        
+        {/* List View */}
+        <div style={{ display: categoryView === 'list' ? 'block' : 'none' }}>
+          <table className="preroll-table" style={{ width: '100%', borderCollapse: 'collapse' }}>
+            <thead>
+              <tr>
+                {bulkActionMode && (
+                  <th style={{ textAlign: 'center', padding: '0.75rem', borderBottom: '2px solid var(--border-color)', width: '50px' }}>
+                    <input
+                      type="checkbox"
+                      checked={selectedCategoryIds.length === getFilteredCategories().length && getFilteredCategories().length > 0}
+                      onChange={toggleSelectAll}
+                      style={{ cursor: 'pointer', width: '18px', height: '18px' }}
+                    />
+                  </th>
+                )}
+                <th 
+                  style={{ 
+                    textAlign: 'left', 
+                    padding: '0.75rem', 
+                    borderBottom: '2px solid var(--border-color)',
+                    cursor: 'pointer',
+                    userSelect: 'none'
+                  }}
+                  onClick={() => handleCategorySortChange('name')}
+                  title="Click to sort by name"
+                >
+                  Name {categorySortField === 'name' && (categorySortDirection === 'asc' ? '▲' : '▼')}
+                </th>
+                <th style={{ textAlign: 'left', padding: '0.75rem', borderBottom: '2px solid var(--border-color)' }}>Description</th>
+                <th 
+                  style={{ 
+                    textAlign: 'center', 
+                    padding: '0.75rem', 
+                    borderBottom: '2px solid var(--border-color)',
+                    cursor: 'pointer',
+                    userSelect: 'none'
+                  }}
+                  onClick={() => handleCategorySortChange('prerolls')}
+                  title="Click to sort by preroll count"
+                >
+                  Prerolls {categorySortField === 'prerolls' && (categorySortDirection === 'asc' ? '▲' : '▼')}
+                </th>
+                <th style={{ textAlign: 'center', padding: '0.75rem', borderBottom: '2px solid var(--border-color)' }}>Duration</th>
+                <th 
+                  style={{ 
+                    textAlign: 'center', 
+                    padding: '0.75rem', 
+                    borderBottom: '2px solid var(--border-color)',
+                    cursor: 'pointer',
+                    userSelect: 'none'
+                  }}
+                  onClick={() => handleCategorySortChange('status')}
+                  title="Click to sort by status"
+                >
+                  Status {categorySortField === 'status' && (categorySortDirection === 'asc' ? '▲' : '▼')}
+                </th>
+                <th style={{ textAlign: 'center', padding: '0.75rem', borderBottom: '2px solid var(--border-color)' }}>Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {(() => {
+                let filtered = getFilteredCategories();
+                
+                // Apply sorting
+                filtered = filtered.sort((a, b) => {
+                  let compareA, compareB;
+                  
+                  switch(categorySortField) {
+                    case 'name':
+                      compareA = a.name.toLowerCase();
+                      compareB = b.name.toLowerCase();
+                      break;
+                    case 'prerolls':
+                      // Calculate actual preroll counts including primary and secondary associations
+                      const aPrimaryCount = prerolls.filter(p => p.category_id === a.id).length;
+                      const aSecondaryCount = prerolls.filter(p => 
+                        p.category_associations && 
+                        p.category_associations.some(assoc => assoc.category_id === a.id)
+                      ).length;
+                      compareA = aPrimaryCount + aSecondaryCount;
+                      
+                      const bPrimaryCount = prerolls.filter(p => p.category_id === b.id).length;
+                      const bSecondaryCount = prerolls.filter(p => 
+                        p.category_associations && 
+                        p.category_associations.some(assoc => assoc.category_id === b.id)
+                      ).length;
+                      compareB = bPrimaryCount + bSecondaryCount;
+                      break;
+                    case 'status':
+                      // Sort by active status (has schedules)
+                      const aHasSchedule = schedules.some(s => s.category_id === a.id);
+                      const bHasSchedule = schedules.some(s => s.category_id === b.id);
+                      compareA = aHasSchedule ? 1 : 0;
+                      compareB = bHasSchedule ? 1 : 0;
+                      break;
+                    default:
+                      return 0;
+                  }
+                  
+                  if (compareA < compareB) return categorySortDirection === 'asc' ? -1 : 1;
+                  if (compareA > compareB) return categorySortDirection === 'asc' ? 1 : -1;
+                  return 0;
+                });
+                
+                if (filtered.length === 0) {
+                  return (
+                    <tr>
+                      <td colSpan="5" style={{ textAlign: 'center', padding: '3rem 1rem', color: 'var(--text-secondary)' }}>
+                        {categorySearchQuery ? (
+                          <>
+                            <div style={{ fontSize: '2rem', marginBottom: '0.5rem' }}>🔍</div>
+                            <div style={{ fontSize: '1rem', marginBottom: '0.5rem', color: 'var(--text-color)' }}>
+                              No categories found matching "{categorySearchQuery}"
+                            </div>
+                            <div style={{ fontSize: '0.85rem' }}>
+                              Try adjusting your search or create a new category below
+                            </div>
+                          </>
+                        ) : (
+                          <>
+                            <div style={{ fontSize: '2rem', marginBottom: '0.5rem' }}>📁</div>
+                            <div style={{ fontSize: '1rem', marginBottom: '0.5rem', color: 'var(--text-color)' }}>
+                              No categories yet
+                            </div>
+                            <div style={{ fontSize: '0.85rem' }}>
+                              Create your first category below to organize your prerolls
+                            </div>
+                          </>
+                        )}
+                      </td>
+                    </tr>
+                  );
+                }
+                
+                return filtered.map(category => {
+                // Calculate statistics for this category
+                const stats = getCategoryStats(category);
+                const isSelected = selectedCategoryIds.includes(category.id);
+                
+                return (
+                  <tr 
+                    key={category.id} 
+                    onClick={() => bulkActionMode && toggleSelectCategory(category.id)}
+                    style={{ 
+                      borderBottom: '1px solid var(--border-color)',
+                      backgroundColor: isSelected && bulkActionMode ? 'rgba(255, 193, 7, 0.1)' : 'transparent',
+                      cursor: bulkActionMode ? 'pointer' : 'default'
+                    }}
+                  >
+                    {bulkActionMode && (
+                      <td style={{ padding: '0.75rem', textAlign: 'center' }}>
+                        <input
+                          type="checkbox"
+                          checked={isSelected}
+                          onChange={() => toggleSelectCategory(category.id)}
+                          onClick={(e) => e.stopPropagation()}
+                          style={{ cursor: 'pointer', width: '18px', height: '18px' }}
+                        />
+                      </td>
+                    )}
+                    <td style={{ padding: '0.75rem', fontWeight: '600', color: 'var(--text-color)' }}>
+                      {category.name}
+                      {stats.hasActiveSchedules && (
+                        <span 
+                          style={{ marginLeft: '0.5rem', fontSize: '0.85rem' }}
+                          title={`Active Schedules: ${stats.scheduleNames.join(', ')}`}
+                        >
+                          📅
+                        </span>
+                      )}
+                    </td>
+                    <td style={{ padding: '0.75rem', color: 'var(--text-secondary)' }}>
+                      {category.description || <em style={{ opacity: 0.6 }}>No description</em>}
+                    </td>
+                    <td style={{ padding: '0.75rem', textAlign: 'center' }}>
+                      <span style={{ 
+                        display: 'inline-block',
+                        fontSize: '0.75rem', 
+                        padding: '0.2rem 0.5rem',
+                        borderRadius: '12px',
+                        backgroundColor: stats.totalPrerolls > 0 ? '#28a745' : '#6c757d',
+                        color: 'white',
+                        fontWeight: '600'
+                      }}>
+                        📹 {stats.totalPrerolls}
+                      </span>
+                    </td>
+                    <td style={{ padding: '0.75rem', textAlign: 'center' }}>
+                      {stats.totalDuration > 0 ? (
+                        <span style={{ 
+                          display: 'inline-block',
+                          fontSize: '0.75rem', 
+                          padding: '0.2rem 0.5rem',
+                          borderRadius: '12px',
+                          backgroundColor: '#17a2b8',
+                          color: 'white',
+                          fontWeight: '600'
+                        }}>
+                          ⏱️ {formatDuration(stats.totalDuration)}
+                        </span>
+                      ) : '-'}
+                    </td>
+                    <td style={{ padding: '0.75rem', textAlign: 'center' }}>
+                      {stats.hasActiveSchedules ? (
+                        <span style={{ 
+                          display: 'inline-block',
+                          fontSize: '0.75rem', 
+                          padding: '0.2rem 0.5rem',
+                          borderRadius: '12px',
+                          backgroundColor: '#ffc107',
+                          color: '#000',
+                          fontWeight: '600'
+                        }}
+                        title={stats.scheduleNames.join(', ')}
+                        >
+                          ✓ {stats.activeSchedules} schedule{stats.activeSchedules !== 1 ? 's' : ''}
+                        </span>
+                      ) : (
+                        <span style={{ color: 'var(--text-secondary)', fontSize: '0.85rem' }}>Inactive</span>
+                      )}
+                    </td>
+                    <td style={{ padding: '0.75rem', textAlign: 'center' }}>
+                      {!bulkActionMode && (
+                        <div style={{ display: 'flex', gap: '0.5rem', justifyContent: 'center', flexWrap: 'wrap' }}>
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleApplyCategoryToActiveServer(category.id, category.name);
+                            }}
+                            className="button"
+                            style={{ fontSize: '0.75rem', padding: '0.3rem 0.6rem' }}
+                            disabled={(() => { const s = getActiveConnectedServer(); return !s || s === 'conflict'; })() || applyingToServer}
+                            title="Apply to Server"
+                          >
+                            🎬
+                          </button>
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleEditCategory(category);
+                            }}
+                            className="nx-iconbtn"
+                            title="Edit category"
+                            style={{ fontSize: '0.9rem' }}
+                          >
+                            ✏️
+                          </button>
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleDeleteCategory(category.id);
+                            }}
+                            className="nx-iconbtn nx-iconbtn--danger"
+                            title="Delete category"
+                            style={{ fontSize: '0.9rem' }}
+                          >
+                            🗑️
+                          </button>
+                        </div>
+                      )}
+                    </td>
+                  </tr>
+                );
+                });
+              })()}
+            </tbody>
+          </table>
         </div>
       </div>
+
+      {/* Create Category Modal */}
+      {showCreateCategoryModal && (
+        <Modal
+          title="Create New Category"
+          onClose={() => {
+            setShowCreateCategoryModal(false);
+            setNewCategory({ name: '', description: '' });
+          }}
+          width={600}
+          zIndex={1000}
+        >
+          <form onSubmit={(e) => {
+            e.preventDefault();
+            handleCreateCategory(e);
+            setShowCreateCategoryModal(false);
+          }}>
+            <div className="nx-form-grid">
+              <div className="nx-field nx-span-2">
+                <label className="nx-label">Category Name *</label>
+                <input
+                  className="nx-input"
+                  type="text"
+                  placeholder="Enter category name"
+                  value={newCategory.name}
+                  onChange={(e) => setNewCategory({...newCategory, name: e.target.value})}
+                  required
+                  autoFocus
+                />
+              </div>
+              <div className="nx-field nx-span-2">
+                <label className="nx-label">Description (Optional)</label>
+                <input
+                  className="nx-input"
+                  type="text"
+                  placeholder="Enter category description"
+                  value={newCategory.description}
+                  onChange={(e) => setNewCategory({...newCategory, description: e.target.value})}
+                />
+              </div>
+            </div>
+            <div style={{ 
+              backgroundColor: 'var(--info-bg)', 
+              border: '1px solid var(--info-border)', 
+              borderRadius: '0.5rem', 
+              padding: '1rem', 
+              marginTop: '1rem',
+              marginBottom: '1rem'
+            }}>
+              <p style={{ fontSize: '0.9rem', color: 'var(--text-color)', margin: 0 }}>
+                💡 <strong>Tip:</strong> Playback mode (Random/Sequential) is controlled by individual schedules, not categories.
+              </p>
+            </div>
+            <div style={{ display: 'flex', gap: '1rem', justifyContent: 'flex-end' }}>
+              <button
+                type="button"
+                onClick={() => {
+                  setShowCreateCategoryModal(false);
+                  setNewCategory({ name: '', description: '' });
+                }}
+                className="button"
+                style={{ backgroundColor: '#6c757d', borderColor: '#6c757d' }}
+              >
+                Cancel
+              </button>
+              <button
+                type="submit"
+                className="button"
+                style={{ backgroundColor: '#28a745', borderColor: '#28a745' }}
+              >
+                Create Category
+              </button>
+            </div>
+          </form>
+        </Modal>
+      )}
     </div>
   );
 
@@ -5161,7 +9014,7 @@ services:
       alert('Disconnect Jellyfin first (only one media server connection at a time).');
       return;
     }
-    fetch('http://localhost:9393/plex/connect', {
+    fetch(apiUrl('plex/connect'), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -5190,7 +9043,7 @@ services:
       alert('Disconnect Jellyfin first (only one media server connection at a time).');
       return;
     }
-    fetch('http://localhost:9393/plex/connect/stable-token', {
+    fetch(apiUrl('plex/connect/stable-token'), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -5216,7 +9069,7 @@ services:
 
   const handleDisconnectPlex = () => {
     if (window.confirm('Are you sure you want to disconnect from Plex? This will clear all stored connection settings.')) {
-      fetch('http://localhost:9393/plex/disconnect', {
+      fetch(apiUrl('plex/disconnect'), {
         method: 'POST'
       })
         .then(res => res.json())
@@ -5242,7 +9095,7 @@ services:
       alert('Disconnect Plex first (only one media server connection at a time).');
       return;
     }
-    fetch('http://localhost:9393/jellyfin/connect', {
+    fetch(apiUrl('jellyfin/connect'), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -5267,7 +9120,7 @@ services:
 
   const handleDisconnectJellyfin = () => {
     if (!window.confirm('Are you sure you want to disconnect from Jellyfin? This will clear all stored connection settings.')) return;
-    fetch('http://localhost:9393/jellyfin/disconnect', {
+    fetch(apiUrl('jellyfin/disconnect'), {
       method: 'POST'
     })
       .then(res => res.json())
@@ -5293,7 +9146,7 @@ services:
       return;
     }
     try {
-      const res = await fetch(`http://localhost:9393/plex/stable-token/save?token=${encodeURIComponent(tok)}`, { method: 'POST' });
+      const res = await fetch(apiUrl(`plex/stable-token/save?token=${encodeURIComponent(tok)}`), { method: 'POST' });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(data?.detail || data?.message || `HTTP ${res.status}`);
       alert('Stable token saved. You can now connect using Method 1.');
@@ -5322,7 +9175,7 @@ services:
         return;
       }
       setPlexOAuth({ id: null, url: '', status: 'starting', error: null });
-      const res = await fetch('http://localhost:9393/plex/tv/start', { method: 'POST' });
+      const res = await fetch(apiUrl('plex/tv/start'), { method: 'POST' });
       const data = await res.json();
       if (!res.ok || !data?.id || !data?.url) {
         throw new Error(data?.detail || 'Failed to start Plex.tv login');
@@ -5333,7 +9186,7 @@ services:
       clearOAuthPoll();
       oauthPollRef.current = setInterval(async () => {
         try {
-          const r = await fetch(`http://localhost:9393/plex/tv/status/${data.id}`);
+          const r = await fetch(apiUrl(`plex/tv/status/${data.id}`));
           const s = await r.json();
           if (s?.status === 'success') {
             clearOAuthPoll();
@@ -5357,7 +9210,7 @@ services:
     if (!sid) return;
     setPlexOAuth(prev => ({ ...prev, status: 'connecting' }));
     try {
-      const res = await fetch('http://localhost:9393/plex/tv/connect', {
+      const res = await fetch(apiUrl('plex/tv/connect'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ id: sid, save_token: true })
@@ -5711,7 +9564,7 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
 
   const handleDownloadDiagnostics = async () => {
     try {
-      const res = await fetch('http://localhost:9393/diagnostics/bundle');
+      const res = await fetch(apiUrl('diagnostics/bundle'));
       if (!res.ok) {
         throw new Error(`HTTP ${res.status}`);
       }
@@ -5730,7 +9583,7 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
   };
 
   const recheckFfmpeg = () => {
-    fetch('http://localhost:9393/system/ffmpeg-info')
+    fetch(apiUrl('system/ffmpeg-info'))
       .then(res => res.json())
       .then(data => setFfmpegInfo(data))
       .catch(() => setFfmpegInfo(null));
@@ -5738,7 +9591,7 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
 
   const handleViewChangelog = async () => {
     try {
-      const response = await fetch('http://localhost:9393/system/changelog');
+      const response = await fetch(apiUrl('system/changelog'));
       const data = await response.json();
       if (data.changelog) {
         setChangelogContent(data.changelog);
@@ -5756,7 +9609,7 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
   const handleReinitThumbnails = async () => {
     if (!window.confirm('Rebuild all thumbnails now? This may take several minutes depending on your library size.')) return;
     try {
-      const res = await fetch('http://localhost:9393/thumbnails/rebuild?force=true', { method: 'POST' });
+      const res = await fetch(apiUrl('thumbnails/rebuild?force=true'), { method: 'POST' });
       const text = await res.text();
       let data = null;
       try { data = text ? JSON.parse(text) : null; } catch {}
@@ -5774,7 +9627,7 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
 
   const handleShowSystemPaths = async () => {
     try {
-      const res = await fetch('http://localhost:9393/system/paths');
+      const res = await fetch(apiUrl('system/paths'));
       const data = await res.json();
       alert([
         `Install: ${data.install_root || 'n/a'}`,
@@ -5801,7 +9654,7 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
   const loadPathMappings = React.useCallback(async () => {
     setPathMappingsLoading(true);
     try {
-      const res = await fetch('http://localhost:9393/settings/path-mappings');
+      const res = await fetch(apiUrl('settings/path-mappings'));
       const data = await safeJson(res);
       const list = normalizeMappingList(data).map(m => ({
         local: m.local ?? m.source ?? m.from ?? '',
@@ -5823,7 +9676,7 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
 
   const tryPutMappings = async (list, shape) => {
     const body = shape === 'array' ? list : { mappings: list };
-    const res = await fetch('http://localhost:9393/settings/path-mappings', {
+    const res = await fetch(apiUrl('settings/path-mappings'), {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body)
@@ -5951,6 +9804,36 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
       alert('Failed to update genre settings: ' + (err?.message || err));
     } finally {
       setGenreSettingsLoading(false);
+    }
+  };
+
+  const loadVerboseLogging = React.useCallback(async () => {
+    try {
+      const res = await fetch(apiUrl('/settings/verbose-logging'));
+      const data = await safeJson(res);
+      if (data && typeof data === 'object') {
+        setVerboseLogging(data.verbose_logging || false);
+      }
+    } catch (err) {
+      console.error('Load verbose logging error:', err);
+    }
+  }, []);
+
+  const updateVerboseLogging = async (enabled) => {
+    setVerboseLoggingLoading(true);
+    try {
+      const res = await fetch(apiUrl('/settings/verbose-logging?verbose_logging=' + enabled), {
+        method: 'PUT'
+      });
+      if (!res.ok) {
+        throw new Error(`HTTP ${res.status}`);
+      }
+      setVerboseLogging(enabled);
+      alert(`Verbose logging ${enabled ? 'enabled' : 'disabled'}. Check console logs for detailed information.`);
+    } catch (err) {
+      alert('Failed to update verbose logging: ' + (err?.message || err));
+    } finally {
+      setVerboseLoggingLoading(false);
     }
   };
 
@@ -6177,23 +10060,161 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
   // Auto-load genre mappings and settings when opening Settings tab
   React.useEffect(() => {
     if (activeTab === 'settings') {
-      try { loadGenreMaps(); loadGenreSettings(); } catch {}
+      try { loadGenreMaps(); loadGenreSettings(); loadVerboseLogging(); } catch {}
     }
-  }, [activeTab, loadGenreMaps, loadGenreSettings]);
+  }, [activeTab, loadGenreMaps, loadGenreSettings, loadVerboseLogging]);
 
   const renderSettings = () => (
     <div>
       <h1 className="header">Settings</h1>
 
-      <details className="card">
+      <details className="card" open>
         <summary style={{ cursor: 'pointer' }}>
-          <h2 style={{ display: 'inline' }}>Theme</h2>
+          <h2 style={{ display: 'inline' }}>NeXroll Settings</h2>
         </summary>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '1rem', marginTop: '1rem' }}>
-          <span>Current theme: {darkMode ? 'Dark' : 'Light'}</span>
-          <button onClick={toggleTheme} className="button">
-            Switch to {darkMode ? 'Light' : 'Dark'} Mode
-          </button>
+        
+        {/* Theme Settings */}
+        <div style={{ marginTop: '1rem', paddingBottom: '1rem', borderBottom: '1px solid var(--border-color)' }}>
+          <h3 style={{ marginBottom: '0.75rem' }}>Theme</h3>
+          <p style={{ marginBottom: '1rem', color: '#888', fontSize: '0.9rem' }}>
+            Choose between light and dark themes for the interface.
+          </p>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+            <label className="nx-rockerswitch">
+              <input
+                type="checkbox"
+                checked={darkMode}
+                onChange={toggleTheme}
+              />
+              <span className="nx-rockerswitch-slider"></span>
+            </label>
+            <span style={{ fontWeight: 'bold', color: 'var(--text-color)' }}>
+              {darkMode ? 'Dark Mode' : 'Light Mode'}
+            </span>
+          </div>
+        </div>
+
+        {/* Timezone Settings */}
+        <div style={{ marginTop: '1rem', paddingBottom: '1rem', borderBottom: '1px solid var(--border-color)' }}>
+          <h3 style={{ marginBottom: '0.75rem' }}>Timezone</h3>
+          <p style={{ marginBottom: '1rem', color: '#888', fontSize: '0.9rem' }}>
+            Set your timezone to ensure schedules run at the correct local time.
+          </p>
+          <div style={{ display: 'flex', gap: '1rem', alignItems: 'flex-end', flexWrap: 'wrap' }}>
+            <div style={{ flex: 1, minWidth: '250px' }}>
+              <label style={{ display: 'block', marginBottom: '0.5rem', fontWeight: 'bold', color: 'var(--text-color)' }}>
+                Current Timezone:
+              </label>
+              <select
+                value={currentTimezone}
+                onChange={(e) => saveTimezone(e.target.value)}
+                disabled={timezoneLoading || timezoneSaving}
+                style={{
+                  width: '100%',
+                  padding: '0.5rem',
+                  borderRadius: '0.25rem',
+                  border: '2px solid var(--border-color)',
+                  backgroundColor: darkMode ? '#2a2a2a' : '#ffffff',
+                  color: darkMode ? '#ffffff' : '#000000',
+                  cursor: timezoneSaving ? 'not-allowed' : 'pointer',
+                  fontSize: '1rem',
+                  opacity: timezoneLoading || timezoneSaving ? 0.6 : 1
+                }}
+              >
+                {availableTimezones.length === 0 ? (
+                  <option value="UTC">Loading timezones...</option>
+                ) : (
+                  availableTimezones.map((tz) => (
+                    <option key={tz.value} value={tz.value} style={{ backgroundColor: darkMode ? '#2a2a2a' : '#ffffff', color: darkMode ? '#ffffff' : '#000000' }}>
+                      {tz.label}
+                    </option>
+                  ))
+                )}
+              </select>
+              <p style={{ fontSize: '0.85rem', color: darkMode ? '#999' : '#666', marginTop: '0.25rem' }}>
+                {timezoneLoading && 'Loading timezones...'}
+                {timezoneSaving && 'Saving...'}
+                {!timezoneLoading && !timezoneSaving && `Selected: ${currentTimezone}`}
+              </p>
+            </div>
+          </div>
+        </div>
+
+        {/* Confirmation Dialogs */}
+        <div style={{ marginTop: '1rem', paddingBottom: '1rem', borderBottom: '1px solid var(--border-color)' }}>
+          <h3 style={{ marginBottom: '0.75rem' }}>Confirmation Dialogs</h3>
+          <p style={{ marginBottom: '1rem', color: '#888', fontSize: '0.9rem' }}>
+            Control whether you see confirmation prompts before deleting items.
+          </p>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+            <label className="nx-rockerswitch">
+              <input
+                type="checkbox"
+                checked={confirmDeletions}
+                onChange={(e) => setConfirmDeletions(e.target.checked)}
+              />
+              <span className="nx-rockerswitch-slider"></span>
+            </label>
+            <span style={{ fontWeight: 'bold', color: 'var(--text-color)' }}>
+              {confirmDeletions ? 'Show Confirmation Prompts' : 'Skip Confirmation Prompts'}
+            </span>
+          </div>
+          <p style={{ fontSize: '0.85rem', color: '#666', marginTop: '0.5rem' }}>
+            When enabled, you'll be asked to confirm before deleting schedules, categories, or prerolls.
+          </p>
+        </div>
+
+        {/* Notification Preferences */}
+        <div style={{ marginTop: '1rem', paddingBottom: '1rem', borderBottom: '1px solid var(--border-color)' }}>
+          <h3 style={{ marginBottom: '0.75rem' }}>Notifications</h3>
+          <p style={{ marginBottom: '1rem', color: '#888', fontSize: '0.9rem' }}>
+            Control success and informational alert notifications.
+          </p>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+            <label className="nx-rockerswitch">
+              <input
+                type="checkbox"
+                checked={showNotifications}
+                onChange={(e) => setShowNotifications(e.target.checked)}
+              />
+              <span className="nx-rockerswitch-slider"></span>
+            </label>
+            <span style={{ fontWeight: 'bold', color: 'var(--text-color)' }}>
+              {showNotifications ? 'Show Notifications' : 'Hide Notifications'}
+            </span>
+          </div>
+          <p style={{ fontSize: '0.85rem', color: '#666', marginTop: '0.5rem' }}>
+            When disabled, only critical error messages will be shown. Success and info messages will be suppressed.
+          </p>
+        </div>
+
+        {/* Verbose Logging */}
+        <div style={{ marginTop: '1rem' }}>
+          <h3 style={{ marginBottom: '0.75rem' }}>Verbose Logging (Beta Testing)</h3>
+          <p style={{ marginBottom: '1rem', color: '#888', fontSize: '0.9rem' }}>
+            Enable verbose logging to see detailed debug information in the console. This helps troubleshoot issues during beta testing.
+          </p>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+            <label className="nx-rockerswitch">
+              <input
+                type="checkbox"
+                checked={verboseLogging}
+                onChange={(e) => updateVerboseLogging(e.target.checked)}
+                disabled={verboseLoggingLoading}
+              />
+              <span className="nx-rockerswitch-slider"></span>
+            </label>
+            <span style={{ fontWeight: 'bold', color: 'var(--text-color)' }}>
+              {verboseLogging ? 'Verbose Logging Enabled' : 'Verbose Logging Disabled'}
+            </span>
+          </div>
+          {verboseLogging && (
+            <div style={{ marginTop: '0.75rem', padding: '0.75rem', backgroundColor: 'var(--card-bg)', border: '1px solid var(--border-color)', borderRadius: '4px' }}>
+              <p style={{ margin: 0, fontSize: '0.9rem', color: '#4CAF50' }}>
+                ✓ Verbose logging is active. Check the console (F12) and application logs for detailed information.
+              </p>
+            </div>
+          )}
         </div>
       </details>
 
@@ -6523,56 +10544,6 @@ C:\\\\Media\\\\Prerolls\\\\summer\\\\beach.mp4`}
       </div>
       </details>
 
-
-
-      <details className="card">
-        <summary style={{ cursor: 'pointer' }}>
-          <h2 style={{ display: 'inline' }}>Timezone Settings</h2>
-        </summary>
-        <p style={{ marginBottom: '1rem', color: 'var(--text-color)' }}>
-          Set your timezone to ensure schedules run at the correct local time.
-        </p>
-
-        <div style={{ display: 'flex', gap: '1rem', alignItems: 'flex-end', flexWrap: 'wrap' }}>
-          <div style={{ flex: 1, minWidth: '250px' }}>
-            <label style={{ display: 'block', marginBottom: '0.5rem', fontWeight: 'bold', color: 'var(--text-color)' }}>
-              Current Timezone:
-            </label>
-            <select
-              value={currentTimezone}
-              onChange={(e) => saveTimezone(e.target.value)}
-              disabled={timezoneLoading || timezoneSaving}
-              style={{
-                width: '100%',
-                padding: '0.5rem',
-                borderRadius: '0.25rem',
-                border: '2px solid var(--border-color)',
-                backgroundColor: darkMode ? '#2a2a2a' : '#ffffff',
-                color: darkMode ? '#ffffff' : '#000000',
-                cursor: timezoneSaving ? 'not-allowed' : 'pointer',
-                fontSize: '1rem',
-                opacity: timezoneLoading || timezoneSaving ? 0.6 : 1
-              }}
-            >
-              {availableTimezones.length === 0 ? (
-                <option value="UTC">Loading timezones...</option>
-              ) : (
-                availableTimezones.map((tz) => (
-                  <option key={tz.value} value={tz.value} style={{ backgroundColor: darkMode ? '#2a2a2a' : '#ffffff', color: darkMode ? '#ffffff' : '#000000' }}>
-                    {tz.label}
-                  </option>
-                ))
-              )}
-            </select>
-            <p style={{ fontSize: '0.85rem', color: darkMode ? '#999' : '#666', marginTop: '0.25rem' }}>
-              {timezoneLoading && 'Loading timezones...'}
-              {timezoneSaving && 'Saving...'}
-              {!timezoneLoading && !timezoneSaving && `Selected: ${currentTimezone}`}
-            </p>
-          </div>
-        </div>
-      </details>
-
       <details className="card">
         <summary style={{ cursor: 'pointer' }}>
           <h2 style={{ display: 'inline' }}>Backup & Restore</h2>
@@ -6632,84 +10603,6 @@ C:\\\\Media\\\\Prerolls\\\\summer\\\\beach.mp4`}
           </div>
         </div>
         </details>
-
-      <details className="card">
-        <summary style={{ cursor: 'pointer' }}>
-          <h2 style={{ display: 'inline' }}>Community Templates</h2>
-        </summary>
-        <p style={{ marginBottom: '1rem', color: 'var(--text-color)' }}>
-          Browse and import community-created schedule templates, or create your own to share.
-        </p>
-
-        <div style={{ marginBottom: '1rem' }}>
-          <button onClick={handleInitTemplates} className="button" style={{ marginRight: '0.5rem' }}>
-            🔄 Load Default Templates
-          </button>
-          <button onClick={handleCreateTemplate} className="button">
-            ➕ Create Template from Schedules
-          </button>
-        </div>
-
-        {/* Schedule Selection for Template Creation */}
-        {schedules.length > 0 && (
-          <div style={{ marginBottom: '1rem', padding: '1rem', border: '1px solid var(--border-color)', borderRadius: '0.25rem' }}>
-            <h3 style={{ marginBottom: '0.5rem' }}>Select Schedules for Template:</h3>
-            <div style={{ display: 'grid', gap: '0.5rem' }}>
-              {schedules.map(schedule => (
-                <label key={schedule.id} style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                  <input
-                    type="checkbox"
-                    checked={selectedSchedules.includes(schedule.id)}
-                    onChange={(e) => {
-                      if (e.target.checked) {
-                        setSelectedSchedules([...selectedSchedules, schedule.id]);
-                      } else {
-                        setSelectedSchedules(selectedSchedules.filter(id => id !== schedule.id));
-                      }
-                    }}
-                  />
-                  <span>{schedule.name} ({schedule.type})</span>
-                </label>
-              ))}
-            </div>
-          </div>
-        )}
-
-        {/* Available Templates */}
-        <div style={{ display: 'grid', gap: '1rem' }}>
-          <h3>Available Templates:</h3>
-          {communityTemplates.length === 0 ? (
-            <p style={{ color: '#666', fontStyle: 'italic' }}>No templates available. Click "Load Default Templates" to get started.</p>
-          ) : (
-            communityTemplates.map(template => (
-              <div key={template.id} style={{
-                border: '1px solid var(--border-color)',
-                padding: '1rem',
-                borderRadius: '0.25rem',
-                backgroundColor: 'var(--card-bg)'
-              }}>
-                <h4 style={{ marginBottom: '0.5rem' }}>{template.name}</h4>
-                <p style={{ fontSize: '0.9rem', color: '#666', marginBottom: '0.5rem' }}>
-                  {template.description}
-                </p>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '0.8rem', color: '#666' }}>
-                  <span>By: {template.author} | Category: {template.category}</span>
-                  <span>Downloads: {template.downloads} | Rating: {template.rating}/5</span>
-                </div>
-                <div style={{ marginTop: '0.5rem' }}>
-                  <button
-                    onClick={() => handleImportTemplate(template.id)}
-                    className="button"
-                    style={{ fontSize: '0.8rem', padding: '0.25rem 0.75rem' }}
-                  >
-                    📥 Import Template
-                  </button>
-                </div>
-              </div>
-            ))
-          )}
-        </div>
-      </details>
 
       <div className="card">
         <h2>System Information</h2>
@@ -6997,6 +10890,802 @@ C:\\\\Media\\\\Prerolls\\\\summer\\\\beach.mp4`}
       </div>
     </div>
   );
+
+  // Render function for Create Schedule page
+  const renderCreateSchedule = () => {
+    return (
+      <div className="upload-section" style={{ maxWidth: '1200px', margin: '30px auto' }}>
+        <div style={{ 
+          display: 'flex', 
+          justifyContent: 'space-between', 
+          alignItems: 'center', 
+          marginBottom: '2rem',
+          paddingBottom: '1rem',
+          borderBottom: '2px solid var(--border-color)'
+        }}>
+          <h2 style={{ margin: 0, fontSize: '1.8rem', fontWeight: 700 }}>
+            {editingSchedule ? 'Edit Schedule' : 'Create New Schedule'}
+          </h2>
+          <div style={{ fontSize: '0.9rem', color: 'var(--text-secondary)' }}>
+            {editingSchedule ? 'Modify your existing schedule' : 'Step-by-step guide to create your perfect schedule'}
+          </div>
+        </div>
+        
+        <form onSubmit={handleCreateSchedule}>
+          {/* Form content will render from renderSchedules - this is the dedicated page version */}
+          {/* Using inline form reference to maintain state */}
+          {(() => {
+            // This renders the same form that's in renderSchedules but on its own page
+            // We'll keep this simple for now and use a navigation approach
+            return (
+              <div style={{ textAlign: 'center', padding: '3rem', opacity: 0.7 }}>
+                <p style={{ fontSize: '1.1rem', marginBottom: '1rem' }}>
+                  The schedule form is currently embedded in the Schedule List page.
+                </p>
+                <button 
+                  type="button"
+                  className="button button-primary"
+                  onClick={() => setActiveTab('schedules')}
+                  style={{ padding: '1rem 2rem', fontSize: '1rem' }}
+                >
+                  Go to Schedule List to Create Schedule
+                </button>
+              </div>
+            );
+          })()}
+        </form>
+      </div>
+    );
+  };
+
+  // Render function for Sequence Builder page
+  const renderSequenceBuilder = () => {
+    return (
+      <div style={{ padding: '1.5rem', maxWidth: '1400px', margin: '0 auto' }}>
+        {/* Header */}
+        <div style={{ 
+          marginBottom: '1.5rem',
+          paddingBottom: '1rem',
+          borderBottom: '2px solid var(--border-color)',
+          display: 'flex',
+          justifyContent: 'space-between',
+          alignItems: 'center'
+        }}>
+          <div>
+            <h1 className="header" style={{ margin: '0 0 0.5rem 0', fontSize: '2rem' }}>
+              🎬 {editingSequenceId ? `Editing: ${editingSequenceName}` : 'Sequence Builder'}
+            </h1>
+            <p style={{ opacity: 0.7, margin: 0, fontSize: '1rem' }}>
+              {editingSequenceId 
+                ? 'Update your sequence and save changes to the library' 
+                : 'Build custom preroll sequences with full creative control. Combine categories, fixed prerolls, and randomized blocks.'}
+            </p>
+          </div>
+          {editingSequenceId && (
+            <button
+              onClick={() => {
+                // Clear editing state to create a new sequence
+                setSequenceBlocks([]);
+                setEditingSequenceId(null);
+                setEditingSequenceName('');
+                setEditingSequenceDescription('');
+              }}
+              className="button"
+              style={{
+                padding: '0.75rem 1.5rem',
+                backgroundColor: '#28a745',
+                borderColor: '#28a745',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '0.5rem'
+              }}
+              title="Start building a new sequence from scratch"
+            >
+              <span style={{ fontSize: '1.2rem' }}>+</span>
+              New Sequence
+            </button>
+          )}
+        </div>
+
+        {/* Full-page Sequence Builder */}
+        <div style={{ 
+          backgroundColor: 'var(--card-bg)', 
+          borderRadius: '12px',
+          padding: '1.5rem',
+          border: '1px solid var(--border-color)',
+          boxShadow: '0 2px 8px rgba(0,0,0,0.08)'
+        }}>
+          <SequenceBuilder
+            blocks={sequenceBlocks}
+            categories={categories}
+            prerolls={prerolls}
+            apiUrl={apiUrl}
+            onBlocksChange={setSequenceBlocks}
+            isEditing={editingSequenceId !== null}
+            initialName={editingSequenceName}
+            initialDescription={editingSequenceDescription}
+            onSave={async (name, description) => {
+              try {
+                await saveSequence(name, description);
+              } catch (error) {
+                console.error('Save failed:', error);
+              }
+            }}
+            onCancel={() => {
+              // Clear the sequence, editing state, and return to library
+              setSequenceBlocks([]);
+              setEditingSequenceId(null);
+              setEditingSequenceName('');
+              setEditingSequenceDescription('');
+              setActiveTab('schedules/library');
+            }}
+            onExport={() => {
+              // Export sequence as .nexseq format
+              const nexseq = {
+                type: 'nexseq',
+                version: '1.0',
+                metadata: {
+                  name: editingSequenceName || 'Custom Sequence',
+                  description: editingSequenceDescription || '',
+                  author: 'NeXroll',
+                  created: new Date().toISOString(),
+                  exported: new Date().toISOString(),
+                  blockCount: sequenceBlocks.length
+                },
+                blocks: sequenceBlocks,
+                compatibility: {
+                  minVersion: '1.0',
+                  features: []
+                }
+              };
+              
+              const blob = new Blob([JSON.stringify(nexseq, null, 2)], { type: 'application/json' });
+              const url = URL.createObjectURL(blob);
+              const a = document.createElement('a');
+              a.href = url;
+              const safeName = (editingSequenceName || 'sequence').replace(/[^a-z0-9]/gi, '_').toLowerCase();
+              a.download = `${safeName}.nexseq`;
+              a.click();
+              URL.revokeObjectURL(url);
+              
+              showAlert('Sequence exported as .nexseq file', 'success');
+            }}
+            onImport={() => {
+              // Import sequence from .nexseq or legacy .json
+              const input = document.createElement('input');
+              input.type = 'file';
+              input.accept = '.nexseq,.json';
+              input.onchange = async (e) => {
+                const file = e.target.files[0];
+                if (file) {
+                  try {
+                    const text = await file.text();
+                    const data = JSON.parse(text);
+                    
+                    // Validate format
+                    let blocks = null;
+                    let name = '';
+                    let description = '';
+                    
+                    if (data.type === 'nexseq' && data.blocks) {
+                      // New .nexseq format
+                      blocks = data.blocks;
+                      name = data.metadata?.name || '';
+                      description = data.metadata?.description || '';
+                      
+                      // Check compatibility
+                      if (data.compatibility?.minVersion && data.compatibility.minVersion > '1.0') {
+                        if (!window.confirm(`This sequence requires version ${data.compatibility.minVersion}. Import anyway?`)) {
+                          return;
+                        }
+                      }
+                    } else if (data.blocks && Array.isArray(data.blocks)) {
+                      // Legacy format
+                      blocks = data.blocks;
+                      name = data.name || '';
+                      description = data.description || '';
+                    }
+                    
+                    if (blocks && Array.isArray(blocks)) {
+                      setSequenceBlocks(blocks);
+                      if (name) setEditingSequenceName(name);
+                      if (description) setEditingSequenceDescription(description);
+                      showAlert(`Sequence imported: ${blocks.length} blocks loaded`, 'success');
+                    } else {
+                      showAlert('Invalid sequence file format', 'error');
+                    }
+                  } catch (error) {
+                    showAlert(`Failed to import: ${error.message}`, 'error');
+                  }
+                }
+              };
+              input.click();
+            }}
+          />
+        </div>
+
+        {/* Helper Cards */}
+        <div style={{ 
+          display: 'grid', 
+          gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))', 
+          gap: '1rem',
+          marginTop: '1.5rem'
+        }}>
+          <div style={{ 
+            backgroundColor: 'var(--card-bg)', 
+            padding: '1rem',
+            borderRadius: '8px',
+            border: '1px solid var(--border-color)'
+          }}>
+            <h3 style={{ margin: '0 0 0.5rem 0', fontSize: '1rem', fontWeight: 600 }}>💡 Quick Tips</h3>
+            <ul style={{ margin: 0, paddingLeft: '1.25rem', fontSize: '0.9rem', opacity: 0.8 }}>
+              <li>Use category blocks for randomized prerolls</li>
+              <li>Use fixed blocks for specific prerolls in order</li>
+              <li>Drag blocks to reorder your sequence</li>
+              <li>Preview your sequence before saving</li>
+            </ul>
+          </div>
+          
+          <div style={{ 
+            backgroundColor: 'var(--card-bg)', 
+            padding: '1rem',
+            borderRadius: '8px',
+            border: '1px solid var(--border-color)'
+          }}>
+            <h3 style={{ margin: '0 0 0.5rem 0', fontSize: '1rem', fontWeight: 600 }}>📦 Save & Share</h3>
+            <ul style={{ margin: 0, paddingLeft: '1.25rem', fontSize: '0.9rem', opacity: 0.8 }}>
+              <li>Save sequences to your library for reuse</li>
+              <li>Export as <code>.nexseq</code> files to share</li>
+              <li>Import <code>.nexseq</code> files from others</li>
+              <li>Use <code>.nexbundle</code> to export multiple sequences</li>
+            </ul>
+          </div>
+        </div>
+      </div>
+    );
+  };
+
+  // Sequence Library Functions
+  const loadSavedSequences = async () => {
+    setSequencesLoading(true);
+    try {
+      const response = await fetch(apiUrl('sequences'));
+      const data = await response.json();
+      setSavedSequences(data);
+    } catch (error) {
+      console.error('Failed to load saved sequences:', error);
+      showAlert('Failed to load sequences', 'error');
+    } finally {
+      setSequencesLoading(false);
+    }
+  };
+
+  const saveSequence = async (name, description) => {
+    try {
+      // Clean the blocks data before sending to ensure it's properly serializable
+      // Validate we have blocks to save
+      if (!sequenceBlocks || sequenceBlocks.length === 0) {
+        throw new Error('Cannot save empty sequence. Please add at least one block.');
+      }
+      
+      const cleanedBlocks = sequenceBlocks.map(block => {
+        const cleaned = {
+          type: block.type,
+          id: block.id
+        };
+        
+        // Add type-specific fields
+        if (block.type === 'random') {
+          cleaned.category_id = block.category_id;
+        } else if (block.type === 'specific') {
+          cleaned.preroll_id = block.preroll_id;
+        }
+        
+        return cleaned;
+      });
+      
+      // Determine if we're updating an existing sequence or creating a new one
+      const isUpdating = editingSequenceId !== null;
+      const method = isUpdating ? 'PUT' : 'POST';
+      const url = isUpdating ? `sequences/${editingSequenceId}` : 'sequences';
+      
+      console.log(isUpdating ? 'Updating' : 'Creating', 'sequence with data:', { 
+        name: name, 
+        description: description, 
+        blocksCount: cleanedBlocks.length,
+        blocks: cleanedBlocks,
+        sequenceId: editingSequenceId
+      });
+      
+      const response = await fetch(apiUrl(url), {
+        method: method,
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name,
+          description,
+          blocks: cleanedBlocks
+        })
+      });
+      
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        console.error('Server error response:', errorData);
+        
+        // Extract meaningful error message from various error response formats
+        let errorMessage = isUpdating ? 'Failed to update sequence' : 'Failed to save sequence';
+        if (typeof errorData.detail === 'string') {
+          errorMessage = errorData.detail;
+        } else if (Array.isArray(errorData.detail)) {
+          // FastAPI validation errors format: [{loc: [...], msg: "...", type: "..."}]
+          errorMessage = errorData.detail.map(err => {
+            const location = err.loc?.join(' -> ') || 'unknown';
+            return `${location}: ${err.msg}`;
+          }).join('; ');
+        } else if (errorData.message) {
+          errorMessage = errorData.message;
+        }
+        
+        throw new Error(errorMessage);
+      }
+      
+      const savedSeq = await response.json();
+      showAlert(`Sequence "${name}" ${isUpdating ? 'updated' : 'saved'} successfully!`, 'success');
+      
+      // Clear editing state after successful save/update
+      setEditingSequenceId(null);
+      
+      loadSavedSequences(); // Reload list
+      return savedSeq;
+    } catch (error) {
+      console.error('Failed to save sequence:', error);
+      const errorMsg = error.message || String(error);
+      showAlert(`Failed to save sequence: ${errorMsg}`, 'error');
+      throw error;
+    }
+  };
+
+  const deleteSequence = async (sequenceId, sequenceName) => {
+    try {
+      const response = await fetch(apiUrl(`sequences/${sequenceId}`), {
+        method: 'DELETE'
+      });
+      
+      if (!response.ok) throw new Error('Failed to delete sequence');
+      
+      showAlert(`Sequence "${sequenceName}" deleted`, 'success');
+      loadSavedSequences(); // Reload list
+    } catch (error) {
+      console.error('Failed to delete sequence:', error);
+      showAlert('Failed to delete sequence', 'error');
+    }
+  };
+
+  const loadSequenceIntoBuilder = (sequence) => {
+    setSequenceBlocks(sequence.blocks || []);
+    setEditingSequenceId(sequence.id); // Track which sequence we're editing
+    setEditingSequenceName(sequence.name || ''); // Load sequence name
+    setEditingSequenceDescription(sequence.description || ''); // Load sequence description
+    setActiveTab('schedules/builder');
+  };
+
+  // Load saved sequences when viewing library
+  React.useEffect(() => {
+    if (activeTab === 'schedules/library') {
+      loadSavedSequences();
+    }
+  }, [activeTab]);
+
+  // Render function for My Sequences (Library) page
+  const renderSequenceLibrary = () => {
+    
+    return (
+      <div style={{ padding: '1.5rem', maxWidth: '1400px', margin: '0 auto' }}>
+        {/* Header */}
+        <div style={{ 
+          display: 'flex',
+          justifyContent: 'space-between',
+          alignItems: 'center',
+          marginBottom: '1.5rem',
+          paddingBottom: '1rem',
+          borderBottom: '2px solid var(--border-color)'
+        }}>
+          <div>
+            <h1 className="header" style={{ margin: '0 0 0.5rem 0', fontSize: '2rem' }}>� Saved Sequences</h1>
+            <p style={{ opacity: 0.7, margin: 0, fontSize: '1rem' }}>
+              Reusable custom sequences you can schedule anytime
+            </p>
+          </div>
+          <div style={{ display: 'flex', gap: '0.75rem' }}>
+            <button 
+              className="button"
+              onClick={loadSavedSequences}
+              disabled={sequencesLoading}
+              style={{ 
+                padding: '0.75rem 1.25rem', 
+                fontSize: '0.95rem',
+                fontWeight: 600,
+                display: 'flex',
+                alignItems: 'center',
+                gap: '0.5rem'
+              }}
+            >
+              <span>🔄</span> {sequencesLoading ? 'Loading...' : 'Refresh'}
+            </button>
+            
+            {/* Import Button */}
+            <button 
+              className="button"
+              onClick={() => {
+                const input = document.createElement('input');
+                input.type = 'file';
+                input.accept = '.nexseq,.nexbundle,.json';
+                input.multiple = true;
+                input.onchange = async (e) => {
+                  const files = Array.from(e.target.files);
+                  let importedCount = 0;
+                  let errors = [];
+                  
+                  for (const file of files) {
+                    try {
+                      const text = await file.text();
+                      const data = JSON.parse(text);
+                      
+                      // Check if it's a bundle
+                      if (data.type === 'nexbundle' && Array.isArray(data.sequences)) {
+                        // Import multiple sequences from bundle
+                        for (const seq of data.sequences) {
+                          try {
+                            const response = await fetch(apiUrl('sequences'), {
+                              method: 'POST',
+                              headers: { 'Content-Type': 'application/json' },
+                              body: JSON.stringify({
+                                name: seq.name,
+                                description: seq.description || '',
+                                blocks: seq.blocks
+                              })
+                            });
+                            if (response.ok) importedCount++;
+                          } catch (err) {
+                            errors.push(`${seq.name}: ${err.message}`);
+                          }
+                        }
+                      } else if (data.blocks && Array.isArray(data.blocks)) {
+                        // Import single sequence
+                        const response = await fetch(apiUrl('sequences'), {
+                          method: 'POST',
+                          headers: { 'Content-Type': 'application/json' },
+                          body: JSON.stringify({
+                            name: data.name || 'Imported Sequence',
+                            description: data.description || '',
+                            blocks: data.blocks
+                          })
+                        });
+                        if (response.ok) importedCount++;
+                      } else {
+                        errors.push(`${file.name}: Invalid format`);
+                      }
+                    } catch (error) {
+                      errors.push(`${file.name}: ${error.message}`);
+                    }
+                  }
+                  
+                  // Show result
+                  if (importedCount > 0) {
+                    showAlert(`Successfully imported ${importedCount} sequence(s)!`, 'success');
+                    loadSavedSequences();
+                  }
+                  if (errors.length > 0) {
+                    console.error('Import errors:', errors);
+                    showAlert(`Some imports failed. Check console for details.`, 'error');
+                  }
+                };
+                input.click();
+              }}
+              style={{ 
+                padding: '0.75rem 1.25rem', 
+                fontSize: '0.95rem',
+                fontWeight: 600,
+                display: 'flex',
+                alignItems: 'center',
+                gap: '0.5rem',
+                backgroundColor: '#17a2b8',
+                borderColor: '#17a2b8'
+              }}
+              title="Import .nexseq or .nexbundle files"
+            >
+              <span>📥</span> Import
+            </button>
+            
+            {/* Export All Button */}
+            {savedSequences.length > 0 && (
+              <button 
+                className="button"
+                onClick={() => {
+                  // Export all sequences as .nexbundle
+                  const bundle = {
+                    type: 'nexbundle',
+                    version: '1.0',
+                    exported: new Date().toISOString(),
+                    count: savedSequences.length,
+                    sequences: savedSequences.map(seq => ({
+                      name: seq.name,
+                      description: seq.description || '',
+                      blocks: seq.blocks,
+                      created_at: seq.created_at
+                    }))
+                  };
+                  
+                  const blob = new Blob([JSON.stringify(bundle, null, 2)], { type: 'application/json' });
+                  const url = URL.createObjectURL(blob);
+                  const a = document.createElement('a');
+                  a.href = url;
+                  a.download = `nexroll-sequences-${Date.now()}.nexbundle`;
+                  a.click();
+                  URL.revokeObjectURL(url);
+                  
+                  showAlert(`Exported ${savedSequences.length} sequences as bundle`, 'success');
+                }}
+                style={{ 
+                  padding: '0.75rem 1.25rem', 
+                  fontSize: '0.95rem',
+                  fontWeight: 600,
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '0.5rem',
+                  backgroundColor: '#6c757d',
+                  borderColor: '#6c757d'
+                }}
+                title="Export all sequences as .nexbundle"
+              >
+                <span>📤</span> Export All ({savedSequences.length})
+              </button>
+            )}
+            
+            <button 
+              className="button button-primary"
+              onClick={() => setActiveTab('schedules/builder')}
+              style={{ 
+                padding: '0.75rem 1.5rem', 
+                fontSize: '0.95rem',
+                fontWeight: 600,
+                display: 'flex',
+                alignItems: 'center',
+                gap: '0.5rem'
+              }}
+            >
+              <span>➕</span> New Sequence
+            </button>
+          </div>
+        </div>
+
+        {/* Loading State */}
+        {sequencesLoading ? (
+          <div style={{
+            backgroundColor: 'var(--card-bg)',
+            borderRadius: '12px',
+            padding: '4rem 2rem',
+            textAlign: 'center',
+            border: '1px solid var(--border-color)'
+          }}>
+            <div style={{ fontSize: '3rem', marginBottom: '1rem' }}>⏳</div>
+            <p style={{ fontSize: '1.1rem', opacity: 0.7 }}>Loading sequences...</p>
+          </div>
+        ) : savedSequences.length === 0 ? (
+          <div style={{
+            backgroundColor: 'var(--card-bg)',
+            borderRadius: '12px',
+            padding: '3rem 2rem',
+            textAlign: 'center',
+            border: '2px dashed var(--border-color)'
+          }}>
+            <div style={{ fontSize: '4rem', marginBottom: '1rem' }}>🎬</div>
+            <h2 style={{ margin: '0 0 0.5rem 0', fontSize: '1.5rem', fontWeight: 600 }}>
+              No Saved Sequences Yet
+            </h2>
+            <p style={{ 
+              margin: '0 0 2rem 0', 
+              fontSize: '1rem', 
+              color: 'var(--text-secondary)',
+              maxWidth: '600px',
+              marginLeft: 'auto',
+              marginRight: 'auto',
+              lineHeight: '1.6'
+            }}>
+              Sequences let you create custom preroll playlists that play in a specific order. 
+              Build once, reuse in multiple schedules!
+            </p>
+
+            {/* Example Use Cases */}
+            <div style={{
+              display: 'grid',
+              gridTemplateColumns: 'repeat(auto-fit, minmax(250px, 1fr))',
+              gap: '1rem',
+              marginBottom: '2rem',
+              textAlign: 'left'
+            }}>
+              {[
+                { icon: '🎭', title: 'Theater Experience', desc: 'Theater intro → Trailers → Feature announcement' },
+                { icon: '🎄', title: 'Holiday Special', desc: 'Holiday greeting → Seasonal trailer → Classic intro' },
+                { icon: '🎪', title: 'Family Movie Night', desc: 'Welcome message → Kid-friendly trailer → Safety reminder' }
+              ].map((example, idx) => (
+                <div key={idx} style={{
+                  padding: '1rem',
+                  backgroundColor: 'var(--bg-color)',
+                  borderRadius: '8px',
+                  border: '1px solid var(--border-color)'
+                }}>
+                  <div style={{ fontSize: '1.5rem', marginBottom: '0.5rem' }}>{example.icon}</div>
+                  <div style={{ fontSize: '0.9rem', fontWeight: 600, marginBottom: '0.25rem' }}>{example.title}</div>
+                  <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>{example.desc}</div>
+                </div>
+              ))}
+            </div>
+
+            <button 
+              className="button button-primary"
+              onClick={() => setActiveTab('schedules/builder')}
+              style={{ 
+                padding: '1rem 2rem', 
+                fontSize: '1rem',
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '0.5rem'
+              }}
+            >
+              🎬 Create Your First Sequence
+            </button>
+          </div>
+        ) : (
+          <div style={{
+            display: 'grid',
+            gridTemplateColumns: 'repeat(auto-fill, minmax(350px, 1fr))',
+            gap: '1.5rem'
+          }}>
+            {savedSequences.map((sequence, index) => (
+              <div 
+                key={index}
+                style={{
+                  backgroundColor: 'var(--card-bg)',
+                  borderRadius: '12px',
+                  padding: '1.5rem',
+                  border: '1px solid var(--border-color)',
+                  boxShadow: '0 2px 8px rgba(0,0,0,0.08)',
+                  transition: 'transform 0.2s, box-shadow 0.2s',
+                  cursor: 'pointer'
+                }}
+                onMouseEnter={(e) => {
+                  e.currentTarget.style.transform = 'translateY(-4px)';
+                  e.currentTarget.style.boxShadow = '0 4px 16px rgba(0,0,0,0.12)';
+                }}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.transform = 'translateY(0)';
+                  e.currentTarget.style.boxShadow = '0 2px 8px rgba(0,0,0,0.08)';
+                }}
+              >
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'start', marginBottom: '1rem' }}>
+                  <h3 style={{ margin: 0, fontSize: '1.25rem', fontWeight: 600 }}>
+                    {sequence.name}
+                  </h3>
+                  <span style={{ 
+                    fontSize: '0.8rem',
+                    padding: '0.25rem 0.5rem',
+                    backgroundColor: 'rgba(99, 102, 241, 0.1)',
+                    color: '#6366f1',
+                    borderRadius: '4px',
+                    fontWeight: 600
+                  }}>
+                    {sequence.blocks?.length || 0} blocks
+                  </span>
+                </div>
+                
+                {sequence.description && (
+                  <p style={{ 
+                    margin: '0 0 1rem 0', 
+                    fontSize: '0.9rem', 
+                    opacity: 0.7,
+                    overflow: 'hidden',
+                    textOverflow: 'ellipsis',
+                    display: '-webkit-box',
+                    WebkitLineClamp: 2,
+                    WebkitBoxOrient: 'vertical'
+                  }}>
+                    {sequence.description}
+                  </p>
+                )}
+                
+                <div style={{ 
+                  display: 'flex', 
+                  justifyContent: 'space-between',
+                  alignItems: 'center',
+                  marginTop: '1rem',
+                  paddingTop: '1rem',
+                  borderTop: '1px solid var(--border-color)'
+                }}>
+                  <div style={{ fontSize: '0.8rem', opacity: 0.6 }}>
+                    {sequence.created_at ? new Date(sequence.created_at).toLocaleDateString() : 'Unknown date'}
+                  </div>
+                  <div style={{ display: 'flex', gap: '0.5rem' }}>
+                    <button 
+                      className="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        
+                        // Export as .nexseq file
+                        const nexseq = {
+                          type: 'nexseq',
+                          version: '1.0',
+                          metadata: {
+                            name: sequence.name,
+                            description: sequence.description || '',
+                            author: 'NeXroll',
+                            created: sequence.created_at,
+                            exported: new Date().toISOString(),
+                            blockCount: sequence.blocks?.length || 0
+                          },
+                          blocks: sequence.blocks,
+                          compatibility: {
+                            minVersion: '1.0',
+                            features: []
+                          }
+                        };
+                        
+                        const blob = new Blob([JSON.stringify(nexseq, null, 2)], { type: 'application/json' });
+                        const url = URL.createObjectURL(blob);
+                        const a = document.createElement('a');
+                        a.href = url;
+                        // Sanitize filename
+                        const safeName = sequence.name.replace(/[^a-z0-9]/gi, '_').toLowerCase();
+                        a.download = `${safeName}.nexseq`;
+                        a.click();
+                        URL.revokeObjectURL(url);
+                        
+                        showAlert(`Exported "${sequence.name}" as .nexseq file`, 'success');
+                      }}
+                      style={{ 
+                        padding: '0.5rem 1rem', 
+                        fontSize: '0.9rem',
+                        backgroundColor: '#17a2b8',
+                        borderColor: '#17a2b8'
+                      }}
+                      title="Export as .nexseq file"
+                    >
+                      💾 Export
+                    </button>
+                    <button 
+                      className="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        loadSequenceIntoBuilder(sequence);
+                      }}
+                      style={{ padding: '0.5rem 1rem', fontSize: '0.9rem' }}
+                    >
+                      📝 Edit
+                    </button>
+                    <button 
+                      className="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        if (window.confirm(`Delete sequence "${sequence.name}"?`)) {
+                          deleteSequence(sequence.id, sequence.name);
+                        }
+                      }}
+                      style={{ 
+                        padding: '0.5rem 1rem', 
+                        fontSize: '0.9rem',
+                        backgroundColor: '#dc3545'
+                      }}
+                    >
+                      🗑️
+                    </button>
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    );
+  };
 
   const renderCommunityPrerolls = () => {
     // Handle Fair Use acceptance
@@ -8218,245 +12907,6 @@ C:\\\\Media\\\\Prerolls\\\\summer\\\\beach.mp4`}
           </div>
         )}
 
-        {/* Discovery: Latest Prerolls Section */}
-        <div className="card">
-          <h3 style={{ 
-            marginTop: 0, 
-            marginBottom: '1rem', 
-            display: 'flex', 
-            alignItems: 'center', 
-            gap: '0.5rem',
-            fontSize: '1.3rem'
-          }}>
-            ✨ Discovery: Latest Prerolls
-          </h3>
-          
-          {communityIsLoadingLatest ? (
-            <div style={{ 
-              textAlign: 'center', 
-              padding: '2rem',
-              color: 'var(--text-secondary)'
-            }}>
-              <div style={{ fontSize: '2rem', marginBottom: '0.5rem' }}>⏳</div>
-              <p>Loading latest prerolls...</p>
-            </div>
-          ) : communityLatestPrerolls.length > 0 ? (
-            <div style={{
-              display: 'grid',
-              gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))',
-              gap: '1.5rem',
-              marginBottom: '1rem'
-            }}>
-              {communityLatestPrerolls.map((preroll, idx) => (
-                <div
-                  key={preroll.id}
-                  style={{
-                    backgroundColor: 'var(--card-bg)',
-                    border: '1px solid var(--border-color)',
-                    borderRadius: '8px',
-                    overflow: 'hidden',
-                    transition: 'transform 0.2s, box-shadow 0.2s',
-                    cursor: 'pointer'
-                  }}
-                  onMouseEnter={(e) => {
-                    e.currentTarget.style.transform = 'translateY(-4px)';
-                    e.currentTarget.style.boxShadow = '0 8px 16px rgba(0,0,0,0.2)';
-                  }}
-                  onMouseLeave={(e) => {
-                    e.currentTarget.style.transform = 'translateY(0)';
-                    e.currentTarget.style.boxShadow = 'none';
-                  }}
-                >
-                  {/* Thumbnail */}
-                  <div style={{
-                    width: '100%',
-                    height: '160px',
-                    backgroundColor: '#1a1a1a',
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    position: 'relative',
-                    overflow: 'hidden'
-                  }}>
-                    <img
-                      src={preroll.thumbnail}
-                      alt={preroll.title}
-                      style={{
-                        width: '100%',
-                        height: '100%',
-                        objectFit: 'cover'
-                      }}
-                    />
-                    {/* NEW badge overlay */}
-                    <div style={{
-                      position: 'absolute',
-                      top: '8px',
-                      right: '8px',
-                      backgroundColor: '#10b981',
-                      color: '#ffffff',
-                      padding: '4px 12px',
-                      borderRadius: '12px',
-                      fontSize: '0.75rem',
-                      fontWeight: 'bold',
-                      boxShadow: '0 2px 4px rgba(0,0,0,0.3)'
-                    }}>
-                      NEW
-                    </div>
-                  </div>
-                  
-                  {/* Content */}
-                  <div style={{ padding: '1rem' }}>
-                    <h4 style={{
-                      margin: '0 0 0.5rem 0',
-                      fontSize: '0.95rem',
-                      fontWeight: '600',
-                      lineHeight: '1.3',
-                      color: 'var(--text-color)',
-                      overflow: 'hidden',
-                      textOverflow: 'ellipsis',
-                      display: '-webkit-box',
-                      WebkitLineClamp: 2,
-                      WebkitBoxOrient: 'vertical',
-                      minHeight: '2.6em'
-                    }}>
-                      {cleanDisplayText(preroll.title)}
-                    </h4>
-
-                    <div style={{ 
-                      display: 'flex', 
-                      gap: '0.75rem', 
-                      flexWrap: 'wrap', 
-                      fontSize: '0.8rem', 
-                      color: 'var(--text-secondary)',
-                      marginBottom: '0.75rem'
-                    }}>
-                      {preroll.category && (
-                        <span>📁 {cleanDisplayText(preroll.category)}</span>
-                      )}
-                      {preroll.duration && (
-                        <span>⏱️ {preroll.duration}s</span>
-                      )}
-                    </div>
-
-                    {/* Category selector */}
-                    {communityShowAddToCategory[preroll.id] && (
-                      <select
-                        value={communitySelectedCategory || ''}
-                        onChange={(e) => setCommunitySelectedCategory(e.target.value || null)}
-                        className="category-select"
-                        style={{
-                          width: '100%',
-                          padding: '0.4rem',
-                          fontSize: '0.85rem',
-                          border: '2px solid var(--border-color)',
-                          borderRadius: '4px',
-                          backgroundColor: darkMode ? '#2d2d2d' : 'white',
-                          color: darkMode ? '#e0e0e0' : '#333',
-                          cursor: 'pointer',
-                          marginBottom: '0.5rem',
-                          outline: 'none'
-                        }}
-                      >
-                        <option value="" style={{backgroundColor: darkMode ? '#2d2d2d' : 'white', color: darkMode ? '#e0e0e0' : '#333'}}>Select category...</option>
-                        {categories.map(cat => (
-                          <option key={cat.id} value={cat.id} style={{backgroundColor: darkMode ? '#2d2d2d' : 'white', color: darkMode ? '#e0e0e0' : '#333'}}>
-                            {cat.name}
-                          </option>
-                        ))}
-                      </select>
-                    )}
-
-                    {/* Action buttons */}
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
-                      <div style={{ display: 'flex', gap: '0.5rem' }}>
-                        <button
-                          onClick={() => setCommunityPreviewingPreroll(preroll)}
-                          className="button-secondary"
-                          style={{
-                            flex: 1,
-                            padding: '0.5rem',
-                            fontSize: '0.8rem'
-                          }}
-                        >
-                          ▶️ Preview
-                        </button>
-                        {isPrerollAlreadyDownloaded(preroll) ? (
-                          <div
-                            className="button"
-                            style={{
-                              flex: 1,
-                              padding: '0.5rem',
-                              fontSize: '0.8rem',
-                              backgroundColor: 'rgba(102, 200, 145, 0.2)',
-                              border: '1px solid rgba(102, 200, 145, 0.4)',
-                              color: '#66c891',
-                              cursor: 'default',
-                              display: 'flex',
-                              alignItems: 'center',
-                              justifyContent: 'center',
-                              gap: '0.3rem'
-                            }}
-                            title="This preroll is already in your collection"
-                          >
-                            ✓ Downloaded
-                          </div>
-                        ) : (
-                          <button
-                            onClick={() => handleDownload(preroll)}
-                            disabled={communityIsDownloading[preroll.id] || (communityShowAddToCategory[preroll.id] && !communitySelectedCategory)}
-                            className="button"
-                            style={{
-                              flex: 1,
-                              padding: '0.5rem',
-                              fontSize: '0.8rem',
-                              opacity: communityIsDownloading[preroll.id] ? 0.6 : 1
-                            }}
-                          >
-                            {communityIsDownloading[preroll.id] === 'downloading' ? '⬇️ Downloading...' : 
-                             communityIsDownloading[preroll.id] === 'processing' ? '⚙️ Processing...' : 
-                             '⬇️ Download'}
-                          </button>
-                        )}
-                      </div>
-                      <button
-                        onClick={() => setCommunityShowAddToCategory(prev => ({
-                          ...prev,
-                          [preroll.id]: !prev[preroll.id]
-                        }))}
-                        className="button-secondary"
-                        style={{
-                          padding: '0.5rem',
-                          fontSize: '0.8rem',
-                          backgroundColor: communityShowAddToCategory[preroll.id] ? 'rgba(102, 200, 145, 0.3)' : undefined,
-                          border: communityShowAddToCategory[preroll.id] ? '1px solid rgba(102, 200, 145, 0.6)' : undefined,
-                          color: darkMode ? undefined : (communityShowAddToCategory[preroll.id] ? '#047857' : undefined)
-                        }}
-                      >
-                        {communityShowAddToCategory[preroll.id] ? '✓ Category Selected' : '+ Add to Category'}
-                      </button>
-                    </div>
-                  </div>
-                </div>
-              ))}
-            </div>
-          ) : (
-            <div style={{ 
-              textAlign: 'center', 
-              padding: '2rem',
-              backgroundColor: 'var(--input-bg)',
-              borderRadius: '6px'
-            }}>
-              <div style={{ fontSize: '2.5rem', marginBottom: '0.5rem' }}>📦</div>
-              <p style={{ margin: '0 0 0.5rem 0', color: 'var(--text-secondary)' }}>
-                No latest prerolls available yet
-              </p>
-              <p style={{ margin: '0', fontSize: '0.85rem', color: 'var(--text-secondary)', opacity: 0.7 }}>
-                💡 Build the local index to see the newest prerolls
-              </p>
-            </div>
-          )}
-        </div>
-
         {/* Random Preroll Section - Always Visible */}
         <div className="card">
           <h3 style={{ marginTop: 0, marginBottom: '1rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
@@ -8666,6 +13116,11 @@ C:\\\\Media\\\\Prerolls\\\\summer\\\\beach.mp4`}
     );
   };
 
+  // Test route for Sequence Builder
+  if (window.location.pathname === '/test-sequence') {
+    return <TestSequenceBuilder />;
+  }
+
   return (
     <div className="app-container">
       {/* Tab Navigation with right-aligned logo */}
@@ -8680,12 +13135,14 @@ C:\\\\Media\\\\Prerolls\\\\summer\\\\beach.mp4`}
           >
             Dashboard
           </button>
+          
           <button
-            className={`tab-button ${activeTab === 'schedules' ? 'active' : ''}`}
+            className={`tab-button ${activeTab.startsWith('schedules') ? 'active' : ''}`}
             onClick={() => setActiveTab('schedules')}
           >
             Schedules
           </button>
+          
           <button
             className={`tab-button ${activeTab === 'categories' ? 'active' : ''}`}
             onClick={() => setActiveTab('categories')}
@@ -8819,7 +13276,7 @@ C:\\\\Media\\\\Prerolls\\\\summer\\\\beach.mp4`}
 
      <div className="dashboard">
        {activeTab === 'dashboard' && renderDashboard()}
-       {activeTab === 'schedules' && renderSchedules()}
+       {activeTab.startsWith('schedules') && renderSchedules()}
        {activeTab === 'categories' && renderCategories()}
        {activeTab === 'settings' && renderSettings()}
        {activeTab === 'connect' && renderConnect()}
@@ -8831,10 +13288,262 @@ C:\\\\Media\\\\Prerolls\\\\summer\\\\beach.mp4`}
        <Modal
          title="Edit Preroll"
          onClose={() => { setEditingPreroll(null); setEditForm({ display_name: '', new_filename: '', tags: '', category_id: '', category_ids: [], description: '' }); }}
+         width={1000}
          zIndex={1100}
          allowBackgroundInteraction={false}
        >
          <form onSubmit={handleUpdatePreroll}>
+           {/* Community Match Status Section */}
+           {editingPreroll && (
+             <div style={{ 
+               marginBottom: '1rem', 
+               padding: '0.75rem', 
+               backgroundColor: editingPreroll.community_preroll_id 
+                 ? 'rgba(16, 185, 129, 0.1)'
+                 : 'rgba(251, 191, 36, 0.1)',
+               border: `1px solid ${editingPreroll.community_preroll_id 
+                 ? 'rgba(16, 185, 129, 0.3)' 
+                 : 'rgba(251, 191, 36, 0.3)'}`,
+               borderRadius: '6px'
+             }}>
+               <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.5rem' }}>
+                 <span style={{ fontSize: '1.2rem' }}>
+                   {editingPreroll.community_preroll_id ? '✅' : '⚠️'}
+                 </span>
+                 <strong style={{ color: 'var(--text-color)' }}>
+                   {editingPreroll.community_preroll_id 
+                     ? 'Community Match Found' 
+                     : 'No Community Match'}
+                 </strong>
+               </div>
+               
+               {editingPreroll.community_preroll_id ? (
+                 <div>
+                   <div style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginBottom: '0.75rem' }}>
+                     This preroll is linked to the Community Prerolls library (ID: {editingPreroll.community_preroll_id}).
+                   </div>
+                   <button
+                     type="button"
+                     onClick={async () => {
+                       if (!window.confirm('Are you sure you want to unmatch this preroll from the Community Prerolls library?')) {
+                         return;
+                       }
+                       try {
+                         const res = await fetch(apiUrl(`prerolls/${editingPreroll.id}/unmatch-community`), {
+                           method: 'POST'
+                         });
+                         const result = await handleFetchResponse(res);
+                         alert(result.message || 'Unmatched successfully!');
+                         setEditingPreroll({ ...editingPreroll, community_preroll_id: null });
+                         fetchData();
+                       } catch (error) {
+                         console.error('Unmatch error:', error);
+                         alert('Failed to unmatch: ' + error.message);
+                       }
+                     }}
+                     className="button"
+                     style={{
+                       backgroundColor: '#ef4444',
+                       color: 'white',
+                       fontSize: '0.85rem',
+                       padding: '0.5rem 0.75rem',
+                       display: 'flex',
+                       alignItems: 'center',
+                       gap: '0.5rem'
+                     }}
+                     title="Remove the link to Community Prerolls library"
+                   >
+                     <span>❌</span>
+                     Unmatch
+                   </button>
+                 </div>
+               ) : (
+                 <div>
+                   <div style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginBottom: '0.75rem' }}>
+                     This preroll hasn't been matched to the Community Prerolls library yet.
+                   </div>
+                   <button
+                     type="button"
+                     onClick={handleAutoMatchPreroll}
+                     className="button"
+                     disabled={autoMatchLoading}
+                     style={{
+                       backgroundColor: autoMatchLoading ? '#999' : '#2196f3',
+                       color: 'white',
+                       fontSize: '0.85rem',
+                       padding: '0.5rem 0.75rem',
+                       display: 'flex',
+                       alignItems: 'center',
+                       gap: '0.5rem',
+                       cursor: autoMatchLoading ? 'not-allowed' : 'pointer'
+                     }}
+                     title="Attempt to automatically match this preroll to Community Prerolls library"
+                   >
+                     {autoMatchLoading ? (
+                       <>
+                         <span className="nx-spinner" style={{ width: '14px', height: '14px', borderWidth: '2px' }}></span>
+                         Searching...
+                       </>
+                     ) : (
+                       <>
+                         <span>🔍</span>
+                         Auto-Match Now
+                       </>
+                     )}
+                   </button>
+                   
+                   {/* Similar Matches List */}
+                   {similarMatches.length > 0 && (
+                     <div style={{ 
+                       marginTop: '1rem',
+                       padding: '0.75rem',
+                       backgroundColor: 'var(--card-bg, #f9f9f9)',
+                       border: '1px solid var(--border-color, #ddd)',
+                       borderRadius: '6px'
+                     }}>
+                       <div style={{ 
+                         fontSize: '0.9rem', 
+                         fontWeight: 'bold', 
+                         marginBottom: '0.75rem',
+                         color: 'var(--text-color)'
+                       }}>
+                         Similar Matches Found ({similarMatches.length})
+                       </div>
+                       <div style={{ 
+                         fontSize: '0.8rem', 
+                         color: 'var(--text-secondary)',
+                         marginBottom: '0.75rem'
+                       }}>
+                         No exact match was found, but here are some similar prerolls. Click one to link it:
+                       </div>
+                       <div style={{ 
+                         display: 'flex', 
+                         flexDirection: 'column', 
+                         gap: '0.5rem',
+                         maxHeight: '300px',
+                         overflowY: 'auto'
+                       }}>
+                         {similarMatches.map((match, index) => (
+                           <div
+                             key={match.id}
+                             style={{
+                               padding: '0.75rem',
+                               backgroundColor: 'var(--input-bg, white)',
+                               border: '1px solid var(--border-color, #ddd)',
+                               borderRadius: '4px',
+                               display: 'flex',
+                               justifyContent: 'space-between',
+                               alignItems: 'center',
+                               gap: '0.5rem'
+                             }}
+                           >
+                             <button
+                               type="button"
+                               onClick={() => handleSelectSimilarMatch(match.id, match.title)}
+                               style={{
+                                 flex: 1,
+                                 padding: '0',
+                                 backgroundColor: 'transparent',
+                                 border: 'none',
+                                 textAlign: 'left',
+                                 cursor: 'pointer',
+                                 display: 'flex',
+                                 justifyContent: 'space-between',
+                                 alignItems: 'center',
+                                 gap: '0.5rem'
+                               }}
+                             >
+                               <div style={{ flex: 1 }}>
+                                 <div style={{ 
+                                   fontSize: '0.9rem', 
+                                   fontWeight: '500',
+                                   color: 'var(--text-color)',
+                                   marginBottom: '0.25rem'
+                                 }}>
+                                   {match.title}
+                                 </div>
+                                 <div style={{ 
+                                   fontSize: '0.75rem', 
+                                   color: 'var(--text-secondary)'
+                                 }}>
+                                   Confidence: {match.confidence}% • ID: {match.id}
+                                 </div>
+                               </div>
+                               <div style={{
+                                 padding: '0.25rem 0.5rem',
+                                 backgroundColor: match.confidence >= 70 ? 'rgba(16, 185, 129, 0.15)' : 
+                                                 match.confidence >= 40 ? 'rgba(251, 191, 36, 0.15)' : 
+                                                 'rgba(239, 68, 68, 0.15)',
+                                 color: match.confidence >= 70 ? '#059669' : 
+                                        match.confidence >= 40 ? '#d97706' : 
+                                        '#dc2626',
+                                 borderRadius: '3px',
+                                 fontSize: '0.75rem',
+                                 fontWeight: 'bold'
+                               }}>
+                                 {match.confidence}%
+                               </div>
+                             </button>
+                             {match.video_url && (
+                               <button
+                                 type="button"
+                                 onClick={() => setCommunityPreviewingPreroll({ id: match.id, title: match.title, url: match.video_url })}
+                                 style={{
+                                   padding: '0.5rem',
+                                   backgroundColor: 'rgba(33, 150, 243, 0.1)',
+                                   border: '1px solid rgba(33, 150, 243, 0.3)',
+                                   borderRadius: '4px',
+                                   color: '#2196f3',
+                                   cursor: 'pointer',
+                                   fontSize: '1rem',
+                                   transition: 'all 0.2s',
+                                   display: 'flex',
+                                   alignItems: 'center',
+                                   justifyContent: 'center',
+                                   width: '36px',
+                                   height: '36px',
+                                   flexShrink: 0
+                                 }}
+                                 onMouseEnter={(e) => {
+                                   e.currentTarget.style.backgroundColor = 'rgba(33, 150, 243, 0.2)';
+                                   e.currentTarget.style.borderColor = '#2196f3';
+                                 }}
+                                 onMouseLeave={(e) => {
+                                   e.currentTarget.style.backgroundColor = 'rgba(33, 150, 243, 0.1)';
+                                   e.currentTarget.style.borderColor = 'rgba(33, 150, 243, 0.3)';
+                                 }}
+                                 title="Preview video"
+                               >
+                                 ▶
+                               </button>
+                             )}
+                           </div>
+                         ))}
+                       </div>
+                       <button
+                         type="button"
+                         onClick={() => setSimilarMatches([])}
+                         style={{
+                           marginTop: '0.75rem',
+                           padding: '0.5rem',
+                           fontSize: '0.8rem',
+                           backgroundColor: 'transparent',
+                           border: '1px solid var(--border-color)',
+                           borderRadius: '4px',
+                           color: 'var(--text-secondary)',
+                           cursor: 'pointer',
+                           width: '100%'
+                         }}
+                       >
+                         ✕ Close Suggestions
+                       </button>
+                     </div>
+                   )}
+                 </div>
+               )}
+             </div>
+           )}
+
            {editingPreroll.filename && (
              <div style={{ 
                marginBottom: '1rem', 
@@ -8885,15 +13594,227 @@ C:\\\\Media\\\\Prerolls\\\\summer\\\\beach.mp4`}
                  placeholder="Search categories…"
                />
              </div>
-             <div className="nx-field">
+             <div className="nx-field nx-span-2">
                <label className="nx-label">Tags</label>
-               <input
-                 className="nx-input"
-                 type="text"
-                 placeholder="Comma separated"
-                 value={editForm.tags}
-                 onChange={(e) => setEditForm({ ...editForm, tags: e.target.value })}
-               />
+               {/* Display current tags as badges */}
+               {editForm.tags && (
+                 <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.4rem', marginBottom: '0.75rem' }}>
+                   {(() => {
+                     // Parse tags - handle both comma-separated strings and JSON array strings
+                     let tagList = [];
+                     try {
+                       // Try parsing as JSON array first (e.g., '["halloween", "christmas"]')
+                       if (editForm.tags.trim().startsWith('[')) {
+                         tagList = JSON.parse(editForm.tags);
+                       } else {
+                         // Otherwise split by comma
+                         tagList = editForm.tags.split(',');
+                       }
+                     } catch (e) {
+                       // If JSON parse fails, fall back to comma split
+                       tagList = editForm.tags.split(',');
+                     }
+                     
+                     return tagList.filter(t => t && String(t).trim()).map((tag, idx) => {
+                       const cleanTag = String(tag).trim();
+                       return (
+                         <span
+                           key={idx}
+                           style={{
+                             fontSize: '0.8rem',
+                             padding: '0.3rem 0.6rem',
+                             borderRadius: '12px',
+                             backgroundColor: 'rgba(99, 102, 241, 0.15)',
+                             color: 'var(--text-color)',
+                             border: '1px solid rgba(99, 102, 241, 0.3)',
+                             fontWeight: '500',
+                             display: 'inline-flex',
+                             alignItems: 'center',
+                             gap: '0.4rem'
+                           }}
+                         >
+                           {cleanTag}
+                           <button
+                             type="button"
+                             onClick={() => {
+                               let tagList = [];
+                               try {
+                                 if (editForm.tags.trim().startsWith('[')) {
+                                   tagList = JSON.parse(editForm.tags);
+                                 } else {
+                                   tagList = editForm.tags.split(',');
+                                 }
+                               } catch (e) {
+                                 tagList = editForm.tags.split(',');
+                               }
+                               const filteredTags = tagList.filter(t => t && String(t).trim() !== cleanTag);
+                               setEditForm({ ...editForm, tags: filteredTags.join(', ') });
+                             }}
+                             style={{
+                               background: 'none',
+                               border: 'none',
+                               color: 'rgba(239, 68, 68, 0.8)',
+                               cursor: 'pointer',
+                               padding: '0',
+                               fontSize: '1rem',
+                               lineHeight: '1',
+                               display: 'flex',
+                               alignItems: 'center'
+                             }}
+                             title={`Remove "${cleanTag}" tag`}
+                           >
+                             ×
+                           </button>
+                         </span>
+                       );
+                     });
+                   })()}
+                 </div>
+               )}
+               {/* Tag input with autocomplete */}
+               <div style={{ position: 'relative' }}>
+                 <input
+                   className="nx-input"
+                   type="text"
+                   placeholder="Type to add tags (comma separated) or select from suggestions"
+                   value={editForm.tags}
+                   onChange={(e) => setEditForm({ ...editForm, tags: e.target.value })}
+                   style={{ paddingRight: '80px' }}
+                 />
+                 {/* Quick add button for available tags */}
+                 {availableTags.length > 0 && (
+                   <div style={{
+                     position: 'absolute',
+                     right: '8px',
+                     top: '50%',
+                     transform: 'translateY(-50%)',
+                     display: 'flex',
+                     gap: '4px'
+                   }}>
+                     <button
+                       type="button"
+                       onClick={(e) => {
+                         const currentTags = editForm.tags.split(',').map(t => t.trim()).filter(Boolean);
+                         const dropdown = document.createElement('div');
+                         dropdown.style.cssText = `
+                           position: fixed;
+                           background: var(--card-bg);
+                           border: 2px solid var(--border-color);
+                           borderRadius: 8px;
+                           boxShadow: 0 4px 12px rgba(0,0,0,0.15);
+                           padding: 0.5rem;
+                           maxHeight: 300px;
+                           overflowY: auto;
+                           zIndex: 10000;
+                         `;
+                         const rect = e.target.getBoundingClientRect();
+                         dropdown.style.top = rect.bottom + 5 + 'px';
+                         dropdown.style.right = window.innerWidth - rect.right + 'px';
+                         
+                         const title = document.createElement('div');
+                         title.textContent = 'Available Tags';
+                         title.style.cssText = 'font-weight: 600; margin-bottom: 0.5rem; color: var(--text-color); font-size: 0.9rem;';
+                         dropdown.appendChild(title);
+                         
+                         availableTags.forEach(tag => {
+                           const isAdded = currentTags.includes(tag);
+                           const btn = document.createElement('button');
+                           btn.type = 'button';
+                           btn.textContent = isAdded ? `✓ ${tag}` : `+ ${tag}`;
+                           btn.style.cssText = `
+                             display: block;
+                             width: 100%;
+                             text-align: left;
+                             padding: 0.5rem;
+                             margin: 0.2rem 0;
+                             background: ${isAdded ? 'rgba(99, 102, 241, 0.15)' : 'transparent'};
+                             border: 1px solid ${isAdded ? 'rgba(99, 102, 241, 0.3)' : 'var(--border-color)'};
+                             borderRadius: 4px;
+                             cursor: pointer;
+                             color: var(--text-color);
+                             font-size: 0.85rem;
+                           `;
+                           btn.onmouseover = () => btn.style.backgroundColor = 'rgba(99, 102, 241, 0.25)';
+                           btn.onmouseout = () => btn.style.backgroundColor = isAdded ? 'rgba(99, 102, 241, 0.15)' : 'transparent';
+                           btn.onclick = () => {
+                             if (!isAdded) {
+                               const newTags = [...currentTags, tag].join(', ');
+                               setEditForm({ ...editForm, tags: newTags });
+                             } else {
+                               const newTags = currentTags.filter(t => t !== tag).join(', ');
+                               setEditForm({ ...editForm, tags: newTags });
+                             }
+                             document.body.removeChild(dropdown);
+                           };
+                           dropdown.appendChild(btn);
+                         });
+                         
+                         const closeBtn = document.createElement('button');
+                         closeBtn.type = 'button';
+                         closeBtn.textContent = 'Close';
+                         closeBtn.style.cssText = `
+                           width: 100%;
+                           padding: 0.5rem;
+                           margin-top: 0.5rem;
+                           background: var(--button-bg);
+                           color: white;
+                           border: none;
+                           borderRadius: 4px;
+                           cursor: pointer;
+                           font-size: 0.85rem;
+                         `;
+                         closeBtn.onclick = () => document.body.removeChild(dropdown);
+                         dropdown.appendChild(closeBtn);
+                         
+                         document.body.appendChild(dropdown);
+                       }}
+                       className="button"
+                       style={{
+                         padding: '0.25rem 0.5rem',
+                         fontSize: '0.75rem',
+                         backgroundColor: '#6366f1',
+                         color: 'white',
+                         border: 'none',
+                         borderRadius: '4px',
+                         cursor: 'pointer'
+                       }}
+                       title="Browse and add from existing tags"
+                     >
+                       📋 Browse
+                     </button>
+                   </div>
+                 )}
+               </div>
+               <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginTop: '0.4rem' }}>
+                 💡 Separate multiple tags with commas. Click × on badges to remove tags quickly.
+               </div>
+             </div>
+             <div className="nx-field nx-span-2">
+               <label style={{ 
+                 display: 'flex', 
+                 alignItems: 'center', 
+                 gap: '0.5rem',
+                 cursor: 'pointer',
+                 userSelect: 'none'
+               }}>
+                 <input
+                   type="checkbox"
+                   checked={editForm.exclude_from_matching}
+                   onChange={(e) => setEditForm({ ...editForm, exclude_from_matching: e.target.checked })}
+                   style={{ cursor: 'pointer' }}
+                 />
+                 <span style={{ fontWeight: '600', color: 'var(--text-color)' }}>
+                   Exclude from Community Matching
+                 </span>
+               </label>
+               <div style={{ 
+                 fontSize: '0.8rem', 
+                 color: 'var(--text-secondary)', 
+                 marginTop: '0.25rem',
+                 marginLeft: '1.5rem'
+               }}>
+                 Prevent this preroll from being automatically matched to the Community Prerolls library
+               </div>
              </div>
              <div className="nx-field nx-span-2">
                <label className="nx-label">Description</label>
@@ -9073,7 +13994,7 @@ C:\\\\Media\\\\Prerolls\\\\summer\\\\beach.mp4`}
            setShowChangelogModal(false);
            // Mark this version as seen
            try {
-             await fetch('http://localhost:9393/system/changelog/mark-seen', {
+             await fetch(apiUrl('system/changelog/mark-seen'), {
                method: 'POST',
                headers: { 'Content-Type': 'application/json' }
              });
@@ -9112,7 +14033,7 @@ C:\\\\Media\\\\Prerolls\\\\summer\\\\beach.mp4`}
              onClick={async () => {
                setShowChangelogModal(false);
                try {
-                 await fetch('http://localhost:9393/system/changelog/mark-seen', {
+                 await fetch(apiUrl('system/changelog/mark-seen'), {
                    method: 'POST',
                    headers: { 'Content-Type': 'application/json' }
                  });
@@ -9163,6 +14084,16 @@ C:\\\\Media\\\\Prerolls\\\\summer\\\\beach.mp4`}
               style={{ color: 'var(--text-secondary, #666)', textDecoration: 'none' }}
             >
               GitHub
+            </a>
+            <span className="nx-footer-sep" aria-hidden="true" style={{ color: 'var(--text-muted, #999)' }}>•</span>
+            <a
+              href="https://discord.gg/R9eH7TbxEk"
+              target="_blank"
+              rel="noopener noreferrer"
+              title="Join our Discord server"
+              style={{ color: 'var(--text-secondary, #666)', textDecoration: 'none' }}
+            >
+              Discord
             </a>
             <span className="nx-footer-sep" aria-hidden="true" style={{ color: 'var(--text-muted, #999)' }}>•</span>
             <a

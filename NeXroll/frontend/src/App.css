@@ -126,5 +126,16 @@
   }
 }
 
+/* Inline code styling */
+code {
+  font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
+  background-color: rgba(99, 102, 241, 0.1);
+  color: #6366f1;
+  padding: 0.15rem 0.4rem;
+  border-radius: 4px;
+  font-size: 0.9em;
+  font-weight: 600;
+}
+
 /* Prerolls UI styles are centralized in index.css for consistency.
    Duplicate rules removed to prevent precedence conflicts. */

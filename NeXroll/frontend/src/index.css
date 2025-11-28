@@ -117,6 +117,11 @@ body.light {
   --header-bg: #f8f9fa;
   --success-color: #28a745;
   --error-color: #dc3545;
+  --input-bg: white;
+  --hover-bg: #f0f0f0;
+  --accent-color: #00d4ff;
+  --button-secondary-bg: #6c757d;
+  --button-text: white;
 }
 
 /* Dark theme */
@@ -133,6 +138,11 @@ body.dark {
   --header-bg: #333;
   --success-color: #40c057;
   --error-color: #fa5252;
+  --input-bg: #1e1e1e;
+  --hover-bg: #3a3a3a;
+  --accent-color: #00d4ff;
+  --button-secondary-bg: #555;
+  --button-text: white;
 }
 
 .app-container {
