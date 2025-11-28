@@ -31,6 +31,9 @@ class Scheduler:
         self._verification_interval_seconds: float = 300.0  # Check every 5 minutes
         # Configurable scheduler check interval (seconds) - default 60s, can be overridden via SCHEDULER_INTERVAL env var
         self._scheduler_check_interval: float = float(os.environ.get('SCHEDULER_INTERVAL', '60.0'))
+        # Track last rotation time for random blocks (schedule_id -> last_rotation_time)
+        self._last_rotation_time: dict[int, datetime.datetime] = {}
+        self._rotation_interval_seconds: float = 300.0  # 5 minutes for testing (change to 600.0 for 10 min production)
 
     def start(self):
         """Start the scheduler in a background thread"""
@@ -517,8 +520,11 @@ class Scheduler:
                 # If this schedule defines an explicit sequence, honor it; otherwise apply whole category
                 if chosen_schedule and getattr(chosen_schedule, "sequence", None):
                     applied_ok = self._apply_schedule_sequence_to_plex(chosen_schedule, db)
+                    # Track rotation time for schedules with sequences
+                    if applied_ok and chosen_schedule.id:
+                        self._last_rotation_time[chosen_schedule.id] = now
                 else:
-                    applied_ok = self._apply_category_to_plex(desired_category_id, db)
+                    applied_ok = self._apply_category_to_plex(desired_category_id, db, schedule=chosen_schedule)
                 if applied_ok:
                     setting.active_category = desired_category_id
                     if chosen_schedule:
@@ -532,17 +538,43 @@ class Scheduler:
                     self._last_logged_state = state_key
                     self._last_logged_time = now
             elif setting.active_category == desired_category_id:
-                # Only log if state changed OR if we haven't logged this schedule in 5 minutes
-                state_key = f"schedule_active:{chosen_schedule.id if chosen_schedule else 'none'}:{desired_category_id}"
-                if self._last_logged_state != state_key:
-                    # State changed (different schedule/category) - log immediately
-                    print(f"SCHEDULER: Category {desired_category_id} already active; no change needed")
-                    self._last_logged_state = state_key
-                    self._last_logged_time = now
-                elif self._last_logged_time and (now - self._last_logged_time).total_seconds() > 300:
-                    # Same state but 5 minutes passed - log for status visibility
-                    print(f"SCHEDULER: Category {desired_category_id} still active")
-                    self._last_logged_time = now
+                # Check if we need to rotate random blocks in a sequence
+                should_rotate = False
+                if chosen_schedule and getattr(chosen_schedule, "sequence", None):
+                    # Check if this schedule has random blocks
+                    try:
+                        seq = chosen_schedule.sequence
+                        if isinstance(seq, str):
+                            seq = json.loads(seq)
+                        if isinstance(seq, list):
+                            has_random = any(block.get("type") == "random" for block in seq)
+                            if has_random:
+                                # Check if 10 minutes have passed since last rotation
+                                last_rotation = self._last_rotation_time.get(chosen_schedule.id)
+                                if last_rotation is None or (now - last_rotation).total_seconds() >= self._rotation_interval_seconds:
+                                    should_rotate = True
+                    except Exception as e:
+                        print(f"SCHEDULER: Error checking rotation for schedule {chosen_schedule.id}: {e}")
+                
+                if should_rotate:
+                    # Re-apply the sequence to rotate random blocks
+                    applied_ok = self._apply_schedule_sequence_to_plex(chosen_schedule, db)
+                    if applied_ok:
+                        self._last_rotation_time[chosen_schedule.id] = now
+                        print(f"SCHEDULER: Rotated random blocks for schedule '{chosen_schedule.name}' (ID {chosen_schedule.id})")
+                        db.commit()
+                else:
+                    # Only log if state changed OR if we haven't logged this schedule in 5 minutes
+                    state_key = f"schedule_active:{chosen_schedule.id if chosen_schedule else 'none'}:{desired_category_id}"
+                    if self._last_logged_state != state_key:
+                        # State changed (different schedule/category) - log immediately
+                        print(f"SCHEDULER: Category {desired_category_id} already active; no change needed")
+                        self._last_logged_state = state_key
+                        self._last_logged_time = now
+                    elif self._last_logged_time and (now - self._last_logged_time).total_seconds() > 300:
+                        # Same state but 5 minutes passed - log for status visibility
+                        print(f"SCHEDULER: Category {desired_category_id} still active")
+                        self._last_logged_time = now
             # If no desired_category_id, leave Plex as-is to avoid unintended clears
 
         finally:
@@ -574,10 +606,26 @@ class Scheduler:
             if not setting.active_category:
                 return
             
-            # Get the expected prerolls for the active category
+            # Check if there's an active schedule with a sequence
+            # If so, skip verification as sequences have their own rotation logic
+            schedules = db.query(models.Schedule).filter(models.Schedule.is_active == True).all()
+            active_schedules = [s for s in schedules if self._is_schedule_active(s, now)]
+            if active_schedules:
+                # Check if any active schedule has a sequence
+                for sched in active_schedules:
+                    if sched.category_id == setting.active_category and getattr(sched, "sequence", None):
+                        # Active schedule with sequence - skip verification
+                        self._last_verification_time = now
+                        return
+            
+            # Get the expected prerolls for the active category (including many-to-many)
+            # Must match the logic in _apply_category_to_plex
             prerolls = (
                 db.query(models.Preroll)
-                .filter(models.Preroll.category_id == setting.active_category)
+                .outerjoin(models.preroll_categories, models.Preroll.id == models.preroll_categories.c.preroll_id)
+                .filter(or_(models.Preroll.category_id == setting.active_category,
+                            models.preroll_categories.c.category_id == setting.active_category))
+                .distinct()
                 .all()
             )
             
@@ -636,13 +684,10 @@ class Scheduler:
             
             expected_paths = [_translate_for_plex(p) for p in preroll_paths_local]
             
-            # Determine separator based on category's plex_mode
-            try:
-                cat = db.query(models.Category).filter(models.Category.id == setting.active_category).first()
-                mode = getattr(cat, "plex_mode", "shuffle") if cat else "shuffle"
-            except Exception:
-                mode = "shuffle"
-            separator = "," if isinstance(mode, str) and mode.lower() == "playlist" else ";"
+            # Note: Verification uses semicolon by default since we don't track which schedule is active
+            # This is a limitation - verification may trigger false positives if the active schedule
+            # uses comma (sequential) mode. Consider storing active schedule ID in settings for proper verification.
+            separator = ";"
             expected_preroll_string = separator.join(expected_paths)
             
             # Get actual preroll setting from Plex
@@ -692,10 +737,11 @@ class Scheduler:
         # Indefinite schedule: active from start onward
         return now >= schedule.start_date
 
-    def _apply_category_to_plex(self, category_id: int, db: Session) -> bool:
+    def _apply_category_to_plex(self, category_id: int, db: Session, schedule: models.Schedule = None) -> bool:
         """
-        Apply all prerolls from a category (including many-to-many) to Plex as a semicolon-separated list.
-        Mirrors the logic in the /categories/{id}/apply-to-plex endpoint.
+        Apply all prerolls from a category (including many-to-many) to Plex.
+        Uses semicolon (random) or comma (sequential) delimiter based on schedule settings.
+        If no schedule provided, defaults to random (semicolon).
         """
         if not category_id:
             return False
@@ -718,14 +764,16 @@ class Scheduler:
             print(f"SCHEDULER: ERROR - No prerolls found for category_id={category_id} (name='{cat_name}'). Ensure prerolls are assigned to this category.")
             return False
 
-        # Build combined path string for Plex multi-preroll format, honoring category.plex_mode
+        # Build combined path string for Plex multi-preroll format
+        # Determine delimiter from schedule settings (not category)
         preroll_paths_local = [os.path.abspath(p.path) for p in prerolls]
-        try:
-            cat = db.query(models.Category).filter(models.Category.id == category_id).first()
-            mode = getattr(cat, "plex_mode", "shuffle") if cat else "shuffle"
-        except Exception:
-            mode = "shuffle"
-        delimiter = "," if isinstance(mode, str) and mode.lower() == "playlist" else ";"
+        
+        # Use schedule's shuffle/playlist settings to determine delimiter
+        # playlist=True means sequential (comma), shuffle=True or default means random (semicolon)
+        if schedule and getattr(schedule, "playlist", False):
+            delimiter = ","  # Sequential playback
+        else:
+            delimiter = ";"  # Random playback (default)
 
         setting = db.query(models.Setting).first()
         # Allow secure-store token fallback via PlexConnector; only require URL here
@@ -828,9 +876,11 @@ class Scheduler:
 
         combined = delimiter.join(preroll_paths_plex)
 
-        print(f"SCHEDULER: Applying category_id={category_id} with {len(prerolls)} prerolls to Plex (mode={mode}, delim={'comma' if delimiter==',' else 'semicolon'})…")
+        # Determine mode from delimiter
+        mode_str = 'sequential' if delimiter == ',' else 'random'
+        print(f"SCHEDULER: Applying category_id={category_id} with {len(prerolls)} prerolls to Plex (mode={mode_str}, delim={'comma' if delimiter==',' else 'semicolon'})…")
         ok = connector.set_preroll(combined)
-        print(f"SCHEDULER: {'SUCCESS' if ok else 'FAIL'} setting multi-preroll (mode={mode}).")
+        print(f"SCHEDULER: {'SUCCESS' if ok else 'FAIL'} setting multi-preroll (mode={mode_str}).")
         if ok:
             # Mirror manual "Apply to Plex" behavior so UI reflects the active category
             try:
@@ -897,15 +947,29 @@ class Scheduler:
                 for p in picks:
                     paths.append(os.path.abspath(p.path))
             elif stype == "fixed":
+                # Support both single preroll_id and array preroll_ids
+                pids = []
                 try:
-                    pid = int(step.get("preroll_id") or 0)
+                    # Try array format first (preroll_ids)
+                    ids_array = step.get("preroll_ids")
+                    if ids_array and isinstance(ids_array, list):
+                        pids = [int(x) for x in ids_array if x]
+                    else:
+                        # Fall back to single preroll_id
+                        pid = int(step.get("preroll_id") or 0)
+                        if pid:
+                            pids = [pid]
                 except Exception:
-                    pid = 0
-                if not pid:
+                    pass
+                
+                if not pids:
                     continue
-                p = db.query(models.Preroll).filter(models.Preroll.id == pid).first()
-                if p:
-                    paths.append(os.path.abspath(p.path))
+                
+                # Query and add each preroll in order
+                for pid in pids:
+                    p = db.query(models.Preroll).filter(models.Preroll.id == pid).first()
+                    if p:
+                        paths.append(os.path.abspath(p.path))
             else:
                 # ignore unknown step types
                 continue
@@ -913,6 +977,10 @@ class Scheduler:
         if not paths:
             print("SCHEDULER: Sequence produced no preroll paths; aborting.")
             return False
+
+        print(f"SCHEDULER: Sequence built {len(paths)} paths:")
+        for i, p in enumerate(paths):
+            print(f"  {i+1}. {p}")
 
         # Choose delimiter: sequences must play in order. Always use playlist (comma) for sequences.
         mode = "playlist"
@@ -971,6 +1039,10 @@ class Scheduler:
             return local_path
 
         paths_plex = [_translate_for_plex(p) for p in paths]
+        
+        print(f"SCHEDULER: After translation, {len(paths_plex)} Plex paths:")
+        for i, p in enumerate(paths_plex):
+            print(f"  {i+1}. {p}")
 
         # Preflight: ensure translated paths match Plex platform path style
         connector = PlexConnector(setting.plex_url, setting.plex_token)

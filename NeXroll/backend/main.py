@@ -20,6 +20,7 @@ from pathlib import Path
 from urllib.parse import unquote
 import uuid
 import time
+import re
 
 class DashboardSection(BaseModel):
     id: str
@@ -123,6 +124,12 @@ def ensure_schema() -> None:
             # Prerolls: ensure community_preroll_id for tracking downloaded community prerolls
             if not _sqlite_has_column("prerolls", "community_preroll_id"):
                 _sqlite_add_column("prerolls", "community_preroll_id TEXT")
+            # Prerolls: ensure exclude_from_matching flag to prevent auto-matching
+            if not _sqlite_has_column("prerolls", "exclude_from_matching"):
+                _sqlite_add_column("prerolls", "exclude_from_matching BOOLEAN DEFAULT 0")
+            # Prerolls: ensure file_hash for duplicate detection
+            if not _sqlite_has_column("prerolls", "file_hash"):
+                _sqlite_add_column("prerolls", "file_hash TEXT")
 
             # Genre maps: ensure canonical normalized key for robust matching/synonyms
             if not _sqlite_has_column("genre_maps", "genre_norm"):
@@ -152,6 +159,10 @@ def ensure_schema() -> None:
             # Settings: ensure timezone column
             if not _sqlite_has_column("settings", "timezone"):
                 _sqlite_add_column("settings", "timezone TEXT DEFAULT 'UTC'")
+            
+            # Settings: ensure verbose_logging column
+            if not _sqlite_has_column("settings", "verbose_logging"):
+                _sqlite_add_column("settings", "verbose_logging BOOLEAN DEFAULT 0")
             
             # Schedules: ensure color column for custom calendar colors
             if not _sqlite_has_column("schedules", "color"):
@@ -296,9 +307,71 @@ def ensure_settings_schema_now() -> None:
 # Run schema upgrades early so requests won't hit missing columns
 ensure_schema()
 
+def migrate_preroll_hashes() -> None:
+    """
+    Calculate and store file hashes for existing prerolls that don't have one.
+    This enables duplicate detection for prerolls uploaded before hash tracking.
+    """
+    try:
+        db = SessionLocal()
+        
+        # Find all prerolls without a hash
+        prerolls_without_hash = db.query(models.Preroll).filter(
+            (models.Preroll.file_hash == None) | (models.Preroll.file_hash == "")
+        ).all()
+        
+        if not prerolls_without_hash:
+            _file_log("Hash migration: All prerolls already have hashes")
+            db.close()
+            return
+        
+        _file_log(f"Hash migration: Found {len(prerolls_without_hash)} prerolls without hashes, calculating...")
+        
+        updated_count = 0
+        failed_count = 0
+        
+        for preroll in prerolls_without_hash:
+            try:
+                # Check if file exists
+                if not preroll.path or not os.path.exists(preroll.path):
+                    _file_log(f"Hash migration: Skipping preroll {preroll.id} - file not found: {preroll.path}")
+                    failed_count += 1
+                    continue
+                
+                # Calculate hash
+                file_hash = calculate_file_hash(preroll.path)
+                preroll.file_hash = file_hash
+                updated_count += 1
+                
+                if updated_count % 10 == 0:
+                    _file_log(f"Hash migration: Processed {updated_count}/{len(prerolls_without_hash)} prerolls...")
+                    
+            except Exception as e:
+                _file_log(f"Hash migration: Error processing preroll {preroll.id}: {e}")
+                failed_count += 1
+                continue
+        
+        # Commit all changes
+        try:
+            db.commit()
+            _file_log(f"Hash migration: Complete! Updated {updated_count} prerolls, {failed_count} failed")
+        except Exception as e:
+            db.rollback()
+            _file_log(f"Hash migration: Failed to commit changes: {e}")
+        finally:
+            db.close()
+            
+    except Exception as e:
+        _file_log(f"Hash migration: Fatal error: {e}")
+        import traceback
+        _file_log(f"Hash migration traceback: {traceback.format_exc()}")
+
 # Run legacy community preroll migration in background (one-time, safe to call multiple times)
 import threading
 threading.Thread(target=migrate_legacy_community_prerolls, daemon=True).start()
+
+# Run hash migration in background for existing prerolls
+threading.Thread(target=migrate_preroll_hashes, daemon=True).start()
 
 # Simple file logger to ProgramData\NeXroll\logs for frozen builds
 def _ensure_log_dir():
@@ -351,6 +424,25 @@ def _file_log(msg: str):
             f.write(f"[{ts}] {msg}\n")
     except Exception:
         pass
+
+def _is_verbose_logging_enabled() -> bool:
+    """Check if verbose logging is enabled in settings"""
+    try:
+        from backend.database import SessionLocal
+        db = SessionLocal()
+        try:
+            setting = db.query(models.Setting).first()
+            return setting.verbose_logging if setting and hasattr(setting, 'verbose_logging') else False
+        finally:
+            db.close()
+    except Exception:
+        return False
+
+def _verbose_log(msg: str):
+    """Log message only if verbose logging is enabled"""
+    if _is_verbose_logging_enabled():
+        print(f"[VERBOSE] {msg}")
+        _file_log(f"[VERBOSE] {msg}")
 
 def _rotate_log_if_needed(max_size_mb=10):
     """
@@ -617,15 +709,16 @@ class ScheduleCreate(BaseModel):
     name: str
     type: str
     start_date: str  # Accept as string from frontend
-    end_date: str = None  # Accept as string from frontend
+    end_date: Optional[str] = None  # Accept as string from frontend
     category_id: int
     shuffle: bool = False
     playlist: bool = False
-    recurrence_pattern: str = None
-    preroll_ids: str = None
+    recurrence_pattern: Optional[str] = None
+    preroll_ids: Optional[str] = None
     sequence: Optional[str] = None
     fallback_category_id: Optional[int] = None
     color: Optional[str] = None  # Custom color for calendar display
+    is_active: bool = True  # Whether the schedule is enabled
 
 class ScheduleResponse(BaseModel):
     id: int
@@ -991,6 +1084,20 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Add exception handler for Pydantic validation errors
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import JSONResponse
+
+@app.exception_handler(RequestValidationError)
+async def validation_exception_handler(request: Request, exc: RequestValidationError):
+    error_details = exc.errors()
+    _file_log(f"VALIDATION ERROR {request.method} {request.url.path}: {error_details}")
+    print(f"VALIDATION ERROR {request.method} {request.url.path}: {error_details}")
+    return JSONResponse(
+        status_code=422,
+        content={"detail": error_details}
+    )
 
 # Ensure app.version attribute is set for runtime inspection (used by /system/version and headers)
 try:
@@ -1509,6 +1616,56 @@ def system_db_introspect():
         info["error"] = str(e)
 
     return info
+
+@app.post("/system/migrate-hashes")
+def trigger_hash_migration(db: Session = Depends(get_db)):
+    """
+    Manually trigger file hash migration for existing prerolls.
+    Calculates and stores SHA256 hashes for all prerolls that don't have one.
+    """
+    try:
+        # Count prerolls without hash
+        count = db.query(models.Preroll).filter(
+            (models.Preroll.file_hash == None) | (models.Preroll.file_hash == "")
+        ).count()
+        
+        if count == 0:
+            return {"message": "All prerolls already have hashes", "processed": 0}
+        
+        # Run migration in background thread
+        def run_migration():
+            migrate_preroll_hashes()
+        
+        threading.Thread(target=run_migration, daemon=True).start()
+        
+        return {
+            "message": f"Hash migration started for {count} prerolls. Check logs for progress.",
+            "prerolls_to_process": count
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to start migration: {str(e)}")
+
+@app.get("/system/hash-migration-status")
+def hash_migration_status(db: Session = Depends(get_db)):
+    """
+    Check the status of file hash migration.
+    Returns count of prerolls with and without hashes.
+    """
+    try:
+        total = db.query(models.Preroll).count()
+        with_hash = db.query(models.Preroll).filter(
+            (models.Preroll.file_hash != None) & (models.Preroll.file_hash != "")
+        ).count()
+        without_hash = total - with_hash
+        
+        return {
+            "total_prerolls": total,
+            "with_hash": with_hash,
+            "without_hash": without_hash,
+            "percentage_complete": round((with_hash / total * 100), 2) if total > 0 else 100
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to get status: {str(e)}")
 
 @app.get("/system/paths")
 def system_paths():
@@ -2045,8 +2202,9 @@ def get_plex_status(db: Session = Depends(get_db)):
             info.setdefault("url", plex_url)
             if token_source:
                 info["token_source"] = token_source
-            if is_connected:
-                _file_log(f"/plex/status: Connected successfully (token from {token_source})")
+            # Commented out to reduce log verbosity (called every 30 seconds by frontend polling)
+            # if is_connected:
+            #     _file_log(f"/plex/status: Connected successfully (token from {token_source})")
         except Exception:
             pass
         return info
@@ -2676,6 +2834,58 @@ def plex_tv_connect(req: PlexTvConnectRequest, db: Session = Depends(get_db)):
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to complete Plex.tv auth: {str(e)}")
 
+def calculate_file_hash(file_path: str) -> str:
+    """Calculate SHA256 hash of a file for duplicate detection"""
+    import hashlib
+    sha256_hash = hashlib.sha256()
+    with open(file_path, "rb") as f:
+        # Read file in chunks to handle large files
+        for byte_block in iter(lambda: f.read(4096), b""):
+            sha256_hash.update(byte_block)
+    return sha256_hash.hexdigest()
+
+def calculate_content_hash(content: bytes) -> str:
+    """Calculate SHA256 hash of file content for duplicate detection"""
+    import hashlib
+    return hashlib.sha256(content).hexdigest()
+
+@app.post("/prerolls/check-duplicate")
+def check_duplicate(
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db)
+):
+    """Check if an uploaded file is a duplicate based on hash"""
+    try:
+        # Read file content
+        content = file.file.read()
+        file_hash = calculate_content_hash(content)
+        
+        # Check if a preroll with this hash already exists
+        existing = db.query(models.Preroll).filter(models.Preroll.file_hash == file_hash).first()
+        
+        if existing:
+            # Return duplicate info
+            return {
+                "is_duplicate": True,
+                "existing_preroll": {
+                    "id": existing.id,
+                    "filename": existing.filename,
+                    "display_name": existing.display_name,
+                    "category_id": existing.category_id,
+                    "category_name": existing.category.name if existing.category else None,
+                    "file_size": existing.file_size,
+                    "upload_date": existing.upload_date.isoformat() if existing.upload_date else None
+                },
+                "file_hash": file_hash
+            }
+        else:
+            return {
+                "is_duplicate": False,
+                "file_hash": file_hash
+            }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error checking duplicate: {str(e)}")
+
 @app.post("/prerolls/upload")
 def upload_preroll(
     file: UploadFile = File(...),
@@ -2683,6 +2893,8 @@ def upload_preroll(
     category_id: str = Form(""),
     category_ids: str = Form(""),
     description: str = Form(""),
+    duplicate_action: str = Form(""),  # skip, replace, rename, or empty to allow duplicate
+    file_hash: str = Form(""),  # Hash from check-duplicate endpoint
     db: Session = Depends(get_db)
 ):
     # Ensure directories exist
@@ -2731,12 +2943,57 @@ def upload_preroll(
     os.makedirs(category_path, exist_ok=True)
     os.makedirs(thumbnail_category_path, exist_ok=True)
 
+    # Read file content once
+    content = file.file.read()
+    file_size = len(content)
+    
+    # Calculate hash if not provided
+    if not file_hash or not file_hash.strip():
+        file_hash = calculate_content_hash(content)
+    
+    # Check for duplicates and handle according to duplicate_action
+    existing_duplicate = db.query(models.Preroll).filter(models.Preroll.file_hash == file_hash).first()
+    
+    if existing_duplicate and duplicate_action:
+        if duplicate_action == "skip":
+            # Return the existing preroll info without creating a new one
+            return {
+                "message": "Duplicate skipped",
+                "skipped": True,
+                "existing_preroll": {
+                    "id": existing_duplicate.id,
+                    "filename": existing_duplicate.filename,
+                    "display_name": existing_duplicate.display_name
+                }
+            }
+        elif duplicate_action == "replace":
+            # Delete the existing preroll (will also delete the file)
+            try:
+                if existing_duplicate.path and os.path.exists(existing_duplicate.path):
+                    os.remove(existing_duplicate.path)
+                if existing_duplicate.thumbnail and os.path.exists(existing_duplicate.thumbnail):
+                    os.remove(existing_duplicate.thumbnail)
+                db.delete(existing_duplicate)
+                db.commit()
+            except Exception as e:
+                db.rollback()
+                raise HTTPException(status_code=500, detail=f"Failed to replace duplicate: {str(e)}")
+        elif duplicate_action == "rename":
+            # Auto-rename the new file to avoid conflict
+            base, ext = os.path.splitext(file.filename)
+            counter = 1
+            new_filename = file.filename
+            while db.query(models.Preroll).filter(
+                models.Preroll.filename == new_filename,
+                models.Preroll.category_id == primary_category_id
+            ).first():
+                new_filename = f"{base}_{counter}{ext}"
+                counter += 1
+            file.filename = new_filename
+    
     # Save file to disk (single physical copy regardless of multi-category assignment)
     file_path = os.path.join(category_path, file.filename)
-    file_size = 0
     with open(file_path, "wb") as f:
-        content = file.file.read()
-        file_size = len(content)
         f.write(content)
 
     # Probe duration (best-effort)
@@ -2773,6 +3030,7 @@ def upload_preroll(
         description=description or None,
         duration=duration,
         file_size=file_size,
+        file_hash=file_hash,
     )
     db.add(preroll)
     db.commit()
@@ -3171,7 +3429,9 @@ def get_prerolls(db: Session = Depends(get_db), category_id: str = "", tags: str
             "duration": p.duration,
             "file_size": p.file_size,
             "managed": getattr(p, "managed", True),
-            "upload_date": p.upload_date
+            "upload_date": p.upload_date,
+            "community_preroll_id": getattr(p, "community_preroll_id", None),
+            "exclude_from_matching": getattr(p, "exclude_from_matching", False)
         })
     return result
 
@@ -3449,6 +3709,247 @@ def delete_preroll(preroll_id: int, db: Session = Depends(get_db)):
         import traceback
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=f"Error deleting preroll: {str(e)}")
+
+@app.post("/prerolls/{preroll_id}/auto-match")
+def auto_match_single_preroll(preroll_id: int, db: Session = Depends(get_db)):
+    """
+    Automatically match a preroll to the Community Prerolls library using fuzzy matching.
+    Returns matched community preroll or similar matches with confidence scores.
+    """
+    try:
+        preroll = db.query(models.Preroll).filter(models.Preroll.id == preroll_id).first()
+        if not preroll:
+            raise HTTPException(status_code=404, detail="Preroll not found")
+        
+        # Check if preroll is excluded from auto-matching
+        if getattr(preroll, 'exclude_from_matching', False):
+            return {
+                "success": False,
+                "matched": False,
+                "excluded": True,
+                "message": "This preroll is excluded from community matching"
+            }
+        
+        # Check if already matched
+        if getattr(preroll, 'community_preroll_id', None):
+            return {
+                "matched": True,
+                "already_matched": True,
+                "community_preroll_id": preroll.community_preroll_id
+            }
+        
+        # Load community index
+        if not PREROLLS_INDEX_PATH.exists():
+            return {
+                "matched": False,
+                "message": "Community prerolls index not available. Please build the index first."
+            }
+        
+        try:
+            with open(PREROLLS_INDEX_PATH, 'r', encoding='utf-8') as f:
+                index_data = json.load(f)
+            # Extract prerolls array from wrapper dict
+            community_data = index_data.get("prerolls", [])
+            _file_log(f"Loaded community index: {len(community_data)} prerolls for auto-match")
+        except Exception as e:
+            _file_log(f"Failed to load community index: {e}")
+            return {"matched": False, "message": f"Failed to load community index: {str(e)}"}
+        
+        # Get preroll title for matching
+        title = preroll.display_name or preroll.filename
+        title_clean = os.path.splitext(title)[0]
+        
+        # Normalize title for matching
+        def normalize(s):
+            s = s.lower()
+            # Replace underscores with spaces first
+            s = s.replace('_', ' ')
+            # Remove all non-alphanumeric characters except spaces
+            s = re.sub(r'[^a-z0-9\s]', '', s)
+            # Collapse multiple spaces into one
+            s = re.sub(r'\s+', ' ', s)
+            return s.strip()
+        
+        # Check if title has hash-like prefix (e.g., "1740Bdd395C04C5Ea7843Da12858C2B4.Title")
+        def has_hash_prefix(title):
+            # Match pattern: starts with 20+ alphanumeric chars followed by dot or space
+            # This catches hash prefixes like "1740Bdd395C04C5Ea7843Da12858C2B4."
+            match = re.match(r'^[a-zA-Z0-9]{20,}[\.\s]', title)
+            return match is not None
+        
+        title_norm = normalize(title_clean)
+        
+        # Try to find exact match
+        for cp in community_data:
+            cp_title_norm = normalize(cp.get('title', ''))
+            if title_norm == cp_title_norm:
+                # Exact match found
+                preroll.community_preroll_id = cp.get('id')
+                db.commit()
+                _file_log(f"Auto-matched preroll '{title}' to community preroll '{cp.get('title')}' (exact match)")
+                return {
+                    "matched": True,
+                    "community_preroll_id": cp.get('id'),
+                    "matched_title": cp.get('title'),
+                    "match_type": "exact",
+                    "match_score": 1.0
+                }
+        
+        # No exact match - find similar matches using fuzzy matching
+        similar_matches = []
+        title_words = set(title_norm.split())
+        _file_log(f"Fuzzy matching for '{title_norm}' with {len(title_words)} words: {title_words}")
+        
+        matches_checked = 0
+        for cp in community_data:
+            cp_title = cp.get('title', '')
+            
+            # Skip prerolls with hash-like prefixes (e.g., "1740Bdd395C04C5Ea7843Da12858C2B4.Title")
+            if has_hash_prefix(cp_title):
+                continue
+            
+            cp_title_norm = normalize(cp_title)
+            cp_words = set(cp_title_norm.split())
+            
+            # Calculate similarity score
+            score = 0.0
+            reason = ""
+            
+            # Check if one title is substring of another
+            if title_norm in cp_title_norm or cp_title_norm in title_norm:
+                score = 0.85
+                reason = "substring"
+            else:
+                # Word overlap scoring - ANY matching word counts
+                if title_words and cp_words:
+                    common_words = title_words & cp_words
+                    if common_words:
+                        # Score based on how many words match relative to the shorter title
+                        # This gives higher scores when ANY word matches
+                        min_words = min(len(title_words), len(cp_words))
+                        score = len(common_words) / min_words
+                        reason = f"word_match ({len(common_words)}/{min_words})"
+            
+            # Threshold at 50% to show matches where at least half the words match
+            if score >= 0.50:
+                similar_matches.append({
+                    "id": cp.get('id'),
+                    "title": cp_title,
+                    "confidence": int(score * 100),
+                    "score": score,
+                    "reason": reason,
+                    "video_url": cp.get('url')  # Include video URL for preview
+                })
+            
+            matches_checked += 1
+            # Log first few high-scoring matches for debugging
+            if score >= 0.50 and len(similar_matches) <= 5:
+                _file_log(f"  Match: '{cp_title}' (score: {int(score*100)}%, common: {common_words if score > 0 else 'none'})")
+        
+        _file_log(f"Checked {matches_checked} community prerolls, found {len(similar_matches)} matches >= 50%")
+        
+        # Sort by score descending
+        similar_matches.sort(key=lambda x: x['score'], reverse=True)
+        
+        # Auto-link only if we have a very confident match (>= 80%)
+        # Lower confidence matches (20-79%) are shown to user for manual selection
+        if similar_matches and similar_matches[0]['score'] >= 0.8:
+            best_match = similar_matches[0]
+            preroll.community_preroll_id = best_match['id']
+            db.commit()
+            _file_log(f"Auto-matched preroll '{title}' to community preroll '{best_match['title']}' (fuzzy match: {best_match['confidence']}%)")
+            return {
+                "matched": True,
+                "community_preroll_id": best_match['id'],
+                "matched_title": best_match['title'],
+                "match_type": "fuzzy",
+                "match_score": best_match['score']
+            }
+        
+        # Return similar matches for user to choose (limit to top 10)
+        if similar_matches:
+            _file_log(f"Returning {len(similar_matches[:10])} similar matches for preroll '{title}'. Top match: {similar_matches[0]['title']} ({similar_matches[0]['confidence']}%)")
+            response = {
+                "matched": False,
+                "similar_matches": similar_matches[:10]
+            }
+            _file_log(f"Response JSON: {json.dumps(response, indent=2)[:500]}...")
+            return response
+        
+        _file_log(f"No matches found for preroll '{title}' (searched {len(community_data)} community prerolls)")
+        return {
+            "matched": False,
+            "message": "No matching community prerolls found"
+        }
+    
+    except Exception as e:
+        _file_log(f"Auto-match error for preroll {preroll_id}: {e}")
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"Auto-match failed: {str(e)}")
+
+@app.post("/prerolls/{preroll_id}/link-community/{community_id}")
+def link_preroll_to_community(preroll_id: int, community_id: str, db: Session = Depends(get_db)):
+    """
+    Manually link a preroll to a community preroll ID.
+    """
+    preroll = db.query(models.Preroll).filter(models.Preroll.id == preroll_id).first()
+    if not preroll:
+        raise HTTPException(status_code=404, detail="Preroll not found")
+    
+    # Validate community ID exists in index
+    if PREROLLS_INDEX_PATH.exists():
+        try:
+            with open(PREROLLS_INDEX_PATH, 'r', encoding='utf-8') as f:
+                index_data = json.load(f)
+            # Extract prerolls array from wrapper dict
+            community_data = index_data.get("prerolls", [])
+            
+            community_exists = any(cp.get('id') == community_id for cp in community_data)
+            if not community_exists:
+                return {
+                    "success": False,
+                    "message": f"Community preroll ID '{community_id}' not found in index"
+                }
+        except Exception as e:
+            _file_log(f"Failed to validate community ID: {e}")
+    
+    preroll.community_preroll_id = community_id
+    db.commit()
+    
+    _file_log(f"Manually linked preroll '{preroll.display_name or preroll.filename}' (ID {preroll_id}) to community ID '{community_id}'")
+    
+    return {
+        "success": True,
+        "message": "Successfully linked to community preroll",
+        "community_preroll_id": community_id
+    }
+
+@app.post("/prerolls/{preroll_id}/unmatch-community")
+def unmatch_preroll_from_community(preroll_id: int, db: Session = Depends(get_db)):
+    """
+    Remove community preroll link from a preroll.
+    """
+    preroll = db.query(models.Preroll).filter(models.Preroll.id == preroll_id).first()
+    if not preroll:
+        raise HTTPException(status_code=404, detail="Preroll not found")
+    
+    if not getattr(preroll, 'community_preroll_id', None):
+        return {
+            "success": False,
+            "message": "Preroll is not linked to any community preroll"
+        }
+    
+    old_id = preroll.community_preroll_id
+    preroll.community_preroll_id = None
+    db.commit()
+    
+    _file_log(f"Unmatched preroll '{preroll.display_name or preroll.filename}' (ID {preroll_id}) from community ID '{old_id}'")
+    
+    return {
+        "success": True,
+        "message": "Successfully removed community preroll link"
+    }
 
 @app.get("/tags")
 def get_all_tags(db: Session = Depends(get_db)):
@@ -4223,6 +4724,169 @@ def get_schedules(db: Session = Depends(get_db)):
     
     return result
 
+def _apply_schedule_win_lose_logic(db: Session, is_being_enabled: bool, is_being_disabled: bool, updated_schedule: models.Schedule):
+    """
+    Apply win/lose logic when a schedule is enabled or disabled.
+    Immediately updates Plex prerolls based on which schedule should win.
+    """
+    now = datetime.datetime.utcnow()
+    
+    # Helper function to check if a schedule is currently active (within its time window)
+    def _is_schedule_active(sched: models.Schedule) -> bool:
+        if not sched.start_date:
+            return False
+        # Windowed schedules: active between start and end (inclusive)
+        if sched.end_date:
+            return sched.start_date <= now <= sched.end_date
+        # Indefinite schedule: active from start onward
+        return now >= sched.start_date
+    
+    # Helper function to apply a schedule's prerolls to Plex
+    def _apply_schedule_to_plex(sched: models.Schedule) -> bool:
+        """Apply a schedule's prerolls to Plex. Returns True if successful."""
+        try:
+            setting = db.query(models.Setting).first()
+            if not setting or not setting.plex_url or not setting.plex_token:
+                print(f"TOGGLE: No Plex settings configured, cannot apply schedule")
+                return False
+            
+            plex_connector = PlexConnector(setting.plex_url, setting.plex_token)
+            
+            # If schedule has a sequence, apply it
+            if sched.sequence:
+                try:
+                    seq = sched.sequence
+                    if isinstance(seq, str):
+                        seq = json.loads(seq)
+                    
+                    preroll_paths = []
+                    for block in seq:
+                        block_type = block.get("type")
+                        if block_type == "fixed":
+                            preroll_ids = block.get("prerolls", [])
+                            for pid in preroll_ids:
+                                preroll = db.query(models.Preroll).filter(models.Preroll.id == pid).first()
+                                if preroll:
+                                    preroll_paths.append(os.path.abspath(preroll.path))
+                        elif block_type == "random":
+                            preroll_ids = block.get("prerolls", [])
+                            count = block.get("count", 1)
+                            available = []
+                            for pid in preroll_ids:
+                                preroll = db.query(models.Preroll).filter(models.Preroll.id == pid).first()
+                                if preroll:
+                                    available.append(os.path.abspath(preroll.path))
+                            if available:
+                                selected = random.sample(available, min(count, len(available)))
+                                preroll_paths.extend(selected)
+                    
+                    if preroll_paths:
+                        preroll_string = ';'.join(preroll_paths)
+                        plex_connector.set_preroll(preroll_string)
+                        print(f"TOGGLE: Applied sequence for schedule '{sched.name}' (ID {sched.id}) with {len(preroll_paths)} prerolls")
+                        return True
+                except Exception as seq_error:
+                    print(f"TOGGLE: Error applying sequence for schedule {sched.id}: {seq_error}")
+                    return False
+            
+            # Otherwise, apply the category's prerolls
+            elif sched.category_id:
+                prerolls = db.query(models.Preroll) \
+                    .outerjoin(models.preroll_categories, models.Preroll.id == models.preroll_categories.c.preroll_id) \
+                    .filter(or_(models.Preroll.category_id == sched.category_id,
+                                models.preroll_categories.c.category_id == sched.category_id)) \
+                    .distinct().all()
+                
+                if prerolls:
+                    preroll_paths = [os.path.abspath(p.path) for p in prerolls]
+                    preroll_string = ';'.join(preroll_paths)
+                    plex_connector.set_preroll(preroll_string)
+                    print(f"TOGGLE: Applied category {sched.category_id} for schedule '{sched.name}' (ID {sched.id}) with {len(prerolls)} prerolls")
+                    return True
+                else:
+                    print(f"TOGGLE: No prerolls found for category {sched.category_id}")
+                    return False
+            
+            return False
+        except Exception as e:
+            print(f"TOGGLE: Error applying schedule to Plex: {e}")
+            return False
+    
+    # Get all active schedules (is_active=True)
+    active_schedules = db.query(models.Schedule).filter(models.Schedule.is_active == True).all()
+    
+    # Filter to schedules that are currently in their time window
+    current_schedules = [s for s in active_schedules if _is_schedule_active(s)]
+    
+    if is_being_enabled:
+        # Schedule was just enabled - check if it should win
+        if _is_schedule_active(updated_schedule):
+            # This schedule is in its active window
+            if current_schedules:
+                # Win/lose logic: Prefer the schedule that ends soonest, then earliest start, then lowest id
+                def _sort_key(s):
+                    end = s.end_date if s.end_date else datetime.datetime.max
+                    start = s.start_date or datetime.datetime.min
+                    return (end, start, s.id)
+                
+                current_schedules.sort(key=_sort_key)
+                winner = current_schedules[0]
+                
+                if winner.id == updated_schedule.id:
+                    # The newly enabled schedule wins - apply it
+                    print(f"TOGGLE: Newly enabled schedule '{updated_schedule.name}' (ID {updated_schedule.id}) wins, applying to Plex")
+                    if _apply_schedule_to_plex(updated_schedule):
+                        setting = db.query(models.Setting).first()
+                        if setting:
+                            setting.active_category = updated_schedule.category_id
+                            db.commit()
+                else:
+                    # Another schedule wins
+                    print(f"TOGGLE: Newly enabled schedule '{updated_schedule.name}' (ID {updated_schedule.id}) loses to schedule '{winner.name}' (ID {winner.id})")
+            else:
+                # No other active schedules, this one wins by default
+                print(f"TOGGLE: Newly enabled schedule '{updated_schedule.name}' (ID {updated_schedule.id}) is the only active schedule, applying to Plex")
+                if _apply_schedule_to_plex(updated_schedule):
+                    setting = db.query(models.Setting).first()
+                    if setting:
+                        setting.active_category = updated_schedule.category_id
+                        db.commit()
+        else:
+            print(f"TOGGLE: Newly enabled schedule '{updated_schedule.name}' (ID {updated_schedule.id}) is not yet in its active time window")
+    
+    elif is_being_disabled:
+        # Schedule was just disabled - check if another schedule should take over
+        if current_schedules:
+            # Win/lose logic: Pick the winning schedule
+            def _sort_key(s):
+                end = s.end_date if s.end_date else datetime.datetime.max
+                start = s.start_date or datetime.datetime.min
+                return (end, start, s.id)
+            
+            current_schedules.sort(key=_sort_key)
+            winner = current_schedules[0]
+            
+            # Apply the winning schedule
+            print(f"TOGGLE: Schedule disabled, applying winning schedule '{winner.name}' (ID {winner.id}) to Plex")
+            if _apply_schedule_to_plex(winner):
+                setting = db.query(models.Setting).first()
+                if setting:
+                    setting.active_category = winner.category_id
+                    db.commit()
+        else:
+            # No active schedules remaining - clear Plex prerolls
+            print(f"TOGGLE: Schedule '{updated_schedule.name}' (ID {updated_schedule.id}) disabled and no other active schedules found, clearing Plex prerolls")
+            try:
+                setting = db.query(models.Setting).first()
+                if setting and setting.plex_url and setting.plex_token:
+                    plex_connector = PlexConnector(setting.plex_url, setting.plex_token)
+                    plex_connector.set_preroll('')
+                    setting.active_category = None
+                    db.commit()
+                    print(f"TOGGLE: Cleared Plex prerolls")
+            except Exception as clear_error:
+                print(f"TOGGLE: Error clearing Plex prerolls: {clear_error}")
+
 @app.put("/schedules/{schedule_id}")
 def update_schedule(schedule_id: int, schedule: ScheduleCreate, db: Session = Depends(get_db)):
     db_schedule = db.query(models.Schedule).filter(models.Schedule.id == schedule_id).first()
@@ -4265,6 +4929,11 @@ def update_schedule(schedule_id: int, schedule: ScheduleCreate, db: Session = De
     except ValueError as e:
         raise HTTPException(status_code=400, detail=f"Invalid date format: {str(e)}")
 
+    # Check if schedule is being enabled or disabled
+    was_active = db_schedule.is_active
+    is_being_disabled = was_active and not schedule.is_active
+    is_being_enabled = not was_active and schedule.is_active
+    
     # Update fields
     db_schedule.name = schedule.name
     db_schedule.type = schedule.type
@@ -4278,13 +4947,22 @@ def update_schedule(schedule_id: int, schedule: ScheduleCreate, db: Session = De
     db_schedule.fallback_category_id = schedule.fallback_category_id
     db_schedule.sequence = schedule.sequence
     db_schedule.color = schedule.color
+    db_schedule.is_active = schedule.is_active
 
     try:
         db.commit()
+        db.refresh(db_schedule)
     except Exception as e:
         db.rollback()
         _file_log(f"Schedule update failed for id={schedule_id}: {e}")
         raise HTTPException(status_code=500, detail=f"Failed to update schedule: {str(e)}")
+    
+    # Apply changes to Plex immediately using win/lose logic
+    try:
+        _apply_schedule_win_lose_logic(db, is_being_enabled, is_being_disabled, db_schedule)
+    except Exception as apply_error:
+        print(f"SCHEDULER: Warning - Failed to apply schedule changes to Plex: {apply_error}")
+    
     return {"message": "Schedule updated"}
 
 @app.delete("/schedules/{schedule_id}")
@@ -4301,6 +4979,135 @@ def delete_schedule(schedule_id: int, db: Session = Depends(get_db)):
         _file_log(f"Schedule delete failed for id={schedule_id}: {e}")
         raise HTTPException(status_code=500, detail=f"Failed to delete schedule: {str(e)}")
     return {"message": "Schedule deleted"}
+
+# ============================================================================
+# SAVED SEQUENCES API
+# ============================================================================
+
+class SavedSequenceCreate(BaseModel):
+    name: str
+    description: Optional[str] = None
+    blocks: List[dict]
+
+class SavedSequenceUpdate(BaseModel):
+    name: Optional[str] = None
+    description: Optional[str] = None
+    blocks: Optional[List[dict]] = None
+
+@app.get("/sequences")
+def get_saved_sequences(db: Session = Depends(get_db)):
+    """Get all saved sequences"""
+    try:
+        sequences = db.query(models.SavedSequence).order_by(models.SavedSequence.updated_at.desc()).all()
+        return [{
+            "id": seq.id,
+            "name": seq.name,
+            "description": seq.description,
+            "blocks": seq.get_blocks(),
+            "created_at": seq.created_at.isoformat() if seq.created_at else None,
+            "updated_at": seq.updated_at.isoformat() if seq.updated_at else None
+        } for seq in sequences]
+    except Exception as e:
+        _file_log(f"Failed to fetch saved sequences: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to fetch sequences: {str(e)}")
+
+@app.post("/sequences")
+def create_saved_sequence(sequence: SavedSequenceCreate, db: Session = Depends(get_db)):
+    """Create a new saved sequence"""
+    try:
+        new_sequence = models.SavedSequence(
+            name=sequence.name,
+            description=sequence.description,
+            blocks=json.dumps(sequence.blocks)
+        )
+        db.add(new_sequence)
+        db.commit()
+        db.refresh(new_sequence)
+        
+        _file_log(f"Saved new sequence: {sequence.name} with {len(sequence.blocks)} blocks")
+        
+        return {
+            "id": new_sequence.id,
+            "name": new_sequence.name,
+            "description": new_sequence.description,
+            "blocks": new_sequence.get_blocks(),
+            "created_at": new_sequence.created_at.isoformat() if new_sequence.created_at else None,
+            "updated_at": new_sequence.updated_at.isoformat() if new_sequence.updated_at else None
+        }
+    except Exception as e:
+        db.rollback()
+        _file_log(f"Failed to create saved sequence: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to create sequence: {str(e)}")
+
+@app.get("/sequences/{sequence_id}")
+def get_saved_sequence(sequence_id: int, db: Session = Depends(get_db)):
+    """Get a specific saved sequence by ID"""
+    sequence = db.query(models.SavedSequence).filter(models.SavedSequence.id == sequence_id).first()
+    if not sequence:
+        raise HTTPException(status_code=404, detail="Sequence not found")
+    
+    return {
+        "id": sequence.id,
+        "name": sequence.name,
+        "description": sequence.description,
+        "blocks": sequence.get_blocks(),
+        "created_at": sequence.created_at.isoformat() if sequence.created_at else None,
+        "updated_at": sequence.updated_at.isoformat() if sequence.updated_at else None
+    }
+
+@app.put("/sequences/{sequence_id}")
+def update_saved_sequence(sequence_id: int, sequence: SavedSequenceUpdate, db: Session = Depends(get_db)):
+    """Update an existing saved sequence"""
+    db_sequence = db.query(models.SavedSequence).filter(models.SavedSequence.id == sequence_id).first()
+    if not db_sequence:
+        raise HTTPException(status_code=404, detail="Sequence not found")
+    
+    try:
+        if sequence.name is not None:
+            db_sequence.name = sequence.name
+        if sequence.description is not None:
+            db_sequence.description = sequence.description
+        if sequence.blocks is not None:
+            db_sequence.blocks = json.dumps(sequence.blocks)
+        
+        db_sequence.updated_at = datetime.datetime.utcnow()
+        db.commit()
+        db.refresh(db_sequence)
+        
+        _file_log(f"Updated sequence: {db_sequence.name} (ID: {sequence_id})")
+        
+        return {
+            "id": db_sequence.id,
+            "name": db_sequence.name,
+            "description": db_sequence.description,
+            "blocks": db_sequence.get_blocks(),
+            "created_at": db_sequence.created_at.isoformat() if db_sequence.created_at else None,
+            "updated_at": db_sequence.updated_at.isoformat() if db_sequence.updated_at else None
+        }
+    except Exception as e:
+        db.rollback()
+        _file_log(f"Failed to update sequence {sequence_id}: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to update sequence: {str(e)}")
+
+@app.delete("/sequences/{sequence_id}")
+def delete_saved_sequence(sequence_id: int, db: Session = Depends(get_db)):
+    """Delete a saved sequence"""
+    db_sequence = db.query(models.SavedSequence).filter(models.SavedSequence.id == sequence_id).first()
+    if not db_sequence:
+        raise HTTPException(status_code=404, detail="Sequence not found")
+    
+    try:
+        sequence_name = db_sequence.name
+        db.delete(db_sequence)
+        db.commit()
+        
+        _file_log(f"Deleted sequence: {sequence_name} (ID: {sequence_id})")
+        
+        return {"message": "Sequence deleted successfully"}
+    except Exception as e:
+        db.rollback()
+        _file_log(f"Failed to delete sequence {sequence_id}: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to delete sequence: {str(e)}")
 
 # Holiday presets
 @app.post("/holiday-presets/init")
@@ -4602,6 +5409,15 @@ def get_scheduler_status():
         "running": scheduler.running,
         "active_schedules": len(scheduler._get_active_schedules()) if hasattr(scheduler, '_get_active_schedules') else 0
     }
+
+@app.get("/scheduler/active-schedule-ids")
+def get_active_schedule_ids():
+    """Return list of currently active schedule IDs"""
+    try:
+        active_schedules = scheduler._get_active_schedules() if hasattr(scheduler, '_get_active_schedules') else []
+        return {"active_schedule_ids": [s.id for s in active_schedules]}
+    except Exception as e:
+        return {"active_schedule_ids": [], "error": str(e)}
 
 @app.post("/scheduler/run-now")
 def run_scheduler_now(db: Session = Depends(get_db)):
@@ -6719,6 +7535,34 @@ def update_genre_settings(
 
     return {"message": "Settings updated"}
 
+@app.get("/settings/verbose-logging")
+def get_verbose_logging(db: Session = Depends(get_db)):
+    """Get verbose logging setting"""
+    setting = db.query(models.Setting).first()
+    if not setting:
+        return {"verbose_logging": False}
+    return {"verbose_logging": getattr(setting, 'verbose_logging', False)}
+
+@app.put("/settings/verbose-logging")
+def update_verbose_logging(verbose_logging: bool, db: Session = Depends(get_db)):
+    """Update verbose logging setting"""
+    setting = db.query(models.Setting).first()
+    if not setting:
+        setting = models.Setting(plex_url=None, plex_token=None)
+        db.add(setting)
+        db.commit()
+        db.refresh(setting)
+    
+    setting.verbose_logging = verbose_logging
+    setting.updated_at = datetime.datetime.utcnow()
+    db.commit()
+    
+    status = "enabled" if verbose_logging else "disabled"
+    print(f"Verbose logging {status}")
+    _file_log(f"Verbose logging {status}")
+    
+    return {"message": f"Verbose logging {status}", "verbose_logging": verbose_logging}
+
 @app.get("/genres/recent-applications")
 def get_recent_genre_applications(limit: int = 10):
     """Get recent genre preroll applications for UI feedback"""
@@ -8494,7 +9338,8 @@ def _load_prerolls_index() -> Optional[dict]:
         with open(PREROLLS_INDEX_PATH, 'r', encoding='utf-8') as f:
             index_data = json.load(f)
         
-        _file_log(f"Loaded prerolls index: {index_data.get('total_prerolls', 0)} prerolls (created {index_data.get('created_at', 'unknown')})")
+        # Only log on first load or errors (too verbose for every call)
+        # _file_log(f"Loaded prerolls index: {index_data.get('total_prerolls', 0)} prerolls (created {index_data.get('created_at', 'unknown')})")
         return index_data
     except Exception as e:
         _file_log(f"Error loading prerolls index: {e}")

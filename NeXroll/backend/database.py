@@ -184,10 +184,18 @@ DB_PATH = _resolve_db_path()
 DB_URL_PATH = DB_PATH.replace("\\", "/")
 SQLALCHEMY_DATABASE_URL = "sqlite:///" + DB_URL_PATH
  
+# SQLite-specific pool configuration to prevent connection exhaustion
+# Use NullPool for SQLite - creates new connection per request, closes when done
+from sqlalchemy.pool import NullPool
+
 engine = create_engine(
     SQLALCHEMY_DATABASE_URL,
-    connect_args={"check_same_thread": False, "timeout": 30},
-    pool_pre_ping=True,
+    connect_args={
+        "check_same_thread": False,
+        "timeout": 60  # Increased from 30 to 60 seconds for busy operations
+    },
+    poolclass=NullPool,  # Best practice for SQLite - no connection pooling
+    pool_pre_ping=False,  # Disabled since NullPool doesn't maintain connections
 )
 
 # Apply SQLite pragmas for better concurrency and reliability
@@ -204,8 +212,8 @@ if SQLALCHEMY_DATABASE_URL.startswith("sqlite"):
             cursor.execute("PRAGMA synchronous=NORMAL;")
             # Enforce foreign key constraints
             cursor.execute("PRAGMA foreign_keys=ON;")
-            # Increase busy timeout to mitigate 'database is locked'
-            cursor.execute("PRAGMA busy_timeout=10000;")
+            # Increase busy timeout to 30 seconds to handle high concurrent load (was 10s)
+            cursor.execute("PRAGMA busy_timeout=30000;")
             cursor.close()
         except Exception:
             # Best-effort; continue without raising

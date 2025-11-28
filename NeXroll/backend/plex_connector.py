@@ -550,6 +550,49 @@ class PlexConnector:
             print(f"Error getting current preroll: {str(e)}")
             return None
 
+    def get_preroll(self) -> str:
+        """Get the current preroll setting from Plex"""
+        try:
+            prefs_url = f"{self.url}/:/prefs"
+            response = requests.get(prefs_url, headers=self.headers, timeout=10, verify=self._verify)
+
+            if response.status_code == 200:
+                import xml.etree.ElementTree as ET
+                try:
+                    root = ET.fromstring(response.content)
+
+                    # List of possible preroll preference names (ordered by priority)
+                    preference_names = [
+                        "CinemaTrailersPrerollID",
+                        "cinemaTrailersPrerollID",
+                        "CinemaTrailersPreroll",
+                        "cinemaTrailersPreroll",
+                        "PrerollID",
+                        "prerollID"
+                    ]
+
+                    # Try to find any of the known preroll preferences
+                    for pref_name in preference_names:
+                        for setting in root.findall('.//Setting'):
+                            setting_id = setting.get('id', '')
+                            if setting_id == pref_name:
+                                current_value = setting.get('value', '')
+                                return current_value
+
+                    # If no known preference found, look for any preroll-related setting
+                    for setting in root.findall('.//Setting'):
+                        setting_id = setting.get('id', '').lower()
+                        if 'preroll' in setting_id or 'cinematrailers' in setting_id:
+                            return setting.get('value', '')
+
+                except ET.ParseError:
+                    pass
+
+        except Exception:
+            pass
+
+        return ""
+
     def _verify_preroll_setting(self, pref_name: str, expected_value: str) -> bool:
         """Verify that a preroll setting was applied correctly"""
         try:

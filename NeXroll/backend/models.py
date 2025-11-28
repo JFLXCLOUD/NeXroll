@@ -28,6 +28,8 @@ class Preroll(Base):
     managed = Column(Boolean, default=True)  # True = uploaded/managed by NeXroll; False = externally mapped
     upload_date = Column(DateTime, default=datetime.datetime.utcnow)
     community_preroll_id = Column(String, nullable=True, index=True)  # ID from community prerolls library
+    exclude_from_matching = Column(Boolean, default=False)  # Exclude from auto-matching to community prerolls
+    file_hash = Column(String, nullable=True, index=True)  # SHA256 hash for duplicate detection
 
     category = relationship("Category")
     # Additional categories (many-to-many via preroll_categories)
@@ -76,6 +78,31 @@ class Schedule(Base):
 
     category = relationship("Category", foreign_keys=[category_id])
     fallback_category = relationship("Category", foreign_keys=[fallback_category_id])
+
+class SavedSequence(Base):
+    __tablename__ = "saved_sequences"
+
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String, index=True)  # Sequence name
+    description = Column(Text, nullable=True)  # Optional description
+    blocks = Column(Text)  # JSON array of sequence blocks
+    created_at = Column(DateTime, default=datetime.datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow)
+    
+    def get_blocks(self):
+        """Parse and return blocks as list"""
+        try:
+            return json.loads(self.blocks) if self.blocks else []
+        except:
+            return []
+    
+    def set_blocks(self, blocks_list):
+        """Set blocks from list"""
+        try:
+            self.blocks = json.dumps(blocks_list) if blocks_list else "[]"
+            return True
+        except:
+            return False
 
 class HolidayPreset(Base):
     __tablename__ = "holiday_presets"
@@ -139,6 +166,8 @@ class Setting(Base):
     dashboard_layout = Column(Text, nullable=True)  # JSON dashboard section layout configuration
     # Version tracking for changelog display
     last_seen_version = Column(String, nullable=True)  # Last version user has seen (for changelog display)
+    # Logging settings
+    verbose_logging = Column(Boolean, default=False)  # Enable verbose/debug logging for troubleshooting
     
     def get_json_value(self, key):
         """Get a JSON value from a column"""
