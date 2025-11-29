@@ -11191,8 +11191,9 @@ C:\\\\Media\\\\Prerolls\\\\summer\\\\beach.mp4`}
         // Add type-specific fields
         if (block.type === 'random') {
           cleaned.category_id = block.category_id;
-        } else if (block.type === 'specific') {
-          cleaned.preroll_id = block.preroll_id;
+          cleaned.count = block.count || 1;
+        } else if (block.type === 'fixed') {
+          cleaned.preroll_ids = block.preroll_ids || [];
         }
         
         return cleaned;
@@ -11245,10 +11246,17 @@ C:\\\\Media\\\\Prerolls\\\\summer\\\\beach.mp4`}
       const savedSeq = await response.json();
       showAlert(`Sequence "${name}" ${isUpdating ? 'updated' : 'saved'} successfully!`, 'success');
       
-      // Clear editing state after successful save/update
+      // Clear ALL editing state after successful save/update
+      setSequenceBlocks([]);
       setEditingSequenceId(null);
+      setEditingSequenceName('');
+      setEditingSequenceDescription('');
       
       loadSavedSequences(); // Reload list
+      
+      // Navigate back to library to show the updated list
+      setActiveTab('schedules/library');
+      
       return savedSeq;
     } catch (error) {
       console.error('Failed to save sequence:', error);
