@@ -19,10 +19,16 @@ NeXroll is a preroll manager for Plex and Jellyfin that makes setup effortless. 
 - Preroll management
   - Upload multiple preroll videos with metadata
   - Automatic thumbnail generation (FFmpeg)
-  - Tags and multi category assignment with improved multi select workflow
+  - Enhanced tag system with visual badges, autocomplete, and easy editing
+  - Tags display as purple pill-shaped badges in grid and list views
+  - Interactive tag editor with individual tag removal and browse functionality
+  - Multi category assignment with improved multi select workflow
 - Categories & Holiday Presets
   - Organize your library by categories (Default, Halloween, Christmas, etc.)
+  - Comprehensive Holiday Presets library with 32 holidays and events
+  - Includes winter, spring, summer, fall, cultural, seasonal, and special event presets
   - One click Holiday Presets initializer creates per holiday categories and date ranges
+  - Holiday presets integrate with schedule creation for automatic date population
   - Apply a category to Plex as a preroll sequence
 - Scheduling
   - Flexible schedules with date/time ranges and recurrence
@@ -45,6 +51,12 @@ NeXroll is a preroll manager for Plex and Jellyfin that makes setup effortless. 
   - One click installer with optional Windows Service and System Tray app
   - Start with Windows, Firewall rule (TCP 9393), and FFmpeg installation via winget
   - Self contained executables (no Python required on user machines)
+- Backup & Restore
+  - Comprehensive database backup includes prerolls, categories, schedules, sequences, and holiday presets
+  - Files backup creates ZIP archives of both preroll and sequence video files
+  - Full restore capability with proper data integrity and foreign key handling
+  - Sequence metadata and block structures preserved through backup cycle
+  - Datetime handling with fallback protection for timestamp fields
 - Observability & storage
   - Logs under %ProgramData%\NeXroll\logs
   - SQLite database storage under %ProgramData%\NeXroll
@@ -222,7 +234,9 @@ If NeXroll is helpful, consider supporting ongoing development:
 
 [![Ko-fi](https://img.shields.io/badge/Ko--fi-Support%20Me-FF5E5B?style=for-the-badge&amp;logo=ko-fi&amp;logoColor=white)](https://ko-fi.com/j_b__)
 
+Join the community on Discord for support, feature requests, and discussions:
 
+[![Discord](https://img.shields.io/badge/Discord-Join%20Server-5865F2?style=for-the-badge&logo=discord&logoColor=white)](https://discord.gg/typical-nerds)
 
 ---
 
