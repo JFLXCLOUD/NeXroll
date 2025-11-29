@@ -2,14 +2,14 @@ import React, { useState } from 'react';
 
 /**
  * PatternImport - Import sequence from .nexseq JSON pattern file
- * Shows preview, match status, and validation warnings before creating schedule
+ * Shows preview, match status, and validation warnings before created schedule
  * 
  * Props:
  * - isOpen: Boolean - whether modal is visible
  * - onClose: Function - callback to close modal
- * - onImportSuccess: Function - callback with imported sequence data
+ * - onImport: Function - callback with imported sequence data
  */
-const PatternImport = ({ isOpen, onClose, onImportSuccess }) => {
+const PatternImport = ({ isOpen, onClose, onImport }) => {
   const [selectedFile, setSelectedFile] = useState(null);
   const [isImporting, setIsImporting] = useState(false);
   const [previewData, setPreviewData] = useState(null);
@@ -38,7 +38,7 @@ const PatternImport = ({ isOpen, onClose, onImportSuccess }) => {
       const formData = new FormData();
       formData.append('file', selectedFile);
 
-      const response = await fetch('/api/sequences/import', {
+      const response = await fetch('/sequences/import', {
         method: 'POST',
         body: formData,
       });
@@ -61,9 +61,9 @@ const PatternImport = ({ isOpen, onClose, onImportSuccess }) => {
   const handleConfirmImport = () => {
     if (!previewData) return;
 
-    // Pass the imported blocks back to parent component (App.js)
+    // Pass the imported blocks back to parent component (SequenceBuilder.js)
     // Parent will create a new schedule with this sequence
-    onImportSuccess({
+    onImport({
       name: previewData.pattern_name,
       blocks: previewData.blocks,
       sequenceJson: previewData.sequence_json,

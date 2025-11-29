@@ -19,7 +19,7 @@ const PatternExport = ({ isOpen, onClose, scheduleId, scheduleName }) => {
     setError(null);
 
     try {
-      const response = await fetch(`/api/sequences/${scheduleId}/export`, {
+      const response = await fetch(`/sequences/${scheduleId}/export`, {
         method: 'POST',
       });
 

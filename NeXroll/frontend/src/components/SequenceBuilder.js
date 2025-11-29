@@ -194,7 +194,10 @@ const SequenceBuilder = ({ blocks: externalBlocks = [], onBlocksChange, initialS
       .filter(Boolean);
   };
 
-  const handleImportPattern = (importedBlocks) => {
+  const handleImportPattern = (importedData) => {
+    // importedData contains: { name, blocks, sequenceJson, matchResults }
+    const importedBlocks = importedData.blocks || [];
+    
     // Add unique IDs for drag-and-drop
     const blocksWithIds = importedBlocks.map((block, index) => ({
       ...block,
