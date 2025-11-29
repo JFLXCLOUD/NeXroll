@@ -1,9 +1,12 @@
-# syntax=docker/dockerfile:1
+﻿# syntax=docker/dockerfile:1
 
 # --- Frontend build stage (build React app from source) ---
 FROM node:22-alpine AS frontend-builder
 
 WORKDIR /build/frontend
+
+# Set Node options for ARM64 compatibility with QEMU
+ENV NODE_OPTIONS="--max-old-space-size=4096"
 
 # Install deps with good caching
 COPY NeXroll/frontend/package*.json ./
@@ -17,9 +20,10 @@ RUN npm run build
 FROM python:3.12-slim
 
 ARG APP_VERSION=dev
+ARG VERSION=dev
 LABEL org.opencontainers.image.title="NeXroll" \
       org.opencontainers.image.description="NeXroll preroll management system" \
-      org.opencontainers.image.version="${APP_VERSION}" \
+      org.opencontainers.image.version="${VERSION}" \
       org.opencontainers.image.licenses="MIT"
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
@@ -65,6 +69,7 @@ COPY --from=frontend-builder /build/frontend/build /app/NeXroll/frontend/build
 
 # Prepare persistent data volume
 RUN mkdir -p /data /data/prerolls
+
 VOLUME ["/data"]
 
 EXPOSE 9393
@@ -75,4 +80,3 @@ HEALTHCHECK --interval=30s --timeout=5s --retries=3 \
 
 # Start Uvicorn
 CMD ["sh", "-c", "uvicorn backend.main:app --host 0.0.0.0 --port ${NEXROLL_PORT:-9393}"]
-
