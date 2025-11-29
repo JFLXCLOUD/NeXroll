@@ -5109,12 +5109,129 @@ def delete_saved_sequence(sequence_id: int, db: Session = Depends(get_db)):
         _file_log(f"Failed to delete sequence {sequence_id}: {e}")
         raise HTTPException(status_code=500, detail=f"Failed to delete sequence: {str(e)}")
 
+@app.post("/sequences/import")
+async def import_sequence_pattern(file: UploadFile = File(...), db: Session = Depends(get_db)):
+    """
+    Import a .nexseq pattern file and match prerolls/categories to local library
+    Returns preview data with match statistics
+    """
+    try:
+        # Read and parse the uploaded file
+        contents = await file.read()
+        pattern_data = json.loads(contents.decode('utf-8'))
+        
+        # Validate required fields
+        if 'pattern_name' not in pattern_data or 'blocks' not in pattern_data:
+            raise HTTPException(status_code=400, detail="Invalid pattern file: missing required fields")
+        
+        # Initialize match tracking
+        matched_count = 0
+        unmatched_count = 0
+        missing_categories = []
+        missing_prerolls = []
+        matched_blocks = []
+        
+        # Get all categories and prerolls for matching
+        all_categories = {cat.name.lower(): cat for cat in db.query(models.Category).all()}
+        all_prerolls = db.query(models.Preroll).all()
+        
+        # Create lookup dictionaries for prerolls
+        prerolls_by_community_id = {p.community_id: p for p in all_prerolls if p.community_id}
+        prerolls_by_name = {}
+        for p in all_prerolls:
+            name = (p.display_name or p.filename).lower()
+            prerolls_by_name[name] = p
+        
+        # Process each block in the pattern
+        for block_data in pattern_data.get('blocks', []):
+            block_type = block_data.get('type', '')
+            matched_block = {
+                'type': block_type,
+                'id': block_data.get('id', str(uuid.uuid4()))
+            }
+            block_matched = False
+            
+            if block_type == 'random':
+                # Match random block by category name
+                category_name = block_data.get('category_name', '').lower()
+                if category_name in all_categories:
+                    matched_block['category_id'] = all_categories[category_name].id
+                    matched_block['category_name'] = all_categories[category_name].name
+                    matched_block['count'] = block_data.get('count', 1)
+                    block_matched = True
+                    matched_count += 1
+                else:
+                    unmatched_count += 1
+                    if block_data.get('category_name') not in missing_categories:
+                        missing_categories.append(block_data.get('category_name', 'Unknown'))
+            
+            elif block_type == 'fixed':
+                # Match fixed block prerolls by community ID first, then by name
+                preroll_refs = block_data.get('prerolls', [])
+                matched_preroll_ids = []
+                
+                for preroll_ref in preroll_refs:
+                    matched_preroll = None
+                    
+                    # Try matching by community_id first (most reliable)
+                    if preroll_ref.get('community_id') and preroll_ref['community_id'] in prerolls_by_community_id:
+                        matched_preroll = prerolls_by_community_id[preroll_ref['community_id']]
+                    # Fall back to name matching
+                    elif preroll_ref.get('name'):
+                        name_lower = preroll_ref['name'].lower()
+                        if name_lower in prerolls_by_name:
+                            matched_preroll = prerolls_by_name[name_lower]
+                    
+                    if matched_preroll:
+                        matched_preroll_ids.append(matched_preroll.id)
+                    else:
+                        # Track missing preroll
+                        missing_preroll = {
+                            'name': preroll_ref.get('name', 'Unknown'),
+                            'community_id': preroll_ref.get('community_id')
+                        }
+                        if missing_preroll not in missing_prerolls:
+                            missing_prerolls.append(missing_preroll)
+                
+                if matched_preroll_ids:
+                    matched_block['preroll_ids'] = matched_preroll_ids
+                    block_matched = True
+                    matched_count += 1
+                else:
+                    unmatched_count += 1
+            
+            # Add block to result if it has any matches (or if it's a valid type)
+            if block_matched or block_type in ['random', 'fixed']:
+                matched_blocks.append(matched_block)
+        
+        # Prepare response with match statistics
+        response_data = {
+            'pattern_name': pattern_data.get('pattern_name', 'Imported Pattern'),
+            'created_by': pattern_data.get('created_by', 'Unknown'),
+            'blocks': matched_blocks,
+            'sequence_json': pattern_data,
+            'match_results': {
+                'matched': matched_count,
+                'unmatched': unmatched_count,
+                'total_blocks': len(pattern_data.get('blocks', [])),
+                'missing_categories': missing_categories,
+                'missing_prerolls': missing_prerolls
+            }
+        }
+        
+        _file_log(f"Pattern import preview: {pattern_data.get('pattern_name')} - {matched_count} matched, {unmatched_count} unmatched")
+        
+        return response_data
+        
+    except json.JSONDecodeError:
+        raise HTTPException(status_code=400, detail="Invalid JSON format in pattern file")
+    except Exception as e:
+        _file_log(f"Failed to import sequence pattern: {e}")
+        raise HTTPException(status_code=500, detail=f"Import failed: {str(e)}")
+
 # Holiday presets
 @app.post("/holiday-presets/init")
 def initialize_holiday_presets(db: Session = Depends(get_db)):
-    categories_created = 0
-    presets_created = 0
-    
     # Create default category for holidays if it doesn't exist
     holiday_category = db.query(models.Category).filter(models.Category.name == "Holidays").first()
     if not holiday_category:
@@ -5122,10 +5239,10 @@ def initialize_holiday_presets(db: Session = Depends(get_db)):
         db.add(holiday_category)
         db.commit()
         db.refresh(holiday_category)
-        categories_created += 1
 
-    # Add common holiday presets with month-long date ranges
+    # Add comprehensive holiday presets with date ranges
     holidays = [
+        # ===== WINTER HOLIDAYS =====
         {
             "name": "Christmas",
             "description": "Christmas season (December 1-31)",
@@ -5134,10 +5251,82 @@ def initialize_holiday_presets(db: Session = Depends(get_db)):
         },
         {
             "name": "New Year",
-            "description": "New Year season (January 1-31)",
+            "description": "New Year season (January 1-15)",
             "start_month": 1, "start_day": 1,
-            "end_month": 1, "end_day": 31
+            "end_month": 1, "end_day": 15
         },
+        {
+            "name": "Hanukkah",
+            "description": "Hanukkah season (December 10-31)",
+            "start_month": 12, "start_day": 10,
+            "end_month": 12, "end_day": 31
+        },
+        {
+            "name": "Kwanzaa",
+            "description": "Kwanzaa (December 26 - January 1)",
+            "start_month": 12, "start_day": 26,
+            "end_month": 1, "end_day": 1
+        },
+        
+        # ===== SPRING HOLIDAYS =====
+        {
+            "name": "Valentine's Day",
+            "description": "Valentine's season (February 1-14)",
+            "start_month": 2, "start_day": 1,
+            "end_month": 2, "end_day": 14
+        },
+        {
+            "name": "St. Patrick's Day",
+            "description": "St. Patrick's Day (March 10-17)",
+            "start_month": 3, "start_day": 10,
+            "end_month": 3, "end_day": 17
+        },
+        {
+            "name": "Easter",
+            "description": "Easter season (April 1-30)",
+            "start_month": 4, "start_day": 1,
+            "end_month": 4, "end_day": 30
+        },
+        {
+            "name": "Passover",
+            "description": "Passover season (April 1-30)",
+            "start_month": 4, "start_day": 1,
+            "end_month": 4, "end_day": 30
+        },
+        {
+            "name": "Cinco de Mayo",
+            "description": "Cinco de Mayo (May 1-5)",
+            "start_month": 5, "start_day": 1,
+            "end_month": 5, "end_day": 5
+        },
+        {
+            "name": "Mother's Day",
+            "description": "Mother's Day season (May 1-31)",
+            "start_month": 5, "start_day": 1,
+            "end_month": 5, "end_day": 31
+        },
+        
+        # ===== SUMMER HOLIDAYS =====
+        {
+            "name": "Father's Day",
+            "description": "Father's Day season (June 1-30)",
+            "start_month": 6, "start_day": 1,
+            "end_month": 6, "end_day": 30
+        },
+        {
+            "name": "Independence Day",
+            "description": "July 4th season (July 1-7)",
+            "start_month": 7, "start_day": 1,
+            "end_month": 7, "end_day": 7
+        },
+        {
+            "name": "Labor Day",
+            "description": "Labor Day season (September 1-10)",
+            "start_month": 9, "start_day": 1,
+            "end_month": 9, "end_day": 10
+        },
+        
+        # ===== FALL HOLIDAYS =====
         {
             "name": "Halloween",
             "description": "Halloween season (October 1-31)",
@@ -5151,16 +5340,118 @@ def initialize_holiday_presets(db: Session = Depends(get_db)):
             "end_month": 11, "end_day": 30
         },
         {
-            "name": "Valentine's Day",
-            "description": "Valentine's season (February 1-28/29)",
-            "start_month": 2, "start_day": 1,
-            "end_month": 2, "end_day": 29  # Will handle leap year in scheduler
+            "name": "Veterans Day",
+            "description": "Veterans Day (November 10-12)",
+            "start_month": 11, "start_day": 10,
+            "end_month": 11, "end_day": 12
+        },
+        
+        # ===== CULTURAL & INTERNATIONAL =====
+        {
+            "name": "Diwali",
+            "description": "Diwali/Festival of Lights (October 20 - November 15)",
+            "start_month": 10, "start_day": 20,
+            "end_month": 11, "end_day": 15
         },
         {
-            "name": "Easter",
-            "description": "Easter season (April 1-30)",
-            "start_month": 4, "start_day": 1,
+            "name": "Chinese New Year",
+            "description": "Chinese New Year (January 20 - February 20)",
+            "start_month": 1, "start_day": 20,
+            "end_month": 2, "end_day": 20
+        },
+        {
+            "name": "Mardi Gras",
+            "description": "Mardi Gras season (February 1-28)",
+            "start_month": 2, "start_day": 1,
+            "end_month": 2, "end_day": 28
+        },
+        {
+            "name": "Ramadan",
+            "description": "Ramadan observance (March 1 - April 30)",
+            "start_month": 3, "start_day": 1,
             "end_month": 4, "end_day": 30
+        },
+        {
+            "name": "Eid al-Fitr",
+            "description": "Eid al-Fitr celebration (April 1-15)",
+            "start_month": 4, "start_day": 1,
+            "end_month": 4, "end_day": 15
+        },
+        {
+            "name": "Day of the Dead",
+            "description": "Día de los Muertos (November 1-2)",
+            "start_month": 11, "start_day": 1,
+            "end_month": 11, "end_day": 2
+        },
+        
+        # ===== SEASONAL =====
+        {
+            "name": "Spring Season",
+            "description": "Spring season (March 1 - May 31)",
+            "start_month": 3, "start_day": 1,
+            "end_month": 5, "end_day": 31
+        },
+        {
+            "name": "Summer Season",
+            "description": "Summer season (June 1 - August 31)",
+            "start_month": 6, "start_day": 1,
+            "end_month": 8, "end_day": 31
+        },
+        {
+            "name": "Fall Season",
+            "description": "Fall season (September 1 - November 30)",
+            "start_month": 9, "start_day": 1,
+            "end_month": 11, "end_day": 30
+        },
+        {
+            "name": "Winter Season",
+            "description": "Winter season (December 1 - February 28)",
+            "start_month": 12, "start_day": 1,
+            "end_month": 2, "end_day": 28
+        },
+        
+        # ===== SPECIAL EVENTS =====
+        {
+            "name": "Back to School",
+            "description": "Back to School season (August 15 - September 15)",
+            "start_month": 8, "start_day": 15,
+            "end_month": 9, "end_day": 15
+        },
+        {
+            "name": "Black Friday",
+            "description": "Black Friday weekend (November 20-30)",
+            "start_month": 11, "start_day": 20,
+            "end_month": 11, "end_day": 30
+        },
+        {
+            "name": "Cyber Monday",
+            "description": "Cyber Monday week (November 25 - December 5)",
+            "start_month": 11, "start_day": 25,
+            "end_month": 12, "end_day": 5
+        },
+        {
+            "name": "Earth Day",
+            "description": "Earth Day (April 20-22)",
+            "start_month": 4, "start_day": 20,
+            "end_month": 4, "end_day": 22
+        },
+        {
+            "name": "Pride Month",
+            "description": "Pride Month (June 1-30)",
+            "start_month": 6, "start_day": 1,
+            "end_month": 6, "end_day": 30
+        },
+        {
+            "name": "Memorial Day",
+            "description": "Memorial Day weekend (May 25-31)",
+            "start_month": 5, "start_day": 25,
+            "end_month": 5, "end_day": 31
+        },
+        {
+            "name": "Martin Luther King Jr. Day",
+            "description": "MLK Day (January 15-21)",
+            "start_month": 1, "start_day": 15,
+            "end_month": 1, "end_day": 21
         }
     ]
 
@@ -5172,12 +5463,10 @@ def initialize_holiday_presets(db: Session = Depends(get_db)):
             db.add(cat)
             db.commit()
             db.refresh(cat)
-            categories_created += 1
 
         # Upsert holiday preset bound to that category
         existing = db.query(models.HolidayPreset).filter(models.HolidayPreset.name == holiday["name"]).first()
         if not existing:
-            presets_created += 1
             preset = models.HolidayPreset(
                 name=holiday["name"],
                 description=holiday["description"],
@@ -5204,12 +5493,7 @@ def initialize_holiday_presets(db: Session = Depends(get_db)):
             existing.category_id = cat.id
 
     db.commit()
-    return {
-        "message": "Holiday presets initialized",
-        "categories_created": categories_created,
-        "presets_created": presets_created,
-        "total_categories": len(holidays) + 1  # Including the "Holidays" category
-    }
+    return {"message": "Holiday presets initialized"}
 
 @app.get("/holiday-presets")
 def get_holiday_presets(db: Session = Depends(get_db)):
@@ -5920,7 +6204,7 @@ def map_preroll_root(req: MapRootRequest, db: Session = Depends(get_db)):
 # Backup and Restore endpoints
 @app.get("/backup/database")
 def backup_database(db: Session = Depends(get_db)):
-    """Export database to JSON"""
+    """Export database to JSON (includes sequences)"""
     try:
         # Export all data
         data = {
@@ -5958,6 +6242,15 @@ def backup_database(db: Session = Depends(get_db)):
                     "preroll_ids": s.preroll_ids
                 } for s in db.query(models.Schedule).all()
             ],
+            "sequences": [
+                {
+                    "name": seq.name,
+                    "description": seq.description,
+                    "blocks": seq.blocks,  # Already JSON string
+                    "created_at": seq.created_at.isoformat() if seq.created_at else None,
+                    "updated_at": seq.updated_at.isoformat() if seq.updated_at else None
+                } for seq in db.query(models.SavedSequence).all()
+            ],
             "holiday_presets": [
                 {
                     "name": h.name,
@@ -5976,7 +6269,7 @@ def backup_database(db: Session = Depends(get_db)):
 
 @app.post("/backup/files")
 def backup_files():
-    """Create ZIP archive of all preroll files"""
+    """Create ZIP archive of all preroll and sequence files"""
     try:
         # Create in-memory ZIP file
         zip_buffer = io.BytesIO()
@@ -5989,6 +6282,14 @@ def backup_files():
                     if file_path.is_file():
                         # Add file to ZIP with relative path
                         zip_file.write(file_path, file_path.relative_to(prerolls_dir.parent))
+            
+            # Add sequence files
+            sequences_dir = Path(os.path.join(data_dir, "sequences"))
+            if sequences_dir.exists():
+                for file_path in sequences_dir.rglob("*"):
+                    if file_path.is_file():
+                        # Add file to ZIP with relative path
+                        zip_file.write(file_path, file_path.relative_to(sequences_dir.parent))
 
         zip_buffer.seek(0)
         return {
@@ -6028,11 +6329,15 @@ def restore_database(backup_data: dict, db: Session = Depends(get_db)):
         print("RESTORE: Deleting holiday presets...")
         db.query(models.HolidayPreset).delete(synchronize_session=False)
         
-        # 6. Delete prerolls (has FK to categories via category_id)
+        # 6. Delete saved sequences (no FK dependencies)
+        print("RESTORE: Deleting saved sequences...")
+        db.query(models.SavedSequence).delete(synchronize_session=False)
+        
+        # 7. Delete prerolls (has FK to categories via category_id)
         print("RESTORE: Deleting prerolls...")
         db.query(models.Preroll).delete(synchronize_session=False)
         
-        # 7. Finally delete categories (all FKs cleared)
+        # 8. Finally delete categories (all FKs cleared)
         print("RESTORE: Deleting categories...")
         db.query(models.Category).delete(synchronize_session=False)
         
@@ -6173,8 +6478,40 @@ def restore_database(backup_data: dict, db: Session = Depends(get_db)):
                 db.rollback()
                 continue
 
+        # Restore saved sequences
+        print("RESTORE: Restoring saved sequences...")
+        for sequence_data in backup_data.get("sequences", []):
+            try:
+                # Safe datetime parsing for sequences
+                created_at = None
+                updated_at = None
+                if sequence_data.get("created_at"):
+                    try:
+                        created_at = datetime.datetime.fromisoformat(str(sequence_data["created_at"]).replace('Z', '+00:00'))
+                    except (ValueError, TypeError):
+                        created_at = None
+                if sequence_data.get("updated_at"):
+                    try:
+                        updated_at = datetime.datetime.fromisoformat(str(sequence_data["updated_at"]).replace('Z', '+00:00'))
+                    except (ValueError, TypeError):
+                        updated_at = None
+                
+                sequence = models.SavedSequence(
+                    name=sequence_data.get("name"),
+                    description=sequence_data.get("description"),
+                    blocks=sequence_data.get("blocks"),  # Already JSON string
+                    created_at=created_at or datetime.datetime.utcnow(),
+                    updated_at=updated_at or datetime.datetime.utcnow()
+                )
+                db.add(sequence)
+                print(f"RESTORE: Added sequence '{sequence.name}'")
+            except Exception as sequence_err:
+                print(f"Error adding sequence {sequence_data.get('name')}: {sequence_err}")
+                db.rollback()
+                continue
+
         db.commit()
-        return {"message": "Database restored successfully (v1.7.7-FIXED)", "version": "1.7.7"}
+        return {"message": "Database restored successfully (includes sequences)", "version": "1.7.7"}
     except Exception as e:
         print(f"Critical restore error: {str(e)}")
         import traceback
