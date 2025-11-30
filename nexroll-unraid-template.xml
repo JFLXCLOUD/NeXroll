@@ -1,0 +1,34 @@
+<?xml version="1.0"?>
+<Container version="2">
+  <Name>NeXroll</Name>
+  <Repository>jbrns/nexroll:latest</Repository>
+  <Registry>https://hub.docker.com/r/jbrns/nexroll</Registry>
+  <Network>bridge</Network>
+  <MyIP/>
+  <Shell>sh</Shell>
+  <Privileged>false</Privileged>
+  <Support>https://github.com/JFLXCLOUD/NeXroll/issues</Support>
+  <Project>https://github.com/JFLXCLOUD/NeXroll</Project>
+  <Overview>NeXroll is a modern preroll manager for Plex and Jellyfin featuring automatic scheduling, category organization, visual sequence builder, and community preroll integration. Upload videos, create schedules, and manage your cinema experience with an intuitive web interface.</Overview>
+  <Category>MediaApp:Video MediaServer:Video</Category>
+  <WebUI>http://[IP]:[PORT:9393]</WebUI>
+  <TemplateURL>https://raw.githubusercontent.com/JFLXCLOUD/NeXroll/main/nexroll-unraid-template.xml</TemplateURL>
+  <Icon>https://raw.githubusercontent.com/JFLXCLOUD/NeXroll/main/NeXroll/frontend/NeXroll_Logo_WHT.png</Icon>
+  <ExtraParams/>
+  <PostArgs/>
+  <CPUset/>
+  <DateInstalled></DateInstalled>
+  <DonateText/>
+  <DonateLink/>
+  <Requires/>
+  <Config Name="WebUI Port" Target="9393" Default="9393" Mode="tcp" Description="Web interface port for NeXroll" Type="Port" Display="always" Required="true" Mask="false">9393</Config>
+  <Config Name="Application Data" Target="/data" Default="/mnt/user/appdata/nexroll" Mode="rw" Description="Database, logs, and application data storage" Type="Path" Display="always" Required="true" Mask="false">/mnt/user/appdata/nexroll</Config>
+  <Config Name="Preroll Storage" Target="/data/prerolls" Default="/mnt/user/media/prerolls" Mode="rw" Description="Directory where preroll videos are stored. Must be accessible by your media server." Type="Path" Display="always" Required="true" Mask="false">/mnt/user/media/prerolls</Config>
+  <Config Name="Time Zone" Target="TZ" Default="America/New_York" Mode="" Description="Timezone for scheduling (e.g., America/New_York, Europe/London)" Type="Variable" Display="always" Required="false" Mask="false">America/New_York</Config>
+  <Config Name="Application Port" Target="NEXROLL_PORT" Default="9393" Mode="" Description="Internal application port (usually leave as 9393)" Type="Variable" Display="advanced" Required="false" Mask="false">9393</Config>
+  <Config Name="Database Directory" Target="NEXROLL_DB_DIR" Default="/data" Mode="" Description="Database storage location inside container" Type="Variable" Display="advanced" Required="false" Mask="false">/data</Config>
+  <Config Name="Preroll Path (Internal)" Target="NEXROLL_PREROLL_PATH" Default="/data/prerolls" Mode="" Description="Preroll directory path inside container" Type="Variable" Display="advanced" Required="false" Mask="false">/data/prerolls</Config>
+  <Config Name="Secrets Directory" Target="NEXROLL_SECRETS_DIR" Default="/data" Mode="" Description="Secure storage for tokens inside container" Type="Variable" Display="advanced" Required="false" Mask="false">/data</Config>
+  <Config Name="PUID" Target="PUID" Default="99" Mode="" Description="User ID for file permissions" Type="Variable" Display="advanced" Required="false" Mask="false">99</Config>
+  <Config Name="PGID" Target="PGID" Default="100" Mode="" Description="Group ID for file permissions" Type="Variable" Display="advanced" Required="false" Mask="false">100</Config>
+</Container>
