@@ -13,7 +13,7 @@
   <Category>MediaApp:Video MediaServer:Video</Category>
   <WebUI>http://[IP]:[PORT:9393]</WebUI>
   <TemplateURL>https://raw.githubusercontent.com/JFLXCLOUD/NeXroll/main/nexroll-unraid-template.xml</TemplateURL>
-  <Icon>https://raw.githubusercontent.com/JFLXCLOUD/NeXroll/main/NeXroll/frontend/NeXroll_Logo_WHT.png</Icon>
+  <Icon>https://raw.githubusercontent.com/JFLXCLOUD/NeXroll/main/NeXroll/icon_1758297097_256x256.png</Icon>
   <ExtraParams/>
   <PostArgs/>
   <CPUset/>

@@ -21,7 +21,7 @@ git push origin main
 ### Step 2: Verify URLs (2 min)
 Open in browser to verify:
 - [ ] https://raw.githubusercontent.com/JFLXCLOUD/NeXroll/main/nexroll-unraid-template.xml
-- [ ] https://raw.githubusercontent.com/JFLXCLOUD/NeXroll/main/NeXroll/frontend/NeXroll_Logo_WHT.png
+- [ ] https://raw.githubusercontent.com/JFLXCLOUD/NeXroll/main/NeXroll/icon_1758297097_256x256.png
 
 ### Step 3: Test on Unraid (10 min)
 1. Docker → Add Container → Template repositories
@@ -75,7 +75,7 @@ https://raw.githubusercontent.com/JFLXCLOUD/NeXroll/main/nexroll-unraid-template
 
 **Icon URL:**
 ```
-https://raw.githubusercontent.com/JFLXCLOUD/NeXroll/main/NeXroll/frontend/NeXroll_Logo_WHT.png
+https://raw.githubusercontent.com/JFLXCLOUD/NeXroll/main/NeXroll/icon_1758297097_256x256.png
 ```
 
 **Docker Hub:**

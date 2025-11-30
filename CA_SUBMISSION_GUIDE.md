@@ -29,8 +29,7 @@ JFLXCLOUD/NeXroll/
 ├── nexroll-unraid-template.xml  ← This file
 ├── README.md
 ├── NeXroll/
-│   └── frontend/
-│       └── NeXroll_Logo_WHT.png  ← Icon file
+│   └── icon_1758297097_256x256.png  ← Icon file (256x256 PNG)
 └── ...
 ```
 
@@ -47,7 +46,7 @@ Test this URL in your browser to ensure it loads correctly.
 
 Your icon will be accessible at:
 ```
-https://raw.githubusercontent.com/JFLXCLOUD/NeXroll/main/NeXroll/frontend/NeXroll_Logo_WHT.png
+https://raw.githubusercontent.com/JFLXCLOUD/NeXroll/main/NeXroll/icon_1758297097_256x256.png
 ```
 
 ---
@@ -350,7 +349,7 @@ curl https://raw.githubusercontent.com/JFLXCLOUD/NeXroll/main/nexroll-unraid-tem
 
 ### Verify Icon URL
 ```bash
-curl -I https://raw.githubusercontent.com/JFLXCLOUD/NeXroll/main/NeXroll/frontend/NeXroll_Logo_WHT.png
+curl -I https://raw.githubusercontent.com/JFLXCLOUD/NeXroll/main/NeXroll/icon_1758297097_256x256.png
 ```
 
 ### XML Validation
