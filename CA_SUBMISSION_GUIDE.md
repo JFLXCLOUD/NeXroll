@@ -1,400 +1,249 @@
-# Community Applications Submission Guide for NeXroll
+# Community Applications Submission Guide
 
-This guide walks you through submitting NeXroll to Unraid's Community Applications (CA).
+**Last Updated:** January 2025  
+**For:** NeXroll v1.8.9+
 
----
-
-## Prerequisites Checklist
-
-Before submitting, verify:
-
-- ✅ Docker image is on Docker Hub: `jbrns/nexroll:latest`
-- ✅ Docker image is tested and working
-- ✅ GitHub repository is public: `JFLXCLOUD/NeXroll`
-- ✅ README.md exists with documentation
-- ✅ XML template is ready: `nexroll-unraid-template.xml`
-- ✅ Logo image is accessible on GitHub
-- ✅ Template includes all required fields
+This guide provides the **modern, streamlined process** for submitting NeXroll to Unraid Community Applications (CA).
 
 ---
 
-## Step 1: Prepare Your Template
+## 📋 Prerequisites Checklist
 
-### 1.1 Upload Template to Your Repository
+Before submitting, verify you have completed:
 
-The template file `nexroll-unraid-template.xml` should be in your GitHub repository root:
+- ✅ **GitHub Repository:** Public repository at `JFLXCLOUD/NeXroll`
+- ✅ **Template File:** `nexroll-unraid-template.xml` in repository root
+- ✅ **Icon File:** 256x256 PNG icon in repository (accessible via raw URL)
+- ✅ **Docker Hub Image:** `jbrns/nexroll:latest` published and working
+- ✅ **Documentation:** README.md with installation/usage instructions
+- ✅ **Support Channel:** GitHub Issues enabled or forum thread created
+- ✅ **2FA Enabled (GitHub):** Two-Factor Authentication enabled on your GitHub account
+- ✅ **2FA Enabled (Docker Hub):** Two-Factor Authentication enabled on your Docker Hub account
 
-```
-JFLXCLOUD/NeXroll/
-├── nexroll-unraid-template.xml  ← This file
-├── README.md
-├── NeXroll/
-│   └── icon_1758297097_256x256.png  ← Icon file (256x256 PNG)
-└── ...
-```
+> **⚠️ CRITICAL:** Both GitHub and Docker Hub **MUST** have 2FA enabled. This is a mandatory CA requirement.
 
-### 1.2 Verify Template URL
+---
 
-Your template will be accessible at:
+## 🚀 Submission Process (Modern Method)
+
+### Step 1: Enable 2FA (If Not Already Done)
+
+#### GitHub 2FA
+1. Go to https://github.com/settings/security
+2. Click **"Enable two-factor authentication"**
+3. Choose authenticator app or SMS
+4. Save recovery codes
+
+#### Docker Hub 2FA
+1. Go to https://hub.docker.com/settings/security
+2. Click **"Two-Factor Authentication"**
+3. Choose authenticator app
+4. Save recovery codes
+
+### Step 2: Verify Your Template URL
+
+Your template is hosted at:
 ```
 https://raw.githubusercontent.com/JFLXCLOUD/NeXroll/main/nexroll-unraid-template.xml
 ```
 
-Test this URL in your browser to ensure it loads correctly.
+**Test it:**
+- Open this URL in your browser
+- Verify the XML loads without errors
+- Check all fields are present and correct
 
-### 1.3 Verify Icon URL
+### Step 3: Submit Via Official Form
 
-Your icon will be accessible at:
-```
-https://raw.githubusercontent.com/JFLXCLOUD/NeXroll/main/NeXroll/icon_1758297097_256x256.png
-```
+The CA team has streamlined submissions to use an official Asana form.
 
----
+**🔗 Submission Form:** https://form.asana.com/?k=qtIUrf5ydiXvXzPI57BiJw&d=714739274360802
 
-## Step 2: Test Your Template Locally
+**Information to Provide:**
 
-Before submitting, test the template on your Unraid server:
+| Field | Value |
+|-------|-------|
+| **Application Name** | NeXroll |
+| **GitHub Repository URL** | https://github.com/JFLXCLOUD/NeXroll |
+| **Template Raw URL** | https://raw.githubusercontent.com/JFLXCLOUD/NeXroll/main/nexroll-unraid-template.xml |
+| **Docker Hub Repository** | jbrns/nexroll |
+| **Docker Hub Image Tag** | latest |
+| **Icon URL** | https://raw.githubusercontent.com/JFLXCLOUD/NeXroll/main/NeXroll/icon_1758297097_256x256.png |
+| **Support URL** | https://github.com/JFLXCLOUD/NeXroll/issues |
+| **Application Description** | NeXroll is a comprehensive preroll management system for Plex and Jellyfin media servers. It allows users to schedule custom video sequences (ads, trailers, bumpers) before movies with flexible scheduling patterns. |
+| **Category** | MediaApp:Video |
+| **2FA Confirmation** | ✓ Confirmed enabled on both GitHub and Docker Hub |
+| **Communication Preference** | Forum PM or Discord (choose your preference) |
 
-### 2.1 Add as Custom Template
+### Step 4: Wait for Processing
 
-1. **Unraid Dashboard** → **Docker** tab
-2. **Click "Add Container"**
-3. **Toggle "Advanced View"** (top right)
-4. **At bottom, click "Template repositories"**
-5. **Add your raw GitHub URL:**
-   ```
-   https://raw.githubusercontent.com/JFLXCLOUD/NeXroll/main/nexroll-unraid-template.xml
-   ```
-6. **Click "Save"**
-7. **Back at Docker tab, click "Add Container"**
-8. **Select "NeXroll" from template dropdown**
-9. **Verify all fields appear correctly**
-10. **Test installation**
+**Timeline:** Up to 48 hours
 
-### 2.2 Testing Checklist
+The CA team (Squid or Limetech) will:
+1. Review your template for CA policy compliance
+2. Verify 2FA is enabled on both accounts
+3. Check for security violations (code injection, malicious commands)
+4. Validate XML structure and required fields
+5. Add your repository to the CA feed
 
-- [ ] Container installs without errors
-- [ ] Web interface loads at http://[IP]:9393
-- [ ] Paths are created correctly
-- [ ] Icon displays properly
-- [ ] All configuration options are present
-- [ ] Default values make sense
-- [ ] Help text is clear
+> **Note:** After submitting the form, you'll see a link to view your request. This link won't work for you (requires CA team credentials). This is normal - just ignore it.
 
----
+### Step 5: Verify Repository Was Added
 
-## Step 3: Fork the AppFeed Repository
+After receiving confirmation (or after 48 hours), verify your app appears:
 
-### 3.1 Fork on GitHub
+1. **Open Unraid Web UI**
+2. **Apps Tab** → **Settings** (gear icon)
+3. **Statistics** → **Repositories**
+4. **Search for:** `JFLXCLOUD/NeXroll`
 
-1. **Go to:** https://github.com/Squidly271/AppFeed
-2. **Click "Fork"** button (top right)
-3. **Fork to your account**
+**If your repository is listed:** ✅ Success! Your repository is registered.
 
-You now have:
-```
-https://github.com/[YOUR-USERNAME]/AppFeed
-```
+**If apps don't appear yet:**
+- Check **Statistics** → **Template Errors**
+- Check **Statistics** → **Invalid Templates**
+- These will show why your template isn't displaying
 
-### 3.2 Clone Your Fork (Optional)
+### Step 6: Address Feedback (If Needed)
 
-If you prefer working locally:
+If the CA team contacts you (via Forum PM or Discord):
 
-```bash
-git clone https://github.com/[YOUR-USERNAME]/AppFeed.git
-cd AppFeed
-```
-
----
-
-## Step 4: Add Your Template to AppFeed
-
-### 4.1 Navigate to Correct Directory
-
-In the AppFeed repository:
-```
-AppFeed/
-└── templates/
-    ├── jbrns/  ← Create this folder (your Docker Hub username)
-    └── ...
-```
-
-### 4.2 Create Your Folder
-
-1. **Create folder:** `templates/jbrns/`
-2. **Inside it, create:** `nexroll.xml`
-
-### 4.3 Add Your Template
-
-**Copy the ENTIRE contents** of your `nexroll-unraid-template.xml` into `templates/jbrns/nexroll.xml`
-
-**Important:** The filename should be lowercase and match your container name.
-
-### 4.4 Directory Structure
-
-```
-AppFeed/
-└── templates/
-    └── jbrns/
-        └── nexroll.xml  ← Your template here
-```
+1. **Read the feedback carefully**
+2. **Make requested changes** to your template in GitHub
+3. **Commit and push changes**
+4. **Respond to confirm** changes are complete
+5. **Wait for re-review** (usually within 24 hours)
 
 ---
 
-## Step 5: Commit and Push
+## 🔍 Verification After Approval
 
-### 5.1 Commit Your Changes
+Once approved, your app should appear in Community Applications:
 
-```bash
-git add templates/jbrns/nexroll.xml
-git commit -m "Add NeXroll - Preroll manager for Plex and Jellyfin"
-git push origin main
-```
+### End-User View
+1. **Apps Tab** in Unraid
+2. **Search for "NeXroll"**
+3. Your app appears with icon and description
+4. Users can click **"Install"** to deploy
 
-Or use GitHub web interface:
-1. **Navigate to** `templates/` in your fork
-2. **Click "Add file" → "Create new file"**
-3. **Name it:** `jbrns/nexroll.xml`
-4. **Paste template content**
-5. **Commit directly to main branch**
+### Your Repository View
+1. **Apps** → **Statistics** → **Repositories**
+2. Find your repository in the list
+3. Shows number of templates, downloads, last update
 
 ---
 
-## Step 6: Create Pull Request
+## 📚 CA Policies Reference
 
-### 6.1 Submit PR
+Key policies your template must comply with:
 
-1. **Go to your fork:** `https://github.com/[YOUR-USERNAME]/AppFeed`
-2. **Click "Pull requests" tab**
-3. **Click "New pull request"**
-4. **Verify:**
-   - Base repository: `Squidly271/AppFeed`
-   - Base branch: `main`
-   - Head repository: `[YOUR-USERNAME]/AppFeed`
-   - Compare branch: `main`
-5. **Click "Create pull request"**
+### Required
+- ✅ Open source (code visible on GitHub)
+- ✅ 2FA enabled on GitHub and Docker Hub
+- ✅ Reasonable description (not empty or generic)
+- ✅ Valid support URL (GitHub Issues or forum thread)
+- ✅ Icon URL must be accessible and non-animated
+- ✅ No malicious code or crypto miners
+- ✅ No code injection in template (e.g., `<script>` tags)
+- ✅ No bash commands appended to docker run command
 
-### 6.2 Write PR Description
+### Prohibited
+- ❌ Closed-source applications (unless from reputable source like Plex)
+- ❌ Referral/affiliate links in Project/Support URLs
+- ❌ Animated icons
+- ❌ Templates that are obviously CA-generated from dockerHub search
+- ❌ Security violations (automatic blacklist, no warnings)
+- ❌ Duplicate dockerHub repositories (can't have multiple templates for same image)
 
-**Title:**
-```
-Add NeXroll - Preroll Manager for Plex/Jellyfin
-```
-
-**Description Template:**
-```markdown
-## Application Details
-
-- **Name:** NeXroll
-- **Author:** JFLXCLOUD
-- **Docker Hub:** https://hub.docker.com/r/jbrns/nexroll
-- **GitHub:** https://github.com/JFLXCLOUD/NeXroll
-- **Category:** MediaApp:Video, MediaServer:Video
-
-## Description
-
-NeXroll is a modern preroll manager for Plex and Jellyfin featuring:
-- Automatic scheduling with date/time ranges
-- Category organization with holiday presets
-- Visual sequence builder for complex patterns
-- Community preroll integration (1,300+ prerolls)
-- Automatic thumbnail generation
-- Backup & restore functionality
-
-## Testing
-
-- [x] Template tested on Unraid 6.x
-- [x] Container installs successfully
-- [x] Web interface accessible
-- [x] All paths work correctly
-- [x] Icon displays properly
-- [x] Plex/Jellyfin integration verified
-
-## Additional Notes
-
-This is my first submission to CA. Template follows the standard format and includes all required fields. Application is actively maintained with regular updates.
-```
-
-### 6.3 Submit
-
-Click **"Create pull request"**
+**Full Policy Document:** https://forums.unraid.net/topic/87144-ca-application-policies/
 
 ---
 
-## Step 7: Wait for Review
+## 🛠️ Troubleshooting
 
-### 7.1 What Happens Next
+### "Repository not appearing in list"
+- Wait the full 48 hours
+- Verify the form was submitted successfully
+- Check your spam folder for CA team emails
+- Send a follow-up PM to Squid on Unraid forums if >48 hours
 
-1. **Automated checks** may run (if configured)
-2. **CA moderators review** your submission
-3. **They may request changes** via PR comments
-4. **You make changes** if requested (push to same branch)
-5. **PR is merged** when approved
+### "Template has errors"
+- Check **Apps → Statistics → Template Errors**
+- Common issues:
+  - Invalid XML syntax
+  - Missing required fields (Name, Repository, Icon)
+  - Icon URL returns 404
+  - Support URL is invalid
+- Fix errors in GitHub and wait for automatic refresh (every 6 hours)
 
-### 7.2 Response Time
+### "Template marked invalid"
+- Check **Apps → Statistics → Invalid Templates**
+- Usually indicates security violation or policy breach
+- Contact Squid via PM for clarification
+- DO NOT resubmit without fixing the issue
 
-- Usually **1-7 days** depending on backlog
-- Be patient and polite
-- Respond to feedback promptly
-
-### 7.3 Common Feedback
-
-- XML formatting issues
-- Missing required fields
-- Description too long/short
-- Icon not displaying
-- Category assignment
-- Path recommendations
-
----
-
-## Step 8: Post-Approval
-
-### 8.1 After Merge
-
-1. **Your app appears in CA** within 24 hours
-2. **Users can search and install**
-3. **Template updates** automatically when you update your GitHub repo
-
-### 8.2 Updates to Template
-
-**For template changes ONLY:**
-1. Update `nexroll-unraid-template.xml` in your repository
-2. Changes auto-propagate (no new PR needed)
-
-**For new versions:**
-- Users pull latest Docker image
-- No template change required
-
-### 8.3 Maintaining Your App
-
-- **Update Docker Hub** when you release new versions
-- **Tag releases** appropriately (`:latest`, `:1.8.9`, etc.)
-- **Keep GitHub README** updated
-- **Respond to GitHub issues**
+### "Repository was blacklisted"
+- Serious security violation detected
+- All templates from your repository are blocked
+- Contact Squid immediately with explanation
+- May require repository rename or transfer to resolve
 
 ---
 
-## Common Issues & Solutions
+## 📞 Getting Help
 
-### Issue: Icon Not Displaying
+### Official Channels
+- **Forum PM:** Message [@Squid](https://forums.unraid.net/profile/10290-squid/) on Unraid forums
+- **Discord:** Message `unraid_squid` on Unraid Discord server
+- **Support Thread:** https://forums.unraid.net/topic/38582-plug-in-community-applications/
 
-**Solution:** 
-- Verify icon URL works in browser
-- Use PNG format (preferred)
-- Recommended size: 256x256 or 512x512
-- Must be on raw.githubusercontent.com
-
-### Issue: Template Not Found
-
-**Solution:**
-- Check file path: `templates/[dockerhub-username]/[appname].xml`
-- Filename should be lowercase
-- Folder must match Docker Hub username
-
-### Issue: XML Validation Errors
-
-**Solution:**
-- Verify XML is well-formed
-- Check for special characters (use `&amp;` for `&`, etc.)
-- Ensure all tags are closed
-- Use XML validator online
-
-### Issue: PR Rejected
-
-**Common reasons:**
-- Duplicate app already exists
-- Insufficient documentation
-- Docker image not stable
-- Template formatting issues
-
-**Solution:**
-- Address feedback
-- Make requested changes
-- Re-submit
+### Community Support
+- **Unraid Forums:** https://forums.unraid.net/
+- **Discord:** https://discord.unraid.net/
+- **Reddit:** r/unRAID
 
 ---
 
-## Template Requirements Reference
+## ✅ Post-Approval Checklist
 
-### Required Fields
-- `<Name>` - Container name
-- `<Repository>` - Docker Hub repo
-- `<Network>` - Network mode
-- `<Overview>` - Description (1-2 sentences)
-- `<Category>` - At least one category
-- `<WebUI>` - Web interface URL
-- `<Icon>` - Icon URL
-- At least one `<Config>` for port mapping
+Once your app is approved and visible:
 
-### Recommended Fields
-- `<Support>` - GitHub issues URL
-- `<Project>` - GitHub project URL
-- `<TemplateURL>` - Your raw GitHub template URL
-- Multiple `<Config>` entries for paths and variables
-
-### Optional Fields
-- `<DonateLink>` - If you accept donations
-- `<Requires>` - Dependencies (rare)
-- `<ExtraParams>` - Advanced Docker parameters
+- [ ] Test installation from CA on a fresh Unraid server
+- [ ] Verify icon displays correctly
+- [ ] Check that support URL works
+- [ ] Monitor GitHub Issues for user questions
+- [ ] Update template when releasing new versions
+- [ ] Keep Docker Hub image up to date
+- [ ] Maintain your GitHub repository (respond to issues)
+- [ ] Keep 2FA enabled on both accounts (losing 2FA = blacklist)
 
 ---
 
-## Testing Commands
+## 🔄 Updating Your Template
 
-### Verify Template URL
-```bash
-curl https://raw.githubusercontent.com/JFLXCLOUD/NeXroll/main/nexroll-unraid-template.xml
-```
+After initial approval, you can update your template anytime:
 
-### Verify Icon URL
-```bash
-curl -I https://raw.githubusercontent.com/JFLXCLOUD/NeXroll/main/NeXroll/icon_1758297097_256x256.png
-```
+1. **Edit** `nexroll-unraid-template.xml` in GitHub
+2. **Commit and push** changes
+3. **Wait 6 hours** for CA to auto-refresh
+4. **No resubmission needed** - CA auto-detects changes
 
-### XML Validation
-Use online validator: https://www.xmlvalidation.com/
-
----
-
-## Contact & Support
-
-### CA Support
-- **Forums:** https://forums.unraid.net/topic/38582-plug-in-community-applications/
-- **GitHub:** https://github.com/Squidly271/AppFeed
-
-### Your App Support
-- **Issues:** https://github.com/JFLXCLOUD/NeXroll/issues
-- **Discussions:** https://github.com/JFLXCLOUD/NeXroll/discussions
+### Major Updates (Optional)
+You can notify CA of major updates:
+- Post in the CA support thread
+- Update your template's `<Changes>` section
+- CA may feature your update in "Updated Apps"
 
 ---
 
-## Checklist Before Submitting
+## 📖 Additional Resources
 
-- [ ] Template tested locally on Unraid
-- [ ] Docker image works correctly
-- [ ] Icon displays in Unraid
-- [ ] All URLs are accessible
-- [ ] XML is valid
-- [ ] Description is clear and concise
-- [ ] Appropriate categories selected
-- [ ] All paths have descriptions
-- [ ] Default values make sense
-- [ ] Repository is public
-- [ ] README.md is complete
-- [ ] PR description is detailed
+- **CA Policies:** https://forums.unraid.net/topic/87144-ca-application-policies/
+- **Docker Template XML Schema:** https://forums.unraid.net/topic/38619-docker-template-xml-schema/
+- **Docker FAQ:** https://forums.unraid.net/topic/57181-docker-faq/
+- **AppFeed Repository:** https://github.com/Squidly271/AppFeed (read-only, auto-generated)
 
 ---
 
-## Next Steps After Submission
+**Good luck with your submission! 🚀**
 
-1. **Monitor your PR** for comments
-2. **Respond to feedback** within 48 hours
-3. **Make requested changes** promptly
-4. **Thank reviewers** when merged
-5. **Announce in forums** (optional)
-6. **Keep app maintained** and updated
-
----
-
-**Good luck with your submission! The Unraid community will appreciate NeXroll! 🎬**
+If you have questions, reach out to the CA team via the channels listed above.
