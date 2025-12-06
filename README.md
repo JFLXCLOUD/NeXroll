@@ -1,4 +1,4 @@
-﻿
+
 <div align="center">
   <img src="NeXroll/frontend/NeXroll_Logo_WHT.png#gh-dark-mode-only" alt="NeXroll Logo" width="500"/>
   <img src="NeXroll/frontend/NeXroll_Logo_BLK.png#gh-light-mode-only" alt="NeXroll Logo" width="500"/>
@@ -236,7 +236,7 @@ If NeXroll is helpful, consider supporting ongoing development:
 
 Join the community on Discord for support, feature requests, and discussions:
 
-[![Discord](https://img.shields.io/badge/Discord-Join%20Server-5865F2?style=for-the-badge&logo=discord&logoColor=white)](https://discord.gg/typical-nerds)
+[![Discord](https://img.shields.io/badge/Discord-Join%20Server-5865F2?style=for-the-badge&logo=discord&logoColor=white)](https://discord.gg/R9eH7TbxEk)
 
 ---
 
