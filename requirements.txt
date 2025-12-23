@@ -1,26 +1,31 @@
 # NeXroll Python Dependencies
 # Backend Framework
-fastapi==0.104.1
-uvicorn[standard]==0.24.0
-python-multipart==0.0.6
+fastapi>=0.115.0
+uvicorn[standard]>=0.32.0
+python-multipart>=0.0.18
+starlette>=0.41.0
 
 # Database
-sqlalchemy==2.0.23
-alembic==1.12.1
+sqlalchemy>=2.0.36
+alembic>=1.14.0
 
 # Plex API
-PlexAPI==4.15.6
+PlexAPI>=4.15.16
 
 # Web Scraping & HTTP (for Community Prerolls)
-requests==2.31.0
-beautifulsoup4==4.12.2
-lxml==4.9.3
+requests>=2.32.3
+beautifulsoup4>=4.12.3
+lxml>=5.3.0
+urllib3>=2.3.0
 
 # Data Validation
-pydantic==2.5.0
+pydantic>=2.10.0
 
 # Scheduling
-APScheduler==3.10.4
+APScheduler>=3.10.4
 
 # Utilities
-python-dotenv==1.0.0
+python-dotenv>=1.0.1
+
+# Timezone support
+pytz>=2024.2
