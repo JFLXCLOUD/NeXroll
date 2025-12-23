@@ -4,6 +4,11 @@ on:
   release:
     types: [published]
   workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version tag (e.g., v1.9.6)'
+        required: true
+        default: 'v1.9.6'
 
 env:
   REGISTRY: docker.io
@@ -17,16 +22,13 @@ jobs:
       packages: write
 
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-        with:
-          ref: ${{ github.event.release.tag_name || github.ref }}
-
       - name: Get version
         id: version
         run: |
           if [ "${{ github.event_name }}" = "release" ]; then
             VERSION="${{ github.event.release.tag_name }}"
+          elif [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            VERSION="${{ github.event.inputs.version }}"
           else
             VERSION="${{ github.ref_name }}"
           fi
@@ -35,6 +37,12 @@ jobs:
           echo "version=${VERSION_NUM}" >> $GITHUB_OUTPUT
           echo "tag=${VERSION}" >> $GITHUB_OUTPUT
           echo "Version: ${VERSION_NUM}"
+          echo "Tag: ${VERSION}"
+
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.version.outputs.tag }}
 
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
