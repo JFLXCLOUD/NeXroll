@@ -60,5 +60,4 @@ jobs:
             ${{ env.IMAGE_NAME }}:latest
           build-args: |
             VERSION=${{ steps.version.outputs.tag }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          no-cache: true
