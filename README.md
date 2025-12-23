@@ -14,54 +14,39 @@ NeXroll is a preroll manager for Plex and Jellyfin that makes setup effortless. 
 
 ---
 
+## Screenshots
+
+### Dashboard
+![Dashboard](docs/screenshots/Dashboard.png)
+
+### Preroll Management
+![Prerolls](docs/screenshots/prerolls.png)
+
+### Schedule Management
+![Schedule](docs/screenshots/schedule.png)
+
+### Calendar Year View
+![Calendar Year View](docs/screenshots/Calendar_Year.png)
+
+### Community Prerolls
+![Community Prerolls](docs/screenshots/community_prerolls.png)
+
+---
+
 ## Main Features
 
-- Preroll management
-  - Upload multiple preroll videos with metadata
-  - Automatic thumbnail generation (FFmpeg)
-  - Enhanced tag system with visual badges, autocomplete, and easy editing
-  - Tags display as purple pill-shaped badges in grid and list views
-  - Interactive tag editor with individual tag removal and browse functionality
-  - Multi category assignment with improved multi select workflow
-- Categories & Holiday Presets
-  - Organize your library by categories (Default, Halloween, Christmas, etc.)
-  - Comprehensive Holiday Presets library with 32 holidays and events
-  - Includes winter, spring, summer, fall, cultural, seasonal, and special event presets
-  - One click Holiday Presets initializer creates per holiday categories and date ranges
-  - Holiday presets integrate with schedule creation for automatic date population
-  - Apply a category to Plex as a preroll sequence
-- Scheduling
-  - Flexible schedules with date/time ranges and recurrence
-  - Optional fallback category when no schedule is active
-  - Real time scheduler status
+- **Preroll Management** — Upload videos, auto-generate thumbnails, organize with tags and multi-category assignments
+- **Smart Scheduling** — Daily, weekly, monthly, yearly schedules with recurrence patterns, fallback categories, and visual calendar views
+- **Sequence Builder** — Create ordered preroll sequences with random blocks and fixed selections
+- **Schedule Blend Mode** — Automatically blend prerolls from overlapping schedules (e.g., Christmas + New Year's)
+- **Priority & Exclusive Mode** — Control which schedule wins with priority levels (1-10) and exclusive override
+- **Holiday Browser** — Search holidays from 100+ countries and create schedules with one click
+- **Holiday Presets** — 32+ built-in holidays with one-click category and schedule creation
+- **Community Prerolls** — Browse and download from 1,300+ community prerolls at prerolls.typicalnerds.uk
+- **Media Server Integration** — Connect to Plex or Jellyfin with status monitoring and quick apply actions
+- **Backup & Restore** — Full database and file backups with one-click restore
+- **Windows Native** — One-click installer with optional Windows Service and System Tray app
 
-- Media Server integration
-  - Connect to Plex or Jellyfin servers
-  - Connect via URL/token or Stable Token (persistent)
-  - Status monitoring and quick Apply-to-Server actions
-- Community Prerolls
-  - Access thousands of community-curated prerolls from prerolls.typicalnerds.uk
-  - Smart search with synonym expansion and category filtering
-  - Platform filtering (Plex/Jellyfin/Emby)
-  - Local indexing for instant searches across 1,300+ prerolls
-  - One-click downloads with no automatic tagging
-  - Random preroll discovery
-  - Fair Use Policy protection
-- Windows experience
-  - One click installer with optional Windows Service and System Tray app
-  - Start with Windows, Firewall rule (TCP 9393), and FFmpeg installation via winget
-  - Self contained executables (no Python required on user machines)
-- Backup & Restore
-  - Comprehensive database backup includes prerolls, categories, schedules, sequences, and holiday presets
-  - Files backup creates ZIP archives of both preroll and sequence video files
-  - Full restore capability with proper data integrity and foreign key handling
-  - Sequence metadata and block structures preserved through backup cycle
-  - Datetime handling with fallback protection for timestamp fields
-- Observability & storage
-  - Logs under %ProgramData%\NeXroll\logs
-  - SQLite database storage under %ProgramData%\NeXroll
-- API
-  - REST API with interactive docs at http://localhost:9393/docs
 ## Download and Install
 
 1. Download the latest `NeXroll_Installer.exe` from GitHub Releases:

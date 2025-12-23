@@ -1,0 +1,127 @@
+﻿# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+dist/
+*.egg
+.venv/
+venv/
+env/
+ENV/
+pip-log.txt
+pip-delete-this-directory.txt
+
+# PyInstaller
+*.spec
+build/
+*.manifest
+*.exe
+*.msi
+
+# Node
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+
+# React build
+NeXroll/frontend/build/
+NeXroll/frontend/.eslintcache
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# OS
+Thumbs.db
+desktop.ini
+*.lnk
+
+# NeXroll specific
+data/
+logs/
+*.db
+*.db-journal
+*.sqlite
+*.sqlite3
+nexroll.db
+
+# Releases and builds (keep locally, don't commit)
+Releases/
+installers/
+*.exe
+*.msi
+*.nsi
+
+# Testing and temp files
+testing/
+temp/
+tmp/
+*.tmp
+*.log
+*.bak
+
+# Secrets
+.env
+.env.local
+*.key
+*.pem
+secrets/
+
+# Documentation drafts
+*_DRAFT.md
+*_WIP.md
+*_TODO.md
+
+# Build artifacts
+NeXroll/build/
+NeXroll/dist/
+NeXroll/__pycache__/
+
+# Dev/temp documentation
+*_IMPLEMENTATION.md
+*_IMPLEMENTATION_*.md
+*_TESTING.md
+*_TESTING_*.md
+*_STATUS.md
+*_DEVELOPMENT_STATUS.md
+*_COMPLETE.md
+*_COMPLETE_*.md
+*_READY.md
+*_READY_*.md
+*_GUIDE.md
+*_NOTES.md
+VISUAL_MOCKUP.txt
+saved_sequences_layout.txt
+CRITICAL_NOTES.md
+WORKSPACE_*.md
+BUILD_COMPLETE_*.md
+INSTALLER_READY_*.md
+QUICK_TEST_*.md
+V1.*.md
+*.md.old
+SAVED_SEQUENCES_*.md
+SEQUENCES_LAYOUT_*.md
+NeXroll/RELEASE_NOTES_v1.8.12.md
+
+# Temp test files
+*.nexseq
+*.nexbundle
+WORKSPACE_READY.txt
+
+# Build scripts (local only)
+build_*.bat
+rebuild_*.bat
+test_*.bat
+replace_*.py
+
+# Discord announcements
+discord_announcement*.txt

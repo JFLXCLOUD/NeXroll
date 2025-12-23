@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { Shuffle, Pin, X, ChevronUp, ChevronDown, Search, Tag, Check } from 'lucide-react';
 
 /**
  * BlockEditor - Modal for configuring sequence blocks
@@ -12,14 +13,19 @@ const BlockEditor = ({ block, categories, prerolls, isNew, onSave, onCancel }) =
   const [searchTerm, setSearchTerm] = useState('');
   const [expandedCategories, setExpandedCategories] = useState({});
   const [label, setLabel] = useState(block.label || '');
+  const [initialBlockId, setInitialBlockId] = useState(block.id);
 
+  // Only reset state when opening a different block (detected by ID change)
   useEffect(() => {
-    setBlockType(block.type || 'random');
-    setCategoryId(block.category_id || (categories[0]?.id || null));
-    setCount(block.count || 1);
-    setSelectedPrerollIds(block.preroll_ids || []);
-    setLabel(block.label || '');
-  }, [block, categories]);
+    if (block.id !== initialBlockId) {
+      setBlockType(block.type || 'random');
+      setCategoryId(block.category_id || (categories[0]?.id || null));
+      setCount(block.count || 1);
+      setSelectedPrerollIds(block.preroll_ids || []);
+      setLabel(block.label || '');
+      setInitialBlockId(block.id);
+    }
+  }, [block.id, block, categories, initialBlockId]);
 
   const handleSave = () => {
     const newBlock = {
@@ -128,36 +134,43 @@ const BlockEditor = ({ block, categories, prerolls, isNew, onSave, onCancel }) =
       <div style={{
         background: 'var(--card-bg)',
         borderRadius: '12px',
-        width: '90%',
-        maxWidth: '700px',
-        maxHeight: '90vh',
+        width: '95%',
+        maxWidth: '850px',
+        maxHeight: '85vh',
         display: 'flex',
         flexDirection: 'column',
         boxShadow: '0 20px 60px rgba(0, 0, 0, 0.6)',
         animation: 'slideUp 0.3s',
-        border: '1px solid var(--border-color)'
+        border: '1px solid var(--border-color)',
+        overflow: 'hidden'
       }} onClick={(e) => e.stopPropagation()}>
         <div style={{
           display: 'flex',
           justifyContent: 'space-between',
           alignItems: 'center',
-          padding: '20px',
-          borderBottom: '2px solid var(--border-color)'
+          padding: '16px 20px',
+          borderBottom: '2px solid var(--border-color)',
+          background: 'var(--hover-bg)'
         }}>
           <h2 style={{
             margin: 0,
-            color: 'var(--accent-color)',
-            fontSize: '22px'
+            color: 'var(--text-color)',
+            fontSize: '20px',
+            fontWeight: 700
           }}>{isNew ? 'Add New Block' : 'Edit Block'}</h2>
           <button type="button" style={{
             background: 'none',
             border: 'none',
-            fontSize: '24px',
             color: 'var(--text-secondary)',
             cursor: 'pointer',
-            padding: '5px 10px',
-            transition: 'color 0.2s'
-          }} onClick={onCancel}>✖</button>
+            padding: '5px',
+            transition: 'color 0.2s',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center'
+          }} onClick={onCancel}>
+            <X size={20} />
+          </button>
         </div>
 
         <div style={{
@@ -166,55 +179,60 @@ const BlockEditor = ({ block, categories, prerolls, isNew, onSave, onCancel }) =
           flex: 1
         }}>
           {/* Block Label (Custom Name) */}
-          <div style={{ marginBottom: '20px' }}>
+          <div style={{ marginBottom: '16px' }}>
             <label htmlFor="block-label" style={{
-              display: 'block',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '6px',
               marginBottom: '8px',
               color: 'var(--text-color)',
               fontWeight: 600,
-              fontSize: '14px'
-            }}>Block Label (Optional)</label>
+              fontSize: '13px'
+            }}>
+              <Tag size={16} />
+              Block Label (Optional)
+            </label>
             <input
               id="block-label"
               type="text"
-              placeholder="e.g., 'Opening Credits', 'Holiday Special', 'Action Pack'"
+              placeholder="e.g., 'Opening Credits', 'Holiday Special'"
               value={label}
               onChange={(e) => setLabel(e.target.value)}
               style={{
                 width: '100%',
-                padding: '10px',
+                padding: '9px 12px',
                 border: '2px solid var(--border-color)',
                 borderRadius: '6px',
                 background: 'var(--input-bg)',
                 color: 'var(--text-color)',
-                fontSize: '14px',
+                fontSize: '13px',
                 transition: 'border-color 0.3s',
                 boxSizing: 'border-box'
               }}
             />
             <small style={{ 
               display: 'block', 
-              marginTop: '6px', 
+              marginTop: '5px', 
               color: 'var(--text-secondary)', 
-              fontSize: '12px' 
+              fontSize: '11px' 
             }}>
-              Give this block a custom name to help identify it in your sequence
+              Custom name to identify this block
             </small>
           </div>
 
           {/* Block Type Selection */}
-          <div style={{ marginBottom: '20px' }}>
+          <div style={{ marginBottom: '16px' }}>
             <label style={{
               display: 'block',
               marginBottom: '8px',
               color: 'var(--text-color)',
               fontWeight: 600,
-              fontSize: '14px'
+              fontSize: '13px'
             }}>Block Type</label>
             <div style={{
               display: 'grid',
               gridTemplateColumns: '1fr 1fr',
-              gap: '15px'
+              gap: '12px'
             }}>
               <button
                 type="button"
@@ -222,19 +240,31 @@ const BlockEditor = ({ block, categories, prerolls, isNew, onSave, onCancel }) =
                   display: 'flex',
                   flexDirection: 'column',
                   alignItems: 'center',
-                  padding: '20px',
+                  padding: '16px',
                   border: blockType === 'random' ? '2px solid var(--accent-color)' : '2px solid var(--border-color)',
                   borderRadius: '8px',
-                  background: blockType === 'random' ? 'var(--hover-bg)' : 'var(--card-bg)',
+                  background: blockType === 'random' ? 'linear-gradient(135deg, rgba(102, 126, 234, 0.1) 0%, rgba(118, 75, 162, 0.1) 100%)' : 'var(--card-bg)',
                   color: 'var(--text-color)',
                   cursor: 'pointer',
-                  transition: 'all 0.3s'
+                  transition: 'all 0.3s',
+                  boxShadow: blockType === 'random' ? '0 2px 8px rgba(102, 126, 234, 0.2)' : 'none'
                 }}
                 onClick={() => setBlockType('random')}
               >
-                <span style={{ fontSize: '32px', marginBottom: '10px' }}>🎲</span>
-                <span style={{ fontWeight: 'bold', fontSize: '16px', marginBottom: '5px' }}>Random</span>
-                <small style={{ fontSize: '11px', color: 'var(--text-secondary)', textAlign: 'center' }}>Select random prerolls from a category</small>
+                <div style={{
+                  width: '48px',
+                  height: '48px',
+                  borderRadius: '8px',
+                  background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  marginBottom: '10px'
+                }}>
+                  <Shuffle size={24} color="white" />
+                </div>
+                <span style={{ fontWeight: 'bold', fontSize: '15px', marginBottom: '4px' }}>Random</span>
+                <small style={{ fontSize: '11px', color: 'var(--text-secondary)', textAlign: 'center', lineHeight: '1.3' }}>Random prerolls from category</small>
               </button>
               <button
                 type="button"
@@ -242,19 +272,31 @@ const BlockEditor = ({ block, categories, prerolls, isNew, onSave, onCancel }) =
                   display: 'flex',
                   flexDirection: 'column',
                   alignItems: 'center',
-                  padding: '20px',
+                  padding: '16px',
                   border: blockType === 'fixed' ? '2px solid var(--accent-color)' : '2px solid var(--border-color)',
                   borderRadius: '8px',
-                  background: blockType === 'fixed' ? 'var(--hover-bg)' : 'var(--card-bg)',
+                  background: blockType === 'fixed' ? 'linear-gradient(135deg, rgba(250, 112, 154, 0.1) 0%, rgba(254, 225, 64, 0.1) 100%)' : 'var(--card-bg)',
                   color: 'var(--text-color)',
                   cursor: 'pointer',
-                  transition: 'all 0.3s'
+                  transition: 'all 0.3s',
+                  boxShadow: blockType === 'fixed' ? '0 2px 8px rgba(250, 112, 154, 0.2)' : 'none'
                 }}
                 onClick={() => setBlockType('fixed')}
               >
-                <span style={{ fontSize: '32px', marginBottom: '10px' }}>📌</span>
-                <span style={{ fontWeight: 'bold', fontSize: '16px', marginBottom: '5px' }}>Fixed</span>
-                <small style={{ fontSize: '11px', color: 'var(--text-secondary)', textAlign: 'center' }}>Specific prerolls in order</small>
+                <div style={{
+                  width: '48px',
+                  height: '48px',
+                  borderRadius: '8px',
+                  background: 'linear-gradient(135deg, #fa709a 0%, #fee140 100%)',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  marginBottom: '10px'
+                }}>
+                  <Pin size={24} color="white" />
+                </div>
+                <span style={{ fontWeight: 'bold', fontSize: '15px', marginBottom: '4px' }}>Fixed</span>
+                <small style={{ fontSize: '11px', color: 'var(--text-secondary)', textAlign: 'center', lineHeight: '1.3' }}>Specific prerolls in order</small>
               </button>
             </div>
           </div>
@@ -262,80 +304,74 @@ const BlockEditor = ({ block, categories, prerolls, isNew, onSave, onCancel }) =
           {/* Random Block Configuration */}
           {blockType === 'random' && (
             <>
-              <div style={{ marginBottom: '20px' }}>
-                <label htmlFor="category-select" style={{
-                  display: 'block',
-                  marginBottom: '8px',
-                  color: 'var(--text-color)',
-                  fontWeight: 600,
-                  fontSize: '14px'
-                }}>Category</label>
-                <select
-                  id="category-select"
-                  value={categoryId || ''}
-                  onChange={(e) => setCategoryId(parseInt(e.target.value))}
-                  style={{
-                    width: '100%',
-                    padding: '10px',
-                    border: '2px solid var(--border-color)',
-                    borderRadius: '6px',
-                    background: 'var(--input-bg)',
+              <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: '12px', marginBottom: '12px' }}>
+                <div>
+                  <label htmlFor="category-select" style={{
+                    display: 'block',
+                    marginBottom: '6px',
                     color: 'var(--text-color)',
-                    fontSize: '14px',
-                    transition: 'border-color 0.3s',
-                    cursor: 'pointer'
-                  }}
-                >
-                  {categories.map((cat) => (
-                    <option 
-                      key={cat.id} 
-                      value={cat.id}
-                      style={{
-                        background: 'var(--input-bg)',
-                        color: 'var(--text-color)',
-                        padding: '10px'
-                      }}
-                    >
-                      {cat.name} ({getCategoryPrerollCount(cat.id)} prerolls)
-                    </option>
-                  ))}
-                </select>
-              </div>
+                    fontWeight: 600,
+                    fontSize: '13px'
+                  }}>Category</label>
+                  <select
+                    id="category-select"
+                    value={categoryId || ''}
+                    onChange={(e) => setCategoryId(parseInt(e.target.value))}
+                    style={{
+                      width: '100%',
+                      padding: '9px 12px',
+                      border: '2px solid var(--border-color)',
+                      borderRadius: '6px',
+                      background: 'var(--input-bg)',
+                      color: 'var(--text-color)',
+                      fontSize: '13px',
+                      transition: 'border-color 0.3s',
+                      cursor: 'pointer'
+                    }}
+                  >
+                    {categories.map((cat) => (
+                      <option 
+                        key={cat.id} 
+                        value={cat.id}
+                        style={{
+                          background: 'var(--input-bg)',
+                          color: 'var(--text-color)'
+                        }}
+                      >
+                        {cat.name} ({getCategoryPrerollCount(cat.id)})
+                      </option>
+                    ))}
+                  </select>
+                </div>
 
-              <div style={{ marginBottom: '20px' }}>
-                <label htmlFor="count-input" style={{
-                  display: 'block',
-                  marginBottom: '8px',
-                  color: 'var(--text-color)',
-                  fontWeight: 600,
-                  fontSize: '14px'
-                }}>Number of Random Prerolls</label>
-                <input
-                  id="count-input"
-                  type="number"
-                  min="1"
-                  max="10"
-                  value={count}
-                  onChange={(e) => setCount(parseInt(e.target.value) || 1)}
-                  style={{
-                    width: '100%',
-                    padding: '10px',
-                    border: '2px solid var(--border-color)',
-                    borderRadius: '6px',
-                    background: 'var(--input-bg)',
+                <div>
+                  <label htmlFor="count-input" style={{
+                    display: 'block',
+                    marginBottom: '6px',
                     color: 'var(--text-color)',
-                    fontSize: '14px',
-                    transition: 'border-color 0.3s'
-                  }}
-                />
-                <small style={{
-                  display: 'block',
-                  marginTop: '5px',
-                  color: 'var(--text-secondary)',
-                  fontSize: '12px'
-                }}>
-                  Will randomly select {count} {count === 1 ? 'preroll' : 'prerolls'} from this category
-                </small>
+                    fontWeight: 600,
+                    fontSize: '13px'
+                  }}>Count</label>
+                  <input
+                    id="count-input"
+                    type="number"
+                    min="1"
+                    max="10"
+                    value={count}
+                    onChange={(e) => setCount(parseInt(e.target.value) || 1)}
+                    style={{
+                      width: '20%',
+                      padding: '9px 12px',
+                      border: '2px solid var(--border-color)',
+                      borderRadius: '6px',
+                      background: 'var(--input-bg)',
+                      color: 'var(--text-color)',
+                      fontSize: '13px',
+                      transition: 'border-color 0.3s',
+                      textAlign: 'center'
+                    }}
+                  />
+                </div>
               </div>
 
               {categoryId && (
@@ -343,24 +379,16 @@ const BlockEditor = ({ block, categories, prerolls, isNew, onSave, onCancel }) =
                   background: 'var(--hover-bg)',
                   border: '1px solid var(--accent-color)',
                   borderRadius: '6px',
-                  padding: '15px',
-                  marginTop: '10px'
+                  padding: '10px 12px',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '12px',
+                  fontSize: '12px'
                 }}>
-                  <strong style={{
-                    color: 'var(--accent-color)',
-                    display: 'block',
-                    marginBottom: '8px'
-                  }}>Preview:</strong>
-                  <p style={{
-                    margin: '5px 0',
-                    color: 'var(--text-color)',
-                    fontSize: '13px'
-                  }}>✓ {getCategoryPrerollCount(categoryId)} prerolls available</p>
-                  <p style={{
-                    margin: '5px 0',
-                    color: 'var(--text-color)',
-                    fontSize: '13px'
-                  }}>✓ Will randomly select {count} on each playback</p>
+                  <Check size={16} color="var(--accent-color)" />
+                  <span style={{ color: 'var(--text-color)' }}>
+                    {getCategoryPrerollCount(categoryId)} available • Will select {count} random on each playback
+                  </span>
                 </div>
               )}
             </>
@@ -369,95 +397,165 @@ const BlockEditor = ({ block, categories, prerolls, isNew, onSave, onCancel }) =
           {/* Fixed Block Configuration */}
           {blockType === 'fixed' && (
             <>
-              <div className="form-group">
-                <label>Selected Prerolls (Order Matters)</label>
-                {selectedPrerollIds.length === 0 ? (
-                  <div className="empty-selection">
-                    No prerolls selected. Choose from the list below.
-                  </div>
-                ) : (
-                  <div className="selected-prerolls">
+              {selectedPrerollIds.length > 0 && (
+                <div style={{ marginBottom: '12px' }}>
+                  <label style={{
+                    display: 'block',
+                    marginBottom: '6px',
+                    color: 'var(--text-color)',
+                    fontWeight: 600,
+                    fontSize: '13px'
+                  }}>Selected ({selectedPrerollIds.length})</label>
+                  <div style={{
+                    border: '2px solid var(--border-color)',
+                    borderRadius: '6px',
+                    background: 'var(--card-bg)',
+                    maxHeight: '140px',
+                    overflowY: 'auto'
+                  }}>
                     {selectedPrerollIds.map((id, index) => {
                       const preroll = getPreroll(id);
                       if (!preroll) return null;
                       return (
-                        <div key={id} className="selected-preroll-item">
-                          <span className="order-number">{index + 1}.</span>
-                          <span className="preroll-name">
+                        <div key={id} style={{
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: '8px',
+                          padding: '8px 10px',
+                          borderBottom: index < selectedPrerollIds.length - 1 ? '1px solid var(--border-color)' : 'none',
+                          background: 'var(--hover-bg)'
+                        }}>
+                          <span style={{
+                            minWidth: '24px',
+                            height: '24px',
+                            borderRadius: '4px',
+                            background: 'var(--accent-color)',
+                            color: 'white',
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            fontSize: '11px',
+                            fontWeight: 'bold'
+                          }}>{index + 1}</span>
+                          <span style={{
+                            flex: 1,
+                            color: 'var(--text-color)',
+                            fontSize: '12px',
+                            overflow: 'hidden',
+                            textOverflow: 'ellipsis',
+                            whiteSpace: 'nowrap'
+                          }}>
                             {preroll.display_name || preroll.filename}
                           </span>
-                          <div className="item-actions">
+                          <div style={{ display: 'flex', gap: '2px' }}>
                             <button
                               type="button"
-                              className="btn-icon"
                               onClick={() => movePrerollUp(index)}
                               disabled={index === 0}
                               title="Move up"
+                              style={{
+                                padding: '4px',
+                                border: 'none',
+                                background: 'var(--button-secondary-bg)',
+                                color: 'var(--button-text)',
+                                borderRadius: '4px',
+                                cursor: index === 0 ? 'not-allowed' : 'pointer',
+                                opacity: index === 0 ? 0.3 : 1,
+                                display: 'flex',
+                                alignItems: 'center',
+                                justifyContent: 'center'
+                              }}
                             >
-                              ↑
+                              <ChevronUp size={14} />
                             </button>
                             <button
                               type="button"
-                              className="btn-icon"
                               onClick={() => movePrerollDown(index)}
                               disabled={index === selectedPrerollIds.length - 1}
                               title="Move down"
+                              style={{
+                                padding: '4px',
+                                border: 'none',
+                                background: 'var(--button-secondary-bg)',
+                                color: 'var(--button-text)',
+                                borderRadius: '4px',
+                                cursor: index === selectedPrerollIds.length - 1 ? 'not-allowed' : 'pointer',
+                                opacity: index === selectedPrerollIds.length - 1 ? 0.3 : 1,
+                                display: 'flex',
+                                alignItems: 'center',
+                                justifyContent: 'center'
+                              }}
                             >
-                              ↓
+                              <ChevronDown size={14} />
                             </button>
                             <button
                               type="button"
-                              className="btn-icon btn-remove"
                               onClick={() => removePreroll(id)}
                               title="Remove"
+                              style={{
+                                padding: '4px',
+                                border: 'none',
+                                background: '#f56565',
+                                color: 'white',
+                                borderRadius: '4px',
+                                cursor: 'pointer',
+                                display: 'flex',
+                                alignItems: 'center',
+                                justifyContent: 'center'
+                              }}
                             >
-                              ✖
+                              <X size={14} />
                             </button>
                           </div>
                         </div>
                       );
                     })}
                   </div>
-                )}
-              </div>
+                </div>
+              )}
 
-              <div style={{ marginBottom: '20px' }}>
+              <div style={{ marginBottom: '8px' }}>
                 <label style={{
-                  display: 'block',
-                  marginBottom: '8px',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '6px',
+                  marginBottom: '6px',
                   color: 'var(--text-color)',
                   fontWeight: 600,
-                  fontSize: '14px'
-                }}>Available Prerolls</label>
+                  fontSize: '13px'
+                }}>
+                  <Search size={16} />
+                  {selectedPrerollIds.length === 0 ? 'Select Prerolls' : 'Add More'}
+                </label>
                 <input
                   type="text"
                   placeholder="Search prerolls..."
                   value={searchTerm}
                   onChange={(e) => setSearchTerm(e.target.value)}
                   style={{
-                    width: '100%',
-                    padding: '10px',
+                    width: '80%',
+                    padding: '9px 12px',
                     border: '2px solid var(--border-color)',
                     borderRadius: '6px',
                     background: 'var(--input-bg)',
                     color: 'var(--text-color)',
-                    fontSize: '14px',
-                    marginBottom: '10px'
+                    fontSize: '13px',
+                    marginBottom: '8px'
                   }}
                 />
                 <div style={{
                   border: '2px solid var(--border-color)',
                   borderRadius: '6px',
                   background: 'var(--card-bg)',
-                  maxHeight: '300px',
+                  maxHeight: selectedPrerollIds.length > 0 ? '200px' : '320px',
                   overflowY: 'auto'
                 }}>
                   {Object.keys(prerollsByCategory).length === 0 ? (
                     <div style={{
-                      padding: '30px',
+                      padding: '24px',
                       textAlign: 'center',
                       color: 'var(--text-secondary)',
-                      fontSize: '14px'
+                      fontSize: '13px'
                     }}>No prerolls found</div>
                   ) : (
                     Object.keys(prerollsByCategory).map((catId) => {
@@ -470,7 +568,7 @@ const BlockEditor = ({ block, categories, prerolls, isNew, onSave, onCancel }) =
                           <div
                             onClick={() => toggleCategory(catId)}
                             style={{
-                              padding: '12px',
+                              padding: '10px 12px',
                               background: 'var(--hover-bg)',
                               borderBottom: '1px solid var(--border-color)',
                               cursor: 'pointer',
@@ -478,6 +576,7 @@ const BlockEditor = ({ block, categories, prerolls, isNew, onSave, onCancel }) =
                               justifyContent: 'space-between',
                               alignItems: 'center',
                               fontWeight: 600,
+                              fontSize: '13px',
                               color: 'var(--text-color)'
                             }}
                           >
@@ -492,8 +591,8 @@ const BlockEditor = ({ block, categories, prerolls, isNew, onSave, onCancel }) =
                                 style={{
                                   display: 'flex',
                                   alignItems: 'center',
-                                  gap: '10px',
-                                  padding: '12px 12px 12px 30px',
+                                  gap: '8px',
+                                  padding: '9px 12px 9px 28px',
                                   borderBottom: '1px solid var(--border-color)',
                                   cursor: 'pointer',
                                   background: isSelected ? 'var(--hover-bg)' : 'transparent',
@@ -508,12 +607,15 @@ const BlockEditor = ({ block, categories, prerolls, isNew, onSave, onCancel }) =
                                     e.stopPropagation();
                                     togglePrerollSelection(preroll.id);
                                   }}
-                                  style={{ cursor: 'pointer' }}
+                                  style={{ cursor: 'pointer', width: '16px', height: '16px' }}
                                 />
                                 <span style={{
                                   flex: 1,
                                   color: 'var(--text-color)',
-                                  fontSize: '14px'
+                                  fontSize: '13px',
+                                  overflow: 'hidden',
+                                  textOverflow: 'ellipsis',
+                                  whiteSpace: 'nowrap'
                                 }}>
                                   {preroll.display_name || preroll.filename}
                                 </span>
@@ -521,10 +623,12 @@ const BlockEditor = ({ block, categories, prerolls, isNew, onSave, onCancel }) =
                                   <span style={{
                                     background: 'var(--accent-color)',
                                     color: 'white',
-                                    padding: '2px 8px',
-                                    borderRadius: '12px',
-                                    fontSize: '11px',
-                                    fontWeight: 'bold'
+                                    padding: '2px 7px',
+                                    borderRadius: '10px',
+                                    fontSize: '10px',
+                                    fontWeight: 'bold',
+                                    minWidth: '22px',
+                                    textAlign: 'center'
                                   }}>
                                     #{selectedPrerollIds.indexOf(preroll.id) + 1}
                                   </span>
@@ -543,42 +647,51 @@ const BlockEditor = ({ block, categories, prerolls, isNew, onSave, onCancel }) =
         </div>
 
         <div style={{
-          padding: '20px',
+          padding: '14px 20px',
           borderTop: '2px solid var(--border-color)',
           display: 'flex',
           justifyContent: 'flex-end',
-          gap: '10px'
+          gap: '10px',
+          background: 'var(--hover-bg)'
         }}>
           <button type="button" style={{
-            padding: '10px 24px',
+            padding: '9px 20px',
             border: 'none',
             borderRadius: '6px',
             cursor: 'pointer',
-            fontSize: '14px',
+            fontSize: '13px',
             fontWeight: 600,
             transition: 'all 0.3s',
             background: 'var(--button-secondary-bg)',
-            color: 'var(--button-text)'
+            color: 'var(--button-text)',
+            display: 'flex',
+            alignItems: 'center',
+            gap: '6px'
           }} onClick={onCancel}>
+            <X size={16} />
             Cancel
           </button>
           <button 
             type="button"
             style={{
-              padding: '10px 24px',
+              padding: '9px 20px',
               border: 'none',
               borderRadius: '6px',
               cursor: canSave ? 'pointer' : 'not-allowed',
-              fontSize: '14px',
+              fontSize: '13px',
               fontWeight: 600,
               transition: 'all 0.3s',
               background: 'var(--button-bg)',
               color: 'white',
-              opacity: canSave ? 1 : 0.5
+              opacity: canSave ? 1 : 0.5,
+              display: 'flex',
+              alignItems: 'center',
+              gap: '6px'
             }}
             onClick={handleSave}
             disabled={!canSave}
           >
+            <Check size={16} />
             {isNew ? 'Add Block' : 'Save Changes'}
           </button>
         </div>

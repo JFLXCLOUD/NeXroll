@@ -87,6 +87,11 @@ def ensure_schema() -> None:
             # Schedules: ensure sequence JSON field
             if not _sqlite_has_column("schedules", "sequence"):
                 _sqlite_add_column("schedules", "sequence TEXT")
+            # Schedules: ensure holiday metadata fields for auto-updating variable date holidays
+            if not _sqlite_has_column("schedules", "holiday_name"):
+                _sqlite_add_column("schedules", "holiday_name TEXT")
+            if not _sqlite_has_column("schedules", "holiday_country"):
+                _sqlite_add_column("schedules", "holiday_country TEXT")
 
             # Holiday presets: ensure date range fields and is_recurring
             for col, ddl in [
@@ -111,6 +116,7 @@ def ensure_schema() -> None:
                 ("override_expires_at", "override_expires_at DATETIME"),
                 ("jellyfin_url", "jellyfin_url TEXT"),
                 ("last_seen_version", "last_seen_version TEXT"),
+                ("last_schedule_fallback", "last_schedule_fallback INTEGER"),
             ]:
                 if not _sqlite_has_column("settings", col):
                     _sqlite_add_column("settings", ddl)
@@ -167,6 +173,18 @@ def ensure_schema() -> None:
             # Schedules: ensure color column for custom calendar colors
             if not _sqlite_has_column("schedules", "color"):
                 _sqlite_add_column("schedules", "color TEXT")
+            
+            # Schedules: ensure blend_enabled column for mix mode
+            if not _sqlite_has_column("schedules", "blend_enabled"):
+                _sqlite_add_column("schedules", "blend_enabled BOOLEAN DEFAULT 0")
+            
+            # Schedules: ensure priority column for schedule priority (1-10, default 5)
+            if not _sqlite_has_column("schedules", "priority"):
+                _sqlite_add_column("schedules", "priority INTEGER DEFAULT 5")
+            
+            # Schedules: ensure exclusive column for exclusive override mode
+            if not _sqlite_has_column("schedules", "exclusive"):
+                _sqlite_add_column("schedules", "exclusive BOOLEAN DEFAULT 0")
     except Exception as e:
         print(f"Schema ensure error: {e}")
 
@@ -300,7 +318,7 @@ def ensure_settings_schema_now() -> None:
             pass
     except Exception as e:
         try:
-            _file_log(f">>> SCHEMA MIGRATION ERROR: {e}")
+            _file_log(f">>> SCHEMA MIGRATION ERROR: {e}", level="ERROR")
         except Exception:
             pass
 
@@ -347,7 +365,7 @@ def migrate_preroll_hashes() -> None:
                     _file_log(f"Hash migration: Processed {updated_count}/{len(prerolls_without_hash)} prerolls...")
                     
             except Exception as e:
-                _file_log(f"Hash migration: Error processing preroll {preroll.id}: {e}")
+                _file_log(f"Hash migration: Error processing preroll {preroll.id}: {e}", level="WARNING")
                 failed_count += 1
                 continue
         
@@ -357,14 +375,14 @@ def migrate_preroll_hashes() -> None:
             _file_log(f"Hash migration: Complete! Updated {updated_count} prerolls, {failed_count} failed")
         except Exception as e:
             db.rollback()
-            _file_log(f"Hash migration: Failed to commit changes: {e}")
+            _file_log(f"Hash migration: Failed to commit changes: {e}", level="ERROR")
         finally:
             db.close()
             
     except Exception as e:
-        _file_log(f"Hash migration: Fatal error: {e}")
+        _file_log(f"Hash migration: Fatal error: {e}", level="ERROR")
         import traceback
-        _file_log(f"Hash migration traceback: {traceback.format_exc()}")
+        _file_log(f"Hash migration traceback: {traceback.format_exc()}", level="ERROR")
 
 # Run legacy community preroll migration in background (one-time, safe to call multiple times)
 import threading
@@ -417,22 +435,41 @@ def _log_file_path():
     except Exception:
         return os.path.join(os.getcwd(), "app.log")
 
-def _file_log(msg: str):
+# Cached verbose logging state to avoid DB hits
+_verbose_logging_cache = {"enabled": False, "last_check": 0}
+_verbose_cache_ttl = 5  # seconds
+
+def _file_log(msg: str, level: str = "INFO"):
+    """
+    Log message to file with timestamp and level.
+    Levels: DEBUG, INFO, WARNING, ERROR
+    """
     try:
         with open(_log_file_path(), "a", encoding="utf-8") as f:
             ts = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-            f.write(f"[{ts}] {msg}\n")
+            f.write(f"[{ts}] [{level}] {msg}\n")
     except Exception:
         pass
 
 def _is_verbose_logging_enabled() -> bool:
-    """Check if verbose logging is enabled in settings"""
+    """Check if verbose logging is enabled in settings (cached)"""
     try:
+        import time
+        now = time.time()
+        
+        # Use cached value if recent
+        if now - _verbose_logging_cache["last_check"] < _verbose_cache_ttl:
+            return _verbose_logging_cache["enabled"]
+        
+        # Refresh cache from DB
         from backend.database import SessionLocal
         db = SessionLocal()
         try:
             setting = db.query(models.Setting).first()
-            return setting.verbose_logging if setting and hasattr(setting, 'verbose_logging') else False
+            enabled = setting.verbose_logging if setting and hasattr(setting, 'verbose_logging') else False
+            _verbose_logging_cache["enabled"] = enabled
+            _verbose_logging_cache["last_check"] = now
+            return enabled
         finally:
             db.close()
     except Exception:
@@ -441,8 +478,8 @@ def _is_verbose_logging_enabled() -> bool:
 def _verbose_log(msg: str):
     """Log message only if verbose logging is enabled"""
     if _is_verbose_logging_enabled():
-        print(f"[VERBOSE] {msg}")
-        _file_log(f"[VERBOSE] {msg}")
+        print(f"[DEBUG] {msg}")
+        _file_log(msg, level="DEBUG")
 
 def _rotate_log_if_needed(max_size_mb=10):
     """
@@ -465,7 +502,46 @@ def _rotate_log_if_needed(max_size_mb=10):
             _file_log(f"Log rotated: previous log saved to {backup_path} ({size_mb:.1f} MB)")
     except Exception as e:
         try:
-            _file_log(f"Log rotation error: {e}")
+            _file_log(f"Log rotation error: {e}", level="ERROR")
+        except Exception:
+            pass
+
+def _log_startup_banner():
+    """Log startup information banner for troubleshooting"""
+    try:
+        from backend.version import __version__
+        import datetime
+        _file_log("=" * 80)
+        _file_log(f"NeXroll v{__version__} - Starting Up")
+        _file_log(f"Build Date: {datetime.datetime.now().strftime('%Y-%m-%d')}")
+        _file_log("=" * 80)
+        _file_log(f"Python: {sys.version.split()[0]}")
+        _file_log(f"Platform: {sys.platform}")
+        _file_log(f"Frozen: {getattr(sys, 'frozen', False)}")
+        _file_log(f"Working Directory: {os.getcwd()}")
+        _file_log(f"Log Directory: {_ensure_log_dir()}")
+        _file_log(f"Database: {os.path.abspath('nexroll.db')}")
+        
+        # Check verbose logging status
+        verbose = _is_verbose_logging_enabled()
+        _file_log(f"Verbose Logging: {'ENABLED' if verbose else 'DISABLED'}")
+        
+        # Environment info
+        _file_log("-" * 80)
+        _file_log("Environment:")
+        env_vars = ['PLEX_URL', 'JELLYFIN_URL', 'TZ']
+        for var in env_vars:
+            val = os.environ.get(var)
+            if val:
+                # Mask sensitive values
+                if 'TOKEN' in var or 'KEY' in var or 'PASSWORD' in var:
+                    val = '***' + val[-4:] if len(val) > 4 else '***'
+                _file_log(f"  {var}: {val}")
+        
+        _file_log("=" * 80)
+    except Exception as e:
+        try:
+            _file_log(f"Error logging startup banner: {e}", level="ERROR")
         except Exception:
             pass
 
@@ -476,7 +552,7 @@ def _install_global_excepthook():
         def _hook(exc_type, exc, tb):
             try:
                 lines = "".join(traceback.format_exception(exc_type, exc, tb))
-                _file_log(f"Unhandled exception: {lines}")
+                _file_log(f"Unhandled exception: {lines}", level="ERROR")
             except Exception:
                 pass
         sys.excepthook = _hook
@@ -689,6 +765,64 @@ def _generate_placeholder(out_path: str, width: int = 426, height: int = 240):
                 f.write(b"")
         except Exception:
             pass
+
+def _generate_thumbnail_for_preroll(preroll, video_path: str, category_name: str = None) -> Optional[str]:
+    """
+    Generate a thumbnail for a preroll and update its thumbnail field.
+    Returns the relative thumbnail path on success, None on failure.
+    
+    Args:
+        preroll: The Preroll model instance (must have an id)
+        video_path: Absolute path to the video file
+        category_name: Category name for thumbnail folder organization (optional)
+    """
+    try:
+        if not preroll or not preroll.id or not video_path:
+            return None
+        
+        # Determine thumbnail directory
+        if category_name:
+            thumbnail_dir = os.path.join(THUMBNAILS_DIR, category_name)
+        else:
+            thumbnail_dir = THUMBNAILS_DIR
+        os.makedirs(thumbnail_dir, exist_ok=True)
+        
+        # Generate thumbnail filename with preroll ID prefix
+        video_filename = os.path.basename(video_path)
+        thumb_filename = f"{preroll.id}_{video_filename}.jpg"
+        thumb_abs = os.path.join(thumbnail_dir, thumb_filename)
+        tmp_thumb = thumb_abs + ".tmp.jpg"
+        
+        # Try ffmpeg to extract a frame at 5 seconds
+        res = _run_subprocess(
+            [get_ffmpeg_cmd(), "-v", "error", "-y", "-ss", "5", "-i", video_path, "-vframes", "1", "-q:v", "2", "-f", "mjpeg", tmp_thumb],
+            capture_output=True,
+            text=True,
+            timeout=30
+        )
+        
+        if getattr(res, "returncode", 1) != 0 or not os.path.exists(tmp_thumb):
+            _file_log(f"FFmpeg thumbnail generation failed for {video_path}: {getattr(res, 'stderr', '')}")
+            _generate_placeholder(tmp_thumb)
+        
+        # Replace any existing thumbnail
+        try:
+            if os.path.exists(thumb_abs):
+                os.remove(thumb_abs)
+        except Exception:
+            pass
+        
+        os.replace(tmp_thumb, thumb_abs)
+        
+        # Return relative path
+        thumbnail_rel = os.path.relpath(thumb_abs, data_dir).replace("\\", "/")
+        _file_log(f"Generated thumbnail for preroll {preroll.id}: {thumbnail_rel}")
+        return thumbnail_rel
+        
+    except Exception as e:
+        _file_log(f"Thumbnail generation error for preroll {preroll.id if preroll else 'unknown'}: {e}")
+        return None
+
 def _placeholder_bytes_jpeg() -> bytes:
     """
     Return a tiny valid JPEG as bytes for inline responses when file I/O fails.
@@ -719,6 +853,9 @@ class ScheduleCreate(BaseModel):
     fallback_category_id: Optional[int] = None
     color: Optional[str] = None  # Custom color for calendar display
     is_active: bool = True  # Whether the schedule is enabled
+    blend_enabled: bool = False  # Allow blending with other overlapping schedules
+    priority: int = 5  # Priority level 1-10 (higher wins during overlap)
+    exclusive: bool = False  # When active, this schedule wins exclusively (no blending)
 
 class ScheduleResponse(BaseModel):
     id: int
@@ -736,6 +873,9 @@ class ScheduleResponse(BaseModel):
     preroll_ids: Optional[str] = None
     sequence: Optional[str] = None
     color: Optional[str] = None
+    blend_enabled: bool = False  # Allow blending with other overlapping schedules
+    priority: int = 5  # Priority level 1-10 (higher wins during overlap)
+    exclusive: bool = False  # When active, this schedule wins exclusively (no blending)
     
     class Config:
         json_encoders = {
@@ -755,6 +895,7 @@ class PrerollUpdate(BaseModel):
     description: Optional[str] = None
     display_name: Optional[str] = None                # UI display label
     new_filename: Optional[str] = None                # optional on-disk rename (basename; extension optional)
+    exclude_from_matching: Optional[bool] = None      # prevent automatic community matching
 
 class PathMapping(BaseModel):
     local: str
@@ -813,6 +954,14 @@ class CommunityPrerollDownloadRequest(BaseModel):
     category_id: int | None = None
     add_to_category: bool = False
     tags: str = ""
+
+class HolidayScheduleRequest(BaseModel):
+    holiday_name: str
+    holiday_date: str = None
+    country_code: str
+    category_id: int
+    multi_year: bool = False
+    year_count: int = 5
 
 def _normalize_url(url: str) -> str:
     try:
@@ -1092,7 +1241,7 @@ from fastapi.responses import JSONResponse
 @app.exception_handler(RequestValidationError)
 async def validation_exception_handler(request: Request, exc: RequestValidationError):
     error_details = exc.errors()
-    _file_log(f"VALIDATION ERROR {request.method} {request.url.path}: {error_details}")
+    _file_log(f"VALIDATION ERROR {request.method} {request.url.path}: {error_details}", level="ERROR")
     print(f"VALIDATION ERROR {request.method} {request.url.path}: {error_details}")
     return JSONResponse(
         status_code=422,
@@ -1207,7 +1356,7 @@ async def _log_errors_mw(request, call_next):
         response = await call_next(request)
     except Exception as e:
         try:
-            _file_log(f"Unhandled error {request.method} {request.url.path}: {e}")
+            _file_log(f"Unhandled error {request.method} {request.url.path}: {e}", level="ERROR")
         except Exception:
             pass
         raise
@@ -1244,7 +1393,7 @@ def startup_event():
         ensure_schema()
     except Exception as e:
         try:
-            _file_log(f"Schema migration error: {e}")
+            _file_log(f"Schema migration error: {e}", level="ERROR")
         except Exception:
             print(f"Schema migration error: {e}")
     
@@ -1273,10 +1422,10 @@ def startup_event():
                 _file_log(f"Startup normalization updated {updated} thumbnail paths")
             except Exception as e:
                 db.rollback()
-                _file_log(f"Startup normalization commit failed: {e}")
+                _file_log(f"Startup normalization commit failed: {e}", level="ERROR")
     except Exception as e:
         try:
-            _file_log(f"Startup normalization error: {e}")
+            _file_log(f"Startup normalization error: {e}", level="ERROR")
         except Exception:
             pass
     finally:
@@ -1287,6 +1436,9 @@ def startup_event():
 
     # Rotate log if it's getting too large (before scheduler starts logging)
     _rotate_log_if_needed(max_size_mb=10)
+    
+    # Log startup banner
+    _log_startup_banner()
     
     scheduler.start()
 
@@ -1321,7 +1473,7 @@ def startup_env_bootstrap():
         db.close()
     except Exception as e:
         try:
-            _file_log(f"Startup Setting initialization error: {e}")
+            _file_log(f"Startup Setting initialization error: {e}", level="ERROR")
         except Exception:
             pass
     
@@ -1335,6 +1487,87 @@ def startup_env_bootstrap():
     except Exception:
         # keep server healthy regardless of failures here
         pass
+    
+    # Auto-refresh variable-date holiday schedules on startup (once per day)
+    try:
+        _auto_refresh_holiday_dates()
+    except Exception as e:
+        try:
+            _file_log(f"Holiday date refresh error on startup: {e}", level="WARNING")
+        except Exception:
+            pass
+
+def _auto_refresh_holiday_dates():
+    """
+    Automatically refresh variable-date holiday schedules (Thanksgiving, Easter, etc.)
+    This runs on startup and updates any schedules linked to holidays that have
+    different dates for the current year.
+    """
+    from datetime import datetime
+    
+    db = SessionLocal()
+    try:
+        current_year = datetime.now().year
+        
+        # Find all schedules with holiday_name set
+        holiday_schedules = db.query(models.Schedule).filter(
+            models.Schedule.holiday_name.isnot(None),
+            models.Schedule.holiday_country.isnot(None)
+        ).all()
+        
+        if not holiday_schedules:
+            return
+        
+        _file_log(f"Auto-checking {len(holiday_schedules)} holiday-linked schedules for {current_year}...")
+        
+        from backend.holiday_api import HolidayAPI
+        updated_count = 0
+        
+        for schedule in holiday_schedules:
+            try:
+                # Skip if schedule is for future year already
+                if schedule.start_date and schedule.start_date.year > current_year:
+                    continue
+                
+                # Get the holiday for current year
+                holidays = HolidayAPI.get_holidays(schedule.holiday_country, current_year)
+                
+                # Find matching holiday
+                matching = None
+                for h in holidays:
+                    if h.get("name", "").lower() == schedule.holiday_name.lower():
+                        matching = h
+                        break
+                    if h.get("localName", "").lower() == schedule.holiday_name.lower():
+                        matching = h
+                        break
+                
+                if matching:
+                    new_date = datetime.strptime(matching["date"], "%Y-%m-%d")
+                    old_date = schedule.start_date
+                    
+                    # Update if year changed or date changed
+                    if old_date.year != current_year or old_date.month != new_date.month or old_date.day != new_date.day:
+                        schedule.start_date = new_date
+                        schedule.end_date = new_date.replace(hour=23, minute=59, second=59)
+                        updated_count += 1
+                        _file_log(f"  Updated '{schedule.name}': {old_date.strftime('%Y-%m-%d')} -> {new_date.strftime('%Y-%m-%d')}")
+                        
+            except Exception as e:
+                _file_log(f"  Error updating schedule '{schedule.name}': {e}", level="WARNING")
+                continue
+        
+        if updated_count > 0:
+            db.commit()
+            _file_log(f"Auto-updated {updated_count} holiday schedule(s) for {current_year}")
+        else:
+            _file_log(f"All {len(holiday_schedules)} holiday schedule(s) already up-to-date for {current_year}")
+            
+    except Exception as e:
+        db.rollback()
+        raise
+    finally:
+        db.close()
 
 @app.on_event("shutdown")
 def shutdown_event():
@@ -1526,10 +1759,10 @@ def get_changelog(db: Session = Depends(get_db)):
                 _file_log(f"  ✗ Not found: {abs_path}")
         
         if not changelog_content:
-            _file_log("⚠ CHANGELOG.md not found in any location")
+            _file_log("⚠ CHANGELOG.md not found in any location", level="WARNING")
     except Exception as e:
-        logger.error(f"Failed to read CHANGELOG.md: {e}")
-        _file_log(f"Changelog read error: {e}")
+        _file_log(f"Failed to read CHANGELOG.md: {e}", level="ERROR")
+        _file_log(f"Changelog read error: {e}", level="ERROR")
         changelog_content = "Changelog not available."
     
     return {
@@ -2099,12 +2332,12 @@ def connect_plex(request: PlexConnectRequest, db: Session = Depends(get_db)):
                     provider_name = secure_store.provider_info()[1]
                     _file_log(f"/plex/connect: ✓ Token saved to secure store ({provider_name})")
                 else:
-                    _file_log(f"/plex/connect: ⚠ Failed to save token to secure store")
+                    _file_log(f"/plex/connect: ⚠ Failed to save token to secure store", level="ERROR")
                     raise HTTPException(status_code=500, detail="Failed to save token to secure storage. Please ensure Windows Credential Manager is available.")
             except HTTPException:
                 raise
             except Exception as e:
-                _file_log(f"/plex/connect: ⚠ Exception saving token: {e}")
+                _file_log(f"/plex/connect: ⚠ Exception saving token: {e}", level="ERROR")
                 raise HTTPException(status_code=500, detail=f"Failed to save token securely: {str(e)}")
 
             db.commit()
@@ -2115,7 +2348,7 @@ def connect_plex(request: PlexConnectRequest, db: Session = Depends(get_db)):
                 "token_storage": provider_name
             }
         else:
-            _file_log(f"/plex/connect: ✗ Connection test failed for {url}")
+            _file_log(f"/plex/connect: ✗ Connection test failed for {url}", level="ERROR")
             raise HTTPException(status_code=422, detail="Failed to connect to Plex server. Please check your URL and token.")
     except Exception as e:
         raise HTTPException(status_code=422, detail=f"Connection error: {str(e)}")
@@ -2174,7 +2407,7 @@ def get_plex_status(db: Session = Depends(get_db)):
                 
                 _file_log(f"/plex/status: Disconnected - URL: {bool(plex_url)}, Token: {bool(token)}")
             except Exception as e:
-                _file_log(f"/plex/status: Error building disconnected response: {e}")
+                _file_log(f"/plex/status: Error building disconnected response: {e}", level="ERROR")
                 pass
             return out
 
@@ -2182,7 +2415,7 @@ def get_plex_status(db: Session = Depends(get_db)):
         try:
             info = connector.get_server_info() or {}
         except Exception as e:
-            _file_log(f"/plex/status: Connection test failed for {plex_url}: {e}")
+            _file_log(f"/plex/status: Connection test failed for {plex_url}: {e}", level="WARNING")
             return {
                 "connected": False,
                 "url": plex_url,
@@ -3599,6 +3832,10 @@ def update_preroll(preroll_id: int, payload: PrerollUpdate, db: Session = Depend
     except Exception as e:
         _file_log(f"update_preroll: thumbnail update failed id={p.id}: {e}")
 
+    # Update exclude_from_matching flag
+    if payload.exclude_from_matching is not None:
+        p.exclude_from_matching = payload.exclude_from_matching
+
     try:
         db.commit()
         db.refresh(p)
@@ -3949,6 +4186,66 @@ def unmatch_preroll_from_community(preroll_id: int, db: Session = Depends(get_db
     return {
         "success": True,
         "message": "Successfully removed community preroll link"
+    }
+
+class BulkUpdateTagsRequest(BaseModel):
+    preroll_ids: List[int]
+    tags_to_add: List[str] = []
+    tags_to_remove: List[str] = []
+
+@app.post("/prerolls/bulk-update-tags")
+def bulk_update_tags(request: BulkUpdateTagsRequest, db: Session = Depends(get_db)):
+    """
+    Bulk update tags for multiple prerolls.
+    Add and/or remove tags from selected prerolls.
+    """
+    if not request.preroll_ids:
+        raise HTTPException(status_code=400, detail="No preroll IDs provided")
+    
+    updated_count = 0
+    errors = []
+    
+    for preroll_id in request.preroll_ids:
+        try:
+            preroll = db.query(models.Preroll).filter(models.Preroll.id == preroll_id).first()
+            if not preroll:
+                errors.append(f"Preroll ID {preroll_id} not found")
+                continue
+            
+            # Parse existing tags
+            existing_tags = set()
+            if preroll.tags:
+                try:
+                    existing_tags = set(json.loads(preroll.tags))
+                except:
+                    # Handle comma-separated tags
+                    existing_tags = {tag.strip() for tag in preroll.tags.split(',') if tag.strip()}
+            
+            # Add new tags
+            for tag in request.tags_to_add:
+                if tag and tag.strip():
+                    existing_tags.add(tag.strip())
+            
+            # Remove tags
+            for tag in request.tags_to_remove:
+                existing_tags.discard(tag.strip())
+            
+            # Update preroll
+            preroll.tags = json.dumps(sorted(list(existing_tags)))
+            updated_count += 1
+            
+        except Exception as e:
+            errors.append(f"Error updating preroll ID {preroll_id}: {str(e)}")
+    
+    db.commit()
+    
+    _file_log(f"Bulk updated tags for {updated_count} prerolls (added: {request.tags_to_add}, removed: {request.tags_to_remove})")
+    
+    return {
+        "success": True,
+        "updated_count": updated_count,
+        "total_requested": len(request.preroll_ids),
+        "errors": errors if errors else None
     }
 
 @app.get("/tags")
@@ -4594,29 +4891,37 @@ def create_schedule(schedule: ScheduleCreate, db: Session = Depends(get_db)):
     end_date = None
 
     try:
-        # Frontend sends times in user's local timezone (without timezone info)
-        # We need to convert them to UTC for storage
+        # For yearly/holiday schedules, only month/day matters - store as naive datetime
+        # For other schedules, convert to UTC for proper timezone handling
+        is_yearly_or_holiday = schedule.type in ('yearly', 'holiday')
+        
         if schedule.start_date:
             sd = schedule.start_date
-            print(f"DEBUG CREATE: Raw start_date from frontend: {sd}")
-            # Parse as naive datetime (local time)
             dt = datetime.datetime.fromisoformat(sd.replace('Z', '+00:00'))
-            print(f"DEBUG CREATE: Parsed datetime: {dt}")
-            # If it has timezone info, strip it. Then treat as user's local time
-            naive_dt = dt.replace(tzinfo=None) if dt.tzinfo else dt
-            # Localize to user's timezone, then convert to UTC
-            local_dt = user_tz.localize(naive_dt)
-            start_date = local_dt.astimezone(pytz.UTC)
-            print(f"DEBUG CREATE: Converted to UTC: {start_date}")
+            
+            if is_yearly_or_holiday:
+                # Store as naive datetime (no timezone conversion)
+                start_date = dt.replace(tzinfo=None) if dt.tzinfo else dt
+                _file_log(f"[INFO] Yearly/Holiday schedule: storing start_date as naive: {start_date}")
+            else:
+                # Convert to UTC for time-based schedules
+                naive_dt = dt.replace(tzinfo=None) if dt.tzinfo else dt
+                local_dt = user_tz.localize(naive_dt)
+                start_date = local_dt.astimezone(pytz.UTC)
+                
         if schedule.end_date:
             ed = schedule.end_date
-            print(f"DEBUG CREATE: Raw end_date from frontend: {ed}")
             dt2 = datetime.datetime.fromisoformat(ed.replace('Z', '+00:00'))
-            print(f"DEBUG CREATE: Parsed datetime: {dt2}")
-            naive_dt2 = dt2.replace(tzinfo=None) if dt2.tzinfo else dt2
-            local_dt2 = user_tz.localize(naive_dt2)
-            end_date = local_dt2.astimezone(pytz.UTC)
-            print(f"DEBUG CREATE: Converted to UTC: {end_date}")
+            
+            if is_yearly_or_holiday:
+                # Store as naive datetime (no timezone conversion)
+                end_date = dt2.replace(tzinfo=None) if dt2.tzinfo else dt2
+                _file_log(f"[INFO] Yearly/Holiday schedule: storing end_date as naive: {end_date}")
+            else:
+                # Convert to UTC for time-based schedules
+                naive_dt2 = dt2.replace(tzinfo=None) if dt2.tzinfo else dt2
+                local_dt2 = user_tz.localize(naive_dt2)
+                end_date = local_dt2.astimezone(pytz.UTC)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=f"Invalid date format: {str(e)}")
 
@@ -4632,7 +4937,10 @@ def create_schedule(schedule: ScheduleCreate, db: Session = Depends(get_db)):
         recurrence_pattern=schedule.recurrence_pattern,
         preroll_ids=schedule.preroll_ids,
         sequence=schedule.sequence,
-        color=schedule.color
+        color=schedule.color,
+        blend_enabled=schedule.blend_enabled,
+        priority=schedule.priority,
+        exclusive=schedule.exclusive
     )
     db.add(db_schedule)
     try:
@@ -4663,7 +4971,10 @@ def create_schedule(schedule: ScheduleCreate, db: Session = Depends(get_db)):
         "preroll_ids": created_schedule.preroll_ids,
         "fallback_category_id": getattr(created_schedule, "fallback_category_id", None),
         "sequence": getattr(created_schedule, "sequence", None),
-        "color": getattr(created_schedule, "color", None)
+        "color": getattr(created_schedule, "color", None),
+        "blend_enabled": getattr(created_schedule, "blend_enabled", False),
+        "priority": getattr(created_schedule, "priority", 5),
+        "exclusive": getattr(created_schedule, "exclusive", False)
     }
 
 @app.get("/schedules")
@@ -4683,24 +4994,34 @@ def get_schedules(db: Session = Depends(get_db)):
         start_iso = None
         end_iso = None
         
+        # Check if this is a yearly or holiday schedule (stored as naive datetime)
+        is_yearly_or_holiday = s.type in ('yearly', 'holiday')
+        
         if s.start_date:
-            # Assume times stored in DB are UTC (though may be naive if from old data)
-            if s.start_date.tzinfo is None:
-                # If naive, assume UTC
-                utc_dt = pytz.UTC.localize(s.start_date)
+            if is_yearly_or_holiday:
+                # Yearly/Holiday schedules: stored as naive datetime, return as-is (no timezone conversion)
+                start_iso = s.start_date.isoformat()
             else:
-                utc_dt = s.start_date
-            # Convert to user's timezone
-            local_dt = utc_dt.astimezone(user_tz)
-            start_iso = local_dt.isoformat()
+                # Time-based schedules: assume stored as UTC, convert to user's timezone
+                if s.start_date.tzinfo is None:
+                    utc_dt = pytz.UTC.localize(s.start_date)
+                else:
+                    utc_dt = s.start_date
+                local_dt = utc_dt.astimezone(user_tz)
+                start_iso = local_dt.isoformat()
         
         if s.end_date:
-            if s.end_date.tzinfo is None:
-                utc_dt = pytz.UTC.localize(s.end_date)
+            if is_yearly_or_holiday:
+                # Yearly/Holiday schedules: stored as naive datetime, return as-is (no timezone conversion)
+                end_iso = s.end_date.isoformat()
             else:
-                utc_dt = s.end_date
-            local_dt = utc_dt.astimezone(user_tz)
-            end_iso = local_dt.isoformat()
+                # Time-based schedules: assume stored as UTC, convert to user's timezone
+                if s.end_date.tzinfo is None:
+                    utc_dt = pytz.UTC.localize(s.end_date)
+                else:
+                    utc_dt = s.end_date
+                local_dt = utc_dt.astimezone(user_tz)
+                end_iso = local_dt.isoformat()
         
         result.append({
             "id": s.id,
@@ -4719,7 +5040,10 @@ def get_schedules(db: Session = Depends(get_db)):
             "preroll_ids": s.preroll_ids,
             "fallback_category_id": getattr(s, "fallback_category_id", None),
             "sequence": getattr(s, "sequence", None),
-            "color": getattr(s, "color", None)
+            "color": getattr(s, "color", None),
+            "blend_enabled": getattr(s, "blend_enabled", False),
+            "priority": getattr(s, "priority", 5),
+            "exclusive": getattr(s, "exclusive", False)
         })
     
     return result
@@ -4731,15 +5055,86 @@ def _apply_schedule_win_lose_logic(db: Session, is_being_enabled: bool, is_being
     """
     now = datetime.datetime.utcnow()
     
-    # Helper function to check if a schedule is currently active (within its time window)
+    # Get user's timezone for time range comparison
+    setting = db.query(models.Setting).first()
+    user_tz_str = setting.timezone if setting and setting.timezone else "UTC"
+    try:
+        user_tz = pytz.timezone(user_tz_str)
+    except:
+        user_tz = pytz.UTC
+    
+    # Convert UTC now to local time for time range comparisons
+    utc_now = now.replace(tzinfo=pytz.UTC)
+    local_now = utc_now.astimezone(user_tz)
+    
+    # Helper function to check if a schedule is currently active (within its time window AND time range)
     def _is_schedule_active(sched: models.Schedule) -> bool:
         if not sched.start_date:
             return False
-        # Windowed schedules: active between start and end (inclusive)
+        
+        # First check date window
+        date_active = False
         if sched.end_date:
-            return sched.start_date <= now <= sched.end_date
-        # Indefinite schedule: active from start onward
-        return now >= sched.start_date
+            # Windowed schedules: active between start and end (inclusive)
+            date_active = sched.start_date <= now <= sched.end_date
+        else:
+            # Indefinite schedule: active from start onward
+            date_active = now >= sched.start_date
+        
+        if not date_active:
+            return False
+        
+        # Now check time range for daily schedules with timeRange in recurrence_pattern
+        if sched.recurrence_pattern:
+            try:
+                pattern = json.loads(sched.recurrence_pattern)
+                time_range = pattern.get("timeRange")
+                if time_range and time_range.get("start"):
+                    # This schedule has a time-of-day constraint
+                    start_time_str = time_range.get("start", "")  # e.g., "22:00"
+                    end_time_str = time_range.get("end", "")  # e.g., "03:00"
+                    
+                    if start_time_str:
+                        # Parse time strings (HH:MM format)
+                        try:
+                            start_parts = start_time_str.split(":")
+                            start_hour = int(start_parts[0])
+                            start_minute = int(start_parts[1]) if len(start_parts) > 1 else 0
+                            
+                            end_hour = 23
+                            end_minute = 59
+                            if end_time_str:
+                                end_parts = end_time_str.split(":")
+                                end_hour = int(end_parts[0])
+                                end_minute = int(end_parts[1]) if len(end_parts) > 1 else 59
+                            
+                            # CRITICAL: Use local time for comparison (timeRange is stored in local time)
+                            current_hour = local_now.hour
+                            current_minute = local_now.minute
+                            current_time_val = current_hour * 60 + current_minute
+                            start_time_val = start_hour * 60 + start_minute
+                            end_time_val = end_hour * 60 + end_minute
+                            
+                            # Handle overnight ranges (e.g., 22:00 to 03:00)
+                            if start_time_val <= end_time_val:
+                                # Normal range (e.g., 09:00 to 17:00)
+                                time_active = start_time_val <= current_time_val <= end_time_val
+                            else:
+                                # Overnight range (e.g., 22:00 to 03:00)
+                                # Active if current time is >= start OR <= end
+                                time_active = current_time_val >= start_time_val or current_time_val <= end_time_val
+                            
+                            if not time_active:
+                                print(f"TOGGLE: Schedule '{sched.name}' outside time range {start_time_str}-{end_time_str} (local: {current_hour:02d}:{current_minute:02d})")
+                                return False
+                            
+                        except (ValueError, IndexError) as e:
+                            print(f"TOGGLE: Error parsing time range for schedule '{sched.name}': {e}")
+                            # If we can't parse the time, fall through to date-only logic
+            except json.JSONDecodeError:
+                pass  # Invalid JSON, ignore time range
+        
+        return True
     
     # Helper function to apply a schedule's prerolls to Plex
     def _apply_schedule_to_plex(sched: models.Schedule) -> bool:
@@ -4906,26 +5301,37 @@ def update_schedule(schedule_id: int, schedule: ScheduleCreate, db: Session = De
     end_date = None
 
     try:
-        # Frontend sends times in user's local timezone (without timezone info)
-        # We need to convert them to UTC for storage
+        # For yearly/holiday schedules, only month/day matters - store as naive datetime
+        # For other schedules, convert to UTC for proper timezone handling
+        is_yearly_or_holiday = schedule.type in ('yearly', 'holiday')
+        
         if schedule.start_date:
             sd = schedule.start_date
-            print(f"DEBUG UPDATE: Raw start_date from frontend: {sd}")
             dt = datetime.datetime.fromisoformat(sd.replace('Z', '+00:00'))
-            print(f"DEBUG UPDATE: Parsed datetime: {dt}")
-            naive_dt = dt.replace(tzinfo=None) if dt.tzinfo else dt
-            local_dt = user_tz.localize(naive_dt)
-            start_date = local_dt.astimezone(pytz.UTC)
-            print(f"DEBUG UPDATE: Converted to UTC: {start_date}")
+            
+            if is_yearly_or_holiday:
+                # Store as naive datetime (no timezone conversion)
+                start_date = dt.replace(tzinfo=None) if dt.tzinfo else dt
+                _file_log(f"[INFO] Yearly/Holiday schedule: storing start_date as naive: {start_date}")
+            else:
+                # Convert to UTC for time-based schedules
+                naive_dt = dt.replace(tzinfo=None) if dt.tzinfo else dt
+                local_dt = user_tz.localize(naive_dt)
+                start_date = local_dt.astimezone(pytz.UTC)
+                
         if schedule.end_date:
             ed = schedule.end_date
-            print(f"DEBUG UPDATE: Raw end_date from frontend: {ed}")
             dt2 = datetime.datetime.fromisoformat(ed.replace('Z', '+00:00'))
-            print(f"DEBUG UPDATE: Parsed datetime: {dt2}")
-            naive_dt2 = dt2.replace(tzinfo=None) if dt2.tzinfo else dt2
-            local_dt2 = user_tz.localize(naive_dt2)
-            end_date = local_dt2.astimezone(pytz.UTC)
-            print(f"DEBUG UPDATE: Converted to UTC: {end_date}")
+            
+            if is_yearly_or_holiday:
+                # Store as naive datetime (no timezone conversion)
+                end_date = dt2.replace(tzinfo=None) if dt2.tzinfo else dt2
+                _file_log(f"[INFO] Yearly/Holiday schedule: storing end_date as naive: {end_date}")
+            else:
+                # Convert to UTC for time-based schedules
+                naive_dt2 = dt2.replace(tzinfo=None) if dt2.tzinfo else dt2
+                local_dt2 = user_tz.localize(naive_dt2)
+                end_date = local_dt2.astimezone(pytz.UTC)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=f"Invalid date format: {str(e)}")
 
@@ -4948,6 +5354,9 @@ def update_schedule(schedule_id: int, schedule: ScheduleCreate, db: Session = De
     db_schedule.sequence = schedule.sequence
     db_schedule.color = schedule.color
     db_schedule.is_active = schedule.is_active
+    db_schedule.blend_enabled = schedule.blend_enabled
+    db_schedule.priority = schedule.priority
+    db_schedule.exclusive = schedule.exclusive
 
     try:
         db.commit()
@@ -5109,24 +5518,839 @@ def delete_saved_sequence(sequence_id: int, db: Session = Depends(get_db)):
         _file_log(f"Failed to delete sequence {sequence_id}: {e}")
         raise HTTPException(status_code=500, detail=f"Failed to delete sequence: {str(e)}")
 
-@app.post("/sequences/import")
-async def import_sequence_pattern(file: UploadFile = File(...), db: Session = Depends(get_db)):
+@app.get("/sequences/preview-video/{preview_id}/{video_path:path}")
+async def get_preview_video(preview_id: str, video_path: str):
     """
-    Import a .nexseq pattern file and match prerolls/categories to local library
-    Returns preview data with match statistics
+    Serve a video file from a bundle preview for playback.
+    The preview_id is a unique identifier for the extracted bundle.
+    The video_path is the relative path within the bundle (e.g., "fixed/file.mp4" or "categories/Christmas/file.mp4")
+    """
+    import re
+    import tempfile
+    from fastapi.responses import FileResponse
+    
+    # Validate preview_id format (alphanumeric, max 8 chars)
+    if not re.match(r'^[a-zA-Z0-9]{1,8}$', preview_id):
+        raise HTTPException(status_code=400, detail="Invalid preview ID")
+    
+    # Sanitize video_path to prevent directory traversal
+    video_path = video_path.replace('..', '').replace('//', '/')
+    
+    # Build the full path
+    preview_dir = os.path.join(tempfile.gettempdir(), f"nexroll_preview_{preview_id}")
+    full_path = os.path.join(preview_dir, video_path)
+    
+    # Security check - ensure the path is within the preview directory
+    if not os.path.abspath(full_path).startswith(os.path.abspath(preview_dir)):
+        raise HTTPException(status_code=403, detail="Access denied")
+    
+    if not os.path.exists(full_path):
+        _file_log(f"[PREVIEW] Video not found: {full_path}")
+        raise HTTPException(status_code=404, detail="Preview video not found")
+    
+    # Get file extension for media type
+    ext = os.path.splitext(full_path)[1].lower()
+    media_types = {
+        '.mp4': 'video/mp4',
+        '.mkv': 'video/x-matroska',
+        '.mov': 'video/quicktime',
+        '.avi': 'video/x-msvideo',
+        '.webm': 'video/webm',
+        '.m4v': 'video/mp4'
+    }
+    media_type = media_types.get(ext, 'video/mp4')
+    
+    _file_log(f"[PREVIEW] Serving video: {video_path}")
+    return FileResponse(full_path, media_type=media_type)
+
+@app.delete("/sequences/preview/{preview_id}")
+def cleanup_preview(preview_id: str):
+    """
+    Clean up preview files when the import is cancelled or completed.
+    """
+    import re
+    import tempfile
+    import shutil
+    
+    # Validate preview_id format
+    if not re.match(r'^[a-zA-Z0-9]{1,8}$', preview_id):
+        raise HTTPException(status_code=400, detail="Invalid preview ID")
+    
+    preview_dir = os.path.join(tempfile.gettempdir(), f"nexroll_preview_{preview_id}")
+    
+    if os.path.exists(preview_dir):
+        try:
+            shutil.rmtree(preview_dir)
+            _file_log(f"[PREVIEW] Cleaned up preview directory: {preview_dir}")
+            return {"message": "Preview cleaned up successfully"}
+        except Exception as e:
+            _file_log(f"[PREVIEW] Failed to clean up: {e}")
+            return {"message": f"Cleanup failed: {str(e)}"}
+    
+    return {"message": "Preview directory not found"}
+
+@app.post("/sequences/import")
+async def import_sequence_pattern(
+    file: UploadFile = File(...), 
+    auto_download: bool = Query(False, description="Automatically download missing prerolls from community"),
+    folder_mappings: Optional[str] = Form(None, description="JSON string of folder mappings for ZIP bundles"),
+    db: Session = Depends(get_db)
+):
+    """
+    Import a .nexseq pattern file or .zip bundle with prerolls.
+    
+    Supports:
+    - .nexseq JSON files (pattern only)
+    - .zip bundles (pattern + video files organized by category/fixed folders)
+    
+    Matching priority:
+    1. Community preroll ID (most reliable)
+    2. Exact name match in local library
+    3. If auto_download=true, download from community prerolls
+    4. Import video files from ZIP bundle (avoids duplicates)
+    
+    For ZIP bundles:
+    - First call without folder_mappings returns bundle_preview with contents
+    - Second call with folder_mappings performs actual import with user-selected destinations
+    
+    Returns preview data with match statistics and import results
     """
     try:
-        # Read and parse the uploaded file
+        # Parse folder mappings if provided
+        mappings = {}
+        if folder_mappings:
+            try:
+                mappings = json.loads(folder_mappings)
+                _file_log(f"[IMPORT] Folder mappings provided: {mappings}")
+            except json.JSONDecodeError:
+                _file_log(f"[IMPORT] Failed to parse folder_mappings: {folder_mappings}")
+        
+        # Read the uploaded file
         contents = await file.read()
-        pattern_data = json.loads(contents.decode('utf-8'))
+        pattern_data = None
+        imported_prerolls = []
+        imported_categories = []
+        bundle_mode = False
+        bundle_preview = None
+        
+        # Check if it's a ZIP bundle or JSON file
+        if file.filename.endswith('.zip'):
+            bundle_mode = True
+            # Handle ZIP bundle
+            import tempfile
+            with tempfile.NamedTemporaryFile(delete=False, suffix='.zip') as tmp_file:
+                tmp_file.write(contents)
+                tmp_path = tmp_file.name
+            
+            try:
+                with zipfile.ZipFile(tmp_path, 'r') as zip_ref:
+                    # Extract to temporary directory
+                    extract_dir = tempfile.mkdtemp()
+                    zip_ref.extractall(extract_dir)
+                    
+                    # Find the .nexseq file
+                    nexseq_file = None
+                    for root, dirs, files in os.walk(extract_dir):
+                        for file_name in files:
+                            if file_name.endswith('.nexseq'):
+                                nexseq_file = os.path.join(root, file_name)
+                                break
+                        if nexseq_file:
+                            break
+                    
+                    if not nexseq_file:
+                        raise HTTPException(status_code=400, detail="No .nexseq file found in ZIP bundle")
+                    
+                    # Read pattern data
+                    with open(nexseq_file, 'r') as f:
+                        pattern_data = json.load(f)
+                    
+                    # Paths for video content
+                    categories_path = os.path.join(extract_dir, 'categories')
+                    fixed_path = os.path.join(extract_dir, 'fixed')
+                    
+                    # If no folder_mappings provided, just return a preview of bundle contents
+                    if not mappings:
+                        _file_log(f"[IMPORT] ZIP bundle preview mode - scanning contents")
+                        bundle_preview = {
+                            'categories': [],
+                            'fixed': [],
+                            'sequence': [],  # Ordered list of prerolls as they appear in the sequence
+                            'preview_id': None  # ID for accessing preview videos
+                        }
+                        
+                        # Generate a unique preview ID and keep extracted files
+                        import uuid as uuid_module
+                        preview_id = str(uuid_module.uuid4())[:8]
+                        preview_dir = os.path.join(tempfile.gettempdir(), f"nexroll_preview_{preview_id}")
+                        
+                        # Move extracted files to preview directory
+                        import shutil
+                        shutil.move(extract_dir, preview_dir)
+                        extract_dir = preview_dir  # Update reference
+                        categories_path = os.path.join(extract_dir, 'categories')
+                        fixed_path = os.path.join(extract_dir, 'fixed')
+                        
+                        bundle_preview['preview_id'] = preview_id
+                        _file_log(f"[IMPORT] Created preview directory: {preview_dir}")
+                        
+                        # Build category info with file list
+                        category_files = {}  # { category_name: [files] }
+                        if os.path.exists(categories_path):
+                            for category_folder in os.listdir(categories_path):
+                                category_folder_path = os.path.join(categories_path, category_folder)
+                                if os.path.isdir(category_folder_path):
+                                    files = [f for f in os.listdir(category_folder_path) 
+                                            if f.lower().endswith(('.mp4', '.mkv', '.avi', '.mov'))]
+                                    category_files[category_folder] = files
+                                    bundle_preview['categories'].append({
+                                        'name': category_folder,
+                                        'preroll_count': len(files),
+                                        'files': [os.path.splitext(f)[0] for f in files]
+                                    })
+                        
+                        # Build fixed prerolls info
+                        fixed_files = {}  # { name: filename }
+                        if os.path.exists(fixed_path):
+                            for video_file in os.listdir(fixed_path):
+                                if video_file.lower().endswith(('.mp4', '.mkv', '.avi', '.mov')):
+                                    name = os.path.splitext(video_file)[0]
+                                    fixed_files[name] = video_file
+                                    bundle_preview['fixed'].append({
+                                        'name': name,
+                                        'filename': video_file
+                                    })
+                        
+                        # Build sequence order from pattern blocks
+                        for block in pattern_data.get('blocks', []):
+                            block_type = block.get('type', '')
+                            if block_type == 'fixed':
+                                preroll_name = block.get('preroll_name', '')
+                                if preroll_name:
+                                    # Find the file path
+                                    if preroll_name in fixed_files:
+                                        bundle_preview['sequence'].append({
+                                            'type': 'fixed',
+                                            'name': preroll_name,
+                                            'path': f"fixed/{fixed_files[preroll_name]}"
+                                        })
+                                    else:
+                                        # Check in categories
+                                        for cat_name, cat_files in category_files.items():
+                                            for f in cat_files:
+                                                if os.path.splitext(f)[0] == preroll_name:
+                                                    bundle_preview['sequence'].append({
+                                                        'type': 'fixed',
+                                                        'name': preroll_name,
+                                                        'path': f"categories/{cat_name}/{f}",
+                                                        'category': cat_name
+                                                    })
+                                                    break
+                            elif block_type == 'random':
+                                category_name = block.get('category_name', '')
+                                count = block.get('count', 1)
+                                # Find matching category with normalized comparison (handle apostrophes, case)
+                                def normalize_name(name):
+                                    return name.lower().replace("'", "").replace("'", "").replace("`", "")
+                                matched_cat = None
+                                for cat_key in category_files.keys():
+                                    if normalize_name(cat_key) == normalize_name(category_name):
+                                        matched_cat = cat_key
+                                        break
+                                if matched_cat:
+                                    _file_log(f"[IMPORT] Matched category '{category_name}' to folder '{matched_cat}'")
+                                    # Add placeholder for random block
+                                    bundle_preview['sequence'].append({
+                                        'type': 'random',
+                                        'category': category_name,
+                                        'count': count,
+                                        'available_files': [
+                                            f"categories/{matched_cat}/{f}" 
+                                            for f in category_files[matched_cat]
+                                        ]
+                                    })
+                                else:
+                                    _file_log(f"[IMPORT] WARNING: No matching category folder for '{category_name}'")
+                        
+                        _file_log(f"[IMPORT] Bundle preview: {len(bundle_preview['categories'])} categories, {len(bundle_preview['fixed'])} fixed prerolls, {len(bundle_preview['sequence'])} sequence blocks")
+                        
+                        # DON'T cleanup temp files - keep them for preview
+                        # They will be cleaned up when the import is confirmed or cancelled
+                        try:
+                            os.unlink(tmp_path)
+                        except Exception:
+                            pass
+                        
+                        # Return early with just the bundle preview for folder mapping UI
+                        return {
+                            'pattern_name': pattern_data.get('pattern_name', 'Imported Pattern'),
+                            'pattern_description': pattern_data.get('pattern_description', ''),
+                            'bundle_preview': bundle_preview,
+                            'blocks': [],
+                            'match_results': {
+                                'matched': 0,
+                                'unmatched': 0,
+                                'downloadable': 0,
+                                'total_blocks': len(pattern_data.get('blocks', [])),
+                                'missing_prerolls': [],
+                                'missing_categories': []
+                            }
+                        }
+                    else:
+                        # Folder mappings provided - do the actual import
+                        _file_log(f"[IMPORT] ZIP bundle import mode with mappings")
+                        plex_library_path = PREROLLS_DIR
+                        
+                        # Build a lookup map of preroll names to community IDs from pattern data
+                        # This allows us to set community_preroll_id when importing from bundle
+                        community_id_map = {}  # { preroll_name: community_id }
+                        for block in pattern_data.get('blocks', []):
+                            block_type = block.get('type', '')
+                            if block_type == 'random':
+                                # Random blocks may have available_prerolls list with community IDs
+                                for preroll_info in block.get('available_prerolls', []):
+                                    name = preroll_info.get('name', '')
+                                    cid = preroll_info.get('community_id')
+                                    if name and cid:
+                                        community_id_map[name] = cid
+                                        _file_log(f"[IMPORT] Mapped community ID for '{name}': {cid}")
+                            elif block_type == 'fixed':
+                                # Fixed blocks have preroll_name and community_id directly
+                                name = block.get('preroll_name', '')
+                                cid = block.get('community_id')
+                                if name and cid:
+                                    community_id_map[name] = cid
+                                    _file_log(f"[IMPORT] Mapped community ID for '{name}': {cid}")
+                                # Also check preroll_data if present
+                                preroll_data = block.get('preroll_data', {})
+                                if preroll_data:
+                                    name = preroll_data.get('name', '')
+                                    cid = preroll_data.get('community_id')
+                                    if name and cid:
+                                        community_id_map[name] = cid
+                        
+                        _file_log(f"[IMPORT] Built community ID map with {len(community_id_map)} entries")
+                        
+                        # Import category folders with user-specified destinations
+                        if os.path.exists(categories_path):
+                            for category_folder in os.listdir(categories_path):
+                                category_folder_path = os.path.join(categories_path, category_folder)
+                                if os.path.isdir(category_folder_path):
+                                    # Get user-specified target category
+                                    mapping_key = f"category:{category_folder}"
+                                    target = str(mappings.get(mapping_key, f"new:{category_folder}"))
+                                    
+                                    if target.startswith('new:'):
+                                        # Create new category with specified name
+                                        new_cat_name = target[4:]  # Remove 'new:' prefix
+                                        category = db.query(models.Category).filter(
+                                            models.Category.name.ilike(new_cat_name)
+                                        ).first()
+                                        if not category:
+                                            category = models.Category(name=new_cat_name)
+                                            db.add(category)
+                                            db.commit()
+                                            db.refresh(category)
+                                            imported_categories.append(new_cat_name)
+                                    else:
+                                        # Use existing category by ID
+                                        try:
+                                            category = db.query(models.Category).filter(
+                                                models.Category.id == int(target)
+                                            ).first()
+                                        except (ValueError, TypeError):
+                                            category = None
+                                        
+                                        if not category:
+                                            # Fallback to creating new category
+                                            category = models.Category(name=category_folder)
+                                            db.add(category)
+                                            db.commit()
+                                            db.refresh(category)
+                                            imported_categories.append(category_folder)
+                                    
+                                    _file_log(f"[IMPORT] Importing category '{category_folder}' -> '{category.name}' (ID: {category.id})")
+                                    
+                                    # Import prerolls from this category
+                                    for video_file in os.listdir(category_folder_path):
+                                        video_path = os.path.join(category_folder_path, video_file)
+                                        if os.path.isfile(video_path) and video_file.lower().endswith(('.mp4', '.mkv', '.avi', '.mov')):
+                                            preroll_display_name = os.path.splitext(video_file)[0]
+                                            _file_log(f"[IMPORT] Processing category preroll: {preroll_display_name}")
+                                            
+                                            # Check if preroll already exists (by name in target category)
+                                            # Check both with and without extension, case-insensitive
+                                            existing = db.query(models.Preroll).filter(
+                                                models.Preroll.category_id == category.id,
+                                                (
+                                                    models.Preroll.display_name.ilike(preroll_display_name) |
+                                                    models.Preroll.display_name.ilike(video_file) |
+                                                    models.Preroll.filename.ilike(video_file)
+                                                )
+                                            ).first()
+                                            
+                                            if existing:
+                                                _file_log(f"[IMPORT] Skipping '{preroll_display_name}' - already exists in category '{category.name}' as '{existing.display_name}'")
+                                                continue
+                                            
+                                            # Copy file to Plex library under category folder
+                                            dest_category_path = os.path.join(plex_library_path, category.name)
+                                            os.makedirs(dest_category_path, exist_ok=True)
+                                            dest_file = os.path.join(dest_category_path, video_file)
+                                            
+                                            # Copy file if it doesn't exist on disk
+                                            if not os.path.exists(dest_file):
+                                                import shutil
+                                                shutil.copy2(video_path, dest_file)
+                                                _file_log(f"[IMPORT] Copied file to: {dest_file}")
+                                            else:
+                                                _file_log(f"[IMPORT] File already exists on disk: {dest_file}")
+                                            
+                                            # Look up community ID from pattern data
+                                            community_id = community_id_map.get(preroll_display_name)
+                                            
+                                            # Create preroll record with community_preroll_id if available
+                                            preroll_kwargs = {
+                                                'filename': video_file,
+                                                'display_name': preroll_display_name,
+                                                'path': dest_file,
+                                                'category_id': category.id,
+                                                'file_size': os.path.getsize(dest_file),
+                                                'tags': json.dumps([])
+                                            }
+                                            if community_id:
+                                                preroll_kwargs['community_preroll_id'] = community_id
+                                                _file_log(f"[IMPORT] Setting community_preroll_id for '{preroll_display_name}': {community_id}")
+                                            
+                                            new_preroll = models.Preroll(**preroll_kwargs)
+                                            db.add(new_preroll)
+                                            db.commit()
+                                            db.refresh(new_preroll)
+                                            _file_log(f"[IMPORT] Created preroll record: {new_preroll.display_name} (ID: {new_preroll.id})")
+                                            
+                                            # Generate thumbnail
+                                            thumb_path = _generate_thumbnail_for_preroll(new_preroll, dest_file, category.name)
+                                            if thumb_path:
+                                                new_preroll.thumbnail = thumb_path
+                                                db.commit()
+                                            
+                                            imported_prerolls.append({
+                                                'name': new_preroll.display_name,
+                                                'category': category.name,
+                                                'type': 'category',
+                                                'community_id': community_id
+                                            })
+                    
+                        # Import fixed prerolls with user-specified destinations
+                        if os.path.exists(fixed_path):
+                            for video_file in os.listdir(fixed_path):
+                                video_path = os.path.join(fixed_path, video_file)
+                                if os.path.isfile(video_path) and video_file.lower().endswith(('.mp4', '.mkv', '.avi', '.mov')):
+                                    preroll_name = os.path.splitext(video_file)[0]
+                                    
+                                    # Check if preroll already exists (by name in any category)
+                                    existing = db.query(models.Preroll).filter(
+                                        models.Preroll.display_name == preroll_name
+                                    ).first()
+                                    
+                                    if not existing:
+                                        # Get user-specified target category
+                                        mapping_key = f"fixed:{preroll_name}"
+                                        target = str(mappings.get(mapping_key, 'new:Imported'))
+                                        
+                                        if target.startswith('new:'):
+                                            # Create new category with specified name
+                                            new_cat_name = target[4:]  # Remove 'new:' prefix
+                                            target_category = db.query(models.Category).filter(
+                                                models.Category.name.ilike(new_cat_name)
+                                            ).first()
+                                            if not target_category:
+                                                target_category = models.Category(name=new_cat_name)
+                                                db.add(target_category)
+                                                db.commit()
+                                                db.refresh(target_category)
+                                        else:
+                                            # Use existing category by ID
+                                            try:
+                                                target_category = db.query(models.Category).filter(
+                                                    models.Category.id == int(target)
+                                                ).first()
+                                            except (ValueError, TypeError):
+                                                target_category = None
+                                            
+                                            if not target_category:
+                                                # Fallback to creating 'Imported' category
+                                                target_category = db.query(models.Category).filter(
+                                                    models.Category.name == 'Imported'
+                                                ).first()
+                                                if not target_category:
+                                                    target_category = models.Category(name='Imported')
+                                                    db.add(target_category)
+                                                    db.commit()
+                                                    db.refresh(target_category)
+                                        
+                                        _file_log(f"[IMPORT] Importing fixed preroll '{preroll_name}' -> '{target_category.name}' (ID: {target_category.id})")
+                                        
+                                        # Copy file to target category folder
+                                        dest_folder = os.path.join(plex_library_path, target_category.name)
+                                        os.makedirs(dest_folder, exist_ok=True)
+                                        dest_file = os.path.join(dest_folder, video_file)
+                                        
+                                        if not os.path.exists(dest_file):
+                                            import shutil
+                                            shutil.copy2(video_path, dest_file)
+                                            
+                                            # Look up community ID from pattern data
+                                            community_id = community_id_map.get(preroll_name)
+                                            
+                                            # Create preroll record with community_preroll_id if available
+                                            preroll_kwargs = {
+                                                'filename': video_file,
+                                                'display_name': preroll_name,
+                                                'path': dest_file,
+                                                'category_id': target_category.id,
+                                                'file_size': os.path.getsize(dest_file),
+                                                'tags': json.dumps([])
+                                            }
+                                            if community_id:
+                                                preroll_kwargs['community_preroll_id'] = community_id
+                                                _file_log(f"[IMPORT] Setting community_preroll_id for '{preroll_name}': {community_id}")
+                                            
+                                            new_preroll = models.Preroll(**preroll_kwargs)
+                                            db.add(new_preroll)
+                                            db.commit()
+                                            db.refresh(new_preroll)
+                                            
+                                            # Generate thumbnail
+                                            thumb_path = _generate_thumbnail_for_preroll(new_preroll, dest_file, target_category.name)
+                                            if thumb_path:
+                                                new_preroll.thumbnail = thumb_path
+                                                db.commit()
+                                            
+                                            imported_prerolls.append({
+                                                'name': new_preroll.display_name,
+                                                'category': target_category.name,
+                                                'type': 'fixed',
+                                                'community_id': community_id
+                                            })
+                    
+                    db.commit()
+                
+                # Cleanup (outside the zipfile context manager)
+                import shutil
+                try:
+                    shutil.rmtree(extract_dir)
+                except Exception as cleanup_error:
+                    _file_log(f"Cleanup warning (extract_dir): {cleanup_error}")
+                
+            except Exception as e:
+                _file_log(f"Failed to process ZIP bundle: {e}")
+                import traceback
+                _file_log(f"Traceback: {traceback.format_exc()}")
+                raise HTTPException(status_code=400, detail=f"Failed to process ZIP bundle: {str(e)}")
+            finally:
+                # Always cleanup temp file
+                try:
+                    if os.path.exists(tmp_path):
+                        os.unlink(tmp_path)
+                except Exception as cleanup_error:
+                    _file_log(f"Cleanup warning (tmp_path): {cleanup_error}")
+        else:
+            # Handle regular .nexseq or .nexbundle JSON file
+            pattern_data = json.loads(contents.decode('utf-8'))
+        
+        # Check if this is a .nexbundle file (multiple sequences)
+        if pattern_data.get('type') == 'nexbundle' and 'sequences' in pattern_data:
+            _file_log(f"[IMPORT] Processing .nexbundle with {len(pattern_data.get('sequences', []))} sequences")
+            
+            # Get all categories and prerolls for matching
+            all_categories = {cat.name.lower(): cat for cat in db.query(models.Category).all()}
+            all_prerolls = db.query(models.Preroll).all()
+            
+            # Create lookup dictionaries for prerolls
+            prerolls_by_community_id = {p.community_preroll_id: p for p in all_prerolls if p.community_preroll_id}
+            prerolls_by_name = {}
+            for p in all_prerolls:
+                display_name = (p.display_name or p.filename).strip().lower()
+                prerolls_by_name[display_name] = p
+                filename_no_ext = os.path.splitext(p.filename)[0].strip().lower()
+                if filename_no_ext != display_name:
+                    prerolls_by_name[filename_no_ext] = p
+            
+            # Track all missing prerolls across all sequences
+            all_missing_prerolls = []
+            all_missing_categories = []
+            sequences_preview = []
+            total_matched = 0
+            total_unmatched = 0
+            total_downloadable = 0
+            
+            # Process each sequence for matching
+            for seq_data in pattern_data.get('sequences', []):
+                seq_name = seq_data.get('name', 'Imported Sequence')
+                seq_description = seq_data.get('description', '')
+                seq_blocks = seq_data.get('blocks', [])
+                
+                matched_blocks = []
+                seq_matched = 0
+                seq_unmatched = 0
+                seq_downloadable = 0
+                seq_missing_prerolls = []
+                
+                for block_data in seq_blocks:
+                    block_type = block_data.get('type', '')
+                    matched_block = {
+                        'type': block_type,
+                        'id': block_data.get('id', str(uuid.uuid4()))
+                    }
+                    block_matched = False
+                    
+                    if block_type == 'random':
+                        category_name = block_data.get('category_name', '').strip().lower()
+                        if category_name and category_name in all_categories:
+                            matched_block['category_id'] = all_categories[category_name].id
+                            matched_block['category_name'] = all_categories[category_name].name
+                            matched_block['count'] = block_data.get('count', 1)
+                            block_matched = True
+                            seq_matched += 1
+                        else:
+                            seq_unmatched += 1
+                            original_category_name = block_data.get('category_name', 'Unknown')
+                            matched_block['category_name'] = original_category_name
+                            matched_block['count'] = block_data.get('count', 1)
+                            matched_block['_unmatched'] = True
+                            matched_block['_missing_category'] = original_category_name
+                            if original_category_name not in all_missing_categories:
+                                all_missing_categories.append(original_category_name)
+                    
+                    elif block_type == 'fixed':
+                        preroll_ids_in_block = block_data.get('preroll_ids', [])
+                        preroll_name = block_data.get('preroll_name')
+                        community_id = block_data.get('community_id')
+                        preroll_data = block_data.get('preroll_data', {})
+                        # New format: preroll_info array with detailed info per preroll
+                        preroll_info = block_data.get('preroll_info', [])
+                        
+                        matched_preroll_ids = []
+                        unmatched_preroll_info = []  # Track info for prerolls we can't find locally
+                        
+                        # If we have preroll_info (new format), use it for matching
+                        if preroll_info:
+                            for pinfo in preroll_info:
+                                pid = pinfo.get('id')
+                                pname = pinfo.get('name')
+                                pcommunity_id = pinfo.get('community_id')
+                                
+                                # Try to find local preroll by ID first
+                                local_preroll = None
+                                if pid:
+                                    local_preroll = db.query(models.Preroll).filter(models.Preroll.id == pid).first()
+                                
+                                if local_preroll:
+                                    matched_preroll_ids.append(pid)
+                                else:
+                                    # Try to find by community_id
+                                    if pcommunity_id and pcommunity_id in prerolls_by_community_id:
+                                        matched_preroll_ids.append(prerolls_by_community_id[pcommunity_id].id)
+                                    elif pname:
+                                        # Try to find by name
+                                        name_lower = pname.strip().lower()
+                                        if name_lower in prerolls_by_name:
+                                            matched_preroll_ids.append(prerolls_by_name[name_lower].id)
+                                        else:
+                                            name_no_ext = os.path.splitext(name_lower)[0]
+                                            if name_no_ext in prerolls_by_name:
+                                                matched_preroll_ids.append(prerolls_by_name[name_no_ext].id)
+                                            else:
+                                                # Couldn't match - track for missing prerolls
+                                                unmatched_preroll_info.append({
+                                                    'name': pname,
+                                                    'community_id': pcommunity_id,
+                                                    'original_id': pid
+                                                })
+                                    else:
+                                        # No name, no community_id, can't match
+                                        unmatched_preroll_info.append({
+                                            'name': f'Preroll ID {pid}' if pid else 'Unknown preroll',
+                                            'community_id': pcommunity_id,
+                                            'original_id': pid
+                                        })
+                        
+                        # Fallback: If we have preroll_ids but no preroll_info (old format), validate each one
+                        elif preroll_ids_in_block:
+                            for pid in preroll_ids_in_block:
+                                local_preroll = db.query(models.Preroll).filter(models.Preroll.id == pid).first()
+                                if local_preroll:
+                                    matched_preroll_ids.append(pid)
+                                else:
+                                    # Preroll ID not found - check if we have community_id info
+                                    if community_id and community_id in prerolls_by_community_id:
+                                        matched_preroll_ids.append(prerolls_by_community_id[community_id].id)
+                                    elif preroll_name:
+                                        name_lower = preroll_name.strip().lower()
+                                        if name_lower in prerolls_by_name:
+                                            matched_preroll_ids.append(prerolls_by_name[name_lower].id)
+                                        else:
+                                            # Try without extension
+                                            name_no_ext = os.path.splitext(name_lower)[0]
+                                            if name_no_ext in prerolls_by_name:
+                                                matched_preroll_ids.append(prerolls_by_name[name_no_ext].id)
+                        
+                        # Also try matching by community_id or name if no preroll_ids
+                        if not matched_preroll_ids:
+                            if community_id and community_id in prerolls_by_community_id:
+                                matched_preroll_ids.append(prerolls_by_community_id[community_id].id)
+                            elif preroll_name:
+                                name_lower = preroll_name.strip().lower()
+                                if name_lower in prerolls_by_name:
+                                    matched_preroll_ids.append(prerolls_by_name[name_lower].id)
+                                else:
+                                    name_no_ext = os.path.splitext(name_lower)[0]
+                                    if name_no_ext in prerolls_by_name:
+                                        matched_preroll_ids.append(prerolls_by_name[name_no_ext].id)
+                        
+                        if matched_preroll_ids:
+                            matched_block['preroll_ids'] = matched_preroll_ids
+                            block_matched = True
+                            seq_matched += 1
+                        else:
+                            # Track as missing
+                            seq_unmatched += 1
+                            matched_block['_unmatched'] = True
+                            matched_block['_original_preroll_ids'] = preroll_ids_in_block
+                            
+                            # Use unmatched_preroll_info if available (new format), otherwise use legacy data
+                            if unmatched_preroll_info:
+                                for upi in unmatched_preroll_info:
+                                    upi_community_id = upi.get('community_id')
+                                    can_download = upi_community_id and not str(upi_community_id).startswith('_') and '\\' not in str(upi_community_id)
+                                    missing_info = {
+                                        'name': upi.get('name', 'Unknown preroll'),
+                                        'community_id': upi_community_id,
+                                        'downloadable': can_download,
+                                        'sequence_name': seq_name,
+                                        'block_id': matched_block['id']
+                                    }
+                                    
+                                    if can_download:
+                                        seq_downloadable += 1
+                                        missing_info['status'] = 'needs_download'
+                                    else:
+                                        missing_info['status'] = 'unavailable'
+                                        missing_info['reason'] = 'No community ID available' if not upi_community_id else 'Invalid community ID format'
+                                    
+                                    seq_missing_prerolls.append(missing_info)
+                                    # Add to global missing list if not already there
+                                    existing = next((m for m in all_missing_prerolls if m.get('community_id') == upi_community_id and m.get('name') == missing_info['name']), None)
+                                    if not existing:
+                                        all_missing_prerolls.append(missing_info)
+                            else:
+                                # Legacy format - single preroll info
+                                can_download = community_id and not community_id.startswith('_') and '\\' not in community_id
+                                missing_info = {
+                                    'name': preroll_name or preroll_data.get('display_name') or f'Preroll ID {preroll_ids_in_block[0] if preroll_ids_in_block else "unknown"}',
+                                    'community_id': community_id,
+                                    'downloadable': can_download,
+                                    'sequence_name': seq_name,
+                                    'block_id': matched_block['id']
+                                }
+                                
+                                if can_download:
+                                    seq_downloadable += 1
+                                    missing_info['status'] = 'needs_download'
+                                else:
+                                    missing_info['status'] = 'unavailable'
+                                    missing_info['reason'] = 'No community ID available' if not community_id else 'Invalid community ID format'
+                                
+                                seq_missing_prerolls.append(missing_info)
+                                # Add to global missing list if not already there
+                                existing = next((m for m in all_missing_prerolls if m.get('community_id') == community_id and m.get('name') == missing_info['name']), None)
+                                if not existing:
+                                    all_missing_prerolls.append(missing_info)
+                    
+                    elif block_type == 'sequential':
+                        category_name = block_data.get('category_name', '').strip().lower()
+                        if category_name and category_name in all_categories:
+                            matched_block['category_id'] = all_categories[category_name].id
+                            matched_block['category_name'] = all_categories[category_name].name
+                            block_matched = True
+                            seq_matched += 1
+                        else:
+                            seq_unmatched += 1
+                            original_category_name = block_data.get('category_name', 'Unknown')
+                            matched_block['category_name'] = original_category_name
+                            matched_block['_unmatched'] = True
+                            matched_block['_missing_category'] = original_category_name
+                            if original_category_name not in all_missing_categories:
+                                all_missing_categories.append(original_category_name)
+                    
+                    elif block_type == 'separator':
+                        # Separators don't need matching
+                        block_matched = True
+                        seq_matched += 1
+                    
+                    matched_blocks.append(matched_block)
+                
+                total_matched += seq_matched
+                total_unmatched += seq_unmatched
+                total_downloadable += seq_downloadable
+                
+                sequences_preview.append({
+                    'name': seq_name,
+                    'description': seq_description,
+                    'blocks': matched_blocks,
+                    'original_blocks': seq_blocks,
+                    'stats': {
+                        'matched': seq_matched,
+                        'unmatched': seq_unmatched,
+                        'downloadable': seq_downloadable,
+                        'total': len(seq_blocks)
+                    },
+                    'missing_prerolls': seq_missing_prerolls
+                })
+            
+            # Return preview data instead of immediately importing
+            return {
+                'success': True,
+                'bundle_preview': True,
+                'type': 'nexbundle',
+                'version': pattern_data.get('version', '1.0'),
+                'exported': pattern_data.get('exported'),
+                'sequences': sequences_preview,
+                'match_results': {
+                    'matched': total_matched,
+                    'unmatched': total_unmatched,
+                    'downloadable': total_downloadable,
+                    'total_sequences': len(sequences_preview),
+                    'total_blocks': sum(len(s['original_blocks']) for s in sequences_preview),
+                    'missing_categories': all_missing_categories,
+                    'missing_prerolls': all_missing_prerolls
+                },
+                'message': f"Preview: {len(sequences_preview)} sequences with {total_matched} matched blocks, {total_unmatched} unmatched"
+            }
+        
+        # Normalize pattern data format (handle both old and new .nexseq formats)
+        # Old format: { pattern_name, blocks }
+        # New format: { type, version, metadata: { name, description }, blocks }
+        if 'metadata' in pattern_data and 'name' in pattern_data.get('metadata', {}):
+            # New format - convert to normalized format
+            pattern_data['pattern_name'] = pattern_data['metadata']['name']
+            pattern_data['pattern_description'] = pattern_data.get('metadata', {}).get('description', '')
         
         # Validate required fields
-        if 'pattern_name' not in pattern_data or 'blocks' not in pattern_data:
-            raise HTTPException(status_code=400, detail="Invalid pattern file: missing required fields")
+        if not pattern_data or 'blocks' not in pattern_data:
+            raise HTTPException(status_code=400, detail="Invalid pattern file: missing 'blocks' field")
+        
+        # Ensure pattern_name exists (fallback to filename if not present)
+        if 'pattern_name' not in pattern_data:
+            # Try to extract name from the filename
+            base_name = os.path.splitext(file.filename)[0] if file.filename else 'Imported Sequence'
+            pattern_data['pattern_name'] = base_name
         
         # Initialize match tracking
         matched_count = 0
         unmatched_count = 0
+        downloadable_count = 0
         missing_categories = []
         missing_prerolls = []
         matched_blocks = []
@@ -5139,8 +6363,13 @@ async def import_sequence_pattern(file: UploadFile = File(...), db: Session = De
         prerolls_by_community_id = {p.community_preroll_id: p for p in all_prerolls if p.community_preroll_id}
         prerolls_by_name = {}
         for p in all_prerolls:
-            name = (p.display_name or p.filename).lower()
-            prerolls_by_name[name] = p
+            # Try multiple name variations for better matching
+            display_name = (p.display_name or p.filename).strip().lower()
+            prerolls_by_name[display_name] = p
+            # Also try filename without extension
+            filename_no_ext = os.path.splitext(p.filename)[0].strip().lower()
+            if filename_no_ext != display_name:
+                prerolls_by_name[filename_no_ext] = p
         
         # Process each block in the pattern
         for block_data in pattern_data.get('blocks', []):
@@ -5152,74 +6381,255 @@ async def import_sequence_pattern(file: UploadFile = File(...), db: Session = De
             block_matched = False
             
             if block_type == 'random':
-                # Match random block by category name
-                category_name = block_data.get('category_name', '').lower()
-                if category_name in all_categories:
+                # Match random block by category name (case-insensitive, trim whitespace)
+                category_name = block_data.get('category_name', '').strip().lower()
+                if category_name and category_name in all_categories:
                     matched_block['category_id'] = all_categories[category_name].id
                     matched_block['category_name'] = all_categories[category_name].name
                     matched_block['count'] = block_data.get('count', 1)
+                    
+                    # Check for available prerolls in exported data
+                    if 'available_prerolls' in block_data:
+                        matched_block['available_prerolls'] = block_data['available_prerolls']
+                    
                     block_matched = True
                     matched_count += 1
                 else:
+                    # Preserve the original category name for debugging
                     unmatched_count += 1
-                    if block_data.get('category_name') not in missing_categories:
-                        missing_categories.append(block_data.get('category_name', 'Unknown'))
+                    original_category_name = block_data.get('category_name', 'Unknown')
+                    matched_block['category_name'] = original_category_name
+                    matched_block['count'] = block_data.get('count', 1)
+                    matched_block['_unmatched'] = True
+                    matched_block['_missing_category'] = original_category_name
+                    if original_category_name not in missing_categories:
+                        missing_categories.append(original_category_name)
             
             elif block_type == 'fixed':
-                # Match fixed block prerolls by community ID first, then by name
-                preroll_refs = block_data.get('prerolls', [])
+                # Handle single preroll or array of prerolls
+                preroll_refs = []
+                
+                # Check different field names for compatibility
+                if 'prerolls' in block_data:
+                    # Array format (future-proofing for multi-preroll fixed blocks)
+                    preroll_refs = block_data['prerolls']
+                elif 'preroll_name' in block_data or 'community_id' in block_data or 'preroll_data' in block_data:
+                    # Single preroll format (current standard)
+                    preroll_refs = [{
+                        'name': block_data.get('preroll_name'),  # Export uses 'preroll_name'
+                        'community_id': block_data.get('community_id'),
+                        'preroll_data': block_data.get('preroll_data')
+                    }]
+                elif 'preroll_ids' in block_data:
+                    # Legacy format using local database IDs - look up the prerolls
+                    for preroll_id in block_data['preroll_ids']:
+                        try:
+                            preroll = db.query(models.Preroll).filter(models.Preroll.id == preroll_id).first()
+                            if preroll:
+                                preroll_refs.append({
+                                    'name': preroll.display_name or preroll.filename,
+                                    'community_id': preroll.community_preroll_id,
+                                    'local_id': preroll_id  # Keep reference for direct matching
+                                })
+                            else:
+                                # Preroll not found in local DB - add placeholder
+                                preroll_refs.append({
+                                    'name': f'Unknown Preroll (ID: {preroll_id})',
+                                    'local_id': preroll_id
+                                })
+                        except Exception as e:
+                            _file_log(f"[IMPORT] Error looking up preroll ID {preroll_id}: {e}")
+                            preroll_refs.append({
+                                'name': f'Unknown Preroll (ID: {preroll_id})',
+                                'local_id': preroll_id
+                            })
+                else:
+                    # No preroll data to import
+                    pass
                 matched_preroll_ids = []
                 
                 for preroll_ref in preroll_refs:
                     matched_preroll = None
+                    can_download = False
                     
-                    # Try matching by community_id first (most reliable)
-                    if preroll_ref.get('community_id') and preroll_ref['community_id'] in prerolls_by_community_id:
-                        matched_preroll = prerolls_by_community_id[preroll_ref['community_id']]
-                    # Fall back to name matching
-                    elif preroll_ref.get('name'):
-                        name_lower = preroll_ref['name'].lower()
-                        if name_lower in prerolls_by_name:
-                            matched_preroll = prerolls_by_name[name_lower]
+                    # Validate community_id format first
+                    # Community IDs can be URL paths (e.g., "/Holidays/Christmas/file.mp4")
+                    community_id = preroll_ref.get('community_id')
+                    is_valid_community_id = False
+                    if community_id:
+                        community_id_str = str(community_id)
+                        # Only reject obviously invalid patterns (starts with underscore from old mangled IDs, or Windows paths)
+                        if community_id_str.startswith('_') or '\\' in community_id_str:
+                            _file_log(f"[IMPORT] Rejecting invalid community_id (mangled ID): {community_id_str}")
+                        else:
+                            is_valid_community_id = True
+                    
+                    # Try matching by local_id first (for imports on the same system)
+                    local_id = preroll_ref.get('local_id')
+                    if local_id:
+                        local_preroll = db.query(models.Preroll).filter(models.Preroll.id == local_id).first()
+                        if local_preroll:
+                            matched_preroll = local_preroll
+                    
+                    # Try matching by community_id (most reliable for cross-system imports)
+                    if not matched_preroll and is_valid_community_id and community_id in prerolls_by_community_id:
+                        matched_preroll = prerolls_by_community_id[community_id]
+                    
+                    # Fall back to name matching (try multiple variations)
+                    if not matched_preroll and preroll_ref.get('name'):
+                        name_lower = preroll_ref['name'].strip().lower()
+                        # Skip placeholder names
+                        if not name_lower.startswith('unknown preroll'):
+                            if name_lower in prerolls_by_name:
+                                matched_preroll = prerolls_by_name[name_lower]
+                            else:
+                                # Try without file extension
+                                name_no_ext = os.path.splitext(name_lower)[0]
+                                if name_no_ext in prerolls_by_name:
+                                    matched_preroll = prerolls_by_name[name_no_ext]
+                    
+                    # If still not matched, check if we can download from community (only if valid community_id)
+                    if not matched_preroll and is_valid_community_id:
+                        can_download = True
+                        # downloadable_count will be incremented below when added to missing_prerolls
+                        
+                        # If auto_download is enabled, attempt to download it
+                        if auto_download:
+                            try:
+                                _file_log(f"Auto-download enabled for community ID: {preroll_ref['community_id']}")
+                                
+                                # Determine the category_id to use
+                                category_id = None
+                                category_names = preroll_ref.get('category_names', [])
+                                if category_names and len(category_names) > 0:
+                                    # Try to find the category by name
+                                    category = db.query(models.Category).filter(models.Category.name == category_names[0]).first()
+                                    if category:
+                                        category_id = category.id
+                                
+                                # Create the download request object
+                                download_request = CommunityPrerollDownloadRequest(
+                                    preroll_id=preroll_ref['community_id'],
+                                    title=preroll_ref.get('name', 'Unknown'),
+                                    category_id=category_id,
+                                    add_to_category=True if category_id else False
+                                )
+                                
+                                # Call the download function with the request and db session
+                                download_result = download_community_preroll(download_request, db)
+                                
+                                # Refresh the matched_preroll after download
+                                matched_preroll = db.query(models.Preroll).filter(
+                                    models.Preroll.community_preroll_id == preroll_ref['community_id']
+                                ).first()
+                                if matched_preroll:
+                                    _file_log(f"Successfully downloaded preroll: {matched_preroll.name} (ID {matched_preroll.id})")
+                                else:
+                                    _file_log(f"Download completed but preroll not found in database")
+                            except Exception as e:
+                                _file_log(f"Failed to auto-download community preroll: {e}")
                     
                     if matched_preroll:
                         matched_preroll_ids.append(matched_preroll.id)
-                    else:
-                        # Track missing preroll
+                        # Log successful match
+                        _file_log(f"Matched preroll: {preroll_ref.get('name')} -> ID {matched_preroll.id} " +
+                                 f"(community_id: {matched_preroll.community_preroll_id})")
+                    elif can_download:
+                        # Track as downloadable missing preroll with actionable info
+                        # Only include if community_id is valid (already validated above)
                         missing_preroll = {
                             'name': preroll_ref.get('name', 'Unknown'),
-                            'community_id': preroll_ref.get('community_id')
+                            'community_id': community_id,  # Use validated community_id variable
+                            'downloadable': True,
+                            'download_url': f'https://prerolls.video/api/prerolls/{community_id}',
+                            'status': 'needs_download',
+                            'category': preroll_ref.get('preroll_data', {}).get('category_name') if preroll_ref.get('preroll_data') else None,
+                            'category_names': preroll_ref.get('category_names'),  # Categories from export
+                            'data': preroll_ref.get('preroll_data')
                         }
                         if missing_preroll not in missing_prerolls:
                             missing_prerolls.append(missing_preroll)
+                            downloadable_count += 1  # Increment counter for downloadable prerolls
+                        _file_log(f"Preroll needs download: {preroll_ref.get('name')} (community_id: {community_id})")
+                    else:
+                        # Track as truly missing preroll (no community ID or download option)
+                        missing_preroll = {
+                            'name': preroll_ref.get('name', 'Unknown'),
+                            'community_id': preroll_ref.get('community_id'),
+                            'downloadable': False,
+                            'status': 'unavailable',
+                            'reason': 'No community ID available' if not preroll_ref.get('community_id') else 'Not found in community library',
+                            'category': preroll_ref.get('preroll_data', {}).get('category_name') if preroll_ref.get('preroll_data') else None,
+                            'data': preroll_ref.get('preroll_data')
+                        }
+                        if missing_preroll not in missing_prerolls:
+                            missing_prerolls.append(missing_preroll)
+                        _file_log(f"Preroll unavailable: {preroll_ref.get('name')} - {missing_preroll['reason']}")
                 
                 if matched_preroll_ids:
                     matched_block['preroll_ids'] = matched_preroll_ids
                     block_matched = True
                     matched_count += 1
                 else:
+                    # Preserve preroll names for debugging even if not matched
                     unmatched_count += 1
+                    matched_block['_unmatched'] = True
+                    matched_block['_missing_prerolls'] = [ref.get('name', 'Unknown') for ref in preroll_refs]
+                    if preroll_refs and len(preroll_refs) > 0:
+                        matched_block['_community_ids'] = [ref.get('community_id') for ref in preroll_refs if ref.get('community_id')]
             
             # Add block to result if it has any matches (or if it's a valid type)
             if block_matched or block_type in ['random', 'fixed']:
                 matched_blocks.append(matched_block)
         
-        # Prepare response with match statistics
+        # Prepare detailed response with match statistics and actionable items
         response_data = {
-            'pattern_name': pattern_data.get('pattern_name', 'Imported Pattern'),
-            'created_by': pattern_data.get('created_by', 'Unknown'),
+            'pattern_name': pattern_data.get('pattern_name', 'Imported Pattern') if pattern_data else 'Bundle Preview',
+            'pattern_description': pattern_data.get('pattern_description', '') if pattern_data else '',
+            'created_by': pattern_data.get('created_by', 'Unknown') if pattern_data else 'Unknown',
+            'export_mode': pattern_data.get('export_mode', 'unknown') if pattern_data else 'bundle',
+            'exported_at': pattern_data.get('exported_at') if pattern_data else None,
+            'nexroll_version': pattern_data.get('nexroll_version') if pattern_data else None,
             'blocks': matched_blocks,
             'sequence_json': pattern_data,
             'match_results': {
                 'matched': matched_count,
                 'unmatched': unmatched_count,
-                'total_blocks': len(pattern_data.get('blocks', [])),
+                'downloadable': downloadable_count,
+                'total_blocks': len(pattern_data.get('blocks', [])) if pattern_data else 0,
                 'missing_categories': missing_categories,
-                'missing_prerolls': missing_prerolls
+                'missing_prerolls': missing_prerolls,
+                'auto_download_enabled': auto_download,
+                # Detailed breakdown for UI
+                'status_summary': {
+                    'fully_matched': matched_count,
+                    'partially_matched': 0,  # TODO: track partial matches
+                    'needs_download': downloadable_count,
+                    'completely_missing': unmatched_count - downloadable_count
+                }
+            },
+            'import_results': {
+                'bundle_mode': bundle_mode,
+                'imported_prerolls': imported_prerolls,
+                'imported_categories': imported_categories,
+                'prerolls_imported_count': len(imported_prerolls),
+                'categories_imported_count': len(imported_categories)
             }
         }
         
-        _file_log(f"Pattern import preview: {pattern_data.get('pattern_name')} - {matched_count} matched, {unmatched_count} unmatched")
+        # Add bundle_preview if available (for ZIP file preview mode)
+        if bundle_preview:
+            response_data['bundle_preview'] = bundle_preview
+        
+        log_msg = f"Pattern import: {pattern_data.get('pattern_name', 'Bundle') if pattern_data else 'Bundle Preview'}"
+        if pattern_data:
+            log_msg += f" - {matched_count} matched, {unmatched_count} unmatched, {downloadable_count} downloadable"
+        if bundle_mode:
+            if bundle_preview:
+                log_msg += f" (preview mode: {len(bundle_preview.get('categories', []))} categories, {len(bundle_preview.get('fixed', []))} fixed)"
+            else:
+                log_msg += f", {len(imported_prerolls)} prerolls imported, {len(imported_categories)} new categories"
+        _file_log(log_msg)
         
         return response_data
         
@@ -5229,11 +6639,291 @@ async def import_sequence_pattern(file: UploadFile = File(...), db: Session = De
         _file_log(f"Failed to import sequence pattern: {e}")
         raise HTTPException(status_code=500, detail=f"Import failed: {str(e)}")
 
-@app.post("/sequences/{sequence_id}/export")
-def export_sequence_pattern(sequence_id: int, db: Session = Depends(get_db)):
+class BundleConfirmRequest(BaseModel):
+    """Request body for confirming a bundle import after preview"""
+    sequences: List[dict]  # Array of sequences with their matched blocks
+
+@app.post("/sequences/import-bundle-confirm")
+async def confirm_bundle_import(
+    request: BundleConfirmRequest,
+    db: Session = Depends(get_db)
+):
     """
-    Export a saved sequence as a .nexseq pattern file
-    Returns JSON pattern with structure only (no actual preroll files)
+    Confirm and save sequences from a .nexbundle after preview/matching.
+    
+    This endpoint is called after the user has reviewed the bundle preview,
+    optionally downloaded missing prerolls, and is ready to import.
+    """
+    try:
+        imported_sequences = []
+        
+        for seq_data in request.sequences:
+            seq_name = seq_data.get('name', 'Imported Sequence')
+            seq_description = seq_data.get('description', '')
+            # Use the matched blocks (which have resolved preroll_ids)
+            seq_blocks = seq_data.get('blocks', [])
+            
+            # Check if sequence with same name already exists
+            existing = db.query(models.SavedSequence).filter(models.SavedSequence.name == seq_name).first()
+            if existing:
+                counter = 1
+                new_name = f"{seq_name} ({counter})"
+                while db.query(models.SavedSequence).filter(models.SavedSequence.name == new_name).first():
+                    counter += 1
+                    new_name = f"{seq_name} ({counter})"
+                seq_name = new_name
+            
+            # Clean blocks - remove internal matching metadata
+            cleaned_blocks = []
+            for block in seq_blocks:
+                cleaned_block = {k: v for k, v in block.items() if not k.startswith('_')}
+                cleaned_blocks.append(cleaned_block)
+            
+            # Create new sequence with matched/cleaned blocks
+            new_sequence = models.SavedSequence(
+                name=seq_name,
+                description=seq_description,
+                blocks=json.dumps(cleaned_blocks)
+            )
+            db.add(new_sequence)
+            imported_sequences.append({
+                'name': seq_name,
+                'blocks_count': len(cleaned_blocks)
+            })
+        
+        db.commit()
+        
+        _file_log(f"[BUNDLE IMPORT] Confirmed import of {len(imported_sequences)} sequences")
+        
+        return {
+            'success': True,
+            'bundle_import': True,
+            'imported_count': len(imported_sequences),
+            'sequences': imported_sequences,
+            'message': f"Successfully imported {len(imported_sequences)} sequences from bundle"
+        }
+        
+    except Exception as e:
+        db.rollback()
+        _file_log(f"Failed to confirm bundle import: {e}")
+        raise HTTPException(status_code=500, detail=f"Import failed: {str(e)}")
+
+def _find_community_id_by_name(preroll_name: str) -> Optional[str]:
+    """
+    Try to find a community preroll ID by matching the preroll name against the community index.
+    This is useful when the stored community_preroll_id is mangled or missing.
+    
+    Returns the community ID if a match is found, or None otherwise.
+    """
+    import re
+    
+    if not preroll_name:
+        return None
+    
+    try:
+        if not PREROLLS_INDEX_PATH.exists():
+            return None
+        
+        with open(PREROLLS_INDEX_PATH, 'r', encoding='utf-8') as f:
+            index_data = json.load(f)
+        community_prerolls = index_data.get('prerolls', [])
+        
+        if not community_prerolls:
+            return None
+        
+        def normalize(s):
+            """Normalize a string for comparison"""
+            s = s.lower()
+            # Remove extension
+            s = re.sub(r'\.(mp4|mkv|mov|avi|m4v|webm)$', '', s)
+            # Replace underscores and dashes with spaces
+            s = s.replace('_', ' ').replace('-', ' ')
+            # Remove non-alphanumeric except spaces
+            s = re.sub(r'[^a-z0-9\s]', '', s)
+            # Collapse multiple spaces
+            s = re.sub(r'\s+', ' ', s).strip()
+            return s
+        
+        name_normalized = normalize(preroll_name)
+        
+        # Try exact match first
+        for cp in community_prerolls:
+            cp_title = cp.get('title', '')
+            if normalize(cp_title) == name_normalized:
+                _file_log(f"[FIND_ID_BY_NAME] Exact match: '{preroll_name}' -> '{cp.get('id')}'")
+                return cp.get('id')
+        
+        # Try substring match
+        for cp in community_prerolls:
+            cp_title = cp.get('title', '')
+            cp_norm = normalize(cp_title)
+            if name_normalized in cp_norm or cp_norm in name_normalized:
+                _file_log(f"[FIND_ID_BY_NAME] Substring match: '{preroll_name}' -> '{cp.get('id')}'")
+                return cp.get('id')
+        
+        # Try word overlap match
+        name_words = set(name_normalized.split())
+        best_match = None
+        best_score = 0
+        
+        for cp in community_prerolls:
+            cp_title = cp.get('title', '')
+            cp_norm = normalize(cp_title)
+            cp_words = set(cp_norm.split())
+            
+            if name_words and cp_words:
+                common = name_words & cp_words
+                if len(common) >= 2:
+                    score = len(common) / max(len(name_words), len(cp_words))
+                    if score > best_score:
+                        best_score = score
+                        best_match = cp.get('id')
+        
+        if best_match and best_score >= 0.5:
+            _file_log(f"[FIND_ID_BY_NAME] Word match ({int(best_score*100)}%): '{preroll_name}' -> '{best_match}'")
+            return best_match
+        
+        _file_log(f"[FIND_ID_BY_NAME] No match found for '{preroll_name}'")
+        return None
+        
+    except Exception as e:
+        _file_log(f"[FIND_ID_BY_NAME] Error: {e}")
+        return None
+
+def _unmangle_community_id(mangled_id: str) -> Optional[str]:
+    """
+    Attempt to convert a mangled community preroll ID back to proper URL path format.
+    Also tries to validate/find the correct ID by looking up the community index.
+    
+    Old versions stored IDs like "_Holidays_Christmas__Plex_file%20name_mp4"
+    which should be converted back to "/Holidays/Christmas/_Plex/file name.mp4"
+    
+    Returns the unmangled ID if successful, or None if the format is unrecognizable.
+    """
+    import urllib.parse
+    
+    if not mangled_id:
+        return None
+    
+    # Already in correct format (starts with /)
+    if mangled_id.startswith('/'):
+        return mangled_id
+    
+    # Check if this looks like a mangled ID (starts with underscore, has encoded chars)
+    if not mangled_id.startswith('_'):
+        return None
+    
+    # First try to find a match in the community index by comparing normalized versions
+    try:
+        if PREROLLS_INDEX_PATH.exists():
+            with open(PREROLLS_INDEX_PATH, 'r', encoding='utf-8') as f:
+                index_data = json.load(f)
+            community_prerolls = index_data.get('prerolls', [])
+            
+            # URL decode the mangled ID for comparison
+            decoded_mangled = urllib.parse.unquote(mangled_id)
+            
+            # Try to match by comparing normalized versions of the ID
+            for cp in community_prerolls:
+                proper_id = cp.get('id', '')
+                if not proper_id:
+                    continue
+                
+                # Create a mangled version of the proper ID for comparison
+                # Replace / with _ and URL encode
+                test_mangled = proper_id.replace('/', '_')
+                test_decoded = urllib.parse.unquote(test_mangled)
+                
+                # Compare decoded versions
+                if decoded_mangled.lower() == test_decoded.lower():
+                    _file_log(f"[UNMANGLE] Found exact match in index: '{mangled_id[:40]}...' -> '{proper_id}'")
+                    return proper_id
+                
+                # Also try comparing with URL-encoded mangled version
+                test_encoded = urllib.parse.quote(proper_id.replace('/', '_'), safe='')
+                if mangled_id == test_encoded:
+                    _file_log(f"[UNMANGLE] Found encoded match in index: '{mangled_id[:40]}...' -> '{proper_id}'")
+                    return proper_id
+                    
+            _file_log(f"[UNMANGLE] No exact match in index, trying heuristic unmangle")
+    except Exception as e:
+        _file_log(f"[UNMANGLE] Error checking community index: {e}")
+    
+    # Fall back to heuristic unmangling
+    try:
+        # URL decode first
+        decoded = urllib.parse.unquote(mangled_id)
+        
+        # The mangling replaced / with _ but we need to be careful
+        # because underscores can be legitimate parts of filenames.
+        # Common pattern: _Category_Subcategory_Creator_filename_ext
+        # Should become: /Category/Subcategory/Creator/filename.ext
+        
+        # Strategy: Convert first underscore to /, then use heuristics
+        # for subsequent underscores
+        if decoded.startswith('_'):
+            decoded = '/' + decoded[1:]
+        
+        # Split by underscore
+        parts = decoded.split('_')
+        
+        # If the last part looks like an extension (mp4, mkv, etc), 
+        # join it with a dot to the previous part
+        if len(parts) >= 2:
+            last = parts[-1].lower()
+            if last in ['mp4', 'mkv', 'mov', 'avi', 'm4v', 'webm']:
+                # Join extension with dot
+                parts[-2] = parts[-2] + '.' + parts[-1]
+                parts = parts[:-1]
+        
+        # Now we need to figure out which underscores were slashes
+        # Typical structure: /Category/Subcategory/Creator/filename.ext
+        # This is tricky because we don't know how many levels there are
+        
+        # Simple heuristic: The first 2-3 parts are likely path components,
+        # everything after might be part of the filename
+        # Let's use the community library structure as guidance
+        
+        # Count how many parts we have
+        if len(parts) <= 4:
+            # Short path - all underscores were likely slashes
+            result = '/'.join(parts)
+        else:
+            # Longer path - first 3 parts are likely path, rest is filename
+            # Try to find where the filename starts by looking for common creator names
+            # or fall back to using the first 3 parts as path
+            path_parts = parts[:3]
+            filename_parts = parts[3:]
+            result = '/'.join(path_parts) + '/' + ' '.join(filename_parts)
+        
+        # Ensure it starts with /
+        if not result.startswith('/'):
+            result = '/' + result
+        
+        _file_log(f"[UNMANGLE] Heuristic result: '{mangled_id[:50]}...' -> '{result}'")
+        return result
+        
+    except Exception as e:
+        _file_log(f"[UNMANGLE] Failed to unmangle '{mangled_id}': {e}")
+        return None
+
+
+@app.post("/sequences/{sequence_id}/export")
+def export_sequence_pattern(
+    sequence_id: int, 
+    export_mode: str = Query("pattern_only", regex="^(pattern_only|with_community_ids|with_preroll_data|full_bundle)$"),
+    db: Session = Depends(get_db)
+):
+    """
+    Export a saved sequence as a .nexseq pattern file with various levels of detail.
+    
+    Export modes:
+    - pattern_only: Structure only (category names, no preroll details)
+    - with_community_ids: Include community preroll IDs for easy re-downloading
+    - with_preroll_data: Include full preroll metadata (name, tags, duration, etc.)
+    - full_bundle: ZIP file with pattern + all preroll video files (large!)
+    
+    Returns JSON pattern or ZIP file depending on mode
     """
     try:
         # Get the sequence
@@ -5241,12 +6931,13 @@ def export_sequence_pattern(sequence_id: int, db: Session = Depends(get_db)):
         if not sequence:
             raise HTTPException(status_code=404, detail="Sequence not found")
         
-        # Parse the sequence JSON
-        sequence_data = json.loads(sequence.sequence_json)
-        blocks = sequence_data.get('blocks', [])
+        # Parse the sequence blocks
+        blocks = sequence.get_blocks()
         
         # Convert blocks to pattern format
         pattern_blocks = []
+        all_preroll_ids = []  # Collect for full bundle mode
+        
         for block in blocks:
             block_type = block.get('type', '')
             pattern_block = {
@@ -5261,28 +6952,238 @@ def export_sequence_pattern(sequence_id: int, db: Session = Depends(get_db)):
                     category = db.query(models.Category).filter(models.Category.id == category_id).first()
                     if category:
                         pattern_block['category_name'] = category.name
+                        
+                        # For preroll_data mode, include category's prerolls metadata
+                        if export_mode in ['with_preroll_data', 'full_bundle']:
+                            category_prerolls = db.query(models.Preroll).filter(
+                                models.Preroll.category_id == category_id
+                            ).all()
+                            pattern_block['available_prerolls'] = [
+                                {
+                                    'name': p.display_name or p.filename,
+                                    'community_id': p.community_preroll_id,
+                                    'tags': json.loads(p.tags) if p.tags else [],
+                                    'duration': p.duration,
+                                    'file_size': p.file_size
+                                } for p in category_prerolls
+                            ]
+                            all_preroll_ids.extend([p.id for p in category_prerolls])
+                            
                 pattern_block['count'] = block.get('count', 1)
             
             elif block_type == 'fixed':
-                # Include preroll information (Community ID preferred)
+                # Include preroll information
                 preroll_id = block.get('preroll_id') or block.get('prerollId')
+                preroll_ids = block.get('preroll_ids') or block.get('prerollIds')
+                
+                # Handle both single preroll_id and array preroll_ids
+                if not preroll_id and preroll_ids and len(preroll_ids) > 0:
+                    preroll_id = preroll_ids[0]  # Use first preroll for now
+                
                 if preroll_id:
                     preroll = db.query(models.Preroll).filter(models.Preroll.id == preroll_id).first()
                     if preroll:
-                        pattern_block['preroll_name'] = preroll.display_name or preroll.filename
+                        # Always include preroll name for matching
+                        preroll_name = preroll.display_name or preroll.filename
+                        pattern_block['preroll_name'] = preroll_name
+                        
+                        # Include community ID for all modes (helps with matching even in pattern_only)
+                        # Community IDs can be URL paths (e.g., "/Holidays/Christmas/file.mp4")
+                        _file_log(f"[EXPORT] Checking preroll '{preroll_name}' - community_preroll_id: '{getattr(preroll, 'community_preroll_id', 'ATTRIBUTE_MISSING')}'")
+                        
+                        resolved_community_id = None
+                        
                         if preroll.community_preroll_id:
-                            pattern_block['community_id'] = preroll.community_preroll_id
+                            community_id = str(preroll.community_preroll_id)
+                            # Check if this is a mangled ID - prioritize name lookup since heuristic unmangling is unreliable
+                            if community_id.startswith('_') or '\\' in community_id:
+                                _file_log(f"[EXPORT] Detected mangled community_preroll_id: {community_id}")
+                                # First try name lookup - more reliable than heuristic unmangling
+                                resolved_community_id = _find_community_id_by_name(preroll_name)
+                                if resolved_community_id:
+                                    _file_log(f"[EXPORT] Found correct ID by name lookup: {resolved_community_id}")
+                                else:
+                                    # Only try unmangle as last resort
+                                    unmangled = _unmangle_community_id(community_id)
+                                    if unmangled:
+                                        resolved_community_id = unmangled
+                                        _file_log(f"[EXPORT] Using heuristically unmangled ID (may be incorrect): {unmangled}")
+                                    else:
+                                        _file_log(f"[EXPORT] Could not resolve mangled ID")
+                            else:
+                                resolved_community_id = community_id
+                        else:
+                            # No community_preroll_id stored - try to find by name
+                            _file_log(f"[EXPORT] No community_preroll_id - trying name lookup for '{preroll_name}'")
+                            resolved_community_id = _find_community_id_by_name(preroll_name)
+                        
+                        if resolved_community_id:
+                            pattern_block['community_id'] = resolved_community_id
+                            _file_log(f"[EXPORT] Including community_id in export: {resolved_community_id}")
+                        else:
+                            _file_log(f"[EXPORT] No community_id found - preroll will not be re-downloadable after import")
+                        
+                        # Include category names so imports can match/download into the same categories
+                        if preroll.categories:
+                            category_names = [cat.name for cat in preroll.categories]
+                            if category_names:
+                                pattern_block['category_names'] = category_names
+                                _file_log(f"[EXPORT] Including categories for '{preroll.display_name or preroll.filename}': {category_names}")
+                        
+                        # Include full metadata only for detailed modes
+                        if export_mode in ['with_preroll_data', 'full_bundle']:
+                            pattern_block['preroll_data'] = {
+                                'name': preroll.display_name or preroll.filename,
+                                'community_id': preroll.community_preroll_id,
+                                'tags': json.loads(preroll.tags) if preroll.tags else [],
+                                'duration': preroll.duration,
+                                'file_size': preroll.file_size,
+                                'description': preroll.description,
+                                'category_name': preroll.category.name if preroll.category else None
+                            }
+                        
+                        all_preroll_ids.append(preroll.id)
             
             pattern_blocks.append(pattern_block)
         
-        # Create pattern response
+        # Create pattern data
         pattern_data = {
             'pattern_name': sequence.name,
+            'pattern_description': sequence.description,
             'created_by': 'NeXroll',
+            'export_mode': export_mode,
+            'nexroll_version': app_version,
+            'exported_at': datetime.datetime.utcnow().isoformat() + 'Z',
             'blocks': pattern_blocks
         }
         
-        _file_log(f"Exported sequence pattern: {sequence.name} with {len(pattern_blocks)} blocks")
+        # For full_bundle mode, create a ZIP with pattern + video files organized by category
+        if export_mode == 'full_bundle':
+            try:
+                zip_buffer = io.BytesIO()
+                with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zip_file:
+                    # Add pattern JSON
+                    zip_file.writestr(
+                        f"{sequence.name.replace(' ', '_')}.nexseq",
+                        json.dumps(pattern_data, indent=2)
+                    )
+                    
+                    # Track what we're adding to avoid duplicates
+                    added_files = set()
+                    categories_exported = {}
+                    fixed_prerolls_exported = []
+                    
+                    # Process blocks to organize files by type
+                    for block in blocks:
+                        block_type = block.get('type', '')
+                        
+                        if block_type == 'random':
+                            # For random blocks, export entire category folder
+                            category_id = block.get('category_id') or block.get('categoryId')
+                            if category_id and category_id not in categories_exported:
+                                category = db.query(models.Category).filter(models.Category.id == category_id).first()
+                                if category:
+                                    category_prerolls = db.query(models.Preroll).filter(
+                                        models.Preroll.category_id == category_id
+                                    ).all()
+                                    
+                                    # Create category folder in ZIP
+                                    category_folder = "".join(c for c in category.name if c.isalnum() or c in (' ', '_', '-'))
+                                    
+                                    for preroll in category_prerolls:
+                                        if preroll.path and os.path.exists(preroll.path):
+                                            file_name = preroll.display_name or preroll.filename
+                                            # Ensure filename has extension
+                                            if not any(file_name.lower().endswith(ext) for ext in ['.mp4', '.mkv', '.mov', '.avi', '.m4v', '.webm']):
+                                                # Get extension from original path
+                                                _, ext = os.path.splitext(preroll.path)
+                                                file_name = file_name + ext
+                                            # Sanitize filename
+                                            file_name = "".join(c for c in file_name if c.isalnum() or c in (' ', '.', '_', '-'))
+                                            zip_path = f"categories/{category_folder}/{file_name}"
+                                            
+                                            if zip_path not in added_files:
+                                                zip_file.write(preroll.path, zip_path)
+                                                added_files.add(zip_path)
+                                    
+                                    categories_exported[category_id] = {
+                                        'name': category.name,
+                                        'preroll_count': len(category_prerolls)
+                                    }
+                        
+                        elif block_type == 'fixed':
+                            # For fixed blocks, export individual preroll to "fixed" folder
+                            # Handle both single preroll_id and array preroll_ids formats
+                            preroll_id = block.get('preroll_id') or block.get('prerollId')
+                            preroll_ids = block.get('preroll_ids') or block.get('prerollIds') or []
+                            
+                            # If no single preroll_id but we have an array, use the first one
+                            if not preroll_id and preroll_ids:
+                                preroll_id = preroll_ids[0] if len(preroll_ids) > 0 else None
+                            
+                            _file_log(f"[FULL_BUNDLE] Fixed block - preroll_id: {preroll_id}, preroll_ids: {preroll_ids}")
+                            
+                            if preroll_id:
+                                preroll = db.query(models.Preroll).filter(models.Preroll.id == preroll_id).first()
+                                _file_log(f"[FULL_BUNDLE] Found preroll: {preroll.display_name if preroll else 'None'}, path: {preroll.path if preroll else 'N/A'}, exists: {os.path.exists(preroll.path) if preroll and preroll.path else False}")
+                                if preroll and preroll.path and os.path.exists(preroll.path):
+                                    file_name = preroll.display_name or preroll.filename
+                                    # Ensure filename has extension
+                                    if not any(file_name.lower().endswith(ext) for ext in ['.mp4', '.mkv', '.mov', '.avi', '.m4v', '.webm']):
+                                        # Get extension from original path
+                                        _, ext = os.path.splitext(preroll.path)
+                                        file_name = file_name + ext
+                                    # Sanitize filename
+                                    file_name = "".join(c for c in file_name if c.isalnum() or c in (' ', '.', '_', '-'))
+                                    zip_path = f"fixed/{file_name}"
+                                    
+                                    if zip_path not in added_files:
+                                        _file_log(f"[FULL_BUNDLE] Adding to ZIP: {preroll.path} -> {zip_path}")
+                                        zip_file.write(preroll.path, zip_path)
+                                        added_files.add(zip_path)
+                                        fixed_prerolls_exported.append({
+                                            'name': preroll.display_name or preroll.filename,
+                                            'category': preroll.category.name if preroll.category else 'Uncategorized'
+                                        })
+                                else:
+                                    _file_log(f"[FULL_BUNDLE] Skipping preroll - not found or path doesn't exist")
+                    
+                    _file_log(f"[FULL_BUNDLE] Export complete - {len(added_files)} files added to ZIP")
+                    
+                    # Add a manifest file with export details
+                    manifest = {
+                        'sequence_name': sequence.name,
+                        'exported_at': datetime.datetime.utcnow().isoformat() + 'Z',
+                        'nexroll_version': app_version,
+                        'total_files': len(added_files),
+                        'categories_exported': categories_exported,
+                        'fixed_prerolls_exported': fixed_prerolls_exported,
+                        'instructions': {
+                            'import': 'Use NeXroll\'s Import feature to restore this sequence',
+                            'structure': {
+                                'categories/': 'Entire category folders for random blocks',
+                                'fixed/': 'Individual prerolls for fixed blocks',
+                                '*.nexseq': 'Sequence pattern file'
+                            }
+                        }
+                    }
+                    zip_file.writestr('MANIFEST.json', json.dumps(manifest, indent=2))
+                
+                zip_buffer.seek(0)
+                _file_log(f"Exported full bundle: {sequence.name} - {len(categories_exported)} categories, {len(fixed_prerolls_exported)} fixed prerolls, {len(added_files)} total files")
+                
+                return StreamingResponse(
+                    zip_buffer,
+                    media_type="application/zip",
+                    headers={
+                        "Content-Disposition": f"attachment; filename={sequence.name.replace(' ', '_')}_bundle.zip"
+                    }
+                )
+            except Exception as e:
+                _file_log(f"Failed to create full bundle: {e}")
+                raise HTTPException(status_code=500, detail=f"Bundle creation failed: {str(e)}")
+        
+        _file_log(f"Exported sequence pattern ({export_mode}): {sequence.name} with {len(pattern_blocks)} blocks")
         return pattern_data
         
     except Exception as e:
@@ -5395,6 +7296,358 @@ def initialize_holiday_presets(db: Session = Depends(get_db)):
 def get_holiday_presets(db: Session = Depends(get_db)):
     presets = db.query(models.HolidayPreset).all()
     return presets
+
+# Holiday API integration endpoints
+@app.get("/holiday-api/countries")
+def get_holiday_countries():
+    """Get list of countries supported by holiday API"""
+    try:
+        from backend.holiday_api import HolidayAPI
+        countries = HolidayAPI.get_available_countries()
+        return {
+            "countries": countries,
+            "total": len(countries),
+            "api_available": HolidayAPI.is_api_available()
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to fetch countries: {str(e)}")
+
+@app.get("/holiday-api/holidays/{country_code}/{year}")
+def get_holidays_for_country(country_code: str, year: int):
+    """
+    Get all holidays for a specific country and year
+    Example: /holiday-api/holidays/US/2024
+    """
+    try:
+        from backend.holiday_api import HolidayAPI
+        holidays = HolidayAPI.get_holidays(country_code.upper(), year)
+        multi_day = HolidayAPI.get_multi_day_holidays(country_code.upper(), year)
+        
+        return {
+            "country_code": country_code.upper(),
+            "year": year,
+            "holidays": holidays,
+            "multi_day_holidays": multi_day,
+            "total": len(holidays),
+            "api_available": HolidayAPI.is_api_available()
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to fetch holidays: {str(e)}")
+
+@app.get("/holiday-api/search")
+def search_holiday(name: str, country_code: str = "US", year: int = None):
+    """
+    Search for a specific holiday by name
+    Example: /holiday-api/search?name=Christmas&country_code=US&year=2024
+    """
+    try:
+        from backend.holiday_api import HolidayAPI
+        from datetime import datetime
+        
+        if year is None:
+            year = datetime.now().year
+        
+        holiday = HolidayAPI.search_holiday_by_name(name, country_code.upper(), year)
+        
+        if holiday:
+            return {
+                "found": True,
+                "holiday": holiday,
+                "country_code": country_code.upper(),
+                "year": year
+            }
+        else:
+            return {
+                "found": False,
+                "message": f"Holiday '{name}' not found for {country_code} in {year}",
+                "country_code": country_code.upper(),
+                "year": year
+            }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to search holiday: {str(e)}")
+
+@app.get("/holiday-api/next/{holiday_name}")
+def get_next_holiday_occurrence(holiday_name: str, country_code: str = "US"):
+    """
+    Get the next occurrence of a holiday
+    Example: /holiday-api/next/Christmas?country_code=CA
+    """
+    try:
+        from backend.holiday_api import HolidayAPI
+        
+        result = HolidayAPI.get_next_occurrence(holiday_name, country_code.upper())
+        
+        if result:
+            holiday_date, description = result
+            return {
+                "found": True,
+                "name": description,
+                "date": holiday_date.strftime("%Y-%m-%d"),
+                "month": holiday_date.month,
+                "day": holiday_date.day,
+                "year": holiday_date.year,
+                "country_code": country_code.upper()
+            }
+        else:
+            return {
+                "found": False,
+                "message": f"Could not find next occurrence of '{holiday_name}'",
+                "country_code": country_code.upper()
+            }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to find next occurrence: {str(e)}")
+
+@app.post("/holiday-api/create-schedule")
+def create_schedule_from_holiday(
+    request: HolidayScheduleRequest,
+    db: Session = Depends(get_db)
+):
+    """
+    Create a recurring schedule from a holiday using the API
+    Will automatically fetch the correct dates for the holiday
+    """
+    try:
+        from backend.holiday_api import HolidayAPI
+        from datetime import datetime
+        
+        # Extract values from request
+        holiday_name = request.holiday_name
+        country_code = request.country_code
+        category_id = request.category_id
+        
+        # Generate years list based on multi_year setting
+        if request.multi_year and request.year_count:
+            current_year = datetime.now().year
+            years = [current_year + i for i in range(request.year_count)]
+        else:
+            current_year = datetime.now().year
+            years = [current_year]
+        
+        # Verify category exists
+        category = db.query(models.Category).filter(models.Category.id == category_id).first()
+        if not category:
+            raise HTTPException(status_code=404, detail=f"Category {category_id} not found")
+        
+        # Get holiday dates for all requested years
+        suggestions = HolidayAPI.suggest_schedule_dates(holiday_name, country_code.upper(), years)
+        
+        if not suggestions:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Holiday '{holiday_name}' not found for {country_code} in years {years}"
+            )
+        
+        # Use the first year's date to create the schedule
+        first_occurrence = suggestions[0]
+        
+        # Check for multi-day holiday
+        multi_day = HolidayAPI.get_multi_day_holidays(country_code.upper(), first_occurrence["year"])
+        matching_multi = next(
+            (h for h in multi_day if holiday_name.lower() in h["name"].lower()),
+            None
+        )
+        
+        if matching_multi:
+            # Multi-day holiday
+            start_month = matching_multi["start_month"]
+            start_day = matching_multi["start_day"]
+            end_month = matching_multi["end_month"]
+            end_day = matching_multi["end_day"]
+        else:
+            # Single day holiday
+            start_month = first_occurrence["month"]
+            start_day = first_occurrence["day"]
+            end_month = start_month
+            end_day = start_day
+        
+        # Create the schedule with proper datetime objects
+        start_date_obj = datetime(2024, start_month, start_day)  # Use a reference year
+        end_date_obj = datetime(2024, end_month, end_day)
+        
+        schedule = models.Schedule(
+            name=first_occurrence["name"],
+            category_id=category_id,
+            type="yearly",
+            is_active=True,
+            start_date=start_date_obj,
+            end_date=end_date_obj,
+            shuffle=False,
+            playlist=False
+        )
+        
+        db.add(schedule)
+        db.commit()
+        db.refresh(schedule)
+        
+        return {
+            "message": f"Schedule created for {first_occurrence['name']}",
+            "schedule_id": schedule.id,
+            "schedule": {
+                "id": schedule.id,
+                "name": schedule.name,
+                "start_date": schedule.start_date,
+                "end_date": schedule.end_date,
+                "type": schedule.type
+            },
+            "holiday_dates": suggestions,
+            "years_created": years
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        db.rollback()
+        import traceback
+        error_details = traceback.format_exc()
+        _file_log(f"[ERROR] Error creating holiday schedule: {str(e)}\n{error_details}")
+        raise HTTPException(status_code=500, detail=f"Failed to create schedule: {str(e)}")
+
+@app.get("/holiday-api/status")
+def get_holiday_api_status():
+    """Check if holiday API is available and working"""
+    try:
+        from backend.holiday_api import HolidayAPI
+        
+        is_available = HolidayAPI.is_api_available()
+        
+        # Test with a simple query
+        test_result = None
+        if is_available:
+            try:
+                from datetime import datetime
+                test_holidays = HolidayAPI.get_holidays("US", datetime.now().year)
+                test_result = {
+                    "test_country": "US",
+                    "test_year": datetime.now().year,
+                    "holidays_found": len(test_holidays)
+                }
+            except Exception as e:
+                test_result = {"error": str(e)}
+        
+        return {
+            "available": is_available,
+            "api_available": is_available,  # Keep for backward compatibility
+            "api_url": HolidayAPI.BASE_URL,
+            "supported_countries": len(HolidayAPI.SUPPORTED_COUNTRIES),
+            "test_result": test_result,
+            "features": {
+                "multi_day_holidays": True,
+                "holiday_search": True,
+                "next_occurrence": True,
+                "auto_schedule_creation": True
+            }
+        }
+    except Exception as e:
+        return {
+            "available": False,
+            "api_available": False,  # Keep for backward compatibility
+            "error": str(e)
+        }
+
+@app.post("/holiday-api/refresh-dates")
+def refresh_holiday_dates(db: Session = Depends(get_db)):
+    """
+    Refresh dates for all schedules linked to holidays.
+    This updates variable-date holidays (Thanksgiving, Easter, etc.) to their correct dates
+    for the current/upcoming year.
+    """
+    try:
+        from backend.holiday_api import HolidayAPI
+        from datetime import datetime
+        
+        current_year = datetime.now().year
+        updated_count = 0
+        errors = []
+        updated_schedules = []
+        
+        # Find all schedules with holiday_name set
+        holiday_schedules = db.query(models.Schedule).filter(
+            models.Schedule.holiday_name.isnot(None),
+            models.Schedule.holiday_country.isnot(None)
+        ).all()
+        
+        for schedule in holiday_schedules:
+            try:
+                # Get the holiday for current year
+                holidays = HolidayAPI.get_holidays(schedule.holiday_country, current_year)
+                
+                # Find matching holiday
+                matching = None
+                for h in holidays:
+                    if h.get("name", "").lower() == schedule.holiday_name.lower():
+                        matching = h
+                        break
+                    # Also check localName
+                    if h.get("localName", "").lower() == schedule.holiday_name.lower():
+                        matching = h
+                        break
+                
+                if matching:
+                    # Parse the date
+                    new_date = datetime.strptime(matching["date"], "%Y-%m-%d")
+                    old_date = schedule.start_date
+                    
+                    # Update if date changed or year is different
+                    if old_date.year != current_year or old_date.month != new_date.month or old_date.day != new_date.day:
+                        schedule.start_date = new_date
+                        schedule.end_date = new_date.replace(hour=23, minute=59, second=59)
+                        updated_count += 1
+                        updated_schedules.append({
+                            "id": schedule.id,
+                            "name": schedule.name,
+                            "holiday": schedule.holiday_name,
+                            "old_date": old_date.strftime("%Y-%m-%d"),
+                            "new_date": new_date.strftime("%Y-%m-%d")
+                        })
+                else:
+                    errors.append({
+                        "schedule_id": schedule.id,
+                        "holiday": schedule.holiday_name,
+                        "error": f"Holiday not found for {schedule.holiday_country} in {current_year}"
+                    })
+                    
+            except Exception as e:
+                errors.append({
+                    "schedule_id": schedule.id,
+                    "holiday": schedule.holiday_name,
+                    "error": str(e)
+                })
+        
+        db.commit()
+        
+        return {
+            "success": True,
+            "total_holiday_schedules": len(holiday_schedules),
+            "updated_count": updated_count,
+            "updated_schedules": updated_schedules,
+            "errors": errors,
+            "year": current_year
+        }
+        
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"Failed to refresh holiday dates: {str(e)}")
+
+@app.get("/holiday-api/linked-schedules")
+def get_holiday_linked_schedules(db: Session = Depends(get_db)):
+    """Get all schedules that are linked to holidays (have holiday_name set)"""
+    try:
+        schedules = db.query(models.Schedule).filter(
+            models.Schedule.holiday_name.isnot(None)
+        ).all()
+        
+        return [{
+            "id": s.id,
+            "name": s.name,
+            "holiday_name": s.holiday_name,
+            "holiday_country": s.holiday_country,
+            "start_date": s.start_date.isoformat() if s.start_date else None,
+            "type": s.type,
+            "is_active": s.is_active
+        } for s in schedules]
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 # Community templates endpoints
 @app.get("/community-templates")
@@ -6147,6 +8400,15 @@ def backup_database(db: Session = Depends(get_db)):
                     "category_id": h.category_id
                 } for h in db.query(models.HolidayPreset).all()
             ],
+            "saved_sequences": [
+                {
+                    "name": seq.name,
+                    "description": seq.description,
+                    "blocks": seq.get_blocks(),
+                    "created_at": seq.created_at.isoformat() if seq.created_at else None,
+                    "updated_at": seq.updated_at.isoformat() if seq.updated_at else None
+                } for seq in db.query(models.SavedSequence).all()
+            ],
             "exported_at": datetime.datetime.utcnow().isoformat()
         }
 
@@ -6208,11 +8470,15 @@ def restore_database(backup_data: dict, db: Session = Depends(get_db)):
         print("RESTORE: Deleting holiday presets...")
         db.query(models.HolidayPreset).delete(synchronize_session=False)
         
-        # 6. Delete prerolls (has FK to categories via category_id)
+        # 6. Delete saved sequences (no FKs, but should be restored fresh)
+        print("RESTORE: Deleting saved sequences...")
+        db.query(models.SavedSequence).delete(synchronize_session=False)
+        
+        # 7. Delete prerolls (has FK to categories via category_id)
         print("RESTORE: Deleting prerolls...")
         db.query(models.Preroll).delete(synchronize_session=False)
         
-        # 7. Finally delete categories (all FKs cleared)
+        # 8. Finally delete categories (all FKs cleared)
         print("RESTORE: Deleting categories...")
         db.query(models.Category).delete(synchronize_session=False)
         
@@ -6353,8 +8619,40 @@ def restore_database(backup_data: dict, db: Session = Depends(get_db)):
                 db.rollback()
                 continue
 
+        # Restore saved sequences
+        print("RESTORE: Restoring saved sequences...")
+        for seq_data in backup_data.get("saved_sequences", []):
+            try:
+                # Safe datetime parsing
+                created_at = None
+                updated_at = None
+                if seq_data.get("created_at"):
+                    try:
+                        created_at = datetime.datetime.fromisoformat(str(seq_data["created_at"]).replace('Z', '+00:00'))
+                    except (ValueError, TypeError):
+                        created_at = None
+                if seq_data.get("updated_at"):
+                    try:
+                        updated_at = datetime.datetime.fromisoformat(str(seq_data["updated_at"]).replace('Z', '+00:00'))
+                    except (ValueError, TypeError):
+                        updated_at = None
+                
+                sequence = models.SavedSequence(
+                    name=seq_data.get("name"),
+                    description=seq_data.get("description"),
+                    blocks=json.dumps(seq_data.get("blocks", [])),
+                    created_at=created_at or datetime.datetime.utcnow(),
+                    updated_at=updated_at or datetime.datetime.utcnow()
+                )
+                db.add(sequence)
+                print(f"RESTORE: Added sequence '{seq_data.get('name')}'")
+            except Exception as seq_err:
+                print(f"Error adding saved sequence {seq_data.get('name')}: {seq_err}")
+                db.rollback()
+                continue
+
         db.commit()
-        return {"message": "Database restored successfully (v1.7.7-FIXED)", "version": "1.7.7"}
+        return {"message": "Database restored successfully (v1.9.0)", "version": "1.9.0"}
     except Exception as e:
         print(f"Critical restore error: {str(e)}")
         import traceback
@@ -7531,6 +9829,20 @@ def get_active_category(db: Session = Depends(get_db)):
             }
         }
     except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
+
+@app.get("/settings/active-fallback")
+def get_active_fallback(db: Session = Depends(get_db)):
+    """Get the fallback category from the most recently active schedule"""
+    try:
+        setting = db.query(models.Setting).first()
+        fallback_id = getattr(setting, "last_schedule_fallback", None) if setting else None
+        
+        _verbose_log(f"GET /settings/active-fallback: last_schedule_fallback={fallback_id}")
+        
+        return {"active_fallback_category_id": fallback_id}
+    except Exception as e:
+        _file_log(f"Error getting active fallback: {str(e)}", level="ERROR")
         raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
 
 @app.get("/settings/timezone")
@@ -9114,6 +11426,95 @@ def remove_category_from_jellyfin(category_id: int, db: Session = Depends(get_db
 
 # --- Community Prerolls Feature ---
 
+# Cache for community preroll health check (5 minute TTL)
+_community_health_cache = {"status": None, "checked_at": None, "error": None}
+COMMUNITY_HEALTH_CACHE_TTL = 300  # 5 minutes in seconds
+
+@app.get("/community-prerolls/health")
+def check_community_prerolls_health():
+    """
+    Check if prerolls.typicalnerds.uk is accessible.
+    Results are cached for 5 minutes to avoid excessive requests.
+    Returns: {
+        "online": bool,
+        "response_time_ms": int or None,
+        "last_checked": datetime,
+        "error": str or None
+    }
+    """
+    now = datetime.datetime.utcnow()
+    
+    # Check cache first
+    if (_community_health_cache["checked_at"] and 
+        (now - _community_health_cache["checked_at"]).total_seconds() < COMMUNITY_HEALTH_CACHE_TTL):
+        return {
+            "online": _community_health_cache["status"],
+            "response_time_ms": _community_health_cache.get("response_time_ms"),
+            "last_checked": _community_health_cache["checked_at"].isoformat() + "Z",
+            "error": _community_health_cache.get("error"),
+            "cached": True
+        }
+    
+    # Perform health check
+    try:
+        start_time = time.time()
+        response = requests.get(
+            "https://prerolls.typicalnerds.uk/",
+            timeout=10,
+            headers={"User-Agent": f"NeXroll/{app_version}"}
+        )
+        response_time_ms = int((time.time() - start_time) * 1000)
+        
+        is_online = response.status_code == 200
+        error_msg = None if is_online else f"HTTP {response.status_code}"
+        
+        # Update cache
+        _community_health_cache.update({
+            "status": is_online,
+            "checked_at": now,
+            "response_time_ms": response_time_ms,
+            "error": error_msg
+        })
+        
+        return {
+            "online": is_online,
+            "response_time_ms": response_time_ms,
+            "last_checked": now.isoformat() + "Z",
+            "error": error_msg,
+            "cached": False
+        }
+        
+    except requests.exceptions.Timeout:
+        error_msg = "Request timeout (>10s)"
+        _community_health_cache.update({
+            "status": False,
+            "checked_at": now,
+            "response_time_ms": None,
+            "error": error_msg
+        })
+        return {
+            "online": False,
+            "response_time_ms": None,
+            "last_checked": now.isoformat() + "Z",
+            "error": error_msg,
+            "cached": False
+        }
+    except Exception as e:
+        error_msg = f"Connection error: {str(e)}"
+        _community_health_cache.update({
+            "status": False,
+            "checked_at": now,
+            "response_time_ms": None,
+            "error": error_msg
+        })
+        return {
+            "online": False,
+            "response_time_ms": None,
+            "last_checked": now.isoformat() + "Z",
+            "error": error_msg,
+            "cached": False
+        }
+
 @app.get("/community-prerolls/fair-use-policy")
 def get_community_fair_use_policy():
     """
@@ -9377,7 +11778,7 @@ def _build_prerolls_index(progress_callback=None) -> dict:
                             keywords = list(set([k for k in keywords if len(k) > 2]))  # Deduplicate and filter short words
                             
                             preroll_entry = {
-                                "id": full_url.replace(base_url, '').replace('/', '_').replace('.', '_'),
+                                "id": full_url.replace(base_url, ''),  # Use URL path as ID (e.g., "/Holidays/Christmas/file.mp4")
                                 "title": title.replace('.mp4', '').replace('.mkv', '').replace('_', ' ').replace('-', ' ').title(),
                                 "creator": creator,
                                 "category": folder_category,
@@ -9446,7 +11847,7 @@ def _build_prerolls_index(progress_callback=None) -> dict:
                         keywords = list(set([k for k in keywords if len(k) > 2]))  # Deduplicate and filter short words
                         
                         preroll_entry = {
-                            "id": full_url.replace(base_url, '').replace('/', '_').replace('.', '_'),
+                            "id": full_url.replace(base_url, ''),  # Use URL path as ID (e.g., "/Holidays/Christmas/file.mp4")
                             "title": title.replace('.mp4', '').replace('.mkv', '').replace('_', ' ').replace('-', ' ').title(),
                             "creator": creator,
                             "category": folder_category,
@@ -10103,11 +12504,26 @@ def download_community_preroll(
     if not (request.preroll_id or request.url):
         raise HTTPException(status_code=422, detail="Either preroll_id or url is required")
     
+    _file_log(f"[DOWNLOAD] Received request - preroll_id: {request.preroll_id}, title: {request.title}, category_id: {request.category_id}")
+    
     # Determine download URL
     download_url = request.url
     if request.preroll_id and not request.url:
-        # Resolve from community library
-        download_url = f"https://prerolls.typicalnerds.uk/api/prerolls/{request.preroll_id}/download"
+        # Community library uses URL paths as IDs (e.g., "/Holidays/Christmas/file.mp4")
+        # Validate format - reject only obviously invalid patterns (starts with underscore from old mangled IDs)
+        preroll_id_str = str(request.preroll_id)
+        if preroll_id_str.startswith('_') or '\\' in preroll_id_str:
+            _file_log(f"[DOWNLOAD] Invalid community_id format (mangled ID): {request.preroll_id}")
+            raise HTTPException(
+                status_code=400, 
+                detail=f"Invalid community preroll ID format. This appears to be a mangled ID. Please refresh the community search."
+            )
+        
+        # Build download URL - community library serves files directly by path
+        # The preroll_id is already the URL path (e.g., "/Holidays/Christmas/file.mp4")
+        base_url = "https://prerolls.typicalnerds.uk"
+        download_url = f"{base_url}{preroll_id_str}"
+        _file_log(f"[DOWNLOAD] Resolved download URL: {download_url}")
     
     if not download_url:
         raise HTTPException(status_code=422, detail="No download URL available")
@@ -10197,13 +12613,23 @@ def download_community_preroll(
         }
         
         # Only add community_preroll_id if the model has the attribute (handles old schemas + pre-restart state)
-        if hasattr(models.Preroll, 'community_preroll_id') and request.preroll_id:
+        has_attr = hasattr(models.Preroll, 'community_preroll_id')
+        has_id = bool(request.preroll_id)
+        _file_log(f"[DOWNLOAD] community_preroll_id check - has_attr: {has_attr}, has_id: {has_id}, preroll_id: '{request.preroll_id}'")
+        
+        if has_attr and request.preroll_id:
             preroll_kwargs["community_preroll_id"] = str(request.preroll_id)
+            _file_log(f"[DOWNLOAD] Setting community_preroll_id to: {preroll_kwargs['community_preroll_id']}")
+        else:
+            _file_log(f"[DOWNLOAD] NOT setting community_preroll_id - will not be exportable!")
         
         preroll = models.Preroll(**preroll_kwargs)
         db.add(preroll)
         db.commit()
         db.refresh(preroll)
+        
+        # Verify it was saved
+        _file_log(f"[DOWNLOAD] Saved preroll ID {preroll.id} - community_preroll_id in DB: '{getattr(preroll, 'community_preroll_id', 'ATTRIBUTE_MISSING')}'")
         
         # Generate thumbnail
         thumbnail_path = None

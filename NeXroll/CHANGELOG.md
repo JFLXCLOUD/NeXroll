@@ -1,5 +1,328 @@
 # Changelog
 
+## [1.9.6] - 12-21-2025
+
+### Fixed
+- **Calendar Month View Conflict Detection** - Fixed false conflict indicators showing on days with exclusive schedules
+  - Days with a time-restricted exclusive schedule (e.g., Adult Swim 10pm-3am) plus other schedules no longer show conflict badges
+  - Orange conflict borders only appear when there's a true scheduling conflict (multiple non-exclusive schedules competing)
+  - Exclusive mode properly resolves priority - no conflict exists when exclusive handles the time window
+
+- **Blend Mode Display for Single Schedules** - Fixed single schedules incorrectly showing as "blended"
+  - Single schedules with `blend_enabled` no longer display the shuffle/blend icon
+  - Blend indicator now only appears when 2+ schedules are actually blending together
+  - Improves calendar clarity by showing blend mode only when meaningful
+
+### Technical
+- Refactored conflict detection in `App.js` to only set `hasConflict` when multiple exclusive schedules compete
+- Removed erroneous `hasBlend = true` for single-schedule scenarios
+- Blend mode requires `contentSchedules.length > 1` before displaying blend indicators
+
+---
+
+## [1.9.5] - 12-21-2025
+
+### Fixed
+- **Critical Timezone Bug in Time Range Schedules** - Fixed bug where time range schedules (e.g., 10pm-3am) were incorrectly applying at the wrong times due to timezone mismatch
+  - **Root Cause**: Time ranges stored in local time were being compared against UTC time
+  - Example: 8:05pm local = 1:05am UTC, which fell inside the 10pm-3am overnight range when compared in UTC
+  - Now properly converts UTC to user's configured timezone before comparing with time ranges
+  - Impact: Time range schedules now correctly activate/deactivate at the specified local times
+
+- **Calendar Week View Time-Restricted Exclusive Display** - Fixed misleading calendar display when time-restricted exclusive schedules overlap with blending schedules
+  - **Issue**: When an exclusive schedule with a time range (e.g., Adult Swim 10pm-3am) overlapped with blended schedules (e.g., Christmas + New Year all day), the calendar showed the blended schedules as crossed out "losers" all day
+  - **Fix**: Calendar now correctly shows:
+    - Time-restricted exclusive schedules with their time range displayed (e.g., "Adult Swim (22:00-03:00)")
+    - Non-exclusive blending schedules as ACTIVE (with blend icon) since they run outside the exclusive's time window
+    - Day headers show both blend and exclusive icons when both modes apply at different times
+    - Proper tooltips explaining when each schedule is active
+  - Impact: Visual calendar now accurately reflects that blended schedules ARE active during most of the day
+
+- **Calendar Month View Time-Restricted Exclusive Display** - Applied same fix to monthly calendar view
+  - Day cells now show appropriate borders: purple for blend mode, red for exclusive, orange only for true conflicts
+  - Time-restricted exclusive with blend mode shows purple border (blend is primary mode most of day)
+  - Added exclusive mode badge indicator (lock icon) with clock icon for time-restricted exclusive
+  - Conflict badge only shows when there's a true conflict (no blend mode, no exclusive)
+  - Hover effects properly restore correct shadow color based on day status
+
+### Technical
+- Added `pytz` import to `scheduler.py`
+- Updated `_is_schedule_active()` to convert UTC now to user's local timezone before time range comparison
+- Updated `_matches_pattern()` with same timezone conversion fix
+- Updated `_apply_schedule_win_lose_logic()` in `main.py` with same fix
+- Day-of-week checks also now use local time
+- Calendar week view now tracks `nonExclusiveWinner` for schedules that win outside exclusive time windows
+- Added `exclusiveHasTimeRange` tracking to properly style time-restricted exclusive schedules
+- Updated span rendering with differentiated borders: dashed red for time-restricted exclusive, solid red for full-day exclusive, purple for blend mode
+- Monthly view calendar now includes `exclusiveHasTimeRange`, `nonExclusiveWinnerScheds`, and `nonExclusiveWinner` tracking
+- Priority sorting now considers higher priority values first, then fallback to end date/start date/ID
+
+---
+
+## [1.9.4] - 12-20-2025
+
+### Fixed
+- **Daily Schedule Time Range Bug** - Fixed critical bug where daily schedules with time ranges (e.g., 10pm-3am) remained active outside their time window
+  - Schedules with `timeRange` in recurrence pattern now properly check current time
+  - Overnight ranges (e.g., 22:00-03:00) are handled correctly
+  - Schedules now correctly become inactive when outside their time window
+  - Impact: Exclusive nightly schedules (like Adult Swim 10pm-3am) now properly switch back to other active schedules when their time window ends
+
+### Technical
+- Enhanced `_is_schedule_active()` method to check `recurrence_pattern.timeRange` in addition to date range
+- Implemented proper overnight time range detection (start > end means overnight wraparound)
+- Updated `_matches_pattern()` to actually check time ranges (was always returning True)
+- Verbose logging added for schedule time window checks
+
+---
+
+## [1.9.3] - 12-20-2025
+
+### Added
+- **Schedule Priority System** (1-10)
+  - New priority slider in schedule creation/editing form
+  - Higher priority schedules win when multiple schedules overlap
+  - Priority badge (P6, P7, etc.) shown in schedule list views when not default (5)
+  - Color-coded badges: red (8-10), orange (5-7), gray (1-4)
+  - Tie-breaking: highest priority → earliest end date → earliest start → lowest ID
+  - Impact: Fine-grained control over which schedule takes precedence during overlaps
+
+- **Exclusive Schedule Mode** 🔒
+  - New "Exclusive" checkbox in schedule creation/editing form
+  - When active, the schedule wins exclusively (no blending with other schedules)
+  - Overrides blend mode - exclusive schedules never blend, even if other schedules have blend enabled
+  - Multiple exclusive schedules: highest priority exclusive wins
+  - Red "Exclusive" badge shown in schedule list views
+  - Perfect for time-specific prerolls (e.g., nightly schedule 10pm-3am) that should override holiday schedules
+  - Impact: Guaranteed schedule control for time-sensitive preroll needs
+
+### Fixed
+- **Blend Mode Delimiter** - Changed from comma (sequential/all) to semicolon (random pick one) so Plex plays 1 random preroll from the blended pool instead of all prerolls
+
+### Technical
+- Added `priority` (INTEGER DEFAULT 5) and `exclusive` (BOOLEAN DEFAULT 0) fields to Schedule model
+- Database migration automatically adds columns to existing databases
+- Scheduler logic updated: exclusive schedules checked first, then blend mode, then normal priority-based winner selection
+- API endpoints (create/update schedule) now accept priority and exclusive parameters
+- Frontend form includes priority slider and exclusive checkbox with helpful descriptions
+- Visual badges for priority and exclusive in both compact and detailed schedule list views
+
+---
+
+## [1.9.2] - 12-19-2025
+
+### Added
+- **Schedule Blend Mode** 🔀
+  - New "Blend Mode" toggle in schedule creation/editing form
+  - When enabled, overlapping schedules with blend mode will mix their prerolls together
+  - Perfect for combining holiday themes (e.g., Hanukkah + Christmas prerolls playing together)
+  - Prerolls are interleaved from each schedule in round-robin fashion
+  - Uses playlist mode (sequential) to maintain the blended order
+  - For sequences: respects the count setting for random blocks
+  - For categories: takes up to 3 random prerolls from each to keep playlist manageable
+  - Blend mode only activates when 2+ overlapping schedules have it enabled
+  - Single blend-enabled schedule falls back to normal winner-takes-all behavior
+  - Impact: Create rich, multi-theme preroll experiences during overlapping holiday periods
+
+### Technical
+- Added `blend_enabled` boolean field to Schedule model
+- Database migration automatically adds column to existing databases
+- New `_apply_blended_schedules_to_plex()` method in scheduler for blend logic
+- API endpoints (create/update schedule) now accept blend_enabled parameter
+- Frontend form includes blend mode checkbox with helpful description
+
+---
+
+## [1.9.0] - 12-16-2025
+
+### Added
+- **Calendar Week View Conflict Detection**
+  - Full conflict detection for the Week view showing when multiple schedules overlap
+  - Winner/loser logic using backend priority rules: ends soonest → started earliest → lowest ID
+  - Visual indicators: Crown icon (👑) for winning schedule, strikethrough for overridden schedules
+  - Day headers highlight conflict days with orange warning indicators
+  - "Schedule Conflicts Detected" banner when any day has conflicts
+  - Legend explaining conflict resolution rules
+  - Tooltips show "ACTIVE (wins conflict)" or "OVERRIDDEN" status on hover
+  - Impact: Users can now clearly see which schedule takes priority when conflicts occur
+
+- **Smart Fallback Category Selection**
+  - Fallback categories now pick the closest schedule based on date proximity
+  - Calendar days without active schedules show the fallback from the nearest schedule
+  - Properly handles year-wrapping schedules (e.g., Christmas Dec 1 - Jan 15)
+  - Fixed issue where Christmas fallback would show in February instead of Valentine's fallback
+  - Both month view and yearly overview use the same smart proximity-based logic
+  - Impact: Fallback categories are now contextually appropriate for each time period
+
+- **Sequence Cards Playback & Preroll Count**
+  - Added Play button to Saved Sequences cards for quick preview
+  - Preroll count badge shows total number of prerolls in each sequence
+  - SequencePreviewModal integration for full playback preview
+  - Improved card layout with better spacing and visual hierarchy
+  - Updated tips box: ".nexbundle" changed to ".zip bundle" for clarity
+
+- **Modern SequenceTimeline Component**
+  - Complete visual overhaul with lucide-react icons
+  - Gradient background colors for different block types
+  - Header stats badges showing blocks, prerolls, and total duration
+  - Film icon for fixed blocks, Shuffle for random, ListOrdered for sequential
+  - Play icon for preroll blocks, Layers for queue/sequence
+  - Clock icon for separators, improved number badges
+  - Better visual distinction between block types
+
+- **Community Prerolls Icon Modernization**
+  - Replaced all emoji icons with lucide-react components
+  - FileText icon for Fair Use Policy button
+  - AlertTriangle/Sparkles/Lightbulb for status indicators
+  - Library icon for indexed count, Link icon for matched count
+  - Search icon in search bar and buttons
+  - Film icon for preroll cards and empty states
+  - User/FolderOpen/Clock icons for metadata display
+  - Play/Eye icons for preview buttons
+  - CheckCircle/Plus icons for category toggle
+  - Loader2 spinner for loading states
+  - Impact: Consistent, professional appearance across all platforms
+
+- **Holiday Browser Feature**
+  - Browse holidays from 100+ countries powered by Nager.Date API
+  - Search holidays by name across all available countries
+  - Filter by country with dropdown selector (200+ countries available)
+  - View holidays by year with past/future year navigation
+  - Holiday cards display: name, local name, date, holiday types
+  - One-click "Use This Holiday" button to populate schedule creation form
+  - Impact: Simplifies holiday schedule creation with accurate international holiday data
+
+### Changed
+- **UI/UX Enhancements**
+  - All icons now use lucide-react for consistent rendering across platforms
+  - Improved spacing and layout in sequence cards
+  - Better visual hierarchy in calendar conflict displays
+  - Modernized Community Prerolls interface with proper icon alignment
+
+### Fixed
+- **Calendar Fallback Display Bug**
+  - Fixed yearly overview showing ALL fallback categories on empty days
+  - Now correctly shows only ONE fallback from the nearest relevant schedule
+  - February days now show Valentine's fallback instead of Christmas fallback
+
+- **Week View Missing Conflict Indicators**
+  - Week view now properly detects and displays schedule conflicts
+  - Added winner/loser visual states matching month view behavior
+
+### Technical
+- **Dependencies**
+  - Added Eye, X, User, RefreshCcw to lucide-react imports
+  - Tree-shakeable imports ensure minimal bundle impact
+
+---
+
+## [1.8.9] - 12-11-2025
+
+### Added
+- **Holiday Browser Feature**
+  - Browse holidays from 100+ countries powered by Nager.Date API
+  - Search holidays by name across all available countries
+  - Filter by country with dropdown selector (200+ countries available)
+  - View holidays by year with past/future year navigation
+  - Holiday cards display: name, local name, date, holiday types (Public/Bank/School/Observance)
+  - Fixed/Variable date indicators for recurring holidays
+  - Color-coded badges for holiday types (green for Public holidays)
+  - One-click "Use This Holiday" button to populate schedule creation form
+  - Integrated help section explaining all features and workflow
+  - Past holidays automatically disabled to prevent scheduling expired dates
+  - **Workflow**: Click holiday → Form pre-fills with name, yearly type, dates → Select category → Adjust dates if needed → Create schedule
+  - Impact: Simplifies holiday schedule creation with accurate international holiday data
+
+- **Professional Icon System**
+  - Replaced all emojis with Lucide Icons for consistent, professional appearance
+  - 27 unique icon components integrated across the entire application
+  - Icons include: Calendar, CalendarDays, CalendarPlus, Clock, Play, Edit, Save, Trash, Upload, Download, Search, and more
+  - Scalable SVG icons ensure perfect rendering at any size and resolution
+  - Icons automatically adapt to light/dark mode themes
+  - Impact: Eliminates emoji rendering inconsistencies across different operating systems and browsers
+
+- **Enhanced Verbose Logging System**
+  - Structured log levels: DEBUG, INFO, WARNING, ERROR
+  - Cached verbose setting with 5-second TTL to reduce database queries
+  - Startup banner showing version, platform, paths, and environment details
+  - Scheduler-specific logging functions with configurable verbosity
+  - Consistent timestamp format: `[YYYY-MM-DD HH:MM:SS] [LEVEL] message`
+  - Impact: Better debugging capabilities and cleaner log organization
+
+### Changed
+- **UI/UX Enhancements**
+  - Floating help button now uses CircleHelp icon instead of emoji
+  - All navigation tabs feature professional icons (Folder, Calendar, Film, Package)
+  - Schedule type indicators use Calendar/CalendarDays icons
+  - Action buttons (Edit, Delete, Save, Create) display icon + text for clarity
+  - Help modal sections use contextual icons (Target, Edit, CheckCircle)
+  - Community preroll buttons use Clock/RefreshCw icons for loading states
+  - Settings buttons use appropriate icons (Search, Download, BookOpen)
+
+### Improved
+- **Visual Consistency**
+  - Uniform icon sizing: 14-20px for buttons, 28px for floating help button
+  - Flex layouts ensure proper icon-text alignment throughout the app
+  - Star icon for primary category markers
+  - CheckCircle badges for "Matched to Community" status
+  - Play icons for video preview buttons
+  - Package bundle size increased by only ~4KB for comprehensive icon system
+
+### Fixed
+- **Holiday Schedule Creation Bugs**
+  - Fixed `TypeError: 'description' is an invalid keyword argument for Schedule` when creating holiday schedules
+  - Fixed `TypeError: SQLite DateTime type only accepts Python datetime objects` by converting date strings to proper datetime objects
+  - Fixed `AttributeError: 'Schedule' object has no attribute 'description'` in API response
+  - Fixed error logging function name (`_error_log` → `_file_log`) that was masking actual errors
+  - Impact: Holiday schedule creation now works correctly end-to-end
+
+- **Critical: Yearly/Holiday Schedule Date Shifting Bug**
+  - Fixed issue where yearly and holiday schedules were incorrectly converted to UTC timezone
+  - Problem: Schedules created for Jan 1-3 would appear as Dec 31-Jan 2 due to timezone conversion (UTC-5)
+  - Solution: Yearly and holiday schedules now stored as naive datetime (no timezone) since they are date-based, not time-based
+  - Affected endpoints: POST `/schedules` (create), PUT `/schedules/{id}` (update), GET `/schedules` (retrieve)
+  - GET endpoint now checks schedule type before applying timezone conversion
+  - Time-based schedules (daily, weekly, monthly) still correctly convert to UTC
+  - Impact: Calendar views now display yearly/holiday schedules on the correct dates without timezone shifting
+
+- **Schedule Fallback Persistence Bug**
+  - Fixed issue where a schedule's fallback category would persist indefinitely after the schedule ended
+  - Problem: Christmas schedule fallback continued applying even after New Year's schedule became active
+  - Solution: Fallback categories are now tied to the active schedule and cleared when a new schedule takes over
+  - New behavior: When a schedule is active, its fallback is "armed" for when it ends. When a new schedule starts, that schedule's fallback (or none) replaces the previous one
+  - Added `last_schedule_fallback` column to settings table to track fallback from most recently active schedule
+  - Impact: Fallbacks now correctly transition between schedules instead of persisting indefinitely
+
+- **Scheduler Logging and Start Issues**
+  - Fixed scheduler failing to start due to circular import issues in logging functions
+  - Problem: Scheduler thread would crash immediately on start, showing as "stopped" in UI
+  - Solution: Replaced runtime imports with direct file writes for scheduler logging
+  - Scheduler logging now writes directly to app.log without depending on main.py imports
+  - Impact: Scheduler now starts reliably and logs all activity correctly
+
+### Technical
+- **Dependencies**
+  - Added lucide-react ^0.560.0 for icon components
+  - Tree-shakeable imports ensure minimal bundle impact
+  - All icons are MIT licensed and production-ready
+
+- **Holiday API Integration**
+  - Backend endpoint: GET `/holiday-api/countries` - Returns list of 100+ countries
+  - Backend endpoint: GET `/holiday-api/holidays/{country_code}/{year}` - Returns holidays for specific country/year
+  - Backend endpoint: GET `/holiday-api/status` - Checks Nager.Date API availability
+  - LRU cache (128 entries, 1-hour TTL) for API responses to minimize external requests
+  - Nager.Date API: Free, no authentication required, JSON responses
+  - Frontend: 8 state variables for modal, countries, holidays, search, loading, API status
+  - Modal size: 1200px width for optimal holiday card layout (3 columns at 275px each)
+  
+- **Logging Functions**
+  - `_file_log(message)` - Direct file logging to app.log
+  - `_verbose_log(message)` - Logs with [DEBUG] prefix when verbose enabled
+  - `_scheduler_log(msg, level)` - Scheduler-specific logging with level support
+  - `_scheduler_verbose(msg)` - Scheduler debug logging only when verbose enabled
+  - Verbose setting cached for 5 seconds to reduce database overhead
+  - Startup banner logs: version, Python version, platform, frozen state, paths, environment
+
 ## [1.8.9] - 11-28-2025
 
 ### Added

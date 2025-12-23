@@ -75,6 +75,12 @@ class Schedule(Base):
     preroll_ids = Column(Text, nullable=True)  # JSON array of preroll IDs for playlists
     sequence = Column(Text, nullable=True)  # JSON describing stacked prerolls (e.g., random blocks + fixed)
     color = Column(String, nullable=True)  # Custom color for calendar display (hex format)
+    blend_enabled = Column(Boolean, default=False)  # Allow blending with other overlapping schedules
+    priority = Column(Integer, default=5)  # Priority level 1-10 (higher wins during overlap)
+    exclusive = Column(Boolean, default=False)  # When active, this schedule wins exclusively (no blending)
+    # Holiday tracking fields for auto-updating variable date holidays
+    holiday_name = Column(String, nullable=True)  # e.g., "Thanksgiving", "Easter"
+    holiday_country = Column(String, nullable=True)  # e.g., "US", "CA"
 
     category = relationship("Category", foreign_keys=[category_id])
     fallback_category = relationship("Category", foreign_keys=[fallback_category_id])
@@ -157,6 +163,7 @@ class Setting(Base):
     updated_at = Column(DateTime, default=datetime.datetime.utcnow)
     override_expires_at = Column(DateTime, nullable=True)
     path_mappings = Column(Text, nullable=True)  # JSON list of {"local": "...", "plex": "..."} path prefix mappings
+    last_schedule_fallback = Column(Integer, nullable=True)  # Fallback category from most recently active schedule (used when no schedules are active)
     # Genre-based preroll settings
     genre_auto_apply = Column(Boolean, default=False)  # Enable/disable automatic genre-based preroll application
     genre_priority_mode = Column(String, default="schedules_override")  # "schedules_override" or "genres_override" - which takes priority when both are active

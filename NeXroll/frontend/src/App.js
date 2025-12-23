@@ -6,9 +6,18 @@ import ReactMarkdown from 'react-markdown';
 import RetroProgressBar from './components/RetroProgressBar';
 import TestSequenceBuilder from './TestSequenceBuilder';
 import SequenceBuilder from './components/SequenceBuilder';
+import PatternImport from './components/PatternImport';
+import PatternExport from './components/PatternExport';
+import SequencePreviewModal from './components/SequencePreviewModal';
 import { validateSequence, stringifySequence, parseSequence, cloneSequenceWithIds } from './utils/sequenceValidator';
-
-// API helpers that resolve the backend base dynamically (works in Docker and behind proxies)
+import { 
+    Calendar, CalendarDays, Clock, Play, Edit, Save, Trash, Upload, 
+    Search, Folder, Film, BookOpen, Star, Plus, Settings, Target, CheckCircle, Link,
+    Sun, Moon, RefreshCw, Download, AlertTriangle, Ban, Crown, Shuffle, Lock,
+    ListOrdered, Palette, Lightbulb, Inbox, FolderOpen, Wrench, FileText, 
+    Bug, Zap, Loader2, Package, FlaskConical, TreePine, Check, XCircle, Video, ChevronRight,
+    Library, Clapperboard, Sparkles, PartyPopper, Users2, Theater, Eye, X, User, RefreshCcw, Menu
+  } from 'lucide-react';// API helpers that resolve the backend base dynamically (works in Docker and behind proxies)
 const apiBase = () => {
   try {
     if (typeof window !== 'undefined') {
@@ -302,7 +311,7 @@ const CategoryPicker = ({ categories, primaryId, secondaryIds, onChange, onCreat
       >
         {primaryItem ? (
           <span className="nx-chip primary" title="Primary category">
-            ⭐ {primaryItem.name}
+            <Star size={14} style={{ marginRight: '4px' }} /> {primaryItem.name}
             <button
               type="button"
               className="nx-chip-x"
@@ -327,7 +336,7 @@ const CategoryPicker = ({ categories, primaryId, secondaryIds, onChange, onCreat
               aria-label={`Make ${i.name} primary`}
               title="Make primary"
             >
-              ⭐
+              <Star size={14} />
             </button>
             <button
               type="button"
@@ -381,7 +390,7 @@ const CategoryPicker = ({ categories, primaryId, secondaryIds, onChange, onCreat
                 disabled={creating}
                 title={creating ? 'Creating…' : `Create category "${normalizedQuery}"`}
               >
-                ➕ Create "{normalizedQuery}"{creating ? '…' : ''}
+                <Plus size={14} style={{ marginRight: '6px' }} /> Create "{normalizedQuery}"{creating ? '…' : ''}
               </button>
             </div>
           )}
@@ -408,7 +417,7 @@ const CategoryPicker = ({ categories, primaryId, secondaryIds, onChange, onCreat
                     title={isPrimary ? 'Primary' : 'Make primary'}
                     aria-label={isPrimary ? `${i.name} is primary` : `Make ${i.name} primary`}
                   >
-                    ⭐
+                    <Star size={14} />
                   </button>
                 </div>
               );
@@ -429,6 +438,7 @@ function App() {
   const [files, setFiles] = useState([]);
   const [uploadProgress, setUploadProgress] = useState({});
   const [activeTab, setActiveTab] = useState('dashboard');
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false); // Mobile navigation menu
   const [openDropdown, setOpenDropdown] = useState(null); // For dropdown navigation
   const [plexConfig, setPlexConfig] = useState({
     url: '',
@@ -643,6 +653,22 @@ const [calendarWeekStart, setCalendarWeekStart] = useState(() => {
   return new Date(d.getFullYear(), d.getMonth(), diff);
 });
 
+// Calendar filter state
+const [calendarFilterSchedules, setCalendarFilterSchedules] = useState([]); // Empty = show all, otherwise filter by schedule IDs
+const [calendarFilterType, setCalendarFilterType] = useState('all'); // 'all', 'daily', 'weekly', 'monthly', 'yearly', 'holiday'
+const [calendarShowConflictsOnly, setCalendarShowConflictsOnly] = useState(false); // Show only days with conflicts
+const [calendarShowInactive, setCalendarShowInactive] = useState(false); // Show inactive schedules too
+
+// Holiday Browser state
+const [showHolidayBrowser, setShowHolidayBrowser] = useState(false);
+const [holidayCountries, setHolidayCountries] = useState([]);
+const [holidaySelectedCountry, setHolidaySelectedCountry] = useState('US');
+const [holidaySelectedYear, setHolidaySelectedYear] = useState(() => new Date().getFullYear());
+const [holidays, setHolidays] = useState([]);
+const [holidaysLoading, setHolidaysLoading] = useState(false);
+const [holidayApiStatus, setHolidayApiStatus] = useState(null);
+const [holidaySearchQuery, setHolidaySearchQuery] = useState('');
+
 // Date/time helpers: treat backend datetimes as UTC and format for local display/inputs
 const ensureUtcIso = (s) => {
   if (!s || typeof s !== 'string') return s;
@@ -687,7 +713,41 @@ const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
   if (!schedule.start_date) return false;
   const dayDate = new Date(dayTime);
   
-  // Check if the day is within the schedule's overall date range
+  // For yearly/holiday schedules, skip the year-based date range check
+  // These schedules repeat every year based on month/day only
+  if (schedule.type === 'yearly' || schedule.type === 'holiday') {
+    const startDateStr = schedule.start_date.includes('T') ? schedule.start_date.split('T')[0] : schedule.start_date;
+    const endDateStr = schedule.end_date ? (schedule.end_date.includes('T') ? schedule.end_date.split('T')[0] : schedule.end_date) : startDateStr;
+    const [, startMonth, startDay] = startDateStr.split('-').map(Number);
+    const [, endMonth, endDay] = endDateStr.split('-').map(Number);
+    const schedStartMonth = startMonth - 1;
+    const schedStartDay = startDay;
+    const schedEndMonth = endMonth - 1;
+    const schedEndDay = endDay;
+    const dayMonth = dayDate.getMonth();
+    const dayDay = dayDate.getDate();
+    
+    // Handle same-month range (e.g., Dec 1-31)
+    if (schedStartMonth === schedEndMonth) {
+      return dayMonth === schedStartMonth && dayDay >= schedStartDay && dayDay <= schedEndDay;
+    }
+    
+    // Handle year-wrapping range (e.g., Dec 15 - Jan 15)
+    if (schedStartMonth > schedEndMonth) {
+      // Schedule wraps around year end
+      return (dayMonth === schedStartMonth && dayDay >= schedStartDay) ||
+             (dayMonth === schedEndMonth && dayDay <= schedEndDay) ||
+             (dayMonth > schedStartMonth) ||  // After start month in same year
+             (dayMonth < schedEndMonth);       // Before end month in next year
+    }
+    
+    // Handle multi-month range within same year (e.g., Oct 15 - Dec 31)
+    return (dayMonth === schedStartMonth && dayDay >= schedStartDay) ||
+           (dayMonth === schedEndMonth && dayDay <= schedEndDay) ||
+           (dayMonth > schedStartMonth && dayMonth < schedEndMonth);
+  }
+  
+  // For non-yearly schedules, check if the day is within the schedule's overall date range
   const sDay = normalizeDay(schedule.start_date);
   const eDay = schedule.end_date ? normalizeDay(schedule.end_date) : Infinity;
   if (dayTime < sDay || dayTime > eDay) return false;
@@ -718,31 +778,8 @@ const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
     }
   }
   
-  // Yearly/Holiday schedules - check month/day match
-  if (schedule.type === 'yearly' || schedule.type === 'holiday') {
-    const startDateStr = schedule.start_date.includes('T') ? schedule.start_date.split('T')[0] : schedule.start_date;
-    const endDateStr = schedule.end_date ? (schedule.end_date.includes('T') ? schedule.end_date.split('T')[0] : schedule.end_date) : startDateStr;
-    const [startYear, startMonth, startDay] = startDateStr.split('-').map(Number);
-    const [endYear, endMonth, endDay] = endDateStr.split('-').map(Number);
-    const schedStartMonth = startMonth - 1;
-    const schedStartDay = startDay;
-    const schedEndMonth = endMonth - 1;
-    const schedEndDay = endDay;
-    const dayMonth = dayDate.getMonth();
-    const dayDay = dayDate.getDate();
-    
-    if (schedStartMonth === schedEndMonth) {
-      return dayMonth === schedStartMonth && dayDay >= schedStartDay && dayDay <= schedEndDay;
-    } else {
-      return (dayMonth === schedStartMonth && dayDay >= schedStartDay) ||
-             (dayMonth === schedEndMonth && dayDay <= schedEndDay) ||
-             (schedStartMonth < schedEndMonth && dayMonth > schedStartMonth && dayMonth < schedEndMonth) ||
-             (schedStartMonth > schedEndMonth && (dayMonth > schedStartMonth || dayMonth < schedEndMonth));
-    }
-  }
-  
   // Default: schedule is active if day is within start/end date range
-  return dayTime >= sDay && dayTime <= eDay;
+  return true;
 };
 
   // Schedule form state
@@ -755,7 +792,10 @@ const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
     shuffle: false,
     playlist: false,
     fallback_category_id: '',
-    color: ''
+    color: '',
+    blend_enabled: false,
+    priority: 5,
+    exclusive: false
   });
 
   // Sequence Builder state
@@ -763,6 +803,11 @@ const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
   const [sequenceBlocks, setSequenceBlocks] = useState([]);
   const [savedSequences, setSavedSequences] = useState([]);
   const [sequencesLoading, setSequencesLoading] = useState(false);
+  const [showSequenceImportModal, setShowSequenceImportModal] = useState(false);
+  const [showSequenceExportModal, setShowSequenceExportModal] = useState(false);
+  const [exportingSequence, setExportingSequence] = useState(null); // Sequence being exported
+  const [showSequencePreviewModal, setShowSequencePreviewModal] = useState(false);
+  const [previewingSequence, setPreviewingSequence] = useState(null); // Sequence being previewed
   const [editingSequenceId, setEditingSequenceId] = useState(null); // Track which sequence is being edited
   const [editingSequenceName, setEditingSequenceName] = useState(''); // Track sequence name when editing
   const [editingSequenceDescription, setEditingSequenceDescription] = useState(''); // Track description when editing
@@ -1120,6 +1165,82 @@ const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
       alert('Failed to update timezone: ' + (e?.message || e));
     } finally {
       setTimezoneSaving(false);
+    }
+  };
+
+  // === Holiday Browser API Functions ===
+  const loadHolidayCountries = async () => {
+    try {
+      const res = await fetch(apiUrl('/holiday-api/countries'));
+      const data = await safeJson(res);
+      if (res.ok && data?.countries && Array.isArray(data.countries)) {
+        setHolidayCountries(data.countries);
+      } else if (res.ok && Array.isArray(data)) {
+        setHolidayCountries(data);
+      }
+    } catch (e) {
+      console.error('Load holiday countries error:', e);
+    }
+  };
+
+  const loadHolidays = async (countryCode, year) => {
+    setHolidaysLoading(true);
+    try {
+      const res = await fetch(apiUrl(`/holiday-api/holidays/${countryCode}/${year}`));
+      const data = await safeJson(res);
+      if (res.ok && data?.holidays && Array.isArray(data.holidays)) {
+        setHolidays(data.holidays);
+      } else if (res.ok && Array.isArray(data)) {
+        setHolidays(data);
+      } else {
+        setHolidays([]);
+      }
+    } catch (e) {
+      console.error('Load holidays error:', e);
+      setHolidays([]);
+    } finally {
+      setHolidaysLoading(false);
+    }
+  };
+
+  const checkHolidayApiStatus = async () => {
+    try {
+      const res = await fetch(apiUrl('/holiday-api/status'));
+      const data = await safeJson(res);
+      setHolidayApiStatus(data);
+    } catch (e) {
+      setHolidayApiStatus({ status: 'offline', error: e.message });
+    }
+  };
+
+  const createScheduleFromHoliday = async (holiday, categoryId) => {
+    try {
+      const res = await fetch(apiUrl('/holiday-api/create-schedule'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          holiday_name: holiday.name,
+          holiday_date: holiday.date,
+          country_code: holidaySelectedCountry,
+          category_id: categoryId,
+          multi_year: true,
+          years_ahead: 5
+        })
+      });
+      const data = await safeJson(res);
+      if (res.ok) {
+        alert(`✅ Schedule "${holiday.name}" created successfully!`);
+        // Refresh schedules
+        const schedRes = await fetch(apiUrl('/schedules'));
+        const schedData = await safeJson(schedRes);
+        if (schedRes.ok) setSchedules(schedData);
+        setShowHolidayBrowser(false);
+      } else {
+        alert(`❌ Failed to create schedule: ${data?.detail || 'Unknown error'}`);
+      }
+    } catch (e) {
+      console.error('Create holiday schedule error:', e);
+      alert(`❌ Error: ${e.message}`);
     }
   };
 
@@ -1761,7 +1882,10 @@ const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
       type: scheduleForm.type,
       start_date: scheduleForm.start_date,
       shuffle: scheduleForm.shuffle,
-      playlist: scheduleForm.playlist
+      playlist: scheduleForm.playlist,
+      blend_enabled: scheduleForm.blend_enabled,
+      priority: scheduleForm.priority,
+      exclusive: scheduleForm.exclusive
     };
 
     // Only add end_date if it has a value
@@ -1822,7 +1946,8 @@ const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
         alert('Schedule created successfully!');
         setScheduleForm({
           name: '', type: 'monthly', start_date: '', end_date: '',
-          category_id: '', shuffle: false, playlist: false, fallback_category_id: '', color: ''
+          category_id: '', shuffle: false, playlist: false, fallback_category_id: '', color: '',
+          holiday_name: '', holiday_country: '', blend_enabled: false, priority: 5, exclusive: false
         });
         setScheduleMode('simple');
         setSequenceBlocks([]);
@@ -1865,6 +1990,31 @@ const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
         console.error('Holiday preset initialization error:', error);
         alert('Failed to initialize holiday presets: ' + error.message);
       });
+  };
+
+  // Refresh variable-date holiday schedules (Thanksgiving, Easter, etc.)
+  const handleRefreshHolidayDates = async () => {
+    try {
+      const res = await fetch(apiUrl('holiday-api/refresh-dates'), { method: 'POST' });
+      const data = await safeJson(res);
+      
+      if (res.ok) {
+        if (data.updated_count > 0) {
+          const updates = data.updated_schedules.map(s => 
+            `• ${s.name}: ${s.old_date} → ${s.new_date}`
+          ).join('\n');
+          alert(`✅ Holiday dates refreshed for ${data.year}!\n\n${data.updated_count} schedule(s) updated:\n${updates}`);
+        } else {
+          alert(`✅ All holiday schedules are up to date for ${data.year}.\n\n${data.total_holiday_schedules} holiday-linked schedule(s) checked.`);
+        }
+        fetchData();
+      } else {
+        alert(`❌ Failed to refresh: ${data?.detail || 'Unknown error'}`);
+      }
+    } catch (e) {
+      console.error('Refresh holiday dates error:', e);
+      alert(`❌ Error: ${e.message}`);
+    }
   };
 
   const handleCategorySortChange = (field) => {
@@ -2403,7 +2553,10 @@ const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
       shuffle: schedule.shuffle,
       playlist: schedule.playlist,
       fallback_category_id: schedule.fallback_category_id || '',
-      color: schedule.color || ''
+      color: schedule.color || '',
+      blend_enabled: schedule.blend_enabled || false,
+      priority: schedule.priority ?? 5,
+      exclusive: schedule.exclusive || false
     });
 
     // Parse recurrence pattern
@@ -2513,7 +2666,10 @@ const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
       type: scheduleForm.type,
       start_date: scheduleForm.start_date,
       shuffle: scheduleForm.shuffle,
-      playlist: scheduleForm.playlist
+      playlist: scheduleForm.playlist,
+      blend_enabled: scheduleForm.blend_enabled,
+      priority: scheduleForm.priority,
+      exclusive: scheduleForm.exclusive
     };
 
     // Only add end_date if it has a value
@@ -2600,7 +2756,8 @@ const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
         setEditingSchedule(null);
         setScheduleForm({
           name: '', type: 'monthly', start_date: '', end_date: '',
-          category_id: '', shuffle: false, playlist: false, fallback_category_id: '', color: ''
+          category_id: '', shuffle: false, playlist: false, fallback_category_id: '', color: '',
+          blend_enabled: false, priority: 5, exclusive: false
         });
         setScheduleMode('simple');
         setSequenceBlocks([]);
@@ -3515,13 +3672,17 @@ const DashboardTiles = {
           <div style={{ display: 'grid', gap: '0.5rem' }}>
             {indexedCount > 0 && (
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                <span style={{ fontSize: '0.9rem', color: 'var(--text-secondary, #666)' }}>📚 Indexed:</span>
+                <span style={{ fontSize: '0.9rem', color: 'var(--text-secondary, #666)', display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
+                  <BookOpen size={14} /> Indexed:
+                </span>
                 <span style={{ fontWeight: 'bold', color: '#22c55e' }}>{indexedCount}</span>
               </div>
             )}
             {matchedCount > 0 && (
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                <span style={{ fontSize: '0.9rem', color: 'var(--text-secondary, #666)' }}>🔗 Matched:</span>
+                <span style={{ fontSize: '0.9rem', color: 'var(--text-secondary, #666)', display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
+                  <Link size={14} /> Matched:
+                </span>
                 <span style={{ fontWeight: 'bold', color: '#3b82f6' }}>{matchedCount}</span>
               </div>
             )}
@@ -3605,7 +3766,7 @@ const DashboardTiles = {
                 minWidth: 'auto'
               }}
             >
-              {darkMode ? '☀️ Light' : '🌙 Dark'}
+              {darkMode ? <><Sun size={14} style={{marginRight: '0.35rem'}} /> Light</> : <><Moon size={14} style={{marginRight: '0.35rem'}} /> Dark</>}
             </button>
           </div>
         </div>
@@ -3638,15 +3799,15 @@ const DashboardTiles = {
             onClick={() => setUploadMode('upload')}
             style={{ flex: 1 }}
           >
-            📤 Upload Files
+            <Upload size={16} style={{marginRight: '6px'}} /> Upload Files
           </button>
           <button
             type="button"
             className={`button ${uploadMode === 'import' ? '' : 'button-secondary'}`}
             onClick={() => setUploadMode('import')}
-            style={{ flex: 1 }}
+            style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.5rem' }}
           >
-            📁 Import Folder
+            <Folder size={16} /> Import Folder
           </button>
         </div>
 
@@ -3779,9 +3940,9 @@ const DashboardTiles = {
                 style={{ padding: '0.5rem' }}
               />
               <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
-                <button type="button" className="button" onClick={() => submitMapRoot(false)} disabled={mapRootLoading}>🧪 Dry Run</button>
+                <button type="button" className="button" onClick={() => submitMapRoot(false)} disabled={mapRootLoading}><FlaskConical size={14} style={{marginRight: '0.35rem'}} /> Dry Run</button>
                 <button type="button" className="button" onClick={() => submitMapRoot(true)} disabled={mapRootLoading} style={{ backgroundColor: '#28a745' }}>
-                  📥 Import Now
+                  <Download size={14} style={{marginRight: '0.35rem'}} /> Import Now
                 </button>
               </div>
               {mapRootLoading && (
@@ -3830,7 +3991,7 @@ services:
             <span className="stat-item">{prerolls.length} total</span>
             <span className="stat-item">{selectedPrerollIds.length} selected</span>
             <button onClick={handleReinitThumbnails} className="button" style={{ marginLeft: '1rem' }} title="Reinitialize all preroll thumbnails">
-              🔄 Reinitialize Thumbnails
+              <RefreshCw size={14} style={{marginRight: '0.35rem'}} /> Reinitialize Thumbnails
             </button>
           </div>
         </div>
@@ -3894,7 +4055,7 @@ services:
                   onChange={(e) => handleTagsChange(e.target.value)}
                   className="search-input"
                 />
-                <span className="search-icon">🔍</span>
+                <span className="search-icon"><Search size={18} /></span>
               </div>
               <button
                 onClick={() => { setCurrentPage(1); fetchData(); }}
@@ -3972,7 +4133,7 @@ services:
               disabled={selectedPrerollIds.length === 0}
               title="Delete all selected prerolls"
             >
-              🗑️ Delete {selectedPrerollIds.length > 0 && `(${selectedPrerollIds.length})`}
+              <Trash size={16} style={{ marginRight: '6px' }} /> Delete {selectedPrerollIds.length > 0 && `(${selectedPrerollIds.length})`}
             </button>
           </div>
         </div>
@@ -4010,21 +4171,21 @@ services:
                     className="nx-iconbtn"
                     title="Preview video"
                   >
-                    ▶️
+                    <Play size={16} />
                   </button>
                   <button
                     onClick={() => handleEditPreroll(preroll)}
                     className="nx-iconbtn"
                     title="Edit preroll"
                   >
-                    ✏️
+                    <Edit size={16} />
                   </button>
                   <button
                     onClick={() => handleDeletePreroll(preroll.id)}
                     className="nx-iconbtn nx-iconbtn--danger"
                     title="Delete preroll"
                   >
-                    🗑️
+                    <Trash size={16} />
                   </button>
                 </div>
               </div>
@@ -4065,7 +4226,7 @@ services:
                   fontSize: '0.75rem', 
                   color: 'var(--text-color)',
                   display: 'inline-block',
-                  backgroundColor: 'rgba(245, 158, 11, 0.15)',
+                  backgroundColor: 'rgba(20, 184, 166, 0.15)',
                   padding: '0.2rem 0.5rem',
                   borderRadius: '4px',
                   fontWeight: '500',
@@ -4194,7 +4355,7 @@ services:
                  fontSize: '0.75rem', 
                  color: 'var(--text-color)',
                  display: 'inline-block',
-                 backgroundColor: 'rgba(245, 158, 11, 0.15)',
+                 backgroundColor: 'rgba(20, 184, 166, 0.15)',
                  padding: '0.2rem 0.5rem',
                  borderRadius: '4px',
                  fontWeight: '500',
@@ -4269,21 +4430,21 @@ services:
                className="nx-iconbtn"
                title="Preview video"
              >
-               ▶️
+               <Play size={16} />
              </button>
              <button
                onClick={() => handleEditPreroll(preroll)}
                className="nx-iconbtn"
                title="Edit preroll"
              >
-               ✏️
+               <Edit size={16} />
              </button>
              <button
                onClick={() => handleDeletePreroll(preroll.id)}
                className="nx-iconbtn nx-iconbtn--danger"
                title="Delete preroll"
              >
-               🗑️
+               <Trash size={16} />
              </button>
            </div>
          </div>
@@ -4308,38 +4469,38 @@ services:
     const tabs = [
       { 
         id: 'schedules', 
-        icon: '📋', 
+        icon: <Calendar size={16} />, 
         label: 'My Schedules', 
         description: 'View and manage all your schedules'
       },
       { 
         id: 'schedules/create', 
-        icon: '➕', 
+        icon: <Plus size={16} />, 
         label: 'Create New', 
         description: 'Schedule a category or custom sequence'
       },
       { 
         id: 'schedules/calendar', 
-        icon: '📅', 
+        icon: <CalendarDays size={16} />, 
         label: 'Calendar View', 
         description: 'Visual calendar of active schedules'
       },
       { 
         id: 'schedules/builder', 
-        icon: '🎬', 
+        icon: <Film size={16} />, 
         label: 'Sequence Builder', 
         description: 'Create custom preroll sequences'
       },
       { 
         id: 'schedules/library', 
-        icon: '📚', 
+        icon: <BookOpen size={16} />, 
         label: 'Saved Sequences', 
         description: 'Your sequence library'
       }
     ];
 
     return (
-      <div style={{ marginBottom: '1.5rem' }}>
+      <>
         {/* Main Tab Bar */}
         <div style={{ 
           borderBottom: '2px solid var(--border-color)',
@@ -4381,7 +4542,7 @@ services:
               }}
               title={tab.description}
             >
-              <span style={{ fontSize: '1.1rem' }}>{tab.icon}</span>
+              <span style={{ display: 'flex', alignItems: 'center' }}>{tab.icon}</span>
               <span>{tab.label}</span>
             </button>
           ))}
@@ -4398,8 +4559,8 @@ services:
           border: '1px solid var(--border-color)'
         }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
-            <span style={{ fontSize: '1.5rem' }}>
-              {tabs.find(t => t.id === activeTab)?.icon || '📋'}
+            <span style={{ display: 'flex', alignItems: 'center' }}>
+              {tabs.find(t => t.id === activeTab)?.icon || <Calendar size={20} />}
             </span>
             <div>
               <div style={{ fontSize: '0.95rem', fontWeight: 600, color: 'var(--text-color)' }}>
@@ -4463,7 +4624,7 @@ services:
             )}
           </div>
         </div>
-      </div>
+      </>
     );
   };
 
@@ -4660,6 +4821,187 @@ services:
     </div>
   )}
 </div>
+
+{/* Calendar Filters Panel */}
+<div className="card" style={{ 
+  marginTop: '0.5rem', 
+  padding: '1rem', 
+  display: 'flex', 
+  flexWrap: 'wrap', 
+  gap: '1rem', 
+  alignItems: 'center',
+  backgroundColor: darkMode ? 'rgba(255,255,255,0.02)' : 'rgba(0,0,0,0.01)'
+}}>
+  <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontWeight: 600, color: 'var(--text-secondary)' }}>
+    <Search size={16} />
+    <span>Filters:</span>
+  </div>
+  
+  {/* Schedule Type Filter */}
+  <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+    <label className="control-label" style={{ fontSize: '0.7rem', fontWeight: 600, textTransform: 'uppercase' }}>Type</label>
+    <select 
+      className="nx-select" 
+      value={calendarFilterType} 
+      onChange={(e) => setCalendarFilterType(e.target.value)}
+      style={{ minWidth: '120px', padding: '0.4rem' }}
+    >
+      <option value="all">All Types</option>
+      <option value="daily">Daily</option>
+      <option value="weekly">Weekly</option>
+      <option value="monthly">Monthly</option>
+      <option value="yearly">Yearly</option>
+      <option value="holiday">Holiday</option>
+    </select>
+  </div>
+  
+  {/* Schedule Filter */}
+  <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+    <label className="control-label" style={{ fontSize: '0.7rem', fontWeight: 600, textTransform: 'uppercase' }}>Schedule</label>
+    <select 
+      className="nx-select" 
+      value={calendarFilterSchedules.length === 0 ? 'all' : calendarFilterSchedules[0]} 
+      onChange={(e) => {
+        if (e.target.value === 'all') {
+          setCalendarFilterSchedules([]);
+        } else {
+          setCalendarFilterSchedules([parseInt(e.target.value, 10)]);
+        }
+      }}
+      style={{ minWidth: '180px', padding: '0.4rem' }}
+    >
+      <option value="all">All Schedules</option>
+      {(schedules || []).map(s => (
+        <option key={s.id} value={s.id}>{s.name} {!s.is_active ? '(Inactive)' : ''}</option>
+      ))}
+    </select>
+  </div>
+  
+  {/* Quick Toggles */}
+  <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'center', marginLeft: 'auto' }}>
+    <label style={{ 
+      display: 'flex', 
+      alignItems: 'center', 
+      gap: '0.5rem', 
+      cursor: 'pointer',
+      padding: '0.4rem 0.75rem',
+      borderRadius: '6px',
+      backgroundColor: calendarShowConflictsOnly ? 'rgba(255, 152, 0, 0.15)' : 'transparent',
+      border: calendarShowConflictsOnly ? '1px solid #ff9800' : '1px solid var(--border-color)',
+      transition: 'all 0.2s ease'
+    }}>
+      <input 
+        type="checkbox" 
+        checked={calendarShowConflictsOnly} 
+        onChange={(e) => setCalendarShowConflictsOnly(e.target.checked)}
+        style={{ width: 16, height: 16 }}
+      />
+      <AlertTriangle size={14} style={{ color: '#ff9800' }} />
+      <span style={{ fontSize: '0.85rem', fontWeight: 500 }}>Conflicts Only</span>
+    </label>
+    
+    <label style={{ 
+      display: 'flex', 
+      alignItems: 'center', 
+      gap: '0.5rem', 
+      cursor: 'pointer',
+      padding: '0.4rem 0.75rem',
+      borderRadius: '6px',
+      backgroundColor: calendarShowInactive ? 'rgba(108, 117, 125, 0.15)' : 'transparent',
+      border: calendarShowInactive ? '1px solid #6c757d' : '1px solid var(--border-color)',
+      transition: 'all 0.2s ease'
+    }}>
+      <input 
+        type="checkbox" 
+        checked={calendarShowInactive} 
+        onChange={(e) => setCalendarShowInactive(e.target.checked)}
+        style={{ width: 16, height: 16 }}
+      />
+      <Ban size={14} style={{ color: '#6c757d' }} />
+      <span style={{ fontSize: '0.85rem', fontWeight: 500 }}>Show Inactive</span>
+    </label>
+    
+    {(calendarFilterSchedules.length > 0 || calendarFilterType !== 'all' || calendarShowConflictsOnly || calendarShowInactive) && (
+      <button
+        type="button"
+        className="button"
+        onClick={() => {
+          setCalendarFilterSchedules([]);
+          setCalendarFilterType('all');
+          setCalendarShowConflictsOnly(false);
+          setCalendarShowInactive(false);
+        }}
+        style={{ 
+          padding: '0.4rem 0.75rem', 
+          fontSize: '0.85rem',
+          backgroundColor: 'transparent',
+          border: '1px solid var(--border-color)',
+          color: 'var(--text-color)'
+        }}
+      >
+        <XCircle size={14} style={{ marginRight: '4px' }} />
+        Clear Filters
+      </button>
+    )}
+  </div>
+</div>
+
+{/* Breadcrumb Navigation */}
+<div style={{ 
+  display: 'flex', 
+  alignItems: 'center', 
+  gap: '0.5rem', 
+  padding: '0.75rem 0',
+  fontSize: '0.9rem',
+  color: 'var(--text-secondary)'
+}}>
+  <button 
+    type="button"
+    onClick={() => setCalendarMode('year')}
+    style={{ 
+      background: 'none', 
+      border: 'none', 
+      cursor: 'pointer', 
+      color: calendarMode === 'year' ? 'var(--button-bg)' : 'var(--text-secondary)',
+      fontWeight: calendarMode === 'year' ? 600 : 400,
+      padding: '0.25rem 0.5rem',
+      borderRadius: '4px',
+      transition: 'all 0.2s ease'
+    }}
+  >
+    {calendarYear}
+  </button>
+  {(calendarMode === 'month' || calendarMode === 'week') && (
+    <>
+      <span style={{ color: 'var(--text-muted)' }}>/</span>
+      <button 
+        type="button"
+        onClick={() => setCalendarMode('month')}
+        style={{ 
+          background: 'none', 
+          border: 'none', 
+          cursor: 'pointer', 
+          color: calendarMode === 'month' ? 'var(--button-bg)' : 'var(--text-secondary)',
+          fontWeight: calendarMode === 'month' ? 600 : 400,
+          padding: '0.25rem 0.5rem',
+          borderRadius: '4px',
+          transition: 'all 0.2s ease'
+        }}
+      >
+        {new Date(calendarYear, calendarMonth - 1, 1).toLocaleString(undefined, { month: 'long' })}
+      </button>
+    </>
+  )}
+  {calendarMode === 'week' && (
+    <>
+      <span style={{ color: 'var(--text-muted)' }}>/</span>
+      <span style={{ fontWeight: 600, color: 'var(--button-bg)' }}>
+        Week of {calendarWeekStart.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}
+      </span>
+    </>
+  )}
+</div>
+
   {calendarMode === 'week' ? (() => {
     // Week view with continuous schedule bars
     const days = [];
@@ -4678,26 +5020,292 @@ services:
       return new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
     };
 
-    const scheds = (schedules || []).filter(s => s.is_active).map(s => ({
+    const scheds = (schedules || [])
+      .filter(s => calendarShowInactive ? true : s.is_active) // Active filter
+      .filter(s => calendarFilterType === 'all' ? true : s.type === calendarFilterType) // Type filter
+      .filter(s => calendarFilterSchedules.length === 0 ? true : calendarFilterSchedules.includes(s.id)) // Schedule filter
+      .map(s => ({
       ...s,
       cat: catMap.get(s.category_id) || { name: (s.sequence ? s.name : (s.category?.name || 'Unknown')), color: s.color || (s.category?.color || '#6c757d') }
     }));
 
     const todayTime = new Date(new Date().getFullYear(), new Date().getMonth(), new Date().getDate()).getTime();
 
+    // Build conflict map for each day
+    const dayConflicts = new Map(); // dayTime -> { schedules: [], hasConflict: boolean, hasBlend: boolean, hasExclusive: boolean, winner: schedule }
+    days.forEach(day => {
+      const t = new Date(day.getFullYear(), day.getMonth(), day.getDate()).getTime();
+      const activeScheds = scheds.filter(s => {
+        if (!s.start_date) return false;
+        return isScheduleActiveOnDay(s, t, normalizeDay);
+      });
+      
+      // Filter to schedules that have actual content (category or sequence) - exclude pure fallback-only schedules
+      // A schedule is "fallback-only" if it has NO category_id AND NO sequence, only a fallback_category_id
+      const contentScheds = activeScheds.filter(s => s.category_id || s.sequence);
+      
+      // Check for exclusive schedules first (they override everything)
+      const exclusiveScheds = contentScheds.filter(s => s.exclusive);
+      const hasExclusive = exclusiveScheds.length > 0;
+      
+      // Check if all exclusive schedules have time restrictions (meaning they don't win all day)
+      // If ANY exclusive schedule has a time range, the "exclusive" styling should be toned down
+      // because other schedules will be active during the non-exclusive hours
+      const exclusiveHasTimeRange = hasExclusive && exclusiveScheds.every(s => {
+        if (!s.recurrence_pattern) return false;
+        try {
+          const pattern = JSON.parse(s.recurrence_pattern);
+          return pattern.timeRange?.start ? true : false;
+        } catch (e) {
+          return false;
+        }
+      });
+      
+      // Non-exclusive schedules (schedules that run when the exclusive is NOT in its time window)
+      const nonExclusiveScheds = contentScheds.filter(s => !s.exclusive);
+      
+      // Check for blend mode among non-exclusive schedules
+      // When exclusive has time range, blending happens during non-exclusive hours
+      const blendScheds = nonExclusiveScheds.filter(s => s.blend_enabled);
+      // Blend mode is active if:
+      // - No exclusive (original logic), OR
+      // - Exclusive has time range AND 2+ non-exclusive schedules with blend enabled
+      const hasBlend = (!hasExclusive && blendScheds.length >= 2) || 
+                       (exclusiveHasTimeRange && blendScheds.length >= 2);
+      
+      // Conflict exists if 2+ schedules overlap but NOT all in blend mode and not exclusive taking over
+      // When exclusive has time range, there's no "conflict" during non-exclusive hours if blending
+      const hasConflict = contentScheds.length > 1 && !hasBlend && !(exclusiveHasTimeRange && blendScheds.length >= 2);
+      
+      // Determine winner using the same logic as backend:
+      // 1. If exclusive schedules exist AND they don't have time ranges, exclusive wins all day
+      // 2. If exclusive has time range, it wins during its window, but non-exclusive schedules also win during their time
+      // 3. Otherwise, highest priority wins, then earliest end date, then earliest start, then lowest ID
+      let winner = null;
+      let nonExclusiveWinner = null; // Winner among non-exclusive schedules (active outside exclusive's time range)
+      
+      if (contentScheds.length > 0) {
+        if (hasExclusive && !exclusiveHasTimeRange) {
+          // Full-day exclusive: highest priority exclusive wins all day
+          const sorted = [...exclusiveScheds].sort((a, b) => {
+            const priorityA = a.priority ?? 5;
+            const priorityB = b.priority ?? 5;
+            if (priorityA !== priorityB) return priorityB - priorityA; // Higher priority first
+            
+            const endA = a.end_date ? new Date(a.end_date).getTime() : Number.MAX_SAFE_INTEGER;
+            const endB = b.end_date ? new Date(b.end_date).getTime() : Number.MAX_SAFE_INTEGER;
+            if (endA !== endB) return endA - endB;
+            
+            return a.id - b.id;
+          });
+          winner = sorted[0];
+        } else if (hasExclusive && exclusiveHasTimeRange) {
+          // Time-restricted exclusive: wins during its time window
+          const sorted = [...exclusiveScheds].sort((a, b) => {
+            const priorityA = a.priority ?? 5;
+            const priorityB = b.priority ?? 5;
+            if (priorityA !== priorityB) return priorityB - priorityA;
+            const endA = a.end_date ? new Date(a.end_date).getTime() : Number.MAX_SAFE_INTEGER;
+            const endB = b.end_date ? new Date(b.end_date).getTime() : Number.MAX_SAFE_INTEGER;
+            if (endA !== endB) return endA - endB;
+            return a.id - b.id;
+          });
+          winner = sorted[0]; // Exclusive wins during its time
+          
+          // Also determine winner among non-exclusive schedules (for the rest of the day)
+          if (nonExclusiveScheds.length > 0) {
+            if (hasBlend) {
+              // All blending schedules are "winners" during non-exclusive hours
+              nonExclusiveWinner = 'blend'; // Special marker for blend mode
+            } else {
+              const nonExSorted = [...nonExclusiveScheds].sort((a, b) => {
+                const priorityA = a.priority ?? 5;
+                const priorityB = b.priority ?? 5;
+                if (priorityA !== priorityB) return priorityB - priorityA;
+                const endA = a.end_date ? new Date(a.end_date).getTime() : Number.MAX_SAFE_INTEGER;
+                const endB = b.end_date ? new Date(b.end_date).getTime() : Number.MAX_SAFE_INTEGER;
+                if (endA !== endB) return endA - endB;
+                const startA = new Date(a.start_date).getTime();
+                const startB = new Date(b.start_date).getTime();
+                if (startA !== startB) return startA - startB;
+                return a.id - b.id;
+              });
+              nonExclusiveWinner = nonExSorted[0];
+            }
+          }
+        } else {
+          // Normal: highest priority wins
+          const sorted = [...contentScheds].sort((a, b) => {
+            const priorityA = a.priority ?? 5;
+            const priorityB = b.priority ?? 5;
+            if (priorityA !== priorityB) return priorityB - priorityA; // Higher priority first
+            
+            const endA = a.end_date ? new Date(a.end_date).getTime() : Number.MAX_SAFE_INTEGER;
+            const endB = b.end_date ? new Date(b.end_date).getTime() : Number.MAX_SAFE_INTEGER;
+            if (endA !== endB) return endA - endB;
+            
+            const startA = new Date(a.start_date).getTime();
+            const startB = new Date(b.start_date).getTime();
+            if (startA !== startB) return startA - startB;
+            
+            return a.id - b.id;
+          });
+          winner = sorted[0];
+        }
+      }
+      
+      dayConflicts.set(t, { 
+        schedules: activeScheds, 
+        hasConflict, 
+        hasBlend, 
+        hasExclusive, 
+        exclusiveHasTimeRange, 
+        blendScheds, 
+        exclusiveScheds, 
+        nonExclusiveScheds,
+        winner,
+        nonExclusiveWinner // New: winner among non-exclusive schedules when exclusive has time range
+      });
+    });
+    
+    // Check if any day has conflicts or blend mode or exclusive
+    const hasAnyConflicts = Array.from(dayConflicts.values()).some(d => d.hasConflict);
+    const hasAnyBlends = Array.from(dayConflicts.values()).some(d => d.hasBlend);
+    const hasAnyExclusives = Array.from(dayConflicts.values()).some(d => d.hasExclusive);
+
     return (
       <div className="card" style={{ padding: '1.5rem' }}>
-        <h2 style={{ 
-          marginTop: 0, 
+        <div style={{ 
+          display: 'flex', 
+          justifyContent: 'space-between', 
+          alignItems: 'center',
           marginBottom: '1.5rem',
-          fontSize: '1.8rem',
-          fontWeight: 600,
-          color: 'var(--text-color)'
+          flexWrap: 'wrap',
+          gap: '8px'
         }}>
-          Week of {days[0].toLocaleDateString(undefined, { month: 'long', day: 'numeric', year: 'numeric' })}
-        </h2>
+          <h2 style={{ 
+            margin: 0,
+            fontSize: '1.8rem',
+            fontWeight: 600,
+            color: 'var(--text-color)'
+          }}>
+            Week of {days[0].toLocaleDateString(undefined, { month: 'long', day: 'numeric', year: 'numeric' })}
+          </h2>
+          
+          <div style={{ display: 'flex', gap: '8px' }}>
+            {hasAnyBlends && (
+              <div style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: '8px',
+                padding: '8px 12px',
+                backgroundColor: 'rgba(139, 92, 246, 0.15)',
+                border: '1px solid rgba(139, 92, 246, 0.5)',
+                borderRadius: '8px',
+                color: '#8b5cf6'
+              }}>
+                <Shuffle size={16} />
+                <span style={{ fontSize: '0.85rem', fontWeight: 600 }}>Blend Mode Active</span>
+              </div>
+            )}
+            {hasAnyExclusives && (
+              <div style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: '8px',
+                padding: '8px 12px',
+                backgroundColor: 'rgba(20, 184, 166, 0.15)',
+                border: '1px solid rgba(20, 184, 166, 0.5)',
+                borderRadius: '8px',
+                color: '#14B8A6'
+              }}>
+                <Lock size={16} />
+                <span style={{ fontSize: '0.85rem', fontWeight: 600 }}>Exclusive Schedule Active</span>
+              </div>
+            )}
+            {hasAnyConflicts && (
+              <div style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: '8px',
+                padding: '8px 12px',
+                backgroundColor: 'rgba(255, 152, 0, 0.15)',
+                border: '1px solid rgba(255, 152, 0, 0.5)',
+                borderRadius: '8px',
+                color: '#ff9800'
+              }}>
+                <AlertTriangle size={16} />
+                <span style={{ fontSize: '0.85rem', fontWeight: 600 }}>Schedule Conflicts Detected</span>
+              </div>
+            )}
+          </div>
+        </div>
         
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+        {/* Day headers with conflict/blend indicators */}
+        <div style={{ 
+          display: 'grid', 
+          gridTemplateColumns: '158px repeat(7, 1fr)', 
+          gap: '4px',
+          marginBottom: '8px'
+        }}>
+          <div></div>
+          {days.map((day, idx) => {
+            const t = new Date(day.getFullYear(), day.getMonth(), day.getDate()).getTime();
+            const isToday = t === todayTime;
+            const dayData = dayConflicts.get(t);
+            const hasConflict = dayData?.hasConflict;
+            const hasBlend = dayData?.hasBlend;
+            const hasExclusive = dayData?.hasExclusive;
+            const exclusiveHasTimeRange = dayData?.exclusiveHasTimeRange;
+            // Full-day exclusive gets bold red styling; time-restricted exclusive gets subtle styling
+            const isFullDayExclusive = hasExclusive && !exclusiveHasTimeRange;
+            // Time-restricted exclusive + blend = show blend styling (purple) since blending happens most of the day
+            const hasTimeRestrictedExclusiveWithBlend = exclusiveHasTimeRange && hasBlend;
+            
+            return (
+              <div key={idx} style={{ 
+                textAlign: 'center',
+                fontWeight: isToday ? 700 : 500,
+                fontSize: '0.85rem',
+                color: isFullDayExclusive 
+                  ? '#ef4444' 
+                  : (hasTimeRestrictedExclusiveWithBlend || hasBlend) 
+                    ? '#8b5cf6' 
+                    : (hasConflict ? '#ff9800' : (isToday ? 'var(--button-bg)' : 'var(--text-color)')),
+                padding: '8px 4px',
+                borderRadius: '4px',
+                backgroundColor: isFullDayExclusive 
+                  ? 'rgba(239, 68, 68, 0.15)'
+                  : ((hasTimeRestrictedExclusiveWithBlend || hasBlend)
+                    ? 'rgba(139, 92, 246, 0.15)'
+                    : (hasConflict 
+                      ? 'rgba(255, 152, 0, 0.15)' 
+                      : (isToday ? (darkMode ? 'rgba(59, 130, 246, 0.15)' : 'rgba(59, 130, 246, 0.1)') : 'transparent'))),
+                border: isFullDayExclusive 
+                  ? '1px solid rgba(239, 68, 68, 0.5)' 
+                  : ((hasTimeRestrictedExclusiveWithBlend || hasBlend)
+                    ? '1px solid rgba(139, 92, 246, 0.5)' 
+                    : (hasConflict ? '1px solid rgba(255, 152, 0, 0.5)' : 'none'))
+              }}>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '4px', flexWrap: 'wrap' }}>
+                  {day.toLocaleDateString(undefined, { weekday: 'short' })}
+                  {hasTimeRestrictedExclusiveWithBlend && (
+                    <>
+                      <Shuffle size={12} title="Blend mode active outside exclusive time" />
+                      <Lock size={10} style={{ opacity: 0.6 }} title="Exclusive during specific hours" />
+                    </>
+                  )}
+                  {isFullDayExclusive && <Lock size={12} />}
+                  {hasBlend && !hasExclusive && <Shuffle size={12} />}
+                  {hasConflict && !hasBlend && !hasExclusive && <AlertTriangle size={12} />}
+                </div>
+                <div style={{ fontSize: '0.75rem', opacity: 0.7 }}>{day.getDate()}</div>
+              </div>
+            );
+          })}
+        </div>
+        
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
           {scheds.map((sched, idx) => {
             // Find continuous spans for this schedule across the week
             const spans = [];
@@ -4706,13 +5314,42 @@ services:
             days.forEach((day, dayIdx) => {
               const t = new Date(day.getFullYear(), day.getMonth(), day.getDate()).getTime();
               const isActive = isScheduleActiveOnDay(sched, t, normalizeDay);
+              const dayData = dayConflicts.get(t);
+              const isWinner = dayData?.winner?.id === sched.id;
+              const hasConflict = dayData?.hasConflict;
+              const hasBlend = dayData?.hasBlend;
+              const hasExclusive = dayData?.hasExclusive;
+              const exclusiveHasTimeRange = dayData?.exclusiveHasTimeRange;
+              const isInBlend = hasBlend && sched.blend_enabled;
+              const isExclusive = hasExclusive && sched.exclusive;
+              
+              // Check if this non-exclusive schedule wins during non-exclusive hours
+              const nonExWinner = dayData?.nonExclusiveWinner;
+              const isNonExclusiveWinner = !sched.exclusive && (
+                nonExWinner === 'blend' ? sched.blend_enabled : nonExWinner?.id === sched.id
+              );
               
               if (isActive) {
                 if (!currentSpan) {
-                  currentSpan = { start: dayIdx, end: dayIdx };
+                  currentSpan = { 
+                    start: dayIdx, 
+                    end: dayIdx, 
+                    conflicts: [], 
+                    isWinner: [], 
+                    blends: [], 
+                    exclusives: [],
+                    exclusiveHasTimeRange: [],
+                    isNonExclusiveWinner: []
+                  };
                 } else {
                   currentSpan.end = dayIdx;
                 }
+                currentSpan.conflicts.push(hasConflict);
+                currentSpan.isWinner.push(isWinner);
+                currentSpan.blends.push(isInBlend);
+                currentSpan.exclusives.push(isExclusive);
+                currentSpan.exclusiveHasTimeRange.push(exclusiveHasTimeRange);
+                currentSpan.isNonExclusiveWinner.push(isNonExclusiveWinner);
               } else {
                 if (currentSpan) {
                   spans.push(currentSpan);
@@ -4724,14 +5361,65 @@ services:
             
             if (spans.length === 0) return null;
             
+            // Determine overall status for this schedule in the week
+            const hasAnyWins = spans.some(span => span.isWinner.some(w => w));
+            // Check if this schedule wins during non-exclusive hours (when there's a time-restricted exclusive)
+            const hasAnyNonExclusiveWins = spans.some(span => span.isNonExclusiveWinner.some(w => w));
+            // A schedule is only a "loser" if it loses during ALL its active hours
+            // If there's a time-restricted exclusive and this schedule wins during non-exclusive hours, it's not a loser
+            const hasTimeRestrictedExclusiveOverlap = spans.some(span => span.exclusiveHasTimeRange.some(e => e));
+            const hasAnyLosses = spans.some(span => span.conflicts.some((c, i) => c && !span.isWinner[i]));
+            // Not a real loser if we win during non-exclusive hours
+            const isActualLoser = hasAnyLosses && !hasAnyWins && !hasAnyNonExclusiveWins && !hasTimeRestrictedExclusiveOverlap;
+            const hasAnyConflictsForSched = spans.some(span => span.conflicts.some(c => c));
+            const hasAnyBlends = spans.some(span => span.blends.some(b => b));
+            const hasAnyExclusivesForSched = spans.some(span => span.exclusives.some(e => e));
+            
+            // Get time range info for this schedule if it's exclusive
+            let schedTimeRange = null;
+            if (sched.exclusive && sched.recurrence_pattern) {
+              try {
+                const pattern = JSON.parse(sched.recurrence_pattern);
+                if (pattern?.timeRange?.start) {
+                  schedTimeRange = `${pattern.timeRange.start}-${pattern.timeRange.end || '23:59'}`;
+                }
+              } catch (e) {}
+            }
+            
             return (
               <div key={idx} style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
                 <div style={{ 
                   minWidth: '150px', 
                   fontWeight: 500, 
                   fontSize: '0.9rem',
-                  color: 'var(--text-color)'
-                }}>{sched.name}</div>
+                  color: 'var(--text-color)',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '6px'
+                }}>
+                  {hasAnyExclusivesForSched ? (() => {
+                    // Get time range if available
+                    let timeRangeStr = schedTimeRange ? ` (${schedTimeRange})` : '';
+                    return <Lock size={14} style={{ color: '#14B8A6', flexShrink: 0 }} title={`Exclusive - wins over other schedules${timeRangeStr ? ' during ' + timeRangeStr : ''}`} />;
+                  })() : hasAnyBlends ? (
+                    <Shuffle size={14} style={{ color: '#8b5cf6', flexShrink: 0 }} title={hasTimeRestrictedExclusiveOverlap 
+                      ? "Blending with other schedules (outside exclusive schedule's time window)" 
+                      : "Blending with other schedules"} />
+                  ) : hasAnyConflictsForSched && (
+                    (hasAnyWins || hasAnyNonExclusiveWins) ? (
+                      <Crown size={14} style={{ color: '#ffd700', flexShrink: 0 }} title="Wins conflict (active)" />
+                    ) : (
+                      <AlertTriangle size={14} style={{ color: '#ff9800', flexShrink: 0 }} title="Loses conflict (overridden)" />
+                    )
+                  )}
+                  <span style={{ 
+                    opacity: isActualLoser ? 0.5 : 1,
+                    textDecoration: isActualLoser ? 'line-through' : 'none'
+                  }}>
+                    {sched.name}
+                    {schedTimeRange && <span style={{ fontSize: '0.75rem', opacity: 0.7, marginLeft: '4px' }}>({schedTimeRange})</span>}
+                  </span>
+                </div>
                 <div style={{ flex: 1, position: 'relative', height: '32px', display: 'flex' }}>
                   {days.map((day, dayIdx) => (
                     <div key={dayIdx} style={{ 
@@ -4743,23 +5431,94 @@ services:
                   {spans.map((span, spanIdx) => {
                     const width = ((span.end - span.start + 1) / 7) * 100;
                     const left = (span.start / 7) * 100;
+                    const spanHasConflict = span.conflicts.some(c => c);
+                    const spanIsWinner = span.isWinner.some(w => w);
+                    const spanIsNonExclusiveWinner = span.isNonExclusiveWinner.some(w => w);
+                    const spanHasTimeRestrictedExclusive = span.exclusiveHasTimeRange.some(e => e);
+                    const spanIsInBlend = span.blends.some(b => b);
+                    const spanIsExclusive = span.exclusives.some(e => e);
+                    
+                    // A span is only a "loser" if it doesn't win anywhere
+                    // If there's a time-restricted exclusive and this schedule wins during non-exclusive hours, it's not a loser
+                    const spanIsLoser = spanHasConflict && !spanIsWinner && !spanIsNonExclusiveWinner && !spanHasTimeRestrictedExclusive && !spanIsInBlend;
+                    
+                    // Determine visual style based on status
+                    let borderStyle = 'none';
+                    let shadowStyle = '0 2px 4px rgba(0,0,0,0.2)';
+                    let opacityStyle = 1;
+                    let textDecorationStyle = 'none';
+                    
+                    if (spanIsExclusive) {
+                      // Exclusive schedule - gold lock border
+                      borderStyle = schedTimeRange 
+                        ? '2px dashed rgba(20, 184, 166, 0.8)' // Time-restricted exclusive
+                        : '2px solid rgba(20, 184, 166, 0.8)'; // Full-day exclusive
+                      shadowStyle = '0 0 8px rgba(20, 184, 166, 0.4), 0 2px 4px rgba(0,0,0,0.2)';
+                    } else if (spanIsWinner) {
+                      // Winner - gold crown border
+                      borderStyle = '2px solid rgba(255, 215, 0, 0.8)';
+                      shadowStyle = '0 0 8px rgba(255, 215, 0, 0.6), 0 2px 4px rgba(0,0,0,0.2)';
+                    } else if (spanIsInBlend || spanIsNonExclusiveWinner) {
+                      // Blending or wins during non-exclusive hours - purple border
+                      borderStyle = '2px solid rgba(139, 92, 246, 0.8)';
+                      shadowStyle = '0 0 6px rgba(139, 92, 246, 0.4), 0 2px 4px rgba(0,0,0,0.2)';
+                    } else if (spanHasTimeRestrictedExclusive && !spanIsExclusive) {
+                      // Has time-restricted exclusive on same day but this is a non-exclusive schedule
+                      // Show as active (it runs outside the exclusive's time window)
+                      borderStyle = '2px solid rgba(139, 92, 246, 0.6)';
+                      shadowStyle = '0 0 4px rgba(139, 92, 246, 0.3), 0 2px 4px rgba(0,0,0,0.2)';
+                    } else if (spanIsLoser) {
+                      // True loser - dimmed with strikethrough
+                      borderStyle = '2px dashed rgba(255, 152, 0, 0.8)';
+                      opacityStyle = 0.5;
+                      textDecorationStyle = 'line-through';
+                    }
+                    
+                    // Build tooltip
+                    let tooltipText = sched.name;
+                    if (spanIsExclusive) {
+                      tooltipText = `🔒 ${sched.name} - EXCLUSIVE${schedTimeRange ? ` (${schedTimeRange})` : ''}\nWins over all other schedules${schedTimeRange ? ' during this time window' : ''}`;
+                    } else if (spanIsWinner) {
+                      tooltipText = `👑 ${sched.name} - ACTIVE (wins conflict)\nPriority: Ends soonest → Started earliest → Lowest ID`;
+                    } else if (spanIsInBlend) {
+                      tooltipText = spanHasTimeRestrictedExclusive
+                        ? `🔀 ${sched.name} - BLENDING\nActive outside exclusive schedule's time window`
+                        : `🔀 ${sched.name} - BLENDING\nPlays together with other blend-enabled schedules`;
+                    } else if (spanHasTimeRestrictedExclusive && !spanIsExclusive) {
+                      tooltipText = `✓ ${sched.name} - ACTIVE\nRuns outside the exclusive schedule's time window`;
+                    } else if (spanIsLoser) {
+                      tooltipText = `⚠️ ${sched.name} - OVERRIDDEN\nAnother schedule has higher priority`;
+                    }
+                    
                     return (
-                      <div key={spanIdx} style={{
-                        position: 'absolute',
-                        left: `${left}%`,
-                        width: `${width}%`,
-                        height: '100%',
-                        backgroundColor: sched.color || sched.cat.color,
-                        borderRadius: '4px',
-                        padding: '4px 8px',
-                        color: '#fff',
-                        fontSize: '0.75rem',
-                        fontWeight: 500,
-                        display: 'flex',
-                        alignItems: 'center',
-                        justifyContent: 'center',
-                        boxShadow: '0 2px 4px rgba(0,0,0,0.2)'
-                      }}>
+                      <div 
+                        key={spanIdx} 
+                        title={tooltipText}
+                        style={{
+                          position: 'absolute',
+                          left: `${left}%`,
+                          width: `${width}%`,
+                          height: '100%',
+                          backgroundColor: sched.color || sched.cat.color,
+                          borderRadius: '4px',
+                          padding: '4px 8px',
+                          color: '#fff',
+                          fontSize: '0.75rem',
+                          fontWeight: 500,
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          gap: '4px',
+                          boxShadow: shadowStyle,
+                          border: borderStyle,
+                          opacity: opacityStyle,
+                          textDecoration: textDecorationStyle
+                        }}
+                      >
+                        {spanIsExclusive && <Lock size={12} style={{ flexShrink: 0 }} />}
+                        {spanIsWinner && !spanIsExclusive && <Crown size={12} style={{ flexShrink: 0 }} />}
+                        {(spanIsInBlend || (spanHasTimeRestrictedExclusive && !spanIsExclusive && !spanIsLoser)) && !spanIsWinner && <Shuffle size={12} style={{ flexShrink: 0 }} />}
+                        {spanIsLoser && <span>⚠️</span>}
                         {sched.name}
                       </div>
                     );
@@ -4770,32 +5529,29 @@ services:
           }).filter(Boolean)}
         </div>
         
-        {/* Day labels at bottom */}
-        <div style={{ 
-          display: 'grid', 
-          gridTemplateColumns: 'repeat(7, 1fr)', 
-          gap: '8px', 
-          marginTop: '1rem',
-          marginLeft: '158px'
-        }}>
-          {days.map((day, idx) => {
-            const isToday = new Date(day.getFullYear(), day.getMonth(), day.getDate()).getTime() === todayTime;
-            return (
-              <div key={idx} style={{ 
-                textAlign: 'center',
-                fontWeight: isToday ? 700 : 500,
-                fontSize: '0.85rem',
-                color: isToday ? 'var(--button-bg)' : 'var(--text-color)',
-                padding: '8px',
-                borderRadius: '4px',
-                backgroundColor: isToday ? (darkMode ? 'rgba(59, 130, 246, 0.15)' : 'rgba(59, 130, 246, 0.1)') : 'transparent'
-              }}>
-                <div>{day.toLocaleDateString(undefined, { weekday: 'short' })}</div>
-                <div style={{ fontSize: '0.75rem', opacity: 0.7 }}>{day.getDate()}</div>
+        {/* Legend */}
+        {hasAnyConflicts && (
+          <div style={{ 
+            marginTop: '1rem',
+            padding: '12px',
+            backgroundColor: darkMode ? 'rgba(255,255,255,0.03)' : 'rgba(0,0,0,0.02)',
+            borderRadius: '8px',
+            fontSize: '0.8rem',
+            color: 'var(--text-muted)'
+          }}>
+            <div style={{ fontWeight: 600, marginBottom: '8px', color: 'var(--text-color)' }}>Conflict Resolution Rules:</div>
+            <div style={{ display: 'flex', gap: '16px', flexWrap: 'wrap' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                <Crown size={14} style={{ color: '#ffd700' }} />
+                <span>Winner (active) - Ends soonest, started earliest, or lowest ID</span>
               </div>
-            );
-          })}
-        </div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                <span style={{ opacity: 0.5, textDecoration: 'line-through' }}>⚠️ Overridden</span>
+                <span>- Lower priority schedule</span>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
     );
   })() : calendarMode === 'month' ? (calendarMonthView === 'timeline' ? (() => {
@@ -4816,7 +5572,11 @@ services:
       return new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
     };
 
-    const scheds = (schedules || []).filter(s => s.is_active).map(s => ({
+    const scheds = (schedules || [])
+      .filter(s => calendarShowInactive ? true : s.is_active) // Active filter
+      .filter(s => calendarFilterType === 'all' ? true : s.type === calendarFilterType) // Type filter
+      .filter(s => calendarFilterSchedules.length === 0 ? true : calendarFilterSchedules.includes(s.id)) // Schedule filter
+      .map(s => ({
       ...s,
       cat: catMap.get(s.category_id) || { name: (s.sequence ? s.name : (s.category?.name || 'Unknown')), color: s.color || (s.category?.color || '#6c757d') }
     }));
@@ -4960,19 +5720,21 @@ services:
       return new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
     };
 
-    // Filter to only active schedules for calendar display and conflict detection
+    // Filter schedules based on calendar filter settings
     const scheds = (schedules || [])
-      .filter(s => s.is_active) // Only show active schedules
+      .filter(s => calendarShowInactive ? true : s.is_active) // Active filter
+      .filter(s => calendarFilterType === 'all' ? true : s.type === calendarFilterType) // Type filter
+      .filter(s => calendarFilterSchedules.length === 0 ? true : calendarFilterSchedules.includes(s.id)) // Schedule filter
       .map(s => ({
         ...s,
         cat: catMap.get(s.category_id) || { name: (s.sequence ? s.name : (s.category?.name || 'Unknown')), color: s.color || (s.category?.color || '#6c757d') }
       }));
 
     // Track both schedules and their categories per day
-    const byDay = new Map(); // dayTime -> { schedules: Set<schedule>, isFallback: boolean, hasConflict: boolean }
+    const byDay = new Map(); // dayTime -> { schedules: Set<schedule>, isFallback: boolean, hasConflict: boolean, hasBlend: boolean, hasExclusive: boolean, exclusiveHasTimeRange: boolean, blendScheds: [], exclusiveScheds: [], nonExclusiveWinner: null }
     days.forEach(d => {
       const t = new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
-      byDay.set(t, { schedules: new Set(), isFallback: false, hasConflict: false });
+      byDay.set(t, { schedules: new Set(), isFallback: false, hasConflict: false, hasBlend: false, hasExclusive: false, exclusiveHasTimeRange: false, blendScheds: [], exclusiveScheds: [], nonExclusiveWinner: null });
     });
 
     // Map schedules to days, accounting for yearly repeats
@@ -4987,49 +5749,312 @@ services:
       }
     }
     
-    // Detect conflicts - multiple non-fallback schedules on same day
+    // Detect conflicts, blend mode, and exclusive schedules - multiple schedules with content on same day
     for (const [dayTime, dayData] of byDay.entries()) {
-      const nonFallbackSchedules = Array.from(dayData.schedules).filter(s => !s.fallback_category_id);
-      if (nonFallbackSchedules.length > 1) {
-        dayData.hasConflict = true;
+      // Filter to schedules that have actual content (category or sequence) - exclude pure fallback-only schedules
+      const contentSchedules = Array.from(dayData.schedules).filter(s => s.category_id || s.sequence);
+      
+      // Check for exclusive schedules first (they override everything)
+      const exclusiveScheds = contentSchedules.filter(s => s.exclusive);
+      const hasExclusive = exclusiveScheds.length > 0;
+      
+      // Check if all exclusive schedules have time restrictions
+      const exclusiveHasTimeRange = hasExclusive && exclusiveScheds.every(s => {
+        if (!s.recurrence_pattern) return false;
+        try {
+          const pattern = JSON.parse(s.recurrence_pattern);
+          return pattern.timeRange?.start ? true : false;
+        } catch (e) {
+          return false;
+        }
+      });
+      
+      // Non-exclusive schedules
+      const nonExclusiveScheds = contentSchedules.filter(s => !s.exclusive);
+      
+      // Check for blend mode among non-exclusive schedules
+      const blendScheds = nonExclusiveScheds.filter(s => s.blend_enabled);
+      
+      if (hasExclusive) {
+        dayData.hasExclusive = true;
+        dayData.exclusiveScheds = exclusiveScheds;
+        dayData.exclusiveHasTimeRange = exclusiveHasTimeRange;
+        
+        // Multiple exclusive schedules competing = conflict (only case that matters)
+        if (exclusiveScheds.length > 1) {
+          dayData.hasConflict = true;
+        }
+        
+        // When there's an exclusive schedule, it handles priority resolution
+        // Non-exclusive schedules are either blending or have clear priority - NOT a conflict
+        
+        // Check blend mode among non-exclusive schedules
+        if (blendScheds.length >= 2) {
+          dayData.hasBlend = true;
+          dayData.blendScheds = blendScheds;
+          dayData.nonExclusiveWinner = 'blend';
+        } else if (nonExclusiveScheds.length === 1) {
+          // Single non-exclusive schedule - no blend display needed
+          dayData.nonExclusiveWinner = nonExclusiveScheds[0];
+        } else if (nonExclusiveScheds.length > 1) {
+          // Multiple non-exclusive schedules
+          // NOT a conflict - exclusive handles its window, rest have clear priority
+          // Determine winner among non-exclusive schedules for display purposes
+          const sorted = [...nonExclusiveScheds].sort((a, b) => {
+            const priorityA = a.priority ?? 5;
+            const priorityB = b.priority ?? 5;
+            if (priorityA !== priorityB) return priorityB - priorityA;
+            const endA = a.end_date ? new Date(a.end_date).getTime() : Number.MAX_SAFE_INTEGER;
+            const endB = b.end_date ? new Date(b.end_date).getTime() : Number.MAX_SAFE_INTEGER;
+            if (endA !== endB) return endA - endB;
+            const startA = new Date(a.start_date).getTime();
+            const startB = new Date(b.start_date).getTime();
+            if (startA !== startB) return startA - startB;
+            return a.id - b.id;
+          });
+          dayData.nonExclusiveWinner = sorted[0];
+        }
+      } else {
+        // No exclusive schedules
+        if (blendScheds.length >= 2) {
+          // Multiple blending schedules - blend mode, no conflict
+          dayData.hasBlend = true;
+          dayData.blendScheds = blendScheds;
+        } else if (contentSchedules.length > 1) {
+          // Multiple schedules - check if it's a blend scenario or conflict
+          if (blendScheds.length === contentSchedules.length) {
+            // All schedules have blend enabled - show as blend
+            dayData.hasBlend = true;
+            dayData.blendScheds = blendScheds;
+          } else {
+            // Not all schedules are blending - true conflict
+            dayData.hasConflict = true;
+          }
+        }
+        // Single schedule case: no hasBlend, no hasConflict - just show normally
       }
     }
     
-    // Show fallback categories on days with no active schedules
-    const fallbackSchedules = (schedules || []).filter(s => s.fallback_category_id);
+    // Show fallback category on days with no active schedules
+    // Pick the fallback from the schedule that is closest to the given day
+    const fallbackSchedules = (schedules || []).filter(s => s.fallback_category_id && s.is_active);
+    
+    // Helper to get year-agnostic date for yearly schedules
+    const getYearAgnosticDates = (schedule, targetYear) => {
+      const startDateStr = schedule.start_date.includes('T') ? schedule.start_date.split('T')[0] : schedule.start_date;
+      const endDateStr = schedule.end_date ? (schedule.end_date.includes('T') ? schedule.end_date.split('T')[0] : schedule.end_date) : startDateStr;
+      const [, startMonth, startDay] = startDateStr.split('-').map(Number);
+      const [, endMonth, endDay] = endDateStr.split('-').map(Number);
+      
+      // Handle year-wrap schedules (e.g., Dec 1 to Jan 15)
+      if (startMonth > endMonth || (startMonth === endMonth && startDay > endDay)) {
+        // Schedule wraps around year - return two ranges
+        return [
+          { start: new Date(targetYear - 1, startMonth - 1, startDay), end: new Date(targetYear, endMonth - 1, endDay) },
+          { start: new Date(targetYear, startMonth - 1, startDay), end: new Date(targetYear + 1, endMonth - 1, endDay) }
+        ];
+      }
+      return [{ start: new Date(targetYear, startMonth - 1, startDay), end: new Date(targetYear, endMonth - 1, endDay) }];
+    };
+    
+    // Find the closest fallback schedule for a given day
+    const findClosestFallback = (dayTime) => {
+      if (fallbackSchedules.length === 0) return null;
+      if (fallbackSchedules.length === 1) return fallbackSchedules[0];
+      
+      const dayDate = new Date(dayTime);
+      const targetYear = dayDate.getFullYear();
+      let closestSchedule = null;
+      let closestDistance = Infinity;
+      
+      for (const s of fallbackSchedules) {
+        const ranges = (s.type === 'yearly' || s.type === 'holiday') 
+          ? getYearAgnosticDates(s, targetYear)
+          : [{ start: new Date(normalizeDay(s.start_date)), end: s.end_date ? new Date(normalizeDay(s.end_date)) : new Date(normalizeDay(s.start_date)) }];
+        
+        for (const range of ranges) {
+          // Check if day is within or near this range
+          const rangeStart = range.start.getTime();
+          const rangeEnd = range.end.getTime();
+          
+          // Calculate distance: 0 if within range, otherwise distance to nearest edge
+          let distance;
+          if (dayTime >= rangeStart && dayTime <= rangeEnd) {
+            distance = 0; // Within range
+          } else if (dayTime < rangeStart) {
+            distance = rangeStart - dayTime; // Before range
+          } else {
+            distance = dayTime - rangeEnd; // After range
+          }
+          
+          if (distance < closestDistance) {
+            closestDistance = distance;
+            closestSchedule = s;
+          }
+        }
+      }
+      
+      return closestSchedule;
+    };
     
     for (const [dayTime, dayData] of byDay.entries()) {
-      if (dayData.schedules.size === 0 && fallbackSchedules.length > 0) {
-        // No active schedules on this day, show fallbacks
-        dayData.isFallback = true;
-        fallbackSchedules.forEach(s => {
-          // Create pseudo-schedule for fallback
+      if (dayData.schedules.size === 0) {
+        const closestFallback = findClosestFallback(dayTime);
+        if (closestFallback) {
+          // No active schedules on this day, show the closest fallback
+          dayData.isFallback = true;
           const fallbackSched = {
-            ...s,
-            category_id: s.fallback_category_id,
-            name: `${s.name} (Fallback)`,
-            cat: catMap.get(s.fallback_category_id) || { name: 'Fallback', color: '#6c757d' }
+            ...closestFallback,
+            category_id: closestFallback.fallback_category_id,
+            name: `${closestFallback.name} (Fallback)`,
+            cat: catMap.get(closestFallback.fallback_category_id) || { name: 'Fallback', color: '#6c757d' },
+            isFallbackDisplay: true
           };
           dayData.schedules.add(fallbackSched);
-        });
+        }
       }
     }
 
     const monthName = startOfMonth.toLocaleString(undefined, { month: 'long', year: 'numeric' });
     const today = new Date();
     const todayTime = new Date(today.getFullYear(), today.getMonth(), today.getDate()).getTime();
+    
+    // Calculate conflict and blend statistics for the month
+    const conflictDays = Array.from(byDay.values()).filter(d => d.hasConflict);
+    const totalConflicts = conflictDays.length;
+    const blendDays = Array.from(byDay.values()).filter(d => d.hasBlend);
+    const totalBlends = blendDays.length;
 
     return (
       <div className="card" style={{ marginBottom: '1rem', padding: '1.5rem' }}>
-        <h2 style={{ 
-          marginTop: 0, 
+        <div style={{ 
+          display: 'flex', 
+          justifyContent: 'space-between', 
+          alignItems: 'center',
           marginBottom: '1.5rem',
-          fontSize: '1.8rem',
-          fontWeight: 600,
-          color: 'var(--text-color)',
           borderBottom: '2px solid var(--border-color)',
           paddingBottom: '0.75rem'
-        }}>{monthName}</h2>
+        }}>
+          <h2 style={{ 
+            margin: 0,
+            fontSize: '1.8rem',
+            fontWeight: 600,
+            color: 'var(--text-color)'
+          }}>{monthName}</h2>
+          
+          {/* Quick Stats */}
+          <div style={{ display: 'flex', gap: '1rem', alignItems: 'center' }}>
+            <div style={{ 
+              display: 'flex', 
+              alignItems: 'center', 
+              gap: '0.5rem',
+              padding: '0.5rem 1rem',
+              borderRadius: '8px',
+              backgroundColor: darkMode ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.03)',
+              border: '1px solid var(--border-color)'
+            }}>
+              <CalendarDays size={16} style={{ color: 'var(--button-bg)' }} />
+              <span style={{ fontSize: '0.85rem', fontWeight: 500 }}>
+                {scheds.length} schedule{scheds.length !== 1 ? 's' : ''}
+              </span>
+            </div>
+            
+            {totalConflicts > 0 && (
+              <div 
+                style={{ 
+                  display: 'flex', 
+                  alignItems: 'center', 
+                  gap: '0.5rem',
+                  padding: '0.5rem 1rem',
+                  borderRadius: '8px',
+                  backgroundColor: 'rgba(255, 152, 0, 0.1)',
+                  border: '1px solid rgba(255, 152, 0, 0.3)',
+                  cursor: 'pointer'
+                }}
+                onClick={() => setCalendarShowConflictsOnly(!calendarShowConflictsOnly)}
+                title="Click to filter to conflict days only"
+              >
+                <AlertTriangle size={16} style={{ color: '#ff9800' }} />
+                <span style={{ fontSize: '0.85rem', fontWeight: 600, color: '#ff9800' }}>
+                  {totalConflicts} conflict{totalConflicts !== 1 ? 's' : ''}
+                </span>
+              </div>
+            )}
+            
+            {totalBlends > 0 && (
+              <div 
+                style={{ 
+                  display: 'flex', 
+                  alignItems: 'center', 
+                  gap: '0.5rem',
+                  padding: '0.5rem 1rem',
+                  borderRadius: '8px',
+                  backgroundColor: 'rgba(139, 92, 246, 0.1)',
+                  border: '1px solid rgba(139, 92, 246, 0.3)'
+                }}
+                title="Days with blended schedules"
+              >
+                <Shuffle size={16} style={{ color: '#8b5cf6' }} />
+                <span style={{ fontSize: '0.85rem', fontWeight: 600, color: '#8b5cf6' }}>
+                  {totalBlends} day{totalBlends !== 1 ? 's' : ''} blending
+                </span>
+              </div>
+            )}
+          </div>
+        </div>
+        
+        {/* Conflict Summary Panel - shows when there are conflicts */}
+        {totalConflicts > 0 && !calendarShowConflictsOnly && (
+          <div style={{
+            marginBottom: '1rem',
+            padding: '1rem',
+            borderRadius: '8px',
+            backgroundColor: 'rgba(255, 152, 0, 0.08)',
+            border: '1px solid rgba(255, 152, 0, 0.25)'
+          }}>
+            <div style={{ 
+              display: 'flex', 
+              alignItems: 'center', 
+              gap: '0.5rem', 
+              marginBottom: '0.75rem',
+              fontWeight: 600,
+              color: '#ff9800'
+            }}>
+              <AlertTriangle size={18} />
+              <span>Schedule Conflicts Detected</span>
+            </div>
+            <p style={{ 
+              margin: '0 0 0.75rem 0', 
+              fontSize: '0.85rem', 
+              color: 'var(--text-secondary)',
+              lineHeight: 1.5
+            }}>
+              <strong>{totalConflicts} day{totalConflicts !== 1 ? 's' : ''}</strong> have overlapping schedules. 
+              The schedule that ends soonest takes priority. Look for the <Crown size={12} style={{ display: 'inline', verticalAlign: 'middle' }} /> crown icon.
+            </p>
+            <div style={{ display: 'flex', gap: '0.5rem', fontSize: '0.8rem' }}>
+              <span style={{ 
+                padding: '0.25rem 0.5rem', 
+                borderRadius: '4px',
+                backgroundColor: 'rgba(255, 215, 0, 0.2)',
+                border: '1px solid rgba(255, 215, 0, 0.5)',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '4px'
+              }}>
+                <Crown size={12} /> = Active
+              </span>
+              <span style={{ 
+                padding: '0.25rem 0.5rem', 
+                borderRadius: '4px',
+                backgroundColor: 'rgba(0,0,0,0.1)',
+                opacity: 0.6
+              }}>
+                Faded = Overridden
+              </span>
+            </div>
+          </div>
+        )}
         
         {/* Day of week headers */}
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', gap: '8px', marginBottom: '8px' }}>
@@ -5051,10 +6076,53 @@ services:
           {days.map((d, idx) => {
             const inMonth = d.getMonth() === monthIndex;
             const t = new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
-            const dayData = byDay.get(t) || { schedules: new Set(), isFallback: false, hasConflict: false };
+            const dayData = byDay.get(t) || { schedules: new Set(), isFallback: false, hasConflict: false, hasBlend: false, hasExclusive: false, exclusiveHasTimeRange: false };
             const schedArray = Array.from(dayData.schedules);
             const isToday = t === todayTime;
+            
+            // If "Conflicts Only" filter is active, dim non-conflict days
+            const isFilteredOut = calendarShowConflictsOnly && !dayData.hasConflict;
             const isWeekend = d.getDay() === 0 || d.getDay() === 6;
+            
+            // Determine day status for border styling
+            // - Full-day exclusive: red border
+            // - Time-restricted exclusive: dashed red border
+            // - Time-restricted exclusive + blend: purple border (blend mode active most of day)
+            // - Blend mode: purple border
+            // - Conflict (no blend, no exclusive): orange border
+            // - Normal: default border
+            const hasTimeRestrictedExclusiveWithBlend = dayData.hasExclusive && dayData.exclusiveHasTimeRange && dayData.hasBlend;
+            const isFullDayExclusive = dayData.hasExclusive && !dayData.exclusiveHasTimeRange;
+            const isTimeRestrictedExclusive = dayData.hasExclusive && dayData.exclusiveHasTimeRange;
+            
+            let dayBorderColor = 'var(--border-color)';
+            let dayBorderWidth = '1px';
+            let dayBorderStyle = 'solid';
+            let dayShadow = 'none';
+            
+            if (isToday) {
+              dayBorderColor = 'var(--button-bg)';
+              dayBorderWidth = '2px';
+              dayShadow = '0 0 12px rgba(59, 130, 246, 0.3)';
+            } else if (isFullDayExclusive) {
+              dayBorderColor = '#14B8A6';
+              dayBorderWidth = '2px';
+              dayShadow = '0 0 8px rgba(20, 184, 166, 0.3)';
+            } else if (hasTimeRestrictedExclusiveWithBlend || dayData.hasBlend) {
+              dayBorderColor = '#8b5cf6';
+              dayBorderWidth = '2px';
+              dayShadow = '0 0 8px rgba(139, 92, 246, 0.3)';
+            } else if (isTimeRestrictedExclusive) {
+              // Time-restricted exclusive without blend - show dashed gold border
+              dayBorderColor = '#14B8A6';
+              dayBorderWidth = '2px';
+              dayBorderStyle = 'dashed';
+              dayShadow = '0 0 8px rgba(20, 184, 166, 0.2)';
+            } else if (dayData.hasConflict) {
+              dayBorderColor = '#ff9800';
+              dayBorderWidth = '2px';
+              dayShadow = '0 0 8px rgba(255, 152, 0, 0.3)';
+            }
             
             // Get unique categories for this day
             const uniqueCats = new Map();
@@ -5071,8 +6139,12 @@ services:
             const nonFallbackSchedules = schedArray.filter(s => !s.fallback_category_id && s.start_date);
             let winningSchedule = null;
             if (nonFallbackSchedules.length > 0) {
-              // Sort by: ends soonest, then started earliest, then lowest ID
+              // Sort by: priority (higher wins), then ends soonest, then started earliest, then lowest ID
               const sorted = [...nonFallbackSchedules].sort((a, b) => {
+                const priorityA = a.priority ?? 5;
+                const priorityB = b.priority ?? 5;
+                if (priorityA !== priorityB) return priorityB - priorityA; // Higher priority first
+                
                 const endA = a.end_date ? new Date(a.end_date).getTime() : Number.MAX_SAFE_INTEGER;
                 const endB = b.end_date ? new Date(b.end_date).getTime() : Number.MAX_SAFE_INTEGER;
                 if (endA !== endB) return endA - endB;
@@ -5088,11 +6160,7 @@ services:
             
             return (
               <div key={idx} style={{
-                border: isToday 
-                  ? '2px solid var(--button-bg)' 
-                  : (dayData.hasConflict 
-                      ? '2px solid #ff9800' 
-                      : '1px solid var(--border-color)'),
+                border: `${dayBorderWidth} ${dayBorderStyle} ${dayBorderColor}`,
                 backgroundColor: inMonth 
                   ? (isWeekend 
                       ? (darkMode ? 'rgba(255,255,255,0.03)' : 'rgba(0,0,0,0.03)') 
@@ -5105,12 +6173,12 @@ services:
                 overflow: 'hidden',
                 transition: 'all 0.2s ease',
                 cursor: inMonth ? 'pointer' : 'default',
-                boxShadow: isToday 
-                  ? '0 0 12px rgba(59, 130, 246, 0.3)' 
-                  : (dayData.hasConflict ? '0 0 8px rgba(255, 152, 0, 0.3)' : 'none')
+                boxShadow: dayShadow,
+                opacity: isFilteredOut ? 0.3 : 1,
+                pointerEvents: isFilteredOut ? 'none' : 'auto'
               }}
               onClick={() => {
-                if (inMonth) {
+                if (inMonth && !isFilteredOut) {
                   // Calculate the start of the week (Sunday) for this day
                   const clickedDate = new Date(d);
                   const dayOfWeek = clickedDate.getDay();
@@ -5121,29 +6189,102 @@ services:
                 }
               }}
               onMouseEnter={(e) => {
-                if (inMonth) {
+                if (inMonth && !isFilteredOut) {
                   e.currentTarget.style.transform = 'translateY(-2px)';
                   e.currentTarget.style.boxShadow = '0 4px 12px var(--shadow)';
                 }
               }}
               onMouseLeave={(e) => {
                 e.currentTarget.style.transform = 'translateY(0)';
-                e.currentTarget.style.boxShadow = isToday ? '0 0 12px rgba(59, 130, 246, 0.3)' : 'none';
+                // Restore the appropriate shadow based on day status
+                let restoreShadow = 'none';
+                if (isToday) {
+                  restoreShadow = '0 0 12px rgba(59, 130, 246, 0.3)';
+                } else if (isFullDayExclusive) {
+                  restoreShadow = '0 0 8px rgba(20, 184, 166, 0.3)';
+                } else if (hasTimeRestrictedExclusiveWithBlend || dayData.hasBlend) {
+                  restoreShadow = '0 0 8px rgba(139, 92, 246, 0.3)';
+                } else if (isTimeRestrictedExclusive) {
+                  restoreShadow = '0 0 8px rgba(20, 184, 166, 0.2)';
+                } else if (dayData.hasConflict) {
+                  restoreShadow = '0 0 8px rgba(255, 152, 0, 0.3)';
+                }
+                e.currentTarget.style.boxShadow = restoreShadow;
               }}>
-                {/* Conflict warning indicator */}
-                {dayData.hasConflict && (
+                {/* Blend Mode indicator - shown when 2+ schedules have blend enabled */}
+                {dayData.hasBlend && !dayData.hasConflict && (
                   <div 
-                    title={`⚠️ Schedule Conflict\nMultiple schedules active on this day.\nWinning schedule: ${winningSchedule?.name || 'Unknown'}`}
+                    title={dayData.hasExclusive 
+                      ? `🔀 BLEND + EXCLUSIVE\n\n${dayData.blendScheds.length} blending schedule${dayData.blendScheds.length > 1 ? 's' : ''}:\n${dayData.blendScheds.map((s, i) => `${i + 1}. ${s.name}`).join('\n')}\n\n${dayData.exclusiveScheds?.length || 0} exclusive schedule${(dayData.exclusiveScheds?.length || 0) > 1 ? 's' : ''}:\n${(dayData.exclusiveScheds || []).map((s, i) => `${i + 1}. ${s.name}`).join('\n')}\n\nExclusive runs during its time window.\nBlend schedules mix prerolls outside that window.`
+                      : `🔀 BLEND MODE ACTIVE\n\n${dayData.blendScheds.length} schedules blending:\n${dayData.blendScheds.map((s, i) => `${i + 1}. ${s.name}`).join('\n')}\n\nPrerolls from all blending schedules are mixed together!\nNo conflicts - all schedules contribute.`}
                     style={{ 
                       position: 'absolute', 
-                      top: 8, 
-                      left: 8, 
-                      fontSize: '1rem',
-                      color: '#ff9800',
-                      fontWeight: 700,
+                      top: 6, 
+                      left: 6, 
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '4px',
+                      padding: '2px 6px',
+                      borderRadius: '4px',
+                      backgroundColor: 'rgba(139, 92, 246, 0.15)',
+                      border: '1px solid rgba(139, 92, 246, 0.5)',
                       cursor: 'help',
-                      textShadow: darkMode ? '0 1px 3px rgba(0,0,0,0.5)' : '0 1px 2px rgba(0,0,0,0.3)'
-                    }}>⚠️</div>
+                      zIndex: 1
+                    }}>
+                    <Shuffle size={12} style={{ color: '#8b5cf6' }} />
+                    {dayData.hasExclusive && <Lock size={10} style={{ color: '#8b5cf6', opacity: 0.7 }} />}
+                    <span style={{ fontSize: '0.65rem', fontWeight: 600, color: '#8b5cf6' }}>{dayData.blendScheds.length}{dayData.hasExclusive ? '+1' : ''}</span>
+                  </div>
+                )}
+                
+                {/* Exclusive Mode indicator - shown when exclusive schedule is active WITHOUT blend */}
+                {dayData.hasExclusive && !dayData.hasBlend && !dayData.hasConflict && (
+                  <div 
+                    title={dayData.exclusiveHasTimeRange 
+                      ? `🔒 TIME-RESTRICTED EXCLUSIVE\n\n${(dayData.exclusiveScheds || []).map(s => s.name).join(', ')}\n\nExclusive during specific hours only.\nOther schedules may run outside this window.`
+                      : `🔒 EXCLUSIVE MODE\n\n${(dayData.exclusiveScheds || []).map(s => s.name).join(', ')}\n\nThis schedule takes priority all day.\nOther schedules on this day are overridden.`}
+                    style={{ 
+                      position: 'absolute', 
+                      top: 6, 
+                      left: 6, 
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '4px',
+                      padding: '2px 6px',
+                      borderRadius: '4px',
+                      backgroundColor: dayData.exclusiveHasTimeRange ? 'rgba(20, 184, 166, 0.1)' : 'rgba(20, 184, 166, 0.15)',
+                      border: dayData.exclusiveHasTimeRange ? '1px dashed rgba(20, 184, 166, 0.5)' : '1px solid rgba(20, 184, 166, 0.5)',
+                      cursor: 'help',
+                      zIndex: 1
+                    }}>
+                    <Lock size={12} style={{ color: '#14B8A6' }} />
+                    {dayData.exclusiveHasTimeRange && <Clock size={10} style={{ color: '#14B8A6', opacity: 0.7 }} />}
+                  </div>
+                )}
+                
+                {/* Enhanced Conflict warning indicator with Lucide icon - only show for true conflicts */}
+                {dayData.hasConflict && (
+                  <div 
+                    title={dayData.hasExclusive 
+                      ? `⚠️ MULTIPLE EXCLUSIVE SCHEDULES\n\n${dayData.exclusiveScheds?.length || 0} exclusive schedules competing:\n${(dayData.exclusiveScheds || []).map((s, i) => `${i + 1}. ${s.name}`).join('\n')}\n\nOnly one exclusive schedule can be active at a time.`
+                      : `⚠️ SCHEDULE CONFLICT\n\n${schedArray.length} schedules active on this day:\n${schedArray.map((s, i) => `${i + 1}. ${s.name}${s === winningSchedule ? ' ← ACTIVE' : ' (overridden)'}`).join('\n')}\n\nTip: Enable "Blend Mode" on schedules to mix their prerolls together!\n\nPriority Rules:\n1. Higher priority value\n2. Ends soonest\n3. Started earliest\n4. Lowest ID`}
+                    style={{ 
+                      position: 'absolute', 
+                      top: 6, 
+                      left: 6, 
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '4px',
+                      padding: '2px 6px',
+                      borderRadius: '4px',
+                      backgroundColor: 'rgba(255, 152, 0, 0.15)',
+                      border: '1px solid rgba(255, 152, 0, 0.5)',
+                      cursor: 'help',
+                      zIndex: 1
+                    }}>
+                    <AlertTriangle size={12} style={{ color: '#ff9800' }} />
+                    <span style={{ fontSize: '0.65rem', fontWeight: 600, color: '#ff9800' }}>{dayData.hasExclusive ? dayData.exclusiveScheds?.length : schedArray.length}</span>
+                  </div>
                 )}
                 
                 <div style={{ 
@@ -5181,43 +6322,96 @@ services:
                       }
                     }
                     
-                    let tooltipText = `${scheduleNames}${dayData.isFallback ? ' (Fallback)' : ''}\nCategory: ${data.cat.name}`;
-                    if (dayData.hasConflict && isWinner) {
-                      tooltipText += '\n👑 This schedule takes priority';
+                    let tooltipText = `${scheduleNames}${dayData.isFallback ? ' (Fallback)' : ''}\nCategory: ${data.cat.name}\nType: ${data.schedObjs[0]?.type || 'unknown'}`;
+                    
+                    // Check if this schedule is part of blend mode or exclusive
+                    const isInBlend = dayData.hasBlend && data.schedObjs.some(s => s.blend_enabled);
+                    const isExclusive = dayData.hasExclusive && data.schedObjs.some(s => s.exclusive);
+                    
+                    // Check if this exclusive schedule has a time range (not full-day exclusive)
+                    let exclusiveTimeRange = '';
+                    let isTimeRestrictedExclusive = false;
+                    if (isExclusive) {
+                      const exclusiveSched = data.schedObjs.find(s => s.exclusive);
+                      if (exclusiveSched && exclusiveSched.recurrence_pattern) {
+                        try {
+                          const pattern = JSON.parse(exclusiveSched.recurrence_pattern);
+                          if (pattern.timeRange?.start) {
+                            exclusiveTimeRange = `${pattern.timeRange.start}-${pattern.timeRange.end || '23:59'}`;
+                            isTimeRestrictedExclusive = true;
+                          }
+                        } catch (e) {}
+                      }
+                    }
+                    
+                    // Full-day exclusive gets bold red styling; time-restricted exclusive gets subtle styling
+                    const isFullDayExclusive = isExclusive && !isTimeRestrictedExclusive;
+                    
+                    if (isExclusive) {
+                      const timeRangeStr = exclusiveTimeRange ? ` during ${exclusiveTimeRange}` : '';
+                      tooltipText += `\n\nEXCLUSIVE - Wins over other schedules${timeRangeStr}`;
+                    } else if (isInBlend) {
+                      tooltipText += '\n\nBLENDING - Prerolls mixed with other schedules';
+                    } else if (dayData.hasConflict && isWinner) {
+                      tooltipText += '\n\nACTIVE - This schedule takes priority';
                     } else if (dayData.hasConflict && !dayData.isFallback) {
-                      tooltipText += '\n⚠️ Overridden by higher priority schedule';
+                      tooltipText += '\n\nOVERRIDDEN - Higher priority schedule is active';
                     }
                     
                     // Show first schedule name, or combined names if multiple
                     const displayName = data.schedules.length === 1 ? data.schedules[0] : scheduleNames;
+                    
+                    // Check if schedule is inactive (greyed out)
+                    const isInactive = data.schedObjs.some(s => !s.is_active);
                     
                     return (
                       <div 
                         key={catId + '_' + i} 
                         title={tooltipText} 
                         style={{
-                        backgroundColor: dayData.isFallback ? 'transparent' : scheduleColor,
-                        border: dayData.isFallback ? `2px dashed ${scheduleColor}` : 'none',
+                        backgroundColor: dayData.isFallback ? 'transparent' : (isInactive ? '#6c757d' : scheduleColor),
+                        border: dayData.isFallback 
+                          ? `2px dashed ${scheduleColor}` 
+                          : (isFullDayExclusive
+                            ? '2px solid rgba(239, 68, 68, 0.8)'
+                            : (isTimeRestrictedExclusive
+                              ? '1px dashed rgba(239, 68, 68, 0.5)'
+                              : (isInBlend 
+                                ? '2px solid rgba(139, 92, 246, 0.8)' 
+                                : (isWinner && dayData.hasConflict ? '2px solid rgba(255, 215, 0, 0.8)' : 'none')))),
                         color: dayData.isFallback ? scheduleColor : '#fff', 
                         borderRadius: '4px',
-                        padding: '4px 6px', 
-                        fontSize: '0.75rem',
-                        fontWeight: isWinner ? 600 : 500,
+                        padding: '3px 6px', 
+                        fontSize: '0.7rem',
+                        fontWeight: isWinner || isInBlend ? 600 : 500,
                         whiteSpace: 'nowrap', 
                         overflow: 'hidden', 
                         textOverflow: 'ellipsis',
                         boxShadow: dayData.isFallback 
                           ? 'none' 
-                          : (isWinner && dayData.hasConflict 
-                              ? '0 2px 6px rgba(0,0,0,0.3), 0 0 0 2px rgba(255, 215, 0, 0.4)' 
-                              : '0 1px 3px rgba(0,0,0,0.2)'),
+                          : (isFullDayExclusive
+                              ? '0 2px 8px rgba(239, 68, 68, 0.4)'
+                              : (isInBlend
+                                  ? '0 2px 8px rgba(139, 92, 246, 0.4)'
+                                  : (isWinner && dayData.hasConflict 
+                                      ? '0 2px 8px rgba(255, 215, 0, 0.4)' 
+                                      : '0 1px 3px rgba(0,0,0,0.2)'))),
                         opacity: dayData.isFallback 
                           ? 0.8 
-                          : (dayData.hasConflict && !isWinner ? 0.6 : 1),
-                        position: 'relative'
+                          : (dayData.hasConflict && !isWinner && !isInBlend && !isExclusive ? 0.5 : (isInactive ? 0.6 : 1)),
+                        position: 'relative',
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '3px'
                       }}>
-                        {isWinner && dayData.hasConflict && <span style={{ marginRight: '4px' }}>👑</span>}
-                        {displayName}
+                        {isExclusive && <Lock size={10} style={{ flexShrink: 0, opacity: isTimeRestrictedExclusive ? 0.7 : 1 }} />}
+                        {isExclusive && exclusiveTimeRange && (
+                          <span style={{ fontSize: '0.55rem', opacity: 0.8, flexShrink: 0 }}>({exclusiveTimeRange})</span>
+                        )}
+                        {!isExclusive && isInBlend && <Shuffle size={10} style={{ flexShrink: 0 }} />}
+                        {!isExclusive && !isInBlend && isWinner && dayData.hasConflict && <Crown size={10} style={{ flexShrink: 0 }} />}
+                        {isInactive && <Ban size={10} style={{ flexShrink: 0, opacity: 0.8 }} />}
+                        <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>{displayName}</span>
                       </div>
                     );
                   })}
@@ -5349,54 +6543,11 @@ services:
     const catMap = new Map((categories || []).map((c, idx) => [c.id, { name: c.name, color: palette[idx % palette.length] }]));
 
     // Count scheduled days per month and track conflicts
-    const counts = Array.from({ length: 12 }, (_, m) => ({ month: m, cats: new Map(), conflictDays: 0 }));
+    const counts = Array.from({ length: 12 }, (_, m) => ({ month: m, cats: new Map(), conflictDays: 0, uniqueScheduledDays: 0 }));
     const normalizeDay = (iso) => {
       if (!iso) return null;
       const d = new Date(ensureUtcIso(iso));
       return new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
-    };
-    
-    // Helper to check if a day matches a schedule (handles yearly repeats)
-    const isScheduleActiveOnDay = (schedule, dayTime) => {
-      if (!schedule.start_date) return false;
-      
-      const dayDate = new Date(dayTime);
-      
-      // For yearly/holiday schedules, check if the month/day matches
-      if (schedule.type === 'yearly' || schedule.type === 'holiday') {
-        // Parse dates using UTC to avoid timezone issues
-        const startDateStr = schedule.start_date.includes('T') ? schedule.start_date.split('T')[0] : schedule.start_date;
-        const endDateStr = schedule.end_date ? (schedule.end_date.includes('T') ? schedule.end_date.split('T')[0] : schedule.end_date) : startDateStr;
-        
-        const [startYear, startMonth, startDay] = startDateStr.split('-').map(Number);
-        const [endYear, endMonth, endDay] = endDateStr.split('-').map(Number);
-        
-        // Use 0-indexed months for comparison (JavaScript Date uses 0-11)
-        const schedStartMonth = startMonth - 1;
-        const schedStartDay = startDay;
-        const schedEndMonth = endMonth - 1;
-        const schedEndDay = endDay;
-        
-        const dayMonth = dayDate.getMonth();
-        const dayDay = dayDate.getDate();
-        
-        // Check if day falls within the recurring month/day range
-        if (schedStartMonth === schedEndMonth) {
-          // Same month: simple day range check
-          return dayMonth === schedStartMonth && dayDay >= schedStartDay && dayDay <= schedEndDay;
-        } else {
-          // Cross-month range (e.g., Dec 20 - Jan 5)
-          return (dayMonth === schedStartMonth && dayDay >= schedStartDay) ||
-                 (dayMonth === schedEndMonth && dayDay <= schedEndDay) ||
-                 (schedStartMonth < schedEndMonth && dayMonth > schedStartMonth && dayMonth < schedEndMonth) ||
-                 (schedStartMonth > schedEndMonth && (dayMonth > schedStartMonth || dayMonth < schedEndMonth));
-        }
-      }
-      
-      // For non-repeating schedules, use standard date range check
-      const sDay = normalizeDay(schedule.start_date);
-      const eDay = schedule.end_date ? normalizeDay(schedule.end_date) : sDay;
-      return dayTime >= sDay && dayTime <= eDay;
     };
     
     // Iterate through each day of the year using proper date construction
@@ -5409,21 +6560,32 @@ services:
         const t = d.getTime();
         
         let activeSchedulesForDay = 0;
+        let dayHasAnySchedule = false;
         
         // Check each schedule to see if it's active on this day
-        // Only consider schedules that are enabled (is_active = true)
+        // Apply calendar filters
         for (const s of (schedules || [])) {
-          if (!s.start_date || !s.category_id || !s.is_active) continue; // Skip disabled schedules
+          // Apply filters
+          if (!s.start_date || !s.category_id) continue;
+          if (!calendarShowInactive && !s.is_active) continue; // Active filter
+          if (calendarFilterType !== 'all' && s.type !== calendarFilterType) continue; // Type filter
+          if (calendarFilterSchedules.length > 0 && !calendarFilterSchedules.includes(s.id)) continue; // Schedule filter
           
-          const isActive = isScheduleActiveOnDay(s, t);
+          const isActive = isScheduleActiveOnDay(s, t, normalizeDay);
           
           if (isActive) {
             map.set(s.category_id, (map.get(s.category_id) || 0) + 1);
+            dayHasAnySchedule = true;
             // Only count non-fallback schedules for conflicts
             if (!s.fallback_category_id) {
               activeSchedulesForDay++;
             }
           }
+        }
+        
+        // Track unique days that have at least one schedule
+        if (dayHasAnySchedule) {
+          counts[month].uniqueScheduledDays++;
         }
         
         // Track if this day has conflicts (multiple active non-fallback schedules)
@@ -5433,31 +6595,94 @@ services:
       }
     }
     
-    // Add fallback categories for days with no active schedules
-    const fallbackCats = new Set((schedules || [])
-      .map(s => s.fallback_category_id)
-      .filter(Boolean));
+    // Add fallback category for days with no active schedules
+    // Use the closest fallback schedule for each empty day
+    const fallbackSchedules = (schedules || []).filter(s => s.fallback_category_id && s.is_active);
     
-    if (fallbackCats.size > 0) {
-      for (let m = 0; m < 12; m++) {
-        const monthStart = new Date(calendarYear, m, 1).getTime();
-        const monthEnd = new Date(calendarYear, m + 1, 0).getTime();
-        const map = counts[m].cats;
+    // Helper to get year-agnostic dates for yearly schedules
+    const getYearAgnosticDatesForYear = (schedule, targetYear) => {
+      const startDateStr = schedule.start_date.includes('T') ? schedule.start_date.split('T')[0] : schedule.start_date;
+      const endDateStr = schedule.end_date ? (schedule.end_date.includes('T') ? schedule.end_date.split('T')[0] : schedule.end_date) : startDateStr;
+      const [, startMonth, startDay] = startDateStr.split('-').map(Number);
+      const [, endMonth, endDay] = endDateStr.split('-').map(Number);
+      
+      // Handle year-wrap schedules (e.g., Dec 1 to Jan 15)
+      if (startMonth > endMonth || (startMonth === endMonth && startDay > endDay)) {
+        return [
+          { start: new Date(targetYear - 1, startMonth - 1, startDay), end: new Date(targetYear, endMonth - 1, endDay) },
+          { start: new Date(targetYear, startMonth - 1, startDay), end: new Date(targetYear + 1, endMonth - 1, endDay) }
+        ];
+      }
+      return [{ start: new Date(targetYear, startMonth - 1, startDay), end: new Date(targetYear, endMonth - 1, endDay) }];
+    };
+    
+    // Find the closest fallback schedule for a given day
+    const findClosestFallbackForDay = (dayTime) => {
+      if (fallbackSchedules.length === 0) return null;
+      if (fallbackSchedules.length === 1) return fallbackSchedules[0];
+      
+      const dayDate = new Date(dayTime);
+      const targetYear = dayDate.getFullYear();
+      let closestSchedule = null;
+      let closestDistance = Infinity;
+      
+      for (const s of fallbackSchedules) {
+        const ranges = (s.type === 'yearly' || s.type === 'holiday') 
+          ? getYearAgnosticDatesForYear(s, targetYear)
+          : [{ start: new Date(normalizeDay(s.start_date)), end: s.end_date ? new Date(normalizeDay(s.end_date)) : new Date(normalizeDay(s.start_date)) }];
         
-        let daysWithSchedules = 0;
-        for (const [catId, count] of map.entries()) {
-          if (!fallbackCats.has(catId)) {
-            daysWithSchedules += count;
+        for (const range of ranges) {
+          const rangeStart = range.start.getTime();
+          const rangeEnd = range.end.getTime();
+          
+          let distance;
+          if (dayTime >= rangeStart && dayTime <= rangeEnd) {
+            distance = 0;
+          } else if (dayTime < rangeStart) {
+            distance = rangeStart - dayTime;
+          } else {
+            distance = dayTime - rangeEnd;
+          }
+          
+          if (distance < closestDistance) {
+            closestDistance = distance;
+            closestSchedule = s;
+          }
+        }
+      }
+      
+      return closestSchedule;
+    };
+    
+    // Re-iterate through days to add fallback categories based on proximity
+    for (let m = 0; m < 12; m++) {
+      const daysInMonth = new Date(calendarYear, m + 1, 0).getDate();
+      const map = counts[m].cats;
+      
+      for (let day = 1; day <= daysInMonth; day++) {
+        const d = new Date(calendarYear, m, day);
+        const t = d.getTime();
+        
+        // Check if this day has any active schedule
+        let dayHasSchedule = false;
+        for (const s of (schedules || [])) {
+          if (!s.start_date || !s.category_id) continue;
+          if (!calendarShowInactive && !s.is_active) continue;
+          if (calendarFilterType !== 'all' && s.type !== calendarFilterType) continue;
+          if (calendarFilterSchedules.length > 0 && !calendarFilterSchedules.includes(s.id)) continue;
+          
+          if (isScheduleActiveOnDay(s, t, normalizeDay)) {
+            dayHasSchedule = true;
+            break;
           }
         }
         
-        const daysInMonth = new Date(calendarYear, m + 1, 0).getDate();
-        const fallbackDays = daysInMonth - daysWithSchedules;
-        
-        if (fallbackDays > 0) {
-          fallbackCats.forEach(fcid => {
-            map.set(fcid, (map.get(fcid) || 0) + fallbackDays);
-          });
+        // If no schedule, add the closest fallback
+        if (!dayHasSchedule) {
+          const closestFallback = findClosestFallbackForDay(t);
+          if (closestFallback) {
+            map.set(closestFallback.fallback_category_id, (map.get(closestFallback.fallback_category_id) || 0) + 1);
+          }
         }
       }
     }
@@ -5482,7 +6707,7 @@ services:
             const monthName = new Date(calendarYear, entry.month, 1).toLocaleString(undefined, { month: 'long' });
             const topCats = Array.from(entry.cats.entries()).sort((a, b) => b[1] - a[1]).slice(0, 4);
             const isCurrentMonth = isCurrentYear && entry.month === currentMonth;
-            const totalDays = Array.from(entry.cats.values()).reduce((sum, count) => sum + count, 0);
+            const totalDays = entry.uniqueScheduledDays; // Use unique scheduled days count
             const daysInMonth = new Date(calendarYear, entry.month + 1, 0).getDate();
             
             return (
@@ -5577,8 +6802,13 @@ services:
                           const t = d.getTime();
                           
                           for (const s of (schedules || [])) {
-                            if (!s.start_date || !s.category_id || !s.is_active) continue;
-                            if (isScheduleActiveOnDay(s, t)) {
+                            if (!s.start_date || !s.category_id) continue;
+                            // Apply same filters as main year view
+                            if (!calendarShowInactive && !s.is_active) continue;
+                            if (calendarFilterType !== 'all' && s.type !== calendarFilterType) continue;
+                            if (calendarFilterSchedules.length > 0 && !calendarFilterSchedules.includes(s.id)) continue;
+                            
+                            if (isScheduleActiveOnDay(s, t, normalizeDay)) {
                               schedCounts.set(s.id, {
                                 schedule: s,
                                 count: (schedCounts.get(s.id)?.count || 0) + 1
@@ -5642,12 +6872,17 @@ services:
                         });
                       })()}
                       {(() => {
-                        // Count total schedules active in this month
+                        // Count total schedules active in this month (with filters)
                         const totalScheds = (schedules || []).filter(s => {
-                          if (!s.start_date || !s.category_id || !s.is_active) return false;
+                          if (!s.start_date || !s.category_id) return false;
+                          // Apply same filters
+                          if (!calendarShowInactive && !s.is_active) return false;
+                          if (calendarFilterType !== 'all' && s.type !== calendarFilterType) return false;
+                          if (calendarFilterSchedules.length > 0 && !calendarFilterSchedules.includes(s.id)) return false;
+                          
                           for (let day = 1; day <= daysInMonth; day++) {
                             const d = new Date(calendarYear, entry.month, day);
-                            if (isScheduleActiveOnDay(s, d.getTime())) return true;
+                            if (isScheduleActiveOnDay(s, d.getTime(), normalizeDay)) return true;
                           }
                           return false;
                         }).length;
@@ -5680,7 +6915,9 @@ services:
       <div className="upload-section" style={{ maxWidth: '1200px', margin: '30px auto' }}>
         {/* Header with Progress Steps */}
         <div style={{ marginBottom: '2rem' }}>
-          <h2 style={{ margin: '0 0 1rem 0', fontSize: '1.8rem', fontWeight: 700 }}>Create New Schedule</h2>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
+            <h2 style={{ margin: 0, fontSize: '1.8rem', fontWeight: 700 }}>Create New Schedule</h2>
+          </div>
           
           {/* Visual Step Progress Indicator */}
           <div style={{
@@ -5693,10 +6930,10 @@ services:
             border: '1px solid var(--border-color)'
           }}>
             {[
-              { num: 1, label: 'Mode', icon: '🎯' },
-              { num: 2, label: 'Details', icon: '📝' },
-              { num: 3, label: scheduleMode === 'simple' ? 'Category' : 'Sequence', icon: scheduleMode === 'simple' ? '📁' : '🎬' },
-              { num: 4, label: 'Review', icon: '✅' }
+              { num: 1, label: 'Mode', icon: <Target size={16} /> },
+              { num: 2, label: 'Details', icon: <Edit size={16} /> },
+              { num: 3, label: scheduleMode === 'simple' ? 'Category' : 'Sequence', icon: scheduleMode === 'simple' ? <Folder size={16} /> : <Film size={16} /> },
+              { num: 4, label: 'Review', icon: <CheckCircle size={16} /> }
             ].map((step, index, arr) => (
               <React.Fragment key={step.num}>
                 <div style={{
@@ -5721,8 +6958,8 @@ services:
                   </div>
                   <div style={{ flex: 1 }}>
                     <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>Step {step.num}</div>
-                    <div style={{ fontSize: '0.9rem', fontWeight: 600, color: 'var(--text-color)' }}>
-                      <span style={{ marginRight: '0.25rem' }}>{step.icon}</span>
+                    <div style={{ fontSize: '0.9rem', fontWeight: 600, color: 'var(--text-color)', display: 'flex', alignItems: 'center', gap: '0.25rem' }}>
+                      <span>{step.icon}</span>
                       {step.label}
                     </div>
                   </div>
@@ -5786,7 +7023,7 @@ services:
                     onChange={(e) => setScheduleMode(e.target.value)}
                     style={{ marginRight: '0.75rem', width: '18px', height: '18px' }}
                   />
-                  <span style={{ fontSize: '1.5rem', marginRight: '0.5rem' }}>📁</span>
+                  <span style={{ display: 'flex', alignItems: 'center', marginRight: '0.5rem' }}><Folder size={24} /></span>
                   <span style={{ fontSize: '1.1rem', fontWeight: 600 }}>Simple Mode</span>
                 </div>
                 <p style={{ margin: '0 0 0 2.25rem', fontSize: '0.9rem', opacity: 0.9 }}>
@@ -5814,7 +7051,7 @@ services:
                     onChange={(e) => setScheduleMode(e.target.value)}
                     style={{ marginRight: '0.75rem', width: '18px', height: '18px' }}
                   />
-                  <span style={{ fontSize: '1.5rem', marginRight: '0.5rem' }}>🎬</span>
+                  <span style={{ display: 'flex', alignItems: 'center', marginRight: '0.5rem' }}><Film size={24} /></span>
                   <span style={{ fontSize: '1.1rem', fontWeight: 600 }}>Sequence Mode</span>
                 </div>
                 <p style={{ margin: '0 0 0 2.25rem', fontSize: '0.9rem', opacity: 0.9 }}>
@@ -5841,6 +7078,61 @@ services:
                   </ul>
                 </div>
               </div>
+            </div>
+          </div>
+
+          {/* Holiday Browser Banner - Between Steps 1 & 2 */}
+          <div 
+            onClick={() => {
+              loadHolidayCountries();
+              loadHolidays(holidaySelectedCountry, holidaySelectedYear);
+              checkHolidayApiStatus();
+              setShowHolidayBrowser(true);
+            }}
+            style={{ 
+              marginBottom: '2rem', 
+              padding: '1rem 1.5rem', 
+              backgroundColor: darkMode ? 'rgba(59, 130, 246, 0.15)' : 'rgba(59, 130, 246, 0.08)', 
+              borderRadius: '12px', 
+              border: '2px dashed rgba(59, 130, 246, 0.4)',
+              cursor: 'pointer',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              transition: 'all 0.2s ease'
+            }}
+            onMouseEnter={(e) => {
+              e.currentTarget.style.backgroundColor = darkMode ? 'rgba(59, 130, 246, 0.25)' : 'rgba(59, 130, 246, 0.12)';
+              e.currentTarget.style.borderColor = 'rgba(59, 130, 246, 0.6)';
+            }}
+            onMouseLeave={(e) => {
+              e.currentTarget.style.backgroundColor = darkMode ? 'rgba(59, 130, 246, 0.15)' : 'rgba(59, 130, 246, 0.08)';
+              e.currentTarget.style.borderColor = 'rgba(59, 130, 246, 0.4)';
+            }}
+          >
+            <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
+              <span style={{ fontSize: '2rem' }}>🌍</span>
+              <div>
+                <div style={{ fontSize: '1.1rem', fontWeight: 600, color: 'var(--text-color)', marginBottom: '0.25rem' }}>
+                  Quick Start: Browse Holidays
+                </div>
+                <div style={{ fontSize: '0.9rem', color: 'var(--text-secondary)' }}>
+                  Select from 100+ countries to auto-fill your schedule with holiday dates
+                </div>
+              </div>
+            </div>
+            <div style={{ 
+              display: 'flex', 
+              alignItems: 'center', 
+              gap: '0.5rem',
+              padding: '0.5rem 1rem',
+              backgroundColor: 'var(--button-bg)',
+              color: 'white',
+              borderRadius: '6px',
+              fontWeight: 600,
+              fontSize: '0.9rem'
+            }}>
+              Browse <ChevronRight size={16} />
             </div>
           </div>
 
@@ -6072,7 +7364,7 @@ services:
                   fontWeight: 700,
                   fontSize: '1rem'
                 }}>3</div>
-                <h3 style={{ margin: 0, fontSize: '1.2rem', fontWeight: 600 }}>📆 Weekly Recurrence</h3>
+                <h3 style={{ margin: 0, fontSize: '1.2rem', fontWeight: 600 }}><CalendarDays size={20} style={{marginRight: '0.5rem', verticalAlign: 'middle'}} /> Weekly Recurrence</h3>
               </div>
               
               <label style={{ display: 'block', marginBottom: '1rem', fontSize: '0.95rem', fontWeight: 600, color: 'var(--text-color)' }}>
@@ -6164,7 +7456,7 @@ services:
                   fontWeight: 700,
                   fontSize: '1rem'
                 }}>3</div>
-                <h3 style={{ margin: 0, fontSize: '1.2rem', fontWeight: 600 }}>🗓️ Monthly Recurrence</h3>
+                <h3 style={{ margin: 0, fontSize: '1.2rem', fontWeight: 600 }}><Calendar size={20} style={{marginRight: '0.5rem', verticalAlign: 'middle'}} /> Monthly Recurrence</h3>
               </div>
               
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
@@ -6295,8 +7587,8 @@ services:
                 fontWeight: 700,
                 fontSize: '1rem'
               }}>4</div>
-              <h3 style={{ margin: 0, fontSize: '1.2rem', fontWeight: 600 }}>
-                {scheduleMode === 'simple' ? '📁 Content Selection' : '🎬 Sequence Builder'}
+              <h3 style={{ margin: 0, fontSize: '1.2rem', fontWeight: 600, display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                {scheduleMode === 'simple' ? <><Folder size={20} /> Content Selection</> : <><Film size={20} /> Sequence Builder</>}
               </h3>
             </div>
             
@@ -6408,7 +7700,7 @@ services:
                           })}
                           style={{ marginRight: '0.75rem', width: '18px', height: '18px' }}
                         />
-                        <span style={{ fontSize: '1.5rem', marginRight: '0.5rem' }}>🔀</span>
+                        <span style={{ fontSize: '1.5rem', marginRight: '0.5rem' }}><Shuffle size={24} /></span>
                         <span style={{ fontSize: '1.05rem', fontWeight: 600 }}>Random</span>
                       </div>
                       <p style={{ margin: '0 0 0 2.25rem', fontSize: '0.85rem', opacity: 0.9 }}>
@@ -6439,7 +7731,7 @@ services:
                           })}
                           style={{ marginRight: '0.75rem', width: '18px', height: '18px' }}
                         />
-                        <span style={{ fontSize: '1.5rem', marginRight: '0.5rem' }}>📝</span>
+                        <span style={{ fontSize: '1.5rem', marginRight: '0.5rem' }}><Edit size={24} /></span>
                         <span style={{ fontSize: '1.05rem', fontWeight: 600 }}>Sequential</span>
                       </div>
                       <p style={{ margin: '0 0 0 2.25rem', fontSize: '0.85rem', opacity: 0.9 }}>
@@ -6463,7 +7755,7 @@ services:
                   border: '1px solid var(--border-color)'
                 }}>
                   <label style={{ display: 'block', marginBottom: '0.75rem', fontSize: '1rem', fontWeight: 600, color: 'var(--text-color)' }}>
-                    📚 Load Saved Sequence (Optional)
+                    <BookOpen size={14} style={{marginRight: '0.35rem'}} /> Load Saved Sequence (Optional)
                   </label>
                   <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'center' }}>
                     <select
@@ -6508,7 +7800,7 @@ services:
                           whiteSpace: 'nowrap'
                         }}
                       >
-                        🗑️ Clear Sequence
+                        <Trash size={16} style={{ marginRight: '6px' }} /> Clear Sequence
                       </button>
                     )}
                   </div>
@@ -6561,7 +7853,7 @@ services:
                 fontWeight: 700,
                 fontSize: '1rem'
               }}>5</div>
-              <h3 style={{ margin: 0, fontSize: '1.2rem', fontWeight: 600 }}>⚙️ Optional Settings</h3>
+              <h3 style={{ margin: 0, fontSize: '1.2rem', fontWeight: 600, display: 'flex', alignItems: 'center', gap: '0.5rem' }}><Settings size={20} /> Optional Settings</h3>
             </div>
             
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1.5rem' }}>
@@ -6696,12 +7988,12 @@ services:
                 gap: '0.5rem'
               }}
             >
-              <span>
+              <span style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
                 {editingSchedule 
-                  ? '💾 Update Schedule' 
+                  ? <><Save size={18} /> Update Schedule</> 
                   : scheduleMode === 'advanced' 
-                    ? '✅ Create Custom Schedule' 
-                    : '✅ Create Schedule'}
+                    ? <><CheckCircle size={18} /> Create Custom Schedule</> 
+                    : <><CheckCircle size={18} /> Create Schedule</>}
               </span>
             </button>
           </div>
@@ -6725,7 +8017,7 @@ services:
           boxShadow: '0 4px 12px rgba(0,0,0,0.1)'
         }}>
           <div style={{ textAlign: 'center', marginBottom: '1.5rem' }}>
-            <span style={{ fontSize: '3rem', marginBottom: '0.5rem', display: 'block' }}>🎬</span>
+            <span style={{ fontSize: '3rem', marginBottom: '0.5rem', display: 'flex', justifyContent: 'center' }}><Film size={48} /></span>
             <h2 style={{ margin: '0 0 0.5rem 0', fontSize: '1.5rem', fontWeight: 700 }}>
               Welcome to NeXroll Scheduling!
             </h2>
@@ -6741,7 +8033,7 @@ services:
               borderRadius: '8px',
               border: '1px solid var(--border-color)'
             }}>
-              <div style={{ fontSize: '2rem', marginBottom: '0.75rem' }}>📁</div>
+              <div style={{ fontSize: '2rem', marginBottom: '0.75rem' }}><Folder size={32} /></div>
               <h3 style={{ margin: '0 0 0.5rem 0', fontSize: '1.1rem', fontWeight: 600 }}>
                 Simple Scheduling
               </h3>
@@ -6772,7 +8064,7 @@ services:
               borderRadius: '8px',
               border: '1px solid var(--border-color)'
             }}>
-              <div style={{ fontSize: '2rem', marginBottom: '0.75rem' }}>🎨</div>
+              <div style={{ fontSize: '2rem', marginBottom: '0.75rem' }}><Palette size={32} /></div>
               <h3 style={{ margin: '0 0 0.5rem 0', fontSize: '1.1rem', fontWeight: 600 }}>
                 Custom Sequences
               </h3>
@@ -6803,7 +8095,7 @@ services:
             border: '1px solid rgba(59, 130, 246, 0.3)'
           }}>
             <div style={{ display: 'flex', alignItems: 'flex-start', gap: '0.75rem' }}>
-              <span style={{ fontSize: '1.5rem' }}>💡</span>
+              <span style={{ fontSize: '1.5rem' }}><Lightbulb size={24} /></span>
               <div>
                 <strong style={{ fontSize: '0.95rem' }}>Pro Tip:</strong>
                 <p style={{ margin: '0.25rem 0 0 0', fontSize: '0.875rem', color: 'var(--text-secondary)', lineHeight: '1.5' }}>
@@ -6814,395 +8106,6 @@ services:
             </div>
           </div>
         </div>
-      )}
-
-      {editingSchedule && (
-        <Modal
-          title="Edit Schedule"
-          onClose={() => {
-            setEditingSchedule(null);
-            setScheduleForm({
-              name: '', type: 'monthly', start_date: '', end_date: '',
-              category_id: '', shuffle: false, playlist: false, fallback_category_id: ''
-            });
-            setScheduleMode('simple');
-            setSequenceBlocks([]);
-            setWeekDays([]);
-            setMonthDays([]);
-            setTimeRange({ start: '', end: '' });
-          }}
-        >
-          <form onSubmit={handleUpdateSchedule}>
-            {/* Mode Toggle */}
-            <div style={{ marginBottom: '1.5rem', padding: '1rem', backgroundColor: 'var(--card-bg)', borderRadius: '0.5rem', border: '1px solid var(--border-color)' }}>
-              <label style={{ display: 'block', marginBottom: '0.75rem', fontWeight: 600, fontSize: '1rem' }}>Schedule Mode</label>
-              <div style={{ display: 'flex', gap: '1rem', marginBottom: '0.5rem' }}>
-                <label style={{ display: 'flex', alignItems: 'center', cursor: 'pointer', padding: '0.5rem 1rem', backgroundColor: scheduleMode === 'simple' ? 'var(--button-bg)' : 'var(--bg-color)', color: scheduleMode === 'simple' ? 'white' : 'var(--text-color)', borderRadius: '0.25rem', border: '2px solid var(--border-color)', transition: 'all 0.2s' }}>
-                  <input
-                    type="radio"
-                    value="simple"
-                    checked={scheduleMode === 'simple'}
-                    onChange={(e) => setScheduleMode(e.target.value)}
-                    style={{ marginRight: '0.5rem' }}
-                  />
-                  <span>Simple (Single Category)</span>
-                </label>
-                <label style={{ display: 'flex', alignItems: 'center', cursor: 'pointer', padding: '0.5rem 1rem', backgroundColor: scheduleMode === 'advanced' ? 'var(--button-bg)' : 'var(--bg-color)', color: scheduleMode === 'advanced' ? 'white' : 'var(--text-color)', borderRadius: '0.25rem', border: '2px solid var(--border-color)', transition: 'all 0.2s' }}>
-                  <input
-                    type="radio"
-                    value="advanced"
-                    checked={scheduleMode === 'advanced'}
-                    onChange={(e) => setScheduleMode(e.target.value)}
-                    style={{ marginRight: '0.5rem' }}
-                  />
-                  <span>Advanced (Sequence Builder)</span>
-                </label>
-              </div>
-              <p style={{ fontSize: '0.85rem', color: '#666', margin: 0 }}>
-                {scheduleMode === 'simple' 
-                  ? 'Select a single category with random or sequential playback.' 
-                  : 'Build a custom sequence with multiple categories and fixed prerolls.'}
-              </p>
-            </div>
-
-            <div className="nx-form-grid">
-              <div className="nx-field">
-                <label className="nx-label">Name</label>
-                <input
-                  className="nx-input"
-                  type="text"
-                  placeholder="Schedule Name"
-                  value={scheduleForm.name}
-                  onChange={(e) => setScheduleForm({...scheduleForm, name: e.target.value})}
-                  required
-                />
-              </div>
-              <div className="nx-field">
-                <label className="nx-label">Type</label>
-                <select
-                  className="nx-select"
-                  value={scheduleForm.type}
-                  onChange={(e) => setScheduleForm({...scheduleForm, type: e.target.value})}
-                >
-                  <option value="daily">Daily</option>
-                  <option value="weekly">Weekly</option>
-                  <option value="monthly">Monthly</option>
-                  <option value="yearly">Yearly</option>
-                  <option value="holiday">Holiday</option>
-                  <option value="custom">Custom</option>
-                </select>
-              </div>
-              <div className="nx-field">
-                <label className="nx-label">Start Date & Time</label>
-                <input
-                  className="nx-input"
-                  type="datetime-local"
-                  value={scheduleForm.start_date}
-                  onChange={(e) => setScheduleForm({...scheduleForm, start_date: e.target.value})}
-                  required
-                />
-              </div>
-              <div className="nx-field">
-                <label className="nx-label">End Date & Time (Optional)</label>
-                <input
-                  className="nx-input"
-                  type="datetime-local"
-                  value={scheduleForm.end_date}
-                  onChange={(e) => setScheduleForm({...scheduleForm, end_date: e.target.value})}
-                />
-              </div>
-
-              {/* Daily Schedule: Time Selector */}
-              {scheduleForm.type === 'daily' && (
-                <div className="nx-field nx-span-2" style={{ padding: '1rem', backgroundColor: 'var(--card-bg)', borderRadius: '0.5rem', border: '1px solid var(--border-color)' }}>
-                  <label className="nx-label" style={{ marginBottom: '0.75rem', fontWeight: 600 }}>Run At Time</label>
-                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
-                    <div>
-                      <label style={{ display: 'block', marginBottom: '0.5rem', fontSize: '0.9rem', color: '#666' }}>Start Time</label>
-                      <input
-                        type="time"
-                        className="nx-input"
-                        value={timeRange.start || ''}
-                        onChange={(e) => setTimeRange({...timeRange, start: e.target.value})}
-                        style={{ width: '100%' }}
-                      />
-                    </div>
-                    <div>
-                      <label style={{ display: 'block', marginBottom: '0.5rem', fontSize: '0.9rem', color: '#666' }}>End Time (Optional)</label>
-                      <input
-                        type="time"
-                        className="nx-input"
-                        value={timeRange.end || ''}
-                        onChange={(e) => setTimeRange({...timeRange, end: e.target.value})}
-                        style={{ width: '100%' }}
-                      />
-                    </div>
-                  </div>
-                  <p style={{ fontSize: '0.85rem', color: '#666', marginTop: '0.5rem', marginBottom: 0 }}>
-                    💡 Leave end time empty to run at a specific time, or set both to create a time window
-                  </p>
-                  {!timeRange.start && (
-                    <p style={{ fontSize: '0.85rem', color: '#dc3545', marginTop: '0.5rem', marginBottom: 0 }}>
-                      ⚠️ Please select at least a start time
-                    </p>
-                  )}
-                </div>
-              )}
-
-              {/* Weekly Schedule: Day of Week Selector */}
-              {scheduleForm.type === 'weekly' && (
-                <div className="nx-field nx-span-2">
-                  <label className="nx-label">Repeat On</label>
-                  <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap', marginTop: '0.5rem' }}>
-                    {['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'].map((day) => {
-                      const dayLower = day.toLowerCase();
-                      const isSelected = weekDays.includes(dayLower);
-                      return (
-                        <label
-                          key={day}
-                          style={{
-                            display: 'flex',
-                            alignItems: 'center',
-                            padding: '0.5rem 0.75rem',
-                            backgroundColor: isSelected ? 'var(--button-bg)' : 'var(--bg-color)',
-                            color: isSelected ? 'white' : 'var(--text-color)',
-                            borderRadius: '0.25rem',
-                            border: '2px solid ' + (isSelected ? 'var(--button-bg)' : 'var(--border-color)'),
-                            cursor: 'pointer',
-                            fontSize: '0.9rem',
-                            transition: 'all 0.2s',
-                            userSelect: 'none'
-                          }}
-                        >
-                          <input
-                            type="checkbox"
-                            checked={isSelected}
-                            onChange={(e) => {
-                              if (e.target.checked) {
-                                setWeekDays([...weekDays, dayLower]);
-                              } else {
-                                setWeekDays(weekDays.filter(d => d !== dayLower));
-                              }
-                            }}
-                            style={{ marginRight: '0.5rem' }}
-                          />
-                          <span>{day.substring(0, 3)}</span>
-                        </label>
-                      );
-                    })}
-                  </div>
-                  {weekDays.length === 0 && (
-                    <p style={{ fontSize: '0.85rem', color: '#dc3545', marginTop: '0.5rem', marginBottom: 0 }}>
-                      ⚠️ Select at least one day
-                    </p>
-                  )}
-                </div>
-              )}
-
-              {/* Monthly Schedule: Day of Month Selector */}
-              {scheduleForm.type === 'monthly' && (
-                <div className="nx-field nx-span-2">
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem' }}>
-                    <label className="nx-label" style={{ margin: 0 }}>On Day(s) of Month</label>
-                    <div style={{ display: 'flex', gap: '0.5rem' }}>
-                      <button
-                        type="button"
-                        onClick={() => setMonthDays(Array.from({length: 31}, (_, i) => i + 1))}
-                        style={{
-                          padding: '0.35rem 0.75rem',
-                          fontSize: '0.8rem',
-                          backgroundColor: 'var(--button-bg)',
-                          color: 'white',
-                          border: 'none',
-                          borderRadius: '0.25rem',
-                          cursor: 'pointer',
-                          fontWeight: 500
-                        }}
-                      >
-                        Select All
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => setMonthDays([])}
-                        style={{
-                          padding: '0.35rem 0.75rem',
-                          fontSize: '0.8rem',
-                          backgroundColor: '#6c757d',
-                          color: 'white',
-                          border: 'none',
-                          borderRadius: '0.25rem',
-                          cursor: 'pointer',
-                          fontWeight: 500
-                        }}
-                      >
-                        Deselect All
-                      </button>
-                    </div>
-                  </div>
-                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', gap: '0.5rem', marginTop: '0.5rem' }}>
-                    {Array.from({length: 31}, (_, i) => i + 1).map((day) => {
-                      const isSelected = monthDays.includes(day);
-                      return (
-                        <button
-                          key={day}
-                          type="button"
-                          onClick={() => {
-                            if (isSelected) {
-                              setMonthDays(monthDays.filter(d => d !== day));
-                            } else {
-                              setMonthDays([...monthDays, day].sort((a, b) => a - b));
-                            }
-                          }}
-                          style={{
-                            padding: '0.5rem',
-                            backgroundColor: isSelected ? 'var(--button-bg)' : 'var(--bg-color)',
-                            color: isSelected ? 'white' : 'var(--text-color)',
-                            border: '2px solid ' + (isSelected ? 'var(--button-bg)' : 'var(--border-color)'),
-                            borderRadius: '0.25rem',
-                            cursor: 'pointer',
-                            fontSize: '0.85rem',
-                            fontWeight: isSelected ? 600 : 400,
-                            transition: 'all 0.2s'
-                          }}
-                        >
-                          {day}
-                        </button>
-                      );
-                    })}
-                  </div>
-                  {monthDays.length === 0 && (
-                    <p style={{ fontSize: '0.85rem', color: '#dc3545', marginTop: '0.5rem', marginBottom: 0 }}>
-                      ⚠️ Select at least one day
-                    </p>
-                  )}
-                </div>
-              )}
-              
-              {/* Simple Mode: Category Selection */}
-              {scheduleMode === 'simple' && (
-                <div className="nx-field">
-                  <label className="nx-label">Category</label>
-                  <select
-                    className="nx-select"
-                    value={scheduleForm.category_id}
-                    onChange={(e) => setScheduleForm({...scheduleForm, category_id: e.target.value})}
-                    required
-                  >
-                    <option value="">Select Category</option>
-                    {categories.map(cat => (
-                      <option key={cat.id} value={cat.id}>{cat.name}</option>
-                    ))}
-                  </select>
-                </div>
-              )}
-              <div className="nx-field">
-                <label className="nx-label">Fallback Category</label>
-                <select
-                  className="nx-select"
-                  value={scheduleForm.fallback_category_id || ''}
-                  onChange={(e) => setScheduleForm({...scheduleForm, fallback_category_id: e.target.value})}
-                >
-                  <option value="">No Fallback</option>
-                  {categories.map(cat => (
-                    <option key={cat.id} value={cat.id}>{cat.name}</option>
-                  ))}
-                </select>
-              </div>
-              
-              {/* Simple Mode: Playback Mode */}
-              {scheduleMode === 'simple' && (
-                <div className="nx-field nx-span-2">
-                  <label className="nx-label">Playback Mode</label>
-                  <select
-                    className="nx-select"
-                    value={scheduleForm.shuffle ? 'random' : 'sequential'}
-                    onChange={(e) => setScheduleForm({
-                      ...scheduleForm,
-                      shuffle: e.target.value === 'random',
-                      playlist: e.target.value === 'sequential'
-                    })}
-                  >
-                    <option value="random">Random</option>
-                    <option value="sequential">Sequential</option>
-                  </select>
-                </div>
-              )}
-
-              {/* Advanced Mode: Sequence Builder */}
-              {scheduleMode === 'advanced' && (
-                <div className="nx-field nx-span-2" style={{ marginTop: '1rem' }}>
-                  <SequenceBuilder
-                    initialSequence={sequenceBlocks}
-                    categories={categories}
-                    prerolls={prerolls}
-                    scheduleId={editingSchedule?.id || null}
-                    apiUrl={apiUrl}
-                    onSave={(blocks) => {
-                      setSequenceBlocks(blocks);
-                      console.log('Sequence updated:', blocks);
-                    }}
-                    onCancel={() => {
-                      console.log('Sequence builder cancelled');
-                    }}
-                  />
-                </div>
-              )}
-              <div className="nx-field nx-span-2">
-                <label className="nx-label">Calendar Color (Optional)</label>
-                <p style={{ fontSize: '0.85rem', color: '#666', marginBottom: '0.5rem' }}>
-                  Custom color for calendar display. Leave empty to use category color.
-                </p>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                  <input
-                    type="color"
-                    value={scheduleForm.color || '#3b82f6'}
-                    onChange={(e) => setScheduleForm({...scheduleForm, color: e.target.value})}
-                    style={{ width: '50px', height: '35px', border: '1px solid var(--border-color)', borderRadius: '4px', cursor: 'pointer' }}
-                  />
-                  <input
-                    className="nx-input"
-                    type="text"
-                    placeholder="#3b82f6"
-                    value={scheduleForm.color || ''}
-                    onChange={(e) => setScheduleForm({...scheduleForm, color: e.target.value})}
-                    style={{ flex: 1, fontFamily: 'monospace' }}
-                  />
-                  {scheduleForm.color && (
-                    <button
-                      type="button"
-                      className="button-secondary"
-                      onClick={() => setScheduleForm({...scheduleForm, color: ''})}
-                      style={{ padding: '0.5rem 0.75rem' }}
-                    >
-                      Clear
-                    </button>
-                  )}
-                </div>
-              </div>
-            </div>
-            <div className="nx-actions">
-              <button type="submit" className="button">Update Schedule</button>
-              <button
-                type="button"
-                className="button-secondary"
-                onClick={() => {
-                  setEditingSchedule(null);
-                  setScheduleForm({
-                    name: '', type: 'monthly', start_date: '', end_date: '',
-                    category_id: '', shuffle: false, playlist: false, fallback_category_id: '', color: ''
-                  });
-                  setScheduleMode('simple');
-                  setSequenceBlocks([]);
-                  setWeekDays([]);
-                  setMonthDays([]);
-                  setTimeRange({ start: '', end: '' });
-                }}
-              >
-                Cancel
-              </button>
-            </div>
-          </form>
-        </Modal>
       )}
 
       <div className="card">
@@ -7242,7 +8145,7 @@ services:
                   gap: '0.25rem'
                 }}
               >
-                📋 Compact
+                <FileText size={14} /> Compact
               </button>
               <button
                 onClick={() => setScheduleViewMode('detailed')}
@@ -7261,7 +8164,7 @@ services:
                   gap: '0.25rem'
                 }}
               >
-                📝 Detailed
+                <Edit size={14} /> Detailed
               </button>
             </div>
             <span style={{ color: 'var(--text-secondary)', fontSize: '0.9rem' }}>
@@ -7352,7 +8255,7 @@ services:
                   borderRadius: '0.5rem',
                   border: '2px dashed var(--border-color)'
                 }}>
-                  <div style={{ fontSize: '3rem', marginBottom: '1rem' }}>📭</div>
+                  <div style={{ fontSize: '3rem', marginBottom: '1rem' }}><Inbox size={48} /></div>
                   <div style={{ fontSize: '1.1rem', fontWeight: 600, marginBottom: '0.5rem' }}>
                     No schedules found
                   </div>
@@ -7463,16 +8366,59 @@ services:
                           borderRadius: '0.25rem',
                           fontWeight: 600
                         }}>
-                          {scheduleMode === 'sequence' ? '🎬' : '📁'} {scheduleMode === 'sequence' ? `${sequenceBlockCount} blocks` : 'Simple'}
+                          {scheduleMode === 'sequence' ? <><Film size={14} style={{marginRight: '4px'}} /> {sequenceBlockCount} blocks</> : <><Folder size={14} style={{marginRight: '4px'}} /> Simple</>}
                         </span>
                         <span style={{
                           color: 'var(--text-secondary)',
-                          fontWeight: 500
+                          fontWeight: 500,
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: '0.25rem'
                         }}>
-                          📅 {schedule.type.charAt(0).toUpperCase() + schedule.type.slice(1)}
+                          <Calendar size={14} /> {schedule.type.charAt(0).toUpperCase() + schedule.type.slice(1)}
                         </span>
                         {recurrenceText && (
                           <span style={{ color: '#3b82f6', fontWeight: 500 }}>{recurrenceText}</span>
+                        )}
+                        {schedule.blend_enabled && (
+                          <span style={{
+                            backgroundColor: '#a855f7',
+                            color: 'white',
+                            padding: '0.15rem 0.5rem',
+                            borderRadius: '0.25rem',
+                            fontWeight: 600,
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            gap: '0.25rem'
+                          }}>
+                            <Shuffle size={12} /> Blend
+                          </span>
+                        )}
+                        {schedule.exclusive && (
+                          <span style={{
+                            backgroundColor: '#14B8A6',
+                            color: 'white',
+                            padding: '0.15rem 0.5rem',
+                            borderRadius: '0.25rem',
+                            fontWeight: 600,
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            gap: '0.25rem'
+                          }}>
+                            <Lock size={12} /> Exclusive
+                          </span>
+                        )}
+                        {(schedule.priority ?? 5) !== 5 && (
+                          <span style={{
+                            backgroundColor: (schedule.priority ?? 5) >= 8 ? '#ef4444' : (schedule.priority ?? 5) >= 5 ? '#14B8A6' : '#6b7280',
+                            color: 'white',
+                            padding: '0.15rem 0.5rem',
+                            borderRadius: '0.25rem',
+                            fontWeight: 600,
+                            fontSize: '0.75rem'
+                          }}>
+                            P{schedule.priority ?? 5}
+                          </span>
                         )}
                       </div>
                     </div>
@@ -7507,7 +8453,7 @@ services:
                         whiteSpace: 'nowrap'
                       }}
                     >
-                      ✏️ Edit
+                      <Edit size={14} style={{marginRight: '6px'}} /> Edit
                     </button>
                     <button
                       onClick={() => handleDeleteSchedule(schedule.id)}
@@ -7519,10 +8465,13 @@ services:
                         borderRadius: '0.25rem',
                         fontSize: '0.8rem',
                         fontWeight: 600,
-                        cursor: 'pointer'
+                        cursor: 'pointer',
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '0.25rem'
                       }}
                     >
-                      🗑️
+                      <Trash size={14} />
                     </button>
                   </div>
                 </div>
@@ -7596,7 +8545,7 @@ services:
                       alignItems: 'center',
                       gap: '0.25rem'
                     }}>
-                      {scheduleMode === 'sequence' ? '🎬' : '📁'} {scheduleMode === 'sequence' ? `Sequence (${sequenceBlockCount} blocks)` : 'Simple'}
+                      {scheduleMode === 'sequence' ? <><Film size={14} style={{marginRight: '4px'}} /> Sequence ({sequenceBlockCount} blocks)</> : <><Folder size={14} style={{marginRight: '4px'}} /> Simple</>}
                     </span>
 
                     {/* Type Badge */}
@@ -7607,9 +8556,12 @@ services:
                       borderRadius: '0.25rem',
                       fontSize: '0.8rem',
                       fontWeight: 500,
-                      border: '1px solid var(--border-color)'
+                      border: '1px solid var(--border-color)',
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      gap: '0.25rem'
                     }}>
-                      📅 {schedule.type.charAt(0).toUpperCase() + schedule.type.slice(1)}
+                      <Calendar size={14} /> {schedule.type.charAt(0).toUpperCase() + schedule.type.slice(1)}
                     </span>
 
                     {/* Category Badge - Only for Simple Mode */}
@@ -7629,14 +8581,14 @@ services:
                     {/* Playback Mode Badge */}
                     {schedule.shuffle && (
                       <span style={{
-                        backgroundColor: '#f59e0b',
+                        backgroundColor: '#14B8A6',
                         color: 'white',
                         padding: '0.25rem 0.75rem',
                         borderRadius: '0.25rem',
                         fontSize: '0.8rem',
                         fontWeight: 500
                       }}>
-                        🎲 Random
+                        <Shuffle size={14} style={{marginRight: '0.35rem'}} /> Random
                       </span>
                     )}
                     {schedule.playlist && (
@@ -7648,7 +8600,55 @@ services:
                         fontSize: '0.8rem',
                         fontWeight: 500
                       }}>
-                        🎵 Sequential
+                        <ListOrdered size={14} style={{marginRight: '0.35rem'}} /> Sequential
+                      </span>
+                    )}
+
+                    {/* Blend Mode Badge */}
+                    {schedule.blend_enabled && (
+                      <span style={{
+                        backgroundColor: '#a855f7',
+                        color: 'white',
+                        padding: '0.25rem 0.75rem',
+                        borderRadius: '0.25rem',
+                        fontSize: '0.8rem',
+                        fontWeight: 500,
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        gap: '0.25rem'
+                      }}>
+                        <Shuffle size={14} /> Blend Mode
+                      </span>
+                    )}
+
+                    {/* Exclusive Badge */}
+                    {schedule.exclusive && (
+                      <span style={{
+                        backgroundColor: '#14B8A6',
+                        color: 'white',
+                        padding: '0.25rem 0.75rem',
+                        borderRadius: '0.25rem',
+                        fontSize: '0.8rem',
+                        fontWeight: 500,
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        gap: '0.25rem'
+                      }}>
+                        <Lock size={14} /> Exclusive
+                      </span>
+                    )}
+
+                    {/* Priority Badge (only show if not default) */}
+                    {(schedule.priority ?? 5) !== 5 && (
+                      <span style={{
+                        backgroundColor: (schedule.priority ?? 5) >= 8 ? '#ef4444' : (schedule.priority ?? 5) >= 5 ? '#14B8A6' : '#6b7280',
+                        color: 'white',
+                        padding: '0.25rem 0.75rem',
+                        borderRadius: '0.25rem',
+                        fontSize: '0.8rem',
+                        fontWeight: 500
+                      }}>
+                        Priority {schedule.priority ?? 5}
                       </span>
                     )}
                   </div>
@@ -7664,7 +8664,7 @@ services:
                   color: '#666'
                 }}>
                   <div>
-                    <div style={{ fontWeight: 600, color: 'var(--text-color)', marginBottom: '0.25rem' }}>📆 Schedule</div>
+                    <div style={{ fontWeight: 600, color: 'var(--text-color)', marginBottom: '0.25rem' }}><CalendarDays size={14} style={{marginRight: '0.35rem', verticalAlign: 'middle'}} /> Schedule</div>
                     <div>Start: {new Date(schedule.start_date).toLocaleDateString()} {new Date(schedule.start_date).toLocaleTimeString([], {hour: '2-digit', minute: '2-digit'})}</div>
                     {schedule.end_date && (
                       <div>End: {new Date(schedule.end_date).toLocaleDateString()} {new Date(schedule.end_date).toLocaleTimeString([], {hour: '2-digit', minute: '2-digit'})}</div>
@@ -7676,21 +8676,21 @@ services:
 
                   {schedule.next_run && (
                     <div>
-                      <div style={{ fontWeight: 600, color: 'var(--text-color)', marginBottom: '0.25rem' }}>⏰ Next Run</div>
+                      <div style={{ fontWeight: 600, color: 'var(--text-color)', marginBottom: '0.25rem' }}><Clock size={14} style={{marginRight: '0.35rem', verticalAlign: 'middle'}} /> Next Run</div>
                       <div>{new Date(schedule.next_run).toLocaleDateString()} {new Date(schedule.next_run).toLocaleTimeString([], {hour: '2-digit', minute: '2-digit'})}</div>
                     </div>
                   )}
 
                   {schedule.last_run && (
                     <div>
-                      <div style={{ fontWeight: 600, color: 'var(--text-color)', marginBottom: '0.25rem' }}>✓ Last Run</div>
+                      <div style={{ fontWeight: 600, color: 'var(--text-color)', marginBottom: '0.25rem' }}><Check size={14} style={{marginRight: '0.35rem', verticalAlign: 'middle'}} /> Last Run</div>
                       <div>{new Date(schedule.last_run).toLocaleDateString()} {new Date(schedule.last_run).toLocaleTimeString([], {hour: '2-digit', minute: '2-digit'})}</div>
                     </div>
                   )}
 
                   {schedule.fallback_category && (
                     <div>
-                      <div style={{ fontWeight: 600, color: 'var(--text-color)', marginBottom: '0.25rem' }}>🔄 Fallback</div>
+                      <div style={{ fontWeight: 600, color: 'var(--text-color)', marginBottom: '0.25rem' }}><RefreshCw size={14} style={{marginRight: '0.35rem', verticalAlign: 'middle'}} /> Fallback</div>
                       <div>{schedule.fallback_category.name}</div>
                     </div>
                   )}
@@ -7738,7 +8738,7 @@ services:
                     onMouseEnter={(e) => e.currentTarget.style.opacity = '0.9'}
                     onMouseLeave={(e) => e.currentTarget.style.opacity = '1'}
                   >
-                    ✏️ Edit Schedule
+                    <Edit size={16} /> Edit Schedule
                   </button>
                   <button
                     onClick={() => handleDeleteSchedule(schedule.id)}
@@ -7759,7 +8759,7 @@ services:
                     onMouseEnter={(e) => e.currentTarget.style.opacity = '0.9'}
                     onMouseLeave={(e) => e.currentTarget.style.opacity = '1'}
                   >
-                    🗑️ Delete
+                    <Trash size={16} /> Delete
                   </button>
                 </div>
               </div>
@@ -7859,8 +8859,6 @@ services:
     if (activeTab === 'schedules/create') {
       return (
         <div>
-          <h1 className="header">Schedule Management</h1>
-          {renderScheduleSubNav()}
           {renderCreateSchedulePage()}
         </div>
       );
@@ -7869,8 +8867,6 @@ services:
     if (activeTab === 'schedules/calendar') {
       return (
         <div>
-          <h1 className="header">Schedule Management</h1>
-          {renderScheduleSubNav()}
           {renderCalendarPage()}
         </div>
       );
@@ -7879,8 +8875,6 @@ services:
     if (activeTab === 'schedules/builder') {
       return (
         <div>
-          <h1 className="header">Schedule Management</h1>
-          {renderScheduleSubNav()}
           {renderSequenceBuilder()}
         </div>
       );
@@ -7889,8 +8883,6 @@ services:
     if (activeTab === 'schedules/library') {
       return (
         <div>
-          <h1 className="header">Schedule Management</h1>
-          {renderScheduleSubNav()}
           {renderSequenceLibrary()}
         </div>
       );
@@ -7899,8 +8891,6 @@ services:
     // Default: Schedule List
     return (
       <div>
-        <h1 className="header">Schedule Management</h1>
-        {renderScheduleSubNav()}
         {renderScheduleListPage()}
       </div>
     );
@@ -8066,7 +9056,7 @@ services:
                               disabled={p.category_id === editingCategory.id}
                               title={p.category_id === editingCategory.id ? 'Cannot remove primary here' : 'Remove from this category'}
                             >
-                              🗑️ Remove
+                              <Trash size={14} style={{marginRight: '0.35rem'}} /> Remove
                             </button>
                           </div>
                         </div>
@@ -8108,7 +9098,7 @@ services:
                       disabled={!categoryAddSelection[editingCategory.id]?.prerollId}
                       onClick={() => handleCategoryAddPreroll(editingCategory.id)}
                     >
-                      ➕ Add to Category
+                      <Plus size={14} style={{marginRight: '0.35rem'}} /> Add to Category
                     </button>
                   </div>
                 </div>
@@ -8177,7 +9167,22 @@ services:
               gap: '0.5rem'
             }}
           >
-            🎄 Load Holiday Categories
+            <TreePine size={14} style={{marginRight: '0.35rem'}} /> Load Holiday Categories
+          </button>
+          <button 
+            type="button"
+            onClick={handleRefreshHolidayDates} 
+            className="button" 
+            style={{ 
+              backgroundColor: '#17a2b8', 
+              borderColor: '#17a2b8',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '0.5rem'
+            }}
+            title="Update dates for variable holidays (Thanksgiving, Easter, etc.)"
+          >
+            <RefreshCw size={14} style={{marginRight: '0.35rem'}} /> Refresh Holiday Dates
           </button>
           <button 
             type="button"
@@ -8207,7 +9212,7 @@ services:
                   gap: '0.5rem'
                 }}
               >
-                📤 Apply Selected ({selectedCategoryIds.length})
+                <Upload size={14} style={{marginRight: '0.35rem'}} /> Apply Selected ({selectedCategoryIds.length})
               </button>
               <button 
                 type="button"
@@ -8221,7 +9226,7 @@ services:
                   gap: '0.5rem'
                 }}
               >
-                🗑️ Delete Selected ({selectedCategoryIds.length})
+                <Trash size={14} style={{marginRight: '0.35rem'}} /> Delete Selected ({selectedCategoryIds.length})
               </button>
             </>
           )}
@@ -8315,7 +9320,7 @@ services:
             justifyContent: 'space-between'
           }}>
             <span>
-              💡 <strong>Bulk Selection Mode:</strong> Click categories to select them, then use the action buttons above.
+                          <Lightbulb size={16} style={{marginRight: '0.35rem', verticalAlign: 'middle', color: '#14B8A6'}} /> <strong>Bulk Selection Mode:</strong> Click categories to select them, then use the action buttons above.
               {selectedCategoryIds.length > 0 && ` (${selectedCategoryIds.length} selected)`}
             </span>
             {getFilteredCategories().length > 0 && (
@@ -8346,7 +9351,7 @@ services:
                 <div style={{ gridColumn: '1 / -1', textAlign: 'center', padding: '3rem 1rem', color: 'var(--text-secondary)' }}>
                   {categorySearchQuery ? (
                     <>
-                      <div style={{ fontSize: '3rem', marginBottom: '1rem' }}>🔍</div>
+                      <div style={{ fontSize: '3rem', marginBottom: '1rem' }}><Search size={48} /></div>
                       <div style={{ fontSize: '1.1rem', marginBottom: '0.5rem', color: 'var(--text-color)' }}>
                         No categories found matching "{categorySearchQuery}"
                       </div>
@@ -8356,7 +9361,7 @@ services:
                     </>
                   ) : (
                     <>
-                      <div style={{ fontSize: '3rem', marginBottom: '1rem' }}>📁</div>
+                      <div style={{ fontSize: '3rem', marginBottom: '1rem' }}><Folder size={48} /></div>
                       <div style={{ fontSize: '1.1rem', marginBottom: '0.5rem', color: 'var(--text-color)' }}>
                         No categories yet
                       </div>
@@ -8438,7 +9443,7 @@ services:
                       color: 'white',
                       fontWeight: '600'
                     }}>
-                      📹 {stats.totalPrerolls} preroll{stats.totalPrerolls !== 1 ? 's' : ''}
+                      <Video size={14} style={{marginRight: '0.35rem'}} /> {stats.totalPrerolls} preroll{stats.totalPrerolls !== 1 ? 's' : ''}
                     </div>
                     {stats.totalDuration > 0 && (
                       <div style={{ 
@@ -8455,7 +9460,9 @@ services:
                     )}
                     {stats.hasActiveSchedules && (
                       <div style={{ 
-                        display: 'inline-block',
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        gap: '0.25rem',
                         fontSize: '0.75rem', 
                         padding: '0.2rem 0.5rem',
                         borderRadius: '12px',
@@ -8465,7 +9472,7 @@ services:
                       }}
                       title={`Active Schedules: ${stats.scheduleNames.join(', ')}`}
                       >
-                        📅 {stats.activeSchedules} schedule{stats.activeSchedules !== 1 ? 's' : ''}
+                        <Calendar size={12} /> {stats.activeSchedules} schedule{stats.activeSchedules !== 1 ? 's' : ''}
                       </div>
                     )}
                   </div>
@@ -8525,7 +9532,7 @@ services:
                           onMouseEnter={(e) => e.currentTarget.style.backgroundColor = 'var(--hover-bg)'}
                           onMouseLeave={(e) => e.currentTarget.style.backgroundColor = 'transparent'}
                         >
-                          ✏️ Edit
+                          <Edit size={16} /> Edit
                         </button>
                         <button
                           onClick={() => {
@@ -8548,7 +9555,7 @@ services:
                           onMouseEnter={(e) => e.currentTarget.style.backgroundColor = 'var(--hover-bg)'}
                           onMouseLeave={(e) => e.currentTarget.style.backgroundColor = 'transparent'}
                         >
-                          🎬 Apply to Server
+                          <Film size={16} /> Apply to Server
                         </button>
                         <button
                           onClick={() => {
@@ -8576,7 +9583,7 @@ services:
                           onMouseEnter={(e) => e.currentTarget.style.backgroundColor = 'var(--hover-bg)'}
                           onMouseLeave={(e) => e.currentTarget.style.backgroundColor = 'transparent'}
                         >
-                          📋 Copy Details
+                          <FileText size={14} style={{marginRight: '0.35rem'}} /> Copy Details
                         </button>
                         <div style={{ borderTop: '1px solid var(--border-color)', margin: '0.25rem 0' }} />
                         <button
@@ -8600,7 +9607,7 @@ services:
                           onMouseEnter={(e) => e.currentTarget.style.backgroundColor = 'rgba(220, 53, 69, 0.1)'}
                           onMouseLeave={(e) => e.currentTarget.style.backgroundColor = 'transparent'}
                         >
-                          🗑️ Delete
+                          <Trash size={16} /> Delete
                         </button>
                       </div>
                     )}
@@ -8634,7 +9641,7 @@ services:
                     disabled={(() => { const s = getActiveConnectedServer(); return !s || s === 'conflict'; })() || applyingToServer}
                     title={applyingToServer ? "Applying to server..." : "Apply this category to the connected server"}
                   >
-                    {applyingToServer ? '⏳ Applying...' : '🎬 Apply to Server'}
+                    {applyingToServer ? <><Clock size={14} style={{marginRight: '6px'}} /> Applying...</> : <><Film size={14} style={{marginRight: '6px'}} /> Apply to Server</>}
                   </button>
                   {plexStatus === 'Connected' && category.apply_to_plex && (
                     <button
@@ -8648,7 +9655,7 @@ services:
                       }}
                       title="Remove from Plex"
                     >
-                      ❌ Remove
+                      <XCircle size={14} style={{marginRight: '0.35rem'}} /> Remove
                     </button>
                   )}
                 </div>
@@ -8665,7 +9672,7 @@ services:
                   }}
                   title="Manage prerolls in this category"
                 >
-                  📁 Manage Prerolls
+                  <Folder size={14} style={{marginRight: '0.35rem'}} /> Manage Prerolls
                 </button>
               </div>
             </div>
@@ -8784,7 +9791,7 @@ services:
                       <td colSpan="5" style={{ textAlign: 'center', padding: '3rem 1rem', color: 'var(--text-secondary)' }}>
                         {categorySearchQuery ? (
                           <>
-                            <div style={{ fontSize: '2rem', marginBottom: '0.5rem' }}>🔍</div>
+                            <div style={{ fontSize: '2rem', marginBottom: '0.5rem' }}><Search size={32} /></div>
                             <div style={{ fontSize: '1rem', marginBottom: '0.5rem', color: 'var(--text-color)' }}>
                               No categories found matching "{categorySearchQuery}"
                             </div>
@@ -8794,7 +9801,7 @@ services:
                           </>
                         ) : (
                           <>
-                            <div style={{ fontSize: '2rem', marginBottom: '0.5rem' }}>📁</div>
+                            <div style={{ fontSize: '2rem', marginBottom: '0.5rem' }}><Folder size={32} /></div>
                             <div style={{ fontSize: '1rem', marginBottom: '0.5rem', color: 'var(--text-color)' }}>
                               No categories yet
                             </div>
@@ -8858,7 +9865,7 @@ services:
                         color: 'white',
                         fontWeight: '600'
                       }}>
-                        📹 {stats.totalPrerolls}
+                        <Video size={14} style={{marginRight: '0.35rem'}} /> {stats.totalPrerolls}
                       </span>
                     </td>
                     <td style={{ padding: '0.75rem', textAlign: 'center' }}>
@@ -8908,7 +9915,7 @@ services:
                             disabled={(() => { const s = getActiveConnectedServer(); return !s || s === 'conflict'; })() || applyingToServer}
                             title="Apply to Server"
                           >
-                            🎬
+                            <Film size={14} />
                           </button>
                           <button
                             onClick={(e) => {
@@ -8930,7 +9937,7 @@ services:
                             title="Delete category"
                             style={{ fontSize: '0.9rem' }}
                           >
-                            🗑️
+                            <Trash size={14} />
                           </button>
                         </div>
                       )}
@@ -8993,7 +10000,7 @@ services:
               marginBottom: '1rem'
             }}>
               <p style={{ fontSize: '0.9rem', color: 'var(--text-color)', margin: 0 }}>
-                💡 <strong>Tip:</strong> Playback mode (Random/Sequential) is controlled by individual schedules, not categories.
+                            <Lightbulb size={16} style={{marginRight: '0.35rem', verticalAlign: 'middle', color: '#14B8A6'}} /> <strong>Tip:</strong> Playback mode (Random/Sequential) is controlled by individual schedules, not categories.
               </p>
             </div>
             <div style={{ display: 'flex', gap: '1rem', justifyContent: 'flex-end' }}>
@@ -9267,7 +10274,7 @@ services:
         </div>
         {/* Stable Token Connection */}
         <div className="upload-section nx-plex-method" style={{ marginBottom: '2rem' }}>
-          <h3 style={{ marginBottom: '0.5rem', color: 'var(--text-color)' }}>🌟 Method 1: Stable Token (Recommended)</h3>
+          <h3 style={{ marginBottom: '0.5rem', color: 'var(--text-color)' }}><Star size={18} style={{marginRight: '0.5rem', verticalAlign: 'middle', color: '#14B8A6'}} /> Method 1: Stable Token (Recommended)</h3>
           <p style={{ fontSize: '0.9rem', color: 'var(--text-color)', marginBottom: '1rem' }}>
             Uses a non-expiring token stored securely. The installer selects "Plex Stable Token Setup" by default.
             If your Plex server runs on a different machine, run "Setup Plex Stable Token" from the Start Menu
@@ -9364,7 +10371,7 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
 
         {/* Method 2: Manual X-Plex-Token */}
         <div className="upload-section nx-plex-method" style={{ marginBottom: '2rem' }}>
-          <h3 style={{ marginBottom: '0.5rem', color: 'var(--text-color)' }}>🧰 Method 2: Manual X-Plex-Token</h3>
+          <h3 style={{ marginBottom: '0.5rem', color: 'var(--text-color)' }}><Wrench size={18} style={{marginRight: '0.5rem', verticalAlign: 'middle'}} /> Method 2: Manual X-Plex-Token</h3>
           <p style={{ fontSize: '0.9rem', color: 'var(--text-color)', marginBottom: '1rem' }}>
             Enter your Plex server URL and authentication token manually.
           </p>
@@ -10443,7 +11450,7 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
                       disabled={!genreSettings.genre_auto_apply}
                       style={{ fontSize: '0.8rem', padding: '0.25rem 0.5rem' }}
                     >
-                      🎬 Apply
+                      <Film size={14} style={{marginRight: '0.35rem'}} /> Apply
                     </button>
                     <button
                       type="button"
@@ -10463,7 +11470,7 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
                       disabled={!genreSettings.genre_auto_apply}
                       style={{ fontSize: '0.8rem', padding: '0.25rem 0.5rem', backgroundColor: '#dc3545' }}
                     >
-                      🗑️ Delete
+                      <Trash size={14} style={{marginRight: '0.35rem'}} /> Delete
                     </button>
                   </div>
                 </div>
@@ -10518,10 +11525,10 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
           ))}
 
           <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
-            <button type="button" className="button" onClick={addMappingRow}>➕ Add Row</button>
+            <button type="button" className="button" onClick={addMappingRow}><Plus size={14} style={{marginRight: '0.35rem'}} /> Add Row</button>
             <button type="button" className="button" onClick={loadPathMappings} disabled={pathMappingsLoading}>↻ Reload</button>
             <button type="button" className="button" onClick={savePathMappings} disabled={pathMappingsLoading} style={{ backgroundColor: '#28a745' }}>
-              💾 Save
+              <Save size={14} style={{marginRight: '0.35rem'}} /> Save
             </button>
           </div>
         </div>
@@ -10541,7 +11548,7 @@ C:\\\\Media\\\\Prerolls\\\\summer\\\\beach.mp4`}
             style={{ width: '100%', padding: '0.5rem', resize: 'vertical' }}
           />
           <div style={{ marginTop: '0.5rem' }}>
-            <button type="button" className="button" onClick={runMappingsTest}>🧪 Run Test</button>
+            <button type="button" className="button" onClick={runMappingsTest}><FlaskConical size={14} style={{marginRight: '0.35rem'}} /> Run Test</button>
           </div>
           {Array.isArray(mappingTestResults) && mappingTestResults.length > 0 && (
             <div style={{ marginTop: '0.5rem' }}>
@@ -10573,7 +11580,7 @@ C:\\\\Media\\\\Prerolls\\\\summer\\\\beach.mp4`}
               Export all schedules, categories, and preroll metadata to JSON
             </p>
             <button onClick={handleBackupDatabase} className="button">
-              📥 Download Database Backup
+              <Download size={14} style={{marginRight: '0.35rem'}} /> Download Database Backup
             </button>
           </div>
 
@@ -10583,7 +11590,7 @@ C:\\\\Media\\\\Prerolls\\\\summer\\\\beach.mp4`}
               Export all preroll video files and thumbnails to ZIP
             </p>
             <button onClick={handleBackupFiles} className="button">
-              📦 Download Files Backup
+              <Package size={14} style={{marginRight: '0.35rem'}} /> Download Files Backup
             </button>
           </div>
 
@@ -10604,14 +11611,14 @@ C:\\\\Media\\\\Prerolls\\\\summer\\\\beach.mp4`}
                 className="button"
                 disabled={!backupFile || !backupFile.name.endsWith('.json')}
               >
-                🔄 Restore Database
+                <RefreshCw size={14} style={{marginRight: '0.35rem'}} /> Restore Database
               </button>
               <button
                 onClick={handleRestoreFiles}
                 className="button"
                 disabled={!backupFile || !backupFile.name.endsWith('.zip')}
               >
-                📂 Restore Files
+                <FolderOpen size={14} style={{marginRight: '0.35rem'}} /> Restore Files
               </button>
             </div>
           </div>
@@ -10634,16 +11641,16 @@ C:\\\\Media\\\\Prerolls\\\\summer\\\\beach.mp4`}
           <div><strong>FFprobe:</strong> {ffmpegInfo ? (ffmpegInfo.ffprobe_present ? ffmpegInfo.ffprobe_version : 'Not found') : 'Detecting...'}</div>
         </div>
         <div style={{ marginTop: '0.75rem' }}>
-          <button onClick={recheckFfmpeg} className="button">🔎 Re-check FFmpeg</button>
-          <button onClick={handleShowSystemPaths} className="button" style={{ marginLeft: '0.5rem' }}>📂 Show Resolved Paths</button>
-          <button onClick={handleDownloadDiagnostics} className="button" style={{ marginLeft: '0.5rem' }}>🧰 Download Diagnostics</button>
-          <button onClick={handleViewChangelog} className="button" style={{ marginLeft: '0.5rem' }}>📋 View Changelog</button>
+          <button onClick={recheckFfmpeg} className="button"><Search size={14} style={{marginRight: '0.35rem'}} /> Re-check FFmpeg</button>
+          <button onClick={handleShowSystemPaths} className="button" style={{ marginLeft: '0.5rem' }}><FolderOpen size={14} style={{marginRight: '0.35rem'}} /> Show Resolved Paths</button>
+          <button onClick={handleDownloadDiagnostics} className="button" style={{ marginLeft: '0.5rem' }}><Wrench size={14} style={{marginRight: '0.35rem'}} /> Download Diagnostics</button>
+          <button onClick={handleViewChangelog} className="button" style={{ marginLeft: '0.5rem' }}><FileText size={14} style={{marginRight: '0.35rem'}} /> View Changelog</button>
         </div>
       </div>
 
       {/* GitHub Issues Section */}
       <div className="card">
-        <h2>🐛 Report Issues & Request Features</h2>
+        <h2><Bug size={20} style={{marginRight: '0.5rem', verticalAlign: 'middle'}} /> Report Issues & Request Features</h2>
         <p style={{ marginBottom: '1rem', color: 'var(--text-color)' }}>
           Found a bug or have a feature request? Please submit it to our GitHub Issues page.
         </p>
@@ -10654,7 +11661,7 @@ C:\\\\Media\\\\Prerolls\\\\summer\\\\beach.mp4`}
           borderRadius: '8px',
           marginBottom: '1rem'
         }}>
-          <h3 style={{ marginTop: 0, marginBottom: '0.75rem' }}>📋 Before Reporting</h3>
+          <h3 style={{ marginTop: 0, marginBottom: '0.75rem' }}><FileText size={16} style={{marginRight: '0.35rem', verticalAlign: 'middle'}} /> Before Reporting</h3>
           <ol style={{ fontSize: '0.9rem', color: 'var(--text-secondary)', paddingLeft: '1.5rem', margin: 0 }}>
             <li>Download diagnostics using the button above (🧰 Download Diagnostics)</li>
             <li>Check existing issues to avoid duplicates</li>
@@ -10671,7 +11678,7 @@ C:\\\\Media\\\\Prerolls\\\\summer\\\\beach.mp4`}
             className="button"
             style={{ textDecoration: 'none', backgroundColor: '#dc3545' }}
           >
-            🐛 Report a Bug
+            <Bug size={14} style={{marginRight: '0.35rem'}} /> Report a Bug
           </a>
           <a 
             href="https://github.com/JFLXCLOUD/NeXroll/issues/new?template=feature_request.md&labels=enhancement" 
@@ -10966,8 +11973,8 @@ C:\\\\Media\\\\Prerolls\\\\summer\\\\beach.mp4`}
           alignItems: 'center'
         }}>
           <div>
-            <h1 className="header" style={{ margin: '0 0 0.5rem 0', fontSize: '2rem' }}>
-              🎬 {editingSequenceId ? `Editing: ${editingSequenceName}` : 'Sequence Builder'}
+            <h1 className="header" style={{ margin: '0 0 0.5rem 0', fontSize: '2rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+              <Clapperboard size={28} /> {editingSequenceId ? `Editing: ${editingSequenceName}` : 'Sequence Builder'}
             </h1>
             <p style={{ opacity: 0.7, margin: 0, fontSize: '1rem' }}>
               {editingSequenceId 
@@ -11146,12 +12153,12 @@ C:\\\\Media\\\\Prerolls\\\\summer\\\\beach.mp4`}
             borderRadius: '8px',
             border: '1px solid var(--border-color)'
           }}>
-            <h3 style={{ margin: '0 0 0.5rem 0', fontSize: '1rem', fontWeight: 600 }}>📦 Save & Share</h3>
+            <h3 style={{ margin: '0 0 0.5rem 0', fontSize: '1rem', fontWeight: 600 }}><Package size={16} style={{marginRight: '0.35rem', verticalAlign: 'middle'}} /> Save & Share</h3>
             <ul style={{ margin: 0, paddingLeft: '1.25rem', fontSize: '0.9rem', opacity: 0.8 }}>
               <li>Save sequences to your library for reuse</li>
               <li>Export as <code>.nexseq</code> files to share</li>
               <li>Import <code>.nexseq</code> files from others</li>
-              <li>Use <code>.nexbundle</code> to export multiple sequences</li>
+              <li>Use <code>.zip bundle</code> to export with prerolls included</li>
             </ul>
           </div>
         </div>
@@ -11301,6 +12308,7 @@ C:\\\\Media\\\\Prerolls\\\\summer\\\\beach.mp4`}
   const renderSequenceLibrary = () => {
     
     return (
+      <>
       <div style={{ padding: '1.5rem', maxWidth: '1400px', margin: '0 auto' }}>
         {/* Header */}
         <div style={{ 
@@ -11312,7 +12320,7 @@ C:\\\\Media\\\\Prerolls\\\\summer\\\\beach.mp4`}
           borderBottom: '2px solid var(--border-color)'
         }}>
           <div>
-            <h1 className="header" style={{ margin: '0 0 0.5rem 0', fontSize: '2rem' }}>� Saved Sequences</h1>
+            <h1 className="header" style={{ margin: '0 0 0.5rem 0', fontSize: '2rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}><Library size={28} /> Saved Sequences</h1>
             <p style={{ opacity: 0.7, margin: 0, fontSize: '1rem' }}>
               Reusable custom sequences you can schedule anytime
             </p>
@@ -11331,78 +12339,13 @@ C:\\\\Media\\\\Prerolls\\\\summer\\\\beach.mp4`}
                 gap: '0.5rem'
               }}
             >
-              <span>🔄</span> {sequencesLoading ? 'Loading...' : 'Refresh'}
+              <RefreshCw size={16} /> {sequencesLoading ? 'Loading...' : 'Refresh'}
             </button>
             
-            {/* Import Button */}
+            {/* Import Button - Opens PatternImport Modal */}
             <button 
               className="button"
-              onClick={() => {
-                const input = document.createElement('input');
-                input.type = 'file';
-                input.accept = '.nexseq,.nexbundle,.json';
-                input.multiple = true;
-                input.onchange = async (e) => {
-                  const files = Array.from(e.target.files);
-                  let importedCount = 0;
-                  let errors = [];
-                  
-                  for (const file of files) {
-                    try {
-                      const text = await file.text();
-                      const data = JSON.parse(text);
-                      
-                      // Check if it's a bundle
-                      if (data.type === 'nexbundle' && Array.isArray(data.sequences)) {
-                        // Import multiple sequences from bundle
-                        for (const seq of data.sequences) {
-                          try {
-                            const response = await fetch(apiUrl('sequences'), {
-                              method: 'POST',
-                              headers: { 'Content-Type': 'application/json' },
-                              body: JSON.stringify({
-                                name: seq.name,
-                                description: seq.description || '',
-                                blocks: seq.blocks
-                              })
-                            });
-                            if (response.ok) importedCount++;
-                          } catch (err) {
-                            errors.push(`${seq.name}: ${err.message}`);
-                          }
-                        }
-                      } else if (data.blocks && Array.isArray(data.blocks)) {
-                        // Import single sequence
-                        const response = await fetch(apiUrl('sequences'), {
-                          method: 'POST',
-                          headers: { 'Content-Type': 'application/json' },
-                          body: JSON.stringify({
-                            name: data.name || 'Imported Sequence',
-                            description: data.description || '',
-                            blocks: data.blocks
-                          })
-                        });
-                        if (response.ok) importedCount++;
-                      } else {
-                        errors.push(`${file.name}: Invalid format`);
-                      }
-                    } catch (error) {
-                      errors.push(`${file.name}: ${error.message}`);
-                    }
-                  }
-                  
-                  // Show result
-                  if (importedCount > 0) {
-                    showAlert(`Successfully imported ${importedCount} sequence(s)!`, 'success');
-                    loadSavedSequences();
-                  }
-                  if (errors.length > 0) {
-                    console.error('Import errors:', errors);
-                    showAlert(`Some imports failed. Check console for details.`, 'error');
-                  }
-                };
-                input.click();
-              }}
+              onClick={() => setShowSequenceImportModal(true)}
               style={{ 
                 padding: '0.75rem 1.25rem', 
                 fontSize: '0.95rem',
@@ -11415,7 +12358,7 @@ C:\\\\Media\\\\Prerolls\\\\summer\\\\beach.mp4`}
               }}
               title="Import .nexseq or .nexbundle files"
             >
-              <span>📥</span> Import
+              <Download size={16} /> Import
             </button>
             
             {/* Export All Button */}
@@ -11423,7 +12366,19 @@ C:\\\\Media\\\\Prerolls\\\\summer\\\\beach.mp4`}
               <button 
                 className="button"
                 onClick={() => {
-                  // Export all sequences as .nexbundle
+                  // Build a map of preroll IDs to their info for quick lookup
+                  const prerollMap = {};
+                  prerolls.forEach(p => {
+                    prerollMap[p.id] = {
+                      name: p.name,
+                      community_preroll_id: p.community_preroll_id || null
+                    };
+                  });
+                  
+                  console.log('[NEXBUNDLE EXPORT] prerolls count:', prerolls.length);
+                  console.log('[NEXBUNDLE EXPORT] prerollMap keys:', Object.keys(prerollMap));
+                  
+                  // Export all sequences as .nexbundle with enriched block data
                   const bundle = {
                     type: 'nexbundle',
                     version: '1.0',
@@ -11432,10 +12387,34 @@ C:\\\\Media\\\\Prerolls\\\\summer\\\\beach.mp4`}
                     sequences: savedSequences.map(seq => ({
                       name: seq.name,
                       description: seq.description || '',
-                      blocks: seq.blocks,
+                      blocks: seq.blocks.map(block => {
+                        if (block.type === 'fixed' && block.preroll_ids) {
+                          // Enrich fixed blocks with preroll names and community IDs
+                          const enrichedInfo = block.preroll_ids.map(pid => {
+                            const info = prerollMap[pid];
+                            console.log(`[NEXBUNDLE EXPORT] Preroll ${pid} lookup:`, info);
+                            return info ? {
+                              id: pid,
+                              name: info.name,
+                              community_id: info.community_preroll_id
+                            } : { 
+                              id: pid, 
+                              name: null, 
+                              community_id: null
+                            };
+                          });
+                          return {
+                            ...block,
+                            preroll_info: enrichedInfo
+                          };
+                        }
+                        return block;
+                      }),
                       created_at: seq.created_at
                     }))
                   };
+                  
+                  console.log('[NEXBUNDLE EXPORT] Final bundle:', JSON.stringify(bundle, null, 2));
                   
                   const blob = new Blob([JSON.stringify(bundle, null, 2)], { type: 'application/json' });
                   const url = URL.createObjectURL(blob);
@@ -11459,7 +12438,7 @@ C:\\\\Media\\\\Prerolls\\\\summer\\\\beach.mp4`}
                 }}
                 title="Export all sequences as .nexbundle"
               >
-                <span>📤</span> Export All ({savedSequences.length})
+                <Upload size={16} /> Export All ({savedSequences.length})
               </button>
             )}
             
@@ -11475,7 +12454,7 @@ C:\\\\Media\\\\Prerolls\\\\summer\\\\beach.mp4`}
                 gap: '0.5rem'
               }}
             >
-              <span>➕</span> New Sequence
+              <Plus size={16} /> New Sequence
             </button>
           </div>
         </div>
@@ -11489,7 +12468,7 @@ C:\\\\Media\\\\Prerolls\\\\summer\\\\beach.mp4`}
             textAlign: 'center',
             border: '1px solid var(--border-color)'
           }}>
-            <div style={{ fontSize: '3rem', marginBottom: '1rem' }}>⏳</div>
+            <div style={{ fontSize: '3rem', marginBottom: '1rem', display: 'flex', justifyContent: 'center' }}><Loader2 size={48} className="spin" /></div>
             <p style={{ fontSize: '1.1rem', opacity: 0.7 }}>Loading sequences...</p>
           </div>
         ) : savedSequences.length === 0 ? (
@@ -11500,7 +12479,7 @@ C:\\\\Media\\\\Prerolls\\\\summer\\\\beach.mp4`}
             textAlign: 'center',
             border: '2px dashed var(--border-color)'
           }}>
-            <div style={{ fontSize: '4rem', marginBottom: '1rem' }}>🎬</div>
+            <div style={{ fontSize: '4rem', marginBottom: '1rem', display: 'flex', justifyContent: 'center' }}><Clapperboard size={64} strokeWidth={1.5} /></div>
             <h2 style={{ margin: '0 0 0.5rem 0', fontSize: '1.5rem', fontWeight: 600 }}>
               No Saved Sequences Yet
             </h2>
@@ -11526,9 +12505,9 @@ C:\\\\Media\\\\Prerolls\\\\summer\\\\beach.mp4`}
               textAlign: 'left'
             }}>
               {[
-                { icon: '🎭', title: 'Theater Experience', desc: 'Theater intro → Trailers → Feature announcement' },
-                { icon: '🎄', title: 'Holiday Special', desc: 'Holiday greeting → Seasonal trailer → Classic intro' },
-                { icon: '🎪', title: 'Family Movie Night', desc: 'Welcome message → Kid-friendly trailer → Safety reminder' }
+                { icon: <Theater size={24} />, title: 'Theater Experience', desc: 'Theater intro → Trailers → Feature announcement' },
+                { icon: <TreePine size={24} />, title: 'Holiday Special', desc: 'Holiday greeting → Seasonal trailer → Classic intro' },
+                { icon: <Users2 size={24} />, title: 'Family Movie Night', desc: 'Welcome message → Kid-friendly trailer → Safety reminder' }
               ].map((example, idx) => (
                 <div key={idx} style={{
                   padding: '1rem',
@@ -11536,7 +12515,7 @@ C:\\\\Media\\\\Prerolls\\\\summer\\\\beach.mp4`}
                   borderRadius: '8px',
                   border: '1px solid var(--border-color)'
                 }}>
-                  <div style={{ fontSize: '1.5rem', marginBottom: '0.5rem' }}>{example.icon}</div>
+                  <div style={{ fontSize: '1.5rem', marginBottom: '0.5rem', color: '#667eea' }}>{example.icon}</div>
                   <div style={{ fontSize: '0.9rem', fontWeight: 600, marginBottom: '0.25rem' }}>{example.title}</div>
                   <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>{example.desc}</div>
                 </div>
@@ -11554,13 +12533,13 @@ C:\\\\Media\\\\Prerolls\\\\summer\\\\beach.mp4`}
                 gap: '0.5rem'
               }}
             >
-              🎬 Create Your First Sequence
+              <Clapperboard size={18} /> Create Your First Sequence
             </button>
           </div>
         ) : (
           <div style={{
             display: 'grid',
-            gridTemplateColumns: 'repeat(auto-fill, minmax(350px, 1fr))',
+            gridTemplateColumns: 'repeat(auto-fill, minmax(380px, 1fr))',
             gap: '1.5rem'
           }}>
             {savedSequences.map((sequence, index) => (
@@ -11569,11 +12548,13 @@ C:\\\\Media\\\\Prerolls\\\\summer\\\\beach.mp4`}
                 style={{
                   backgroundColor: 'var(--card-bg)',
                   borderRadius: '12px',
-                  padding: '1.5rem',
+                  padding: '1.25rem',
                   border: '1px solid var(--border-color)',
                   boxShadow: '0 2px 8px rgba(0,0,0,0.08)',
                   transition: 'transform 0.2s, box-shadow 0.2s',
-                  cursor: 'pointer'
+                  cursor: 'pointer',
+                  display: 'flex',
+                  flexDirection: 'column'
                 }}
                 onMouseEnter={(e) => {
                   e.currentTarget.style.transform = 'translateY(-4px)';
@@ -11584,128 +12565,246 @@ C:\\\\Media\\\\Prerolls\\\\summer\\\\beach.mp4`}
                   e.currentTarget.style.boxShadow = '0 2px 8px rgba(0,0,0,0.08)';
                 }}
               >
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'start', marginBottom: '1rem' }}>
-                  <h3 style={{ margin: 0, fontSize: '1.25rem', fontWeight: 600 }}>
-                    {sequence.name}
-                  </h3>
+                {/* Header: Title */}
+                <h3 style={{ margin: '0 0 0.75rem 0', fontSize: '1.2rem', fontWeight: 600, lineHeight: 1.3 }}>
+                  {sequence.name}
+                </h3>
+                
+                {/* Stats Row */}
+                <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '0.75rem', flexWrap: 'wrap' }}>
                   <span style={{ 
-                    fontSize: '0.8rem',
-                    padding: '0.25rem 0.5rem',
+                    fontSize: '0.75rem',
+                    padding: '0.3rem 0.6rem',
                     backgroundColor: 'rgba(99, 102, 241, 0.1)',
                     color: '#6366f1',
                     borderRadius: '4px',
-                    fontWeight: 600
+                    fontWeight: 600,
+                    whiteSpace: 'nowrap'
                   }}>
                     {sequence.blocks?.length || 0} blocks
                   </span>
+                  <span style={{ 
+                    fontSize: '0.75rem',
+                    padding: '0.3rem 0.6rem',
+                    backgroundColor: 'rgba(16, 185, 129, 0.1)',
+                    color: '#10b981',
+                    borderRadius: '4px',
+                    fontWeight: 600,
+                    whiteSpace: 'nowrap'
+                  }}>
+                    {(sequence.blocks || []).reduce((total, block) => {
+                      if (block.type === 'random') return total + (block.count || 1);
+                      if (block.type === 'fixed') return total + (block.preroll_ids?.length || 0);
+                      return total;
+                    }, 0)} prerolls
+                  </span>
+                  <span style={{ 
+                    fontSize: '0.75rem',
+                    padding: '0.3rem 0.6rem',
+                    backgroundColor: 'rgba(107, 114, 128, 0.1)',
+                    color: 'var(--text-secondary)',
+                    borderRadius: '4px',
+                    whiteSpace: 'nowrap'
+                  }}>
+                    {sequence.created_at ? new Date(sequence.created_at).toLocaleDateString() : 'Unknown date'}
+                  </span>
                 </div>
                 
+                {/* Description */}
                 {sequence.description && (
                   <p style={{ 
-                    margin: '0 0 1rem 0', 
-                    fontSize: '0.9rem', 
+                    margin: '0 0 0.75rem 0', 
+                    fontSize: '0.85rem', 
                     opacity: 0.7,
                     overflow: 'hidden',
                     textOverflow: 'ellipsis',
                     display: '-webkit-box',
                     WebkitLineClamp: 2,
-                    WebkitBoxOrient: 'vertical'
+                    WebkitBoxOrient: 'vertical',
+                    lineHeight: 1.5,
+                    flex: 1
                   }}>
                     {sequence.description}
                   </p>
                 )}
                 
+                {/* Spacer if no description */}
+                {!sequence.description && <div style={{ flex: 1 }} />}
+                
+                {/* Action Buttons */}
                 <div style={{ 
                   display: 'flex', 
-                  justifyContent: 'space-between',
-                  alignItems: 'center',
-                  marginTop: '1rem',
-                  paddingTop: '1rem',
-                  borderTop: '1px solid var(--border-color)'
+                  gap: '0.5rem',
+                  marginTop: '0.75rem',
+                  paddingTop: '0.75rem',
+                  borderTop: '1px solid var(--border-color)',
+                  flexWrap: 'wrap'
                 }}>
-                  <div style={{ fontSize: '0.8rem', opacity: 0.6 }}>
-                    {sequence.created_at ? new Date(sequence.created_at).toLocaleDateString() : 'Unknown date'}
-                  </div>
-                  <div style={{ display: 'flex', gap: '0.5rem' }}>
-                    <button 
-                      className="button"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        
-                        // Export as .nexseq file
-                        const nexseq = {
-                          type: 'nexseq',
-                          version: '1.0',
-                          metadata: {
-                            name: sequence.name,
-                            description: sequence.description || '',
-                            author: 'NeXroll',
-                            created: sequence.created_at,
-                            exported: new Date().toISOString(),
-                            blockCount: sequence.blocks?.length || 0
-                          },
-                          blocks: sequence.blocks,
-                          compatibility: {
-                            minVersion: '1.0',
-                            features: []
-                          }
-                        };
-                        
-                        const blob = new Blob([JSON.stringify(nexseq, null, 2)], { type: 'application/json' });
-                        const url = URL.createObjectURL(blob);
-                        const a = document.createElement('a');
-                        a.href = url;
-                        // Sanitize filename
-                        const safeName = sequence.name.replace(/[^a-z0-9]/gi, '_').toLowerCase();
-                        a.download = `${safeName}.nexseq`;
-                        a.click();
-                        URL.revokeObjectURL(url);
-                        
-                        showAlert(`Exported "${sequence.name}" as .nexseq file`, 'success');
-                      }}
-                      style={{ 
-                        padding: '0.5rem 1rem', 
-                        fontSize: '0.9rem',
-                        backgroundColor: '#17a2b8',
-                        borderColor: '#17a2b8'
-                      }}
-                      title="Export as .nexseq file"
-                    >
-                      💾 Export
-                    </button>
-                    <button 
-                      className="button"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        loadSequenceIntoBuilder(sequence);
-                      }}
-                      style={{ padding: '0.5rem 1rem', fontSize: '0.9rem' }}
-                    >
-                      📝 Edit
-                    </button>
-                    <button 
-                      className="button"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        if (window.confirm(`Delete sequence "${sequence.name}"?`)) {
-                          deleteSequence(sequence.id, sequence.name);
-                        }
-                      }}
-                      style={{ 
-                        padding: '0.5rem 1rem', 
-                        fontSize: '0.9rem',
-                        backgroundColor: '#dc3545'
-                      }}
-                    >
-                      🗑️
-                    </button>
-                  </div>
+                  <button 
+                    className="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setPreviewingSequence(sequence);
+                      setShowSequencePreviewModal(true);
+                    }}
+                    style={{ 
+                      padding: '0.4rem 0.75rem', 
+                      fontSize: '0.8rem',
+                      backgroundColor: '#10b981',
+                      borderColor: '#10b981',
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '0.35rem'
+                    }}
+                    title="Preview sequence playback"
+                  >
+                    <Play size={13} /> Play
+                  </button>
+                  <button 
+                    className="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setExportingSequence(sequence);
+                      setShowSequenceExportModal(true);
+                    }}
+                    style={{ 
+                      padding: '0.4rem 0.75rem', 
+                      fontSize: '0.8rem',
+                      backgroundColor: '#17a2b8',
+                      borderColor: '#17a2b8',
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '0.35rem'
+                    }}
+                    title="Export sequence"
+                  >
+                    <Save size={13} /> Export
+                  </button>
+                  <button 
+                    className="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      loadSequenceIntoBuilder(sequence);
+                    }}
+                    style={{ 
+                      padding: '0.4rem 0.75rem', 
+                      fontSize: '0.8rem',
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '0.35rem'
+                    }}
+                    title="Edit sequence"
+                  >
+                    <Edit size={13} /> Edit
+                  </button>
+                  <button 
+                    className="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      if (window.confirm(`Delete sequence "${sequence.name}"?`)) {
+                        deleteSequence(sequence.id, sequence.name);
+                      }
+                    }}
+                    style={{ 
+                      padding: '0.4rem 0.75rem', 
+                      fontSize: '0.8rem',
+                      backgroundColor: '#dc3545',
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '0.35rem',
+                      marginLeft: 'auto'
+                    }}
+                    title="Delete sequence"
+                  >
+                    <Trash size={13} />
+                  </button>
                 </div>
               </div>
             ))}
           </div>
         )}
       </div>
+      
+      {/* Pattern Import Modal */}
+      <PatternImport
+        isOpen={showSequenceImportModal}
+        onClose={() => setShowSequenceImportModal(false)}
+        onImport={async (importedBlocks, metadata) => {
+          // Check if this was a bundle import (already saved in backend)
+          if (importedBlocks && importedBlocks.bundle_import && importedBlocks.success) {
+            // Bundle sequences already saved by backend - just refresh the list
+            showAlert(`Successfully imported ${importedBlocks.imported_count} sequences from bundle!`, 'success');
+            loadSavedSequences();
+            setShowSequenceImportModal(false);
+            return;
+          }
+          
+          // Save the imported sequence to database
+          try {
+            const response = await fetch(apiUrl('sequences'), {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                name: metadata?.name || 'Imported Sequence',
+                description: metadata?.description || '',
+                blocks: importedBlocks
+              })
+            });
+            
+            if (response.ok) {
+              showAlert(`Successfully imported "${metadata?.name || 'Imported Sequence'}"!`, 'success');
+              loadSavedSequences();
+            } else {
+              const error = await response.json();
+              // Handle various error detail formats
+              let errorMsg = 'Unknown error';
+              if (typeof error.detail === 'string') {
+                errorMsg = error.detail;
+              } else if (Array.isArray(error.detail)) {
+                errorMsg = error.detail.map(err => err.msg || String(err)).join('; ');
+              } else if (error.detail) {
+                errorMsg = JSON.stringify(error.detail);
+              }
+              showAlert(`Failed to save sequence: ${errorMsg}`, 'error');
+            }
+          } catch (error) {
+            showAlert(`Error saving sequence: ${error.message}`, 'error');
+          }
+          setShowSequenceImportModal(false);
+        }}
+        existingFiles={prerolls.map(p => p.full_path)}
+        showCommunityDownload={true}
+      />
+      
+      {/* Pattern Export Modal */}
+      {exportingSequence && (
+        <PatternExport
+          isOpen={showSequenceExportModal}
+          onClose={() => {
+            setShowSequenceExportModal(false);
+            setExportingSequence(null);
+          }}
+          scheduleId={exportingSequence.id}
+          scheduleName={exportingSequence.name}
+        />
+      )}
+      
+      {/* Sequence Preview Modal */}
+      {previewingSequence && (
+        <SequencePreviewModal
+          isOpen={showSequencePreviewModal}
+          onClose={() => {
+            setShowSequencePreviewModal(false);
+            setPreviewingSequence(null);
+          }}
+          blocks={previewingSequence.blocks || []}
+          categories={categories}
+          prerolls={prerolls}
+          sequenceName={previewingSequence.name}
+          apiUrl={apiUrl}
+        />
+      )}
+      </>
     );
   };
 
@@ -12247,7 +13346,7 @@ C:\\\\Media\\\\Prerolls\\\\summer\\\\beach.mp4`}
                 onClick={handleConfirmDownload}
                 style={{ padding: '0.5rem 1.5rem' }}
               >
-                ⬇️ Download
+                <Download size={14} style={{marginRight: '0.35rem'}} /> Download
               </button>
               <button
                 className="button-secondary"
@@ -12296,7 +13395,7 @@ C:\\\\Media\\\\Prerolls\\\\summer\\\\beach.mp4`}
                 onClick={handleAcceptFairUse}
                 style={{ padding: '0.5rem 1rem' }}
               >
-                ✓ Accept & Continue
+                <Check size={14} style={{marginRight: '0.35rem'}} /> Accept & Continue
               </button>
               <button
                 className="button-secondary"
@@ -12344,7 +13443,7 @@ C:\\\\Media\\\\Prerolls\\\\summer\\\\beach.mp4`}
               style={{ padding: '0.4rem 0.8rem', fontSize: '0.85rem' }}
               title="View Fair Use Policy"
             >
-              📋 Fair Use Policy
+              <FileText size={14} style={{marginRight: '0.35rem'}} /> Fair Use Policy
             </button>
           </div>
           
@@ -12353,10 +13452,10 @@ C:\\\\Media\\\\Prerolls\\\\summer\\\\beach.mp4`}
             <div style={{
               padding: '0.75rem',
               backgroundColor: communityIndexStatus.exists 
-                ? (communityIndexStatus.is_stale ? 'rgba(245, 158, 11, 0.1)' : 'rgba(34, 197, 94, 0.1)')
+                ? (communityIndexStatus.is_stale ? 'rgba(20, 184, 166, 0.1)' : 'rgba(34, 197, 94, 0.1)')
                 : 'rgba(239, 68, 68, 0.1)',
               border: `1px solid ${communityIndexStatus.exists 
-                ? (communityIndexStatus.is_stale ? 'rgba(245, 158, 11, 0.3)' : 'rgba(34, 197, 94, 0.3)')
+                ? (communityIndexStatus.is_stale ? 'rgba(20, 184, 166, 0.3)' : 'rgba(34, 197, 94, 0.3)')
                 : 'rgba(239, 68, 68, 0.3)'}`,
               borderRadius: '4px',
               marginBottom: '1rem',
@@ -12371,13 +13470,13 @@ C:\\\\Media\\\\Prerolls\\\\summer\\\\beach.mp4`}
                   {communityIndexStatus.exists ? (
                     <>
                       {communityIndexStatus.is_stale ? (
-                        <span>⚠️ <strong>Index is stale</strong> (last updated {Math.round(communityIndexStatus.age_days)} days ago)</span>
+                        <span><AlertTriangle size={14} style={{marginRight: '0.35rem', verticalAlign: 'middle', color: '#14B8A6'}} /> <strong>Index is stale</strong> (last updated {Math.round(communityIndexStatus.age_days)} days ago)</span>
                       ) : (
-                        <span>✨ <strong>Fast search enabled</strong></span>
+                        <span><Sparkles size={14} style={{marginRight: '0.35rem', verticalAlign: 'middle', color: '#10b981'}} /> <strong>Fast search enabled</strong></span>
                       )}
                     </>
                   ) : (
-                    <span>💡 <strong>Build local index for instant searches</strong></span>
+                    <span><Lightbulb size={14} style={{marginRight: '0.35rem', verticalAlign: 'middle', color: '#14B8A6'}} /> <strong>Build local index for instant searches</strong></span>
                   )}
                 </div>
                 
@@ -12389,9 +13488,12 @@ C:\\\\Media\\\\Prerolls\\\\summer\\\\beach.mp4`}
                     border: '1px solid rgba(34, 197, 94, 0.3)',
                     borderRadius: '4px',
                     fontSize: '0.85rem',
-                    whiteSpace: 'nowrap'
+                    whiteSpace: 'nowrap',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '0.35rem'
                   }}>
-                    📚 <strong>{communityIndexStatus.total_prerolls}</strong> indexed
+                    <Library size={14} /> <strong>{communityIndexStatus.total_prerolls}</strong> indexed
                   </div>
                 )}
                 
@@ -12403,9 +13505,12 @@ C:\\\\Media\\\\Prerolls\\\\summer\\\\beach.mp4`}
                     border: '1px solid rgba(59, 130, 246, 0.3)',
                     borderRadius: '4px',
                     fontSize: '0.85rem',
-                    whiteSpace: 'nowrap'
+                    whiteSpace: 'nowrap',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '0.35rem'
                   }}>
-                    🔗 <strong>{communityMatchedCount}</strong> matched
+                    <Link size={14} /> <strong>{communityMatchedCount}</strong> matched
                   </div>
                 )}
               </div>
@@ -12421,7 +13526,7 @@ C:\\\\Media\\\\Prerolls\\\\summer\\\\beach.mp4`}
                   }}
                   title={communityIndexStatus.exists ? 'Refresh index to get latest prerolls' : 'Build index for instant searches'}
                 >
-                  {communityIsBuilding ? '⏳ Building...' : (communityIndexStatus.exists ? '🔄 Refresh Index' : '⚡ Build Index')}
+                  {communityIsBuilding ? <><Loader2 size={14} style={{marginRight: '0.35rem'}} className="animate-spin" /> Building...</> : (communityIndexStatus.exists ? <><RefreshCw size={14} style={{marginRight: '0.35rem'}} /> Refresh Index</> : <><Zap size={14} style={{marginRight: '0.35rem'}} /> Build Index</>)}
                 </button>
                 <button
                   onClick={() => handleMatchExisting(true)}
@@ -12434,7 +13539,7 @@ C:\\\\Media\\\\Prerolls\\\\summer\\\\beach.mp4`}
                   }}
                   title="Match your existing prerolls to the community library"
                 >
-                  {communityIsMigrating ? '⏳ Matching...' : '🔗 Match Existing Prerolls'}
+                  {communityIsMigrating ? <><Loader2 size={14} style={{marginRight: '0.35rem'}} className="animate-spin" /> Matching...</> : <><Link size={14} style={{marginRight: '0.35rem'}} /> Match Existing Prerolls</>}
                 </button>
                 {communityIndexStatus.exists && (
                   <button
@@ -12445,13 +13550,13 @@ C:\\\\Media\\\\Prerolls\\\\summer\\\\beach.mp4`}
                       padding: '0.4rem 0.8rem', 
                       fontSize: '0.85rem',
                       whiteSpace: 'nowrap',
-                      backgroundColor: darkMode ? 'rgba(245, 158, 11, 0.1)' : 'rgba(245, 158, 11, 0.15)',
-                      border: darkMode ? '1px solid rgba(245, 158, 11, 0.3)' : '1px solid rgba(245, 158, 11, 0.4)',
-                      color: darkMode ? 'rgba(245, 158, 11, 0.9)' : '#b45309'
+                      backgroundColor: darkMode ? 'rgba(20, 184, 166, 0.1)' : 'rgba(20, 184, 166, 0.15)',
+                      border: darkMode ? '1px solid rgba(20, 184, 166, 0.3)' : '1px solid rgba(20, 184, 166, 0.4)',
+                      color: darkMode ? 'rgba(20, 184, 166, 0.9)' : '#b45309'
                     }}
                     title="Clear all existing matches and rematch with improved algorithm"
                   >
-                    {communityIsMigrating ? '⏳ Rematching...' : '🔄 Rematch All'}
+                    {communityIsMigrating ? <><Loader2 size={14} style={{marginRight: '0.35rem'}} className="animate-spin" /> Rematching...</> : <><RefreshCcw size={14} style={{marginRight: '0.35rem'}} /> Rematch All</>}
                   </button>
                 )}
               </div>
@@ -12483,9 +13588,12 @@ C:\\\\Media\\\\Prerolls\\\\summer\\\\beach.mp4`}
                 fontSize: '0.9rem', 
                 marginBottom: '0.5rem',
                 color: 'var(--text-color, #333)',
-                fontWeight: 'bold'
+                fontWeight: 'bold',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '0.35rem'
               }}>
-                🔗 Matching Prerolls to Community Library
+                <Link size={14} /> Matching Prerolls to Community Library
               </div>
               <div style={{
                 backgroundColor: 'var(--bg-color, #fff)',
@@ -12514,10 +13622,11 @@ C:\\\\Media\\\\Prerolls\\\\summer\\\\beach.mp4`}
                   transform: 'translateY(-50%)',
                   color: '#888',
                   pointerEvents: 'none',
-                  fontSize: '18px',
-                  zIndex: 1
+                  zIndex: 1,
+                  display: 'flex',
+                  alignItems: 'center'
                 }}>
-                  🔍
+                  <Search size={18} />
                 </div>
                 <input
                   type="text"
@@ -12672,7 +13781,7 @@ C:\\\\Media\\\\Prerolls\\\\summer\\\\beach.mp4`}
                   e.target.style.transform = 'translateY(0)';
                 }}
               >
-                <span style={{ fontSize: '18px' }}>{communityIsSearching ? '⏳' : '🔍'}</span>
+                {communityIsSearching ? <Loader2 size={18} className="animate-spin" /> : <Search size={18} />}
                 <span>{communityIsSearching ? 'Searching...' : 'Search'}</span>
               </button>
             </div>
@@ -12687,8 +13796,8 @@ C:\\\\Media\\\\Prerolls\\\\summer\\\\beach.mp4`}
               border: '1px solid var(--border-color)',
               borderRadius: '6px'
             }}>
-              <div style={{ marginBottom: '0.5rem', fontSize: '0.9rem', color: 'var(--text-secondary)' }}>
-                🔍 Searching Typical Nerds library...
+              <div style={{ marginBottom: '0.5rem', fontSize: '0.9rem', color: 'var(--text-secondary)', display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
+                <Search size={14} /> Searching Typical Nerds library...
               </div>
               <div style={{
                 width: '100%',
@@ -12769,10 +13878,9 @@ C:\\\\Media\\\\Prerolls\\\\summer\\\\beach.mp4`}
                     display: 'flex',
                     alignItems: 'center',
                     justifyContent: 'center',
-                    color: 'var(--text-secondary)',
-                    fontSize: '2rem'
+                    color: 'var(--text-secondary)'
                   }}>
-                    🎬
+                    <Film size={28} />
                   </div>
 
                   {/* Content */}
@@ -12792,16 +13900,16 @@ C:\\\\Media\\\\Prerolls\\\\summer\\\\beach.mp4`}
 
                     <div style={{ display: 'flex', gap: '1rem', flexWrap: 'wrap', fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
                       {preroll.creator && (
-                        <span>👤 {cleanDisplayText(preroll.creator)}</span>
+                        <span style={{ display: 'flex', alignItems: 'center', gap: '0.25rem' }}><User size={14} /> {cleanDisplayText(preroll.creator)}</span>
                       )}
                       {preroll.category && (
-                        <span>📁 {cleanDisplayText(preroll.category)}</span>
+                        <span style={{ display: 'flex', alignItems: 'center', gap: '0.25rem' }}><FolderOpen size={14} /> {cleanDisplayText(preroll.category)}</span>
                       )}
                       {preroll.duration && (
-                        <span>⏱️ {preroll.duration}s</span>
+                        <span style={{ display: 'flex', alignItems: 'center', gap: '0.25rem' }}><Clock size={14} /> {preroll.duration}s</span>
                       )}
                       {preroll.file_size && preroll.file_size !== 'Unknown' && (
-                        <span>📦 {preroll.file_size}</span>
+                        <span><Package size={14} style={{marginRight: '0.35rem', verticalAlign: 'middle'}} /> {preroll.file_size}</span>
                       )}
                     </div>
                   </div>
@@ -12845,7 +13953,7 @@ C:\\\\Media\\\\Prerolls\\\\summer\\\\beach.mp4`}
                         }}
                         title="Preview video"
                       >
-                        ▶️ Preview
+                        <Play size={14} style={{marginRight: '0.25rem'}} /> Preview
                       </button>
                       {isPrerollAlreadyDownloaded(preroll) ? (
                         <div
@@ -12865,7 +13973,7 @@ C:\\\\Media\\\\Prerolls\\\\summer\\\\beach.mp4`}
                           }}
                           title="This preroll is already in your collection"
                         >
-                          ✓ Downloaded
+                          <CheckCircle size={14} style={{marginRight: '0.25rem'}} /> Downloaded
                         </div>
                       ) : (
                         <button
@@ -12879,9 +13987,9 @@ C:\\\\Media\\\\Prerolls\\\\summer\\\\beach.mp4`}
                             opacity: communityIsDownloading[preroll.id] ? 0.6 : 1
                           }}
                         >
-                          {communityIsDownloading[preroll.id] === 'downloading' ? '⬇️ Downloading...' : 
-                           communityIsDownloading[preroll.id] === 'processing' ? '⚙️ Processing...' : 
-                           '⬇️ Download'}
+                          {communityIsDownloading[preroll.id] === 'downloading' ? <><Loader2 size={14} style={{marginRight: '0.35rem'}} /> Downloading...</> : 
+                           communityIsDownloading[preroll.id] === 'processing' ? <><Settings size={14} style={{marginRight: '0.35rem'}} /> Processing...</> : 
+                           <><Download size={14} style={{marginRight: '0.35rem'}} /> Download</>}
                         </button>
                       )}
                       <button
@@ -12899,7 +14007,7 @@ C:\\\\Media\\\\Prerolls\\\\summer\\\\beach.mp4`}
                           color: communityShowAddToCategory[preroll.id] ? '#66c891' : 'white'
                         }}
                       >
-                        {communityShowAddToCategory[preroll.id] ? '✓ Category' : '+ Category'}
+                        {communityShowAddToCategory[preroll.id] ? <><CheckCircle size={14} style={{marginRight: '0.25rem'}} /> Category</> : <><Plus size={14} style={{marginRight: '0.25rem'}} /> Category</>}
                       </button>
                     </div>
                   </div>
@@ -12917,14 +14025,14 @@ C:\\\\Media\\\\Prerolls\\\\summer\\\\beach.mp4`}
             backgroundColor: 'var(--input-bg)',
             borderRadius: '6px'
           }}>
-            <div style={{ fontSize: '3rem', marginBottom: '1rem' }}>🎬</div>
+            <div style={{ marginBottom: '1rem', color: 'var(--text-secondary)' }}><Film size={48} /></div>
             <p style={{ margin: '0 0 0.5rem 0', color: 'var(--text-secondary)' }}>
               {communityTotalResults === 0 && communitySearchQuery ? 
                 `No results found for "${communitySearchQuery}". Try different keywords or browse by category.` :
                 'No results yet. Start searching or browse by category and platform!'}
             </p>
-            <p style={{ margin: '0.5rem 0 0 0', fontSize: '0.85rem', color: 'var(--text-secondary)', opacity: 0.7 }}>
-              💡 Tip: Search by theme, holiday, genre, or franchise (e.g., "halloween", "thanksgiving", "christmas", "marvel", "star wars")
+            <p style={{ margin: '0.5rem 0 0 0', fontSize: '0.85rem', color: 'var(--text-secondary)', opacity: 0.7, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.35rem' }}>
+              <Lightbulb size={14} /> Tip: Search by theme, holiday, genre, or franchise (e.g., "halloween", "thanksgiving", "christmas", "marvel", "star wars")
             </p>
           </div>
         )}
@@ -12932,7 +14040,7 @@ C:\\\\Media\\\\Prerolls\\\\summer\\\\beach.mp4`}
         {/* Random Preroll Section - Always Visible */}
         <div className="card">
           <h3 style={{ marginTop: 0, marginBottom: '1rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-            🎲 Random Preroll
+            <Shuffle size={14} style={{marginRight: '0.35rem'}} /> Random Preroll
           </h3>
           
           {/* Random Button */}
@@ -12952,7 +14060,7 @@ C:\\\\Media\\\\Prerolls\\\\summer\\\\beach.mp4`}
                 display: 'inline-block',
                 animation: communityIsLoadingRandom ? 'diceRoll 0.8s ease-in-out infinite' : 'none'
               }}>
-                🎲
+                <Shuffle size={24} />
               </span>
               {' '}
               {communityIsLoadingRandom ? 'Finding...' : 'Random Preroll'}
@@ -13000,10 +14108,9 @@ C:\\\\Media\\\\Prerolls\\\\summer\\\\beach.mp4`}
                 borderRadius: '8px',
                 display: 'flex',
                 alignItems: 'center',
-                justifyContent: 'center',
-                fontSize: '3rem'
+                justifyContent: 'center'
               }}>
-                🎬
+                <Film size={36} style={{ color: '#9333ea' }} />
               </div>
               
               <div style={{ flex: 1 }}>
@@ -13023,7 +14130,7 @@ C:\\\\Media\\\\Prerolls\\\\summer\\\\beach.mp4`}
                       backgroundColor: '#3b82f6'
                     }}
                   >
-                    👁️ Preview
+                    <Eye size={14} style={{marginRight: '0.35rem'}} /> Preview
                   </button>
                   <button
                     onClick={() => {
@@ -13035,7 +14142,7 @@ C:\\\\Media\\\\Prerolls\\\\summer\\\\beach.mp4`}
                       backgroundColor: '#10b981'
                     }}
                   >
-                    ⬇️ Download
+                    <Download size={14} style={{marginRight: '0.35rem'}} /> Download
                   </button>
                   <button
                     onClick={() => setCommunityRandomPreroll(null)}
@@ -13045,7 +14152,7 @@ C:\\\\Media\\\\Prerolls\\\\summer\\\\beach.mp4`}
                       backgroundColor: '#6b7280'
                     }}
                   >
-                    ✕ Clear
+                    <X size={14} style={{marginRight: '0.35rem'}} /> Clear
                   </button>
                 </div>
                 
@@ -13080,9 +14187,9 @@ C:\\\\Media\\\\Prerolls\\\\summer\\\\beach.mp4`}
                         opacity: communityIsDownloading[communityRandomPreroll.id] ? 0.6 : 1
                       }}
                     >
-                      {communityIsDownloading[communityRandomPreroll.id] === 'downloading' ? '⏳ Downloading...' : 
-                       communityIsDownloading[communityRandomPreroll.id] === 'success' ? '✅ Downloaded!' : 
-                       '⬇️ Confirm Download'}
+                      {communityIsDownloading[communityRandomPreroll.id] === 'downloading' ? <><Loader2 size={14} style={{marginRight: '0.35rem'}} /> Downloading...</> : 
+                       communityIsDownloading[communityRandomPreroll.id] === 'success' ? <><CheckCircle size={14} style={{marginRight: '0.35rem'}} /> Downloaded!</> : 
+                       <><Download size={14} style={{marginRight: '0.35rem'}} /> Confirm Download</>}
                     </button>
                   </div>
                 )}
@@ -13150,42 +14257,51 @@ C:\\\\Media\\\\Prerolls\\\\summer\\\\beach.mp4`}
         className="tab-buttons"
         style={{ alignItems: 'center', justifyContent: 'space-between', padding: '0 0.5rem' }}
       >
-        <div className="tab-group">
+        {/* Mobile hamburger menu button */}
+        <button 
+          className="mobile-menu-toggle"
+          onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
+          aria-label="Toggle navigation menu"
+        >
+          {mobileMenuOpen ? <X size={24} /> : <Menu size={24} />}
+        </button>
+        
+        <div className={`tab-group ${mobileMenuOpen ? 'mobile-open' : ''}`}>
           <button
             className={`tab-button ${activeTab === 'dashboard' ? 'active' : ''}`}
-            onClick={() => setActiveTab('dashboard')}
+            onClick={() => { setActiveTab('dashboard'); setMobileMenuOpen(false); }}
           >
             Dashboard
           </button>
           
           <button
             className={`tab-button ${activeTab.startsWith('schedules') ? 'active' : ''}`}
-            onClick={() => setActiveTab('schedules')}
+            onClick={() => { setActiveTab('schedules'); setMobileMenuOpen(false); }}
           >
             Schedules
           </button>
           
           <button
             className={`tab-button ${activeTab === 'categories' ? 'active' : ''}`}
-            onClick={() => setActiveTab('categories')}
+            onClick={() => { setActiveTab('categories'); setMobileMenuOpen(false); }}
           >
             Categories
           </button>
           <button
             className={`tab-button ${activeTab === 'settings' ? 'active' : ''}`}
-            onClick={() => setActiveTab('settings')}
+            onClick={() => { setActiveTab('settings'); setMobileMenuOpen(false); }}
           >
             Settings
           </button>
           <button
             className={`tab-button ${activeTab === 'connect' ? 'active' : ''}`}
-            onClick={() => setActiveTab('connect')}
+            onClick={() => { setActiveTab('connect'); setMobileMenuOpen(false); }}
           >
             Connect
           </button>
           <button
             className={`tab-button ${activeTab === 'community-prerolls' ? 'active' : ''}`}
-            onClick={() => setActiveTab('community-prerolls')}
+            onClick={() => { setActiveTab('community-prerolls'); setMobileMenuOpen(false); }}
           >
             Community Prerolls
           </button>
@@ -13200,6 +14316,14 @@ C:\\\\Media\\\\Prerolls\\\\summer\\\\beach.mp4`}
           </a>
         </div>
       </div>
+      
+      {/* Mobile menu overlay */}
+      {mobileMenuOpen && (
+        <div 
+          className="mobile-menu-overlay" 
+          onClick={() => setMobileMenuOpen(false)}
+        />
+      )}
 
       {showUpdateBanner && updateInfo && (
         <div
@@ -13297,6 +14421,63 @@ C:\\\\Media\\\\Prerolls\\\\summer\\\\beach.mp4`}
       )}
 
      <div className="dashboard">
+       {/* Schedule Sub-Nav Tab Bar - Rendered at dashboard level for proper sticky behavior */}
+       {activeTab.startsWith('schedules') && (
+         <div style={{ 
+           position: 'sticky',
+           top: '38px',
+           zIndex: 800,
+           backgroundColor: 'var(--bg-color)',
+           paddingTop: '1rem',
+           borderBottom: '2px solid var(--border-color)',
+           display: 'flex',
+           gap: '0.25rem'
+         }}>
+           {[
+             { id: 'schedules', icon: <Calendar size={16} />, label: 'My Schedules' },
+             { id: 'schedules/create', icon: <Plus size={16} />, label: 'Create New' },
+             { id: 'schedules/calendar', icon: <CalendarDays size={16} />, label: 'Calendar View' },
+             { id: 'schedules/builder', icon: <Film size={16} />, label: 'Sequence Builder' },
+             { id: 'schedules/library', icon: <BookOpen size={16} />, label: 'Saved Sequences' }
+           ].map(tab => (
+             <button
+               key={tab.id}
+               onClick={() => setActiveTab(tab.id)}
+               style={{
+                 padding: '0.875rem 1.25rem',
+                 border: 'none',
+                 borderBottom: activeTab === tab.id ? '3px solid var(--button-bg)' : '3px solid transparent',
+                 backgroundColor: activeTab === tab.id ? 'var(--bg-color)' : 'transparent',
+                 color: activeTab === tab.id ? 'var(--button-bg)' : 'var(--text-color)',
+                 cursor: 'pointer',
+                 fontSize: '0.9rem',
+                 fontWeight: activeTab === tab.id ? 600 : 400,
+                 transition: 'all 0.2s',
+                 marginBottom: '-2px',
+                 display: 'flex',
+                 alignItems: 'center',
+                 gap: '0.5rem',
+                 borderRadius: '8px 8px 0 0'
+               }}
+               onMouseEnter={(e) => {
+                 if (activeTab !== tab.id) {
+                   e.currentTarget.style.backgroundColor = 'var(--bg-color)';
+                   e.currentTarget.style.color = 'var(--button-bg)';
+                 }
+               }}
+               onMouseLeave={(e) => {
+                 if (activeTab !== tab.id) {
+                   e.currentTarget.style.backgroundColor = 'transparent';
+                   e.currentTarget.style.color = 'var(--text-color)';
+                 }
+               }}
+             >
+               <span style={{ display: 'flex', alignItems: 'center' }}>{tab.icon}</span>
+               <span>{tab.label}</span>
+             </button>
+           ))}
+         </div>
+       )}
        {activeTab === 'dashboard' && renderDashboard()}
        {activeTab.startsWith('schedules') && renderSchedules()}
        {activeTab === 'categories' && renderCategories()}
@@ -14130,6 +15311,746 @@ C:\\\\Media\\\\Prerolls\\\\summer\\\\beach.mp4`}
           </div>
         </div>
       </footer>
+
+      {/* Edit Schedule Modal - Available Globally */}
+      {editingSchedule && (
+        <Modal
+          title="Edit Schedule"
+          onClose={() => {
+            setEditingSchedule(null);
+            setScheduleForm({
+              name: '', type: 'monthly', start_date: '', end_date: '',
+              category_id: '', shuffle: false, playlist: false, fallback_category_id: ''
+            });
+            setScheduleMode('simple');
+            setSequenceBlocks([]);
+            setWeekDays([]);
+            setMonthDays([]);
+            setTimeRange({ start: '', end: '' });
+          }}
+        >
+          <form onSubmit={handleUpdateSchedule}>
+            {/* Mode Toggle */}
+            <div style={{ marginBottom: '1.5rem', padding: '1rem', backgroundColor: 'var(--card-bg)', borderRadius: '0.5rem', border: '1px solid var(--border-color)' }}>
+              <label style={{ display: 'block', marginBottom: '0.75rem', fontWeight: 600, fontSize: '1rem' }}>Schedule Mode</label>
+              <div style={{ display: 'flex', gap: '1rem', marginBottom: '0.5rem' }}>
+                <label style={{ display: 'flex', alignItems: 'center', cursor: 'pointer', padding: '0.5rem 1rem', backgroundColor: scheduleMode === 'simple' ? 'var(--button-bg)' : 'var(--bg-color)', color: scheduleMode === 'simple' ? 'white' : 'var(--text-color)', borderRadius: '0.25rem', border: '2px solid var(--border-color)', transition: 'all 0.2s' }}>
+                  <input
+                    type="radio"
+                    value="simple"
+                    checked={scheduleMode === 'simple'}
+                    onChange={(e) => setScheduleMode(e.target.value)}
+                    style={{ marginRight: '0.5rem' }}
+                  />
+                  <span>Simple (Single Category)</span>
+                </label>
+                <label style={{ display: 'flex', alignItems: 'center', cursor: 'pointer', padding: '0.5rem 1rem', backgroundColor: scheduleMode === 'advanced' ? 'var(--button-bg)' : 'var(--bg-color)', color: scheduleMode === 'advanced' ? 'white' : 'var(--text-color)', borderRadius: '0.25rem', border: '2px solid var(--border-color)', transition: 'all 0.2s' }}>
+                  <input
+                    type="radio"
+                    value="advanced"
+                    checked={scheduleMode === 'advanced'}
+                    onChange={(e) => setScheduleMode(e.target.value)}
+                    style={{ marginRight: '0.5rem' }}
+                  />
+                  <span>Advanced (Sequence Builder)</span>
+                </label>
+              </div>
+              <p style={{ fontSize: '0.85rem', color: '#666', margin: 0 }}>
+                {scheduleMode === 'simple' 
+                  ? 'Select a single category with random or sequential playback.' 
+                  : 'Build a custom sequence with multiple categories and fixed prerolls.'}
+              </p>
+            </div>
+
+            <div className="nx-form-grid">
+              <div className="nx-field">
+                <label className="nx-label">Name</label>
+                <input
+                  className="nx-input"
+                  type="text"
+                  placeholder="Schedule Name"
+                  value={scheduleForm.name}
+                  onChange={(e) => setScheduleForm({...scheduleForm, name: e.target.value})}
+                  required
+                />
+              </div>
+              <div className="nx-field">
+                <label className="nx-label">Type</label>
+                <select
+                  className="nx-select"
+                  value={scheduleForm.type}
+                  onChange={(e) => setScheduleForm({...scheduleForm, type: e.target.value})}
+                >
+                  <option value="daily">Daily</option>
+                  <option value="weekly">Weekly</option>
+                  <option value="monthly">Monthly</option>
+                  <option value="yearly">Yearly</option>
+                  <option value="holiday">Holiday</option>
+                  <option value="custom">Custom</option>
+                </select>
+              </div>
+              <div className="nx-field">
+                <label className="nx-label">Start Date & Time</label>
+                <input
+                  className="nx-input"
+                  type="datetime-local"
+                  value={scheduleForm.start_date}
+                  onChange={(e) => setScheduleForm({...scheduleForm, start_date: e.target.value})}
+                  required
+                />
+              </div>
+              <div className="nx-field">
+                <label className="nx-label">End Date & Time (Optional)</label>
+                <input
+                  className="nx-input"
+                  type="datetime-local"
+                  value={scheduleForm.end_date}
+                  onChange={(e) => setScheduleForm({...scheduleForm, end_date: e.target.value})}
+                />
+              </div>
+
+              {/* Daily Schedule: Time Selector */}
+              {scheduleForm.type === 'daily' && (
+                <div className="nx-field nx-span-2" style={{ padding: '1rem', backgroundColor: 'var(--card-bg)', borderRadius: '0.5rem', border: '1px solid var(--border-color)' }}>
+                  <label className="nx-label" style={{ marginBottom: '0.75rem', fontWeight: 600 }}>Run At Time</label>
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
+                    <div>
+                      <label style={{ display: 'block', marginBottom: '0.5rem', fontSize: '0.9rem', color: '#666' }}>Start Time</label>
+                      <input
+                        type="time"
+                        className="nx-input"
+                        value={timeRange.start || ''}
+                        onChange={(e) => setTimeRange({...timeRange, start: e.target.value})}
+                        style={{ width: '100%' }}
+                      />
+                    </div>
+                    <div>
+                      <label style={{ display: 'block', marginBottom: '0.5rem', fontSize: '0.9rem', color: '#666' }}>End Time (Optional)</label>
+                      <input
+                        type="time"
+                        className="nx-input"
+                        value={timeRange.end || ''}
+                        onChange={(e) => setTimeRange({...timeRange, end: e.target.value})}
+                        style={{ width: '100%' }}
+                      />
+                    </div>
+                  </div>
+                  <p style={{ fontSize: '0.85rem', color: '#666', marginTop: '0.5rem', marginBottom: 0 }}>
+                    💡 Leave end time empty to run at a specific time, or set both to create a time window
+                  </p>
+                  {!timeRange.start && (
+                    <p style={{ fontSize: '0.85rem', color: '#dc3545', marginTop: '0.5rem', marginBottom: 0 }}>
+                      ⚠️ Please select at least a start time
+                    </p>
+                  )}
+                </div>
+              )}
+
+              {/* Weekly Schedule: Day of Week Selector */}
+              {scheduleForm.type === 'weekly' && (
+                <div className="nx-field nx-span-2">
+                  <label className="nx-label">Repeat On</label>
+                  <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap', marginTop: '0.5rem' }}>
+                    {['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'].map((day) => {
+                      const dayLower = day.toLowerCase();
+                      const isSelected = weekDays.includes(dayLower);
+                      return (
+                        <label
+                          key={day}
+                          style={{
+                            display: 'flex',
+                            alignItems: 'center',
+                            padding: '0.5rem 0.75rem',
+                            backgroundColor: isSelected ? 'var(--button-bg)' : 'var(--bg-color)',
+                            color: isSelected ? 'white' : 'var(--text-color)',
+                            borderRadius: '0.25rem',
+                            border: '2px solid ' + (isSelected ? 'var(--button-bg)' : 'var(--border-color)'),
+                            cursor: 'pointer',
+                            fontSize: '0.9rem',
+                            transition: 'all 0.2s',
+                            userSelect: 'none'
+                          }}
+                        >
+                          <input
+                            type="checkbox"
+                            checked={isSelected}
+                            onChange={(e) => {
+                              if (e.target.checked) {
+                                setWeekDays([...weekDays, dayLower]);
+                              } else {
+                                setWeekDays(weekDays.filter(d => d !== dayLower));
+                              }
+                            }}
+                            style={{ marginRight: '0.5rem' }}
+                          />
+                          <span>{day.substring(0, 3)}</span>
+                        </label>
+                      );
+                    })}
+                  </div>
+                  {weekDays.length === 0 && (
+                    <p style={{ fontSize: '0.85rem', color: '#dc3545', marginTop: '0.5rem', marginBottom: 0 }}>
+                      ⚠️ Select at least one day
+                    </p>
+                  )}
+                </div>
+              )}
+
+              {/* Monthly Schedule: Day of Month Selector */}
+              {scheduleForm.type === 'monthly' && (
+                <div className="nx-field nx-span-2">
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem' }}>
+                    <label className="nx-label" style={{ margin: 0 }}>On Day(s) of Month</label>
+                    <div style={{ display: 'flex', gap: '0.5rem' }}>
+                      <button
+                        type="button"
+                        onClick={() => setMonthDays(Array.from({length: 31}, (_, i) => i + 1))}
+                        style={{
+                          padding: '0.35rem 0.75rem',
+                          fontSize: '0.8rem',
+                          backgroundColor: 'var(--button-bg)',
+                          color: 'white',
+                          border: 'none',
+                          borderRadius: '0.25rem',
+                          cursor: 'pointer',
+                          fontWeight: 500
+                        }}
+                      >
+                        Select All
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setMonthDays([])}
+                        style={{
+                          padding: '0.35rem 0.75rem',
+                          fontSize: '0.8rem',
+                          backgroundColor: '#6c757d',
+                          color: 'white',
+                          border: 'none',
+                          borderRadius: '0.25rem',
+                          cursor: 'pointer',
+                          fontWeight: 500
+                        }}
+                      >
+                        Deselect All
+                      </button>
+                    </div>
+                  </div>
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', gap: '0.5rem', marginTop: '0.5rem' }}>
+                    {Array.from({length: 31}, (_, i) => i + 1).map((day) => {
+                      const isSelected = monthDays.includes(day);
+                      return (
+                        <button
+                          key={day}
+                          type="button"
+                          onClick={() => {
+                            if (isSelected) {
+                              setMonthDays(monthDays.filter(d => d !== day));
+                            } else {
+                              setMonthDays([...monthDays, day].sort((a, b) => a - b));
+                            }
+                          }}
+                          style={{
+                            padding: '0.5rem',
+                            backgroundColor: isSelected ? 'var(--button-bg)' : 'var(--bg-color)',
+                            color: isSelected ? 'white' : 'var(--text-color)',
+                            border: '2px solid ' + (isSelected ? 'var(--button-bg)' : 'var(--border-color)'),
+                            borderRadius: '0.25rem',
+                            cursor: 'pointer',
+                            fontSize: '0.85rem',
+                            fontWeight: isSelected ? 600 : 400,
+                            transition: 'all 0.2s'
+                          }}
+                        >
+                          {day}
+                        </button>
+                      );
+                    })}
+                  </div>
+                  {monthDays.length === 0 && (
+                    <p style={{ fontSize: '0.85rem', color: '#dc3545', marginTop: '0.5rem', marginBottom: 0 }}>
+                      ⚠️ Select at least one day
+                    </p>
+                  )}
+                </div>
+              )}
+              
+              {/* Simple Mode: Category Selection */}
+              {scheduleMode === 'simple' && (
+                <div className="nx-field">
+                  <label className="nx-label">Category</label>
+                  <select
+                    className="nx-select"
+                    value={scheduleForm.category_id}
+                    onChange={(e) => setScheduleForm({...scheduleForm, category_id: e.target.value})}
+                    required
+                  >
+                    <option value="">Select Category</option>
+                    {categories.map(cat => (
+                      <option key={cat.id} value={cat.id}>{cat.name}</option>
+                    ))}
+                  </select>
+                </div>
+              )}
+              <div className="nx-field">
+                <label className="nx-label">Fallback Category</label>
+                <select
+                  className="nx-select"
+                  value={scheduleForm.fallback_category_id || ''}
+                  onChange={(e) => setScheduleForm({...scheduleForm, fallback_category_id: e.target.value})}
+                >
+                  <option value="">No Fallback</option>
+                  {categories.map(cat => (
+                    <option key={cat.id} value={cat.id}>{cat.name}</option>
+                  ))}
+                </select>
+              </div>
+              
+              {/* Blend Mode Toggle */}
+              <div className="nx-field nx-span-2">
+                <label className="nx-label" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                  <input
+                    type="checkbox"
+                    checked={scheduleForm.blend_enabled}
+                    onChange={(e) => setScheduleForm({...scheduleForm, blend_enabled: e.target.checked})}
+                    style={{ width: 'auto' }}
+                  />
+                  <span>🔀 Blend Mode</span>
+                </label>
+                <p style={{ fontSize: '0.85rem', color: '#666', marginTop: '0.25rem' }}>
+                  When enabled, this schedule's prerolls will be mixed with other overlapping schedules that also have Blend Mode enabled. 
+                  Great for combining holiday themes (e.g., Hanukkah + Christmas).
+                </p>
+              </div>
+              
+              {/* Priority and Exclusive Controls */}
+              <div className="nx-field">
+                <label className="nx-label">Priority (1-10)</label>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+                  <input
+                    type="range"
+                    min="1"
+                    max="10"
+                    value={scheduleForm.priority}
+                    onChange={(e) => setScheduleForm({...scheduleForm, priority: parseInt(e.target.value)})}
+                    style={{ flex: 1 }}
+                  />
+                  <span style={{ 
+                    minWidth: '2rem', 
+                    textAlign: 'center', 
+                    fontWeight: 'bold',
+                    color: scheduleForm.priority >= 8 ? '#ef4444' : scheduleForm.priority >= 5 ? '#14B8A6' : '#6b7280'
+                  }}>
+                    {scheduleForm.priority}
+                  </span>
+                </div>
+                <p style={{ fontSize: '0.85rem', color: '#666', marginTop: '0.25rem' }}>
+                  Higher priority schedules win when multiple schedules overlap.
+                </p>
+              </div>
+              
+              <div className="nx-field">
+                <label className="nx-label" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                  <input
+                    type="checkbox"
+                    checked={scheduleForm.exclusive}
+                    onChange={(e) => setScheduleForm({...scheduleForm, exclusive: e.target.checked})}
+                    style={{ width: 'auto' }}
+                  />
+                  <Lock size={16} style={{ color: '#14B8A6' }} />
+                  <span>Exclusive</span>
+                </label>
+                <p style={{ fontSize: '0.85rem', color: '#666', marginTop: '0.25rem' }}>
+                  When active, this schedule wins exclusively (no blending with other schedules).
+                </p>
+              </div>
+              
+              {/* Simple Mode: Playback Mode */}
+              {scheduleMode === 'simple' && (
+                <div className="nx-field nx-span-2">
+                  <label className="nx-label">Playback Mode</label>
+                  <select
+                    className="nx-select"
+                    value={scheduleForm.shuffle ? 'random' : 'sequential'}
+                    onChange={(e) => setScheduleForm({
+                      ...scheduleForm,
+                      shuffle: e.target.value === 'random',
+                      playlist: e.target.value === 'sequential'
+                    })}
+                  >
+                    <option value="random">Random</option>
+                    <option value="sequential">Sequential</option>
+                  </select>
+                </div>
+              )}
+
+              {/* Advanced Mode: Sequence Builder */}
+              {scheduleMode === 'advanced' && (
+                <div className="nx-field nx-span-2" style={{ marginTop: '1rem' }}>
+                  <SequenceBuilder
+                    initialSequence={sequenceBlocks}
+                    categories={categories}
+                    prerolls={prerolls}
+                    scheduleId={editingSchedule?.id || null}
+                    apiUrl={apiUrl}
+                    onSave={(blocks) => {
+                      setSequenceBlocks(blocks);
+                      console.log('Sequence updated:', blocks);
+                    }}
+                    onCancel={() => {
+                      console.log('Sequence builder cancelled');
+                    }}
+                  />
+                </div>
+              )}
+              <div className="nx-field nx-span-2">
+                <label className="nx-label">Calendar Color (Optional)</label>
+                <p style={{ fontSize: '0.85rem', color: '#666', marginBottom: '0.5rem' }}>
+                  Custom color for calendar display. Leave empty to use category color.
+                </p>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                  <input
+                    type="color"
+                    value={scheduleForm.color || '#3b82f6'}
+                    onChange={(e) => setScheduleForm({...scheduleForm, color: e.target.value})}
+                    style={{ width: '50px', height: '35px', border: '1px solid var(--border-color)', borderRadius: '4px', cursor: 'pointer' }}
+                  />
+                  <input
+                    className="nx-input"
+                    type="text"
+                    placeholder="#3b82f6"
+                    value={scheduleForm.color || ''}
+                    onChange={(e) => setScheduleForm({...scheduleForm, color: e.target.value})}
+                    style={{ flex: 1, fontFamily: 'monospace' }}
+                  />
+                  {scheduleForm.color && (
+                    <button
+                      type="button"
+                      className="button-secondary"
+                      onClick={() => setScheduleForm({...scheduleForm, color: ''})}
+                      style={{ padding: '0.5rem 0.75rem' }}
+                    >
+                      Clear
+                    </button>
+                  )}
+                </div>
+              </div>
+            </div>
+            <div className="nx-actions">
+              <button type="submit" className="button">Update Schedule</button>
+              <button
+                type="button"
+                className="button-secondary"
+                onClick={() => {
+                  setEditingSchedule(null);
+                  setScheduleForm({
+                    name: '', type: 'monthly', start_date: '', end_date: '',
+                    category_id: '', shuffle: false, playlist: false, fallback_category_id: '', color: ''
+                  });
+                  setScheduleMode('simple');
+                  setSequenceBlocks([]);
+                  setWeekDays([]);
+                  setMonthDays([]);
+                  setTimeRange({ start: '', end: '' });
+                }}
+              >
+                Cancel
+              </button>
+            </div>
+          </form>
+        </Modal>
+      )}
+
+      {/* Holiday Browser Modal */}
+      {showHolidayBrowser && (
+        <div style={{
+          position: 'fixed',
+          top: 0,
+          left: 0,
+          right: 0,
+          bottom: 0,
+          backgroundColor: 'rgba(0,0,0,0.7)',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          zIndex: 10000
+        }} onClick={(e) => { if (e.target === e.currentTarget) setShowHolidayBrowser(false); }}>
+          <div style={{
+            backgroundColor: 'var(--card-bg)',
+            borderRadius: '12px',
+            width: '90%',
+            maxWidth: '1200px',
+            maxHeight: '90vh',
+            overflow: 'hidden',
+            display: 'flex',
+            flexDirection: 'column',
+            boxShadow: '0 10px 40px rgba(0, 0, 0, 0.3)',
+            border: '1px solid var(--border-color)'
+          }}>
+            {/* Modal Header - NeXroll Style */}
+            <div style={{
+              padding: '1.25rem 1.5rem',
+              borderBottom: '1px solid var(--border-color)',
+              display: 'flex',
+              justifyContent: 'space-between',
+              alignItems: 'center',
+              backgroundColor: 'var(--card-bg)'
+            }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+                <span style={{ fontSize: '1.5rem' }}>🌍</span>
+                <div>
+                  <h2 style={{ margin: 0, color: 'var(--text-color)', fontSize: '1.25rem', fontWeight: 700 }}>
+                    Holiday Browser
+                  </h2>
+                  <p style={{ margin: '0.15rem 0 0 0', color: 'var(--text-secondary)', fontSize: '0.8rem' }}>
+                    Browse international holidays and create schedules
+                  </p>
+                </div>
+              </div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+                {holidayApiStatus && (
+                  <span style={{
+                    padding: '0.3rem 0.6rem',
+                    borderRadius: '4px',
+                    fontSize: '0.7rem',
+                    fontWeight: 600,
+                    backgroundColor: holidayApiStatus.available ? 'rgba(34, 197, 94, 0.15)' : 'rgba(239, 68, 68, 0.15)',
+                    color: holidayApiStatus.available ? '#22c55e' : '#ef4444',
+                    border: `1px solid ${holidayApiStatus.available ? 'rgba(34, 197, 94, 0.3)' : 'rgba(239, 68, 68, 0.3)'}`
+                  }}>
+                    {holidayApiStatus.available ? '● Online' : '○ Offline'}
+                  </span>
+                )}
+                <button
+                  onClick={() => setShowHolidayBrowser(false)}
+                  style={{
+                    background: 'var(--bg-color)',
+                    border: '1px solid var(--border-color)',
+                    color: 'var(--text-color)',
+                    width: '32px',
+                    height: '32px',
+                    borderRadius: '6px',
+                    cursor: 'pointer',
+                    fontSize: '1.1rem',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    transition: 'all 0.2s ease'
+                  }}
+                  onMouseEnter={(e) => e.currentTarget.style.backgroundColor = 'var(--border-color)'}
+                  onMouseLeave={(e) => e.currentTarget.style.backgroundColor = 'var(--bg-color)'}
+                >×</button>
+              </div>
+            </div>
+
+            {/* Controls Bar */}
+            <div style={{
+              padding: '1rem 2rem',
+              borderBottom: '1px solid var(--border-color)',
+              display: 'flex',
+              gap: '1rem',
+              alignItems: 'center',
+              flexWrap: 'wrap',
+              backgroundColor: darkMode ? 'rgba(255,255,255,0.02)' : 'rgba(0,0,0,0.02)'
+            }}>
+              {/* Country Selector */}
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                <label style={{ fontSize: '0.75rem', fontWeight: 600, color: 'var(--text-secondary)', textTransform: 'uppercase' }}>Country</label>
+                <select
+                  value={holidaySelectedCountry}
+                  onChange={(e) => {
+                    setHolidaySelectedCountry(e.target.value);
+                    loadHolidays(e.target.value, holidaySelectedYear);
+                  }}
+                  className="nx-select"
+                  style={{ minWidth: '200px', padding: '0.5rem' }}
+                >
+                  {holidayCountries.length === 0 ? (
+                    <option value="US">United States</option>
+                  ) : (
+                    holidayCountries.map(c => (
+                      <option key={c.countryCode} value={c.countryCode}>
+                        {c.name}
+                      </option>
+                    ))
+                  )}
+                </select>
+              </div>
+
+              {/* Year Selector */}
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                <label style={{ fontSize: '0.75rem', fontWeight: 600, color: 'var(--text-secondary)', textTransform: 'uppercase' }}>Year</label>
+                <select
+                  value={holidaySelectedYear}
+                  onChange={(e) => {
+                    setHolidaySelectedYear(parseInt(e.target.value, 10));
+                    loadHolidays(holidaySelectedCountry, parseInt(e.target.value, 10));
+                  }}
+                  className="nx-select"
+                  style={{ minWidth: '100px', padding: '0.5rem' }}
+                >
+                  {[0, 1, 2, 3, 4].map(offset => {
+                    const year = new Date().getFullYear() + offset;
+                    return <option key={year} value={year}>{year}</option>;
+                  })}
+                </select>
+              </div>
+
+              {/* Search */}
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', flex: 1 }}>
+                <label style={{ fontSize: '0.75rem', fontWeight: 600, color: 'var(--text-secondary)', textTransform: 'uppercase' }}>Search</label>
+                <input
+                  type="text"
+                  placeholder="Search holidays..."
+                  value={holidaySearchQuery}
+                  onChange={(e) => setHolidaySearchQuery(e.target.value)}
+                  className="nx-input"
+                  style={{ padding: '0.5rem 1rem' }}
+                />
+              </div>
+            </div>
+
+            {/* Holiday List */}
+            <div style={{
+              flex: 1,
+              overflow: 'auto',
+              padding: '1.5rem 2rem'
+            }}>
+              {holidaysLoading ? (
+                <div style={{ textAlign: 'center', padding: '3rem', color: 'var(--text-secondary)' }}>
+                  <div style={{ fontSize: '2rem', marginBottom: '1rem' }}>⏳</div>
+                  <p>Loading holidays...</p>
+                </div>
+              ) : holidays.length === 0 ? (
+                <div style={{ textAlign: 'center', padding: '3rem', color: 'var(--text-secondary)' }}>
+                  <div style={{ fontSize: '2rem', marginBottom: '1rem' }}>📅</div>
+                  <p>No holidays found for this country/year</p>
+                </div>
+              ) : (
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(320px, 1fr))', gap: '1rem' }}>
+                  {holidays
+                    .filter(h => {
+                      if (!holidaySearchQuery) return true;
+                      const query = holidaySearchQuery.toLowerCase();
+                      return h.name?.toLowerCase().includes(query) || h.localName?.toLowerCase().includes(query);
+                    })
+                    .map((holiday, idx) => {
+                      const holidayDate = new Date(holiday.date + 'T00:00:00');
+                      const isPast = holidayDate < new Date();
+                      const isPublic = holiday.types?.includes('Public');
+                      
+                      return (
+                        <div key={idx} style={{
+                          padding: '1.25rem',
+                          borderRadius: '12px',
+                          border: '1px solid var(--border-color)',
+                          backgroundColor: isPast ? (darkMode ? 'rgba(255,255,255,0.02)' : 'rgba(0,0,0,0.02)') : 'var(--card-bg)',
+                          opacity: isPast ? 0.6 : 1,
+                          transition: 'all 0.2s ease'
+                        }}>
+                          {/* Holiday Header */}
+                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '0.75rem' }}>
+                            <div style={{ flex: 1 }}>
+                              <h4 style={{ margin: 0, fontSize: '1.1rem', fontWeight: 600, color: 'var(--text-color)' }}>
+                                {holiday.name}
+                              </h4>
+                              {holiday.localName && holiday.localName !== holiday.name && (
+                                <p style={{ margin: '0.25rem 0 0 0', fontSize: '0.85rem', color: 'var(--text-secondary)', fontStyle: 'italic' }}>
+                                  {holiday.localName}
+                                </p>
+                              )}
+                            </div>
+                            {isPublic && (
+                              <span style={{
+                                padding: '0.25rem 0.5rem',
+                                borderRadius: '4px',
+                                fontSize: '0.7rem',
+                                fontWeight: 600,
+                                backgroundColor: 'rgba(59, 130, 246, 0.15)',
+                                color: '#3b82f6',
+                                textTransform: 'uppercase'
+                              }}>Public</span>
+                            )}
+                          </div>
+
+                          {/* Date Display */}
+                          <div style={{
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: '0.5rem',
+                            marginBottom: '1rem',
+                            padding: '0.75rem',
+                            borderRadius: '8px',
+                            backgroundColor: darkMode ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.03)'
+                          }}>
+                            <span style={{ fontSize: '1.5rem' }}>📅</span>
+                            <div>
+                              <div style={{ fontWeight: 600, color: 'var(--text-color)' }}>
+                                {holidayDate.toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric' })}
+                              </div>
+                              <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>
+                                {holiday.fixed ? '📌 Fixed date' : '🔄 Variable date'}
+                              </div>
+                            </div>
+                          </div>
+
+                          {/* Select Holiday Button */}
+                          <button
+                            type="button"
+                            onClick={() => {
+                              // Parse the holiday date
+                              const holidayDate = new Date(holiday.date + 'T00:00:00');
+                              const formattedDate = holidayDate.toISOString().slice(0, 16);
+                              
+                              // Prefill the schedule form with holiday metadata for auto-updating
+                              setScheduleForm(prev => ({
+                                ...prev,
+                                name: holiday.name,
+                                type: 'holiday',
+                                start_date: formattedDate,
+                                end_date: formattedDate.slice(0, 10) + 'T23:59',
+                                // Store holiday metadata for variable-date tracking
+                                holiday_name: holiday.name,
+                                holiday_country: holidaySelectedCountry
+                              }));
+                              
+                              // Close the holiday browser
+                              setShowHolidayBrowser(false);
+                              
+                              // Show success message with variable date note
+                              const variableNote = !holiday.fixed ? '\n\n🔄 This is a variable-date holiday - NeXroll will auto-update the date each year!' : '';
+                              showAlert(`✅ Form prefilled with "${holiday.name}" - ${holidayDate.toLocaleDateString()}${variableNote}`, 'success');
+                            }}
+                            style={{
+                              width: '100%',
+                              padding: '0.6rem 1rem',
+                              borderRadius: '6px',
+                              border: 'none',
+                              backgroundColor: 'var(--button-bg)',
+                              color: 'white',
+                              fontWeight: 600,
+                              cursor: 'pointer',
+                              fontSize: '0.9rem',
+                              display: 'flex',
+                              alignItems: 'center',
+                              justifyContent: 'center',
+                              gap: '0.5rem',
+                              transition: 'all 0.2s ease'
+                            }}
+                            onMouseEnter={(e) => e.currentTarget.style.opacity = '0.9'}
+                            onMouseLeave={(e) => e.currentTarget.style.opacity = '1'}
+                          >
+                            <CheckCircle size={16} /> Select Holiday
+                          </button>
+                        </div>
+                      );
+                    })}
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

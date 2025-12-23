@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { DndContext, closestCenter, PointerSensor, useSensor, useSensors } from '@dnd-kit/core';
 import { SortableContext, verticalListSortingStrategy, arrayMove } from '@dnd-kit/sortable';
+import { Download, Upload, Play, Save, Edit, Trash2, X, Film, Shuffle, Pin, LayoutGrid, BarChart3 } from 'lucide-react';
 import SequenceBlock from './SequenceBlock';
 import BlockEditor from './BlockEditor';
 import SequencePreview from './SequencePreview';
@@ -31,7 +32,7 @@ import PatternImport from './PatternImport';
  *   {"type": "random", "category_id": 8, "count": 1}
  * ]
  */
-const SequenceBuilder = ({ blocks: externalBlocks = [], onBlocksChange, initialSequence = [], categories = [], prerolls = [], onSave, onCancel, scheduleId = null, apiUrl, isEditing = false, initialName = '', initialDescription = '' }) => {
+const SequenceBuilder = ({ blocks: externalBlocks = [], onBlocksChange, initialSequence = [], categories = [], prerolls = [], onSave, onCancel, onDelete, scheduleId = null, apiUrl, isEditing = false, initialName = '', initialDescription = '' }) => {
   // Use external blocks if provided, otherwise use internal state
   const [internalBlocks, setInternalBlocks] = useState([]);
   // Use external blocks if onBlocksChange callback is provided (controlled mode)
@@ -227,7 +228,7 @@ const SequenceBuilder = ({ blocks: externalBlocks = [], onBlocksChange, initialS
         <div>
           <h2 style={{
             margin: 0,
-            color: 'var(--accent-color)',
+            color: 'var(--text-color)',
             fontSize: '24px'
           }}>Sequence Builder</h2>
           <p style={{
@@ -264,10 +265,13 @@ const SequenceBuilder = ({ blocks: externalBlocks = [], onBlocksChange, initialS
                   fontSize: '13px',
                   backgroundColor: viewMode === 'card' ? '#667eea' : 'transparent',
                   color: viewMode === 'card' ? 'white' : 'var(--text-color)',
-                  transition: 'all 0.2s'
+                  transition: 'all 0.2s',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '6px'
                 }}
               >
-                📦 Card
+                <LayoutGrid size={14} /> Card
               </button>
               <button
                 type="button"
@@ -280,10 +284,13 @@ const SequenceBuilder = ({ blocks: externalBlocks = [], onBlocksChange, initialS
                   fontSize: '13px',
                   backgroundColor: viewMode === 'timeline' ? '#667eea' : 'transparent',
                   color: viewMode === 'timeline' ? 'white' : 'var(--text-color)',
-                  transition: 'all 0.2s'
+                  transition: 'all 0.2s',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '6px'
                 }}
               >
-                📊 Timeline
+                <BarChart3 size={14} /> Timeline
               </button>
             </div>
           )}
@@ -300,30 +307,37 @@ const SequenceBuilder = ({ blocks: externalBlocks = [], onBlocksChange, initialS
                 fontSize: '14px',
                 transition: 'all 0.3s',
                 background: '#f59e0b',
-                color: 'white'
+                color: 'white',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '6px'
               }}
               onClick={() => setShowExportModal(true)}
             >
-              📤 Export
+              <Upload size={16} /> Export
             </button>
           )}
           
-          <button 
-            type="button"
-            style={{
-              padding: '10px 20px',
-              border: 'none',
-              borderRadius: '5px',
-              cursor: 'pointer',
-              fontSize: '14px',
-              transition: 'all 0.3s',
-              background: '#8b5cf6',
-              color: 'white'
-            }}
-            onClick={() => setShowImportModal(true)}
-          >
-            📥 Import
-          </button>
+          {/* Hide Import button when editing a sequence */}
+          {!isEditing && (
+            <button 
+              type="button"
+              style={{
+                padding: '10px 20px',
+                border: 'none',
+                borderRadius: '5px',
+                cursor: 'pointer',
+                fontSize: '14px',
+                transition: 'all 0.3s',
+                background: '#8b5cf6',
+                color: 'white'
+              }}
+              onClick={() => setShowImportModal(true)}
+            >
+              <Download size={16} style={{ marginRight: '6px', verticalAlign: 'middle' }} />
+              Import
+            </button>
+          )}
           
           {/* Full Preview Button */}
           <button 
@@ -337,7 +351,10 @@ const SequenceBuilder = ({ blocks: externalBlocks = [], onBlocksChange, initialS
               transition: 'all 0.3s',
               background: '#667eea',
               color: 'white',
-              opacity: blocks.length === 0 ? 0.5 : 1
+              opacity: blocks.length === 0 ? 0.5 : 1,
+              display: 'flex',
+              alignItems: 'center',
+              gap: '6px'
             }}
             onClick={() => {
               console.log('Opening sequence playback modal, blocks:', blocks.length);
@@ -345,7 +362,8 @@ const SequenceBuilder = ({ blocks: externalBlocks = [], onBlocksChange, initialS
             }}
             disabled={blocks.length === 0}
           >
-            🎬 Play Sequence
+            <Play size={16} />
+            Play Sequence
           </button>
           
           <button 
@@ -359,14 +377,57 @@ const SequenceBuilder = ({ blocks: externalBlocks = [], onBlocksChange, initialS
               transition: 'all 0.3s',
               background: '#28a745',
               color: 'white',
-              opacity: (blocks.length === 0 || !sequenceName.trim()) ? 0.5 : 1
+              opacity: (blocks.length === 0 || !sequenceName.trim()) ? 0.5 : 1,
+              display: 'flex',
+              alignItems: 'center',
+              gap: '6px'
             }}
             onClick={handleSaveSequence}
             disabled={blocks.length === 0 || !sequenceName.trim()}
             title={!sequenceName.trim() ? 'Please enter a sequence name' : (isEditing ? 'Update this sequence' : 'Save this sequence to your library')}
           >
-            {isEditing ? '✏️ Update Sequence' : '💾 Save & Add to Library'}
+            {isEditing ? (
+              <>
+                <Edit size={16} />
+                Update Sequence
+              </>
+            ) : (
+              <>
+                <Save size={16} />
+                Save & Add to Library
+              </>
+            )}
           </button>
+          
+          {/* Show Delete button only when editing an existing sequence */}
+          {isEditing && onDelete && (
+            <button 
+              type="button"
+              style={{
+                padding: '10px 20px',
+                border: 'none',
+                borderRadius: '5px',
+                cursor: 'pointer',
+                fontSize: '14px',
+                transition: 'all 0.3s',
+                background: '#dc3545',
+                color: 'white',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '6px'
+              }}
+              onClick={() => {
+                if (window.confirm(`Are you sure you want to delete "${sequenceName}"? This action cannot be undone.`)) {
+                  onDelete();
+                }
+              }}
+              title="Delete this sequence permanently"
+            >
+              <Trash2 size={16} />
+              Delete Sequence
+            </button>
+          )}
+          
           <button 
             type="button"
             style={{
@@ -377,10 +438,14 @@ const SequenceBuilder = ({ blocks: externalBlocks = [], onBlocksChange, initialS
               fontSize: '14px',
               transition: 'all 0.3s',
               background: 'var(--button-secondary-bg)',
-              color: 'var(--button-text)'
+              color: 'var(--button-text)',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '6px'
             }}
             onClick={onCancel}
           >
+            <X size={16} />
             Cancel
           </button>
         </div>
@@ -505,8 +570,12 @@ const SequenceBuilder = ({ blocks: externalBlocks = [], onBlocksChange, initialS
             <p style={{
               fontSize: '18px',
               margin: '10px 0',
-              color: 'var(--text-color)'
-            }}>🎬 No blocks yet. Add blocks to start building your sequence.</p>
+              color: 'var(--text-color)',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              gap: '8px'
+            }}><Film size={20} /> No blocks yet. Add blocks to start building your sequence.</p>
             <p style={{
               fontSize: '14px',
               color: 'var(--text-secondary)',
@@ -584,7 +653,7 @@ const SequenceBuilder = ({ blocks: externalBlocks = [], onBlocksChange, initialS
             e.currentTarget.style.boxShadow = 'none';
           }}
         >
-          <span style={{ fontSize: '20px' }}>🎲</span> Add Random Block
+          <Shuffle size={20} /> Add Random Block
         </button>
         <button 
           type="button"
@@ -611,7 +680,7 @@ const SequenceBuilder = ({ blocks: externalBlocks = [], onBlocksChange, initialS
             e.currentTarget.style.boxShadow = 'none';
           }}
         >
-          <span style={{ fontSize: '20px' }}>📌</span> Add Fixed Block
+          <Pin size={20} /> Add Fixed Block
         </button>
       </div>
 

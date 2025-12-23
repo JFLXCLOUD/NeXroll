@@ -312,7 +312,7 @@ body.dark {
   box-shadow: 0 12px 30px var(--shadow);
   width: 100%;
   max-width: 700px;
-  max-height: 85vh;
+  max-height: 92vh;
   display: flex;
   flex-direction: column;
   overflow: hidden;
@@ -760,6 +760,11 @@ details.nx-plex-help[open] {
 
 @keyframes nx-spin {
   to { transform: rotate(360deg); }
+}
+
+/* Spin animation for Lucide icons */
+.spin {
+  animation: nx-spin 1s linear infinite;
 }
 
 .nx-progress {
@@ -1994,3 +1999,689 @@ body.dark .react-grid-item.react-grid-placeholder {
   }
 }
 
+/* ========== Mobile Responsive Styles ========== */
+
+/* Mobile Navigation - Hamburger Menu */
+.mobile-menu-toggle {
+  display: none;
+  background: none;
+  border: none;
+  padding: 0.5rem;
+  cursor: pointer;
+  color: var(--text-color);
+  z-index: 1001;
+}
+
+.mobile-menu-toggle svg {
+  width: 24px;
+  height: 24px;
+}
+
+/* Mobile breakpoint - 768px and below */
+@media (max-width: 768px) {
+  /* Show hamburger menu on mobile */
+  .mobile-menu-toggle {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  /* Tab buttons become mobile dropdown */
+  .tab-buttons {
+    position: sticky;
+    top: 0;
+    flex-wrap: wrap;
+    padding: 0.5rem;
+    gap: 0.25rem;
+  }
+
+  .tab-buttons .tab-group {
+    display: none;
+    position: absolute;
+    top: 100%;
+    left: 0;
+    right: 0;
+    background: var(--header-bg);
+    border: 1px solid var(--border-color);
+    border-top: none;
+    box-shadow: 0 4px 12px var(--shadow);
+    flex-direction: column;
+    z-index: 999;
+  }
+
+  .tab-buttons .tab-group.mobile-open {
+    display: flex;
+  }
+
+  .tab-buttons .tab-button {
+    padding: 0.75rem 1rem;
+    text-align: left;
+    border-bottom: 1px solid var(--border-color);
+    border-radius: 0;
+    font-size: 0.95rem;
+  }
+
+  .tab-buttons .tab-button:last-child {
+    border-bottom: none;
+  }
+
+  .tab-buttons .tabbar-right {
+    padding-right: 0 !important;
+  }
+
+  .tab-buttons .tabbar-right img {
+    height: 36px !important;
+  }
+
+  /* App container */
+  .app-container {
+    padding: 0.5rem;
+  }
+
+  /* Cards */
+  .card {
+    padding: 0.75rem;
+    border-radius: 0.375rem;
+  }
+
+  .card h2 {
+    font-size: 1.1rem;
+  }
+
+  /* Grid layouts */
+  .grid {
+    grid-template-columns: 1fr !important;
+    gap: 0.75rem;
+  }
+
+  /* Dashboard grid */
+  .nx-dashboard-grid {
+    grid-template-columns: 1fr !important;
+    gap: 0.75rem;
+  }
+
+  /* Dashboard sections */
+  .nx-dashboard-section {
+    padding: 0.75rem;
+    min-height: auto;
+  }
+
+  .nx-dashboard-section-title {
+    font-size: 1rem;
+  }
+
+  /* Buttons */
+  .button, .button-secondary {
+    padding: 0.5rem 0.75rem;
+    font-size: 0.85rem;
+  }
+
+  /* Forms */
+  .nx-form-grid {
+    grid-template-columns: 1fr !important;
+    gap: 0.75rem;
+  }
+
+  .nx-span-2 {
+    grid-column: span 1 !important;
+  }
+
+  /* Modals */
+  .nx-modal-overlay {
+    padding: 0.5rem;
+    align-items: flex-start;
+    padding-top: 2rem;
+  }
+
+  .nx-modal {
+    max-width: 100%;
+    max-height: 95vh;
+    border-radius: 8px;
+  }
+
+  .nx-modal-header {
+    padding: 0.75rem 1rem;
+  }
+
+  .nx-modal-header h2 {
+    font-size: 1.1rem;
+  }
+
+  .nx-modal-body {
+    padding: 0.75rem 1rem;
+  }
+
+  .nx-modal-footer {
+    padding: 0.75rem 1rem;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+  }
+
+  .nx-modal-footer button {
+    flex: 1;
+    min-width: 100px;
+  }
+
+  /* Tables - horizontal scroll */
+  .table-container {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  table {
+    min-width: 500px;
+  }
+
+  th, td {
+    padding: 0.5rem;
+    font-size: 0.85rem;
+  }
+
+  /* Calendar view */
+  .calendar-grid {
+    font-size: 0.75rem;
+  }
+
+  /* Input fields */
+  input, select, textarea {
+    font-size: 16px !important; /* Prevents iOS zoom on focus */
+    padding: 0.5rem;
+  }
+
+  /* Preroll items */
+  .preroll-item {
+    padding: 0.5rem;
+  }
+
+  .preroll-thumbnail {
+    width: 60px;
+    height: 40px;
+  }
+
+  /* Alert/notification banners */
+  .nx-update-banner, .nx-install-banner {
+    flex-direction: column;
+    text-align: center;
+    gap: 0.75rem;
+    padding: 0.75rem;
+  }
+
+  /* Sequence builder blocks */
+  .sequence-block {
+    padding: 0.5rem;
+  }
+
+  /* Schedule form improvements */
+  .schedule-form {
+    padding: 0.75rem;
+  }
+
+  /* Flex containers */
+  .flex-row-mobile-col {
+    flex-direction: column !important;
+    gap: 0.5rem;
+  }
+
+  /* Hide non-essential elements on mobile */
+  .hide-mobile {
+    display: none !important;
+  }
+
+  /* Show only on mobile */
+  .show-mobile {
+    display: block !important;
+  }
+
+  /* Adjust padding for touch targets - minimum 44px */
+  button, .clickable, [role="button"] {
+    min-height: 44px;
+  }
+
+  /* Settings page */
+  .settings-grid {
+    grid-template-columns: 1fr !important;
+  }
+
+  /* Connection status cards */
+  .connection-card {
+    padding: 0.75rem;
+  }
+
+  /* Community prerolls */
+  .community-preroll-grid {
+    grid-template-columns: 1fr !important;
+  }
+
+  /* Typography adjustments */
+  h1, .header {
+    font-size: 1.5rem !important;
+  }
+
+  h2 {
+    font-size: 1.2rem;
+  }
+
+  h3 {
+    font-size: 1.1rem;
+  }
+
+  /* Spacing adjustments */
+  .mb-1 { margin-bottom: 0.5rem; }
+  .mt-1 { margin-top: 0.5rem; }
+  .p-1 { padding: 0.5rem; }
+}
+
+/* Extra small screens (phones in portrait) */
+@media (max-width: 480px) {
+  .app-container {
+    padding: 0.25rem;
+  }
+
+  .tab-buttons {
+    padding: 0.25rem;
+  }
+
+  .tab-buttons .tabbar-right img {
+    height: 30px !important;
+  }
+
+  .card {
+    padding: 0.5rem;
+  }
+
+  .nx-modal {
+    border-radius: 4px;
+    margin: 0.25rem;
+  }
+
+  /* Stack buttons vertically */
+  .button-group, .action-buttons {
+    flex-direction: column;
+    width: 100%;
+  }
+
+  .button-group button, .action-buttons button {
+    width: 100%;
+  }
+
+  /* Smaller fonts */
+  body {
+    font-size: 14px;
+  }
+
+  .card h2 {
+    font-size: 1rem;
+  }
+
+  /* Calendar even smaller */
+  .calendar-grid {
+    font-size: 0.65rem;
+  }
+
+  /* Very compact preroll items */
+  .preroll-thumbnail {
+    width: 50px;
+    height: 35px;
+  }
+}
+
+/* Landscape phone orientation */
+@media (max-width: 768px) and (orientation: landscape) {
+  .nx-modal {
+    max-height: 85vh;
+  }
+
+  .nx-modal-body {
+    max-height: 50vh;
+    overflow-y: auto;
+  }
+}
+
+/* Touch-specific improvements */
+@media (pointer: coarse) {
+  /* Larger touch targets */
+  .tab-button {
+    min-height: 48px;
+    padding: 0.75rem 1rem;
+  }
+
+  .button, .button-secondary {
+    min-height: 44px;
+  }
+
+  /* More spacing between clickable items */
+  .clickable-list > * {
+    margin-bottom: 0.5rem;
+  }
+
+  /* Disable hover effects on touch devices */
+  .tab-button:hover:not(.active),
+  .button:hover,
+  .card:hover {
+    transform: none;
+    box-shadow: inherit;
+  }
+}
+
+/* Safe area insets for notched phones */
+@supports (padding: env(safe-area-inset-bottom)) {
+  .app-container {
+    padding-left: env(safe-area-inset-left);
+    padding-right: env(safe-area-inset-right);
+    padding-bottom: env(safe-area-inset-bottom);
+  }
+
+  .tab-buttons {
+    padding-top: env(safe-area-inset-top);
+  }
+
+  .nx-modal {
+    padding-bottom: env(safe-area-inset-bottom);
+  }
+}
+
+/* Dark mode mobile adjustments */
+@media (max-width: 768px) {
+  body.dark .card {
+    border-color: var(--border-color);
+  }
+
+  body.dark .tab-buttons {
+    border-color: var(--border-color);
+  }
+}
+
+/* ========== Mobile Hamburger Menu ========== */
+
+/* Mobile menu toggle button - hidden on desktop */
+.mobile-menu-toggle {
+  display: none;
+  background: transparent;
+  border: none;
+  padding: 0.5rem;
+  cursor: pointer;
+  color: var(--text-color);
+  z-index: 1001;
+}
+
+/* Mobile menu overlay */
+.mobile-menu-overlay {
+  display: none;
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.5);
+  z-index: 999;
+}
+
+/* Mobile styles */
+@media (max-width: 768px) {
+  /* Show hamburger button on mobile */
+  .mobile-menu-toggle {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  
+  /* Show overlay when menu is open */
+  .mobile-menu-overlay {
+    display: block;
+  }
+  
+  /* Tab buttons container */
+  .tab-buttons {
+    position: relative;
+    flex-wrap: nowrap;
+  }
+  
+  /* Tab group - hidden by default, shown when mobile-open */
+  .tab-group {
+    display: none;
+    position: fixed;
+    top: 60px;
+    left: 0;
+    right: 0;
+    background: var(--card-bg);
+    border-bottom: 1px solid var(--border-color);
+    flex-direction: column;
+    padding: 0.5rem;
+    gap: 0.25rem;
+    z-index: 1000;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+    max-height: calc(100vh - 60px);
+    overflow-y: auto;
+  }
+  
+  .tab-group.mobile-open {
+    display: flex;
+  }
+  
+  /* Full-width tab buttons in mobile menu */
+  .tab-group .tab-button {
+    width: 100%;
+    text-align: left;
+    padding: 0.875rem 1rem;
+    border-radius: 0.375rem;
+    font-size: 1rem;
+  }
+  
+  /* Hide tabbar-right on smaller mobile */
+  .tabbar-right {
+    padding-right: 8px !important;
+  }
+  
+  .tabbar-right img {
+    height: 36px !important;
+  }
+  
+  /* Content area adjustments */
+  .content-area {
+    padding: 0.5rem;
+  }
+  
+  /* Cards - single column */
+  .dashboard-grid,
+  .categories-grid,
+  .schedules-grid {
+    grid-template-columns: 1fr !important;
+  }
+  
+  /* Modal improvements */
+  .nx-modal {
+    width: 95vw !important;
+    max-width: none !important;
+    margin: 1rem;
+    max-height: 90vh;
+  }
+  
+  .nx-modal-header {
+    padding: 0.75rem 1rem;
+  }
+  
+  .nx-modal-body {
+    padding: 0.75rem 1rem;
+    max-height: calc(90vh - 120px);
+    overflow-y: auto;
+  }
+  
+  .nx-modal-footer {
+    padding: 0.75rem 1rem;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+  }
+  
+  .nx-modal-footer button {
+    flex: 1;
+    min-width: 100px;
+  }
+  
+  /* Form elements */
+  .form-row {
+    flex-direction: column;
+  }
+  
+  .form-group {
+    width: 100%;
+  }
+  
+  input, select, textarea {
+    font-size: 16px !important; /* Prevents iOS zoom on focus */
+  }
+  
+  /* Schedule/Calendar cards */
+  .schedule-card,
+  .category-card {
+    padding: 0.75rem;
+  }
+  
+  /* Buttons - larger touch targets */
+  button {
+    min-height: 44px;
+  }
+  
+  /* Action button groups */
+  .action-buttons,
+  .button-group {
+    flex-wrap: wrap;
+    gap: 0.5rem;
+  }
+  
+  .action-buttons button,
+  .button-group button {
+    flex: 1;
+    min-width: 80px;
+  }
+  
+  /* Dashboard tiles */
+  .nx-tile {
+    min-height: 120px;
+  }
+  
+  /* Preroll grid */
+  .preroll-grid {
+    grid-template-columns: repeat(2, 1fr) !important;
+    gap: 0.5rem;
+  }
+  
+  /* Preroll items */
+  .preroll-item {
+    padding: 0.5rem;
+  }
+  
+  .preroll-thumbnail {
+    width: 60px;
+    height: 40px;
+  }
+  
+  /* Calendar adjustments */
+  .calendar-container {
+    overflow-x: auto;
+  }
+  
+  .calendar-grid {
+    min-width: 600px;
+    font-size: 0.7rem;
+  }
+  
+  /* Settings page */
+  .settings-section {
+    padding: 0.75rem;
+  }
+  
+  /* Tables */
+  table {
+    display: block;
+    overflow-x: auto;
+    white-space: nowrap;
+  }
+  
+  /* Schedule list items */
+  .schedule-list-item {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 0.5rem;
+  }
+  
+  .schedule-list-item .schedule-actions {
+    width: 100%;
+    justify-content: flex-end;
+  }
+  
+  /* Connect page QR code */
+  .qr-code-container {
+    max-width: 200px;
+    margin: 0 auto;
+  }
+  
+  /* Community prerolls */
+  .community-preroll-card {
+    padding: 0.75rem;
+  }
+  
+  /* Sequence builder */
+  .sequence-block {
+    padding: 0.5rem;
+  }
+  
+  .sequence-timeline {
+    overflow-x: auto;
+  }
+}
+
+/* Extra small devices */
+@media (max-width: 480px) {
+  .tab-buttons {
+    padding: 0 0.25rem;
+  }
+  
+  .tabbar-right img {
+    height: 30px !important;
+  }
+  
+  .card {
+    padding: 0.75rem;
+  }
+  
+  .card h2 {
+    font-size: 1rem;
+  }
+  
+  /* Even smaller preroll grid */
+  .preroll-grid {
+    grid-template-columns: 1fr !important;
+  }
+  
+  /* Stack buttons vertically */
+  .action-buttons,
+  .button-group {
+    flex-direction: column;
+  }
+  
+  .action-buttons button,
+  .button-group button {
+    width: 100%;
+  }
+  
+  /* Compact headers */
+  h1 { font-size: 1.5rem; }
+  h2 { font-size: 1.25rem; }
+  h3 { font-size: 1.1rem; }
+}
+
+/* Tablet/iPad specific */
+@media (min-width: 769px) and (max-width: 1024px) {
+  .tab-group .tab-button {
+    padding: 0.5rem 0.75rem;
+    font-size: 0.85rem;
+  }
+  
+  .dashboard-grid {
+    grid-template-columns: repeat(2, 1fr) !important;
+  }
+  
+  .preroll-grid {
+    grid-template-columns: repeat(3, 1fr) !important;
+  }
+}

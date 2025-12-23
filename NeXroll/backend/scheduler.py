@@ -8,6 +8,7 @@ import os
 import sys
 import requests
 import re
+import pytz
 
 from sqlalchemy.orm import Session
 from sqlalchemy import or_, func
@@ -15,6 +16,41 @@ import backend.models as models
 from backend.plex_connector import PlexConnector
 from backend.jellyfin_connector import JellyfinConnector
 from backend.database import SessionLocal
+
+# Logging helpers - direct file writes to avoid circular imports
+def _get_log_path():
+    """Get the log file path"""
+    if sys.platform == "win32":
+        log_dir = os.path.join(os.environ.get("PROGRAMDATA", "C:\\ProgramData"), "NeXroll", "logs")
+    else:
+        log_dir = "/var/log/nexroll"
+    os.makedirs(log_dir, exist_ok=True)
+    return os.path.join(log_dir, "app.log")
+
+def _scheduler_log(msg: str, level: str = "INFO"):
+    """Log scheduler messages with consistent formatting"""
+    try:
+        log_path = _get_log_path()
+        with open(log_path, "a", encoding="utf-8") as f:
+            ts = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            f.write(f"[{ts}] [{level}] SCHEDULER: {msg}\n")
+    except Exception as e:
+        # Fallback to print if logging fails
+        print(f"[SCHEDULER] [{level}] {msg} (log error: {e})")
+
+def _scheduler_verbose(msg: str):
+    """Log verbose scheduler messages (only if verbose logging enabled)"""
+    try:
+        # Check if verbose logging is enabled by querying database
+        db = SessionLocal()
+        try:
+            setting = db.query(models.Setting).first()
+            if setting and getattr(setting, 'verbose_logging', False):
+                _scheduler_log(msg, level="DEBUG")
+        finally:
+            db.close()
+    except Exception:
+        pass
 
 class Scheduler:
     def __init__(self):
@@ -34,6 +70,11 @@ class Scheduler:
         # Track last rotation time for random blocks (schedule_id -> last_rotation_time)
         self._last_rotation_time: dict[int, datetime.datetime] = {}
         self._rotation_interval_seconds: float = 300.0  # 5 minutes for testing (change to 600.0 for 10 min production)
+        # Cache for holiday dates (holiday_name_country_year -> date)
+        self._holiday_date_cache: dict[str, Optional[datetime.date]] = {}
+        # Track blend mode state for verification
+        self._blend_mode_active: bool = False
+        self._blend_expected_preroll: Optional[str] = None
 
     def start(self):
         """Start the scheduler in a background thread"""
@@ -51,21 +92,22 @@ class Scheduler:
 
     def _run_scheduler(self):
         """Main scheduler loop - runs based on SCHEDULER_INTERVAL (default 60s)"""
+        _scheduler_log(f"Scheduler started (interval: {self._scheduler_check_interval}s)")
         while self.running:
             try:
                 # Auto-apply mapped category from currently playing Plex item (genre-based)
                 self._apply_genre_mapping_from_playback()
             except Exception as e:
-                print(f"Scheduler genre-monitor error: {e}")
+                _scheduler_log(f"Genre-monitor error: {e}", level="ERROR")
             try:
                 self._check_and_execute_schedules()
             except Exception as e:
-                print(f"Scheduler error: {e}")
+                _scheduler_log(f"Schedule check error: {e}", level="ERROR")
             try:
                 # Periodically verify Plex has the correct prerolls set
                 self._verify_and_reapply_if_needed()
             except Exception as e:
-                print(f"Scheduler verification error: {e}")
+                _scheduler_log(f"Verification error: {e}", level="ERROR")
             # Use configurable interval (default 60s, set via SCHEDULER_INTERVAL env var)
             time.sleep(self._scheduler_check_interval)
 
@@ -84,14 +126,14 @@ class Scheduler:
         try:
             setting = db.query(models.Setting).first()
             if not setting or not getattr(setting, "jellyfin_url", None):
-                print("SCHEDULER: Jellyfin not configured (missing URL); cannot apply prerolls.")
+                _scheduler_log("Jellyfin not configured (missing URL); cannot apply prerolls", level="WARNING")
                 return False
             
             jellyfin_url = setting.jellyfin_url.rstrip("/")
             jellyfin_api_key = getattr(setting, "jellyfin_api_key", None)
             
             if not jellyfin_api_key:
-                print("SCHEDULER: Jellyfin API key not configured; cannot apply prerolls.")
+                _scheduler_log("Jellyfin API key not configured; cannot apply prerolls", level="WARNING")
                 return False
             
             # Get prerolls for this category
@@ -102,7 +144,7 @@ class Scheduler:
                 .distinct().all()
             
             if not prerolls:
-                print(f"SCHEDULER: No prerolls found for category_id={category_id}. Cannot apply to Jellyfin.")
+                _scheduler_log(f"No prerolls found for category_id={category_id}; cannot apply to Jellyfin", level="WARNING")
                 return False
             
             # Calculate total intro duration (sum of all preroll lengths in ticks)
@@ -123,7 +165,7 @@ class Scheduler:
             # Convert seconds to Jellyfin ticks (10,000,000 ticks per second)
             intro_ticks_end = int(total_intro_seconds * 10_000_000)
             
-            print(f"SCHEDULER: Preparing to apply {len(prerolls)} prerolls to Jellyfin (total {total_intro_seconds}s intro)…")
+            _scheduler_log(f"Preparing to apply {len(prerolls)} prerolls to Jellyfin (total {total_intro_seconds}s intro)…")
             
             # Get category name for search/matching
             category = db.query(models.Category).filter(models.Category.id == category_id).first()
@@ -153,19 +195,19 @@ class Scheduler:
                     
                     if connector.set_item_intros(item_id, intro_data):
                         applied_count += 1
-                        print(f"  ✓ Applied intro to: {item_name}")
+                        _scheduler_verbose(f"  ✓ Applied intro to: {item_name}")
                     else:
-                        print(f"  ✗ Failed to apply intro to: {item_name}")
+                        _scheduler_log(f"  ✗ Failed to apply intro to: {item_name}", level="ERROR")
                 
                 except Exception as e:
-                    print(f"  ✗ Error applying to item: {e}")
+                    _scheduler_log(f"  ✗ Error applying to item: {e}", level="ERROR")
                     continue
             
-            print(f"SCHEDULER: Successfully applied prerolls to {applied_count}/{len(search_results)} Jellyfin items.")
+            _scheduler_log(f"Successfully applied prerolls to {applied_count}/{len(search_results)} Jellyfin items.")
             return applied_count > 0
         
         except Exception as e:
-            print(f"SCHEDULER: Error applying prerolls to Jellyfin: {e}")
+            _scheduler_log(f"SCHEDULER: Error applying prerolls to Jellyfin: {e}", level="ERROR")
             return False
 
     def _apply_genre_mapping_from_playback(self):
@@ -193,20 +235,20 @@ class Scheduler:
             try:
                 r = requests.get(f"{str(setting.plex_url).rstrip('/')}/status/sessions", headers=headers, timeout=6, verify=verify)
             except Exception as e:
-                print(f"SCHEDULER: Failed to fetch sessions: {e}")
+                _scheduler_log(f"Failed to fetch sessions: {e}")
                 return
             if getattr(r, "status_code", 0) != 200:
-                print(f"SCHEDULER: Sessions API returned status {r.status_code}")
+                _scheduler_log(f"Sessions API returned status {r.status_code}")
                 return
             if not r.content:
-                print("SCHEDULER: Sessions API returned empty content")
+                _scheduler_log("Sessions API returned empty content")
                 return
 
             import xml.etree.ElementTree as ET
             try:
                 root = ET.fromstring(r.content)
             except Exception as e:
-                print(f"SCHEDULER: Failed to parse sessions XML: {e}")
+                _scheduler_log(f"Failed to parse sessions XML: {e}")
                 return
 
             # Choose the first playing video; otherwise any active with viewOffset/viewCount signal
@@ -250,14 +292,14 @@ class Scheduler:
             try:
                 rm = requests.get(f"{str(setting.plex_url).rstrip('/')}/library/metadata/{chosen_key}", headers=headers, timeout=6, verify=verify)
                 if getattr(rm, "status_code", 0) != 200:
-                    print(f"SCHEDULER: Metadata API for {chosen_key} returned status {rm.status_code}")
+                    _scheduler_log(f"Metadata API for {chosen_key} returned status {rm.status_code}")
                     return
                 if not rm.content:
-                    print(f"SCHEDULER: Metadata API for {chosen_key} returned empty content")
+                    _scheduler_log(f"Metadata API for {chosen_key} returned empty content")
                     return
                 rootm = ET.fromstring(rm.content)
             except Exception as e:
-                print(f"SCHEDULER: Failed to fetch/parse metadata for {chosen_key}: {e}")
+                _scheduler_log(f"Failed to fetch/parse metadata for {chosen_key}: {e}")
                 return
 
             # Collect and normalize Genre tags from the item metadata
@@ -385,13 +427,13 @@ class Scheduler:
                 now = datetime.datetime.utcnow()
                 active_schedules = [s for s in schedules if self._is_schedule_active(s, now)]
                 if active_schedules:
-                    print(f"SCHEDULER: Skipping genre mapping for ratingKey={chosen_key} due to active schedule (priority mode: {priority_mode})")
+                    _scheduler_log(f"Skipping genre mapping for ratingKey={chosen_key} due to active schedule (priority mode: {priority_mode})")
                     return
 
             # Apply to Plex and set override to protect from scheduler immediately overriding
             ok = self._apply_category_to_plex(matched_cat.id, db)
             if not ok:
-                print(f"SCHEDULER: Failed to apply matched category '{matched_cat.name}' (ID {matched_cat.id}) for genre '{matched_genre_display}'")
+                _scheduler_log(f"Failed to apply matched category '{matched_cat.name}' (ID {matched_cat.id}) for genre '{matched_genre_display}'")
                 return
 
             try:
@@ -424,7 +466,7 @@ class Scheduler:
             if len(RECENT_GENRE_APPLICATIONS) > 10:
                 RECENT_GENRE_APPLICATIONS.pop(0)
 
-            print(f"SCHEDULER: Genre mapping applied for ratingKey={chosen_key}: '{matched_genre_display}' -> category '{matched_cat.name}'")
+            _scheduler_log(f"Genre mapping applied for ratingKey={chosen_key}: '{matched_genre_display}' -> category '{matched_cat.name}'")
 
         finally:
             try:
@@ -461,7 +503,7 @@ class Scheduler:
                         # Only log override once per minute to avoid spam
                         state_key = f"override:{ovr.isoformat()}"
                         if self._last_logged_state != state_key or (self._last_logged_time and (now - self._last_logged_time).total_seconds() > 60):
-                            print(f"SCHEDULER: override active until {ovr.isoformat()}Z; skipping schedule apply")
+                            _scheduler_log(f"override active until {ovr.isoformat()}Z; skipping schedule apply")
                             self._last_logged_state = state_key
                             self._last_logged_time = now
                         return
@@ -471,22 +513,112 @@ class Scheduler:
 
             desired_category_id = None
             chosen_schedule = None
+            current_fallback_id = None
+            blend_schedules = []  # Schedules to blend together
 
             if active:
-                # Prefer the schedule that ends soonest, then earliest start, then lowest id
-                def _sort_key(s):
-                    end = s.end_date if s.end_date else datetime.datetime.max
-                    start = s.start_date or datetime.datetime.min
-                    return (end, start, s.id)
-                active.sort(key=_sort_key)
-                chosen_schedule = active[0]
-                desired_category_id = chosen_schedule.category_id
+                # STEP 1: Check for EXCLUSIVE schedules first
+                # Exclusive schedules override everything - they win exclusively (no blending)
+                exclusive_schedules = [s for s in active if getattr(s, "exclusive", False)]
+                
+                if exclusive_schedules:
+                    # Multiple exclusive schedules: highest priority wins, then earliest end, then lowest id
+                    def _exclusive_sort_key(s):
+                        priority = getattr(s, "priority", 5)
+                        end = s.end_date if s.end_date else datetime.datetime.max
+                        return (-priority, end, s.id)  # Negative priority so higher values sort first
+                    exclusive_schedules.sort(key=_exclusive_sort_key)
+                    chosen_schedule = exclusive_schedules[0]
+                    desired_category_id = chosen_schedule.category_id
+                    priority = getattr(chosen_schedule, "priority", 5)
+                    
+                    state_key = f"exclusive:{chosen_schedule.id}:{desired_category_id}"
+                    if self._last_logged_state != state_key:
+                        _scheduler_log(f"EXCLUSIVE: '{chosen_schedule.name}' (Priority {priority}) wins exclusively over {len(active)-1} other schedule(s)")
+                        self._last_logged_state = state_key
+                        self._last_logged_time = now
+                    
+                    # Store fallback from winning exclusive schedule
+                    current_fallback_id = getattr(chosen_schedule, "fallback_category_id", None)
+                    stored_fallback = getattr(setting, "last_schedule_fallback", None)
+                    if stored_fallback != current_fallback_id:
+                        setting.last_schedule_fallback = current_fallback_id
+                        db.commit()
+                    
+                    # Skip to normal apply logic (below the blend section)
+                else:
+                    # STEP 2: Check for blend mode (only non-exclusive schedules)
+                    blend_schedules = [s for s in active if getattr(s, "blend_enabled", False)]
+                    
+                    # Log blend mode eligibility check
+                    if blend_schedules:
+                        blend_names = [f"'{s.name}'" for s in blend_schedules]
+                        _scheduler_verbose(f"Blend check: {len(blend_schedules)} schedule(s) with blend enabled: {', '.join(blend_names)}")
+                        if len(blend_schedules) == 1:
+                            _scheduler_verbose(f"Blend mode requires 2+ overlapping schedules with blend enabled. '{blend_schedules[0].name}' will use normal mode.")
+                    
+                    if len(blend_schedules) >= 2:
+                        # Multiple blendable schedules - use blend mode
+                        _scheduler_log(f"BLEND MODE ACTIVATED: {len(blend_schedules)} schedules blending together")
+                        for bs in blend_schedules:
+                            cat_name = bs.category.name if bs.category else f"Category {bs.category_id}"
+                            priority = getattr(bs, "priority", 5)
+                            _scheduler_log(f"  -> '{bs.name}' (Category: {cat_name}, Priority: {priority})")
+                        
+                        # Apply blended schedules
+                        applied_ok = self._apply_blended_schedules_to_plex(blend_schedules, db)
+                        if applied_ok:
+                            # Use the first schedule's category as the "active" one for tracking
+                            chosen_schedule = blend_schedules[0]
+                            desired_category_id = chosen_schedule.category_id
+                            setting.active_category = desired_category_id
+                            for sched in blend_schedules:
+                                sched.last_run = now
+                                sched.next_run = self._calculate_next_run(sched)
+                            db.commit()
+                            
+                            state_key = f"blend_active:{','.join(str(s.id) for s in blend_schedules)}"
+                            if self._last_logged_state != state_key:
+                                names = ', '.join(f"'{s.name}'" for s in blend_schedules)
+                                _scheduler_log(f"BLEND: Blend mode active: {names}")
+                                self._last_logged_state = state_key
+                                self._last_logged_time = now
+                        else:
+                            _scheduler_log(f"BLEND: Blend mode failed to apply prerolls to Plex", level="WARNING")
+                        return  # Skip normal processing when in blend mode
+                    
+                    # STEP 3: No exclusive, no blend - use normal winner selection
+                    # Priority (highest wins), then earliest end date, then earliest start, then lowest id
+                    def _sort_key(s):
+                        priority = getattr(s, "priority", 5)
+                        end = s.end_date if s.end_date else datetime.datetime.max
+                        start = s.start_date or datetime.datetime.min
+                        return (-priority, end, start, s.id)  # Negative priority so higher values sort first
+                    active.sort(key=_sort_key)
+                    chosen_schedule = active[0]
+                    desired_category_id = chosen_schedule.category_id
+                
+                # Store the fallback for the WINNING schedule only
+                # This ensures that when a schedule wins, its fallback (or lack thereof) takes precedence
+                # even if other overlapping schedules have fallbacks defined
+                current_fallback_id = getattr(chosen_schedule, "fallback_category_id", None)
+                
+                # Only update the stored fallback if it's different from what's currently stored
+                # This prevents unnecessary database writes and log spam
+                stored_fallback = getattr(setting, "last_schedule_fallback", None)
+                if stored_fallback != current_fallback_id:
+                    setting.last_schedule_fallback = current_fallback_id
+                    db.commit()  # Persist the fallback change immediately
+                    if current_fallback_id:
+                        _scheduler_verbose(f"Schedule '{chosen_schedule.name}' has fallback category {current_fallback_id} (will be used when no schedules are active)")
+                    else:
+                        _scheduler_verbose(f"Schedule '{chosen_schedule.name}' has no fallback; cleared previous fallback")
                 
                 # Sanity check: ensure category_id is set
                 if not desired_category_id:
                     state_key = f"error:no_category:{chosen_schedule.id}"
                     if self._last_logged_state != state_key:
-                        print(f"SCHEDULER: ERROR - Schedule '{chosen_schedule.name}' (ID {chosen_schedule.id}) has no category_id set. Cannot apply prerolls.")
+                        _scheduler_log(f"Schedule '{chosen_schedule.name}' (ID {chosen_schedule.id}) has no category_id set. Cannot apply prerolls.", level="ERROR")
                         self._last_logged_state = state_key
                         self._last_logged_time = now
                     desired_category_id = None
@@ -494,23 +626,23 @@ class Scheduler:
                     # Use a consistent state key that works with the "already active" check below
                     state_key = f"schedule_active:{chosen_schedule.id}:{desired_category_id}"
                     if self._last_logged_state != state_key:
-                        print(f"SCHEDULER: Active schedule selected: '{chosen_schedule.name}' (ID {chosen_schedule.id}) -> Category {desired_category_id}")
+                        _scheduler_log(f"Active schedule selected: '{chosen_schedule.name}' (ID {chosen_schedule.id}) -> Category {desired_category_id}")
                         self._last_logged_state = state_key
                         self._last_logged_time = now
             else:
-                # No active schedules -> attempt fallback from any schedule that defines it
-                fallback_ids = [s.fallback_category_id for s in schedules if getattr(s, "fallback_category_id", None)]
-                if fallback_ids:
-                    desired_category_id = fallback_ids[0]
+                # No active schedules -> use fallback from most recently active schedule
+                stored_fallback = getattr(setting, "last_schedule_fallback", None)
+                if stored_fallback:
+                    desired_category_id = stored_fallback
                     state_key = f"fallback:{desired_category_id}"
                     if self._last_logged_state != state_key:
-                        print(f"SCHEDULER: No active schedules; using fallback category {desired_category_id}")
+                        _scheduler_log(f"No active schedules; using fallback category {desired_category_id} from last active schedule")
                         self._last_logged_state = state_key
                         self._last_logged_time = now
                 else:
                     state_key = "no_schedules"
                     if self._last_logged_state != state_key:
-                        print(f"SCHEDULER: No active schedules and no fallback defined; Plex preroll will remain unchanged")
+                        _scheduler_log(f"No active schedules and no fallback defined; Plex preroll will remain unchanged")
                         self._last_logged_state = state_key
                         self._last_logged_time = now
 
@@ -534,7 +666,7 @@ class Scheduler:
             elif desired_category_id is None:
                 state_key = "no_category_to_apply"
                 if self._last_logged_state != state_key:
-                    print(f"SCHEDULER: No category to apply (desired_category_id is None)")
+                    _scheduler_log(f"No category to apply (desired_category_id is None)")
                     self._last_logged_state = state_key
                     self._last_logged_time = now
             elif setting.active_category == desired_category_id:
@@ -554,26 +686,26 @@ class Scheduler:
                                 if last_rotation is None or (now - last_rotation).total_seconds() >= self._rotation_interval_seconds:
                                     should_rotate = True
                     except Exception as e:
-                        print(f"SCHEDULER: Error checking rotation for schedule {chosen_schedule.id}: {e}")
+                        _scheduler_log(f"SCHEDULER: Error checking rotation for schedule {chosen_schedule.id}: {e}", level="ERROR")
                 
                 if should_rotate:
                     # Re-apply the sequence to rotate random blocks
                     applied_ok = self._apply_schedule_sequence_to_plex(chosen_schedule, db)
                     if applied_ok:
                         self._last_rotation_time[chosen_schedule.id] = now
-                        print(f"SCHEDULER: Rotated random blocks for schedule '{chosen_schedule.name}' (ID {chosen_schedule.id})")
+                        _scheduler_log(f"Rotated random blocks for schedule '{chosen_schedule.name}' (ID {chosen_schedule.id})")
                         db.commit()
                 else:
                     # Only log if state changed OR if we haven't logged this schedule in 5 minutes
                     state_key = f"schedule_active:{chosen_schedule.id if chosen_schedule else 'none'}:{desired_category_id}"
                     if self._last_logged_state != state_key:
                         # State changed (different schedule/category) - log immediately
-                        print(f"SCHEDULER: Category {desired_category_id} already active; no change needed")
+                        _scheduler_log(f"Category {desired_category_id} already active; no change needed")
                         self._last_logged_state = state_key
                         self._last_logged_time = now
                     elif self._last_logged_time and (now - self._last_logged_time).total_seconds() > 300:
                         # Same state but 5 minutes passed - log for status visibility
-                        print(f"SCHEDULER: Category {desired_category_id} still active")
+                        _scheduler_log(f"Category {desired_category_id} still active")
                         self._last_logged_time = now
             # If no desired_category_id, leave Plex as-is to avoid unintended clears
 
@@ -604,6 +736,11 @@ class Scheduler:
             
             # Only verify if we have an active category
             if not setting.active_category:
+                return
+            
+            # Skip verification when blend mode is active - blend has its own validation
+            if self._blend_mode_active:
+                self._last_verification_time = now
                 return
             
             # Check if there's an active schedule with a sequence
@@ -700,17 +837,17 @@ class Scheduler:
             
             # Compare expected vs actual
             if expected_normalized != actual_normalized:
-                print(f"SCHEDULER VERIFICATION: Plex preroll mismatch detected!")
-                print(f"  Expected: {expected_normalized}")
-                print(f"  Actual:   {actual_normalized}")
-                print(f"  Reapplying category {setting.active_category}...")
+                _scheduler_log(f"VERIFICATION: Plex preroll mismatch detected!")
+                _scheduler_verbose(f"  Expected: {expected_normalized}")
+                _scheduler_verbose(f"  Actual:   {actual_normalized}")
+                _scheduler_verbose(f"  Reapplying category {setting.active_category}...")
                 
                 # Reapply the current category
                 success = self._apply_category_to_plex(setting.active_category, db)
                 if success:
-                    print(f"SCHEDULER VERIFICATION: Successfully reapplied prerolls")
+                    _scheduler_log(f"VERIFICATION: Successfully reapplied prerolls")
                 else:
-                    print(f"SCHEDULER VERIFICATION: Failed to reapply prerolls")
+                    _scheduler_log(f"VERIFICATION: Failed to reapply prerolls")
             
             # Update last verification time
             self._last_verification_time = now
@@ -726,16 +863,94 @@ class Scheduler:
         - If end_date is provided: active for the whole window [start_date, end_date].
         - If no end_date: treat as an ongoing schedule starting at start_date (indefinite)
           until another schedule takes precedence or a fallback is applied when no schedule is active.
+        - For daily schedules with timeRange: also check if current time is within the time window.
+        
+        IMPORTANT: timeRange values are stored in the user's local timezone, so we must
+        convert 'now' (which is UTC) to local time before comparing.
         """
         if not schedule or not getattr(schedule, "start_date", None):
             return False
 
-        # Windowed schedules: active between start and end (inclusive)
+        # First check date window
+        date_active = False
         if getattr(schedule, "end_date", None):
-            return schedule.start_date <= now <= schedule.end_date
-
-        # Indefinite schedule: active from start onward
-        return now >= schedule.start_date
+            # Windowed schedules: active between start and end (inclusive)
+            date_active = schedule.start_date <= now <= schedule.end_date
+        else:
+            # Indefinite schedule: active from start onward
+            date_active = now >= schedule.start_date
+        
+        if not date_active:
+            return False
+        
+        # Now check time range for daily schedules with timeRange in recurrence_pattern
+        if schedule.recurrence_pattern:
+            try:
+                pattern = json.loads(schedule.recurrence_pattern)
+                time_range = pattern.get("timeRange")
+                if time_range and time_range.get("start"):
+                    # This schedule has a time-of-day constraint
+                    start_time_str = time_range.get("start", "")  # e.g., "22:00"
+                    end_time_str = time_range.get("end", "")  # e.g., "03:00"
+                    
+                    if start_time_str:
+                        # Parse time strings (HH:MM format)
+                        try:
+                            start_parts = start_time_str.split(":")
+                            start_hour = int(start_parts[0])
+                            start_minute = int(start_parts[1]) if len(start_parts) > 1 else 0
+                            
+                            end_hour = 23
+                            end_minute = 59
+                            if end_time_str:
+                                end_parts = end_time_str.split(":")
+                                end_hour = int(end_parts[0])
+                                end_minute = int(end_parts[1]) if len(end_parts) > 1 else 59
+                            
+                            # CRITICAL: Convert UTC 'now' to user's local timezone
+                            # timeRange is stored in local time, so we must compare in local time
+                            db = SessionLocal()
+                            try:
+                                setting = db.query(models.Setting).first()
+                                user_tz_str = setting.timezone if setting and setting.timezone else "UTC"
+                                try:
+                                    user_tz = pytz.timezone(user_tz_str)
+                                except:
+                                    user_tz = pytz.UTC
+                                
+                                # Convert UTC now to local time
+                                utc_now = now.replace(tzinfo=pytz.UTC) if now.tzinfo is None else now
+                                local_now = utc_now.astimezone(user_tz)
+                                current_hour = local_now.hour
+                                current_minute = local_now.minute
+                            finally:
+                                db.close()
+                            
+                            current_time_val = current_hour * 60 + current_minute
+                            start_time_val = start_hour * 60 + start_minute
+                            end_time_val = end_hour * 60 + end_minute
+                            
+                            # Handle overnight ranges (e.g., 22:00 to 03:00)
+                            if start_time_val <= end_time_val:
+                                # Normal range (e.g., 09:00 to 17:00)
+                                time_active = start_time_val <= current_time_val <= end_time_val
+                            else:
+                                # Overnight range (e.g., 22:00 to 03:00)
+                                # Active if current time is >= start OR <= end
+                                time_active = current_time_val >= start_time_val or current_time_val <= end_time_val
+                            
+                            if not time_active:
+                                _scheduler_verbose(f"Schedule '{schedule.name}' outside time range {start_time_str}-{end_time_str} (local: {current_hour:02d}:{current_minute:02d})")
+                            return time_active
+                            
+                        except (ValueError, IndexError) as e:
+                            _scheduler_log(f"Error parsing time range for schedule '{schedule.name}': {e}", level="WARNING")
+                            # If we can't parse the time, fall through to date-only logic
+            except json.JSONDecodeError:
+                pass  # Invalid JSON, ignore time range
+        
+        # No time range or couldn't parse - schedule is active based on date only
+        return True
 
     def _apply_category_to_plex(self, category_id: int, db: Session, schedule: models.Schedule = None) -> bool:
         """
@@ -761,7 +976,7 @@ class Scheduler:
                     cat_name = cat.name
             except Exception:
                 pass
-            print(f"SCHEDULER: ERROR - No prerolls found for category_id={category_id} (name='{cat_name}'). Ensure prerolls are assigned to this category.")
+            _scheduler_log(f"No prerolls found for category_id={category_id} (name='{cat_name}'). Ensure prerolls are assigned to this category.", level="ERROR")
             return False
 
         # Build combined path string for Plex multi-preroll format
@@ -778,7 +993,7 @@ class Scheduler:
         setting = db.query(models.Setting).first()
         # Allow secure-store token fallback via PlexConnector; only require URL here
         if not setting or not getattr(setting, "plex_url", None):
-            print("SCHEDULER: Plex not configured (missing URL); cannot apply category.")
+            _scheduler_log("Plex not configured (missing URL); cannot apply category.", level="WARNING")
             return False
 
         # Translate local paths to Plex-accessible paths using configured mappings
@@ -871,17 +1086,20 @@ class Scheduler:
             mismatches = []
 
         if mismatches:
-            print(f"SCHEDULER: Path style mismatch with Plex platform '{platform_str}'; example: {mismatches[0]}")
+            _scheduler_log(f"Path style mismatch with Plex platform '{platform_str}'; example: {mismatches[0]}")
             return False
 
         combined = delimiter.join(preroll_paths_plex)
 
         # Determine mode from delimiter
         mode_str = 'sequential' if delimiter == ',' else 'random'
-        print(f"SCHEDULER: Applying category_id={category_id} with {len(prerolls)} prerolls to Plex (mode={mode_str}, delim={'comma' if delimiter==',' else 'semicolon'})…")
+        _scheduler_log(f"Applying category_id={category_id} with {len(prerolls)} prerolls to Plex (mode={mode_str}, delim={'comma' if delimiter==',' else 'semicolon'})…")
         ok = connector.set_preroll(combined)
-        print(f"SCHEDULER: {'SUCCESS' if ok else 'FAIL'} setting multi-preroll (mode={mode_str}).")
+        _scheduler_log(f"{'SUCCESS' if ok else 'FAIL'} setting multi-preroll (mode={mode_str}).")
         if ok:
+            # Clear blend mode tracking since we're in normal mode now
+            self._blend_mode_active = False
+            self._blend_expected_preroll = None
             # Mirror manual "Apply to Plex" behavior so UI reflects the active category
             try:
                 db.query(models.Category).update({"apply_to_plex": False})
@@ -975,12 +1193,12 @@ class Scheduler:
                 continue
 
         if not paths:
-            print("SCHEDULER: Sequence produced no preroll paths; aborting.")
+            _scheduler_log("Sequence produced no preroll paths; aborting.")
             return False
 
-        print(f"SCHEDULER: Sequence built {len(paths)} paths:")
+        _scheduler_log(f"Sequence built {len(paths)} paths:")
         for i, p in enumerate(paths):
-            print(f"  {i+1}. {p}")
+            _scheduler_verbose(f"  {i+1}. {p}")
 
         # Choose delimiter: sequences must play in order. Always use playlist (comma) for sequences.
         mode = "playlist"
@@ -989,7 +1207,7 @@ class Scheduler:
         setting = db.query(models.Setting).first()
         # Allow secure-store token fallback via PlexConnector; only require URL here
         if not setting or not getattr(setting, "plex_url", None):
-            print("SCHEDULER: Plex not configured (missing URL); cannot apply sequence.")
+            _scheduler_log("Plex not configured (missing URL); cannot apply sequence.", level="WARNING")
             return False
 
         # Translate each path to Plex-visible paths using configured mappings
@@ -1040,9 +1258,9 @@ class Scheduler:
 
         paths_plex = [_translate_for_plex(p) for p in paths]
         
-        print(f"SCHEDULER: After translation, {len(paths_plex)} Plex paths:")
+        _scheduler_log(f"After translation, {len(paths_plex)} Plex paths:")
         for i, p in enumerate(paths_plex):
-            print(f"  {i+1}. {p}")
+            _scheduler_verbose(f"  {i+1}. {p}")
 
         # Preflight: ensure translated paths match Plex platform path style
         connector = PlexConnector(setting.plex_url, setting.plex_token)
@@ -1086,14 +1304,14 @@ class Scheduler:
             mismatches = []
 
         if mismatches:
-            print(f"SCHEDULER: Path style mismatch with Plex platform '{platform_str}'; example: {mismatches[0]}")
+            _scheduler_log(f"Path style mismatch with Plex platform '{platform_str}'; example: {mismatches[0]}")
             return False
 
         combined = delimiter.join(paths_plex)
 
-        print(f"SCHEDULER: Applying schedule sequence with {len(paths)} items (mode={mode}, delim={'comma' if delimiter==',' else 'semicolon'})…")
+        _scheduler_log(f"Applying schedule sequence with {len(paths)} items (mode={mode}, delim={'comma' if delimiter==',' else 'semicolon'})…")
         ok = connector.set_preroll(combined)
-        print(f"SCHEDULER: {'SUCCESS' if ok else 'FAIL'} setting sequence preroll list.")
+        _scheduler_log(f"{'SUCCESS' if ok else 'FAIL'} setting sequence preroll list.")
         if ok:
             # Mirror manual "Apply to Plex" behavior: mark schedule's category as applied
             try:
@@ -1107,6 +1325,166 @@ class Scheduler:
                     db.rollback()
                 except Exception:
                     pass
+        return ok
+
+    def _apply_blended_schedules_to_plex(self, schedules: List[models.Schedule], db: Session) -> bool:
+        """
+        Apply prerolls from multiple blended schedules to Plex.
+        Interleaves prerolls from each schedule for a mixed experience.
+        """
+        if not schedules:
+            return False
+        
+        _scheduler_log(f"BLEND: Building blended playlist from {len(schedules)} schedules...")
+        
+        # Helper to gather prerolls for a category (primary and many-to-many)
+        def _prerolls_for_category(cid: int):
+            return db.query(models.Preroll) \
+                .outerjoin(models.preroll_categories, models.Preroll.id == models.preroll_categories.c.preroll_id) \
+                .filter(or_(models.Preroll.category_id == cid, models.preroll_categories.c.category_id == cid)) \
+                .distinct().all()
+
+        # Collect preroll paths from each schedule
+        all_schedule_paths = []  # List of (schedule_name, paths_list)
+        
+        for schedule in schedules:
+            paths = []
+            
+            # If schedule has a sequence, use it
+            if getattr(schedule, "sequence", None):
+                try:
+                    seq = schedule.sequence
+                    if isinstance(seq, str):
+                        seq = json.loads(seq)
+                    if isinstance(seq, list):
+                        for step in seq:
+                            stype = str(step.get("type", "")).lower()
+                            if stype == "random":
+                                cid = int(step.get("category_id") or schedule.category_id or 0)
+                                if not cid:
+                                    continue
+                                count = int(step.get("count") or 1)
+                                pool = _prerolls_for_category(cid)
+                                if pool:
+                                    k = min(max(count, 1), len(pool))
+                                    picks = random.sample(pool, k) if len(pool) > k else pool
+                                    for p in picks:
+                                        paths.append(os.path.abspath(p.path))
+                            elif stype == "fixed":
+                                pids = []
+                                ids_array = step.get("preroll_ids")
+                                if ids_array and isinstance(ids_array, list):
+                                    pids = [int(x) for x in ids_array if x]
+                                else:
+                                    pid = step.get("preroll_id")
+                                    if pid:
+                                        pids = [int(pid)]
+                                for pid in pids:
+                                    p = db.query(models.Preroll).filter(models.Preroll.id == pid).first()
+                                    if p:
+                                        paths.append(os.path.abspath(p.path))
+                except Exception as e:
+                    _scheduler_log(f"Error parsing sequence for blended schedule '{schedule.name}': {e}", level="WARNING")
+            
+            # Otherwise, use the category's prerolls
+            elif schedule.category_id:
+                pool = _prerolls_for_category(schedule.category_id)
+                # For blending, take a random sample (up to 3) from each category to keep it manageable
+                if pool:
+                    k = min(3, len(pool))
+                    picks = random.sample(pool, k) if len(pool) > k else pool
+                    for p in picks:
+                        paths.append(os.path.abspath(p.path))
+            
+            if paths:
+                all_schedule_paths.append((schedule.name, paths))
+                _scheduler_log(f"BLEND:   '{schedule.name}': {len(paths)} prerolls collected")
+                for i, p in enumerate(paths[:3]):  # Log first 3 paths
+                    _scheduler_verbose(f"      {i+1}. {os.path.basename(p)}")
+                if len(paths) > 3:
+                    _scheduler_verbose(f"      ... and {len(paths) - 3} more")
+        
+        if not all_schedule_paths:
+            _scheduler_log("BLEND: No preroll paths collected from any schedule", level="WARNING")
+            return False
+        
+        # Interleave paths from all schedules (round-robin)
+        final_paths = []
+        max_len = max(len(paths) for _, paths in all_schedule_paths)
+        for i in range(max_len):
+            for schedule_name, paths in all_schedule_paths:
+                if i < len(paths):
+                    final_paths.append(paths[i])
+        
+        _scheduler_log(f"BLEND: Blend complete: {len(final_paths)} total prerolls interleaved from {len(all_schedule_paths)} schedules")
+        
+        # Apply path mappings and send to Plex
+        setting = db.query(models.Setting).first()
+        if not setting or not getattr(setting, "plex_url", None):
+            _scheduler_log("Plex not configured (missing URL); cannot apply blended schedules.", level="WARNING")
+            return False
+        
+        # Get path mappings
+        mappings = []
+        try:
+            raw = getattr(setting, "path_mappings", None)
+            if raw:
+                data = json.loads(raw)
+                if isinstance(data, list):
+                    mappings = [m for m in data if isinstance(m, dict) and m.get("local") and m.get("plex")]
+        except Exception:
+            mappings = []
+        
+        def _translate_for_plex(local_path: str) -> str:
+            try:
+                lp = os.path.normpath(local_path)
+                best = None
+                best_src = None
+                best_len = -1
+                for m in mappings:
+                    src = os.path.normpath(str(m.get("local")))
+                    if sys.platform.startswith("win"):
+                        if lp.lower().startswith(src.lower()) and len(src) > best_len:
+                            best = m
+                            best_src = src
+                            best_len = len(src)
+                    else:
+                        if lp.startswith(src) and len(src) > best_len:
+                            best = m
+                            best_src = src
+                            best_len = len(src)
+                if best:
+                    dst_prefix = str(best.get("plex"))
+                    rest = lp[len(best_src):].lstrip("\\/")
+                    if ("/" in dst_prefix) and ("\\" not in dst_prefix):
+                        out = dst_prefix.rstrip("/") + "/" + rest.replace("\\", "/")
+                    elif "\\" in dst_prefix:
+                        out = dst_prefix.rstrip("\\") + "\\" + rest.replace("/", "\\")
+                    else:
+                        out = dst_prefix.rstrip("/") + "/" + rest.replace("\\", "/")
+                    return out
+            except Exception:
+                pass
+            return local_path
+        
+        paths_plex = [_translate_for_plex(p) for p in final_paths]
+        
+        # Use semicolon (random mode) so Plex picks one random preroll from the blended pool
+        # The interleaving ensures fair distribution between schedules in the pool
+        delimiter = ";"
+        combined = delimiter.join(paths_plex)
+        
+        connector = PlexConnector(setting.plex_url, setting.plex_token)
+        _scheduler_log(f"BLEND: Sending blended playlist to Plex ({len(paths_plex)} prerolls, random mode)...")
+        ok = connector.set_preroll(combined)
+        if ok:
+            _scheduler_log(f"BLEND: Blended preroll list applied successfully to Plex")
+            # Track blend mode for verification
+            self._blend_mode_active = True
+            self._blend_expected_preroll = combined
+        else:
+            _scheduler_log(f"BLEND: Failed to apply blended preroll list to Plex", level="ERROR")
+        
         return ok
 
     def _get_active_schedules(self) -> List[models.Schedule]:
@@ -1128,7 +1506,23 @@ class Scheduler:
                    now.minute == schedule.start_date.minute)
 
         elif schedule.type == "yearly":
-            # Execute on the same date each year
+            # Check if this schedule uses dynamic holiday lookup
+            if schedule.recurrence_pattern:
+                try:
+                    pattern = json.loads(schedule.recurrence_pattern)
+                    if pattern.get('type') == 'holiday_dynamic':
+                        # Dynamic holiday: look up current year's date from Holiday API
+                        holiday_date = self._get_holiday_date(pattern.get('name'), pattern.get('country'), now.year)
+                        if holiday_date:
+                            return (now.month == holiday_date.month and
+                                   now.day == holiday_date.day and
+                                   now.hour == schedule.start_date.hour and
+                                   now.minute == schedule.start_date.minute)
+                        return False
+                except Exception as e:
+                    _scheduler_log(f"Error parsing holiday pattern: {e}", level="ERROR")
+            
+            # Standard yearly schedule: execute on the same date each year
             return (now.month == schedule.start_date.month and
                    now.day == schedule.start_date.day and
                    now.hour == schedule.start_date.hour and
@@ -1151,6 +1545,54 @@ class Scheduler:
                 return self._matches_pattern(now, schedule.recurrence_pattern)
 
         return False
+
+    def _get_holiday_date(self, holiday_name: str, country_code: str, year: int) -> Optional[datetime.date]:
+        """
+        Look up the date for a holiday in a specific year using the Holiday API.
+        This handles variable-date holidays like Thanksgiving, Easter, etc.
+        
+        Args:
+            holiday_name: Name of the holiday (e.g., "Thanksgiving")
+            country_code: ISO country code (e.g., "US")
+            year: Year to look up
+            
+        Returns:
+            datetime.date object if found, None otherwise
+        """
+        # Check cache first
+        cache_key = f"{holiday_name}_{country_code}_{year}"
+        if cache_key in self._holiday_date_cache:
+            return self._holiday_date_cache[cache_key]
+        
+        try:
+            # Import Holiday API
+            from backend.holiday_api import HolidayAPI
+            
+            # Fetch holidays for this country and year
+            holidays = HolidayAPI.get_holidays(country_code, year)
+            
+            # Find matching holiday (case-insensitive)
+            holiday_name_lower = holiday_name.lower()
+            for holiday in holidays:
+                if holiday_name_lower in holiday.get('name', '').lower():
+                    # Found it! Parse the date
+                    holiday_date_str = holiday.get('date')
+                    if holiday_date_str:
+                        holiday_date = datetime.datetime.strptime(holiday_date_str, '%Y-%m-%d').date()
+                        # Cache it
+                        self._holiday_date_cache[cache_key] = holiday_date
+                        _scheduler_log(f"Found {holiday_name} in {country_code} {year}: {holiday_date}")
+                        return holiday_date
+            
+            # Not found - cache None to avoid repeated API calls
+            self._holiday_date_cache[cache_key] = None
+            _scheduler_log(f"Holiday '{holiday_name}' not found in {country_code} {year}", level="WARNING")
+            return None
+            
+        except Exception as e:
+            _scheduler_log(f"SCHEDULER: Error looking up holiday date: {e}", level="ERROR")
+            # Don't cache errors - try again next time
+            return None
 
     def _execute_schedule(self, schedule: models.Schedule, db: Session):
         """
@@ -1182,15 +1624,15 @@ class Scheduler:
 
     def _update_plex_preroll(self, prerolls: List[models.Preroll], db: Session):
         """Update Plex server with selected preroll"""
-        print(f"SCHEDULER: Starting Plex update with {len(prerolls)} prerolls")
+        _scheduler_log(f"Starting Plex update with {len(prerolls)} prerolls")
 
         setting = db.query(models.Setting).first()
         if not setting or not prerolls:
-            print("SCHEDULER: No settings or prerolls found for Plex update")
+            _scheduler_log("No settings or prerolls found for Plex update")
             return
 
-        print(f"SCHEDULER: Plex URL: {setting.plex_url}")
-        print(f"SCHEDULER: Plex token available: {bool(setting.plex_token)}")
+        _scheduler_log(f"Plex URL: {setting.plex_url}")
+        _scheduler_log(f"Plex token available: {bool(setting.plex_token)}")
 
         connector = PlexConnector(setting.plex_url, setting.plex_token)
 
@@ -1245,10 +1687,10 @@ class Scheduler:
             # Join all paths with semicolons for Plex multi-preroll format
             multi_preroll_path = ";".join(preroll_paths_plex)
 
-            print(f"SCHEDULER: Setting {len(prerolls)} prerolls for schedule:")
+            _scheduler_log(f"Setting {len(prerolls)} prerolls for schedule:")
             for i, preroll in enumerate(prerolls, 1):
-                print(f"SCHEDULER:   {i}. {preroll.filename}")
-            print(f"SCHEDULER: Combined path: {multi_preroll_path}")
+                _scheduler_log(f"  {i}. {preroll.filename}")
+            _scheduler_log(f"Combined path: {multi_preroll_path}")
 
             preroll_path = multi_preroll_path
         else:
@@ -1298,16 +1740,16 @@ class Scheduler:
 
             preroll_path = _translate_for_plex(preroll_path)
 
-            print(f"SCHEDULER: Attempting to update Plex with single preroll: {preroll_path}")
+            _scheduler_log(f"Attempting to update Plex with single preroll: {preroll_path}")
 
         # Actually call the Plex connector to set the preroll
-        print("SCHEDULER: Calling connector.set_preroll()...")
+        _scheduler_log("Calling connector.set_preroll()...")
         success = connector.set_preroll(preroll_path)
 
         if success:
-            print(f"SCHEDULER: SUCCESS: Plex preroll updated to: {preroll_path}")
+            _scheduler_log(f"SUCCESS: Plex preroll updated to: {preroll_path}")
         else:
-            print(f"SCHEDULER: FAILED: Could not update Plex preroll to: {preroll_path}")
+            _scheduler_log(f"Could not update Plex preroll to: {preroll_path}", level="ERROR")
 
     def _calculate_next_run(self, schedule: models.Schedule) -> Optional[datetime.datetime]:
         """Calculate when this schedule should run next"""
@@ -1360,10 +1802,86 @@ class Scheduler:
         return None
 
     def _matches_pattern(self, now: datetime.datetime, pattern: str) -> bool:
-        """Simple pattern matching (could be enhanced with cron parser)"""
-        # For now, just check if it's time to run
-        # This is a simplified implementation
-        return True
+        """Check if current time matches a recurrence pattern.
+        
+        IMPORTANT: timeRange values are stored in user's local timezone,
+        so we must convert 'now' (which is UTC) to local time before comparing.
+        """
+        try:
+            pattern_data = json.loads(pattern)
+            
+            # Check time range if present
+            time_range = pattern_data.get("timeRange")
+            if time_range and time_range.get("start"):
+                start_time_str = time_range.get("start", "")
+                end_time_str = time_range.get("end", "")
+                
+                if start_time_str:
+                    start_parts = start_time_str.split(":")
+                    start_hour = int(start_parts[0])
+                    start_minute = int(start_parts[1]) if len(start_parts) > 1 else 0
+                    
+                    end_hour = 23
+                    end_minute = 59
+                    if end_time_str:
+                        end_parts = end_time_str.split(":")
+                        end_hour = int(end_parts[0])
+                        end_minute = int(end_parts[1]) if len(end_parts) > 1 else 59
+                    
+                    # CRITICAL: Convert UTC 'now' to user's local timezone
+                    db = SessionLocal()
+                    try:
+                        setting = db.query(models.Setting).first()
+                        user_tz_str = setting.timezone if setting and setting.timezone else "UTC"
+                        try:
+                            user_tz = pytz.timezone(user_tz_str)
+                        except:
+                            user_tz = pytz.UTC
+                        
+                        utc_now = now.replace(tzinfo=pytz.UTC) if now.tzinfo is None else now
+                        local_now = utc_now.astimezone(user_tz)
+                        current_hour = local_now.hour
+                        current_minute = local_now.minute
+                    finally:
+                        db.close()
+                    
+                    current_time_val = current_hour * 60 + current_minute
+                    start_time_val = start_hour * 60 + start_minute
+                    end_time_val = end_hour * 60 + end_minute
+                    
+                    # Handle overnight ranges
+                    if start_time_val <= end_time_val:
+                        if not (start_time_val <= current_time_val <= end_time_val):
+                            return False
+                    else:
+                        # Overnight range (e.g., 22:00 to 03:00)
+                        if not (current_time_val >= start_time_val or current_time_val <= end_time_val):
+                            return False
+            
+            # Check days of week if present
+            days = pattern_data.get("daysOfWeek")
+            if days and isinstance(days, list):
+                # Python weekday: Monday=0, Sunday=6
+                # Note: we should also use local time for day-of-week check
+                db = SessionLocal()
+                try:
+                    setting = db.query(models.Setting).first()
+                    user_tz_str = setting.timezone if setting and setting.timezone else "UTC"
+                    try:
+                        user_tz = pytz.timezone(user_tz_str)
+                    except:
+                        user_tz = pytz.UTC
+                    
+                    utc_now = now.replace(tzinfo=pytz.UTC) if now.tzinfo is None else now
+                    local_now = utc_now.astimezone(user_tz)
+                    if local_now.weekday() not in days:
+                        return False
+                finally:
+                    db.close()
+            
+            return True
+        except (json.JSONDecodeError, ValueError, IndexError):
+            return True  # If pattern is invalid, default to match
 
 # Global scheduler instance
 scheduler = Scheduler()
