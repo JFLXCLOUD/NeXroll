@@ -18,8 +18,8 @@
   <PostArgs/>
   <CPUset/>
   <DateInstalled></DateInstalled>
-  <DonateText/>
-  <DonateLink/>
+  <DonateText>Buy me a coffee</DonateText>
+  <DonateLink>https://ko-fi.com/j_b__</DonateLink>
   <Requires/>
   <Config Name="WebUI Port" Target="9393" Default="9393" Mode="tcp" Description="Web interface port for NeXroll" Type="Port" Display="always" Required="true" Mask="false">9393</Config>
   <Config Name="Application Data" Target="/data" Default="/mnt/user/appdata/nexroll" Mode="rw" Description="Database, logs, and application data storage" Type="Path" Display="always" Required="true" Mask="false">/mnt/user/appdata/nexroll</Config>
