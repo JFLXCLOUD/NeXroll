@@ -69,3 +69,4 @@ jobs:
           build-args: |
             VERSION=${{ steps.version.outputs.tag }}
           no-cache: true
+          pull: true
