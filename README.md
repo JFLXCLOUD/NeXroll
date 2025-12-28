@@ -223,6 +223,10 @@ Join the community on Discord for support, feature requests, and discussions:
 
 [![Discord](https://img.shields.io/badge/Discord-Join%20Server-5865F2?style=for-the-badge&logo=discord&logoColor=white)](https://discord.gg/R9eH7TbxEk)
 
+Join the subreddit:
+
+[![Reddit](https://img.shields.io/badge/Reddit-r%2FNeXroll-FF4500?style=for-the-badge&logo=reddit&logoColor=white)](https://www.reddit.com/r/NeXroll/)
+
 ---
 
 ## Credits
