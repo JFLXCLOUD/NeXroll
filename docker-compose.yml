@@ -1,4 +1,5 @@
-version: '3.8'
+# NeXroll Docker Compose Configuration
+# Documentation: https://github.com/JFLXCLOUD/NeXroll
 
 services:
   nexroll:
@@ -11,21 +12,39 @@ services:
     
     volumes:
       # Prerolls directory - mount your NAS or local prerolls folder here
+      # IMPORTANT: Update this path to your actual prerolls location
       - /path/to/your/prerolls:/app/data/prerolls
       
       # Persistent data (database, logs, thumbnails)
       - nexroll-data:/app/data
     
     environment:
-      # Optional: Pre-configure Plex token for auto-connect
-      # Get your token from: https://support.plex.tv/articles/204059436-finding-an-authentication-token-x-plex-token/
-      - PLEX_TOKEN=${PLEX_TOKEN:-}
+      # Timezone - important for schedule accuracy
+      # Find yours at: https://en.wikipedia.org/wiki/List_of_tz_database_time_zones
+      - TZ=${TZ:-America/New_York}
       
-      # Optional: Plex server URL (for Docker environments)
+      # Plex Configuration (optional - can also configure in UI)
+      # Get your token: https://support.plex.tv/articles/204059436-finding-an-authentication-token-x-plex-token/
+      - PLEX_TOKEN=${PLEX_TOKEN:-}
       - PLEX_URL=${PLEX_URL:-http://host.docker.internal:32400}
       
-      # Optional: Timezone configuration
-      - TZ=${TZ:-UTC}
+      # Jellyfin Configuration (optional - can also configure in UI)
+      - JELLYFIN_URL=${JELLYFIN_URL:-}
+      - JELLYFIN_API_KEY=${JELLYFIN_API_KEY:-}
+    
+    # Health check to ensure NeXroll is running properly
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9393/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    
+    # Optional: Add labels for reverse proxy (Traefik example)
+    # labels:
+    #   - "traefik.enable=true"
+    #   - "traefik.http.routers.nexroll.rule=Host(`nexroll.yourdomain.com`)"
+    #   - "traefik.http.services.nexroll.loadbalancer.server.port=9393"
     
     # Uncomment to allow access to host network (alternative to host.docker.internal)
     # network_mode: host
@@ -44,6 +63,10 @@ volumes:
   nexroll-data:
     driver: local
 
+# =============================================================================
+# EXAMPLES
+# =============================================================================
+
 # Example with Plex in the same compose stack:
 # services:
 #   plex:
@@ -52,7 +75,7 @@ volumes:
 #     network_mode: host
 #     environment:
 #       - PLEX_CLAIM=${PLEX_CLAIM}
-#       - TZ=${TZ:-UTC}
+#       - TZ=${TZ:-America/New_York}
 #     volumes:
 #       - plex-config:/config
 #       - /path/to/media:/media
@@ -68,6 +91,7 @@ volumes:
 #       - nexroll-data:/app/data
 #     environment:
 #       - PLEX_URL=http://plex:32400
+#       - TZ=${TZ:-America/New_York}
 #     depends_on:
 #       - plex
 # 
