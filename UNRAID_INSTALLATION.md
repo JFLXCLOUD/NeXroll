@@ -270,11 +270,11 @@ http://[UNRAID-IP]:9393
 
 ## Version Information
 
-- **Current Version:** 1.8.9
+- **Current Version:** 1.9.6
 - **Docker Image:** `jbrns/nexroll:latest`
 - **Platform:** linux/amd64
 - **Base:** Python 3.10 + Node.js 18
 
 ---
 
-**Enjoy managing your prerolls with NeXroll on Unraid! 🎬**
+**Enjoy managing your prerolls with NeXroll on Unraid!**
