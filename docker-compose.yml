@@ -12,11 +12,17 @@ services:
     
     volumes:
       # Prerolls directory - mount your NAS or local prerolls folder here
-      # IMPORTANT: Update this path to your actual prerolls location
-      - /path/to/your/prerolls:/app/data/prerolls
+      # Format: /your/host/path:/data/prerolls
+      #         ^^^^^^^^^^^^^^^^ CHANGE THIS to your actual prerolls location
+      #                          ^^^^^^^^^^^^^^ DO NOT CHANGE (container path)
+      # Examples:
+      #   - /mnt/user/media/prerolls:/data/prerolls   (Unraid)
+      #   - /volume1/media/prerolls:/data/prerolls    (Synology)
+      #   - /home/user/prerolls:/data/prerolls        (Linux)
+      - /path/to/your/prerolls:/data/prerolls
       
       # Persistent data (database, logs, thumbnails)
-      - nexroll-data:/app/data
+      - nexroll-data:/data
     
     environment:
       # Timezone - important for schedule accuracy
@@ -87,8 +93,8 @@ volumes:
 #     ports:
 #       - "9393:9393"
 #     volumes:
-#       - /path/to/prerolls:/app/data/prerolls
-#       - nexroll-data:/app/data
+#       - /path/to/prerolls:/data/prerolls
+#       - nexroll-data:/data
 #     environment:
 #       - PLEX_URL=http://plex:32400
 #       - TZ=${TZ:-America/New_York}
