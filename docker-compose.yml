@@ -13,8 +13,7 @@ services:
     volumes:
       # Prerolls directory - mount your NAS or local prerolls folder here
       # Format: /your/host/path:/data/prerolls
-      #         ^^^^^^^^^^^^^^^^ CHANGE THIS to your actual prerolls location
-      #                          ^^^^^^^^^^^^^^ DO NOT CHANGE (container path)
+
       # Examples:
       #   - /mnt/user/media/prerolls:/data/prerolls   (Unraid)
       #   - /volume1/media/prerolls:/data/prerolls    (Synology)
