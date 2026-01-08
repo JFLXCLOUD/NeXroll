@@ -1,21 +1,5 @@
 ﻿# syntax=docker/dockerfile:1
 
-# --- Frontend build stage (build React app from source) ---
-FROM node:22-alpine AS frontend-builder
-
-WORKDIR /build/frontend
-
-# Set Node options for ARM64 compatibility with QEMU
-ENV NODE_OPTIONS="--max-old-space-size=4096"
-
-# Install deps with good caching
-COPY NeXroll/frontend/package*.json ./
-RUN npm install --no-audit --no-fund --legacy-peer-deps
-
-# Copy source and build
-COPY NeXroll/frontend/ ./
-RUN npm run build
-
 # --- Backend runtime stage ---
 FROM python:3.12-slim
 
@@ -64,8 +48,8 @@ COPY NeXroll/version.py /app/NeXroll/version.py
 # Copy CHANGELOG
 COPY NeXroll/CHANGELOG.md /app/NeXroll/CHANGELOG.md
 
-# Copy freshly built frontend assets from the builder stage
-COPY --from=frontend-builder /build/frontend/build /app/NeXroll/frontend/build
+# Copy pre-built frontend assets (built locally before Docker build)
+COPY NeXroll/frontend/build /app/NeXroll/frontend/build
 
 # Prepare persistent data volume
 RUN mkdir -p /data /data/prerolls

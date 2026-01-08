@@ -61,12 +61,12 @@ jobs:
         with:
           context: .
           file: ./Dockerfile
-          platforms: linux/amd64,linux/arm64
+          platforms: linux/amd64
           push: true
           tags: |
             ${{ env.IMAGE_NAME }}:${{ steps.version.outputs.version }}
             ${{ env.IMAGE_NAME }}:latest
           build-args: |
             VERSION=${{ steps.version.outputs.tag }}
-          no-cache: true
-          pull: true
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
