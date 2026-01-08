@@ -175,6 +175,10 @@ class Setting(Base):
     last_seen_version = Column(String, nullable=True)  # Last version user has seen (for changelog display)
     # Logging settings
     verbose_logging = Column(Boolean, default=False)  # Enable verbose/debug logging for troubleshooting
+    # Coexistence mode (passive mode)
+    passive_mode = Column(Boolean, default=False)  # When enabled, only manage prerolls during active schedules (allows coexistence with other preroll managers)
+    # Clear prerolls when inactive
+    clear_when_inactive = Column(Boolean, default=False)  # When enabled, clear Plex preroll field when no schedules are active
     
     def get_json_value(self, key):
         """Get a JSON value from a column"""

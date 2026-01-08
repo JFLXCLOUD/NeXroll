@@ -1,5 +1,44 @@
 # Changelog
 
+## [1.9.8] - 01-08-2026
+
+### Fixed
+- **Timezone Drift Bug** - Fixed critical bug where schedules would shift backward by 7-8 hours on each save for users in GMT-7/8 timezones
+  - Schedules are now stored as naive local datetimes with no timezone conversion
+  - What you enter is exactly what gets saved and displayed
+  - Scheduler now uses local time for all comparisons
+
+- **Random Order Default** - Fixed bug where new schedules defaulted to Sequential even when Random was visually selected
+  - The "Random" playback option now correctly defaults to enabled when creating a new schedule
+
+### Changed
+- **Time Display Format** - Dashboard "Upcoming Schedules" card now shows times without seconds (e.g., "1/1/2026, 7:00 AM" instead of "1/1/2026, 7:00:00 AM")
+
+- **Community Prerolls URL** - Updated community prerolls library URL from prerolls.typicalnerds.uk to prerolls.uk
+
+### Added
+- **Reddit Community** - Added r/NeXroll subreddit link to footer and README
+
+- **Coexistence Mode** - New setting that allows NeXroll to work alongside other preroll managers (like Preroll Plus)
+  - When enabled, NeXroll only manages prerolls during active schedules
+  - Outside of scheduled times, NeXroll stays hands-off, allowing other preroll managers to control Plex
+  - Found in Settings → NeXroll Settings → Coexistence Mode
+
+- **Clear When Inactive** - New setting to clear prerolls when no schedule is active
+  - When enabled, NeXroll will clear the Plex preroll field outside of scheduled times
+  - No prerolls will play when you don't have an active schedule
+  - Found in Settings → NeXroll Settings → Clear Prerolls When Inactive
+
+- **Daily Calendar View** - New "Day" view option in the calendar
+  - Shows an hourly breakdown of the selected day with all active schedules
+  - Displays schedule conflicts, exclusive schedules, and blend mode at each hour
+  - Click any day in Month view to jump to that day's hourly view
+  - Visual indicators for current hour when viewing today
+  - Night hours (10 PM - 6 AM) are subtly highlighted
+
+
+---
+
 ## [1.9.6] - 12-21-2025
 
 ### Fixed
@@ -843,7 +882,7 @@
 
 ### Added
 - **Community Prerolls Integration**
-  - Access to thousands of community-curated prerolls from prerolls.typicalnerds.uk
+  - Access to thousands of community-curated prerolls from prerolls.uk
   - Smart search engine with synonym expansion (e.g., "turkey" → "thanksgiving")
   - Local index system with unlimited-depth directory scanning (1,327+ prerolls)
   - Dual HTML/JSON parsing for Caddy web server compatibility

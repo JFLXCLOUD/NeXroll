@@ -42,7 +42,7 @@ NeXroll is a preroll manager for Plex and Jellyfin that makes setup effortless. 
 - **Priority & Exclusive Mode** — Control which schedule wins with priority levels (1-10) and exclusive override
 - **Holiday Browser** — Search holidays from 100+ countries and create schedules with one click
 - **Holiday Presets** — 32+ built-in holidays with one-click category and schedule creation
-- **Community Prerolls** — Browse and download from 1,300+ community prerolls at prerolls.typicalnerds.uk
+- **Community Prerolls** — Browse and download from 1,300+ community prerolls at prerolls.uk
 - **Media Server Integration** — Connect to Plex or Jellyfin with status monitoring and quick apply actions
 - **Backup & Restore** — Full database and file backups with one-click restore
 - **Windows Native** — One-click installer with optional Windows Service and System Tray app

@@ -592,6 +592,23 @@ function App() {
   });
   const [mapRootLoading, setMapRootLoading] = useState(false);
   const [mapRootLoadingMsg, setMapRootLoadingMsg] = useState('');
+  const [mapRootProgress, setMapRootProgress] = useState({ found: 0, processed: 0, phase: '' });
+  const [mapRootResult, setMapRootResult] = useState(null); // Stores dry run or import result for inline display
+  const [mapRootCategoryError, setMapRootCategoryError] = useState(false); // Highlight category selector when missing
+  
+  // Folder browser state for Import feature
+  const [showFolderBrowser, setShowFolderBrowser] = useState(false);
+  const [folderBrowserPath, setFolderBrowserPath] = useState('');
+  const [folderBrowserItems, setFolderBrowserItems] = useState([]);
+  const [folderBrowserParent, setFolderBrowserParent] = useState(null);
+  const [folderBrowserLoading, setFolderBrowserLoading] = useState(false);
+  const [folderBrowserVideoCount, setFolderBrowserVideoCount] = useState(0);
+  const [recentImportPaths, setRecentImportPaths] = useState(() => {
+    try {
+      const saved = localStorage.getItem('nexroll_recent_import_paths');
+      return saved ? JSON.parse(saved) : [];
+    } catch { return []; }
+  });
 
   // Timezone settings state
   const [currentTimezone, setCurrentTimezone] = useState('UTC');
@@ -620,6 +637,14 @@ const [applyingToServer, setApplyingToServer] = useState(false);
   const [verboseLogging, setVerboseLogging] = useState(false);
   const [verboseLoggingLoading, setVerboseLoggingLoading] = useState(false);
 
+  // Passive mode (coexistence mode) state
+  const [passiveMode, setPassiveMode] = useState(false);
+  const [passiveModeLoading, setPassiveModeLoading] = useState(false);
+
+  // Clear when inactive state
+  const [clearWhenInactive, setClearWhenInactive] = useState(false);
+  const [clearWhenInactiveLoading, setClearWhenInactiveLoading] = useState(false);
+
   // UI Preferences state (stored in localStorage)
   const [confirmDeletions, setConfirmDeletions] = useState(() => {
     try { return JSON.parse(localStorage.getItem('confirmDeletions') || 'true'); } catch { return true; }
@@ -644,7 +669,7 @@ const [calendarYear, setCalendarYear] = useState(() => {
   const d = new Date();
   return d.getFullYear();
 });
-const [calendarMode, setCalendarMode] = useState('year'); // 'month' | 'week' | 'year' - default to year view
+const [calendarMode, setCalendarMode] = useState('year'); // 'day' | 'month' | 'week' | 'year' - default to year view
 const [calendarMonthView, setCalendarMonthView] = useState('grid'); // 'grid' | 'timeline' - default to grid view
 const [calendarWeekStart, setCalendarWeekStart] = useState(() => {
   const d = new Date();
@@ -652,6 +677,7 @@ const [calendarWeekStart, setCalendarWeekStart] = useState(() => {
   const diff = d.getDate() - day; // Get to Sunday
   return new Date(d.getFullYear(), d.getMonth(), diff);
 });
+const [calendarDay, setCalendarDay] = useState(() => new Date()); // For daily view - which day to show
 
 // Calendar filter state
 const [calendarFilterSchedules, setCalendarFilterSchedules] = useState([]); // Empty = show all, otherwise filter by schedule IDs
@@ -669,30 +695,54 @@ const [holidaysLoading, setHolidaysLoading] = useState(false);
 const [holidayApiStatus, setHolidayApiStatus] = useState(null);
 const [holidaySearchQuery, setHolidaySearchQuery] = useState('');
 
-// Date/time helpers: treat backend datetimes as UTC and format for local display/inputs
-const ensureUtcIso = (s) => {
-  if (!s || typeof s !== 'string') return s;
-  // Check if already has timezone info (Z, +offset, or -offset)
-  // Must check for timezone offset pattern to avoid matching negative years or times
-  const hasTimezone = s.endsWith('Z') || /[+-]\d{2}:\d{2}$/.test(s);
-  return hasTimezone ? s : (s + 'Z');
-};
+// Date/time helpers: treat backend datetimes as naive local times
+// The backend stores dates exactly as entered by the user (no timezone conversion)
+// so we can use them directly without any timezone manipulation
 const toLocalInputValue = (isoOrNaive) => {
   if (!isoOrNaive) return '';
-  const d = new Date(ensureUtcIso(isoOrNaive));
-  const pad = (n) => String(n).padStart(2, '0');
-  const yyyy = d.getFullYear();
-  const mm = pad(d.getMonth() + 1);
-  const dd = pad(d.getDate());
-  const hh = pad(d.getHours());
-  const mi = pad(d.getMinutes());
-  return `${yyyy}-${mm}-${dd}T${hh}:${mi}`;
+  // Handle ISO string - just take the date and time portion (YYYY-MM-DDTHH:MM)
+  // Remove any timezone info if present (shouldn't be with new backend, but be safe)
+  let s = isoOrNaive;
+  if (s.endsWith('Z')) {
+    s = s.slice(0, -1);
+  }
+  // Remove timezone offset like +00:00 or -07:00
+  const offsetMatch = s.match(/[+-]\d{2}:\d{2}$/);
+  if (offsetMatch) {
+    s = s.slice(0, -6);
+  }
+  // Remove seconds if present (datetime-local input doesn't need them)
+  if (s.length > 16 && s[16] === ':') {
+    s = s.slice(0, 16);
+  }
+  return s;
 };
 const toLocalDisplay = (isoOrNaive) => {
   if (!isoOrNaive) return 'N/A';
   try {
-    const d = new Date(ensureUtcIso(isoOrNaive));
-    return d.toLocaleString();
+    // Parse the naive datetime string and display it
+    // Since it's stored as local time, we create a date without timezone conversion
+    let s = isoOrNaive;
+    if (s.endsWith('Z')) {
+      s = s.slice(0, -1);
+    }
+    const offsetMatch = s.match(/[+-]\d{2}:\d{2}$/);
+    if (offsetMatch) {
+      s = s.slice(0, -6);
+    }
+    // Parse as local time by treating the string as a local datetime
+    const [datePart, timePart] = s.split('T');
+    const [year, month, day] = datePart.split('-').map(Number);
+    const [hour, minute] = (timePart || '00:00').split(':').map(Number);
+    const d = new Date(year, month - 1, day, hour, minute);
+    // Format without seconds: "1/1/2026, 7:00 AM"
+    return d.toLocaleString(undefined, {
+      year: 'numeric',
+      month: 'numeric',
+      day: 'numeric',
+      hour: 'numeric',
+      minute: '2-digit'
+    });
   } catch {
     return isoOrNaive;
   }
@@ -706,6 +756,27 @@ const toLocalInputFromDate = (d) => {
   const hh = pad(d.getHours());
   const mi = pad(d.getMinutes());
   return `${yyyy}-${mm}-${dd}T${hh}:${mi}`;
+};
+
+// Parse a naive ISO datetime string into a Date object
+// Since schedules are stored as naive local time, we parse them directly
+// without any timezone conversion
+const parseNaiveDatetime = (isoOrNaive) => {
+  if (!isoOrNaive) return null;
+  // Remove any timezone info if present
+  let s = isoOrNaive;
+  if (s.endsWith('Z')) {
+    s = s.slice(0, -1);
+  }
+  const offsetMatch = s.match(/[+-]\d{2}:\d{2}$/);
+  if (offsetMatch) {
+    s = s.slice(0, -6);
+  }
+  // Parse as local time
+  const [datePart, timePart] = s.split('T');
+  const [year, month, day] = datePart.split('-').map(Number);
+  const [hour, minute] = (timePart || '00:00').split(':').map(Number);
+  return new Date(year, month - 1, day, hour || 0, minute || 0);
 };
 
 // Helper function to check if a schedule is active on a specific day
@@ -789,7 +860,7 @@ const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
     start_date: '',
     end_date: '',
     category_id: '',
-    shuffle: false,
+    shuffle: true,
     playlist: false,
     fallback_category_id: '',
     color: '',
@@ -1946,7 +2017,7 @@ const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
         alert('Schedule created successfully!');
         setScheduleForm({
           name: '', type: 'monthly', start_date: '', end_date: '',
-          category_id: '', shuffle: false, playlist: false, fallback_category_id: '', color: '',
+          category_id: '', shuffle: true, playlist: false, fallback_category_id: '', color: '',
           holiday_name: '', holiday_country: '', blend_enabled: false, priority: 5, exclusive: false
         });
         setScheduleMode('simple');
@@ -2756,7 +2827,7 @@ const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
         setEditingSchedule(null);
         setScheduleForm({
           name: '', type: 'monthly', start_date: '', end_date: '',
-          category_id: '', shuffle: false, playlist: false, fallback_category_id: '', color: '',
+          category_id: '', shuffle: true, playlist: false, fallback_category_id: '', color: '',
           blend_enabled: false, priority: 5, exclusive: false
         });
         setScheduleMode('simple');
@@ -3825,7 +3896,7 @@ const DashboardTiles = {
                 style={{ width: '100%' }}
               />
               {files.length > 0 && (
-                <div style={{ marginTop: '0.5rem', fontSize: '0.9rem', color: '#666' }}>
+                <div style={{ marginTop: '0.5rem', fontSize: '0.9rem', color: 'var(--text-color)' }}>
                   {files.length} file{files.length !== 1 ? 's' : ''} selected
                   <ul style={{ marginTop: '0.25rem', paddingLeft: '1rem' }}>
                     {files.map((file, index) => (
@@ -3879,107 +3950,424 @@ const DashboardTiles = {
 
         {uploadMode === 'import' && (
           <div>
-            <p style={{ marginBottom: '0.5rem', color: 'var(--text-color)' }}>
+            <p style={{ marginBottom: '0.75rem', color: 'var(--text-color)', fontSize: '0.9rem' }}>
               Index files from an existing folder into NeXroll without moving them on disk. These files are marked as external (managed=false).
             </p>
-            <div style={{ display: 'grid', gap: '0.5rem' }}>
-              <input
-                type="text"
-                placeholder="Root path (e.g., C:\\Prerolls or \\\\NAS\\share\\prerolls)"
-                value={mapRootForm.root_path}
-                onChange={(e) => setMapRootForm({ ...mapRootForm, root_path: e.target.value })}
-                disabled={mapRootLoading}
-                style={{ padding: '0.5rem' }}
-              />
+            <div style={{ display: 'grid', gap: '0.75rem' }}>
+              {/* Path input with Browse button */}
+              <div style={{ display: 'flex', gap: '2rem', alignItems: 'center' }}>
+                <div style={{ width: '50%' }}>
+                  <input
+                    type="text"
+                    placeholder="Root path (e.g., C:\\Prerolls or \\\\NAS\\share\\prerolls)"
+                    value={mapRootForm.root_path}
+                    onChange={(e) => setMapRootForm({ ...mapRootForm, root_path: e.target.value })}
+                    disabled={mapRootLoading}
+                    className="nx-input"
+                    style={{ padding: '0.5rem', width: '97%' }}
+                  />
+                </div>
+                {/* Recent paths dropdown - separate element */}
+                {recentImportPaths.length > 0 && !mapRootLoading && (
+                  <select
+                    value=""
+                    onChange={(e) => {
+                      if (e.target.value) {
+                        setMapRootForm({ ...mapRootForm, root_path: e.target.value });
+                      }
+                    }}
+                    className="nx-select"
+                    style={{ 
+                      padding: '0.5rem',
+                      width: '360px',
+                      cursor: 'pointer',
+                      flexShrink: 0
+                    }}
+                    title="Recent paths"
+                  >
+                    <option value="">Recent</option>
+                    {recentImportPaths.map((p, i) => (
+                      <option key={i} value={p}>{p.length > 20 ? '...' + p.slice(-20) : p}</option>
+                    ))}
+                  </select>
+                )}
+                <button 
+                  type="button" 
+                  className="button button-secondary"
+                  onClick={openFolderBrowser}
+                  disabled={mapRootLoading}
+                  title="Browse folders"
+                  style={{ padding: '0.5rem 0.75rem', display: 'flex', alignItems: 'center', gap: '0.25rem' }}
+                >
+                  <FolderOpen size={16} /> Browse
+                </button>
+              </div>
+
+              {/* Category selector */}
               <select
                 value={mapRootForm.category_id}
-                onChange={(e) => setMapRootForm({ ...mapRootForm, category_id: e.target.value })}
+                onChange={(e) => {
+                  setMapRootForm({ ...mapRootForm, category_id: e.target.value });
+                  setMapRootCategoryError(false); // Clear error when user selects
+                  if (mapRootResult?.type === 'error') setMapRootResult(null); // Clear error message
+                }}
                 className="nx-select"
                 disabled={mapRootLoading}
-                style={{ padding: '0.5rem' }}
+                style={{ 
+                  padding: '0.5rem', 
+                  width: '50%',
+                  borderColor: mapRootCategoryError ? '#dc3545' : undefined,
+                  boxShadow: mapRootCategoryError ? '0 0 0 2px rgba(220, 53, 69, 0.25)' : undefined
+                }}
               >
                 <option value="">Select Category</option>
                 {categories.map(cat => (
                   <option key={cat.id} value={cat.id}>{cat.name}</option>
                 ))}
               </select>
+              {mapRootCategoryError && (
+                <div style={{ color: '#dc3545', fontSize: '0.85rem', marginTop: '-0.5rem' }}>
+                  ↑ Please select a category first
+                </div>
+              )}
+
+              {/* Options row */}
               <div style={{ display: 'flex', gap: '1rem', flexWrap: 'wrap' }}>
-                <label style={{ display: 'inline-flex', alignItems: 'center', gap: '0.5rem' }}>
+                <label style={{ display: 'inline-flex', alignItems: 'center', gap: '0.5rem', cursor: 'pointer' }}>
                   <input
                     type="checkbox"
                     checked={!!mapRootForm.recursive}
                     onChange={(e) => setMapRootForm({ ...mapRootForm, recursive: e.target.checked })}
                     disabled={mapRootLoading}
                   />
-                  Recurse subfolders
+                  <span>Recurse subfolders</span>
                 </label>
-                <label style={{ display: 'inline-flex', alignItems: 'center', gap: '0.5rem' }}>
+                <label style={{ display: 'inline-flex', alignItems: 'center', gap: '0.5rem', cursor: 'pointer' }}>
                   <input
                     type="checkbox"
                     checked={!!mapRootForm.generate_thumbnails}
                     onChange={(e) => setMapRootForm({ ...mapRootForm, generate_thumbnails: e.target.checked })}
                     disabled={mapRootLoading}
                   />
-                  Generate thumbnails
+                  <span>Generate thumbnails</span>
                 </label>
               </div>
-              <input
-                type="text"
-                placeholder="Extensions (comma-separated, no dots) e.g., mp4,mkv,avi,mov"
-                value={mapRootForm.extensions}
-                onChange={(e) => setMapRootForm({ ...mapRootForm, extensions: e.target.value })}
-                disabled={mapRootLoading}
-                style={{ padding: '0.5rem' }}
-              />
-              <input
-                type="text"
-                placeholder="Tags (optional, comma-separated)"
-                value={mapRootForm.tags}
-                onChange={(e) => setMapRootForm({ ...mapRootForm, tags: e.target.value })}
-                disabled={mapRootLoading}
-                style={{ padding: '0.5rem' }}
-              />
+
+              {/* Extensions and Tags in a row */}
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '2rem' }}>
+                <input
+                  type="text"
+                  placeholder="Extensions: mp4,mkv,avi,mov"
+                  value={mapRootForm.extensions}
+                  onChange={(e) => setMapRootForm({ ...mapRootForm, extensions: e.target.value })}
+                  disabled={mapRootLoading}
+                  className="nx-input"
+                  style={{ padding: '0.5rem' }}
+                />
+                <input
+                  type="text"
+                  placeholder="Tags (optional, comma-separated)"
+                  value={mapRootForm.tags}
+                  onChange={(e) => setMapRootForm({ ...mapRootForm, tags: e.target.value })}
+                  disabled={mapRootLoading}
+                  className="nx-input"
+                  style={{ padding: '0.5rem', width : '60%' }}
+                />
+              </div>
+
+              {/* Action buttons */}
               <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
-                <button type="button" className="button" onClick={() => submitMapRoot(false)} disabled={mapRootLoading}><FlaskConical size={14} style={{marginRight: '0.35rem'}} /> Dry Run</button>
-                <button type="button" className="button" onClick={() => submitMapRoot(true)} disabled={mapRootLoading} style={{ backgroundColor: '#28a745' }}>
-                  <Download size={14} style={{marginRight: '0.35rem'}} /> Import Now
+                <button 
+                  type="button" 
+                  className="button button-secondary" 
+                  onClick={() => submitMapRoot(false)} 
+                  disabled={mapRootLoading || !mapRootForm.root_path}
+                  style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.35rem' }}
+                >
+                  <FlaskConical size={14} /> Dry Run (Preview)
+                </button>
+                <button 
+                  type="button" 
+                  className="button" 
+                  onClick={() => submitMapRoot(true)} 
+                  disabled={mapRootLoading || !mapRootForm.root_path} 
+                  style={{ flex: 1, backgroundColor: '#28a745', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.35rem' }}
+                >
+                  <Download size={14} /> Import Now
                 </button>
               </div>
+
+              {/* Enhanced Progress indicator */}
               {mapRootLoading && (
-                <div className="nx-map-progress" style={{ marginTop: '0.5rem' }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.25rem' }}>
-                    <span className="nx-spinner" aria-hidden="true"></span>
-                    <span style={{ fontSize: '0.9rem', color: 'var(--text-color)' }}>
-                      {mapRootLoadingMsg || 'Working…'}
-                    </span>
+                <div className="nx-import-progress" style={{ 
+                  marginTop: '0.5rem', 
+                  padding: '1rem', 
+                  background: 'var(--card-bg)', 
+                  borderRadius: '8px',
+                  border: '1px solid var(--border-color)'
+                }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', marginBottom: '0.75rem' }}>
+                    <Loader2 size={20} className="spin" style={{ color: 'var(--button-bg)' }} />
+                    <div>
+                      <div style={{ fontWeight: 600, color: 'var(--text-color)' }}>
+                        {mapRootLoadingMsg || 'Working…'}
+                      </div>
+                      {mapRootProgress.phase && (
+                        <div style={{ fontSize: '0.85rem', color: '#888', marginTop: '0.25rem' }}>
+                          {mapRootProgress.phase}
+                        </div>
+                      )}
+                    </div>
                   </div>
-                  <div className="nx-progress"><div className="bar"></div></div>
+                  <div className="nx-progress" style={{ height: '8px' }}>
+                    <div className="bar"></div>
+                  </div>
+                  <div style={{ fontSize: '0.8rem', color: '#888', marginTop: '0.5rem', textAlign: 'center' }}>
+                    Please wait while files are being scanned and indexed...
+                  </div>
+                </div>
+              )}
+
+              {/* Inline Results Display */}
+              {mapRootResult && !mapRootLoading && (
+                <div style={{ 
+                  marginTop: '0.5rem', 
+                  padding: '1rem', 
+                  background: mapRootResult.type === 'error' ? 'rgba(220, 53, 69, 0.1)' : 
+                              mapRootResult.type === 'dryrun' ? 'var(--card-bg)' : 'rgba(40, 167, 69, 0.1)', 
+                  borderRadius: '8px',
+                  border: `1px solid ${mapRootResult.type === 'error' ? '#dc3545' : 
+                                       mapRootResult.type === 'dryrun' ? 'var(--border-color)' : '#28a745'}`
+                }}>
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: mapRootResult.type === 'error' ? '0' : '0.75rem' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                      {mapRootResult.type === 'error' ? (
+                        <AlertTriangle size={18} style={{ color: '#dc3545' }} />
+                      ) : mapRootResult.type === 'dryrun' ? (
+                        <FlaskConical size={18} style={{ color: 'var(--button-bg)' }} />
+                      ) : (
+                        <CheckCircle size={18} style={{ color: '#28a745' }} />
+                      )}
+                      <span style={{ fontWeight: 600, color: mapRootResult.type === 'error' ? '#dc3545' : 'var(--text-color)' }}>
+                        {mapRootResult.type === 'error' ? mapRootResult.message :
+                         mapRootResult.type === 'dryrun' ? 'Dry Run Results' : 'Import Complete'}
+                      </span>
+                    </div>
+                    <button 
+                      onClick={() => setMapRootResult(null)}
+                      style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#888', padding: '0.25rem' }}
+                      title="Dismiss"
+                    >
+                      <X size={16} />
+                    </button>
+                  </div>
+                  {mapRootResult.type !== 'error' && (
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '0.75rem', textAlign: 'center' }}>
+                    <div style={{ padding: '0.5rem', background: 'var(--bg-color)', borderRadius: '6px' }}>
+                      <div style={{ fontSize: '1.5rem', fontWeight: 700, color: 'var(--button-bg)' }}>
+                        {mapRootResult.found}
+                      </div>
+                      <div style={{ fontSize: '0.8rem', color: '#888' }}>Files Found</div>
+                    </div>
+                    <div style={{ padding: '0.5rem', background: 'var(--bg-color)', borderRadius: '6px' }}>
+                      <div style={{ fontSize: '1.5rem', fontWeight: 700, color: '#888' }}>
+                        {mapRootResult.present}
+                      </div>
+                      <div style={{ fontSize: '0.8rem', color: '#888' }}>Already Present</div>
+                    </div>
+                    <div style={{ padding: '0.5rem', background: 'var(--bg-color)', borderRadius: '6px' }}>
+                      <div style={{ fontSize: '1.5rem', fontWeight: 700, color: '#28a745' }}>
+                        {mapRootResult.type === 'dryrun' ? mapRootResult.toAdd : mapRootResult.added}
+                      </div>
+                      <div style={{ fontSize: '0.8rem', color: '#888' }}>
+                        {mapRootResult.type === 'dryrun' ? 'Would Add' : 'Added'}
+                      </div>
+                    </div>
+                  </div>
+                  )}
+                  {mapRootResult.type === 'dryrun' && mapRootResult.toAdd > 0 && (
+                    <div style={{ marginTop: '0.75rem', textAlign: 'center' }}>
+                      <button 
+                        className="button"
+                        onClick={() => { setMapRootResult(null); submitMapRoot(true); }}
+                        style={{ backgroundColor: '#28a745' }}
+                      >
+                        <Download size={14} style={{ marginRight: '0.35rem' }} />
+                        Import {mapRootResult.toAdd} File{mapRootResult.toAdd !== 1 ? 's' : ''} Now
+                      </button>
+                    </div>
+                  )}
                 </div>
               )}
             </div>
-            <div className="nx-help" style={{ marginTop: '0.75rem', padding: '0.75rem', border: '1px dashed var(--border-color)', borderRadius: '6px', background: 'var(--card-bg)' }}>
-              <h3 style={{ margin: 0, marginBottom: '0.5rem' }}>Docker/NAS guidance</h3>
-              <ul style={{ margin: 0, paddingLeft: '1.25rem' }}>
-                <li>If NeXroll runs in Docker, the container cannot see Windows mapped drives or UNC paths by default. Mount your NAS/host folder into the container and use the container path in "Root path".</li>
-                <li>UNC paths like \\NAS\share aren't usable inside Linux containers. Mount the SMB share on the host (e.g., /mnt/nas) and map it into the container.</li>
-                <li>If Plex runs on Windows, ensure Plex can access the same media folder via a Windows path (e.g., <code>Z:\Prerolls</code> or <code>\\NAS\share\Prerolls</code>). Then add a path mapping from the NeXroll path (e.g., <code>/data/prerolls</code> in Docker or a local/UNC path on Windows) to that Windows path so NeXroll sends Plex a reachable path.</li>
-                <li>Example docker run: <code>docker run -d --name nexroll -p 9393:9393 -v /mnt/nas/prerolls:/nas/prerolls jbrns/nexroll:latest</code> → then use <code>/nas/prerolls</code> as the Root path.</li>
-                <li>docker-compose example:</li>
-              </ul>
-              <pre className="nx-code" style={{ whiteSpace: 'pre-wrap', marginTop: '0.5rem' }}>
-version: "3.8"
-services:
-  nexroll:
-    image: jbrns/nexroll:latest
-    ports:
-      - "9393:9393"
-    volumes:
-      - /mnt/nas/prerolls:/nas/prerolls
-              </pre>
-              <div style={{ fontSize: '0.9rem', color: '#666' }}>
-                Tip: Use the "UNC/Local → Plex Path Mappings" section in Settings to translate your local or container paths (e.g., <code>/nas/prerolls</code> or <code>\\NAS\share\prerolls</code>) into the Plex-visible mount on your Plex host (e.g., <code>/mnt/prerolls</code>).
+
+            {/* Folder Browser Modal */}
+            {showFolderBrowser && (
+              <div className="nx-modal-overlay" onClick={() => setShowFolderBrowser(false)}>
+                <div 
+                  className="nx-modal" 
+                  onClick={(e) => e.stopPropagation()}
+                  style={{ maxWidth: '600px', maxHeight: '80vh', display: 'flex', flexDirection: 'column' }}
+                >
+                  <div className="nx-modal-header" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '1rem', borderBottom: '1px solid var(--border-color)' }}>
+                    <h3 style={{ margin: 0, display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                      <FolderOpen size={20} /> Browse Folders
+                    </h3>
+                    <button 
+                      onClick={() => setShowFolderBrowser(false)} 
+                      style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-color)' }}
+                    >
+                      <X size={20} />
+                    </button>
+                  </div>
+                  
+                  {/* Current path breadcrumb */}
+                  <div style={{ padding: '0.75rem 1rem', background: 'var(--header-bg)', borderBottom: '1px solid var(--border-color)', fontSize: '0.9rem' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                      <span style={{ fontWeight: 500 }}>Path:</span>
+                      <code style={{ 
+                        background: 'var(--bg-color)', 
+                        padding: '0.25rem 0.5rem', 
+                        borderRadius: '4px',
+                        flex: 1,
+                        overflow: 'hidden',
+                        textOverflow: 'ellipsis',
+                        whiteSpace: 'nowrap'
+                      }}>
+                        {folderBrowserPath || '(Select a drive or root)'}
+                      </code>
+                    </div>
+                    {folderBrowserVideoCount > 0 && (
+                      <div style={{ marginTop: '0.5rem', color: '#28a745', fontSize: '0.85rem' }}>
+                        <Film size={14} style={{ verticalAlign: 'middle', marginRight: '0.25rem' }} />
+                        {folderBrowserVideoCount} video file{folderBrowserVideoCount !== 1 ? 's' : ''} in this folder
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Folder list */}
+                  <div style={{ flex: 1, overflow: 'auto', padding: '0.5rem' }}>
+                    {folderBrowserLoading ? (
+                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '2rem', gap: '0.5rem' }}>
+                        <Loader2 size={20} className="spin" />
+                        <span>Loading folders...</span>
+                      </div>
+                    ) : (
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
+                        {/* Go up button */}
+                        {folderBrowserParent !== null && (
+                          <button
+                            onClick={() => browseFolders(folderBrowserParent)}
+                            style={{
+                              display: 'flex',
+                              alignItems: 'center',
+                              gap: '0.5rem',
+                              padding: '0.5rem 0.75rem',
+                              background: 'var(--header-bg)',
+                              border: '1px solid var(--border-color)',
+                              borderRadius: '4px',
+                              cursor: 'pointer',
+                              color: 'var(--text-color)',
+                              textAlign: 'left'
+                            }}
+                          >
+                            <ChevronRight size={16} style={{ transform: 'rotate(180deg)' }} />
+                            <span>..</span>
+                            <span style={{ color: '#888', fontSize: '0.85rem' }}>(Go up)</span>
+                          </button>
+                        )}
+                        
+                        {/* Folder items */}
+                        {folderBrowserItems.map((item, i) => (
+                          <button
+                            key={i}
+                            onClick={() => browseFolders(item.path)}
+                            style={{
+                              display: 'flex',
+                              alignItems: 'center',
+                              gap: '0.5rem',
+                              padding: '0.5rem 0.75rem',
+                              background: 'var(--card-bg)',
+                              border: '1px solid var(--border-color)',
+                              borderRadius: '4px',
+                              cursor: 'pointer',
+                              color: 'var(--text-color)',
+                              textAlign: 'left',
+                              transition: 'background 0.15s'
+                            }}
+                            onMouseEnter={(e) => e.target.style.background = 'var(--header-bg)'}
+                            onMouseLeave={(e) => e.target.style.background = 'var(--card-bg)'}
+                          >
+                            {item.type === 'drive' ? (
+                              <span style={{ fontSize: '1.1rem' }}>💾</span>
+                            ) : (
+                              <Folder size={16} style={{ color: '#f0c000' }} />
+                            )}
+                            <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                              {item.name}
+                            </span>
+                            <ChevronRight size={14} style={{ color: '#888' }} />
+                          </button>
+                        ))}
+                        
+                        {folderBrowserItems.length === 0 && !folderBrowserLoading && (
+                          <div style={{ padding: '1rem', textAlign: 'center', color: '#888' }}>
+                            No subfolders found
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Footer with Select button */}
+                  <div style={{ 
+                    padding: '1rem', 
+                    borderTop: '1px solid var(--border-color)', 
+                    display: 'flex', 
+                    gap: '0.5rem',
+                    justifyContent: 'flex-end'
+                  }}>
+                    <button 
+                      className="button button-secondary"
+                      onClick={() => setShowFolderBrowser(false)}
+                    >
+                      Cancel
+                    </button>
+                    <button 
+                      className="button"
+                      onClick={() => selectFolderFromBrowser(folderBrowserPath)}
+                      disabled={!folderBrowserPath}
+                      style={{ backgroundColor: '#28a745' }}
+                    >
+                      <Check size={14} style={{ marginRight: '0.35rem' }} />
+                      Select This Folder
+                    </button>
+                  </div>
+                </div>
               </div>
-            </div>
+            )}
+
+            {/* Help section - collapsible */}
+            <details style={{ marginTop: '0.75rem' }}>
+              <summary style={{ 
+                cursor: 'pointer', 
+                padding: '0.5rem 0.75rem', 
+                background: 'var(--header-bg)', 
+                borderRadius: '6px',
+                color: 'var(--text-color)',
+                fontSize: '0.9rem',
+                fontWeight: 500
+              }}>
+                💡 Docker/NAS Help & Tips
+              </summary>
+              <div style={{ padding: '0.75rem', border: '1px dashed var(--border-color)', borderTop: 'none', borderRadius: '0 0 6px 6px', background: 'var(--card-bg)' }}>
+                <ul style={{ margin: 0, paddingLeft: '1.25rem', fontSize: '0.9rem' }}>
+                  <li>If NeXroll runs in Docker, the container cannot see Windows mapped drives or UNC paths by default. Mount your NAS/host folder into the container and use the container path in "Root path".</li>
+                  <li style={{ marginTop: '0.5rem' }}>UNC paths like \\NAS\share aren't usable inside Linux containers. Mount the SMB share on the host (e.g., /mnt/nas) and map it into the container.</li>
+                  <li style={{ marginTop: '0.5rem' }}>Example docker run: <code>docker run -d -p 9393:9393 -v /mnt/nas/prerolls:/nas/prerolls jbrns/nexroll:latest</code></li>
+                </ul>
+              </div>
+            </details>
           </div>
         )}
       </div>
@@ -4635,11 +5023,70 @@ services:
   <div className="toolbar-group">
     <label className="control-label">View</label>
     <select className="nx-select" value={calendarMode} onChange={(e) => setCalendarMode(e.target.value)}>
+      <option value="day">Day</option>
       <option value="week">Week</option>
       <option value="month">Month</option>
       <option value="year">Year</option>
     </select>
   </div>
+
+  {calendarMode === 'day' && (
+    <>
+      <div className="toolbar-group">
+        <div className="view-toggle">
+          <button
+            type="button"
+            className="view-btn"
+            onClick={() => { 
+              const prev = new Date(calendarDay);
+              prev.setDate(prev.getDate() - 1);
+              setCalendarDay(prev);
+            }}
+            title="Previous Day"
+            style={{ padding: '0.5rem 1rem', fontWeight: 500 }}
+          >
+            <span className="view-icon">◀</span>
+            Previous
+          </button>
+          <button
+            type="button"
+            className="button"
+            onClick={() => setCalendarDay(new Date())}
+            title="Go to Today"
+            style={{ padding: '0.5rem 1.5rem', fontWeight: 600, minWidth: '120px' }}
+          >
+            Today
+          </button>
+          <button
+            type="button"
+            className="view-btn"
+            onClick={() => { 
+              const next = new Date(calendarDay);
+              next.setDate(next.getDate() + 1);
+              setCalendarDay(next);
+            }}
+            title="Next Day"
+            style={{ padding: '0.5rem 1rem', fontWeight: 500 }}
+          >
+            Next
+            <span className="view-icon">▶</span>
+          </button>
+        </div>
+      </div>
+      <div className="toolbar-group">
+        <input
+          type="date"
+          className="nx-input"
+          value={calendarDay.toISOString().split('T')[0]}
+          onChange={(e) => {
+            const d = new Date(e.target.value + 'T00:00:00');
+            if (!isNaN(d.getTime())) setCalendarDay(d);
+          }}
+          style={{ padding: '0.5rem' }}
+        />
+      </div>
+    </>
+  )}
 
   {calendarMode === 'week' && (
     <>
@@ -4957,7 +5404,12 @@ services:
 }}>
   <button 
     type="button"
-    onClick={() => setCalendarMode('year')}
+    onClick={() => {
+      if (calendarMode === 'day') {
+        setCalendarYear(calendarDay.getFullYear());
+      }
+      setCalendarMode('year');
+    }}
     style={{ 
       background: 'none', 
       border: 'none', 
@@ -4969,14 +5421,20 @@ services:
       transition: 'all 0.2s ease'
     }}
   >
-    {calendarYear}
+    {calendarMode === 'day' ? calendarDay.getFullYear() : calendarYear}
   </button>
-  {(calendarMode === 'month' || calendarMode === 'week') && (
+  {(calendarMode === 'month' || calendarMode === 'week' || calendarMode === 'day') && (
     <>
       <span style={{ color: 'var(--text-muted)' }}>/</span>
       <button 
         type="button"
-        onClick={() => setCalendarMode('month')}
+        onClick={() => {
+          if (calendarMode === 'day') {
+            setCalendarMonth(calendarDay.getMonth() + 1);
+            setCalendarYear(calendarDay.getFullYear());
+          }
+          setCalendarMode('month');
+        }}
         style={{ 
           background: 'none', 
           border: 'none', 
@@ -4988,7 +5446,9 @@ services:
           transition: 'all 0.2s ease'
         }}
       >
-        {new Date(calendarYear, calendarMonth - 1, 1).toLocaleString(undefined, { month: 'long' })}
+        {calendarMode === 'day' 
+          ? calendarDay.toLocaleString(undefined, { month: 'long' })
+          : new Date(calendarYear, calendarMonth - 1, 1).toLocaleString(undefined, { month: 'long' })}
       </button>
     </>
   )}
@@ -5000,9 +5460,433 @@ services:
       </span>
     </>
   )}
+  {calendarMode === 'day' && (
+    <>
+      <span style={{ color: 'var(--text-muted)' }}>/</span>
+      <span style={{ fontWeight: 600, color: 'var(--button-bg)' }}>
+        {calendarDay.toLocaleDateString(undefined, { weekday: 'long', day: 'numeric' })}
+      </span>
+    </>
+  )}
 </div>
 
-  {calendarMode === 'week' ? (() => {
+  {calendarMode === 'day' ? (() => {
+    // Day view with hourly breakdown showing scheduled categories
+    const selectedDay = new Date(calendarDay.getFullYear(), calendarDay.getMonth(), calendarDay.getDate());
+    const dayTime = selectedDay.getTime();
+    const todayTime = new Date(new Date().getFullYear(), new Date().getMonth(), new Date().getDate()).getTime();
+    const isToday = dayTime === todayTime;
+    const currentHour = new Date().getHours();
+    
+    const palette = ['#f94144','#f3722c','#f8961e','#f9844a','#f9c74f','#90be6d','#43aa8b','#577590','#9b5de5','#f15bb5'];
+    const catMap = new Map((categories || []).map((c, idx) => [c.id, { name: c.name, color: palette[idx % palette.length] }]));
+
+    const normalizeDay = (iso) => {
+      if (!iso) return null;
+      const d = parseNaiveDatetime(iso);
+      return d ? new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime() : null;
+    };
+
+    // Get all schedules active on this day
+    const daySchedules = (schedules || [])
+      .filter(s => calendarShowInactive ? true : s.is_active)
+      .filter(s => calendarFilterType === 'all' ? true : s.type === calendarFilterType)
+      .filter(s => calendarFilterSchedules.length === 0 ? true : calendarFilterSchedules.includes(s.id))
+      .filter(s => {
+        if (!s.start_date) return false;
+        return isScheduleActiveOnDay(s, dayTime, normalizeDay);
+      })
+      .map(s => ({
+        ...s,
+        cat: catMap.get(s.category_id) || { name: (s.sequence ? s.name : (s.category?.name || 'Unknown')), color: s.color || (s.category?.color || '#6c757d') }
+      }));
+
+    // Parse time range for a schedule
+    const getTimeRange = (schedule) => {
+      if (!schedule.recurrence_pattern) return { start: 0, end: 24 }; // All day
+      try {
+        const pattern = JSON.parse(schedule.recurrence_pattern);
+        if (pattern.timeRange?.start) {
+          const [startH, startM] = pattern.timeRange.start.split(':').map(Number);
+          const [endH, endM] = (pattern.timeRange.end || '23:59').split(':').map(Number);
+          // Handle overnight ranges (e.g., 22:00 to 03:00)
+          const startDecimal = startH + (startM || 0) / 60;
+          let endDecimal = endH + (endM || 0) / 60;
+          // If end is smaller than start, it wraps to next day - for display, treat as extending to midnight
+          const wrapsOvernight = endDecimal < startDecimal;
+          return { start: startDecimal, end: wrapsOvernight ? 24 : endDecimal, wrapsOvernight, rawEnd: endDecimal };
+        }
+      } catch (e) {}
+      return { start: 0, end: 24 }; // All day
+    };
+
+    // Build hour-by-hour breakdown
+    const hours = [];
+    for (let h = 0; h < 24; h++) {
+      const hourSchedules = daySchedules.filter(s => {
+        const range = getTimeRange(s);
+        // Check if this hour falls within the schedule's time range
+        if (range.start <= h && h < range.end) return true;
+        // For overnight schedules, also check the morning portion (0 to rawEnd)
+        if (range.wrapsOvernight && h < range.rawEnd) return true;
+        return false;
+      });
+      
+      // Determine winner for this hour (same logic as week view)
+      const contentScheds = hourSchedules.filter(s => s.category_id || s.sequence);
+      const exclusiveScheds = contentScheds.filter(s => s.exclusive);
+      const hasExclusive = exclusiveScheds.length > 0;
+      const blendScheds = contentScheds.filter(s => s.blend_enabled && !s.exclusive);
+      const hasBlend = blendScheds.length > 1;
+      const hasConflict = contentScheds.length > 1;
+      
+      let winner = null;
+      if (contentScheds.length > 0) {
+        if (hasExclusive) {
+          // Exclusive schedule wins
+          const sorted = [...exclusiveScheds].sort((a, b) => (b.priority ?? 5) - (a.priority ?? 5));
+          winner = sorted[0];
+        } else if (hasBlend) {
+          winner = 'blend';
+        } else {
+          const sorted = [...contentScheds].sort((a, b) => {
+            const priorityA = a.priority ?? 5;
+            const priorityB = b.priority ?? 5;
+            if (priorityA !== priorityB) return priorityB - priorityA;
+            const endA = a.end_date ? new Date(a.end_date).getTime() : Number.MAX_SAFE_INTEGER;
+            const endB = b.end_date ? new Date(b.end_date).getTime() : Number.MAX_SAFE_INTEGER;
+            if (endA !== endB) return endA - endB;
+            return a.id - b.id;
+          });
+          winner = sorted[0];
+        }
+      }
+      
+      hours.push({
+        hour: h,
+        schedules: hourSchedules,
+        contentScheds,
+        winner,
+        hasConflict,
+        hasBlend,
+        hasExclusive
+      });
+    }
+
+    // Format hour for display
+    const formatHour = (h) => {
+      if (h === 0) return '12 AM';
+      if (h === 12) return '12 PM';
+      if (h < 12) return `${h} AM`;
+      return `${h - 12} PM`;
+    };
+
+    // Check if any conflicts exist
+    const hasAnyConflicts = hours.some(h => h.hasConflict && !h.hasBlend && !h.hasExclusive);
+    const hasAnyBlends = hours.some(h => h.hasBlend);
+    const hasAnyExclusives = hours.some(h => h.hasExclusive);
+
+    return (
+      <div className="card" style={{ padding: '1.5rem' }}>
+        <div style={{ 
+          display: 'flex', 
+          justifyContent: 'space-between', 
+          alignItems: 'center',
+          marginBottom: '1.5rem',
+          flexWrap: 'wrap',
+          gap: '8px'
+        }}>
+          <h2 style={{ 
+            margin: 0,
+            fontSize: '1.8rem',
+            fontWeight: 600,
+            color: 'var(--text-color)',
+            display: 'flex',
+            alignItems: 'center',
+            gap: '12px'
+          }}>
+            {calendarDay.toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' })}
+            {isToday && (
+              <span style={{
+                fontSize: '0.75rem',
+                padding: '4px 10px',
+                backgroundColor: 'var(--button-bg)',
+                color: '#fff',
+                borderRadius: '12px',
+                fontWeight: 600
+              }}>
+                TODAY
+              </span>
+            )}
+          </h2>
+          
+          <div style={{ display: 'flex', gap: '8px' }}>
+            {hasAnyBlends && (
+              <div style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: '8px',
+                padding: '8px 12px',
+                backgroundColor: 'rgba(139, 92, 246, 0.15)',
+                border: '1px solid rgba(139, 92, 246, 0.5)',
+                borderRadius: '8px',
+                color: '#8b5cf6'
+              }}>
+                <Shuffle size={16} />
+                <span style={{ fontSize: '0.85rem', fontWeight: 600 }}>Blend Mode</span>
+              </div>
+            )}
+            {hasAnyExclusives && (
+              <div style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: '8px',
+                padding: '8px 12px',
+                backgroundColor: 'rgba(20, 184, 166, 0.15)',
+                border: '1px solid rgba(20, 184, 166, 0.5)',
+                borderRadius: '8px',
+                color: '#14B8A6'
+              }}>
+                <Lock size={16} />
+                <span style={{ fontSize: '0.85rem', fontWeight: 600 }}>Exclusive Schedule</span>
+              </div>
+            )}
+            {hasAnyConflicts && (
+              <div style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: '8px',
+                padding: '8px 12px',
+                backgroundColor: 'rgba(255, 152, 0, 0.15)',
+                border: '1px solid rgba(255, 152, 0, 0.5)',
+                borderRadius: '8px',
+                color: '#ff9800'
+              }}>
+                <AlertTriangle size={16} />
+                <span style={{ fontSize: '0.85rem', fontWeight: 600 }}>Conflicts</span>
+              </div>
+            )}
+          </div>
+        </div>
+        
+        {/* Summary of active schedules */}
+        {daySchedules.length > 0 && (
+          <div style={{
+            marginBottom: '1.5rem',
+            padding: '12px 16px',
+            backgroundColor: darkMode ? 'rgba(255,255,255,0.03)' : 'rgba(0,0,0,0.02)',
+            borderRadius: '8px'
+          }}>
+            <div style={{ fontSize: '0.85rem', fontWeight: 600, marginBottom: '8px', color: 'var(--text-color)' }}>
+              Active Schedules ({daySchedules.length})
+            </div>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
+              {daySchedules.map((sched, idx) => {
+                const range = getTimeRange(sched);
+                const isAllDay = range.start === 0 && range.end === 24;
+                const timeStr = isAllDay ? 'All Day' : `${formatHour(Math.floor(range.start))} - ${range.wrapsOvernight ? formatHour(Math.floor(range.rawEnd)) + ' (next day)' : formatHour(Math.floor(range.end))}`;
+                return (
+                  <div key={idx} style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '6px',
+                    padding: '6px 10px',
+                    backgroundColor: sched.color || sched.cat.color,
+                    borderRadius: '6px',
+                    color: '#fff',
+                    fontSize: '0.8rem',
+                    fontWeight: 500
+                  }}>
+                    {sched.exclusive && <Lock size={12} />}
+                    {sched.blend_enabled && !sched.exclusive && <Shuffle size={12} />}
+                    <span>{sched.name}</span>
+                    <span style={{ opacity: 0.8, fontSize: '0.75rem' }}>({timeStr})</span>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
+
+        {/* Hourly timeline */}
+        <div style={{ 
+          display: 'flex',
+          flexDirection: 'column',
+          gap: '2px',
+          border: '1px solid var(--border-color)',
+          borderRadius: '8px',
+          overflow: 'hidden'
+        }}>
+          {hours.map((hourData, idx) => {
+            const isCurrentHour = isToday && hourData.hour === currentHour;
+            const hasSchedules = hourData.contentScheds.length > 0;
+            
+            return (
+              <div 
+                key={idx}
+                style={{
+                  display: 'grid',
+                  gridTemplateColumns: '80px 1fr',
+                  minHeight: '48px',
+                  borderBottom: idx < 23 ? '1px solid var(--border-color)' : 'none',
+                  backgroundColor: isCurrentHour 
+                    ? 'rgba(59, 130, 246, 0.1)' 
+                    : (hourData.hour >= 6 && hourData.hour < 22) 
+                      ? 'transparent' 
+                      : (darkMode ? 'rgba(0,0,0,0.2)' : 'rgba(0,0,0,0.03)')
+                }}
+              >
+                {/* Hour label */}
+                <div style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  padding: '8px',
+                  fontWeight: isCurrentHour ? 700 : 500,
+                  fontSize: '0.85rem',
+                  color: isCurrentHour ? 'var(--button-bg)' : 'var(--text-secondary)',
+                  borderRight: '1px solid var(--border-color)',
+                  backgroundColor: isCurrentHour ? 'rgba(59, 130, 246, 0.15)' : 'transparent'
+                }}>
+                  {formatHour(hourData.hour)}
+                  {isCurrentHour && <span style={{ marginLeft: '4px', color: 'var(--button-bg)' }}>●</span>}
+                </div>
+                
+                {/* Schedule blocks for this hour */}
+                <div style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  padding: '4px 8px',
+                  gap: '6px',
+                  flexWrap: 'wrap'
+                }}>
+                  {!hasSchedules && (
+                    <span style={{ 
+                      fontSize: '0.8rem', 
+                      color: 'var(--text-muted)',
+                      fontStyle: 'italic'
+                    }}>
+                      No scheduled prerolls
+                    </span>
+                  )}
+                  {hourData.contentScheds.map((sched, sIdx) => {
+                    const isWinner = hourData.winner === sched || (hourData.hasBlend && sched.blend_enabled);
+                    const isExclusive = sched.exclusive;
+                    const isBlending = hourData.hasBlend && sched.blend_enabled;
+                    const isLoser = hourData.hasConflict && !isWinner && !isBlending && !isExclusive;
+                    
+                    // Get category/sequence info
+                    const categoryName = sched.category_id 
+                      ? (categories.find(c => c.id === sched.category_id)?.name || 'Unknown')
+                      : (sched.sequence ? 'Sequence' : 'Unknown');
+                    
+                    return (
+                      <div 
+                        key={sIdx}
+                        title={`${sched.name}\nCategory: ${categoryName}\nType: ${sched.type}${isExclusive ? '\n🔒 Exclusive - overrides other schedules' : ''}${isBlending ? '\n🔀 Blending with other schedules' : ''}${isLoser ? '\n⚠️ Overridden by higher priority schedule' : ''}`}
+                        style={{
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: '6px',
+                          padding: '6px 12px',
+                          backgroundColor: sched.color || sched.cat.color,
+                          borderRadius: '6px',
+                          color: '#fff',
+                          fontSize: '0.8rem',
+                          fontWeight: 500,
+                          opacity: isLoser ? 0.5 : 1,
+                          textDecoration: isLoser ? 'line-through' : 'none',
+                          border: isExclusive 
+                            ? '2px solid rgba(20, 184, 166, 0.8)' 
+                            : isWinner && hourData.hasConflict && !isBlending
+                              ? '2px solid rgba(255, 215, 0, 0.8)'
+                              : isBlending
+                                ? '2px solid rgba(139, 92, 246, 0.8)'
+                                : 'none',
+                          boxShadow: isExclusive 
+                            ? '0 0 8px rgba(20, 184, 166, 0.4)' 
+                            : isWinner && hourData.hasConflict 
+                              ? '0 0 8px rgba(255, 215, 0, 0.4)'
+                              : 'none'
+                        }}
+                      >
+                        {isExclusive && <Lock size={12} />}
+                        {isWinner && hourData.hasConflict && !isExclusive && !isBlending && <Crown size={12} />}
+                        {isBlending && <Shuffle size={12} />}
+                        {isLoser && <AlertTriangle size={12} />}
+                        <span>{sched.name}</span>
+                        <span style={{ 
+                          opacity: 0.8, 
+                          fontSize: '0.7rem',
+                          padding: '2px 6px',
+                          backgroundColor: 'rgba(0,0,0,0.2)',
+                          borderRadius: '4px'
+                        }}>
+                          {categoryName}
+                        </span>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+
+        {/* Legend */}
+        <div style={{ 
+          marginTop: '1rem',
+          padding: '12px',
+          backgroundColor: darkMode ? 'rgba(255,255,255,0.03)' : 'rgba(0,0,0,0.02)',
+          borderRadius: '8px',
+          fontSize: '0.8rem',
+          color: 'var(--text-muted)'
+        }}>
+          <div style={{ fontWeight: 600, marginBottom: '8px', color: 'var(--text-color)' }}>Legend:</div>
+          <div style={{ display: 'flex', gap: '16px', flexWrap: 'wrap' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+              <Lock size={14} style={{ color: '#14B8A6' }} />
+              <span>Exclusive (overrides all)</span>
+            </div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+              <Crown size={14} style={{ color: '#ffd700' }} />
+              <span>Winner (highest priority)</span>
+            </div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+              <Shuffle size={14} style={{ color: '#8b5cf6' }} />
+              <span>Blending</span>
+            </div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+              <span style={{ opacity: 0.5, textDecoration: 'line-through' }}>⚠️ Overridden</span>
+            </div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+              <div style={{ 
+                width: '20px', 
+                height: '20px', 
+                backgroundColor: darkMode ? 'rgba(0,0,0,0.2)' : 'rgba(0,0,0,0.03)',
+                borderRadius: '4px'
+              }} />
+              <span>Night hours (10 PM - 6 AM)</span>
+            </div>
+          </div>
+        </div>
+        
+        {daySchedules.length === 0 && (
+          <div style={{
+            textAlign: 'center',
+            padding: '3rem',
+            color: 'var(--text-muted)'
+          }}>
+            <Calendar size={48} style={{ opacity: 0.3, marginBottom: '1rem' }} />
+            <div style={{ fontSize: '1.1rem', fontWeight: 500 }}>No schedules active on this day</div>
+            <div style={{ fontSize: '0.9rem', marginTop: '0.5rem' }}>
+              Create a schedule in the Schedules tab to see it here
+            </div>
+          </div>
+        )}
+      </div>
+    );
+  })() : calendarMode === 'week' ? (() => {
     // Week view with continuous schedule bars
     const days = [];
     for (let i = 0; i < 7; i++) {
@@ -5016,8 +5900,8 @@ services:
 
     const normalizeDay = (iso) => {
       if (!iso) return null;
-      const d = new Date(ensureUtcIso(iso));
-      return new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
+      const d = parseNaiveDatetime(iso);
+      return d ? new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime() : null;
     };
 
     const scheds = (schedules || [])
@@ -5568,8 +6452,8 @@ services:
 
     const normalizeDay = (iso) => {
       if (!iso) return null;
-      const d = new Date(ensureUtcIso(iso));
-      return new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
+      const d = parseNaiveDatetime(iso);
+      return d ? new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime() : null;
     };
 
     const scheds = (schedules || [])
@@ -5716,8 +6600,8 @@ services:
 
     const normalizeDay = (iso) => {
       if (!iso) return null;
-      const d = new Date(ensureUtcIso(iso));
-      return new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
+      const d = parseNaiveDatetime(iso);
+      return d ? new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime() : null;
     };
 
     // Filter schedules based on calendar filter settings
@@ -6179,13 +7063,9 @@ services:
               }}
               onClick={() => {
                 if (inMonth && !isFilteredOut) {
-                  // Calculate the start of the week (Sunday) for this day
-                  const clickedDate = new Date(d);
-                  const dayOfWeek = clickedDate.getDay();
-                  const weekStart = new Date(clickedDate);
-                  weekStart.setDate(clickedDate.getDate() - dayOfWeek);
-                  setCalendarWeekStart(weekStart);
-                  setCalendarMode('week');
+                  // Navigate to day view for the clicked date
+                  setCalendarDay(new Date(d));
+                  setCalendarMode('day');
                 }
               }}
               onMouseEnter={(e) => {
@@ -6546,8 +7426,8 @@ services:
     const counts = Array.from({ length: 12 }, (_, m) => ({ month: m, cats: new Map(), conflictDays: 0, uniqueScheduledDays: 0 }));
     const normalizeDay = (iso) => {
       if (!iso) return null;
-      const d = new Date(ensureUtcIso(iso));
-      return new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
+      const d = parseNaiveDatetime(iso);
+      return d ? new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime() : null;
     };
     
     // Iterate through each day of the year using proper date construction
@@ -7953,7 +8833,7 @@ services:
               onClick={() => {
                 setScheduleForm({
                   name: '', type: 'monthly', start_date: '', end_date: '',
-                  category_id: '', shuffle: false, playlist: false, fallback_category_id: ''
+                  category_id: '', shuffle: true, playlist: false, fallback_category_id: ''
                 });
                 setScheduleMode('simple');
                 setSequenceBlocks([]);
@@ -10858,6 +11738,66 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
     }
   };
 
+  const loadPassiveMode = React.useCallback(async () => {
+    try {
+      const res = await fetch(apiUrl('/settings/passive-mode'));
+      const data = await safeJson(res);
+      if (data && typeof data === 'object') {
+        setPassiveMode(data.passive_mode || false);
+      }
+    } catch (err) {
+      console.error('Load passive mode error:', err);
+    }
+  }, []);
+
+  const updatePassiveMode = async (enabled) => {
+    setPassiveModeLoading(true);
+    try {
+      const res = await fetch(apiUrl('/settings/passive-mode?passive_mode=' + enabled), {
+        method: 'PUT'
+      });
+      if (!res.ok) {
+        throw new Error(`HTTP ${res.status}`);
+      }
+      setPassiveMode(enabled);
+      alert(`Coexistence mode ${enabled ? 'enabled' : 'disabled'}. ${enabled ? 'NeXroll will only manage prerolls during active schedules.' : 'NeXroll will manage prerolls at all times.'}`);
+    } catch (err) {
+      alert('Failed to update coexistence mode: ' + (err?.message || err));
+    } finally {
+      setPassiveModeLoading(false);
+    }
+  };
+
+  const loadClearWhenInactive = React.useCallback(async () => {
+    try {
+      const res = await fetch(apiUrl('/settings/clear-when-inactive'));
+      const data = await safeJson(res);
+      if (data && typeof data === 'object') {
+        setClearWhenInactive(data.clear_when_inactive || false);
+      }
+    } catch (err) {
+      console.error('Load clear-when-inactive error:', err);
+    }
+  }, []);
+
+  const updateClearWhenInactive = async (enabled) => {
+    setClearWhenInactiveLoading(true);
+    try {
+      const res = await fetch(apiUrl('/settings/clear-when-inactive?clear_when_inactive=' + enabled), {
+        method: 'PUT'
+      });
+      if (!res.ok) {
+        throw new Error(`HTTP ${res.status}`);
+      }
+      setClearWhenInactive(enabled);
+      alert(`Clear when inactive ${enabled ? 'enabled' : 'disabled'}. ${enabled ? 'Prerolls will be cleared from Plex when no schedule is active.' : 'Prerolls will remain in Plex when no schedule is active.'}`);
+    } catch (err) {
+      alert('Failed to update clear when inactive: ' + (err?.message || err));
+    } finally {
+      setClearWhenInactiveLoading(false);
+    }
+  };
+
   const cancelEditGenreMap = () => {
     setGmEditing(null);
     setGmForm({ genre: '', category_id: '' });
@@ -11005,11 +11945,66 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
     }
   };
 
+  // Folder browser functions for Import feature
+  const browseFolders = async (path = '') => {
+    setFolderBrowserLoading(true);
+    try {
+      const res = await fetch(apiUrl('/browse-folders'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ path })
+      });
+      if (!res.ok) {
+        const text = await res.text();
+        let detail = text;
+        try { detail = JSON.parse(text).detail || text; } catch {}
+        throw new Error(detail);
+      }
+      const data = await res.json();
+      setFolderBrowserPath(data.path || '');
+      setFolderBrowserItems(data.folders || []);
+      setFolderBrowserParent(data.parent);
+      setFolderBrowserVideoCount(data.video_count || 0);
+    } catch (e) {
+      alert('Error browsing folders: ' + (e.message || e));
+    } finally {
+      setFolderBrowserLoading(false);
+    }
+  };
+
+  const openFolderBrowser = () => {
+    setShowFolderBrowser(true);
+    browseFolders(mapRootForm.root_path || '');
+  };
+
+  const selectFolderFromBrowser = (folderPath) => {
+    setMapRootForm(prev => ({ ...prev, root_path: folderPath }));
+    setShowFolderBrowser(false);
+    // Save to recent paths
+    const newRecent = [folderPath, ...recentImportPaths.filter(p => p !== folderPath)].slice(0, 5);
+    setRecentImportPaths(newRecent);
+    try { localStorage.setItem('nexroll_recent_import_paths', JSON.stringify(newRecent)); } catch {}
+  };
+
+  const saveRecentImportPath = (path) => {
+    if (!path) return;
+    const newRecent = [path, ...recentImportPaths.filter(p => p !== path)].slice(0, 5);
+    setRecentImportPaths(newRecent);
+    try { localStorage.setItem('nexroll_recent_import_paths', JSON.stringify(newRecent)); } catch {}
+  };
+
   const submitMapRoot = async (applyNow) => {
     const root = (mapRootForm.root_path || '').trim();
-    if (!root) { alert('Enter a root path'); return; }
+    if (!root) {
+      setMapRootResult({ type: 'error', message: 'Please enter a root path to import from.' });
+      return;
+    }
     const cid = parseInt(mapRootForm.category_id, 10);
-    if (!cid || isNaN(cid)) { alert('Select a category'); return; }
+    if (!cid || isNaN(cid)) {
+      setMapRootCategoryError(true); // Highlight the category selector
+      setMapRootResult({ type: 'error', message: 'Please select a category before performing a dry run or import.' });
+      return;
+    }
 
     const payload = {
       root_path: root,
@@ -11031,6 +12026,7 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
 
     setMapRootLoading(true);
     setMapRootLoadingMsg(applyNow ? 'Mapping files… This may take a moment.' : 'Scanning files (dry run)…');
+    setMapRootResult(null); // Clear previous results
 
     try {
       const res = await fetch('/prerolls/map-root', {
@@ -11048,20 +12044,32 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
       // Summarize counts based on backend response shape
       // Dry run: { total_found, already_present, to_add }
       // Apply:   { total_found, already_present, added, added_details[] }
-      let message = '';
       if (data && data.dry_run) {
         const found = Number(data.total_found ?? 0);
         const present = Number(data.already_present ?? 0);
         const toAdd = Number(data.to_add ?? Math.max(0, found - present));
-        message = `Dry run complete.\nFound: ${found}\nAlready present: ${present}\nWould add: ${toAdd}`;
+        // Show dry run results inline instead of alert
+        setMapRootResult({
+          type: 'dryrun',
+          found,
+          present,
+          toAdd
+        });
       } else {
         const added = Number(data.added ?? (Array.isArray(data.added_details) ? data.added_details.length : 0));
         const found = Number(data.total_found ?? 0);
         const present = Number(data.already_present ?? 0);
-        message = `Mapping complete.\nAdded: ${added}\nTotal found: ${found}\nAlready present: ${present}`;
+        // Show import results inline
+        setMapRootResult({
+          type: 'import',
+          added,
+          found,
+          present
+        });
       }
-      alert(message);
       if (applyNow) {
+        // Save to recent paths on successful import
+        saveRecentImportPath(root);
         setMapRootForm(prev => ({ ...prev, dry_run: true }));
         fetchData();
       }
@@ -11070,6 +12078,7 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
     } finally {
       setMapRootLoading(false);
       setMapRootLoadingMsg('');
+      setMapRootProgress({ found: 0, processed: 0, phase: '' });
     }
   };
 
@@ -11081,9 +12090,9 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
   // Auto-load genre mappings and settings when opening Settings tab
   React.useEffect(() => {
     if (activeTab === 'settings') {
-      try { loadGenreMaps(); loadGenreSettings(); loadVerboseLogging(); } catch {}
+      try { loadGenreMaps(); loadGenreSettings(); loadVerboseLogging(); loadPassiveMode(); loadClearWhenInactive(); } catch {}
     }
-  }, [activeTab, loadGenreMaps, loadGenreSettings, loadVerboseLogging]);
+  }, [activeTab, loadGenreMaps, loadGenreSettings, loadVerboseLogging, loadPassiveMode, loadClearWhenInactive]);
 
   const renderSettings = () => (
     <div>
@@ -11233,6 +12242,85 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
             <div style={{ marginTop: '0.75rem', padding: '0.75rem', backgroundColor: 'var(--card-bg)', border: '1px solid var(--border-color)', borderRadius: '4px' }}>
               <p style={{ margin: 0, fontSize: '0.9rem', color: '#4CAF50' }}>
                 ✓ Verbose logging is active. Check the console (F12) and application logs for detailed information.
+              </p>
+            </div>
+          )}
+        </div>
+
+        {/* Coexistence Mode (Passive Mode) */}
+        <div style={{ marginTop: '1.5rem' }}>
+          <h3 style={{ marginBottom: '0.75rem' }}>Coexistence Mode</h3>
+          <p style={{ marginBottom: '1rem', color: '#888', fontSize: '0.9rem' }}>
+            Enable this if you use another preroll manager (like Preroll Plus) alongside NeXroll. When enabled, NeXroll will <strong>only</strong> manage prerolls during active schedules and stay hands-off at all other times, allowing your other preroll manager to control prerolls outside scheduled times.
+          </p>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+            <label className="nx-rockerswitch">
+              <input
+                type="checkbox"
+                checked={passiveMode}
+                onChange={(e) => updatePassiveMode(e.target.checked)}
+                disabled={passiveModeLoading}
+              />
+              <span className="nx-rockerswitch-slider"></span>
+            </label>
+            <span style={{ fontWeight: 'bold', color: 'var(--text-color)' }}>
+              {passiveMode ? 'Coexistence Mode Enabled' : 'Coexistence Mode Disabled'}
+            </span>
+          </div>
+          {passiveMode && (
+            <div style={{ marginTop: '0.75rem', padding: '0.75rem', backgroundColor: 'var(--card-bg)', border: '1px solid #2196F3', borderRadius: '4px' }}>
+              <p style={{ margin: 0, fontSize: '0.9rem', color: '#2196F3' }}>
+                ✓ Coexistence mode is active. NeXroll will only apply prerolls during active schedules. Outside of scheduled times, your other preroll manager can control Plex's preroll settings.
+              </p>
+            </div>
+          )}
+          {!passiveMode && (
+            <div style={{ marginTop: '0.75rem', padding: '0.75rem', backgroundColor: 'var(--card-bg)', border: '1px solid var(--border-color)', borderRadius: '4px' }}>
+              <p style={{ margin: 0, fontSize: '0.9rem', color: '#888' }}>
+                ℹ️ Standard mode: NeXroll manages prerolls at all times, including applying fallback categories when no schedules are active.
+              </p>
+            </div>
+          )}
+        </div>
+
+        {/* Clear When Inactive */}
+        <div style={{ marginTop: '1.5rem' }}>
+          <h3 style={{ marginBottom: '0.75rem' }}>Clear Prerolls When Inactive</h3>
+          <p style={{ marginBottom: '1rem', color: '#888', fontSize: '0.9rem' }}>
+            When enabled, NeXroll will <strong>clear</strong> the Plex preroll field when no schedules are active. This means no prerolls will play outside of your scheduled times.
+          </p>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+            <label className="nx-rockerswitch">
+              <input
+                type="checkbox"
+                checked={clearWhenInactive}
+                onChange={(e) => updateClearWhenInactive(e.target.checked)}
+                disabled={clearWhenInactiveLoading || passiveMode}
+              />
+              <span className="nx-rockerswitch-slider"></span>
+            </label>
+            <span style={{ fontWeight: 'bold', color: 'var(--text-color)' }}>
+              {clearWhenInactive ? 'Clear When Inactive Enabled' : 'Clear When Inactive Disabled'}
+            </span>
+          </div>
+          {passiveMode && (
+            <div style={{ marginTop: '0.75rem', padding: '0.75rem', backgroundColor: 'var(--card-bg)', border: '1px solid #ff9800', borderRadius: '4px' }}>
+              <p style={{ margin: 0, fontSize: '0.9rem', color: '#ff9800' }}>
+                ⚠️ This setting is disabled while Coexistence Mode is active. Coexistence Mode already keeps NeXroll hands-off outside of schedules.
+              </p>
+            </div>
+          )}
+          {!passiveMode && clearWhenInactive && (
+            <div style={{ marginTop: '0.75rem', padding: '0.75rem', backgroundColor: 'var(--card-bg)', border: '1px solid #2196F3', borderRadius: '4px' }}>
+              <p style={{ margin: 0, fontSize: '0.9rem', color: '#2196F3' }}>
+                ✓ Prerolls will be cleared from Plex when no schedules are active. Movies will play without any preroll outside of scheduled times.
+              </p>
+            </div>
+          )}
+          {!passiveMode && !clearWhenInactive && (
+            <div style={{ marginTop: '0.75rem', padding: '0.75rem', backgroundColor: 'var(--card-bg)', border: '1px solid var(--border-color)', borderRadius: '4px' }}>
+              <p style={{ margin: 0, fontSize: '0.9rem', color: '#888' }}>
+                ℹ️ Prerolls will remain in Plex when no schedules are active (either using a fallback category or leaving the current preroll unchanged).
               </p>
             </div>
           )}
@@ -14316,14 +15404,6 @@ C:\\\\Media\\\\Prerolls\\\\summer\\\\beach.mp4`}
           </a>
         </div>
       </div>
-      
-      {/* Mobile menu overlay */}
-      {mobileMenuOpen && (
-        <div 
-          className="mobile-menu-overlay" 
-          onClick={() => setMobileMenuOpen(false)}
-        />
-      )}
 
       {showUpdateBanner && updateInfo && (
         <div
@@ -15308,6 +16388,16 @@ C:\\\\Media\\\\Prerolls\\\\summer\\\\beach.mp4`}
             >
               Ko‑fi
             </a>
+            <span className="nx-footer-sep" aria-hidden="true" style={{ color: 'var(--text-muted, #999)' }}>•</span>
+            <a
+              href="https://www.reddit.com/r/NeXroll/"
+              target="_blank"
+              rel="noopener noreferrer"
+              title="Join our subreddit"
+              style={{ color: 'var(--text-secondary, #666)', textDecoration: 'none' }}
+            >
+              Reddit
+            </a>
           </div>
         </div>
       </footer>
@@ -15320,7 +16410,7 @@ C:\\\\Media\\\\Prerolls\\\\summer\\\\beach.mp4`}
             setEditingSchedule(null);
             setScheduleForm({
               name: '', type: 'monthly', start_date: '', end_date: '',
-              category_id: '', shuffle: false, playlist: false, fallback_category_id: ''
+              category_id: '', shuffle: true, playlist: false, fallback_category_id: ''
             });
             setScheduleMode('simple');
             setSequenceBlocks([]);
@@ -15745,7 +16835,7 @@ C:\\\\Media\\\\Prerolls\\\\summer\\\\beach.mp4`}
                   setEditingSchedule(null);
                   setScheduleForm({
                     name: '', type: 'monthly', start_date: '', end_date: '',
-                    category_id: '', shuffle: false, playlist: false, fallback_category_id: '', color: ''
+                    category_id: '', shuffle: true, playlist: false, fallback_category_id: '', color: ''
                   });
                   setScheduleMode('simple');
                   setSequenceBlocks([]);

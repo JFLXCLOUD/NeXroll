@@ -424,7 +424,8 @@ class Scheduler:
             if priority_mode == "schedules_override":
                 # Check if any schedule is currently active
                 schedules = db.query(models.Schedule).filter(models.Schedule.is_active == True).all()
-                now = datetime.datetime.utcnow()
+                # Use local time for comparisons since schedules are stored as naive local datetimes
+                now = datetime.datetime.now()
                 active_schedules = [s for s in schedules if self._is_schedule_active(s, now)]
                 if active_schedules:
                     _scheduler_log(f"Skipping genre mapping for ratingKey={chosen_key} due to active schedule (priority mode: {priority_mode})")
@@ -478,7 +479,8 @@ class Scheduler:
         """Evaluate schedules, apply active category to Plex, and handle fallback when idle."""
         db = SessionLocal()
         try:
-            now = datetime.datetime.utcnow()
+            # Use local time for comparisons since schedules are stored as naive local datetimes
+            now = datetime.datetime.now()
             schedules = db.query(models.Schedule).filter(models.Schedule.is_active == True).all()
 
             # Determine active schedules (window-aware)
@@ -491,6 +493,17 @@ class Scheduler:
                 db.add(setting)
                 db.commit()
                 db.refresh(setting)
+
+            # Check passive mode (coexistence mode) - if enabled and no active schedules, skip all preroll management
+            # This allows other preroll managers (like Preroll Plus) to control prerolls outside scheduled times
+            passive_mode = getattr(setting, "passive_mode", False)
+            if passive_mode and not active:
+                state_key = "passive_mode_idle"
+                if self._last_logged_state != state_key:
+                    _scheduler_log(f"Passive mode enabled - no active schedules, skipping preroll management (allowing other preroll managers to control)")
+                    self._last_logged_state = state_key
+                    self._last_logged_time = now
+                return  # Exit early - don't apply prerolls or fallback
 
             # Respect temporary override window set by genre-apply (prevents immediate scheduler override)
             try:
@@ -630,21 +643,37 @@ class Scheduler:
                         self._last_logged_state = state_key
                         self._last_logged_time = now
             else:
-                # No active schedules -> use fallback from most recently active schedule
-                stored_fallback = getattr(setting, "last_schedule_fallback", None)
-                if stored_fallback:
-                    desired_category_id = stored_fallback
-                    state_key = f"fallback:{desired_category_id}"
+                # No active schedules -> check clear_when_inactive setting first
+                clear_when_inactive = getattr(setting, "clear_when_inactive", False)
+                if clear_when_inactive:
+                    # Clear prerolls when no schedule is active
+                    state_key = "clearing_inactive"
                     if self._last_logged_state != state_key:
-                        _scheduler_log(f"No active schedules; using fallback category {desired_category_id} from last active schedule")
+                        _scheduler_log(f"No active schedules; clearing Plex preroll field (clear_when_inactive enabled)")
                         self._last_logged_state = state_key
                         self._last_logged_time = now
+                    # Clear prerolls by setting empty string
+                    if setting.active_category is not None:
+                        cleared_ok = self._clear_plex_prerolls(db)
+                        if cleared_ok:
+                            setting.active_category = None
+                            db.commit()
                 else:
-                    state_key = "no_schedules"
-                    if self._last_logged_state != state_key:
-                        _scheduler_log(f"No active schedules and no fallback defined; Plex preroll will remain unchanged")
-                        self._last_logged_state = state_key
-                        self._last_logged_time = now
+                    # Use fallback from most recently active schedule
+                    stored_fallback = getattr(setting, "last_schedule_fallback", None)
+                    if stored_fallback:
+                        desired_category_id = stored_fallback
+                        state_key = f"fallback:{desired_category_id}"
+                        if self._last_logged_state != state_key:
+                            _scheduler_log(f"No active schedules; using fallback category {desired_category_id} from last active schedule")
+                            self._last_logged_state = state_key
+                            self._last_logged_time = now
+                    else:
+                        state_key = "no_schedules"
+                        if self._last_logged_state != state_key:
+                            _scheduler_log(f"No active schedules and no fallback defined; Plex preroll will remain unchanged")
+                            self._last_logged_state = state_key
+                            self._last_logged_time = now
 
             # Apply category change to Plex only if it differs from current
             if desired_category_id and setting.active_category != desired_category_id:
@@ -718,7 +747,8 @@ class Scheduler:
         If there's a mismatch, reapply the current active category.
         This ensures scheduled prerolls remain active even if manually changed or API calls fail.
         """
-        now = datetime.datetime.utcnow()
+        # Use local time for comparisons since schedules are stored as naive local datetimes
+        now = datetime.datetime.now()
         
         # Check if enough time has passed since last verification
         if self._last_verification_time:
@@ -733,6 +763,16 @@ class Scheduler:
             setting = db.query(models.Setting).first()
             if not setting:
                 return
+            
+            # Skip verification in passive mode when no active schedules
+            # (Let other preroll managers control prerolls outside scheduled times)
+            passive_mode = getattr(setting, "passive_mode", False)
+            if passive_mode:
+                schedules = db.query(models.Schedule).filter(models.Schedule.is_active == True).all()
+                active_schedules = [s for s in schedules if self._is_schedule_active(s, now)]
+                if not active_schedules:
+                    self._last_verification_time = now
+                    return  # Passive mode, no active schedules - skip verification
             
             # Only verify if we have an active category
             if not setting.active_category:
@@ -865,8 +905,8 @@ class Scheduler:
           until another schedule takes precedence or a fallback is applied when no schedule is active.
         - For daily schedules with timeRange: also check if current time is within the time window.
         
-        IMPORTANT: timeRange values are stored in the user's local timezone, so we must
-        convert 'now' (which is UTC) to local time before comparing.
+        NOTE: Both schedule dates and 'now' are expected to be in local time (naive datetimes).
+        This simplifies comparisons and avoids timezone conversion bugs.
         """
         if not schedule or not getattr(schedule, "start_date", None):
             return False
@@ -907,24 +947,9 @@ class Scheduler:
                                 end_hour = int(end_parts[0])
                                 end_minute = int(end_parts[1]) if len(end_parts) > 1 else 59
                             
-                            # CRITICAL: Convert UTC 'now' to user's local timezone
-                            # timeRange is stored in local time, so we must compare in local time
-                            db = SessionLocal()
-                            try:
-                                setting = db.query(models.Setting).first()
-                                user_tz_str = setting.timezone if setting and setting.timezone else "UTC"
-                                try:
-                                    user_tz = pytz.timezone(user_tz_str)
-                                except:
-                                    user_tz = pytz.UTC
-                                
-                                # Convert UTC now to local time
-                                utc_now = now.replace(tzinfo=pytz.UTC) if now.tzinfo is None else now
-                                local_now = utc_now.astimezone(user_tz)
-                                current_hour = local_now.hour
-                                current_minute = local_now.minute
-                            finally:
-                                db.close()
+                            # Both 'now' and timeRange are in local time
+                            current_hour = now.hour
+                            current_minute = now.minute
                             
                             current_time_val = current_hour * 60 + current_minute
                             start_time_val = start_hour * 60 + start_minute
@@ -1106,6 +1131,35 @@ class Scheduler:
                 cat = db.query(models.Category).filter(models.Category.id == category_id).first()
                 if cat:
                     cat.apply_to_plex = True
+                db.commit()
+            except Exception:
+                try:
+                    db.rollback()
+                except Exception:
+                    pass
+        return ok
+
+    def _clear_plex_prerolls(self, db: Session) -> bool:
+        """
+        Clear the Plex preroll field (set to empty string).
+        Used when no schedules are active and clear_when_inactive is enabled.
+        """
+        setting = db.query(models.Setting).first()
+        if not setting or not getattr(setting, "plex_url", None):
+            _scheduler_log("Plex not configured (missing URL); cannot clear prerolls.", level="WARNING")
+            return False
+
+        connector = PlexConnector(setting.plex_url, setting.plex_token)
+        _scheduler_log("Clearing Plex preroll field (no active schedules, clear_when_inactive enabled)…")
+        ok = connector.set_preroll("")  # Empty string clears prerolls
+        _scheduler_log(f"{'SUCCESS' if ok else 'FAIL'} clearing Plex preroll field.")
+        if ok:
+            # Clear blend mode tracking
+            self._blend_mode_active = False
+            self._blend_expected_preroll = None
+            # Clear apply_to_plex flag from all categories
+            try:
+                db.query(models.Category).update({"apply_to_plex": False})
                 db.commit()
             except Exception:
                 try:
@@ -1491,7 +1545,8 @@ class Scheduler:
         """Return a list of schedules currently active (for diagnostics/status)."""
         db = SessionLocal()
         try:
-            now = datetime.datetime.utcnow()
+            # Use local time for comparisons since schedules are stored as naive local datetimes
+            now = datetime.datetime.now()
             schedules = db.query(models.Schedule).filter(models.Schedule.is_active == True).all()
             return [s for s in schedules if self._is_schedule_active(s, now)]
         finally:
@@ -1753,7 +1808,8 @@ class Scheduler:
 
     def _calculate_next_run(self, schedule: models.Schedule) -> Optional[datetime.datetime]:
         """Calculate when this schedule should run next"""
-        now = datetime.datetime.utcnow()
+        # Use local time for comparisons since schedules are stored as naive local datetimes
+        now = datetime.datetime.now()
 
         if schedule.type == "monthly":
             # Next month, same day

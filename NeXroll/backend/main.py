@@ -170,6 +170,14 @@ def ensure_schema() -> None:
             if not _sqlite_has_column("settings", "verbose_logging"):
                 _sqlite_add_column("settings", "verbose_logging BOOLEAN DEFAULT 0")
             
+            # Settings: ensure passive_mode column (coexistence mode)
+            if not _sqlite_has_column("settings", "passive_mode"):
+                _sqlite_add_column("settings", "passive_mode BOOLEAN DEFAULT 0")
+            
+            # Settings: ensure clear_when_inactive column (clear prerolls when no schedule active)
+            if not _sqlite_has_column("settings", "clear_when_inactive"):
+                _sqlite_add_column("settings", "clear_when_inactive BOOLEAN DEFAULT 0")
+            
             # Schedules: ensure color column for custom calendar colors
             if not _sqlite_has_column("schedules", "color"):
                 _sqlite_add_column("schedules", "color TEXT")
@@ -219,7 +227,7 @@ def migrate_legacy_community_prerolls() -> None:
                 
                 # Search community API
                 response = requests.get(
-                    'https://prerolls.typicalnerds.uk/api/search',
+                    'https://prerolls.uk/api/search',
                     params={'query': search_title, 'limit': 5},
                     timeout=5
                 )
@@ -4878,50 +4886,38 @@ def create_schedule(schedule: ScheduleCreate, db: Session = Depends(get_db)):
     if not category:
         raise HTTPException(status_code=404, detail="Category not found")
 
-    # Get user's timezone for conversion
-    settings = db.query(models.Setting).first()
-    user_tz_str = settings.timezone if settings and settings.timezone else "UTC"
-    try:
-        user_tz = pytz.timezone(user_tz_str)
-    except:
-        user_tz = pytz.UTC
-
-    # Parse dates from strings
+    # Parse dates from strings - store as naive local datetime (no timezone conversion)
+    # The user enters their local time, we store it as-is, and the scheduler compares against local time
     start_date = None
     end_date = None
 
     try:
-        # For yearly/holiday schedules, only month/day matters - store as naive datetime
-        # For other schedules, convert to UTC for proper timezone handling
-        is_yearly_or_holiday = schedule.type in ('yearly', 'holiday')
-        
         if schedule.start_date:
             sd = schedule.start_date
-            dt = datetime.datetime.fromisoformat(sd.replace('Z', '+00:00'))
-            
-            if is_yearly_or_holiday:
-                # Store as naive datetime (no timezone conversion)
-                start_date = dt.replace(tzinfo=None) if dt.tzinfo else dt
-                _file_log(f"[INFO] Yearly/Holiday schedule: storing start_date as naive: {start_date}")
-            else:
-                # Convert to UTC for time-based schedules
-                naive_dt = dt.replace(tzinfo=None) if dt.tzinfo else dt
-                local_dt = user_tz.localize(naive_dt)
-                start_date = local_dt.astimezone(pytz.UTC)
+            # Remove any timezone info and store as naive datetime
+            # This avoids timezone conversion bugs where browser TZ != configured TZ
+            if 'Z' in sd:
+                sd = sd.replace('Z', '')
+            if '+' in sd and 'T' in sd:
+                sd = sd.split('+')[0]
+            if sd.count('-') > 2 and 'T' in sd:  # Has negative offset like -07:00
+                parts = sd.rsplit('-', 1)
+                if ':' in parts[-1]:  # It's a timezone offset, not part of the date
+                    sd = parts[0]
+            start_date = datetime.datetime.fromisoformat(sd)
                 
         if schedule.end_date:
             ed = schedule.end_date
-            dt2 = datetime.datetime.fromisoformat(ed.replace('Z', '+00:00'))
-            
-            if is_yearly_or_holiday:
-                # Store as naive datetime (no timezone conversion)
-                end_date = dt2.replace(tzinfo=None) if dt2.tzinfo else dt2
-                _file_log(f"[INFO] Yearly/Holiday schedule: storing end_date as naive: {end_date}")
-            else:
-                # Convert to UTC for time-based schedules
-                naive_dt2 = dt2.replace(tzinfo=None) if dt2.tzinfo else dt2
-                local_dt2 = user_tz.localize(naive_dt2)
-                end_date = local_dt2.astimezone(pytz.UTC)
+            # Remove any timezone info and store as naive datetime
+            if 'Z' in ed:
+                ed = ed.replace('Z', '')
+            if '+' in ed and 'T' in ed:
+                ed = ed.split('+')[0]
+            if ed.count('-') > 2 and 'T' in ed:  # Has negative offset like -07:00
+                parts = ed.rsplit('-', 1)
+                if ':' in parts[-1]:  # It's a timezone offset, not part of the date
+                    ed = parts[0]
+            end_date = datetime.datetime.fromisoformat(ed)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=f"Invalid date format: {str(e)}")
 
@@ -4954,19 +4950,20 @@ def create_schedule(schedule: ScheduleCreate, db: Session = Depends(get_db)):
     # Load the category relationship for the response
     created_schedule = db.query(models.Schedule).options(joinedload(models.Schedule.category)).filter(models.Schedule.id == db_schedule.id).first()
 
+    # Return dates as naive datetime strings (no 'Z' suffix - they're local times)
     return {
         "id": created_schedule.id,
         "name": created_schedule.name,
         "type": created_schedule.type,
-        "start_date": created_schedule.start_date.isoformat() + "Z" if created_schedule.start_date else None,
-        "end_date": created_schedule.end_date.isoformat() + "Z" if created_schedule.end_date else None,
+        "start_date": created_schedule.start_date.isoformat() if created_schedule.start_date else None,
+        "end_date": created_schedule.end_date.isoformat() if created_schedule.end_date else None,
         "category_id": created_schedule.category_id,
         "category": {"id": created_schedule.category.id, "name": created_schedule.category.name} if created_schedule.category else None,
         "shuffle": created_schedule.shuffle,
         "playlist": created_schedule.playlist,
         "is_active": created_schedule.is_active,
-        "last_run": created_schedule.last_run.isoformat() + "Z" if created_schedule.last_run else None,
-        "next_run": created_schedule.next_run.isoformat() + "Z" if created_schedule.next_run else None,
+        "last_run": created_schedule.last_run.isoformat() if created_schedule.last_run else None,
+        "next_run": created_schedule.next_run.isoformat() if created_schedule.next_run else None,
         "recurrence_pattern": created_schedule.recurrence_pattern,
         "preroll_ids": created_schedule.preroll_ids,
         "fallback_category_id": getattr(created_schedule, "fallback_category_id", None),
@@ -4979,49 +4976,13 @@ def create_schedule(schedule: ScheduleCreate, db: Session = Depends(get_db)):
 
 @app.get("/schedules")
 def get_schedules(db: Session = Depends(get_db)):
-    # Get user's timezone for conversion
-    settings = db.query(models.Setting).first()
-    user_tz_str = settings.timezone if settings and settings.timezone else "UTC"
-    try:
-        user_tz = pytz.timezone(user_tz_str)
-    except:
-        user_tz = pytz.UTC
-    
     schedules = db.query(models.Schedule).options(joinedload(models.Schedule.category)).all()
     result = []
     for s in schedules:
-        # Convert times from UTC back to user's local timezone for display
-        start_iso = None
-        end_iso = None
-        
-        # Check if this is a yearly or holiday schedule (stored as naive datetime)
-        is_yearly_or_holiday = s.type in ('yearly', 'holiday')
-        
-        if s.start_date:
-            if is_yearly_or_holiday:
-                # Yearly/Holiday schedules: stored as naive datetime, return as-is (no timezone conversion)
-                start_iso = s.start_date.isoformat()
-            else:
-                # Time-based schedules: assume stored as UTC, convert to user's timezone
-                if s.start_date.tzinfo is None:
-                    utc_dt = pytz.UTC.localize(s.start_date)
-                else:
-                    utc_dt = s.start_date
-                local_dt = utc_dt.astimezone(user_tz)
-                start_iso = local_dt.isoformat()
-        
-        if s.end_date:
-            if is_yearly_or_holiday:
-                # Yearly/Holiday schedules: stored as naive datetime, return as-is (no timezone conversion)
-                end_iso = s.end_date.isoformat()
-            else:
-                # Time-based schedules: assume stored as UTC, convert to user's timezone
-                if s.end_date.tzinfo is None:
-                    utc_dt = pytz.UTC.localize(s.end_date)
-                else:
-                    utc_dt = s.end_date
-                local_dt = utc_dt.astimezone(user_tz)
-                end_iso = local_dt.isoformat()
+        # Return dates as naive datetime strings (no timezone conversion)
+        # The frontend will display them as local times in the user's browser
+        start_iso = s.start_date.isoformat() if s.start_date else None
+        end_iso = s.end_date.isoformat() if s.end_date else None
         
         result.append({
             "id": s.id,
@@ -5034,8 +4995,8 @@ def get_schedules(db: Session = Depends(get_db)):
             "shuffle": s.shuffle,
             "playlist": s.playlist,
             "is_active": s.is_active,
-            "last_run": s.last_run.isoformat() + "Z" if s.last_run else None,
-            "next_run": s.next_run.isoformat() + "Z" if s.next_run else None,
+            "last_run": s.last_run.isoformat() if s.last_run else None,
+            "next_run": s.next_run.isoformat() if s.next_run else None,
             "recurrence_pattern": s.recurrence_pattern,
             "preroll_ids": s.preroll_ids,
             "fallback_category_id": getattr(s, "fallback_category_id", None),
@@ -5053,19 +5014,8 @@ def _apply_schedule_win_lose_logic(db: Session, is_being_enabled: bool, is_being
     Apply win/lose logic when a schedule is enabled or disabled.
     Immediately updates Plex prerolls based on which schedule should win.
     """
-    now = datetime.datetime.utcnow()
-    
-    # Get user's timezone for time range comparison
-    setting = db.query(models.Setting).first()
-    user_tz_str = setting.timezone if setting and setting.timezone else "UTC"
-    try:
-        user_tz = pytz.timezone(user_tz_str)
-    except:
-        user_tz = pytz.UTC
-    
-    # Convert UTC now to local time for time range comparisons
-    utc_now = now.replace(tzinfo=pytz.UTC)
-    local_now = utc_now.astimezone(user_tz)
+    # Use local time for comparisons since schedules are stored as naive local datetimes
+    now = datetime.datetime.now()
     
     # Helper function to check if a schedule is currently active (within its time window AND time range)
     def _is_schedule_active(sched: models.Schedule) -> bool:
@@ -5108,9 +5058,9 @@ def _apply_schedule_win_lose_logic(db: Session, is_being_enabled: bool, is_being
                                 end_hour = int(end_parts[0])
                                 end_minute = int(end_parts[1]) if len(end_parts) > 1 else 59
                             
-                            # CRITICAL: Use local time for comparison (timeRange is stored in local time)
-                            current_hour = local_now.hour
-                            current_minute = local_now.minute
+                            # Use local time for comparison (timeRange is stored in local time)
+                            current_hour = now.hour
+                            current_minute = now.minute
                             current_time_val = current_hour * 60 + current_minute
                             start_time_val = start_hour * 60 + start_minute
                             end_time_val = end_hour * 60 + end_minute
@@ -5288,50 +5238,38 @@ def update_schedule(schedule_id: int, schedule: ScheduleCreate, db: Session = De
     if not db_schedule:
         raise HTTPException(status_code=404, detail="Schedule not found")
 
-    # Get user's timezone for conversion
-    settings = db.query(models.Setting).first()
-    user_tz_str = settings.timezone if settings and settings.timezone else "UTC"
-    try:
-        user_tz = pytz.timezone(user_tz_str)
-    except:
-        user_tz = pytz.UTC
-
-    # Parse dates from strings
+    # Parse dates from strings - store as naive local datetime (no timezone conversion)
+    # The user enters their local time, we store it as-is, and the scheduler compares against local time
     start_date = None
     end_date = None
 
     try:
-        # For yearly/holiday schedules, only month/day matters - store as naive datetime
-        # For other schedules, convert to UTC for proper timezone handling
-        is_yearly_or_holiday = schedule.type in ('yearly', 'holiday')
-        
         if schedule.start_date:
             sd = schedule.start_date
-            dt = datetime.datetime.fromisoformat(sd.replace('Z', '+00:00'))
-            
-            if is_yearly_or_holiday:
-                # Store as naive datetime (no timezone conversion)
-                start_date = dt.replace(tzinfo=None) if dt.tzinfo else dt
-                _file_log(f"[INFO] Yearly/Holiday schedule: storing start_date as naive: {start_date}")
-            else:
-                # Convert to UTC for time-based schedules
-                naive_dt = dt.replace(tzinfo=None) if dt.tzinfo else dt
-                local_dt = user_tz.localize(naive_dt)
-                start_date = local_dt.astimezone(pytz.UTC)
+            # Remove any timezone info and store as naive datetime
+            # This avoids timezone conversion bugs where browser TZ != configured TZ
+            if 'Z' in sd:
+                sd = sd.replace('Z', '')
+            if '+' in sd and 'T' in sd:
+                sd = sd.split('+')[0]
+            if sd.count('-') > 2 and 'T' in sd:  # Has negative offset like -07:00
+                parts = sd.rsplit('-', 1)
+                if ':' in parts[-1]:  # It's a timezone offset, not part of the date
+                    sd = parts[0]
+            start_date = datetime.datetime.fromisoformat(sd)
                 
         if schedule.end_date:
             ed = schedule.end_date
-            dt2 = datetime.datetime.fromisoformat(ed.replace('Z', '+00:00'))
-            
-            if is_yearly_or_holiday:
-                # Store as naive datetime (no timezone conversion)
-                end_date = dt2.replace(tzinfo=None) if dt2.tzinfo else dt2
-                _file_log(f"[INFO] Yearly/Holiday schedule: storing end_date as naive: {end_date}")
-            else:
-                # Convert to UTC for time-based schedules
-                naive_dt2 = dt2.replace(tzinfo=None) if dt2.tzinfo else dt2
-                local_dt2 = user_tz.localize(naive_dt2)
-                end_date = local_dt2.astimezone(pytz.UTC)
+            # Remove any timezone info and store as naive datetime
+            if 'Z' in ed:
+                ed = ed.replace('Z', '')
+            if '+' in ed and 'T' in ed:
+                ed = ed.split('+')[0]
+            if ed.count('-') > 2 and 'T' in ed:  # Has negative offset like -07:00
+                parts = ed.rsplit('-', 1)
+                if ':' in parts[-1]:  # It's a timezone offset, not part of the date
+                    ed = parts[0]
+            end_date = datetime.datetime.fromisoformat(ed)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=f"Invalid date format: {str(e)}")
 
@@ -8141,6 +8079,119 @@ def test_path_mappings(req: TestTranslationRequest, db: Session = Depends(get_db
     results = [_translate(p) for p in paths]
     return {"results": results}
 
+
+# Folder browser endpoint for Import feature
+class BrowseFolderRequest(BaseModel):
+    path: str = ""  # Empty string or path to browse
+
+@app.post("/browse-folders")
+def browse_folders(req: BrowseFolderRequest):
+    """
+    Browse filesystem folders for the Import feature.
+    Returns list of subfolders in the given path.
+    If path is empty, returns available drives (Windows) or root directories.
+    """
+    import string
+    
+    path = (req.path or "").strip()
+    
+    try:
+        # If no path provided, return drive list (Windows) or root (Unix)
+        if not path:
+            if sys.platform.startswith("win"):
+                # List available Windows drives
+                drives = []
+                for letter in string.ascii_uppercase:
+                    drive = f"{letter}:\\"
+                    if os.path.exists(drive):
+                        try:
+                            # Get drive label if possible
+                            drives.append({
+                                "name": f"{letter}:",
+                                "path": drive,
+                                "type": "drive"
+                            })
+                        except Exception:
+                            pass
+                return {"path": "", "folders": drives, "parent": None}
+            else:
+                # Unix - return root subfolders
+                folders = []
+                try:
+                    for item in os.listdir("/"):
+                        item_path = f"/{item}"
+                        if os.path.isdir(item_path):
+                            folders.append({
+                                "name": item,
+                                "path": item_path,
+                                "type": "folder"
+                            })
+                    folders.sort(key=lambda x: x["name"].lower())
+                except Exception:
+                    pass
+                return {"path": "/", "folders": folders, "parent": None}
+        
+        # Normalize and validate path
+        try:
+            abs_path = os.path.abspath(path)
+        except Exception:
+            abs_path = path
+        
+        if not os.path.isdir(abs_path):
+            raise HTTPException(status_code=404, detail=f"Path not found or not a directory: {path}")
+        
+        # Get parent path
+        parent = os.path.dirname(abs_path)
+        if parent == abs_path:  # Root
+            parent = None
+        
+        # List subfolders
+        folders = []
+        try:
+            for item in os.listdir(abs_path):
+                item_path = os.path.join(abs_path, item)
+                try:
+                    if os.path.isdir(item_path):
+                        folders.append({
+                            "name": item,
+                            "path": item_path,
+                            "type": "folder"
+                        })
+                except PermissionError:
+                    pass  # Skip inaccessible folders
+        except PermissionError:
+            raise HTTPException(status_code=403, detail=f"Permission denied accessing: {path}")
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Error listing directory: {str(e)}")
+        
+        # Sort folders alphabetically
+        folders.sort(key=lambda x: x["name"].lower())
+        
+        # Count video files in this folder for preview
+        video_extensions = {'.mp4', '.mkv', '.avi', '.mov', '.wmv', '.webm', '.m4v', '.flv'}
+        video_count = 0
+        try:
+            for item in os.listdir(abs_path):
+                if os.path.isfile(os.path.join(abs_path, item)):
+                    _, ext = os.path.splitext(item)
+                    if ext.lower() in video_extensions:
+                        video_count += 1
+        except Exception:
+            pass
+        
+        return {
+            "path": abs_path,
+            "folders": folders,
+            "parent": parent,
+            "video_count": video_count
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error browsing folders: {str(e)}")
+
+
 # Preroll external directory mapping endpoint
 @app.post("/prerolls/map-root")
 def map_preroll_root(req: MapRootRequest, db: Session = Depends(get_db)):
@@ -8200,17 +8251,27 @@ def map_preroll_root(req: MapRootRequest, db: Session = Depends(get_db)):
 
     total_found = len(candidate_files)
 
-    # Helper: check existing by case-insensitive path on Windows
-    def _exists_in_db(abs_path: str) -> bool:
+    # Helper: check existing by case-insensitive path on Windows OR by filename within the same category
+    def _exists_in_db(abs_path: str, filename: str, category_id: int) -> bool:
         try:
+            # Check by exact path
             row = db.query(models.Preroll).filter(models.Preroll.path == abs_path).first()
             if row:
                 return True
+            # Check by path case-insensitive on Windows
             if sys.platform.startswith("win"):
                 lp = abs_path.lower()
                 row = db.query(models.Preroll).filter(func.lower(models.Preroll.path) == lp).first()
                 if row:
                     return True
+            # Check by filename within the same category (case-insensitive)
+            fname_lower = filename.lower()
+            row = db.query(models.Preroll).filter(
+                models.Preroll.category_id == category_id,
+                func.lower(models.Preroll.filename) == fname_lower
+            ).first()
+            if row:
+                return True
         except Exception:
             pass
         return False
@@ -8221,7 +8282,8 @@ def map_preroll_root(req: MapRootRequest, db: Session = Depends(get_db)):
             ap = os.path.abspath(pth)
         except Exception:
             ap = pth
-        if _exists_in_db(ap):
+        fname = os.path.basename(ap)
+        if _exists_in_db(ap, fname, category.id):
             existing += 1
 
     to_add = total_found - existing
@@ -8260,10 +8322,10 @@ def map_preroll_root(req: MapRootRequest, db: Session = Depends(get_db)):
         except Exception:
             abs_src = src
 
-        if _exists_in_db(abs_src):
+        filename = os.path.basename(abs_src)
+        if _exists_in_db(abs_src, filename, category.id):
             continue
 
-        filename = os.path.basename(abs_src)
         file_size = None
         try:
             file_size = os.path.getsize(abs_src)
@@ -10066,6 +10128,62 @@ def update_verbose_logging(verbose_logging: bool, db: Session = Depends(get_db))
     
     return {"message": f"Verbose logging {status}", "verbose_logging": verbose_logging}
 
+@app.get("/settings/passive-mode")
+def get_passive_mode(db: Session = Depends(get_db)):
+    """Get passive mode setting (coexistence mode for other preroll managers)"""
+    setting = db.query(models.Setting).first()
+    if not setting:
+        return {"passive_mode": False}
+    return {"passive_mode": getattr(setting, 'passive_mode', False)}
+
+@app.put("/settings/passive-mode")
+def update_passive_mode(passive_mode: bool, db: Session = Depends(get_db)):
+    """Update passive mode setting (coexistence mode for other preroll managers)"""
+    setting = db.query(models.Setting).first()
+    if not setting:
+        setting = models.Setting(plex_url=None, plex_token=None)
+        db.add(setting)
+        db.commit()
+        db.refresh(setting)
+    
+    setting.passive_mode = passive_mode
+    setting.updated_at = datetime.datetime.utcnow()
+    db.commit()
+    
+    status = "enabled" if passive_mode else "disabled"
+    print(f"Passive mode (coexistence) {status}")
+    _file_log(f"Passive mode (coexistence) {status}")
+    
+    return {"message": f"Passive mode {status}", "passive_mode": passive_mode}
+
+@app.get("/settings/clear-when-inactive")
+def get_clear_when_inactive(db: Session = Depends(get_db)):
+    """Get clear-when-inactive setting (clear prerolls when no schedule is active)"""
+    setting = db.query(models.Setting).first()
+    if not setting:
+        return {"clear_when_inactive": False}
+    return {"clear_when_inactive": getattr(setting, 'clear_when_inactive', False)}
+
+@app.put("/settings/clear-when-inactive")
+def update_clear_when_inactive(clear_when_inactive: bool, db: Session = Depends(get_db)):
+    """Update clear-when-inactive setting (clear prerolls when no schedule is active)"""
+    setting = db.query(models.Setting).first()
+    if not setting:
+        setting = models.Setting(plex_url=None, plex_token=None)
+        db.add(setting)
+        db.commit()
+        db.refresh(setting)
+    
+    setting.clear_when_inactive = clear_when_inactive
+    setting.updated_at = datetime.datetime.utcnow()
+    db.commit()
+    
+    status = "enabled" if clear_when_inactive else "disabled"
+    print(f"Clear when inactive {status}")
+    _file_log(f"Clear when inactive {status}")
+    
+    return {"message": f"Clear when inactive {status}", "clear_when_inactive": clear_when_inactive}
+
 @app.get("/genres/recent-applications")
 def get_recent_genre_applications(limit: int = 10):
     """Get recent genre preroll applications for UI feedback"""
@@ -11433,7 +11551,7 @@ COMMUNITY_HEALTH_CACHE_TTL = 300  # 5 minutes in seconds
 @app.get("/community-prerolls/health")
 def check_community_prerolls_health():
     """
-    Check if prerolls.typicalnerds.uk is accessible.
+    Check if prerolls.uk is accessible.
     Results are cached for 5 minutes to avoid excessive requests.
     Returns: {
         "online": bool,
@@ -11459,7 +11577,7 @@ def check_community_prerolls_health():
     try:
         start_time = time.time()
         response = requests.get(
-            "https://prerolls.typicalnerds.uk/",
+            "https://prerolls.uk/",
             timeout=10,
             headers={"User-Agent": f"NeXroll/{app_version}"}
         )
@@ -11519,7 +11637,7 @@ def check_community_prerolls_health():
 def get_community_fair_use_policy():
     """
     Return the Fair Use Policy text from Typical Nerds.
-    Fetched from: https://prerolls.typicalnerds.uk/%23%20FAIR%20USE%20POLICY%20-%20READ%20ME.txt
+    Fetched from: https://prerolls.uk/%23%20FAIR%20USE%20POLICY%20-%20READ%20ME.txt
     """
     policy_text = """------------------------------------------------
 Fair Use Policy Disclosure
@@ -11538,7 +11656,7 @@ By accessing and using these assets, you acknowledge that you have read, underst
 """
     return {
         "policy": policy_text,
-        "source": "https://prerolls.typicalnerds.uk/",
+        "source": "https://prerolls.uk/",
         "credit": "https://typicalnerds.uk/"
     }
 
@@ -11596,7 +11714,7 @@ def test_community_scrape():
         import requests
         from bs4 import BeautifulSoup
         
-        url = "https://prerolls.typicalnerds.uk/Holidays/Halloween/Carving%20Pumpkin%20-%20AwesomeAustn/"
+        url = "https://prerolls.uk/Holidays/Halloween/Carving%20Pumpkin%20-%20AwesomeAustn/"
         response = requests.get(url, timeout=10)
         soup = BeautifulSoup(response.text, 'html.parser')
         
@@ -11654,7 +11772,7 @@ def _build_prerolls_index(progress_callback=None) -> dict:
     
     _file_log("Building Typical Nerds prerolls index (this may take a few minutes)...")
     
-    base_url = "https://prerolls.typicalnerds.uk"
+    base_url = "https://prerolls.uk"
     headers = {
         "Accept": "text/html,application/json",
         "User-Agent": f"NeXroll/{app_version} (Index Builder; +https://github.com/JFLXCLOUD/NeXroll)"
@@ -12214,7 +12332,7 @@ def search_community_prerolls(request: Request, query: str = "", category: str =
     
     try:
         # Try to connect to the community library
-        base_url = "https://prerolls.typicalnerds.uk"
+        base_url = "https://prerolls.uk"
         
         headers = {
             "Accept": "text/html,application/json",
@@ -12481,7 +12599,7 @@ def search_community_prerolls(request: Request, query: str = "", category: str =
             "total": len(filtered_results),
             "query": query,
             "category": category,
-            "note": "API currently unavailable - showing demo results. Visit https://prerolls.typicalnerds.uk/ to browse the live library."
+            "note": "API currently unavailable - showing demo results. Visit https://prerolls.uk/ to browse the live library."
         }
         
     except Exception as e:
@@ -12521,7 +12639,7 @@ def download_community_preroll(
         
         # Build download URL - community library serves files directly by path
         # The preroll_id is already the URL path (e.g., "/Holidays/Christmas/file.mp4")
-        base_url = "https://prerolls.typicalnerds.uk"
+        base_url = "https://prerolls.uk"
         download_url = f"{base_url}{preroll_id_str}"
         _file_log(f"[DOWNLOAD] Resolved download URL: {download_url}")
     
@@ -13037,7 +13155,7 @@ def get_random_community_preroll(
         from bs4 import BeautifulSoup
         from urllib.parse import urljoin, unquote
         
-        base_url = "https://prerolls.typicalnerds.uk/"
+        base_url = "https://prerolls.uk/"
         start_paths = ["Community/", "Holidays/", "Seasons/", "Clips/"]
         
         # If category specified, focus on that category
@@ -13156,7 +13274,7 @@ def get_top5_community_prerolls(
     try:
         _file_log(f"Top 5 community prerolls request: platform='{platform}'")
         
-        base_url = "https://prerolls.typicalnerds.uk/"
+        base_url = "https://prerolls.uk/"
         
         # Featured directories with popular content
         featured_paths = [

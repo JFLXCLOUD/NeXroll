@@ -1,10 +1,23 @@
+html {
+  margin: 0;
+  padding: 0;
+  height: 100%;
+}
+
 body {
   margin: 0;
+  padding: 0;
+  height: 100%;
+  overflow-x: hidden; /* Only on body, not html - to preserve sticky */
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen',
     'Ubuntu', 'Cantarell', 'Fira Sans', 'Droid Sans', 'Helvetica Neue',
     sans-serif;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+}
+
+#root {
+  min-height: 100%;
 }
 
 code {
@@ -150,7 +163,9 @@ body.dark {
   background-color: var(--bg-color);
   color: var(--text-color);
   padding: 1rem;
+  padding-top: 0; /* Remove top padding so sticky header works */
   transition: background-color 0.3s ease, color 0.3s ease;
+  /* No overflow restrictions - required for sticky to work */
 }
 
 .dashboard {
@@ -256,13 +271,12 @@ body.dark {
 .tab-buttons {
   position: sticky;
   top: 0;
-  z-index: 900;
+  z-index: 9999;
   display: flex;
   margin-bottom: 1rem;
   border-bottom: 1px solid var(--border-color);
   background-color: var(--header-bg);
   border-radius: 0.5rem 0.5rem 0 0;
-  overflow: hidden;
   box-shadow: 0 2px 4px var(--shadow);
 }
 
@@ -790,6 +804,33 @@ details.nx-plex-help[open] {
   0%   { left: -40%; }
   50%  { left: 60%; }
   100% { left: 100%; }
+}
+
+/* Enhanced import progress styles */
+.nx-import-progress {
+  animation: fadeIn 0.3s ease;
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(-10px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+/* Folder browser button hover states */
+.nx-folder-item {
+  transition: background-color 0.15s ease, border-color 0.15s ease;
+}
+
+.nx-folder-item:hover {
+  background-color: var(--header-bg) !important;
+  border-color: var(--button-bg) !important;
+}
+
+/* Mobile responsive for import section */
+@media (max-width: 768px) {
+  .upload-section [style*="grid-template-columns: 1fr 1fr"] {
+    grid-template-columns: 1fr !important;
+  }
 }
 
 /* Rockerswitch toggle */
@@ -2026,10 +2067,13 @@ body.dark .react-grid-item.react-grid-placeholder {
     justify-content: center;
   }
 
-  /* Tab buttons become mobile dropdown */
+  /* Tab buttons become mobile dropdown - STICKY HEADER */
   .tab-buttons {
-    position: sticky;
-    top: 0;
+    position: sticky !important;
+    top: 0 !important;
+    z-index: 9999 !important;
+    background: var(--card-bg) !important;
+    border-bottom: 1px solid var(--border-color);
     flex-wrap: wrap;
     padding: 0.5rem;
     gap: 0.25rem;
@@ -2037,16 +2081,19 @@ body.dark .react-grid-item.react-grid-placeholder {
 
   .tab-buttons .tab-group {
     display: none;
-    position: absolute;
-    top: 100%;
+    position: fixed;
+    top: 60px;
     left: 0;
     right: 0;
-    background: var(--header-bg);
+    background: var(--card-bg);
     border: 1px solid var(--border-color);
     border-top: none;
-    box-shadow: 0 4px 12px var(--shadow);
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
     flex-direction: column;
-    z-index: 999;
+    z-index: 10000;
+    padding: 0.5rem;
+    max-height: calc(100vh - 60px);
+    overflow-y: auto;
   }
 
   .tab-buttons .tab-group.mobile-open {
@@ -2054,11 +2101,12 @@ body.dark .react-grid-item.react-grid-placeholder {
   }
 
   .tab-buttons .tab-button {
-    padding: 0.75rem 1rem;
+    padding: 0.875rem 1rem;
     text-align: left;
     border-bottom: 1px solid var(--border-color);
-    border-radius: 0;
-    font-size: 0.95rem;
+    border-radius: 0.375rem;
+    font-size: 1rem;
+    width: 100%;
   }
 
   .tab-buttons .tab-button:last-child {
@@ -2073,9 +2121,16 @@ body.dark .react-grid-item.react-grid-placeholder {
     height: 36px !important;
   }
 
-  /* App container */
+  /* App container - ensure no overflow that breaks sticky */
   .app-container {
-    padding: 0.5rem;
+    padding: 0;
+    overflow: visible !important;
+  }
+  
+  /* Content padding (not on header) */
+  .app-container > *:not(.tab-buttons) {
+    padding-left: 0.5rem;
+    padding-right: 0.5rem;
   }
 
   /* Cards */
@@ -2404,16 +2459,15 @@ body.dark .react-grid-item.react-grid-placeholder {
   z-index: 1001;
 }
 
-/* Mobile menu overlay */
+/* Mobile menu overlay - visibility controlled by React conditional rendering */
 .mobile-menu-overlay {
-  display: none;
   position: fixed;
-  top: 0;
+  top: 60px; /* Start below the nav bar so it doesn't block the menu */
   left: 0;
   right: 0;
   bottom: 0;
   background: rgba(0, 0, 0, 0.5);
-  z-index: 999;
+  z-index: 998; /* Below the menu (1000) */
 }
 
 /* Mobile styles */
@@ -2425,46 +2479,10 @@ body.dark .react-grid-item.react-grid-placeholder {
     justify-content: center;
   }
   
-  /* Show overlay when menu is open */
-  .mobile-menu-overlay {
-    display: block;
-  }
-  
   /* Tab buttons container */
   .tab-buttons {
     position: relative;
     flex-wrap: nowrap;
-  }
-  
-  /* Tab group - hidden by default, shown when mobile-open */
-  .tab-group {
-    display: none;
-    position: fixed;
-    top: 60px;
-    left: 0;
-    right: 0;
-    background: var(--card-bg);
-    border-bottom: 1px solid var(--border-color);
-    flex-direction: column;
-    padding: 0.5rem;
-    gap: 0.25rem;
-    z-index: 1000;
-    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
-    max-height: calc(100vh - 60px);
-    overflow-y: auto;
-  }
-  
-  .tab-group.mobile-open {
-    display: flex;
-  }
-  
-  /* Full-width tab buttons in mobile menu */
-  .tab-group .tab-button {
-    width: 100%;
-    text-align: left;
-    padding: 0.875rem 1rem;
-    border-radius: 0.375rem;
-    font-size: 1rem;
   }
   
   /* Hide tabbar-right on smaller mobile */
@@ -2590,13 +2608,73 @@ body.dark .react-grid-item.react-grid-placeholder {
     padding: 0.75rem;
   }
   
-  /* Tables */
-  table {
+  /* Tables - convert to card layout on mobile */
+  table.preroll-table {
     display: block;
-    overflow-x: auto;
-    white-space: nowrap;
+    width: 100% !important;
   }
   
+  table.preroll-table thead {
+    display: none; /* Hide table headers on mobile */
+  }
+  
+  table.preroll-table tbody {
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+  }
+  
+  table.preroll-table tr {
+    display: flex;
+    flex-direction: column;
+    padding: 0.75rem;
+    background: var(--card-bg);
+    border: 1px solid var(--border-color);
+    border-radius: 0.5rem;
+    gap: 0.5rem;
+  }
+  
+  table.preroll-table td {
+    display: block;
+    padding: 0.25rem 0 !important;
+    border: none !important;
+    text-align: left !important;
+    white-space: normal !important;
+    word-wrap: break-word;
+  }
+  
+  /* First cell (name) - make it prominent */
+  table.preroll-table td:first-child {
+    font-size: 1rem;
+    font-weight: 600;
+    padding-bottom: 0.5rem !important;
+    border-bottom: 1px solid var(--border-color) !important;
+    margin-bottom: 0.25rem;
+  }
+  
+  /* Hide checkbox column label area, keep checkbox */
+  table.preroll-table td:has(input[type="checkbox"]) {
+    position: absolute;
+    top: 0.5rem;
+    right: 0.5rem;
+  }
+  
+  /* Actions cell - make buttons row */
+  table.preroll-table td:last-child {
+    padding-top: 0.5rem !important;
+    border-top: 1px solid var(--border-color) !important;
+    margin-top: 0.25rem;
+  }
+  
+  table.preroll-table td:last-child > div {
+    justify-content: flex-start !important;
+  }
+  
+  /* Badges in table - inline */
+  table.preroll-table td span[style*="borderRadius"] {
+    margin-right: 0.5rem;
+  }
+
   /* Schedule list items */
   .schedule-list-item {
     flex-direction: column;
@@ -2628,7 +2706,184 @@ body.dark .react-grid-item.react-grid-placeholder {
   .sequence-timeline {
     overflow-x: auto;
   }
+
+  /* ===== CATEGORIES PAGE MOBILE FIXES ===== */
+  
+  /* Page headers */
+  .header, h1.header {
+    font-size: 1.25rem !important;
+    margin-bottom: 0.75rem !important;
+  }
+  
+  /* Category/Schedule action buttons at top */
+  div[style*="display: flex"][style*="gap"] > button.button,
+  div[style*="display: flex"][style*="gap"] > button.button-secondary {
+    padding: 0.5rem 0.75rem !important;
+    font-size: 0.8rem !important;
+    white-space: nowrap;
+  }
+  
+  /* Search/Filter bar - stack vertically on mobile */
+  div[style*="display: flex"][style*="gap: 1rem"][style*="marginBottom"] {
+    flex-direction: column !important;
+    gap: 0.5rem !important;
+    padding: 0.75rem !important;
+  }
+  
+  /* Search input full width on mobile */
+  div[style*="display: flex"][style*="gap: 1rem"] input[type="text"][style*="width: 65%"] {
+    width: 100% !important;
+  }
+  
+  /* Filter dropdown full width on mobile */
+  div[style*="display: flex"][style*="gap: 1rem"] select[style*="width: 20%"] {
+    width: 100% !important;
+  }
+  
+  /* View toggle - compact on mobile */
+  .view-toggle {
+    width: 100% !important;
+    justify-content: center !important;
+    margin-left: 0 !important;
+  }
+  
+  .view-btn {
+    flex: 1;
+    justify-content: center;
+    padding: 0.5rem !important;
+    font-size: 0.85rem !important;
+  }
+  
+  /* Category cards in grid view - PREVENT CUTOFF */
+  .nx-category-card,
+  [class*="category"][class*="card"],
+  div[style*="borderRadius"][style*="padding"][style*="background"] {
+    padding: 0.75rem !important;
+    overflow: visible !important;
+    min-height: auto !important;
+    height: auto !important;
+  }
+  
+  .nx-category-card h3,
+  [class*="category"] h3 {
+    font-size: 0.95rem !important;
+    word-wrap: break-word !important;
+    overflow-wrap: break-word !important;
+  }
+  
+  /* Category card actions */
+  .nx-category-card .nx-actions,
+  .nx-category-card [class*="actions"] {
+    flex-wrap: wrap;
+    gap: 0.25rem;
+  }
+  
+  .nx-category-card button {
+    padding: 0.4rem 0.6rem !important;
+    font-size: 0.75rem !important;
+  }
+  
+  /* Category badges - allow wrapping */
+  div[style*="display: flex"][style*="flexWrap: wrap"][style*="gap"] {
+    flex-wrap: wrap !important;
+  }
+  
+  /* Category dropdown menus - ensure they fit on screen */
+  div[style*="position: absolute"][style*="minWidth"] {
+    min-width: 150px !important;
+    max-width: 200px !important;
+    right: 0 !important;
+    left: auto !important;
+  }
+  
+  /* ===== SCHEDULES PAGE MOBILE FIXES ===== */
+  
+  /* Schedule cards */
+  .nx-schedule-card,
+  [class*="schedule"][class*="card"] {
+    padding: 0.75rem !important;
+    overflow: visible !important;
+  }
+  
+  /* Schedule info layout */
+  .schedule-info,
+  [class*="schedule-info"] {
+    flex-direction: column;
+    gap: 0.5rem;
+  }
+  
+  /* Schedule actions */
+  .schedule-actions,
+  [class*="schedule-actions"] {
+    flex-wrap: wrap;
+    gap: 0.25rem;
+    width: 100%;
+    justify-content: flex-start !important;
+  }
+  
+  /* Calendar view - make it scrollable */
+  .calendar-wrapper,
+  [class*="calendar"] {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+  
+  /* ===== GENERAL MOBILE IMPROVEMENTS ===== */
+  
+  /* Icon buttons smaller on mobile */
+  .nx-iconbtn {
+    padding: 0.35rem !important;
+    min-width: 32px !important;
+    min-height: 32px !important;
+  }
+  
+  /* Checkbox styling */
+  input[type="checkbox"] {
+    width: 20px;
+    height: 20px;
+    min-width: 20px;
+  }
+  
+  /* Badge/tag styling */
+  .badge, .tag, [class*="badge"], [class*="tag"] {
+    font-size: 0.7rem !important;
+    padding: 0.2rem 0.4rem !important;
+  }
+  
+  /* Status indicators */
+  [class*="status"] {
+    font-size: 0.75rem;
+  }
+  
+  /* Preroll count badges */
+  .preroll-count,
+  [class*="preroll-count"] {
+    font-size: 0.75rem !important;
+  }
+  
+  /* Flex containers - allow wrapping */
+  [style*="display: flex"]:not(.tab-buttons):not(.tab-group) {
+    flex-wrap: wrap;
+  }
+  
+  /* Gap adjustments for inline flex */
+  [style*="gap: 1rem"] {
+    gap: 0.5rem !important;
+  }
+  
+  /* Section padding */
+  section, .section {
+    padding: 0.5rem !important;
+  }
+  
+  /* Make inline buttons wrap */
+  .inline-actions,
+  [class*="inline-actions"] {
+    flex-wrap: wrap;
+    gap: 0.25rem;
+  }
 }
+
 
 /* Extra small devices */
 @media (max-width: 480px) {
@@ -2665,9 +2920,58 @@ body.dark .react-grid-item.react-grid-placeholder {
   }
   
   /* Compact headers */
-  h1 { font-size: 1.5rem; }
-  h2 { font-size: 1.25rem; }
-  h3 { font-size: 1.1rem; }
+  h1, .header { font-size: 1.25rem !important; }
+  h2 { font-size: 1.1rem !important; }
+  h3 { font-size: 1rem !important; }
+  
+  /* Extra small - hide view toggle text */
+  .view-btn .view-icon {
+    margin-right: 0 !important;
+  }
+  
+  .view-btn span:not(.view-icon) {
+    display: none;
+  }
+  
+  /* Category/Schedule buttons - icon only on very small */
+  button[style*="display: flex"][style*="alignItems: center"] span:not(:first-child) {
+    display: none;
+  }
+  
+  /* Tighter padding everywhere */
+  .content-area {
+    padding: 0.25rem !important;
+  }
+  
+  /* Search bar smaller text */
+  input[type="text"][placeholder*="Search"] {
+    font-size: 0.85rem !important;
+    padding: 0.5rem !important;
+  }
+  
+  /* Select dropdowns */
+  select {
+    font-size: 0.85rem !important;
+    padding: 0.5rem !important;
+  }
+  
+  /* Modal adjustments for very small screens */
+  .nx-modal {
+    width: 98vw !important;
+    margin: 0.5rem !important;
+  }
+  
+  .nx-modal-body {
+    padding: 0.5rem !important;
+  }
+  
+  .nx-modal-header {
+    padding: 0.5rem 0.75rem !important;
+  }
+  
+  .nx-modal-footer {
+    padding: 0.5rem !important;
+  }
 }
 
 /* Tablet/iPad specific */
