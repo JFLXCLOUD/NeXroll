@@ -1,5 +1,19 @@
 # Changelog
 
+## [Unreleased] - v1.9.10
+
+### Fixed
+- **Installer Folder Picker** - Fixed bug where selecting a custom preroll location during installation would not save
+  - The folder picker dialog was using inverted logic, ignoring valid folder selections
+  - Users can now successfully choose a custom preroll storage location during installation
+
+### Removed
+- **Genre-based Preroll Mapping** - Removed the experimental genre-based preroll feature from the UI
+  - The feature never fully worked due to Plex playback limitations
+  - Backend code remains dormant but no longer accessible through the interface
+
+---
+
 ## [1.9.8] - 01-08-2026
 
 ### Fixed
