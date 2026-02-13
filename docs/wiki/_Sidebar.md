@@ -10,6 +10,7 @@
 
 ### Features
 
+* [NeX-Up (Trailers)](NeX-Up)
 * [Sequences](Sequences)
 * [Scheduling Guide](Scheduling)
 * [Path Mappings](Path-Mappings)
