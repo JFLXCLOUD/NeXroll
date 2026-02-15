@@ -277,7 +277,7 @@ export const cloneSequenceWithIds = (sequence) => {
   }));
 };
 
-export default {
+const sequenceValidatorExports = {
   validateSequence,
   validateBlock,
   sanitizeSequence,
@@ -288,3 +288,5 @@ export default {
   estimatePrerollCount,
   cloneSequenceWithIds,
 };
+
+export default sequenceValidatorExports;

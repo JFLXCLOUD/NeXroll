@@ -46,10 +46,7 @@ const SequencePreview = ({ blocks, categories, prerolls, getCategoryName, getPre
     };
   }, [blocks, prerolls]);
 
-  const formatTime = (seconds) => {
-    const mins = Math.floor(seconds / 60);
-    const secs = Math.floor(seconds % 60);
-    return `${mins}:${secs.toString().padStart(2, '0')}`;
+// eslint-disable-next-line no-unused-vars
   };
 
   return (

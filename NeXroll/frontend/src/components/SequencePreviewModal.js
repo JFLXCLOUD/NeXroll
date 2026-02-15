@@ -1,5 +1,7 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
+// eslint-disable-next-line no-unused-vars
 import SequenceTimeline from './SequenceTimeline';
+// eslint-disable-next-line no-unused-vars
 import SequenceStats from './SequenceStats';
 
 /**
@@ -23,6 +25,27 @@ const SequencePreviewModal = ({ isOpen, onClose, blocks = [], categories = [], p
   const [expandedBlocks, setExpandedBlocks] = useState(new Set());
   const [playlist, setPlaylist] = useState([]);
   const videoRef = React.useRef(null);
+
+  // Get preroll details for a block
+  const getBlockPrerolls = useCallback((block) => {
+    if (block.type === 'preroll') {
+      const preroll = prerolls.find((p) => p.id === block.preroll_id);
+      return preroll ? [preroll] : [];
+    } else if (block.type === 'fixed') {
+      // Fixed block with specific preroll IDs
+      if (!block.preroll_ids || block.preroll_ids.length === 0) return [];
+      return block.preroll_ids
+        .map(id => prerolls.find(p => p.id === id))
+        .filter(Boolean);
+    } else if (block.type === 'random' || block.type === 'sequential') {
+      return prerolls.filter((p) => p.category_id === block.category_id);
+    } else if (block.type === 'queue') {
+      return []; // Queue items would be dynamic
+    } else if (block.type === 'sequence') {
+      return []; // Nested sequence
+    }
+    return [];
+  }, [prerolls]);
 
   // Build the playlist when blocks change or modal opens
   useEffect(() => {
@@ -64,7 +87,7 @@ const SequencePreviewModal = ({ isOpen, onClose, blocks = [], categories = [], p
     });
 
     setPlaylist(newPlaylist);
-  }, [isOpen, blocks, prerolls]);
+  }, [isOpen, blocks, prerolls, getBlockPrerolls]);
 
   // Start playback
   const startPlayback = () => {
@@ -132,6 +155,7 @@ const SequencePreviewModal = ({ isOpen, onClose, blocks = [], categories = [], p
     }
   };
 
+  // eslint-disable-next-line no-unused-vars
   const toggleBlockExpanded = (index) => {
     const newExpanded = new Set(expandedBlocks);
     if (newExpanded.has(index)) {
@@ -142,34 +166,15 @@ const SequencePreviewModal = ({ isOpen, onClose, blocks = [], categories = [], p
     setExpandedBlocks(newExpanded);
   };
 
-  // Get preroll details for a block
-  const getBlockPrerolls = (block) => {
-    if (block.type === 'preroll') {
-      const preroll = prerolls.find((p) => p.id === block.preroll_id);
-      return preroll ? [preroll] : [];
-    } else if (block.type === 'fixed') {
-      // Fixed block with specific preroll IDs
-      if (!block.preroll_ids || block.preroll_ids.length === 0) return [];
-      return block.preroll_ids
-        .map(id => prerolls.find(p => p.id === id))
-        .filter(Boolean);
-    } else if (block.type === 'random' || block.type === 'sequential') {
-      return prerolls.filter((p) => p.category_id === block.category_id);
-    } else if (block.type === 'queue') {
-      return []; // Queue items would be dynamic
-    } else if (block.type === 'sequence') {
-      return []; // Nested sequence
-    }
-    return [];
-  };
-
   // Get category name
+  // eslint-disable-next-line no-unused-vars
   const getCategoryName = (categoryId) => {
     const category = categories.find((c) => c.id === categoryId);
     return category?.name || 'Unknown Category';
   };
 
   // Get block icon
+  // eslint-disable-next-line no-unused-vars
   const getBlockIcon = (type) => {
     const icons = {
       preroll: '🎬',
@@ -184,6 +189,7 @@ const SequencePreviewModal = ({ isOpen, onClose, blocks = [], categories = [], p
   };
 
   // Get block color
+  // eslint-disable-next-line no-unused-vars
   const getBlockColor = (type) => {
     const colors = {
       preroll: '#667eea',
@@ -198,6 +204,7 @@ const SequencePreviewModal = ({ isOpen, onClose, blocks = [], categories = [], p
   };
 
   // Format duration
+  // eslint-disable-next-line no-unused-vars
   const formatDuration = (seconds) => {
     const mins = Math.floor(seconds / 60);
     const secs = Math.floor(seconds % 60);

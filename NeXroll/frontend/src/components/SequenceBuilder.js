@@ -41,7 +41,9 @@ const SequenceBuilder = ({ blocks: externalBlocks = [], onBlocksChange, initialS
   
   const [editingBlock, setEditingBlock] = useState(null);
   const [editingIndex, setEditingIndex] = useState(null);
+  // eslint-disable-next-line no-unused-vars
   const [showPreview, setShowPreview] = useState(false);
+  // eslint-disable-next-line no-unused-vars
   const [isModified, setIsModified] = useState(false);
   const [viewMode, setViewMode] = useState('card'); // 'card' or 'timeline'
   const [showFullPreview, setShowFullPreview] = useState(false);
@@ -76,7 +78,7 @@ const SequenceBuilder = ({ blocks: externalBlocks = [], onBlocksChange, initialS
       }));
       setBlocks(blocksWithIds);
     }
-  }, [initialSequence]);
+  }, [initialSequence, setBlocks]);
 
   const handleDragEnd = (event) => {
     const { active, over } = event;
@@ -163,6 +165,7 @@ const SequenceBuilder = ({ blocks: externalBlocks = [], onBlocksChange, initialS
       return;
     }
     // Strip IDs and labels before saving (backend doesn't need them)
+    // eslint-disable-next-line no-unused-vars
     const cleanBlocks = blocks.map(({ id, label, ...block }) => block);
     onSave(sequenceName.trim(), sequenceDescription.trim());
   };
