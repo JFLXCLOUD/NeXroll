@@ -65,8 +65,8 @@ export const validateBlock = (block, categories = [], prerolls = []) => {
   }
 
   const blockType = String(block.type).toLowerCase();
-  if (!['random', 'fixed'].includes(blockType)) {
-    errors.push(`Invalid block type: ${block.type}. Must be "random" or "fixed"`);
+  if (!['random', 'fixed', 'sequential'].includes(blockType)) {
+    errors.push(`Invalid block type: ${block.type}. Must be "random", "fixed", or "sequential"`);
     return errors;
   }
 
@@ -91,6 +91,33 @@ export const validateBlock = (block, categories = [], prerolls = []) => {
       }
       if (count > 10) {
         errors.push('Random block count cannot exceed 10');
+      }
+    }
+  }
+
+  // Validate sequential block (similar to random, but plays in order)
+  // Sequential blocks from imports may use category_name instead of category_id
+  if (blockType === 'sequential') {
+    // Accept either category_id or category_name (for imported sequences)
+    if (!block.category_id && !block.category_name) {
+      errors.push('Sequential block requires category_id or category_name');
+    } else if (block.category_id) {
+      // Check if category exists
+      const categoryExists = categories.some((c) => c.id === block.category_id);
+      if (!categoryExists) {
+        errors.push(`Category ${block.category_id} not found`);
+      }
+    }
+    // Note: category_name blocks will be resolved by backend during schedule execution
+
+    // Count is optional for sequential blocks (defaults to 1)
+    if (block.count !== undefined && block.count !== null) {
+      const count = parseInt(block.count);
+      if (isNaN(count) || count < 1) {
+        errors.push('Sequential block count must be at least 1');
+      }
+      if (count > 10) {
+        errors.push('Sequential block count cannot exceed 10');
       }
     }
   }

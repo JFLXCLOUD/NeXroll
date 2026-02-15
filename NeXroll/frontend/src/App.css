@@ -139,3 +139,40 @@ code {
 
 /* Prerolls UI styles are centralized in index.css for consistency.
    Duplicate rules removed to prevent precedence conflicts. */
+
+/* Live Preview Animations for Preroll Generator */
+@keyframes previewBgPulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.85; }
+}
+
+@keyframes previewParticles {
+  0%, 100% { transform: scale(1) rotate(0deg); opacity: 1; }
+  50% { transform: scale(1.1) rotate(1deg); opacity: 0.7; }
+}
+
+@keyframes previewFadeIn {
+  0% { opacity: 0; transform: translateY(10px); }
+  100% { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes previewNeonGlow {
+  0%, 100% { 
+    text-shadow: 0 0 10px currentColor, 0 0 20px currentColor, 0 0 30px currentColor;
+    opacity: 1;
+  }
+  50% { 
+    text-shadow: 0 0 20px currentColor, 0 0 40px currentColor, 0 0 60px currentColor;
+    opacity: 0.9;
+  }
+}
+
+@keyframes previewPulse {
+  0%, 100% { transform: scale(1); }
+  50% { transform: scale(1.03); }
+}
+
+@keyframes previewLineExpand {
+  0% { width: 0; opacity: 0; }
+  100% { width: 60%; opacity: 1; }
+}

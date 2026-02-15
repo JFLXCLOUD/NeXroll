@@ -36,6 +36,14 @@ services:
       # Jellyfin Configuration (optional - can also configure in UI)
       - JELLYFIN_URL=${JELLYFIN_URL:-}
       - JELLYFIN_API_KEY=${JELLYFIN_API_KEY:-}
+      
+      # NeX-Up: Radarr Integration (optional - for automatic trailer downloads)
+      - RADARR_URL=${RADARR_URL:-}
+      - RADARR_API_KEY=${RADARR_API_KEY:-}
+      
+      # NeX-Up: Sonarr Integration (optional - for automatic trailer downloads)
+      - SONARR_URL=${SONARR_URL:-}
+      - SONARR_API_KEY=${SONARR_API_KEY:-}
     
     # Health check to ensure NeXroll is running properly
     healthcheck:

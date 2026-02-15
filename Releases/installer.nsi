@@ -12,6 +12,7 @@
 !include "LogicLib.nsh"
 !include "FileFunc.nsh"
 !include "nsDialogs.nsh"
+!include "x64.nsh"
 
 Name "NeXroll"
 InstallDir "$PROGRAMFILES64\NeXroll"
@@ -21,15 +22,15 @@ ShowInstDetails show
 Icon "NeXroll_ICON\icon_1758297097_64x64.ico"
 UninstallIcon "NeXroll_ICON\icon_1758297097_32x32.ico"
 
-!define APP_VERSION "1.9.8"
-VIProductVersion "1.9.8.0"
+!define APP_VERSION "1.10.14"
+VIProductVersion "1.10.14.0"
 VIAddVersionKey /LANG=1033 "ProductName" "NeXroll"
 VIAddVersionKey /LANG=1033 "ProductVersion" "${APP_VERSION}"
 VIAddVersionKey /LANG=1033 "FileVersion" "${APP_VERSION}"
 VIAddVersionKey /LANG=1033 "CompanyName" "JFLXCLOUD"
 VIAddVersionKey /LANG=1033 "FileDescription" "NeXroll Installer"
-VIAddVersionKey /LANG=1033 "LegalCopyright" "© 2025 JFLXCLOUD"
-OutFile "NeXroll_Installer_v${APP_VERSION}.exe"
+VIAddVersionKey /LANG=1033 "LegalCopyright" "© 2026 JFLXCLOUD"
+OutFile "dist\NeXroll_Installer_v1.10.14.exe"
  
 ; Variables
 Var PREROLL_PATH
@@ -101,6 +102,10 @@ FunctionEnd
 ; ------------------------------
 Section "!NeXroll Application (Required)" SEC_APP
   SectionIn RO
+  
+  ; Force 64-bit registry view so our keys are readable by 64-bit apps
+  SetRegView 64
+  
   SetOutPath "$INSTDIR"
   SetOverwrite on
 
@@ -163,8 +168,6 @@ Section "!NeXroll Application (Required)" SEC_APP
 
 
   ; Persist config to registry
-  ; Clear old registry entries first (for upgrades)
-  DeleteRegKey /ifempty HKLM "Software\NeXroll"
   WriteRegStr HKLM "Software\NeXroll" "InstallDir" "$INSTDIR"
   WriteRegStr HKLM "Software\NeXroll" "PrerollPath" "$PREROLL_PATH"
   WriteRegStr HKLM "Software\NeXroll" "Version" "${APP_VERSION}"
@@ -239,8 +242,8 @@ Section "FFmpeg Path Registration (Auto-detect)" SEC_FFREG
     StrCpy $0 "$PROGRAMFILES64\FFmpeg\bin\ffmpeg.exe"
   IfFileExists "$PROGRAMFILES\FFmpeg\bin\ffmpeg.exe" 0 +2
     StrCpy $0 "$PROGRAMFILES\FFmpeg\bin\ffmpeg.exe"
-  IfFileExists "%ProgramData%\chocolatey\bin\ffmpeg.exe" 0 +2
-    StrCpy $0 "%ProgramData%\chocolatey\bin\ffmpeg.exe"
+  IfFileExists "C:\ProgramData\chocolatey\bin\ffmpeg.exe" 0 +2
+    StrCpy $0 "C:\ProgramData\chocolatey\bin\ffmpeg.exe"
   IfFileExists "C:\ffmpeg\bin\ffmpeg.exe" 0 +2
     StrCpy $0 "C:\ffmpeg\bin\ffmpeg.exe"
   ${If} $0 != ""
@@ -257,8 +260,8 @@ Section "FFmpeg Path Registration (Auto-detect)" SEC_FFREG
     StrCpy $1 "$PROGRAMFILES64\FFmpeg\bin\ffprobe.exe"
   IfFileExists "$PROGRAMFILES\FFmpeg\bin\ffprobe.exe" 0 +2
     StrCpy $1 "$PROGRAMFILES\FFmpeg\bin\ffprobe.exe"
-  IfFileExists "%ProgramData%\chocolatey\bin\ffprobe.exe" 0 +2
-    StrCpy $1 "%ProgramData%\chocolatey\bin\ffprobe.exe"
+  IfFileExists "C:\ProgramData\chocolatey\bin\ffprobe.exe" 0 +2
+    StrCpy $1 "C:\ProgramData\chocolatey\bin\ffprobe.exe"
   IfFileExists "C:\ffmpeg\bin\ffprobe.exe" 0 +2
     StrCpy $1 "C:\ffmpeg\bin\ffprobe.exe"
   ${If} $1 != ""
@@ -307,6 +310,9 @@ FunctionEnd
 ; Uninstaller
 ; ------------------------------
 Section "Uninstall"
+  ; Force 64-bit registry view to match installer
+  SetRegView 64
+  
   ; Stop and remove Windows service if installed
   IfFileExists "$INSTDIR\NeXrollService.exe" 0 +5
     nsExec::ExecToStack '"$INSTDIR\NeXrollService.exe" stop' $0
@@ -344,8 +350,9 @@ Section "Uninstall"
   Delete "$INSTDIR\NeXrollService.exe"
   Delete "$INSTDIR\setup_plex_token.exe"
   Delete "$INSTDIR\NeXrollTray.exe"
-  Delete "$INSTDIR\favicon.ico"
   Delete "$INSTDIR\start_windows.bat"
+  Delete "$INSTDIR\CHANGELOG.md"
+  Delete "$INSTDIR\README.md"
   Delete "$INSTDIR\uninstall.exe"
   ; Attempt to remove the install dir (will fail if non-empty; that's OK)
   RMDir "$INSTDIR"
@@ -367,7 +374,6 @@ SectionEnd
 Function .onInit
    ; Best-effort: stop running NeXroll processes so upgrade can proceed
    ; Try to stop the Windows service first (ignore errors if not installed/running)
-   DetailPrint "Stopping NeXroll service and processes..."
    nsExec::ExecToStack 'sc stop "NeXrollService"' $0
    Pop $0
    Sleep 2000
@@ -394,8 +400,6 @@ Function .onInit
    nsExec::ExecToStack 'taskkill /F /IM NeXrollService.exe /T' $0
    Pop $0
    Sleep 1500
-   
-   DetailPrint "Process cleanup complete."
 
    ; No Python checks (NeXroll.exe is self-contained)
    ; Light ffmpeg check just to inform user
@@ -412,10 +416,21 @@ FunctionEnd
 ; Post-install message (simplified)
 ; ------------------------------
 Function .onInstSuccess
-   ; Launch NeXrollTray.exe after installation (best-effort)
-   Exec '"$INSTDIR\NeXrollTray.exe"'
+   ; Launch NeXrollTray.exe in the USER's context (not elevated/SYSTEM)
+   ; The installer runs as admin, so we need to de-elevate to access mapped drives
+   ; and user-specific network credentials. The most reliable method is to use
+   ; a scheduled task that runs immediately as the interactive logged-in user.
+   nsExec::ExecToStack 'powershell -NoProfile -ExecutionPolicy Bypass -Command "\
+      $$action = New-ScheduledTaskAction -Execute \"$INSTDIR\NeXrollTray.exe\"; \
+      $$trigger = New-ScheduledTaskTrigger -Once -At (Get-Date).AddSeconds(2); \
+      $$settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries; \
+      $$principal = New-ScheduledTaskPrincipal -GroupId \"S-1-5-32-545\" -RunLevel Limited; \
+      Register-ScheduledTask -TaskName \"NeXrollLaunch\" -Action $$action -Trigger $$trigger -Settings $$settings -Principal $$principal -Force | Out-Null; \
+      Start-Sleep -Seconds 3; \
+      Unregister-ScheduledTask -TaskName \"NeXrollLaunch\" -Confirm:$$false -ErrorAction SilentlyContinue"'
+   Pop $0
 
    ; Show a simple informational message to avoid complex quoting/escaping issues
-   MessageBox MB_ICONINFORMATION|MB_OK "Installation complete. You can launch NeXroll from the Start Menu or the system tray. If you installed the service, check Services or the ProgramData\\NeXroll\\logs\\service.log for details."
+   MessageBox MB_ICONINFORMATION|MB_OK "Installation complete!$\r$\n$\r$\nNeXroll is now running in the system tray.$\r$\nAccess the web interface at http://localhost:9393"
 FunctionEnd
 

@@ -43,6 +43,7 @@ class Category(Base):
     description = Column(Text)
     plex_mode = Column(String, default="shuffle")  # 'shuffle' or 'playlist' for Plex delimiter behavior
     apply_to_plex = Column(Boolean, default=False)  # Whether this category should be applied to Plex
+    is_system = Column(Boolean, default=False)  # System categories cannot be edited/deleted (e.g., NeX-Up Trailers)
     # Optional: reverse relation to list all prerolls tagged with this category (view-only)
     prerolls = relationship("Preroll", secondary="preroll_categories", viewonly=True)
 
@@ -142,6 +143,70 @@ class CommunityTemplate(Base):
     created_at = Column(DateTime, default=datetime.datetime.utcnow)
     is_public = Column(Boolean, default=True)
 
+
+class ComingSoonTrailer(Base):
+    """NeX-Up: Tracks trailers for upcoming movies from Radarr"""
+    __tablename__ = "coming_soon_trailers"
+
+    id = Column(Integer, primary_key=True, index=True)
+    radarr_movie_id = Column(Integer, index=True)  # Radarr's internal movie ID
+    tmdb_id = Column(Integer, index=True)  # TMDB ID for cross-referencing
+    imdb_id = Column(String, nullable=True)  # IMDB ID
+    title = Column(String, index=True)  # Movie title
+    year = Column(Integer, nullable=True)  # Release year
+    overview = Column(Text, nullable=True)  # Movie description
+    release_date = Column(DateTime, nullable=True)  # Expected release date
+    release_type = Column(String, nullable=True)  # 'digital', 'physical', 'theatrical'
+    trailer_url = Column(String, nullable=True)  # Original YouTube URL
+    local_path = Column(String, nullable=True)  # Path to downloaded trailer file
+    file_size_mb = Column(Float, nullable=True)  # Size of downloaded trailer in MB
+    duration_seconds = Column(Integer, nullable=True)  # Trailer duration
+    resolution = Column(String, nullable=True)  # e.g., "1080p"
+    poster_url = Column(String, nullable=True)  # Movie poster URL
+    fanart_url = Column(String, nullable=True)  # Fanart/background URL
+    downloaded_at = Column(DateTime, nullable=True)  # When trailer was downloaded
+    status = Column(String, default='pending')  # 'pending', 'downloading', 'downloaded', 'error', 'expired'
+    error_message = Column(Text, nullable=True)  # Error details if download failed
+    is_enabled = Column(Boolean, default=True)  # User can enable/disable individual trailers
+    play_count = Column(Integer, default=0)  # How many times this trailer has been played
+    last_played = Column(DateTime, nullable=True)  # Last time trailer was played
+    created_at = Column(DateTime, default=datetime.datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow)
+
+
+class ComingSoonTVTrailer(Base):
+    """NeX-Up: Tracks trailers for upcoming TV shows/seasons from Sonarr"""
+    __tablename__ = "coming_soon_tv_trailers"
+
+    id = Column(Integer, primary_key=True, index=True)
+    sonarr_series_id = Column(Integer, index=True)  # Sonarr's internal series ID
+    tvdb_id = Column(Integer, index=True)  # TVDB ID for cross-referencing
+    tmdb_id = Column(Integer, nullable=True)  # TMDB ID
+    imdb_id = Column(String, nullable=True)  # IMDB ID
+    title = Column(String, index=True)  # Show title
+    year = Column(Integer, nullable=True)  # Show start year
+    season_number = Column(Integer, nullable=True)  # Season number (1 for new shows)
+    overview = Column(Text, nullable=True)  # Show/season description
+    network = Column(String, nullable=True)  # Network/streaming service
+    release_date = Column(DateTime, nullable=True)  # Premiere date
+    release_type = Column(String, nullable=True)  # 'new_show' or 'new_season'
+    trailer_url = Column(String, nullable=True)  # Original YouTube URL
+    local_path = Column(String, nullable=True)  # Path to downloaded trailer file
+    file_size_mb = Column(Float, nullable=True)  # Size of downloaded trailer in MB
+    duration_seconds = Column(Integer, nullable=True)  # Trailer duration
+    resolution = Column(String, nullable=True)  # e.g., "1080p"
+    poster_url = Column(String, nullable=True)  # Show poster URL
+    fanart_url = Column(String, nullable=True)  # Fanart/background URL
+    downloaded_at = Column(DateTime, nullable=True)  # When trailer was downloaded
+    status = Column(String, default='pending')  # 'pending', 'downloading', 'downloaded', 'error', 'expired'
+    error_message = Column(Text, nullable=True)  # Error details if download failed
+    is_enabled = Column(Boolean, default=True)  # User can enable/disable individual trailers
+    play_count = Column(Integer, default=0)  # How many times this trailer has been played
+    last_played = Column(DateTime, nullable=True)  # Last time trailer was played
+    created_at = Column(DateTime, default=datetime.datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow)
+
+
 class Setting(Base):
     __tablename__ = "settings"
 
@@ -179,6 +244,41 @@ class Setting(Base):
     passive_mode = Column(Boolean, default=False)  # When enabled, only manage prerolls during active schedules (allows coexistence with other preroll managers)
     # Clear prerolls when inactive
     clear_when_inactive = Column(Boolean, default=False)  # When enabled, clear Plex preroll field when no schedules are active
+    
+    # NeX-Up Settings (Radarr integration for upcoming movie trailers)
+    nexup_enabled = Column(Boolean, default=False)  # Master enable/disable for NeX-Up feature
+    nexup_radarr_url = Column(String, nullable=True)  # Radarr server URL
+    nexup_radarr_api_key = Column(String, nullable=True)  # Radarr API key
+    nexup_storage_path = Column(String, nullable=True)  # Path for temporary trailer storage
+    nexup_quality = Column(String, default='1080')  # Trailer quality: '720', '1080', '4k', 'best'
+    nexup_days_ahead = Column(Integer, default=90)  # How many days ahead to look for upcoming movies
+    nexup_max_trailers = Column(Integer, default=10)  # Maximum number of trailers to keep
+    nexup_max_storage_gb = Column(Float, default=5.0)  # Maximum storage space for trailers
+    nexup_trailers_per_playback = Column(Integer, default=2)  # How many trailers to include per preroll session
+    nexup_playback_order = Column(String, default='release_date')  # 'release_date', 'random', 'download_date'
+    nexup_auto_refresh_hours = Column(Integer, default=24)  # How often to refresh from Radarr (hours)
+    nexup_last_sync = Column(DateTime, nullable=True)  # Last time NeX-Up synced with Radarr
+    nexup_category_id = Column(Integer, ForeignKey("categories.id"), nullable=True)  # Auto-created category for trailers
+    
+    # YouTube Rate Limiting Settings
+    nexup_download_delay = Column(Integer, default=5)  # Seconds to wait between downloads (YouTube rate limiting)
+    nexup_max_concurrent = Column(Integer, default=1)  # Max concurrent downloads (1 = sequential)
+    nexup_bulk_warning_threshold = Column(Integer, default=5)  # Show warning when downloading more than this many
+    nexup_tmdb_api_key = Column(String, nullable=True)  # User's TMDB API key (optional, uses fallback if not provided)
+    
+    # NeX-Up Sonarr Settings (TV show trailers)
+    nexup_sonarr_enabled = Column(Boolean, default=False)  # Enable Sonarr integration
+    nexup_sonarr_url = Column(String, nullable=True)  # Sonarr server URL
+    nexup_sonarr_api_key = Column(String, nullable=True)  # Sonarr API key
+    nexup_tv_category_id = Column(Integer, ForeignKey("categories.id"), nullable=True)  # Auto-created category for TV trailers
+    nexup_last_sonarr_sync = Column(DateTime, nullable=True)  # Last time NeX-Up synced with Sonarr
+    nexup_max_trailer_duration = Column(Integer, default=180)  # Maximum trailer duration in seconds (0 = no limit)
+    
+    # Dynamic Preroll Generation Settings
+    nexup_dynamic_preroll_template = Column(String, nullable=True)  # Template name: 'coming_soon', 'now_playing', etc.
+    nexup_dynamic_preroll_server_name = Column(String, nullable=True)  # Server name to display in generated preroll
+    nexup_dynamic_preroll_duration = Column(Integer, nullable=True)  # Duration of generated preroll in seconds
+    nexup_dynamic_preroll_theme = Column(String, nullable=True)  # Color theme: 'midnight', 'sunset', 'forest', 'royal', 'monochrome'
     
     def get_json_value(self, key):
         """Get a JSON value from a column"""

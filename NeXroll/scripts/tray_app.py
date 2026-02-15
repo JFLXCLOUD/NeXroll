@@ -14,6 +14,48 @@ from typing import Optional
 from PIL import Image, ImageDraw
 import pystray
 
+# Single-instance mutex name
+MUTEX_NAME = "Global\\NeXrollTray_SingleInstance_Mutex"
+_mutex_handle = None
+
+def _acquire_single_instance():
+    """Acquire a system-wide mutex to ensure only one tray instance runs.
+    Returns True if this is the first instance, False if another is already running."""
+    global _mutex_handle
+    try:
+        # CreateMutexW: create or open a named mutex
+        kernel32 = ctypes.windll.kernel32
+        ERROR_ALREADY_EXISTS = 183
+        
+        _mutex_handle = kernel32.CreateMutexW(None, True, MUTEX_NAME)
+        last_error = kernel32.GetLastError()
+        
+        if last_error == ERROR_ALREADY_EXISTS:
+            # Another instance is already running
+            if _mutex_handle:
+                kernel32.CloseHandle(_mutex_handle)
+                _mutex_handle = None
+            return False
+        return True
+    except Exception as e:
+        # If mutex fails, allow running (fallback behavior)
+        try:
+            _log_tray(f"Mutex acquisition failed: {e}")
+        except:
+            pass
+        return True
+
+def _release_single_instance():
+    """Release the mutex when exiting."""
+    global _mutex_handle
+    try:
+        if _mutex_handle:
+            ctypes.windll.kernel32.ReleaseMutex(_mutex_handle)
+            ctypes.windll.kernel32.CloseHandle(_mutex_handle)
+            _mutex_handle = None
+    except Exception:
+        pass
+
 
 APP_URL = "http://localhost:9393"
 GITHUB_URL = "https://github.com/JFLXCLOUD/NeXroll"
@@ -629,6 +671,11 @@ def run_tray():
 
 
 if __name__ == "__main__":
+    # Single-instance check - prevent multiple tray apps from running
+    if not _acquire_single_instance():
+        # Another instance is already running - just exit silently
+        sys.exit(0)
+    
     # Install a global excepthook to capture unhandled exceptions to ProgramData\NeXroll\logs\tray.log
     def _tray_excepthook(exc_type, exc, tb):
         try:
@@ -646,5 +693,10 @@ if __name__ == "__main__":
         sys.excepthook = _tray_excepthook
     except Exception:
         pass
-    # Run as GUI app (no console when packaged)
-    run_tray()
+    
+    try:
+        # Run as GUI app (no console when packaged)
+        run_tray()
+    finally:
+        # Release mutex on exit
+        _release_single_instance()

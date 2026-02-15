@@ -1,16 +1,137 @@
 # Changelog
 
-## [Unreleased] - v1.9.10
+## [1.10.14] - 02-14-2026
+
+### New Feature: NeX-Up - Radarr & Sonarr Trailer Integration
+
+A brand new feature that brings the movie theater "Coming Soon" experience to your Plex server. Automatically download and play trailers for upcoming movies and TV shows before your content.
+
+#### Radarr & Sonarr Connections
+- **One-Click Integration** - Connect to Radarr and Sonarr with URL and API key
+- **Automatic Discovery** - Fetches movies/shows scheduled to release within your configured timeframe
+- **Smart Cleanup** - Automatically removes trailers when content is added to your library
+- **Separate Storage** - Trailers organized in `/movies` and `/tv` subdirectories
+
+#### Automatic Trailer Downloads
+- **YouTube Integration** - Downloads trailers automatically from YouTube
+- **Cookie File Support** - Use exported cookies for age-restricted or region-locked content
+- **Quality Settings** - Choose 720p, 1080p, 4K, or best available
+- **Storage Limits** - Configure max trailers and storage allocation
+
+#### Dynamic Preroll Generator
+- **Custom Intro Videos** - Create "Coming Soon to [Your Server]" intro clips
+- **Multiple Templates** - Cinematic, Neon, Minimal, Retro, Elegant styles
+- **Color Themes** - 5 color themes (Midnight, Sunset, Forest, Royal, Monochrome)
+- **Live Preview** - Watch your generated intro directly in the browser
+- **FFmpeg Powered** - High-quality video generation
+
+#### Sequence Builder Presets
+- "Coming Soon + Movie Trailers" - Intro followed by random movie trailers
+- "Coming Soon + TV Trailers" - Intro followed by random TV trailers
+- "Mixed: Movies + TV" - Intro with both movie and TV trailers
+- "Theater Experience" - Full cinema experience with 4 trailers
+
+#### NeX-Up Page Organization
+- **Connections Tab** - Radarr/Sonarr management with quick sync buttons
+- **Your Trailers Tab** - Manage movie and TV trailers with storage info
+- **Settings Tab** - YouTube cookies, storage path, TMDB API, rate limiting
+- **Generator Tab** - Dynamic preroll generator and sequence builder
+
+### Added
+
+- **Custom Styled Confirmation Dialogs** - All browser confirmation dialogs replaced with themed modal dialogs. Supports warning, danger, info, success, and error styles with icons, smooth animations, and async/await handling.
+
+#### System & Files Backup (Enhanced)
+- **Comprehensive System Backup** - "Files Backup" renamed to "System & Files Backup" - now creates a complete system snapshot
+- **Database Included** - Backup includes both SQLite database file (nexroll.db) and JSON export for cross-version compatibility
+- **All Preroll Videos** - Every preroll video file is included in the backup ZIP
+- **Thumbnails Included** - All generated thumbnails preserved in backup
+- **Settings & Configuration** - Application settings exported with the backup
+- **Streaming Download** - Large backups now use FileResponse streaming to prevent memory issues
+- **Smart Restore** - Restore process handles both new comprehensive format and legacy backups
+- **Progress Tracking** - Real-time progress indicators during backup creation and restore operations
+- **Button Disable During Operations** - UI prevents accidental double-clicks during backup/restore
+
+#### Video Quality Dashboard
+- **New Dashboard Tile** - "Video Quality" card shows resolution distribution of your preroll library
+- **Interactive Bar Chart** - Visual breakdown of 4K, 1080p, 720p, 480p, and other resolutions
+- **Click to Filter** - Click any resolution bar to filter prerolls by that quality
+- **Color-Coded Bars** - Each resolution has a distinct color for quick identification
+
+#### Community Prerolls Stale Indicator
+- **"Currently Showing" Tile Rename** - Currebt Category dashboard tile renamed to "Currently Showing"
+- **Stale Data Warning** - Orange indicator appears when community data is older than 24 hours
+- **Last Updated Timestamp** - Shows when community prerolls were last refreshed
+
+#### YouTube Bot Detection Warning
+- **New Info Box in NeX-Up Settings** - Explains YouTube's aggressive bot detection
+- **VPN Guidance** - Suggests refreshing VPN IP if downloads fail
+- **Rate Limiting Tips** - Wait between downloads to avoid blocks
+- **Cookie Instructions** - Export from Incognito using cookies.txt extension
+
+#### Dashboard Quick Actions
+- **NeX-Up Sync Button** - One-click sync for both Radarr and Sonarr trailers
+- **Real-Time Progress** - Shows which trailer is downloading with progress counter
+- **Spinner Animations** - All Quick Action buttons now animate properly
+
+#### Video Scaling Page
+- **Dedicated Dashboard Sub-Page** - New "Video Scaling" page accessible from Dashboard menu
+- **Resolution Stats Cards** - Visual breakdown showing count of 4K, 1080p, 720p, 480p, SD, and unknown resolution prerolls
+- **Click-to-Filter** - Click any resolution card to filter the preroll list
+- **Bulk Selection** - Multi-select prerolls with "Select All" and "Clear Selection" buttons
+- **Batch Scaling** - Scale multiple prerolls to target resolution (1080p, 720p, or 480p) in one operation
+- **Progress Tracking** - Real-time progress indicator shows current file being processed
+- **Smart Filtering** - Excludes NeX-Up trailers and dynamic prerolls from scaling (they have their own workflows)
+- **Scale Prerolls to Lower Resolutions** - Transcode to 1080p, 720p, or 480p
+- **One-Click Scaling in Edit Modal** - Quick access to scale individual prerolls
+- **High Quality Settings** - Uses FFmpeg libx264, CRF 18, slow preset
+- **720p Recommended** - Ideal for remote streaming without transcoding
+
+#### Schedule Conflict Detection
+- **Same-Priority Warnings** - Orange badges when exclusive schedules conflict
+- **Calendar Indicators** - Day, Week, and Month views show conflicts
+- **Priority Visualization** - Higher priority schedules shown with lock icon, lower priority greyed out
+
+### Improved
+
+- **Add Prerolls to Category UI** - Replaced cluttered dropdown with a searchable thumbnail grid. Multi-select prerolls with visual checkmarks and add them all at once.
+- **Schedules Page Organization** - Schedules are now organized into three clear sections: "Currently Running" (active right now), "Enabled Schedules" (ready but not running), and "Disabled Schedules" (paused).
+- **Category Management Styling** - Categories now organized into three sections: "Scheduled Categories", "Categories with Prerolls", and "Empty Categories". Added colored accent borders on cards, section headers with icons and counts, and a quick stats bar showing totals at a glance.
+- **Dashboard Card Icons** - All dashboard cards now display lucide icons in their headers for visual consistency (Servers, Prerolls, Storage, Schedules, Scheduler, Current Category, Upcoming, Genre Prerolls, Community, NeX-Up).
+- **Category Grid Condensed View** - Category cards in grid view are now more compact with reduced padding, no duplicate buttons, and clickable cards to edit. Minimum width reduced to 220px for better space efficiency.
+- **Backup & Restore Overhaul** - Complete redesign of the backup/restore interface with progress indicators, card-based layout, and clearer button alignment.
+
+#### yt-dlp & Deno Updates
+- **yt-dlp 2026.2.4** - Latest version with improved YouTube extraction
+- **Deno 2.6.8** - Required JavaScript runtime for YouTube extraction
+- **Better Error Messages** - Clear guidance when YouTube blocks downloads
+
+#### Installer
+- **Launch Tray After Install** - Option to start NeXrollTray immediately
+- **Fixed Post-Install Context** - Network drives accessible on first launch
 
 ### Fixed
-- **Installer Folder Picker** - Fixed bug where selecting a custom preroll location during installation would not save
-  - The folder picker dialog was using inverted logic, ignoring valid folder selections
-  - Users can now successfully choose a custom preroll storage location during installation
+- **Category Grid Dropdown Z-Index** - Fixed issue where the three-dot menu options in Category Management grid view appeared behind neighboring category cards.
+- **Category Preroll Count Bug** - Fixed issue where non-primary category assignments showed 0 prerolls. The category stats now correctly count prerolls added via many-to-many associations.
+- **Category Dropdown Sorting** - All category dropdown menus throughout the app now display categories in alphabetical order.
+- **Fixed Folder Picker** - Custom preroll location now saves correctly
+
+#### Schedule Management
+- **Load Saved Sequences** - Dropdown loads sequences when creating schedules
+- **Improved Edit Modal** - Better layout with 900px width
+- **Duplicate Prevention** - No more duplicate sequences when using saved sequences
+
+### Fixed
+- Fixed KeyError when YouTube download fails (proper error dict handling)
+- Fixed dynamic preroll theme not saving after generation
+- Fixed gradient backgrounds to match CSS preview
+- Fixed Radarr/Sonarr auto-sync KeyError with dictionary keys
+- Fixed color themes working for all template types
+- Fixed video preview caching issues
+- Fixed sequence validator for 'sequential' block type
 
 ### Removed
-- **Genre-based Preroll Mapping** - Removed the experimental genre-based preroll feature from the UI
-  - The feature never fully worked due to Plex playback limitations
-  - Backend code remains dormant but no longer accessible through the interface
+- **Genre-based Preroll Mapping** - Removed experimental feature that never fully worked
 
 ---
 

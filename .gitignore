@@ -28,8 +28,8 @@ yarn-debug.log*
 yarn-error.log*
 .pnpm-debug.log*
 
-# React build
-NeXroll/frontend/build/
+# React build cache
+#NeXroll/frontend/build/
 NeXroll/frontend/.eslintcache
 
 # IDEs
@@ -125,3 +125,8 @@ replace_*.py
 
 # Discord announcements
 discord_announcement*.txt
+# Personal notes
+NexRollQuestions.txt
+
+# Root package-lock (frontend only)
+/package-lock.json

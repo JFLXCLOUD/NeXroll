@@ -19,6 +19,10 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     NEXROLL_SECRETS_DIR=/data \
     PLEX_URL="" \
     JELLYFIN_URL="" \
+    RADARR_URL="" \
+    RADARR_API_KEY="" \
+    SONARR_URL="" \
+    SONARR_API_KEY="" \
     TZ=UTC
 
 RUN apt-get update && \
@@ -26,12 +30,17 @@ RUN apt-get update && \
     apt-get install -y --no-install-recommends \
         ffmpeg \
         curl \
+        unzip \
         tzdata \
         build-essential \
         rustc \
         cargo \
         pkg-config && \
     rm -rf /var/lib/apt/lists/*
+
+# Install Deno (required for yt-dlp YouTube extraction)
+RUN curl -fsSL https://deno.land/install.sh | sh && \
+    ln -s /root/.deno/bin/deno /usr/local/bin/deno
 
 WORKDIR /app/NeXroll
 

@@ -2,17 +2,17 @@
 
 **Release Date:** January 8, 2026
 
-## 🎉 What's New
+##  What's New
 
 ### Daily Calendar View
 A brand new view mode for your schedule calendar that shows an **hourly breakdown** of any day:
-- 📅 Hour-by-hour timeline (12 AM - 11 PM) showing which categories are scheduled
-- 🎯 Visual conflict resolution: see which schedules win each hour
-- 🔒 Exclusive schedule indicators with time ranges
-- 🔀 Blend mode visualization when multiple schedules mix
-- 🌙 Night hours (10 PM - 6 AM) subtly highlighted
-- ⏰ Current hour indicator when viewing today
-- 🖱️ Click any day in Month view to jump to its hourly breakdown
+-  Hour-by-hour timeline (12 AM - 11 PM) showing which categories are scheduled
+-  Visual conflict resolution: see which schedules win each hour
+-  Exclusive schedule indicators with time ranges
+-  Blend mode visualization when multiple schedules mix
+-  Night hours (10 PM - 6 AM) subtly highlighted
+-  Current hour indicator when viewing today
+-  Click any day in Month view to jump to its hourly breakdown
 
 Perfect for fine-tuning complex schedules and understanding exactly what plays when!
 
@@ -34,7 +34,7 @@ Run NeXroll alongside other preroll managers:
 - Added r/NeXroll subreddit link to footer and README
 - Join the community for support, feature requests, and discussions!
 
-## 🐛 Bug Fixes
+## Bug Fixes
 
 ### Critical Timezone Drift Bug
 Fixed a **major bug** affecting users in GMT-7/8 timezones:
@@ -50,7 +50,7 @@ Fixed new schedules defaulting to Sequential playback:
 - "Random" option now correctly defaults to enabled when creating a schedule
 - Visual selection now matches the actual backend default
 
-## 🔄 Changes
+## Changes
 
 ### Time Display Format
 - Dashboard "Upcoming Schedules" now shows times without seconds
@@ -63,13 +63,13 @@ Fixed new schedules defaulting to Sequential playback:
 
 ---
 
-## 📦 Installation
+## Installation
 
-Download `NeXroll_Installer_v1.9.8.exe` from the releases page and run it.
+Download `NeXroll_Installer.exe` from the releases page and run it.
 
 **For existing users:** The installer will upgrade your current installation while preserving your database and settings.
 
-## 🆘 Support
+## Support
 
 - **Issues:** [GitHub Issues](https://github.com/your-repo/issues)
 - **Discussions:** r/NeXroll on Reddit
@@ -77,10 +77,10 @@ Download `NeXroll_Installer_v1.9.8.exe` from the releases page and run it.
 
 ---
 
-## 📝 Full Changelog
+##  Full Changelog
 
 See [CHANGELOG.md](CHANGELOG.md) for complete version history.
 
-## 🙏 Thank You
+##  Thank You
 
 Thanks to all community members who reported bugs, suggested features, and helped test this release!

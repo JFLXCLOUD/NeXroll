@@ -1,7 +1,8 @@
-from fastapi import FastAPI, Depends, File, UploadFile, HTTPException, Form, Request, Query
+from fastapi import FastAPI, Depends, File, UploadFile, HTTPException, Form, Request, Query, Body, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, Response, StreamingResponse
+from starlette.background import BackgroundTask
 from sqlalchemy.orm import Session, joinedload
 from sqlalchemy import or_, select, func, text
 from sqlalchemy.exc import IntegrityError, OperationalError
@@ -21,6 +22,7 @@ from urllib.parse import unquote
 import uuid
 import time
 import re
+import asyncio
 
 class DashboardSection(BaseModel):
     id: str
@@ -80,6 +82,9 @@ def ensure_schema() -> None:
             # Categories: ensure plex_mode
             if not _sqlite_has_column("categories", "plex_mode"):
                 _sqlite_add_column("categories", "plex_mode TEXT DEFAULT 'shuffle'")
+            # Categories: ensure is_system (for NeX-Up Trailers, etc.)
+            if not _sqlite_has_column("categories", "is_system"):
+                _sqlite_add_column("categories", "is_system BOOLEAN DEFAULT 0")
 
             # Schedules: ensure fallback_category_id
             if not _sqlite_has_column("schedules", "fallback_category_id"):
@@ -177,6 +182,89 @@ def ensure_schema() -> None:
             # Settings: ensure clear_when_inactive column (clear prerolls when no schedule active)
             if not _sqlite_has_column("settings", "clear_when_inactive"):
                 _sqlite_add_column("settings", "clear_when_inactive BOOLEAN DEFAULT 0")
+            
+            # NeX-Up Settings (Radarr integration for upcoming movie trailers)
+            nexup_columns = [
+                ("nexup_enabled", "nexup_enabled BOOLEAN DEFAULT 0"),
+                ("nexup_radarr_url", "nexup_radarr_url TEXT"),
+                ("nexup_radarr_api_key", "nexup_radarr_api_key TEXT"),
+                ("nexup_storage_path", "nexup_storage_path TEXT"),
+                ("nexup_quality", "nexup_quality TEXT DEFAULT '1080'"),
+                ("nexup_days_ahead", "nexup_days_ahead INTEGER DEFAULT 90"),
+                ("nexup_max_trailers", "nexup_max_trailers INTEGER DEFAULT 10"),
+                ("nexup_max_storage_gb", "nexup_max_storage_gb REAL DEFAULT 5.0"),
+                ("nexup_trailers_per_playback", "nexup_trailers_per_playback INTEGER DEFAULT 2"),
+                ("nexup_playback_order", "nexup_playback_order TEXT DEFAULT 'release_date'"),
+                ("nexup_auto_refresh_hours", "nexup_auto_refresh_hours INTEGER DEFAULT 24"),
+                ("nexup_last_sync", "nexup_last_sync DATETIME"),
+                ("nexup_category_id", "nexup_category_id INTEGER"),
+                # YouTube Rate Limiting
+                ("nexup_download_delay", "nexup_download_delay INTEGER DEFAULT 5"),
+                ("nexup_max_concurrent", "nexup_max_concurrent INTEGER DEFAULT 1"),
+                ("nexup_bulk_warning_threshold", "nexup_bulk_warning_threshold INTEGER DEFAULT 5"),
+                # TMDB API Key (user-provided)
+                ("nexup_tmdb_api_key", "nexup_tmdb_api_key TEXT"),
+                # Sonarr Settings
+                ("nexup_sonarr_enabled", "nexup_sonarr_enabled BOOLEAN DEFAULT 0"),
+                ("nexup_sonarr_url", "nexup_sonarr_url TEXT"),
+                ("nexup_sonarr_api_key", "nexup_sonarr_api_key TEXT"),
+                ("nexup_tv_category_id", "nexup_tv_category_id INTEGER"),
+                ("nexup_last_sonarr_sync", "nexup_last_sonarr_sync DATETIME"),
+                # Max trailer duration filter
+                ("nexup_max_trailer_duration", "nexup_max_trailer_duration INTEGER DEFAULT 180"),
+            ]
+            for col, ddl in nexup_columns:
+                if not _sqlite_has_column("settings", col):
+                    _sqlite_add_column("settings", ddl)
+            
+            # Create coming_soon_tv_trailers table for Sonarr
+            with engine.connect() as conn:
+                conn.exec_driver_sql("""
+                    CREATE TABLE IF NOT EXISTS coming_soon_tv_trailers (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        sonarr_series_id INTEGER,
+                        tvdb_id INTEGER,
+                        tmdb_id INTEGER,
+                        imdb_id TEXT,
+                        title TEXT,
+                        year INTEGER,
+                        season_number INTEGER,
+                        overview TEXT,
+                        network TEXT,
+                        release_date DATETIME,
+                        release_type TEXT,
+                        trailer_url TEXT,
+                        local_path TEXT,
+                        file_size_mb REAL,
+                        duration_seconds INTEGER,
+                        resolution TEXT,
+                        poster_url TEXT,
+                        fanart_url TEXT,
+                        downloaded_at DATETIME,
+                        status TEXT DEFAULT 'pending',
+                        error_message TEXT,
+                        is_enabled BOOLEAN DEFAULT 1,
+                        play_count INTEGER DEFAULT 0,
+                        last_played DATETIME,
+                        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+                    )
+                """)
+                conn.exec_driver_sql("CREATE INDEX IF NOT EXISTS idx_tv_trailers_sonarr ON coming_soon_tv_trailers(sonarr_series_id)")
+                conn.exec_driver_sql("CREATE INDEX IF NOT EXISTS idx_tv_trailers_tvdb ON coming_soon_tv_trailers(tvdb_id)")
+                conn.exec_driver_sql("CREATE INDEX IF NOT EXISTS idx_tv_trailers_title ON coming_soon_tv_trailers(title)")
+                conn.commit()
+            
+            # Dynamic Preroll Generation Settings
+            dynamic_preroll_columns = [
+                ("nexup_dynamic_preroll_template", "nexup_dynamic_preroll_template TEXT"),
+                ("nexup_dynamic_preroll_server_name", "nexup_dynamic_preroll_server_name TEXT"),
+                ("nexup_dynamic_preroll_duration", "nexup_dynamic_preroll_duration INTEGER"),
+                ("nexup_dynamic_preroll_theme", "nexup_dynamic_preroll_theme TEXT"),
+            ]
+            for col, ddl in dynamic_preroll_columns:
+                if not _sqlite_has_column("settings", col):
+                    _sqlite_add_column("settings", ddl)
             
             # Schedules: ensure color column for custom calendar colors
             if not _sqlite_has_column("schedules", "color"):
@@ -447,12 +535,46 @@ def _log_file_path():
 _verbose_logging_cache = {"enabled": False, "last_check": 0}
 _verbose_cache_ttl = 5  # seconds
 
+# Track last log rotation check to avoid checking on every write
+_log_rotation_cache = {"last_check": 0}
+_log_rotation_check_interval = 60  # Check every 60 seconds
+
+def _check_log_rotation():
+    """Check and rotate log if needed (cached to avoid checking too often)"""
+    try:
+        import time
+        now = time.time()
+        
+        # Only check periodically
+        if now - _log_rotation_cache["last_check"] < _log_rotation_check_interval:
+            return
+        
+        _log_rotation_cache["last_check"] = now
+        
+        log_path = _log_file_path()
+        if not os.path.exists(log_path):
+            return
+        
+        size_mb = os.path.getsize(log_path) / (1024 * 1024)
+        if size_mb > 10:  # 10MB limit
+            backup_path = log_path + ".1"
+            # Remove old backup if exists
+            if os.path.exists(backup_path):
+                os.remove(backup_path)
+            # Rename current log to backup
+            os.rename(log_path, backup_path)
+    except Exception:
+        pass
+
 def _file_log(msg: str, level: str = "INFO"):
     """
     Log message to file with timestamp and level.
     Levels: DEBUG, INFO, WARNING, ERROR
     """
     try:
+        # Check rotation before writing
+        _check_log_rotation()
+        
         with open(_log_file_path(), "a", encoding="utf-8") as f:
             ts = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             f.write(f"[{ts}] [{level}] {msg}\n")
@@ -614,10 +736,42 @@ def _redirect_std_streams():
     except Exception:
         pass
 
+def _setup_python_logging():
+    """Configure Python's logging module to write to the same log file"""
+    try:
+        import logging
+        log_path = _log_file_path()
+        os.makedirs(os.path.dirname(log_path), exist_ok=True)
+        
+        # Create a file handler for all backend modules
+        file_handler = logging.FileHandler(log_path, encoding='utf-8')
+        file_handler.setLevel(logging.INFO)
+        
+        # Use a format similar to _file_log
+        formatter = logging.Formatter('[%(asctime)s] [%(levelname)s] %(message)s', 
+                                      datefmt='%Y-%m-%d %H:%M:%S')
+        file_handler.setFormatter(formatter)
+        
+        # Add handler to root logger and specific backend loggers
+        root_logger = logging.getLogger()
+        root_logger.setLevel(logging.INFO)
+        root_logger.addHandler(file_handler)
+        
+        # Also configure specific backend module loggers
+        for module_name in ['backend.radarr_connector', 'backend.scheduler', 
+                           'backend.sonarr_connector', 'backend.main']:
+            module_logger = logging.getLogger(module_name)
+            module_logger.setLevel(logging.INFO)
+            module_logger.addHandler(file_handler)
+            
+    except Exception as e:
+        _file_log(f"Failed to setup Python logging: {e}", level="ERROR")
+
 def _init_global_logging():
     try:
         _install_global_excepthook()
         _redirect_std_streams()
+        _setup_python_logging()  # Add Python logging handler
         _file_log("Global logging initialized")
     except Exception:
         pass
@@ -852,7 +1006,7 @@ class ScheduleCreate(BaseModel):
     type: str
     start_date: str  # Accept as string from frontend
     end_date: Optional[str] = None  # Accept as string from frontend
-    category_id: int
+    category_id: Optional[int] = None  # Optional for sequence-based schedules
     shuffle: bool = False
     playlist: bool = False
     recurrence_pattern: Optional[str] = None
@@ -1593,6 +1747,112 @@ def get_db():
 @app.get("/health")
 def health_check():
     return {"status": "healthy"}
+
+
+@app.get("/system/dependencies")
+def system_dependencies():
+    """Return comprehensive system dependency information for the System Information page."""
+    import shutil
+    import platform
+    
+    def probe_version(cmd: str, version_flag: str = "-version"):
+        """Run a command with version flag and return (available, version_string)."""
+        try:
+            r = _run_subprocess([cmd, version_flag], capture_output=True, text=True)
+            if r.returncode == 0:
+                first = r.stdout.splitlines()[0] if r.stdout else ""
+                return True, first.strip()
+        except Exception:
+            pass
+        return False, None
+    
+    def probe_which(cmd: str):
+        """Check if a command exists in PATH."""
+        return shutil.which(cmd) is not None
+    
+    dependencies = {
+        "python": {
+            "available": True,
+            "version": platform.python_version(),
+            "description": "Python runtime for NeXroll backend",
+            "path": sys.executable
+        },
+        "ffmpeg": {
+            "available": False,
+            "version": None,
+            "description": "Video processing & preroll generation",
+            "path": None
+        },
+        "ffprobe": {
+            "available": False,
+            "version": None,
+            "description": "Video analysis & metadata extraction",
+            "path": None
+        },
+        "yt_dlp": {
+            "available": False,
+            "version": None,
+            "description": "YouTube & trailer downloads (NeX-Up)",
+            "path": None
+        },
+        "deno": {
+            "available": False,
+            "version": None,
+            "description": "JavaScript runtime for YouTube extraction",
+            "path": None
+        }
+    }
+    
+    # Check FFmpeg
+    ffmpeg_cmd = get_ffmpeg_cmd()
+    ffmpeg_ok, ffmpeg_ver = probe_version(ffmpeg_cmd)
+    dependencies["ffmpeg"]["available"] = ffmpeg_ok
+    dependencies["ffmpeg"]["version"] = ffmpeg_ver
+    dependencies["ffmpeg"]["path"] = ffmpeg_cmd if ffmpeg_ok else None
+    
+    # Check FFprobe
+    ffprobe_cmd = get_ffprobe_cmd()
+    ffprobe_ok, ffprobe_ver = probe_version(ffprobe_cmd)
+    dependencies["ffprobe"]["available"] = ffprobe_ok
+    dependencies["ffprobe"]["version"] = ffprobe_ver
+    dependencies["ffprobe"]["path"] = ffprobe_cmd if ffprobe_ok else None
+    
+    # Check yt-dlp (Python module first, then CLI)
+    try:
+        import yt_dlp
+        dependencies["yt_dlp"]["available"] = True
+        dependencies["yt_dlp"]["version"] = f"yt-dlp {yt_dlp.version.__version__}"
+        dependencies["yt_dlp"]["path"] = "Python module (bundled)"
+    except ImportError:
+        yt_dlp_path = shutil.which('yt-dlp')
+        if yt_dlp_path:
+            dependencies["yt_dlp"]["available"] = True
+            yt_ok, yt_ver = probe_version('yt-dlp', '--version')
+            dependencies["yt_dlp"]["version"] = f"yt-dlp {yt_ver}" if yt_ver else "yt-dlp (version unknown)"
+            dependencies["yt_dlp"]["path"] = yt_dlp_path
+    
+    # Check Deno (required for yt-dlp YouTube extraction)
+    deno_path = shutil.which('deno')
+    if deno_path:
+        dependencies["deno"]["available"] = True
+        deno_ok, deno_ver = probe_version('deno', '--version')
+        if deno_ver:
+            # deno --version returns multiple lines, first line is "deno X.X.X"
+            dependencies["deno"]["version"] = deno_ver
+        dependencies["deno"]["path"] = deno_path
+    
+    # Add system info
+    system_info = {
+        "platform": platform.system(),
+        "platform_version": platform.version(),
+        "architecture": platform.machine(),
+        "hostname": platform.node()
+    }
+    
+    return {
+        "dependencies": dependencies,
+        "system": system_info
+    }
 
 
 @app.get("/system/ffmpeg-info")
@@ -3618,6 +3878,254 @@ def upload_multiple_prerolls(
         "auto_applied": auto_applied,
     }
 
+# ─────────────────────────────────────────────────────────────────────────────
+# Video Scaling/Transcoding Endpoint
+# ─────────────────────────────────────────────────────────────────────────────
+
+class TranscodeRequest(BaseModel):
+    resolution: str = "720p"  # 1080p, 720p, 480p
+    replace_original: bool = True  # If false, creates a new file with suffix
+
+@app.post("/prerolls/{preroll_id}/transcode")
+def transcode_preroll(preroll_id: int, request: TranscodeRequest, db: Session = Depends(get_db)):
+    """
+    Transcode a preroll video to a different resolution.
+    
+    Useful for remote streaming where lower resolution prerolls 
+    avoid live transcoding on the media server.
+    
+    Supported resolutions:
+    - 1080p: 1920x1080 (Full HD)
+    - 720p: 1280x720 (HD - recommended for remote streaming)
+    - 480p: 854x480 (SD - low bandwidth)
+    """
+    preroll = db.query(models.Preroll).filter(models.Preroll.id == preroll_id).first()
+    if not preroll:
+        raise HTTPException(status_code=404, detail="Preroll not found")
+    
+    if not preroll.path or not os.path.exists(preroll.path):
+        raise HTTPException(status_code=404, detail="Video file not found on disk")
+    
+    # Validate resolution
+    resolution_map = {
+        "1080p": (1920, 1080),
+        "720p": (1280, 720),
+        "480p": (854, 480),
+    }
+    if request.resolution not in resolution_map:
+        raise HTTPException(status_code=400, detail=f"Invalid resolution. Supported: {', '.join(resolution_map.keys())}")
+    
+    target_width, target_height = resolution_map[request.resolution]
+    
+    # Check ffmpeg availability
+    ffmpeg_cmd = get_ffmpeg_cmd()
+    ffprobe_cmd = get_ffprobe_cmd()
+    
+    # Get current video resolution using ffprobe
+    try:
+        probe_result = _run_subprocess(
+            [ffprobe_cmd, "-v", "error", "-select_streams", "v:0", 
+             "-show_entries", "stream=width,height", "-of", "json", preroll.path],
+            capture_output=True, text=True
+        )
+        if probe_result.returncode == 0:
+            probe_data = json.loads(probe_result.stdout) if probe_result.stdout else {}
+            streams = probe_data.get("streams", [])
+            if streams:
+                current_width = streams[0].get("width", 0)
+                current_height = streams[0].get("height", 0)
+                _file_log(f"[TRANSCODE] Current resolution: {current_width}x{current_height}")
+                
+                # Check if already at target resolution
+                if current_width == target_width and current_height == target_height:
+                    return {
+                        "success": True,
+                        "message": f"Video is already at {request.resolution} ({target_width}x{target_height})",
+                        "skipped": True,
+                        "current_resolution": f"{current_width}x{current_height}"
+                    }
+    except Exception as e:
+        _file_log(f"[TRANSCODE] Warning: Could not probe video resolution: {e}")
+    
+    # Prepare output path
+    original_path = Path(preroll.path)
+    original_stem = original_path.stem
+    original_suffix = original_path.suffix
+    
+    if request.replace_original:
+        # Create temp file, then replace original
+        temp_output = original_path.parent / f"{original_stem}_transcoding{original_suffix}"
+        final_output = original_path
+    else:
+        # Create new file with resolution suffix
+        final_output = original_path.parent / f"{original_stem}_{request.resolution}{original_suffix}"
+        temp_output = final_output
+    
+    _file_log(f"[TRANSCODE] Starting transcode of '{preroll.filename}' to {request.resolution}")
+    _file_log(f"[TRANSCODE] Input: {preroll.path}")
+    _file_log(f"[TRANSCODE] Output: {temp_output}")
+    
+    try:
+        # FFmpeg command for transcoding
+        # Using scale with force_original_aspect_ratio to maintain aspect ratio
+        # and pad to exact dimensions if needed
+        # Note: -pix_fmt yuv420p ensures compatibility with H.264 high profile
+        # (required for 4:2:2 sources like ProRes which use yuv422p)
+        ffmpeg_args = [
+            ffmpeg_cmd,
+            "-y",  # Overwrite output
+            "-i", str(preroll.path),
+            "-vf", f"scale={target_width}:{target_height}:force_original_aspect_ratio=decrease,pad={target_width}:{target_height}:(ow-iw)/2:(oh-ih)/2:black",
+            "-c:v", "libx264",
+            "-pix_fmt", "yuv420p",  # Convert to 4:2:0 for H.264 high profile compatibility
+            "-preset", "slow",  # Good quality/speed balance
+            "-crf", "18",  # High quality (lower = better, 18 is visually lossless)
+            "-profile:v", "high",
+            "-level", "4.1",
+            "-c:a", "aac",
+            "-b:a", "192k",
+            "-movflags", "+faststart",  # Web optimization
+            str(temp_output)
+        ]
+        
+        result = _run_subprocess(ffmpeg_args, capture_output=True, text=True)
+        
+        if result.returncode != 0:
+            _file_log(f"[TRANSCODE] FFmpeg error: {result.stderr}")
+            raise HTTPException(status_code=500, detail=f"FFmpeg transcoding failed: {result.stderr[:500]}")
+        
+        # Verify output file exists
+        if not temp_output.exists():
+            raise HTTPException(status_code=500, detail="Transcoding failed - output file not created")
+        
+        # If replacing original, swap files
+        if request.replace_original and temp_output != final_output:
+            # Remove original and rename temp to original
+            original_path.unlink()
+            temp_output.rename(final_output)
+            _file_log(f"[TRANSCODE] Replaced original file")
+        
+        # Get new file size
+        new_size = final_output.stat().st_size
+        
+        # Update database record
+        if request.replace_original:
+            preroll.file_size = new_size
+            # Regenerate thumbnail after transcode
+            thumb_path = _generate_thumbnail_for_preroll(preroll, str(final_output), 
+                                                         preroll.category.name if preroll.category else None)
+            if thumb_path:
+                preroll.thumbnail = thumb_path
+            db.commit()
+        else:
+            # Create new preroll record for the scaled version
+            new_preroll = models.Preroll(
+                filename=final_output.name,
+                display_name=f"{preroll.display_name or original_stem} ({request.resolution})" if preroll.display_name or original_stem else final_output.name,
+                path=str(final_output),
+                thumbnail=None,
+                tags=preroll.tags,
+                category_id=preroll.category_id,
+                description=f"Scaled to {request.resolution} from {preroll.filename}",
+                duration=preroll.duration,
+                file_size=new_size,
+            )
+            db.add(new_preroll)
+            db.commit()
+            db.refresh(new_preroll)
+            
+            # Generate thumbnail for new preroll
+            thumb_path = _generate_thumbnail_for_preroll(new_preroll, str(final_output),
+                                                         preroll.category.name if preroll.category else None)
+            if thumb_path:
+                new_preroll.thumbnail = thumb_path
+                db.commit()
+        
+        _file_log(f"[TRANSCODE] Successfully transcoded to {request.resolution}: {final_output}")
+        
+        return {
+            "success": True,
+            "message": f"Successfully transcoded to {request.resolution}",
+            "resolution": request.resolution,
+            "dimensions": f"{target_width}x{target_height}",
+            "new_size_bytes": new_size,
+            "new_size_mb": round(new_size / (1024 * 1024), 2),
+            "replaced_original": request.replace_original,
+            "output_path": str(final_output)
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        _file_log(f"[TRANSCODE] Error: {e}")
+        # Cleanup temp file if it exists
+        if temp_output.exists() and temp_output != original_path:
+            try:
+                temp_output.unlink()
+            except:
+                pass
+        raise HTTPException(status_code=500, detail=f"Transcoding failed: {str(e)}")
+
+@app.get("/prerolls/{preroll_id}/video-info")
+def get_preroll_video_info(preroll_id: int, db: Session = Depends(get_db)):
+    """Get detailed video information including current resolution."""
+    preroll = db.query(models.Preroll).filter(models.Preroll.id == preroll_id).first()
+    if not preroll:
+        raise HTTPException(status_code=404, detail="Preroll not found")
+    
+    if not preroll.path or not os.path.exists(preroll.path):
+        raise HTTPException(status_code=404, detail="Video file not found")
+    
+    ffprobe_cmd = get_ffprobe_cmd()
+    
+    try:
+        probe_result = _run_subprocess(
+            [ffprobe_cmd, "-v", "error", "-select_streams", "v:0",
+             "-show_entries", "stream=width,height,codec_name,bit_rate,r_frame_rate",
+             "-show_entries", "format=duration,size,bit_rate",
+             "-of", "json", preroll.path],
+            capture_output=True, text=True, timeout=30
+        )
+        
+        if probe_result.returncode == 0:
+            probe_data = json.loads(probe_result.stdout) if probe_result.stdout else {}
+            streams = probe_data.get("streams", [{}])
+            format_info = probe_data.get("format", {})
+            
+            video_stream = streams[0] if streams else {}
+            width = video_stream.get("width", 0)
+            height = video_stream.get("height", 0)
+            
+            # Determine resolution label
+            resolution_label = "Unknown"
+            if height >= 1080:
+                resolution_label = "1080p (Full HD)"
+            elif height >= 720:
+                resolution_label = "720p (HD)"
+            elif height >= 480:
+                resolution_label = "480p (SD)"
+            elif height > 0:
+                resolution_label = f"{height}p"
+            
+            return {
+                "success": True,
+                "width": width,
+                "height": height,
+                "resolution_label": resolution_label,
+                "codec": video_stream.get("codec_name", "unknown"),
+                "duration": format_info.get("duration"),
+                "file_size": format_info.get("size"),
+                "bitrate": format_info.get("bit_rate"),
+                "frame_rate": video_stream.get("r_frame_rate")
+            }
+    except Exception as e:
+        _file_log(f"[VIDEO-INFO] Error probing video: {e}")
+    
+    return {
+        "success": False,
+        "error": "Could not retrieve video information"
+    }
+
 @app.get("/prerolls")
 def get_prerolls(db: Session = Depends(get_db), category_id: str = "", tags: str = "", search: str = ""):
     # Base query
@@ -4285,6 +4793,10 @@ def delete_category(category_id: int, db: Session = Depends(get_db)):
     if not category:
         raise HTTPException(status_code=404, detail="Category not found")
 
+    # Prevent deletion of system categories (e.g., NeX-Up Trailers)
+    if getattr(category, 'is_system', False):
+        raise HTTPException(status_code=403, detail="Cannot delete system category")
+
     # Check if category is used by prerolls (primary) or via many-to-many, or by schedules
     preroll_primary_count = db.query(models.Preroll).filter(models.Preroll.category_id == category_id).count()
     m2m_count = db.query(models.Preroll).join(
@@ -4293,7 +4805,7 @@ def delete_category(category_id: int, db: Session = Depends(get_db)):
     schedule_count = db.query(models.Schedule).filter(models.Schedule.category_id == category_id).count()
 
     if (preroll_primary_count + m2m_count) > 0 or schedule_count > 0:
-        raise HTTPException(status_code=400, detail="Cannot delete category that is in use")
+        raise HTTPException(status_code=400, detail="Category must be empty before deleting. Remove or reassign prerolls first.")
 
     # Remove any holiday presets pointing at this category to avoid FK integrity errors
     try:
@@ -4365,6 +4877,7 @@ def get_categories(db: Session = Depends(get_db)):
         "description": c.description,
         "apply_to_plex": getattr(c, "apply_to_plex", False),
         "plex_mode": getattr(c, "plex_mode", "shuffle"),
+        "is_system": getattr(c, "is_system", False),
     } for c in categories]
 
 @app.put("/categories/{category_id}")
@@ -4372,6 +4885,10 @@ def update_category(category_id: int, category: CategoryCreate, db: Session = De
     db_category = db.query(models.Category).filter(models.Category.id == category_id).first()
     if not db_category:
         raise HTTPException(status_code=404, detail="Category not found")
+
+    # Prevent editing of system categories (e.g., NeX-Up Trailers)
+    if getattr(db_category, 'is_system', False):
+        raise HTTPException(status_code=403, detail="Cannot edit system category")
 
     new_name = (category.name or "").strip()
     if not new_name:
@@ -4881,10 +5398,16 @@ def get_default_category(db: Session = Depends(get_db)):
 # Schedule endpoints
 @app.post("/schedules")
 def create_schedule(schedule: ScheduleCreate, db: Session = Depends(get_db)):
-    # Validate category exists
-    category = db.query(models.Category).filter(models.Category.id == schedule.category_id).first()
-    if not category:
-        raise HTTPException(status_code=404, detail="Category not found")
+    # Validate: must have either category_id or sequence
+    if not schedule.category_id and not schedule.sequence:
+        raise HTTPException(status_code=400, detail="Schedule must have either a category or a sequence")
+    
+    # Validate category exists if provided
+    category = None
+    if schedule.category_id:
+        category = db.query(models.Category).filter(models.Category.id == schedule.category_id).first()
+        if not category:
+            raise HTTPException(status_code=404, detail="Category not found")
 
     # Parse dates from strings - store as naive local datetime (no timezone conversion)
     # The user enters their local time, we store it as-is, and the scheduler compares against local time
@@ -8480,28 +9003,120 @@ def backup_database(db: Session = Depends(get_db)):
 
 @app.post("/backup/files")
 def backup_files():
-    """Create ZIP archive of all preroll files"""
+    """Create comprehensive ZIP archive of all system files including database, prerolls, and thumbnails"""
     try:
-        # Create in-memory ZIP file
-        zip_buffer = io.BytesIO()
-
-        with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zip_file:
-            # Add preroll files
-            prerolls_dir = Path(os.path.join(data_dir, "prerolls"))
-            if prerolls_dir.exists():
-                for file_path in prerolls_dir.rglob("*"):
+        from backend.database import DB_PATH
+        
+        # Create temp file for ZIP (streaming large files)
+        import tempfile
+        temp_dir = tempfile.gettempdir()
+        timestamp = datetime.datetime.now().strftime('%Y%m%d_%H%M%S')
+        zip_filename = f"nexroll_system_backup_{timestamp}.zip"
+        zip_path = os.path.join(temp_dir, zip_filename)
+        
+        with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as zip_file:
+            # 1. Add database file
+            if os.path.exists(DB_PATH):
+                zip_file.write(DB_PATH, "database/nexroll.db")
+            
+            # 2. Add database JSON export (for cross-version compatibility)
+            try:
+                db = SessionLocal()
+                try:
+                    db_export = {
+                        "prerolls": [
+                            {
+                                "filename": p.filename,
+                                "display_name": getattr(p, "display_name", None),
+                                "path": p.path,
+                                "thumbnail": p.thumbnail,
+                                "tags": p.tags,
+                                "category_id": p.category_id,
+                                "categories": [{"id": c.id, "name": c.name} for c in (p.categories or [])],
+                                "description": p.description,
+                                "managed": getattr(p, "managed", True),
+                                "upload_date": p.upload_date.isoformat() if p.upload_date else None
+                            } for p in db.query(models.Preroll).all()
+                        ],
+                        "categories": [
+                            {
+                                "id": c.id,
+                                "name": c.name,
+                                "description": c.description
+                            } for c in db.query(models.Category).all()
+                        ],
+                        "schedules": [
+                            {
+                                "name": s.name,
+                                "type": s.type,
+                                "start_date": s.start_date.isoformat() if s.start_date else None,
+                                "end_date": s.end_date.isoformat() if s.end_date else None,
+                                "category_id": s.category_id,
+                                "fallback_category_id": getattr(s, "fallback_category_id", None),
+                                "shuffle": s.shuffle,
+                                "playlist": s.playlist,
+                                "is_active": s.is_active,
+                                "recurrence_pattern": s.recurrence_pattern,
+                                "preroll_ids": s.preroll_ids
+                            } for s in db.query(models.Schedule).all()
+                        ],
+                        "holiday_presets": [
+                            {
+                                "name": h.name,
+                                "description": h.description,
+                                "month": h.month,
+                                "day": h.day,
+                                "category_id": h.category_id
+                            } for h in db.query(models.HolidayPreset).all()
+                        ],
+                        "saved_sequences": [
+                            {
+                                "name": seq.name,
+                                "description": seq.description,
+                                "blocks": seq.get_blocks(),
+                                "created_at": seq.created_at.isoformat() if seq.created_at else None,
+                                "updated_at": seq.updated_at.isoformat() if seq.updated_at else None
+                            } for seq in db.query(models.SavedSequence).all()
+                        ],
+                        "exported_at": datetime.datetime.utcnow().isoformat(),
+                        "version": "1.10.14"
+                    }
+                    zip_file.writestr("database/nexroll_data.json", json.dumps(db_export, indent=2))
+                finally:
+                    db.close()
+            except Exception as db_err:
+                print(f"Warning: Could not export database JSON: {db_err}")
+            
+            # 3. Add all preroll video files
+            if os.path.exists(PREROLLS_DIR):
+                for file_path in Path(PREROLLS_DIR).rglob("*"):
                     if file_path.is_file():
-                        # Add file to ZIP with relative path
-                        zip_file.write(file_path, file_path.relative_to(prerolls_dir.parent))
-
-        zip_buffer.seek(0)
-        return {
-            "filename": f"prerolls_backup_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.zip",
-            "content": zip_buffer.getvalue(),
-            "content_type": "application/zip"
-        }
+                        # Skip thumbnails folder - we'll add it separately
+                        rel_path = file_path.relative_to(Path(PREROLLS_DIR))
+                        if not str(rel_path).startswith("thumbnails"):
+                            zip_file.write(file_path, f"prerolls/{rel_path}")
+            
+            # 4. Add thumbnails
+            if os.path.exists(THUMBNAILS_DIR):
+                for file_path in Path(THUMBNAILS_DIR).rglob("*"):
+                    if file_path.is_file():
+                        rel_path = file_path.relative_to(Path(THUMBNAILS_DIR))
+                        zip_file.write(file_path, f"thumbnails/{rel_path}")
+            
+            # 5. Add settings.json if exists
+            settings_path = os.path.join(data_dir, "settings.json")
+            if os.path.exists(settings_path):
+                zip_file.write(settings_path, "settings/settings.json")
+        
+        # Return as streaming response
+        return FileResponse(
+            path=zip_path,
+            filename=zip_filename,
+            media_type="application/zip",
+            background=BackgroundTask(lambda: os.unlink(zip_path) if os.path.exists(zip_path) else None)
+        )
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"File backup failed: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"System backup failed: {str(e)}")
 
 @app.post("/restore/database")
 def restore_database(backup_data: dict, db: Session = Depends(get_db)):
@@ -8723,29 +9338,106 @@ def restore_database(backup_data: dict, db: Session = Depends(get_db)):
         raise HTTPException(status_code=500, detail=f"Restore failed: {str(e)}")
 
 @app.post("/restore/files")
-def restore_files(file: UploadFile = File(...)):
-    """Import preroll files from ZIP archive"""
+def restore_files(file: UploadFile = File(...), db: Session = Depends(get_db)):
+    """Import system backup from ZIP archive (handles new comprehensive format and legacy format)"""
     try:
-        # Create backup directory if it doesn't exist
-        backup_dir = Path("prerolls_backup")
-        backup_dir.mkdir(exist_ok=True)
-
+        from backend.database import DB_PATH
+        import tempfile
+        import shutil
+        
         # Save uploaded ZIP file temporarily
-        zip_path = backup_dir / "temp_restore.zip"
+        temp_dir = tempfile.gettempdir()
+        zip_path = os.path.join(temp_dir, "nexroll_restore_temp.zip")
         with open(zip_path, "wb") as f:
             content = file.file.read()
             f.write(content)
-
-        # Extract ZIP file
+        
+        restored_items = []
+        
         with zipfile.ZipFile(zip_path, 'r') as zip_ref:
-            zip_ref.extractall(os.path.join(data_dir, "prerolls"))
-
+            namelist = zip_ref.namelist()
+            
+            # Detect backup format
+            is_new_format = any(n.startswith("database/") or n.startswith("prerolls/") for n in namelist)
+            
+            if is_new_format:
+                # New comprehensive format
+                print("RESTORE: Detected new comprehensive backup format")
+                
+                # 1. Restore database file if present
+                if "database/nexroll.db" in namelist:
+                    print("RESTORE: Restoring database file...")
+                    # Extract to temp location first
+                    db_temp = os.path.join(temp_dir, "nexroll_restore.db")
+                    with zip_ref.open("database/nexroll.db") as src:
+                        with open(db_temp, "wb") as dst:
+                            dst.write(src.read())
+                    # Copy to actual location (backup existing first)
+                    if os.path.exists(DB_PATH):
+                        backup_db = DB_PATH + ".backup"
+                        try:
+                            shutil.copy2(DB_PATH, backup_db)
+                        except Exception:
+                            pass
+                    shutil.copy2(db_temp, DB_PATH)
+                    os.unlink(db_temp)
+                    restored_items.append("database")
+                
+                # 2. Restore preroll files
+                preroll_files = [n for n in namelist if n.startswith("prerolls/") and not n.endswith("/")]
+                if preroll_files:
+                    print(f"RESTORE: Restoring {len(preroll_files)} preroll files...")
+                    for name in preroll_files:
+                        # Extract relative path after "prerolls/"
+                        rel_path = name[len("prerolls/"):]
+                        target_path = os.path.join(PREROLLS_DIR, rel_path)
+                        os.makedirs(os.path.dirname(target_path), exist_ok=True)
+                        with zip_ref.open(name) as src:
+                            with open(target_path, "wb") as dst:
+                                dst.write(src.read())
+                    restored_items.append(f"{len(preroll_files)} preroll files")
+                
+                # 3. Restore thumbnails
+                thumb_files = [n for n in namelist if n.startswith("thumbnails/") and not n.endswith("/")]
+                if thumb_files:
+                    print(f"RESTORE: Restoring {len(thumb_files)} thumbnail files...")
+                    for name in thumb_files:
+                        rel_path = name[len("thumbnails/"):]
+                        target_path = os.path.join(THUMBNAILS_DIR, rel_path)
+                        os.makedirs(os.path.dirname(target_path), exist_ok=True)
+                        with zip_ref.open(name) as src:
+                            with open(target_path, "wb") as dst:
+                                dst.write(src.read())
+                    restored_items.append(f"{len(thumb_files)} thumbnails")
+                
+                # 4. Restore settings if present
+                if "settings/settings.json" in namelist:
+                    print("RESTORE: Restoring settings...")
+                    settings_path = os.path.join(data_dir, "settings.json")
+                    with zip_ref.open("settings/settings.json") as src:
+                        with open(settings_path, "wb") as dst:
+                            dst.write(src.read())
+                    restored_items.append("settings")
+                
+            else:
+                # Legacy format - just prerolls folder directly
+                print("RESTORE: Detected legacy backup format")
+                zip_ref.extractall(PREROLLS_DIR)
+                restored_items.append("preroll files (legacy format)")
+        
         # Clean up temp file
-        zip_path.unlink()
-
-        return {"message": "Files restored successfully"}
+        os.unlink(zip_path)
+        
+        return {
+            "message": "System restore completed successfully",
+            "restored": restored_items,
+            "format": "comprehensive" if is_new_format else "legacy"
+        }
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"File restore failed: {str(e)}")
+        print(f"RESTORE ERROR: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"System restore failed: {str(e)}")
 
 @app.post("/maintenance/fix-thumbnail-paths")
 def fix_thumbnail_paths(db: Session = Depends(get_db)):
@@ -10183,6 +10875,3504 @@ def update_clear_when_inactive(clear_when_inactive: bool, db: Session = Depends(
     _file_log(f"Clear when inactive {status}")
     
     return {"message": f"Clear when inactive {status}", "clear_when_inactive": clear_when_inactive}
+
+# ==============================================================================
+# NeX-Up: Radarr Integration for Upcoming Movie Trailers
+# ==============================================================================
+
+# Global sync progress state for SSE streaming
+_nexup_sync_progress = {
+    "syncing": False,
+    "type": None,  # "radarr" or "sonarr"
+    "status": "",
+    "current_item": "",
+    "progress": 0,
+    "total": 0,
+    "downloaded": 0,
+    "skipped": 0,
+    "errors": 0
+}
+
+@app.get("/nexup/sync-progress")
+async def get_sync_progress():
+    """
+    Server-Sent Events endpoint for real-time sync progress
+    """
+    from starlette.responses import StreamingResponse
+    import asyncio
+    import json
+    
+    async def event_stream():
+        try:
+            while True:
+                progress_data = _nexup_sync_progress.copy()
+                yield f"data: {json.dumps(progress_data)}\n\n"
+                
+                # Stop streaming when sync is complete
+                if not progress_data.get("syncing", False) and progress_data.get("progress", 0) >= 100:
+                    await asyncio.sleep(0.3)
+                    break
+                
+                await asyncio.sleep(0.3)  # Update every 300ms
+        except Exception as e:
+            _file_log(f"Sync progress stream error: {e}")
+    
+    return StreamingResponse(event_stream(), media_type="text/event-stream")
+
+@app.get("/nexup/settings")
+def get_nexup_settings(db: Session = Depends(get_db)):
+    """Get all NeX-Up settings"""
+    setting = db.query(models.Setting).first()
+    if not setting:
+        return {
+            "enabled": False,
+            "radarr_url": None,
+            "radarr_connected": False,
+            "storage_path": None,
+            "quality": "1080",
+            "days_ahead": 90,
+            "max_trailers": 10,
+            "max_storage_gb": 5.0,
+            "trailers_per_playback": 2,
+            "playback_order": "release_date",
+            "auto_refresh_hours": 24,
+            "max_trailer_duration": 180,
+            "last_sync": None,
+            "category_id": None,
+            "download_delay": 5,
+            "max_concurrent": 1,
+            "bulk_warning_threshold": 5,
+            "sonarr_enabled": False,
+            "sonarr_url": None,
+            "sonarr_connected": False,
+            "tv_category_id": None
+        }
+    
+    return {
+        "enabled": getattr(setting, 'nexup_enabled', False),
+        "radarr_url": getattr(setting, 'nexup_radarr_url', None),
+        "radarr_connected": bool(getattr(setting, 'nexup_radarr_url', None) and getattr(setting, 'nexup_radarr_api_key', None)),
+        "storage_path": getattr(setting, 'nexup_storage_path', None),
+        "quality": getattr(setting, 'nexup_quality', '1080'),
+        "days_ahead": getattr(setting, 'nexup_days_ahead', 90),
+        "max_trailers": getattr(setting, 'nexup_max_trailers', 10),
+        "max_storage_gb": getattr(setting, 'nexup_max_storage_gb', 5.0),
+        "trailers_per_playback": getattr(setting, 'nexup_trailers_per_playback', 2),
+        "playback_order": getattr(setting, 'nexup_playback_order', 'release_date'),
+        "auto_refresh_hours": getattr(setting, 'nexup_auto_refresh_hours', 24),
+        "max_trailer_duration": getattr(setting, 'nexup_max_trailer_duration', 180),
+        "last_sync": getattr(setting, 'nexup_last_sync', None).isoformat() if getattr(setting, 'nexup_last_sync', None) else None,
+        "category_id": getattr(setting, 'nexup_category_id', None),
+        "download_delay": getattr(setting, 'nexup_download_delay', 5),
+        "max_concurrent": getattr(setting, 'nexup_max_concurrent', 1),
+        "bulk_warning_threshold": getattr(setting, 'nexup_bulk_warning_threshold', 5),
+        "tmdb_api_key": getattr(setting, 'nexup_tmdb_api_key', None),
+        # Sonarr settings
+        "sonarr_enabled": getattr(setting, 'nexup_sonarr_enabled', False),
+        "sonarr_url": getattr(setting, 'nexup_sonarr_url', None),
+        "sonarr_connected": bool(getattr(setting, 'nexup_sonarr_url', None) and getattr(setting, 'nexup_sonarr_api_key', None)),
+        "tv_category_id": getattr(setting, 'nexup_tv_category_id', None),
+        "last_sonarr_sync": getattr(setting, 'nexup_last_sonarr_sync', None).isoformat() if getattr(setting, 'nexup_last_sonarr_sync', None) else None
+    }
+
+@app.put("/nexup/settings")
+def update_nexup_settings(
+    enabled: Optional[bool] = None,
+    sonarr_enabled: Optional[bool] = None,
+    storage_path: Optional[str] = None,
+    quality: Optional[str] = None,
+    days_ahead: Optional[int] = None,
+    max_trailers: Optional[int] = None,
+    max_storage_gb: Optional[float] = None,
+    trailers_per_playback: Optional[int] = None,
+    playback_order: Optional[str] = None,
+    auto_refresh_hours: Optional[int] = None,
+    max_trailer_duration: Optional[int] = None,
+    download_delay: Optional[int] = None,
+    max_concurrent: Optional[int] = None,
+    bulk_warning_threshold: Optional[int] = None,
+    tmdb_api_key: Optional[str] = None,
+    db: Session = Depends(get_db)
+):
+    """Update NeX-Up settings"""
+    setting = db.query(models.Setting).first()
+    if not setting:
+        setting = models.Setting(plex_url=None, plex_token=None)
+        db.add(setting)
+        db.commit()
+        db.refresh(setting)
+    
+    if enabled is not None:
+        setting.nexup_enabled = enabled
+    if sonarr_enabled is not None:
+        setting.nexup_sonarr_enabled = sonarr_enabled
+    if storage_path is not None:
+        setting.nexup_storage_path = storage_path
+        # Create directory if it doesn't exist
+        if storage_path:
+            try:
+                Path(storage_path).mkdir(parents=True, exist_ok=True)
+            except Exception as e:
+                _file_log(f"Failed to create NeX-Up storage path: {e}")
+        
+        # Auto-create the NeX-Up Trailers system category for movies if it doesn't exist
+        nexup_category = db.query(models.Category).filter(
+            models.Category.name == "NeX-Up Movie Trailers"
+        ).first()
+        if not nexup_category:
+            nexup_category = models.Category(
+                name="NeX-Up Movie Trailers",
+                description="System category for upcoming movie trailers from Radarr. Managed automatically by NeX-Up.",
+                plex_mode="shuffle",
+                apply_to_plex=False,
+                is_system=True
+            )
+            db.add(nexup_category)
+            db.commit()
+            db.refresh(nexup_category)
+            _file_log("Created NeX-Up Trailers system category")
+        
+        # Store the category ID in settings
+        setting.nexup_category_id = nexup_category.id
+        
+        # Auto-create the NeX-Up TV Trailers system category for TV shows if it doesn't exist
+        nexup_tv_category = db.query(models.Category).filter(
+            models.Category.name == "NeX-Up TV Trailers"
+        ).first()
+        if not nexup_tv_category:
+            nexup_tv_category = models.Category(
+                name="NeX-Up TV Trailers",
+                description="System category for upcoming TV show trailers from Sonarr. Managed automatically by NeX-Up.",
+                plex_mode="shuffle",
+                apply_to_plex=False,
+                is_system=True
+            )
+            db.add(nexup_tv_category)
+            db.commit()
+            db.refresh(nexup_tv_category)
+            _file_log("Created NeX-Up TV Trailers system category")
+        elif not nexup_tv_category.description:
+            # Update description if missing
+            nexup_tv_category.description = "System category for upcoming TV show trailers from Sonarr. Managed automatically by NeX-Up."
+            nexup_tv_category.is_system = True
+            db.commit()
+            _file_log("Updated NeX-Up TV Trailers category description")
+        
+        # Store the TV category ID in settings
+        setting.nexup_tv_category_id = nexup_tv_category.id
+    if quality is not None:
+        setting.nexup_quality = quality
+    if days_ahead is not None:
+        setting.nexup_days_ahead = days_ahead
+    if max_trailers is not None:
+        setting.nexup_max_trailers = max_trailers
+    if max_storage_gb is not None:
+        setting.nexup_max_storage_gb = max_storage_gb
+    if trailers_per_playback is not None:
+        setting.nexup_trailers_per_playback = trailers_per_playback
+    if playback_order is not None:
+        setting.nexup_playback_order = playback_order
+    if auto_refresh_hours is not None:
+        setting.nexup_auto_refresh_hours = auto_refresh_hours
+    if max_trailer_duration is not None:
+        setting.nexup_max_trailer_duration = max(0, min(600, max_trailer_duration))  # 0-600 seconds (0 = no limit)
+    if download_delay is not None:
+        setting.nexup_download_delay = max(0, min(60, download_delay))  # 0-60 seconds
+    if max_concurrent is not None:
+        setting.nexup_max_concurrent = max(1, min(5, max_concurrent))  # 1-5 concurrent
+    if bulk_warning_threshold is not None:
+        setting.nexup_bulk_warning_threshold = max(1, min(50, bulk_warning_threshold))  # 1-50 trailers
+    if tmdb_api_key is not None:
+        setting.nexup_tmdb_api_key = tmdb_api_key if tmdb_api_key.strip() else None
+    
+    setting.updated_at = datetime.datetime.utcnow()
+    db.commit()
+    
+    _file_log(f"NeX-Up settings updated")
+    return {"message": "NeX-Up settings updated", "success": True}
+
+@app.post("/nexup/radarr/connect")
+async def connect_radarr(
+    url: str,
+    api_key: str,
+    db: Session = Depends(get_db)
+):
+    """Connect to Radarr and test the connection"""
+    try:
+        from backend.radarr_connector import RadarrConnector
+        
+        # Clean up URL
+        url = url.strip().rstrip('/')
+        if not url.startswith(('http://', 'https://')):
+            url = f"http://{url}"
+        
+        # Test connection
+        connector = RadarrConnector(url, api_key)
+        result = await connector.test_connection()
+        
+        if result['success']:
+            # Save credentials
+            setting = db.query(models.Setting).first()
+            if not setting:
+                setting = models.Setting(plex_url=None, plex_token=None)
+                db.add(setting)
+                db.commit()
+                db.refresh(setting)
+            
+            setting.nexup_radarr_url = url
+            setting.nexup_radarr_api_key = api_key
+            setting.updated_at = datetime.datetime.utcnow()
+            db.commit()
+            
+            _file_log(f"Radarr connected: {result.get('appName')} v{result.get('version')}")
+            return {
+                "success": True,
+                "message": f"Connected to {result.get('appName', 'Radarr')} v{result.get('version', 'Unknown')}",
+                "version": result.get('version'),
+                "appName": result.get('appName'),
+                "instanceName": result.get('instanceName')
+            }
+        else:
+            return {
+                "success": False,
+                "message": result.get('message', 'Connection failed')
+            }
+    except Exception as e:
+        _file_log(f"Radarr connect error: {str(e)}")
+        return {
+            "success": False,
+            "message": f"Connection error: {str(e)}"
+        }
+
+@app.delete("/nexup/radarr/disconnect")
+def disconnect_radarr(db: Session = Depends(get_db)):
+    """Disconnect from Radarr"""
+    setting = db.query(models.Setting).first()
+    if setting:
+        setting.nexup_radarr_url = None
+        setting.nexup_radarr_api_key = None
+        setting.updated_at = datetime.datetime.utcnow()
+        db.commit()
+    
+    _file_log("Radarr disconnected")
+    return {"success": True, "message": "Radarr disconnected"}
+
+@app.get("/nexup/radarr/upcoming")
+async def get_upcoming_movies(db: Session = Depends(get_db)):
+    """Get list of upcoming movies from Radarr"""
+    setting = db.query(models.Setting).first()
+    if not setting or not setting.nexup_radarr_url or not setting.nexup_radarr_api_key:
+        raise HTTPException(status_code=400, detail="Radarr not connected")
+    
+    from backend.radarr_connector import RadarrConnector
+    
+    connector = RadarrConnector(setting.nexup_radarr_url, setting.nexup_radarr_api_key)
+    days_ahead = getattr(setting, 'nexup_days_ahead', 90) or 90
+    
+    movies = await connector.get_upcoming_movies(days_ahead)
+    
+    # Get existing trailers to mark which are already downloaded
+    existing_trailers = db.query(models.ComingSoonTrailer).all()
+    existing_radarr_ids = {t.radarr_movie_id for t in existing_trailers}
+    
+    for movie in movies:
+        movie['downloaded'] = movie['radarr_id'] in existing_radarr_ids
+    
+    return {
+        "movies": movies,
+        "total": len(movies),
+        "days_ahead": days_ahead
+    }
+
+@app.get("/nexup/radarr/debug/{radarr_id}")
+async def debug_radarr_movie(radarr_id: int, db: Session = Depends(get_db)):
+    """Debug endpoint to see raw Radarr movie data including trailer info"""
+    setting = db.query(models.Setting).first()
+    if not setting or not setting.nexup_radarr_url or not setting.nexup_radarr_api_key:
+        raise HTTPException(status_code=400, detail="Radarr not connected")
+    
+    from backend.radarr_connector import RadarrConnector
+    
+    connector = RadarrConnector(setting.nexup_radarr_url, setting.nexup_radarr_api_key)
+    movie = await connector.get_movie_by_id(radarr_id)
+    
+    if not movie:
+        raise HTTPException(status_code=404, detail="Movie not found in Radarr")
+    
+    # Extract trailer-related fields
+    return {
+        "id": movie.get('id'),
+        "title": movie.get('title'),
+        "year": movie.get('year'),
+        "tmdbId": movie.get('tmdbId'),
+        "imdbId": movie.get('imdbId'),
+        "youTubeTrailerId": movie.get('youTubeTrailerId'),
+        "trailer_url": f"https://www.youtube.com/watch?v={movie['youTubeTrailerId']}" if movie.get('youTubeTrailerId') else None,
+        "status": movie.get('status'),
+        "hasFile": movie.get('hasFile'),
+        "monitored": movie.get('monitored'),
+        "digitalRelease": movie.get('digitalRelease'),
+        "physicalRelease": movie.get('physicalRelease'),
+        "inCinemas": movie.get('inCinemas'),
+        # Include all fields for debugging
+        "_raw_keys": list(movie.keys())
+    }
+
+# ============================================================================
+# SONARR INTEGRATION ENDPOINTS
+# ============================================================================
+
+@app.post("/nexup/sonarr/connect")
+async def connect_sonarr(
+    url: str,
+    api_key: str,
+    db: Session = Depends(get_db)
+):
+    """Connect to Sonarr and test the connection"""
+    try:
+        from backend.sonarr_connector import SonarrConnector
+        
+        # Clean up URL
+        url = url.strip().rstrip('/')
+        if not url.startswith(('http://', 'https://')):
+            url = f"http://{url}"
+        
+        # Test connection
+        connector = SonarrConnector(url, api_key)
+        result = await connector.test_connection()
+        
+        if result['success']:
+            # Save credentials
+            setting = db.query(models.Setting).first()
+            if not setting:
+                setting = models.Setting(plex_url=None, plex_token=None)
+                db.add(setting)
+                db.commit()
+                db.refresh(setting)
+            
+            setting.nexup_sonarr_url = url
+            setting.nexup_sonarr_api_key = api_key
+            setting.nexup_sonarr_enabled = True
+            setting.updated_at = datetime.datetime.utcnow()
+            db.commit()
+            
+            _file_log(f"Sonarr connected: {result.get('appName')} v{result.get('version')}")
+            return {
+                "success": True,
+                "message": f"Connected to {result.get('appName', 'Sonarr')} v{result.get('version', 'Unknown')}",
+                "version": result.get('version'),
+                "appName": result.get('appName'),
+                "instanceName": result.get('instanceName')
+            }
+        else:
+            return {
+                "success": False,
+                "message": result.get('message', 'Connection failed')
+            }
+    except Exception as e:
+        _file_log(f"Sonarr connect error: {str(e)}")
+        return {
+            "success": False,
+            "message": f"Connection error: {str(e)}"
+        }
+
+@app.delete("/nexup/sonarr/disconnect")
+def disconnect_sonarr(db: Session = Depends(get_db)):
+    """Disconnect from Sonarr"""
+    setting = db.query(models.Setting).first()
+    if setting:
+        setting.nexup_sonarr_url = None
+        setting.nexup_sonarr_api_key = None
+        setting.nexup_sonarr_enabled = False
+        setting.updated_at = datetime.datetime.utcnow()
+        db.commit()
+    
+    _file_log("Sonarr disconnected")
+    return {"success": True, "message": "Sonarr disconnected"}
+
+@app.get("/nexup/sonarr/upcoming")
+async def get_upcoming_shows(db: Session = Depends(get_db)):
+    """Get list of upcoming TV show premieres from Sonarr"""
+    setting = db.query(models.Setting).first()
+    if not setting or not getattr(setting, 'nexup_sonarr_url', None) or not getattr(setting, 'nexup_sonarr_api_key', None):
+        _file_log("Sonarr: Get upcoming shows failed - not connected")
+        raise HTTPException(status_code=400, detail="Sonarr not connected")
+    
+    from backend.sonarr_connector import SonarrConnector
+    
+    _file_log(f"Sonarr: Fetching upcoming shows from {setting.nexup_sonarr_url}")
+    connector = SonarrConnector(setting.nexup_sonarr_url, setting.nexup_sonarr_api_key)
+    days_ahead = getattr(setting, 'nexup_days_ahead', 90) or 90
+    
+    # Use the calendar-based premiere detection for accurate dates
+    shows = await connector.get_upcoming_premieres(days_ahead)
+    _file_log(f"Sonarr: Found {len(shows)} upcoming shows within {days_ahead} days")
+    
+    # Get existing TV trailers to mark which are already downloaded (only successful downloads)
+    existing_trailers = db.query(models.ComingSoonTVTrailer).filter(
+        models.ComingSoonTVTrailer.status == 'downloaded'
+    ).all()
+    existing_keys = {f"{t.sonarr_series_id}_S{t.season_number}" for t in existing_trailers}
+    
+    for show in shows:
+        key = f"{show['sonarr_id']}_S{show['season_number']}"
+        show['downloaded'] = key in existing_keys
+        # Also check if trailer exists in DB
+        show['has_trailer'] = True  # We'll try to find one via TMDB
+    
+    return {
+        "shows": shows,
+        "total": len(shows),
+        "days_ahead": days_ahead
+    }
+
+@app.get("/nexup/sonarr/trailers")
+def get_sonarr_trailers(db: Session = Depends(get_db)):
+    """Get all downloaded TV show trailers"""
+    trailers = db.query(models.ComingSoonTVTrailer).filter(
+        models.ComingSoonTVTrailer.status == 'downloaded'
+    ).order_by(models.ComingSoonTVTrailer.release_date.asc()).all()
+    
+    return [{
+        "id": t.id,
+        "sonarr_series_id": t.sonarr_series_id,
+        "tvdb_id": t.tvdb_id,
+        "title": t.title,
+        "year": t.year,
+        "season_number": t.season_number,
+        "network": t.network,
+        "release_date": t.release_date.isoformat() if t.release_date else None,
+        "release_type": t.release_type,
+        "local_path": t.local_path,
+        "file_size_mb": t.file_size_mb,
+        "poster_url": t.poster_url,
+        "is_enabled": t.is_enabled,
+        "status": t.status
+    } for t in trailers]
+
+@app.get("/nexup/trailers/download/tv")
+async def download_tv_trailer(
+    sonarr_series_id: int,
+    season_number: int = 1,
+    db: Session = Depends(get_db)
+):
+    """Download a trailer for a TV show from Sonarr"""
+    _file_log(f"Sonarr: Download request for series_id={sonarr_series_id}, season={season_number}")
+    setting = db.query(models.Setting).first()
+    if not setting or not getattr(setting, 'nexup_sonarr_url', None):
+        _file_log("Sonarr: Download failed - not connected")
+        raise HTTPException(status_code=400, detail="Sonarr not connected")
+    
+    storage_path = getattr(setting, 'nexup_storage_path', None)
+    if not storage_path:
+        _file_log("Sonarr: Download failed - storage path not configured")
+        raise HTTPException(status_code=400, detail="Storage path not configured")
+    
+    # Check if already downloaded
+    existing = db.query(models.ComingSoonTVTrailer).filter(
+        models.ComingSoonTVTrailer.sonarr_series_id == sonarr_series_id,
+        models.ComingSoonTVTrailer.season_number == season_number,
+        models.ComingSoonTVTrailer.status == 'downloaded'
+    ).first()
+    
+    if existing:
+        _file_log(f"Sonarr: Trailer already downloaded for series_id={sonarr_series_id}")
+        return {"success": False, "message": "Trailer already downloaded", "trailer_id": existing.id}
+    
+    # Delete any failed/error records so we can retry
+    db.query(models.ComingSoonTVTrailer).filter(
+        models.ComingSoonTVTrailer.sonarr_series_id == sonarr_series_id,
+        models.ComingSoonTVTrailer.season_number == season_number,
+        models.ComingSoonTVTrailer.status.in_(['error', 'downloading'])
+    ).delete(synchronize_session=False)
+    db.commit()
+    
+    from backend.sonarr_connector import SonarrConnector, TVTrailerFetcher
+    from backend.radarr_connector import TrailerDownloader
+    
+    # Get show info from Sonarr
+    connector = SonarrConnector(setting.nexup_sonarr_url, setting.nexup_sonarr_api_key)
+    all_series = await connector.get_all_series()
+    
+    show_info = None
+    for series in all_series:
+        if series.get('id') == sonarr_series_id:
+            show_info = series
+            break
+    
+    if not show_info:
+        _file_log(f"Sonarr: Show not found in Sonarr for series_id={sonarr_series_id}")
+        raise HTTPException(status_code=404, detail="Show not found in Sonarr")
+    
+    _file_log(f"Sonarr: Found show '{show_info.get('title')}' (TVDB: {show_info.get('tvdbId')}, IMDB: {show_info.get('imdbId')})")
+    
+    # Get trailer URL from TMDB or IMDB
+    tmdb_api_key = getattr(setting, 'nexup_tmdb_api_key', None)
+    fetcher = TVTrailerFetcher(tmdb_api_key=tmdb_api_key)
+    _file_log(f"Sonarr: Searching for trailers for '{show_info.get('title')}' S{season_number}")
+    trailers = await fetcher.get_season_trailers(
+        tmdb_id=None,
+        tvdb_id=show_info.get('tvdbId'),
+        imdb_id=show_info.get('imdbId'),
+        season_number=season_number
+    ) if show_info.get('tvdbId') or show_info.get('imdbId') else []
+    
+    # If no season-specific trailers, try show-level trailers
+    if not trailers:
+        _file_log(f"Sonarr: No season-specific trailers found, trying show-level trailers")
+        trailers = await fetcher.get_tv_trailers(
+            tvdb_id=show_info.get('tvdbId'),
+            imdb_id=show_info.get('imdbId')
+        )
+    
+    if not trailers:
+        _file_log(f"Sonarr: No trailers found for '{show_info.get('title')}'")
+        raise HTTPException(status_code=404, detail="No trailer found for this show")
+    
+    _file_log(f"Sonarr: Found {len(trailers)} trailer(s) for '{show_info.get('title')}'")
+    
+    # Use first available trailer
+    trailer_info = trailers[0]
+    trailer_url = trailer_info['url']
+    
+    # Create trailer record
+    trailer = models.ComingSoonTVTrailer(
+        sonarr_series_id=sonarr_series_id,
+        tvdb_id=show_info.get('tvdbId'),
+        imdb_id=show_info.get('imdbId'),
+        title=show_info.get('title', 'Unknown'),
+        year=show_info.get('year'),
+        season_number=season_number,
+        overview=show_info.get('overview'),
+        network=show_info.get('network'),
+        release_type='new_show' if season_number == 1 else 'new_season',
+        trailer_url=trailer_url,
+        status='downloading'
+    )
+    
+    # Get poster URL
+    for image in show_info.get('images', []):
+        if image.get('coverType') == 'poster':
+            trailer.poster_url = image.get('remoteUrl') or image.get('url')
+        elif image.get('coverType') == 'fanart':
+            trailer.fanart_url = image.get('remoteUrl') or image.get('url')
+    
+    db.add(trailer)
+    db.commit()
+    db.refresh(trailer)
+    
+    # Download the trailer
+    quality = getattr(setting, 'nexup_quality', '1080') or '1080'
+    downloader = TrailerDownloader(storage_path, quality, tmdb_api_key=tmdb_api_key)
+    
+    try:
+        season_str = f"S{season_number:02d}" if season_number else ""
+        safe_title = re.sub(r'[^\w\s-]', '', show_info.get('title', 'Unknown')).strip()
+        filename = f"{safe_title} {season_str} Trailer"
+        
+        _file_log(f"Sonarr: Downloading trailer from {trailer_url}")
+        result = await downloader.download_trailer(
+            trailer_url, 
+            filename, 
+            tvdb_id=show_info.get('tvdbId')
+        )
+        
+        if result and result.get('path'):
+            trailer.local_path = result['path']
+            trailer.file_size_mb = result.get('size_mb')
+            trailer.duration_seconds = result.get('duration')
+            trailer.resolution = result.get('resolution')
+            trailer.status = 'downloaded'
+            trailer.downloaded_at = datetime.datetime.utcnow()
+            
+            _file_log(f"Sonarr: Successfully downloaded '{show_info.get('title')}' trailer ({result.get('size_mb', 0):.1f} MB) to {result['path']}")
+            
+            # Create preroll entry
+            await _create_preroll_from_tv_trailer(trailer, setting, db)
+            
+            db.commit()
+            
+            return {
+                "success": True,
+                "message": "Trailer downloaded successfully",
+                "trailer_id": trailer.id,
+                "path": result.get('path')
+            }
+        else:
+            trailer.status = 'error'
+            trailer.error_message = 'Download failed - no file returned'
+            _file_log(f"Sonarr: Download failed for '{show_info.get('title')}'", level="ERROR")
+            
+            db.commit()
+            
+            return {
+                "success": False,
+                "message": "Download failed",
+                "trailer_id": trailer.id,
+                "path": None
+            }
+        
+    except Exception as e:
+        trailer.status = 'error'
+        trailer.error_message = str(e)
+        db.commit()
+        _file_log(f"Sonarr: Download exception for series_id={sonarr_series_id}: {str(e)}", level="ERROR")
+        raise HTTPException(status_code=500, detail=str(e))
+
+async def _create_preroll_from_tv_trailer(trailer, setting, db):
+    """Create a preroll entry from a downloaded TV trailer"""
+    # Get or create the TV trailers category
+    category_id = getattr(setting, 'nexup_tv_category_id', None)
+    if not category_id:
+        # Check if category already exists
+        existing_category = db.query(models.Category).filter(
+            models.Category.name == "NeX-Up TV Trailers"
+        ).first()
+        
+        if existing_category:
+            category = existing_category
+            # Update description if missing
+            if not category.description:
+                category.description = "System category for upcoming TV show trailers from Sonarr. Managed automatically by NeX-Up."
+                category.is_system = True
+                db.commit()
+        else:
+            # Create a category for TV trailers
+            category = models.Category(
+                name="NeX-Up TV Trailers",
+                description="System category for upcoming TV show trailers from Sonarr. Managed automatically by NeX-Up.",
+                plex_mode="shuffle",
+                apply_to_plex=False,
+                is_system=True
+            )
+            db.add(category)
+            db.commit()
+            db.refresh(category)
+        
+        setting.nexup_tv_category_id = category.id
+        category_id = category.id
+        db.commit()
+    
+    # Check if preroll already exists
+    existing = db.query(models.Preroll).filter(
+        models.Preroll.path == trailer.local_path
+    ).first()
+    
+    if existing:
+        return existing
+    
+    # Create preroll
+    season_str = f" S{trailer.season_number}" if trailer.season_number else ""
+    display_name = f"{trailer.title}{season_str} - Trailer"
+    filename = Path(trailer.local_path).name if trailer.local_path else f"tv_trailer_{trailer.id}.mp4"
+    
+    preroll = models.Preroll(
+        filename=filename,
+        display_name=display_name,
+        path=trailer.local_path,
+        category_id=category_id,
+        thumbnail=trailer.poster_url or "",
+        tags="[]",
+        duration=trailer.duration_seconds,
+        managed=False
+    )
+    db.add(preroll)
+    db.commit()
+    
+    return preroll
+
+@app.delete("/nexup/trailers/tv/{trailer_id}")
+def delete_tv_trailer(trailer_id: int, db: Session = Depends(get_db)):
+    """Delete a TV show trailer"""
+    trailer = db.query(models.ComingSoonTVTrailer).filter(
+        models.ComingSoonTVTrailer.id == trailer_id
+    ).first()
+    
+    if not trailer:
+        raise HTTPException(status_code=404, detail="Trailer not found")
+    
+    # Delete the file
+    if trailer.local_path and os.path.exists(trailer.local_path):
+        try:
+            os.remove(trailer.local_path)
+        except Exception as e:
+            _file_log(f"Failed to delete TV trailer file: {e}")
+    
+    # Delete associated preroll
+    if trailer.local_path:
+        preroll = db.query(models.Preroll).filter(
+            models.Preroll.path == trailer.local_path
+        ).first()
+        if preroll:
+            db.delete(preroll)
+    
+    db.delete(trailer)
+    db.commit()
+    
+    return {"success": True, "message": "TV trailer deleted"}
+
+@app.put("/nexup/trailers/tv/{trailer_id}/toggle")
+def toggle_tv_trailer(trailer_id: int, db: Session = Depends(get_db)):
+    """Toggle a TV show trailer's enabled state"""
+    trailer = db.query(models.ComingSoonTVTrailer).filter(
+        models.ComingSoonTVTrailer.id == trailer_id
+    ).first()
+    
+    if not trailer:
+        raise HTTPException(status_code=404, detail="Trailer not found")
+    
+    trailer.is_enabled = not trailer.is_enabled
+    trailer.updated_at = datetime.datetime.utcnow()
+    
+    # Also toggle the associated preroll
+    if trailer.local_path:
+        preroll = db.query(models.Preroll).filter(
+            models.Preroll.path == trailer.local_path
+        ).first()
+        if preroll:
+            preroll.enabled = trailer.is_enabled
+    
+    db.commit()
+    
+    return {"success": True, "is_enabled": trailer.is_enabled}
+
+@app.post("/nexup/sonarr/sync")
+async def sync_sonarr_trailers(db: Session = Depends(get_db)):
+    """Sync TV show trailers from Sonarr - download new ones, expire old ones"""
+    global _nexup_sync_progress
+    
+    _file_log("Sonarr Sync: Starting TV trailer sync")
+    setting = db.query(models.Setting).first()
+    if not setting or not getattr(setting, 'nexup_sonarr_url', None):
+        _file_log("Sonarr Sync: Failed - not connected")
+        raise HTTPException(status_code=400, detail="Sonarr not connected")
+    
+    storage_path = getattr(setting, 'nexup_storage_path', None)
+    if not storage_path:
+        _file_log("Sonarr Sync: Failed - storage path not configured")
+        raise HTTPException(status_code=400, detail="Storage path not configured")
+    
+    # Initialize progress tracking
+    _nexup_sync_progress = {
+        "syncing": True,
+        "type": "sonarr",
+        "status": "Connecting to Sonarr...",
+        "current_item": "",
+        "progress": 0,
+        "total": 0,
+        "downloaded": 0,
+        "skipped": 0,
+        "errors": 0
+    }
+    
+    from backend.sonarr_connector import SonarrConnector, TVTrailerFetcher
+    from backend.radarr_connector import TrailerDownloader
+    
+    connector = SonarrConnector(setting.nexup_sonarr_url, setting.nexup_sonarr_api_key)
+    days_ahead = getattr(setting, 'nexup_days_ahead', 90) or 90
+    max_trailers = getattr(setting, 'nexup_max_trailers', 10) or 10
+    download_delay = getattr(setting, 'nexup_download_delay', 5) or 5
+    
+    _file_log(f"Sonarr Sync: Config - days_ahead={days_ahead}, max_trailers={max_trailers}, delay={download_delay}s")
+    
+    results = {
+        "checked": 0,
+        "downloaded": 0,
+        "expired": 0,
+        "errors": [],
+        "eligible": 0
+    }
+    
+    # ========================================
+    # CLEANUP: Expire trailers for aired shows
+    # ========================================
+    _nexup_sync_progress["status"] = "Checking for expired TV trailers..."
+    
+    # Get all series from Sonarr to check download status
+    all_series = await connector.get_all_series()
+    
+    # Build a map of series_id -> {season_number: episodeFileCount}
+    series_download_status = {}
+    for series in all_series:
+        series_id = series.get('id')
+        series_download_status[series_id] = {
+            'title': series.get('title', 'Unknown'),
+            'seasons': {}
+        }
+        for season in series.get('seasons', []):
+            season_num = season.get('seasonNumber', 0)
+            stats = season.get('statistics', {})
+            series_download_status[series_id]['seasons'][season_num] = stats.get('episodeFileCount', 0)
+    
+    # Get existing trailers and check for expired ones
+    existing_trailers = db.query(models.ComingSoonTVTrailer).filter(
+        models.ComingSoonTVTrailer.status == 'downloaded'
+    ).all()
+    
+    today = datetime.datetime.now().date()
+    grace_period_days = 5  # Keep trailer for 5 days after air date
+    
+    for trailer in existing_trailers:
+        should_expire = False
+        expire_reason = ""
+        
+        # Check 1: Has Sonarr downloaded episodes for this season?
+        series_info = series_download_status.get(trailer.sonarr_series_id)
+        if series_info:
+            season_file_count = series_info['seasons'].get(trailer.season_number, 0)
+            if season_file_count > 0:
+                should_expire = True
+                expire_reason = f"Season has {season_file_count} episode(s) downloaded"
+        
+        # Check 2: Has the release date passed by more than grace period?
+        if not should_expire and trailer.release_date:
+            release_date = trailer.release_date.date() if hasattr(trailer.release_date, 'date') else trailer.release_date
+            days_since_release = (today - release_date).days
+            if days_since_release > grace_period_days:
+                should_expire = True
+                expire_reason = f"Aired {days_since_release} days ago (grace period: {grace_period_days} days)"
+        
+        if should_expire:
+            _file_log(f"Sonarr Sync: Expiring trailer for '{trailer.title}' S{trailer.season_number} - {expire_reason}")
+            
+            # Delete trailer file
+            if trailer.local_path and os.path.exists(trailer.local_path):
+                try:
+                    os.remove(trailer.local_path)
+                    _file_log(f"Sonarr Sync: Deleted trailer file: {trailer.local_path}")
+                except Exception as e:
+                    _file_log(f"Sonarr Sync: Failed to delete trailer file: {e}", level="ERROR")
+            
+            # Also remove from prerolls if it exists
+            preroll = db.query(models.Preroll).filter(
+                models.Preroll.path == trailer.local_path
+            ).first()
+            if preroll:
+                db.delete(preroll)
+                _file_log(f"Sonarr Sync: Removed preroll record for expired trailer")
+            
+            db.delete(trailer)
+            results["expired"] += 1
+    
+    if results["expired"] > 0:
+        db.commit()
+        _file_log(f"Sonarr Sync: Expired {results['expired']} TV trailers")
+    
+    # ========================================
+    # DOWNLOAD: Get new trailers
+    # ========================================
+    _nexup_sync_progress["status"] = "Fetching upcoming shows from Sonarr..."
+    upcoming = await connector.get_upcoming_premieres(days_ahead)
+    _file_log(f"Sonarr Sync: Found {len(upcoming)} upcoming shows")
+    results["checked"] = len(upcoming)
+    _nexup_sync_progress["total"] = len(upcoming)
+    _nexup_sync_progress["status"] = f"Found {len(upcoming)} upcoming shows..."
+    
+    # Re-fetch existing trailers after cleanup
+    existing_trailers = db.query(models.ComingSoonTVTrailer).filter(
+        models.ComingSoonTVTrailer.status == 'downloaded'
+    ).all()
+    existing_keys = {f"{t.sonarr_series_id}_S{t.season_number}" for t in existing_trailers}
+    
+    # Find shows that need trailers
+    tmdb_api_key = getattr(setting, 'nexup_tmdb_api_key', None)
+    fetcher = TVTrailerFetcher(tmdb_api_key=tmdb_api_key)
+    quality = getattr(setting, 'nexup_quality', '1080') or '1080'
+    max_duration = getattr(setting, 'nexup_max_trailer_duration', 180) or 0
+    downloader = TrailerDownloader(storage_path, quality, tmdb_api_key=tmdb_api_key, max_duration=max_duration)
+    
+    downloads_completed = 0
+    skipped_no_trailer = 0
+    skipped_already_exists = 0
+    processed_count = 0
+    
+    for show in upcoming:
+        processed_count += 1
+        progress_pct = int((processed_count / len(upcoming)) * 100) if upcoming else 100
+        _nexup_sync_progress["progress"] = progress_pct
+        
+        key = f"{show['sonarr_id']}_S{show['season_number']}"
+        
+        if key in existing_keys:
+            skipped_already_exists += 1
+            _nexup_sync_progress["skipped"] = skipped_already_exists
+            _nexup_sync_progress["status"] = f"Skipping '{show['title']}' S{show['season_number']} (already have)"
+            continue
+        
+        if downloads_completed >= max_trailers:
+            _nexup_sync_progress["status"] = f"Reached max trailers limit ({max_trailers})"
+            _file_log(f"Sonarr Sync: Reached max trailers limit ({max_trailers})")
+            break
+        
+        results["eligible"] += 1
+        
+        # Try to find and download trailer
+        try:
+            _nexup_sync_progress["status"] = f"Looking for trailer: '{show['title']}' S{show['season_number']}..."
+            _nexup_sync_progress["current_item"] = f"{show['title']} S{show['season_number']}"
+            
+            trailers = await fetcher.get_tv_trailers(
+                tvdb_id=show.get('tvdb_id'),
+                imdb_id=show.get('imdb_id')
+            )
+            
+            if not trailers:
+                skipped_no_trailer += 1
+                _nexup_sync_progress["status"] = f"No trailer found for '{show['title']}' S{show['season_number']}"
+                _file_log(f"Sonarr Sync: No trailer found for '{show['title']}' S{show.get('season_number', '?')} (TVDB: {show.get('tvdb_id')}, IMDB: {show.get('imdb_id')})")
+                continue
+            
+            trailer_url = trailers[0]['url']
+            
+            # Create record
+            tv_trailer = models.ComingSoonTVTrailer(
+                sonarr_series_id=show['sonarr_id'],
+                tvdb_id=show.get('tvdb_id'),
+                imdb_id=show.get('imdb_id'),
+                title=show['title'],
+                year=show.get('year'),
+                season_number=show['season_number'],
+                overview=show.get('overview'),
+                network=show.get('network'),
+                release_date=datetime.datetime.fromisoformat(show['release_date']) if show.get('release_date') else None,
+                release_type=show['release_type'],
+                trailer_url=trailer_url,
+                poster_url=show.get('poster_url'),
+                fanart_url=show.get('fanart_url'),
+                status='downloading'
+            )
+            db.add(tv_trailer)
+            db.commit()
+            db.refresh(tv_trailer)
+            
+            # Download
+            _nexup_sync_progress["status"] = f"Downloading trailer for '{show['title']}' S{show['season_number']}..."
+            season_str = f"S{show['season_number']:02d}" if show.get('season_number') else ""
+            safe_title = re.sub(r'[^\w\s-]', '', show['title']).strip()
+            filename = f"{safe_title} {season_str} Trailer"
+            
+            result = await downloader.download_trailer(
+                trailer_url, 
+                filename,
+                tvdb_id=show.get('tvdb_id')
+            )
+            
+            if result and result.get('path'):
+                tv_trailer.local_path = result['path']
+                tv_trailer.file_size_mb = result.get('size_mb')
+                tv_trailer.duration_seconds = result.get('duration')
+                tv_trailer.resolution = result.get('resolution')
+                tv_trailer.status = 'downloaded'
+                tv_trailer.downloaded_at = datetime.datetime.utcnow()
+                
+                await _create_preroll_from_tv_trailer(tv_trailer, setting, db)
+                results["downloaded"] += 1
+                downloads_completed += 1
+                _nexup_sync_progress["downloaded"] = results["downloaded"]
+                _nexup_sync_progress["status"] = f"Downloaded '{show['title']}' S{show['season_number']} successfully!"
+                
+                _file_log(f"Sonarr Sync: Downloaded trailer for '{show['title']}' S{show['season_number']} to {result['path']}")
+                
+                # Rate limiting delay
+                if download_delay > 0 and downloads_completed < max_trailers:
+                    _nexup_sync_progress["status"] = f"Rate limiting - waiting {download_delay}s..."
+                    await asyncio.sleep(download_delay)
+            else:
+                tv_trailer.status = 'error'
+                tv_trailer.error_message = "Download failed - no file returned"
+                results["errors"].append(f"{show['title']}: Download failed")
+                _nexup_sync_progress["errors"] = len(results["errors"])
+                _nexup_sync_progress["status"] = f"Failed to download '{show['title']}' S{show['season_number']}"
+                _file_log(f"Sonarr Sync: Failed to download trailer for '{show['title']}' S{show['season_number']}", level="ERROR")
+            
+            db.commit()
+            
+        except Exception as e:
+            results["errors"].append(f"{show['title']}: {str(e)}")
+            _nexup_sync_progress["errors"] = len(results["errors"])
+            _nexup_sync_progress["status"] = f"Error: {show['title']} - {str(e)[:50]}"
+            _file_log(f"Sonarr Sync: Error downloading '{show['title']}': {str(e)}", level="ERROR")
+    
+    # Add skip counts to results
+    results["skipped_no_trailer"] = skipped_no_trailer
+    results["skipped_already_exists"] = skipped_already_exists
+    
+    # Update last Sonarr sync time
+    setting.nexup_last_sonarr_sync = datetime.datetime.now()
+    db.commit()
+    
+    # Final progress update
+    _nexup_sync_progress["status"] = f"Sync complete! Downloaded {results['downloaded']} trailers."
+    _nexup_sync_progress["progress"] = 100
+    _nexup_sync_progress["syncing"] = False
+    
+    _file_log(f"Sonarr Sync: Complete - checked={results['checked']}, eligible={results['eligible']}, downloaded={results['downloaded']}, skipped_no_trailer={skipped_no_trailer}, errors={len(results['errors'])}")
+    
+    # Add help message if no downloads and many skipped
+    if results['downloaded'] == 0 and skipped_no_trailer > 0:
+        results["help"] = f"No trailers were found for {skipped_no_trailer} shows. This usually happens because TMDB doesn't have trailers for these shows yet. Try adding a TMDB API key in settings for better results."
+    
+    return results
+
+# ============================================================================
+# END SONARR INTEGRATION
+# ============================================================================
+
+@app.get("/nexup/download/diagnostics")
+async def download_diagnostics(db: Session = Depends(get_db)):
+    """
+    Get diagnostics about the download system including:
+    - Available download sources
+    - Browser cookie availability
+    - yt-dlp version
+    """
+    import shutil
+    import subprocess
+    from backend.radarr_connector import TrailerDownloader
+    
+    setting = db.query(models.Setting).first()
+    storage_path = getattr(setting, 'nexup_storage_path', None) or 'temp'
+    quality = getattr(setting, 'nexup_quality', '1080p') or '1080p'
+    
+    diagnostics = {
+        "yt_dlp_available": False,
+        "yt_dlp_version": None,
+        "ffmpeg_available": False,
+        "ffmpeg_version": None,
+        "browser_cookies_available": False,
+        "detected_browser": None,
+        "cookies_file_exists": False,
+        "cookies_file_path": None,
+        "download_sources": {
+            "apple_trailers": "Enabled - No bot detection",
+            "vimeo": "Enabled - No bot detection",
+            "youtube": "Enabled - Requires authentication (cookies)"
+        },
+        "youtube_status": "Not configured - YouTube requires authentication",
+        "youtube_help": "To download from YouTube, either: 1) Close your browser and try again, or 2) Export cookies to youtube_cookies.txt in your trailer storage folder"
+    }
+    
+    # Check yt-dlp (Python module - works in bundled builds)
+    try:
+        import yt_dlp
+        diagnostics['yt_dlp_available'] = True
+        diagnostics['yt_dlp_version'] = yt_dlp.version.__version__
+    except ImportError:
+        # Fall back to checking CLI
+        if shutil.which('yt-dlp'):
+            diagnostics['yt_dlp_available'] = True
+            try:
+                result = subprocess.run(['yt-dlp', '--version'], capture_output=True, text=True)
+                diagnostics['yt_dlp_version'] = result.stdout.strip()
+            except:
+                pass
+    
+    # Check ffmpeg
+    if shutil.which('ffmpeg'):
+        diagnostics['ffmpeg_available'] = True
+        try:
+            result = subprocess.run(['ffmpeg', '-version'], capture_output=True, text=True)
+            first_line = result.stdout.split('\n')[0] if result.stdout else None
+            diagnostics['ffmpeg_version'] = first_line
+        except:
+            pass
+    
+    # Check browser cookies
+    downloader = TrailerDownloader(storage_path, quality)
+    if downloader.cookie_browser:
+        diagnostics['browser_cookies_available'] = True
+        diagnostics['detected_browser'] = downloader.get_cookie_browser()
+    
+    # Check for cookies file
+    cookies_file = Path(storage_path) / 'youtube_cookies.txt'
+    diagnostics['cookies_file_path'] = str(cookies_file)
+    if cookies_file.exists():
+        diagnostics['cookies_file_exists'] = True
+        diagnostics['youtube_status'] = "Configured - Using exported cookies file"
+    elif diagnostics['browser_cookies_available']:
+        diagnostics['youtube_status'] = "May work - Browser detected but may be locked. Close browser for best results"
+    
+    return diagnostics
+
+@app.get("/nexup/youtube/status")
+def get_youtube_status(db: Session = Depends(get_db)):
+    """Check if YouTube authentication is set up and working"""
+    setting = db.query(models.Setting).first()
+    storage_path = getattr(setting, 'nexup_storage_path', None) or 'temp'
+    
+    status = {
+        "configured": False,
+        "method": None,
+        "browser": None,
+        "cookies_file": None,
+        "oauth_file": None,
+        "browser_available": False,
+        "browser_locked": True,
+        "message": "YouTube authentication not configured"
+    }
+    
+    # Check for OAuth file first (most reliable, doesn't expire)
+    oauth_file = Path(storage_path) / 'youtube_oauth.json'
+    status['oauth_file'] = str(oauth_file)
+    
+    if oauth_file.exists():
+        status['configured'] = True
+        status['method'] = 'oauth'
+        status['message'] = "YouTube configured via OAuth (recommended)"
+        return status
+    
+    # Check for cookies file (reliable but can expire)
+    cookies_file = Path(storage_path) / 'youtube_cookies.txt'
+    status['cookies_file'] = str(cookies_file)
+    
+    if cookies_file.exists():
+        status['configured'] = True
+        status['method'] = 'cookies_file'
+        status['message'] = "YouTube configured via cookies file"
+        return status
+    
+    # Check for browser cookies
+    from backend.radarr_connector import TrailerDownloader
+    downloader = TrailerDownloader(storage_path, '1080')
+    browser = downloader.get_cookie_browser()
+    
+    if browser:
+        status['browser'] = browser
+        status['browser_available'] = True
+        
+        # Try to test if browser is locked by checking if we can access cookies
+        # We do this by checking if common browser processes are running
+        import psutil
+        browser_processes = {
+            'chrome': ['chrome.exe', 'chrome'],
+            'firefox': ['firefox.exe', 'firefox'],
+            'edge': ['msedge.exe', 'msedge'],
+            'brave': ['brave.exe', 'brave'],
+        }
+        
+        running = False
+        for proc in psutil.process_iter(['name']):
+            try:
+                proc_name = proc.info['name'].lower()
+                for browser_name, proc_names in browser_processes.items():
+                    if any(pn in proc_name for pn in proc_names):
+                        running = True
+                        break
+            except:
+                pass
+            if running:
+                break
+        
+        status['browser_locked'] = running
+        
+        if not running:
+            status['configured'] = True
+            status['method'] = 'browser_cookies'
+            status['message'] = f"YouTube configured via {browser} browser cookies"
+        else:
+            status['message'] = f"Click 'Setup YouTube' to configure authentication. Browser cookies available from {browser}."
+    
+    return status
+
+@app.post("/nexup/youtube/open-browser")
+def open_youtube_browser(browser: str = Query('chrome', description="Browser to open")):
+    """Open YouTube in a specific browser for user to sign in"""
+    import webbrowser
+    import subprocess
+    import sys
+    
+    youtube_url = 'https://www.youtube.com'
+    
+    # Try to open in specific browser
+    browser_commands = {
+        'chrome': {
+            'windows': ['start', 'chrome', youtube_url],
+            'darwin': ['open', '-a', 'Google Chrome', youtube_url],
+            'linux': ['google-chrome', youtube_url]
+        },
+        'edge': {
+            'windows': ['start', 'msedge', youtube_url],
+            'darwin': ['open', '-a', 'Microsoft Edge', youtube_url],
+            'linux': ['microsoft-edge', youtube_url]
+        },
+        'firefox': {
+            'windows': ['start', 'firefox', youtube_url],
+            'darwin': ['open', '-a', 'Firefox', youtube_url],
+            'linux': ['firefox', youtube_url]
+        },
+        'brave': {
+            'windows': ['start', 'brave', youtube_url],
+            'darwin': ['open', '-a', 'Brave Browser', youtube_url],
+            'linux': ['brave-browser', youtube_url]
+        }
+    }
+    
+    platform = 'windows' if sys.platform == 'win32' else ('darwin' if sys.platform == 'darwin' else 'linux')
+    
+    try:
+        if browser in browser_commands:
+            cmd = browser_commands[browser].get(platform)
+            if cmd and sys.platform == 'win32':
+                # Windows needs shell=True for 'start' command
+                subprocess.run(' '.join(cmd), shell=True)
+                return {"success": True, "message": f"Opened YouTube in {browser}. Please sign in if not already."}
+            elif cmd:
+                subprocess.run(cmd)
+                return {"success": True, "message": f"Opened YouTube in {browser}. Please sign in if not already."}
+    except Exception as e:
+        _file_log(f"Failed to open specific browser {browser}: {e}")
+    
+    # Fallback to default browser
+    webbrowser.open(youtube_url)
+    return {"success": True, "message": "Opened YouTube in default browser. Please sign in if not already."}
+
+@app.post("/nexup/youtube/upload-cookies")
+async def upload_youtube_cookies(file: UploadFile = File(...), db: Session = Depends(get_db)):
+    """Upload a cookies.txt file manually"""
+    setting = db.query(models.Setting).first()
+    storage_path = getattr(setting, 'nexup_storage_path', None)
+    
+    if not storage_path:
+        return {"success": False, "error": "Storage path not configured"}
+    
+    cookies_file = Path(storage_path) / 'youtube_cookies.txt'
+    
+    try:
+        content = await file.read()
+        content_str = content.decode('utf-8')
+        
+        # Validate it looks like a cookies file
+        if '.youtube.com' not in content_str and 'youtube' not in content_str.lower():
+            return {"success": False, "error": "File doesn't appear to contain YouTube cookies"}
+        
+        # Check for auth tokens
+        has_auth = any(auth in content_str for auth in ['SID', 'SSID', 'LOGIN_INFO', '__Secure-1PSID'])
+        
+        if not has_auth:
+            return {
+                "success": False, 
+                "error": "Cookies file doesn't contain authentication. Make sure you export cookies while signed in to YouTube."
+            }
+        
+        # Save the file
+        with open(cookies_file, 'w', encoding='utf-8') as f:
+            f.write(content_str)
+        
+        # Verify the file was written successfully
+        if not cookies_file.exists():
+            _file_log(f"YouTube cookies upload FAILED - file not found after write at: {cookies_file}")
+            return {"success": False, "error": f"File write failed - not found at {cookies_file}"}
+        
+        file_size = cookies_file.stat().st_size
+        _file_log(f"YouTube cookies uploaded successfully to {cookies_file} ({file_size} bytes)")
+        return {"success": True, "message": f"Cookies file uploaded successfully! ({file_size} bytes)"}
+        
+    except Exception as e:
+        _file_log(f"Cookie upload failed: {e}")
+        return {"success": False, "error": f"Failed to process file: {str(e)}"}
+
+@app.post("/nexup/youtube/extract-cookies")
+async def extract_youtube_cookies(browser: str = Query(None, description="Specific browser to extract from"), db: Session = Depends(get_db)):
+    """
+    Attempt to extract cookies from browser and save to cookies file.
+    This works best when the browser is closed.
+    """
+    setting = db.query(models.Setting).first()
+    storage_path = getattr(setting, 'nexup_storage_path', None)
+    
+    if not storage_path:
+        return {"success": False, "error": "Storage path not configured"}
+    
+    # Use specified browser or detect one
+    if not browser:
+        from backend.radarr_connector import TrailerDownloader
+        downloader = TrailerDownloader(storage_path, '1080')
+        browser = downloader.get_cookie_browser()
+        if not browser:
+            browser = 'chrome'  # Default fallback
+    
+    cookies_file = Path(storage_path) / 'youtube_cookies.txt'
+    
+    # Check if the browser process is running (cookie extraction usually fails with browser running)
+    import subprocess
+    import sys
+    
+    creationflags = 0
+    if sys.platform == 'win32':
+        creationflags = subprocess.CREATE_NO_WINDOW
+        
+        # Map browser names to process names
+        browser_processes = {
+            'chrome': ['chrome.exe'],
+            'edge': ['msedge.exe'],
+            'firefox': ['firefox.exe'],
+            'brave': ['brave.exe'],
+            'chromium': ['chromium.exe'],
+            'opera': ['opera.exe'],
+            'vivaldi': ['vivaldi.exe']
+        }
+        
+        # Check if browser is running
+        target_browser = browser.lower()
+        if target_browser in browser_processes:
+            for proc_name in browser_processes[target_browser]:
+                try:
+                    check = subprocess.run(
+                        ['tasklist', '/FI', f'IMAGENAME eq {proc_name}', '/NH'],
+                        capture_output=True, text=True, timeout=5,
+                        creationflags=creationflags
+                    )
+                    if proc_name.lower() in check.stdout.lower():
+                        _file_log(f"Warning: {browser} browser appears to be running ({proc_name})")
+                except Exception:
+                    pass
+    
+    # Try to extract cookies using yt_dlp module
+    try:
+        import yt_dlp
+        ydl_opts = {
+            'cookiesfrombrowser': (browser,),
+            'cookiefile': str(cookies_file),
+            'skip_download': True,
+            'quiet': True,
+            'no_warnings': True,
+        }
+        
+        # Just initialize and get cookies - don't actually download
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            # Try to extract info from a simple video to trigger cookie extraction
+            try:
+                ydl.extract_info('https://www.youtube.com/watch?v=dQw4w9WgXcQ', download=False)
+            except Exception:
+                pass  # We don't care about the video, just the cookies
+        
+        # Check if cookies file was created and contains login cookies
+        if cookies_file.exists() and cookies_file.stat().st_size > 100:
+            cookie_content = cookies_file.read_text()
+            has_auth = any(auth in cookie_content for auth in ['SID', 'SSID', 'LOGIN_INFO', '__Secure-1PSID'])
+            
+            if has_auth:
+                _file_log(f"Successfully extracted authenticated YouTube cookies from {browser}")
+                return {
+                    "success": True,
+                    "browser": browser,
+                    "cookies_file": str(cookies_file),
+                    "message": f"Successfully extracted authenticated cookies from {browser}"
+                }
+            else:
+                _file_log(f"Cookies extracted from {browser} but no authentication found")
+                cookies_file.unlink()
+    except ImportError:
+        _file_log("yt_dlp module not available, falling back to CLI")
+    except Exception as e:
+        _file_log(f"yt_dlp module cookie extraction failed: {e}")
+    
+    # Fallback: Try using CLI yt-dlp if module method failed
+    browsers_to_try = [browser, 'chrome', 'edge', 'firefox', 'brave']
+    browsers_to_try = list(dict.fromkeys(browsers_to_try))  # Remove duplicates
+    
+    for try_browser in browsers_to_try:
+        try:
+            import shutil
+            ytdlp_path = shutil.which('yt-dlp')
+            if not ytdlp_path:
+                break  # No CLI available
+                
+            cmd = [
+                'yt-dlp',
+                '--cookies-from-browser', try_browser,
+                '--cookies', str(cookies_file),
+                '--skip-download',
+                'https://www.youtube.com/watch?v=dQw4w9WgXcQ'
+            ]
+            
+            result = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                timeout=30,
+                creationflags=creationflags
+            )
+            
+            if cookies_file.exists() and cookies_file.stat().st_size > 100:
+                cookie_content = cookies_file.read_text()
+                has_auth = any(auth in cookie_content for auth in ['SID', 'SSID', 'LOGIN_INFO', '__Secure-1PSID'])
+                
+                if has_auth:
+                    _file_log(f"Successfully extracted authenticated YouTube cookies from {try_browser} (CLI)")
+                    return {
+                        "success": True,
+                        "browser": try_browser,
+                        "cookies_file": str(cookies_file),
+                        "message": f"Successfully extracted authenticated cookies from {try_browser}"
+                    }
+                else:
+                    if cookies_file.exists():
+                        cookies_file.unlink()
+        except subprocess.TimeoutExpired:
+            continue
+        except Exception as e:
+            _file_log(f"Cookie extraction failed for {try_browser}: {e}")
+            continue
+    
+    return {
+        "success": False,
+        "error": "Could not extract authenticated cookies.",
+        "hint": f"Make sure you are SIGNED IN to YouTube in {browser.title()}, then CLOSE ALL {browser.title()} windows completely (check Task Manager) before trying again. Also ensure you've actually logged in - just visiting YouTube is not enough."
+    }
+
+@app.post("/nexup/youtube/test-download")
+async def test_youtube_download(db: Session = Depends(get_db)):
+    """Test if YouTube downloads are working with current configuration"""
+    setting = db.query(models.Setting).first()
+    storage_path = getattr(setting, 'nexup_storage_path', None)
+    
+    if not storage_path:
+        return {"success": False, "error": "Storage path not configured"}
+    
+    import subprocess
+    import sys
+    
+    creationflags = 0
+    if sys.platform == 'win32':
+        creationflags = subprocess.CREATE_NO_WINDOW
+    
+    test_url = "https://www.youtube.com/watch?v=dQw4w9WgXcQ"  # Short test video
+    cookies_file = Path(storage_path) / 'youtube_cookies.txt'
+    
+    # Build command - we need to actually try to get video info, not just simulate
+    # This properly tests if authentication is working
+    base_cmd = ['yt-dlp', '--dump-json', '--no-download', test_url]
+    
+    if cookies_file.exists():
+        cmd = ['yt-dlp', '--cookies', str(cookies_file), '--dump-json', '--no-download', test_url]
+    else:
+        from backend.radarr_connector import TrailerDownloader
+        downloader = TrailerDownloader(storage_path, '1080')
+        browser = downloader.get_cookie_browser()
+        if browser:
+            cmd = ['yt-dlp', '--cookies-from-browser', browser, '--dump-json', '--no-download', test_url]
+        else:
+            cmd = base_cmd
+    
+    try:
+        result = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            timeout=30,
+            creationflags=creationflags
+        )
+        
+        if result.returncode == 0:
+            return {"success": True, "message": "YouTube downloads are working!"}
+        else:
+            error = result.stderr or "Unknown error"
+            if "Sign in to confirm" in error:
+                return {"success": False, "error": "Authentication required", "hint": "Please complete the YouTube setup process"}
+            return {"success": False, "error": error[:200]}
+    except subprocess.TimeoutExpired:
+        return {"success": False, "error": "Test timed out"}
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+# YouTube OAuth state storage
+YOUTUBE_OAUTH_SESSIONS: dict = {}
+
+@app.post("/nexup/youtube/oauth/start")
+def start_youtube_oauth(db: Session = Depends(get_db)):
+    """
+    Start YouTube OAuth flow. Returns a URL and verification code for the user.
+    Uses yt-dlp's OAuth device flow.
+    """
+    import subprocess
+    import sys
+    import json
+    import uuid
+    import re
+    
+    setting = db.query(models.Setting).first()
+    storage_path = getattr(setting, 'nexup_storage_path', None)
+    
+    if not storage_path:
+        return {"success": False, "error": "Storage path not configured. Set your trailer storage path first."}
+    
+    # Ensure storage path exists
+    Path(storage_path).mkdir(parents=True, exist_ok=True)
+    
+    session_id = str(uuid.uuid4())
+    oauth_cache = Path(storage_path) / '.youtube_oauth_cache'
+    
+    # Start yt-dlp OAuth process
+    # yt-dlp --username oauth --password "" will trigger device OAuth flow
+    creationflags = 0
+    startupinfo = None
+    if sys.platform == 'win32':
+        creationflags = subprocess.CREATE_NO_WINDOW
+        startupinfo = subprocess.STARTUPINFO()
+        startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+    
+    try:
+        # Run yt-dlp to initiate OAuth - it outputs the verification URL and code
+        cmd = [
+            'yt-dlp',
+            '--username', 'oauth2',
+            '--password', '',
+            '--cache-dir', str(oauth_cache),
+            '--dump-json',
+            '--no-download',
+            'https://www.youtube.com/watch?v=dQw4w9WgXcQ'
+        ]
+        
+        # Run with a timeout - OAuth will fail but print the URL first
+        process = subprocess.Popen(
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            creationflags=creationflags,
+            startupinfo=startupinfo
+        )
+        
+        # Read stderr where the OAuth URL is printed
+        stderr_output = ""
+        try:
+            _, stderr_output = process.communicate(timeout=15)
+        except subprocess.TimeoutExpired:
+            process.kill()
+            _, stderr_output = process.communicate()
+        
+        _file_log(f"OAuth stderr: {stderr_output[:500]}")
+        
+        # Parse the verification URL and code from yt-dlp output
+        # yt-dlp outputs something like: 
+        # "To give yt-dlp access to your account, go to https://www.google.com/device and enter code ABC-DEF"
+        url_match = re.search(r'https://[^\s]+device[^\s]*', stderr_output)
+        code_match = re.search(r'enter code\s+([A-Z0-9-]+)', stderr_output, re.IGNORECASE)
+        
+        if not url_match:
+            # Try alternate pattern
+            url_match = re.search(r'(https://accounts\.google\.com/[^\s]+)', stderr_output)
+        
+        if url_match:
+            verification_url = url_match.group(0).strip()
+            user_code = code_match.group(1) if code_match else None
+            
+            # Store session
+            YOUTUBE_OAUTH_SESSIONS[session_id] = {
+                "created": datetime.datetime.now().isoformat(),
+                "storage_path": storage_path,
+                "status": "pending",
+                "verification_url": verification_url,
+                "user_code": user_code
+            }
+            
+            return {
+                "success": True,
+                "session_id": session_id,
+                "verification_url": verification_url,
+                "user_code": user_code,
+                "message": "Open the URL and enter the code to authorize NeXroll"
+            }
+        else:
+            # No OAuth URL found - might mean yt-dlp version doesn't support it
+            return {
+                "success": False,
+                "error": "Could not initiate OAuth. Your yt-dlp version may not support OAuth.",
+                "hint": "Try updating yt-dlp: pip install -U yt-dlp",
+                "debug": stderr_output[:300] if stderr_output else "No output"
+            }
+            
+    except Exception as e:
+        _file_log(f"OAuth start error: {e}")
+        return {"success": False, "error": str(e)}
+
+@app.get("/nexup/youtube/oauth/poll/{session_id}")
+def poll_youtube_oauth(session_id: str, db: Session = Depends(get_db)):
+    """Poll the status of an OAuth session"""
+    session = YOUTUBE_OAUTH_SESSIONS.get(session_id)
+    if not session:
+        return {"success": False, "error": "Session not found or expired"}
+    
+    # Check if OAuth file was created
+    storage_path = session.get('storage_path')
+    oauth_file = Path(storage_path) / 'youtube_oauth.json'
+    oauth_cache = Path(storage_path) / '.youtube_oauth_cache'
+    
+    # Check in cache dir for OAuth tokens
+    if oauth_cache.exists():
+        for f in oauth_cache.rglob('*.json'):
+            try:
+                content = f.read_text()
+                if 'access_token' in content or 'refresh_token' in content:
+                    # Copy to our OAuth file
+                    import shutil
+                    shutil.copy(f, oauth_file)
+                    session['status'] = 'completed'
+                    return {
+                        "success": True,
+                        "status": "completed",
+                        "message": "OAuth authorization completed!"
+                    }
+            except:
+                continue
+    
+    return {
+        "success": True,
+        "status": session.get('status', 'pending'),
+        "message": "Waiting for authorization..."
+    }
+
+@app.post("/nexup/youtube/oauth/complete/{session_id}")
+async def complete_youtube_oauth(session_id: str, db: Session = Depends(get_db)):
+    """
+    Complete the OAuth flow by running yt-dlp again to finalize the token exchange.
+    Call this after the user has authorized the device.
+    """
+    import subprocess
+    import sys
+    
+    session = YOUTUBE_OAUTH_SESSIONS.get(session_id)
+    if not session:
+        return {"success": False, "error": "Session not found or expired"}
+    
+    storage_path = session.get('storage_path')
+    oauth_cache = Path(storage_path) / '.youtube_oauth_cache'
+    oauth_file = Path(storage_path) / 'youtube_oauth.json'
+    
+    creationflags = 0
+    if sys.platform == 'win32':
+        creationflags = subprocess.CREATE_NO_WINDOW
+    
+    try:
+        # Run yt-dlp again - if user has authorized, it should work and cache the token
+        cmd = [
+            'yt-dlp',
+            '--username', 'oauth2',
+            '--password', '',
+            '--cache-dir', str(oauth_cache),
+            '--dump-json',
+            '--no-download',
+            'https://www.youtube.com/watch?v=dQw4w9WgXcQ'
+        ]
+        
+        result = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            timeout=60,
+            creationflags=creationflags
+        )
+        
+        # Check if it worked (return code 0 and we got JSON output)
+        if result.returncode == 0:
+            # Look for the token file and copy it
+            for f in oauth_cache.rglob('*.json'):
+                try:
+                    content = f.read_text()
+                    if 'access_token' in content or 'refresh_token' in content or 'token' in content:
+                        import shutil
+                        shutil.copy(f, oauth_file)
+                        _file_log(f"OAuth token saved to {oauth_file}")
+                        
+                        # Clean up session
+                        YOUTUBE_OAUTH_SESSIONS.pop(session_id, None)
+                        
+                        return {
+                            "success": True,
+                            "message": "YouTube OAuth setup complete! You can now download trailers."
+                        }
+                except:
+                    continue
+            
+            # Even if we can't find token file, if yt-dlp succeeded, OAuth is working
+            return {
+                "success": True,
+                "message": "YouTube OAuth is working! Trailers can now be downloaded."
+            }
+        else:
+            error = result.stderr or "Unknown error"
+            if "enter code" in error.lower():
+                return {
+                    "success": False,
+                    "status": "pending",
+                    "message": "Please complete authorization in your browser first"
+                }
+            return {"success": False, "error": error[:300]}
+            
+    except subprocess.TimeoutExpired:
+        return {"success": False, "error": "OAuth timed out. Please try again."}
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+@app.delete("/nexup/youtube/oauth")
+def delete_youtube_oauth(db: Session = Depends(get_db)):
+    """Delete YouTube OAuth credentials"""
+    setting = db.query(models.Setting).first()
+    storage_path = getattr(setting, 'nexup_storage_path', None)
+    
+    if not storage_path:
+        return {"success": False, "error": "Storage path not configured"}
+    
+    oauth_file = Path(storage_path) / 'youtube_oauth.json'
+    oauth_cache = Path(storage_path) / '.youtube_oauth_cache'
+    
+    deleted = []
+    try:
+        if oauth_file.exists():
+            oauth_file.unlink()
+            deleted.append("OAuth token file")
+        
+        if oauth_cache.exists():
+            import shutil
+            shutil.rmtree(oauth_cache)
+            deleted.append("OAuth cache")
+        
+        if deleted:
+            return {"success": True, "message": f"Deleted: {', '.join(deleted)}"}
+        else:
+            return {"success": True, "message": "No OAuth credentials found"}
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+@app.get("/nexup/trailers")
+def get_nexup_trailers(db: Session = Depends(get_db)):
+    """Get all downloaded trailers"""
+    trailers = db.query(models.ComingSoonTrailer).order_by(
+        models.ComingSoonTrailer.release_date.asc()
+    ).all()
+    
+    def calc_days_until(release_dt):
+        if not release_dt:
+            return None
+        try:
+            if hasattr(release_dt, 'date'):
+                release_date = release_dt.date()
+            else:
+                release_date = release_dt
+            return (release_date - datetime.datetime.now().date()).days
+        except:
+            return None
+    
+    return {
+        "trailers": [
+            {
+                "id": t.id,
+                "radarr_movie_id": t.radarr_movie_id,
+                "tmdb_id": t.tmdb_id,
+                "title": t.title,
+                "year": t.year,
+                "overview": t.overview,
+                "release_date": t.release_date.isoformat() if t.release_date else None,
+                "release_type": t.release_type,
+                "days_until": calc_days_until(t.release_date),
+                "local_path": t.local_path,
+                "file_size_mb": t.file_size_mb,
+                "duration_seconds": t.duration_seconds,
+                "resolution": t.resolution,
+                "poster_url": t.poster_url,
+                "status": t.status,
+                "is_enabled": t.is_enabled,
+                "play_count": t.play_count,
+                "downloaded_at": t.downloaded_at.isoformat() if t.downloaded_at else None
+            }
+            for t in trailers
+        ],
+        "total": len(trailers)
+    }
+
+@app.post("/nexup/trailers/download")
+async def download_trailer(radarr_movie_id: int, db: Session = Depends(get_db)):
+    """Download a specific trailer by Radarr movie ID"""
+    
+    setting = db.query(models.Setting).first()
+    if not setting or not setting.nexup_radarr_url or not setting.nexup_radarr_api_key:
+        raise HTTPException(status_code=400, detail="Radarr not connected")
+    
+    storage_path = getattr(setting, 'nexup_storage_path', None)
+    if not storage_path:
+        raise HTTPException(status_code=400, detail="Storage path not configured")
+    
+    # Check if yt-dlp Python module is available (works in bundled builds)
+    try:
+        import yt_dlp
+    except ImportError:
+        import shutil
+        if not shutil.which('yt-dlp'):
+            _file_log("yt-dlp not available - trailer downloads will fail")
+            raise HTTPException(status_code=500, detail="yt-dlp not found. Please install yt-dlp to download trailers.")
+    
+    # Check if already downloaded
+    existing = db.query(models.ComingSoonTrailer).filter(
+        models.ComingSoonTrailer.radarr_movie_id == radarr_movie_id
+    ).first()
+    if existing:
+        return {"success": False, "message": "Trailer already downloaded", "trailer_id": existing.id}
+    
+    from backend.radarr_connector import RadarrConnector, TrailerDownloader
+    
+    try:
+        # Get movie details from Radarr
+        connector = RadarrConnector(setting.nexup_radarr_url, setting.nexup_radarr_api_key)
+        movie = await connector.get_movie_by_id(radarr_movie_id)
+        
+        if not movie:
+            raise HTTPException(status_code=404, detail="Movie not found in Radarr")
+        
+        trailer_url = None
+        youtube_id = movie.get('youTubeTrailerId')
+        if youtube_id:
+            trailer_url = f"https://www.youtube.com/watch?v={youtube_id}"
+        
+        _file_log(f"Downloading trailer for: {movie.get('title')} (TMDB: {movie.get('tmdbId')}, YouTube ID: {youtube_id}, URL: {trailer_url})")
+        
+        if not trailer_url:
+            raise HTTPException(status_code=400, detail="No trailer available for this movie in Radarr")
+        
+        # Download trailer
+        quality = getattr(setting, 'nexup_quality', '1080') or '1080'
+        downloader = TrailerDownloader(storage_path, quality)
+        
+        # Log cookie status
+        cookies_file = Path(storage_path) / 'youtube_cookies.txt'
+        browser = downloader.get_cookie_browser()
+        _file_log(f"Download config: cookies_file={cookies_file.exists()}, browser={browser}, quality={quality}")
+        
+        result = await downloader.download_trailer(
+            trailer_url,
+            movie.get('title', 'Unknown'),
+            movie.get('tmdbId', 0),
+            year=movie.get('year')
+        )
+        
+        if not result:
+            # Provide helpful error message
+            help_msg = "YouTube is blocking the download. "
+            if not cookies_file.exists() and not browser:
+                help_msg += "Export your browser cookies to 'youtube_cookies.txt' in your NeX-Up storage folder, or close your browser and try again."
+            elif not cookies_file.exists():
+                help_msg += f"Detected browser: {browser}. Try closing {browser} completely and retry, or export cookies to youtube_cookies.txt."
+            else:
+                help_msg += "Cookies file exists but may be expired. Re-export fresh cookies from your browser."
+            
+            _file_log(f"Failed to download trailer for {movie.get('title')} - {help_msg}")
+            raise HTTPException(status_code=500, detail=help_msg)
+    except HTTPException:
+        raise
+    except Exception as e:
+        _file_log(f"Error downloading trailer: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error downloading trailer: {str(e)}")
+    
+    # Parse release date
+    release_date = None
+    for date_field in ['digitalRelease', 'physicalRelease', 'inCinemas']:
+        if movie.get(date_field):
+            try:
+                release_date = datetime.datetime.fromisoformat(movie[date_field].replace('Z', '+00:00')).date()
+                break
+            except:
+                pass
+    
+    # Create database entry
+    trailer = models.ComingSoonTrailer(
+        radarr_movie_id=radarr_movie_id,
+        tmdb_id=movie.get('tmdbId'),
+        imdb_id=movie.get('imdbId'),
+        title=movie.get('title', 'Unknown'),
+        year=movie.get('year'),
+        overview=movie.get('overview', ''),
+        release_date=release_date,
+        trailer_url=trailer_url,
+        local_path=result['path'],
+        file_size_mb=result['size_mb'],
+        duration_seconds=result.get('duration', 0),
+        resolution=result.get('resolution', ''),
+        downloaded_at=datetime.datetime.utcnow(),
+        status='downloaded',
+        is_enabled=True,
+        play_count=0
+    )
+    
+    # Get poster URL
+    for img in movie.get('images', []):
+        if img.get('coverType') == 'poster':
+            trailer.poster_url = img.get('remoteUrl') or img.get('url')
+            break
+    
+    db.add(trailer)
+    db.commit()
+    db.refresh(trailer)
+    
+    # Also create a Preroll record for sequence builder compatibility
+    nexup_category = db.query(models.Category).filter(
+        models.Category.name == "NeX-Up Movie Trailers"
+    ).first()
+    
+    if nexup_category:
+        # Check if preroll already exists for this path
+        existing_preroll = db.query(models.Preroll).filter(
+            models.Preroll.path == result['path']
+        ).first()
+        
+        if not existing_preroll:
+            preroll_record = models.Preroll(
+                filename=Path(result['path']).name,
+                path=result['path'],
+                display_name=f"{movie.get('title', 'Unknown')} ({movie.get('year', '')})",
+                category_id=nexup_category.id,
+                thumbnail=trailer.poster_url or "",
+                tags="[]",
+                duration=result.get('duration', 0),
+                managed=False
+            )
+            db.add(preroll_record)
+            db.commit()
+            _file_log(f"NeX-Up: Created preroll record for '{movie.get('title')}'")
+    
+    _file_log(f"NeX-Up: Downloaded trailer for '{movie.get('title')}'")
+    
+    return {
+        "success": True,
+        "message": f"Downloaded trailer for {movie.get('title')}",
+        "trailer_id": trailer.id,
+        "file_size_mb": result['size_mb']
+    }
+
+@app.post("/nexup/trailers/manual")
+async def add_manual_trailer(
+    title: str,
+    tmdb_id: Optional[int] = None,
+    year: Optional[int] = None,
+    release_date: Optional[str] = None,
+    file_path: Optional[str] = None,
+    url: Optional[str] = None,
+    db: Session = Depends(get_db)
+):
+    """
+    Manually add a trailer by providing either:
+    - A local file path to an existing trailer video
+    - A URL to download from (YouTube, Vimeo, etc.)
+    """
+    setting = db.query(models.Setting).first()
+    if not setting:
+        raise HTTPException(status_code=400, detail="Settings not configured")
+    
+    storage_path = getattr(setting, 'nexup_storage_path', None)
+    if not storage_path:
+        raise HTTPException(status_code=400, detail="Storage path not configured")
+    
+    # Generate a unique tmdb_id for manual entries if not provided
+    # Use negative numbers to avoid conflicts with real TMDB IDs
+    if not tmdb_id:
+        import random
+        tmdb_id = -random.randint(100000, 999999)
+    
+    # Check if trailer already exists for this movie (only for real TMDB IDs)
+    if tmdb_id > 0:
+        existing = db.query(models.ComingSoonTrailer).filter(
+            models.ComingSoonTrailer.tmdb_id == tmdb_id
+        ).first()
+        if existing:
+            raise HTTPException(status_code=400, detail=f"Trailer already exists for {title}")
+    
+    import shutil
+    from pathlib import Path
+    
+    final_path = None
+    file_size_mb = 0
+    
+    # Determine output directory - movies go to movies subdirectory
+    movies_dir = Path(storage_path) / 'movies'
+    movies_dir.mkdir(parents=True, exist_ok=True)
+    
+    if file_path:
+        # User provided a local file path - copy it to storage
+        source = Path(file_path)
+        if not source.exists():
+            raise HTTPException(status_code=404, detail=f"File not found: {file_path}")
+        
+        # Sanitize filename
+        safe_title = ''.join(c for c in title if c.isalnum() or c in ' -_').strip().replace(' ', '_')[:100]
+        dest_filename = f"{safe_title}_{tmdb_id}_trailer{source.suffix}"
+        dest = movies_dir / dest_filename
+        
+        shutil.copy2(source, dest)
+        final_path = str(dest)
+        file_size_mb = dest.stat().st_size / (1024 * 1024)
+        _file_log(f"NeX-Up: Copied manual trailer for '{title}' from {file_path}")
+        
+    elif url:
+        # User provided a URL - try to download it
+        from backend.radarr_connector import TrailerDownloader
+        
+        quality = getattr(setting, 'nexup_quality', '1080') or '1080'
+        downloader = TrailerDownloader(storage_path, quality)
+        
+        _file_log(f"NeX-Up: Starting manual download for '{title}' from {url}")
+        try:
+            result = await downloader.download_trailer(url, title, tmdb_id)
+            if not result:
+                _file_log(f"NeX-Up: Manual download failed for '{title}' - no result returned")
+                raise HTTPException(status_code=500, detail=f"Failed to download trailer from {url}. Check if YouTube authentication is configured.")
+            
+            final_path = result['path']
+            file_size_mb = result['size_mb']
+        except HTTPException:
+            raise
+        except Exception as e:
+            _file_log(f"NeX-Up: Manual download error for '{title}': {str(e)}")
+            raise HTTPException(status_code=500, detail=f"Download error: {str(e)}")
+        _file_log(f"NeX-Up: Downloaded manual trailer for '{title}' from {url}")
+    else:
+        raise HTTPException(status_code=400, detail="Must provide either file_path or url")
+    
+    # Parse release date
+    parsed_release_date = None
+    if release_date:
+        try:
+            parsed_release_date = datetime.datetime.fromisoformat(release_date).date()
+        except:
+            pass
+    
+    # Create database entry
+    trailer = models.ComingSoonTrailer(
+        radarr_movie_id=0,  # Manual entry
+        tmdb_id=tmdb_id,
+        title=title,
+        year=year,
+        release_date=parsed_release_date,
+        local_path=final_path,
+        file_size_mb=round(file_size_mb, 2),
+        downloaded_at=datetime.datetime.utcnow(),
+        status='downloaded',
+        is_enabled=True,
+        play_count=0
+    )
+    db.add(trailer)
+    db.commit()
+    db.refresh(trailer)
+    
+    # Also create a Preroll record for sequence builder compatibility
+    nexup_category = db.query(models.Category).filter(
+        models.Category.name == "NeX-Up Movie Trailers"
+    ).first()
+    
+    if nexup_category:
+        existing_preroll = db.query(models.Preroll).filter(
+            models.Preroll.path == final_path
+        ).first()
+        
+        if not existing_preroll:
+            preroll_record = models.Preroll(
+                filename=Path(final_path).name,
+                path=final_path,
+                display_name=f"{title} ({year or ''})",
+                category_id=nexup_category.id,
+                thumbnail="",
+                tags="[]",
+                managed=False
+            )
+            db.add(preroll_record)
+            db.commit()
+            _file_log(f"NeX-Up: Created preroll record for manual trailer '{title}'")
+    
+    return {
+        "success": True,
+        "message": f"Added trailer for {title}",
+        "trailer_id": trailer.id,
+        "file_size_mb": round(file_size_mb, 2)
+    }
+
+@app.post("/nexup/trailers/sync-prerolls")
+def sync_nexup_trailers_to_prerolls(db: Session = Depends(get_db)):
+    """Sync existing ComingSoonTrailer records to Preroll table for sequence builder compatibility"""
+    nexup_category = db.query(models.Category).filter(
+        models.Category.name == "NeX-Up Movie Trailers"
+    ).first()
+    
+    if not nexup_category:
+        return {"success": False, "message": "NeX-Up Trailers category not found", "synced": 0}
+    
+    trailers = db.query(models.ComingSoonTrailer).filter(
+        models.ComingSoonTrailer.status == 'downloaded'
+    ).all()
+    
+    synced = 0
+    for trailer in trailers:
+        if not trailer.local_path:
+            continue
+            
+        # Check if preroll already exists
+        existing = db.query(models.Preroll).filter(
+            models.Preroll.path == trailer.local_path
+        ).first()
+        
+        if not existing:
+            preroll_record = models.Preroll(
+                filename=Path(trailer.local_path).name if trailer.local_path else f"trailer_{trailer.id}.mp4",
+                path=trailer.local_path,
+                display_name=f"{trailer.title} ({trailer.year or ''})" if trailer.title else "Unknown Trailer",
+                category_id=nexup_category.id,
+                thumbnail=trailer.poster_url or "",
+                tags="[]",
+                duration=trailer.duration_seconds,
+                managed=False
+            )
+            db.add(preroll_record)
+            synced += 1
+    
+    db.commit()
+    _file_log(f"NeX-Up: Synced {synced} trailers to preroll records")
+    
+    return {"success": True, "message": f"Synced {synced} trailers to preroll records", "synced": synced}
+
+@app.delete("/nexup/trailers/{trailer_id}")
+def delete_nexup_trailer(trailer_id: int, db: Session = Depends(get_db)):
+    """Delete a trailer"""
+    trailer = db.query(models.ComingSoonTrailer).filter(
+        models.ComingSoonTrailer.id == trailer_id
+    ).first()
+    
+    if not trailer:
+        raise HTTPException(status_code=404, detail="Trailer not found")
+    
+    # Delete the corresponding Preroll record if it exists
+    if trailer.local_path:
+        preroll_record = db.query(models.Preroll).filter(
+            models.Preroll.path == trailer.local_path
+        ).first()
+        if preroll_record:
+            db.delete(preroll_record)
+    
+    # Delete the file
+    if trailer.local_path and os.path.exists(trailer.local_path):
+        try:
+            os.remove(trailer.local_path)
+        except Exception as e:
+            _file_log(f"Failed to delete trailer file: {e}")
+    
+    title = trailer.title
+    db.delete(trailer)
+    db.commit()
+    
+    _file_log(f"NeX-Up: Deleted trailer for '{title}'")
+    
+    return {"success": True, "message": f"Deleted trailer for {title}"}
+
+@app.put("/nexup/trailers/{trailer_id}/toggle")
+def toggle_nexup_trailer(trailer_id: int, db: Session = Depends(get_db)):
+    """Enable/disable a trailer"""
+    trailer = db.query(models.ComingSoonTrailer).filter(
+        models.ComingSoonTrailer.id == trailer_id
+    ).first()
+    
+    if not trailer:
+        raise HTTPException(status_code=404, detail="Trailer not found")
+    
+    trailer.is_enabled = not trailer.is_enabled
+    trailer.updated_at = datetime.datetime.utcnow()
+    db.commit()
+    
+    status = "enabled" if trailer.is_enabled else "disabled"
+    return {"success": True, "message": f"Trailer {status}", "is_enabled": trailer.is_enabled}
+
+@app.post("/nexup/sync")
+async def sync_nexup(db: Session = Depends(get_db)):
+    """
+    Full sync: Check Radarr for updates, download new trailers, cleanup expired ones.
+    Optimized to batch API calls and avoid redundant requests.
+    """
+    global _nexup_sync_progress
+    
+    setting = db.query(models.Setting).first()
+    if not setting or not setting.nexup_radarr_url or not setting.nexup_radarr_api_key:
+        raise HTTPException(status_code=400, detail="Radarr not connected")
+    
+    storage_path = getattr(setting, 'nexup_storage_path', None)
+    if not storage_path:
+        raise HTTPException(status_code=400, detail="Storage path not configured")
+    
+    # Initialize progress tracking
+    _nexup_sync_progress = {
+        "syncing": True,
+        "type": "radarr",
+        "status": "Connecting to Radarr...",
+        "current_item": "",
+        "progress": 0,
+        "total": 0,
+        "downloaded": 0,
+        "skipped": 0,
+        "errors": 0
+    }
+    
+    from backend.radarr_connector import RadarrConnector, TrailerDownloader
+    
+    connector = RadarrConnector(setting.nexup_radarr_url, setting.nexup_radarr_api_key)
+    max_duration = getattr(setting, 'nexup_max_trailer_duration', 180) or 0
+    
+    # Debug: Log storage path and cookie file status
+    cookies_file = Path(storage_path) / 'youtube_cookies.txt'
+    _file_log(f"NeX-Up sync: storage_path={storage_path}")
+    _file_log(f"NeX-Up sync: cookies_file={cookies_file} (exists={cookies_file.exists()})")
+    
+    downloader = TrailerDownloader(storage_path, getattr(setting, 'nexup_quality', '1080') or '1080', max_duration=max_duration)
+    
+    results = {
+        "checked": 0,
+        "downloaded": 0,
+        "expired": 0,
+        "skipped_no_trailer": 0,
+        "skipped_already_exists": 0,
+        "eligible": 0,
+        "errors": []
+    }
+    
+    try:
+        # Get ALL movies from Radarr in ONE request (includes download status)
+        days_ahead = getattr(setting, 'nexup_days_ahead', 90) or 90
+        _nexup_sync_progress["status"] = "Fetching movies from Radarr..."
+        _file_log(f"NeX-Up sync: Fetching movies from Radarr...")
+        
+        # This single call gets all movie info including hasFile status
+        all_radarr_movies = await connector.get_all_movies_raw()
+        _file_log(f"NeX-Up sync: Got {len(all_radarr_movies)} total movies from Radarr")
+        
+        # Build a map of radarr_id -> hasFile for quick lookups
+        downloaded_movies = {m['id'] for m in all_radarr_movies if m.get('hasFile', False)}
+        _file_log(f"NeX-Up sync: {len(downloaded_movies)} movies already downloaded")
+        
+        # Get existing trailers from our DB
+        existing = db.query(models.ComingSoonTrailer).all()
+        existing_radarr_ids = {t.radarr_movie_id for t in existing}
+        _file_log(f"NeX-Up sync: {len(existing_radarr_ids)} existing trailers in DB")
+        
+        _nexup_sync_progress["status"] = "Cleaning up orphaned records..."
+        
+        # Verify existing trailer files exist - remove orphaned records
+        orphaned_count = 0
+        for trailer in existing:
+            if trailer.local_path and not os.path.exists(trailer.local_path):
+                _file_log(f"NeX-Up sync: Removing orphaned record for '{trailer.title}' - file missing: {trailer.local_path}")
+                existing_radarr_ids.discard(trailer.radarr_movie_id)
+                db.delete(trailer)
+                orphaned_count += 1
+        if orphaned_count > 0:
+            db.commit()
+            _file_log(f"NeX-Up sync: Cleaned up {orphaned_count} orphaned trailer records")
+        
+        _nexup_sync_progress["status"] = "Checking for expired trailers..."
+        
+        # Check for movies that have been downloaded (expire their trailers) - NO extra API calls!
+        for trailer in existing:
+            if trailer.radarr_movie_id in downloaded_movies:
+                # Delete trailer file
+                if trailer.local_path and os.path.exists(trailer.local_path):
+                    try:
+                        os.remove(trailer.local_path)
+                    except:
+                        pass
+                db.delete(trailer)
+                results["expired"] += 1
+                _file_log(f"NeX-Up: Expired trailer for downloaded movie '{trailer.title}'")
+        
+        # Parse upcoming movies from the already-fetched data
+        upcoming = connector.parse_upcoming_from_raw(all_radarr_movies, days_ahead)
+        results["checked"] = len(upcoming)
+        _file_log(f"NeX-Up sync: Found {len(upcoming)} upcoming movies")
+        
+        # Download new trailers (up to limit)
+        max_trailers = getattr(setting, 'nexup_max_trailers', 10) or 10
+        current_count = db.query(models.ComingSoonTrailer).count()
+        storage_usage = downloader.get_storage_usage()
+        max_storage = getattr(setting, 'nexup_max_storage_gb', 5.0) or 5.0
+        
+        _file_log(f"NeX-Up sync: max_trailers={max_trailers}, current_count={current_count}, storage={storage_usage['total_size_gb']}GB/{max_storage}GB")
+        
+        # Filter to only truly upcoming movies (positive days) with trailers
+        eligible_movies = [m for m in upcoming if m.get('trailer_url') and (m.get('days_until_release') or 0) >= -7]
+        _file_log(f"NeX-Up sync: {len(eligible_movies)} eligible movies (with trailer, releasing soon)")
+        results["eligible"] = len(eligible_movies)
+        
+        # Update progress with total eligible
+        _nexup_sync_progress["total"] = len(eligible_movies)
+        _nexup_sync_progress["status"] = f"Found {len(eligible_movies)} movies with trailers..."
+        
+        # Get rate limiting settings
+        download_delay = getattr(setting, 'nexup_download_delay', 5) or 5
+        downloads_completed = 0
+        processed_count = 0
+        
+        for movie in eligible_movies:
+            processed_count += 1
+            progress_pct = int((processed_count / len(eligible_movies)) * 100) if eligible_movies else 100
+            _nexup_sync_progress["progress"] = progress_pct
+            
+            # Check limits
+            if current_count >= max_trailers:
+                _nexup_sync_progress["status"] = f"Reached max trailers limit ({max_trailers})"
+                _file_log(f"NeX-Up sync: Reached max trailers limit ({max_trailers})")
+                break
+            if storage_usage['total_size_gb'] >= max_storage:
+                _nexup_sync_progress["status"] = f"Reached storage limit ({max_storage}GB)"
+                _file_log(f"NeX-Up sync: Reached storage limit ({max_storage}GB)")
+                break
+            
+            # Skip if already have this movie
+            if movie['radarr_id'] in existing_radarr_ids:
+                results["skipped_already_exists"] += 1
+                _nexup_sync_progress["skipped"] = results["skipped_already_exists"]
+                _nexup_sync_progress["status"] = f"Skipping '{movie['title']}' (already have)"
+                continue
+            
+            # Rate limiting: Add delay between downloads (except for first one)
+            if downloads_completed > 0 and download_delay > 0:
+                _nexup_sync_progress["status"] = f"Rate limiting - waiting {download_delay}s..."
+                _file_log(f"NeX-Up sync: Waiting {download_delay}s before next download (rate limiting)")
+                await asyncio.sleep(download_delay)
+            
+            _nexup_sync_progress["status"] = f"Downloading trailer for '{movie['title']}'..."
+            _nexup_sync_progress["current_item"] = movie['title']
+            _file_log(f"NeX-Up sync: Downloading trailer for '{movie['title']}' ({movie['days_until_release']} days away)")
+            
+            # Download trailer
+            try:
+                result = await downloader.download_trailer(
+                    movie['trailer_url'],
+                    movie['title'],
+                    movie['tmdb_id']
+                )
+                
+                # Check if result is a successful download (has 'path') vs an error dict (has 'error')
+                if result and isinstance(result, dict) and 'path' in result:
+                    _nexup_sync_progress["status"] = f"Downloaded '{movie['title']}' successfully!"
+                    _nexup_sync_progress["downloaded"] = results["downloaded"] + 1
+                    _file_log(f"NeX-Up sync: Downloaded '{movie['title']}' to {result['path']} ({result['size_mb']}MB)")
+                    # Create database entry
+                    trailer = models.ComingSoonTrailer(
+                        radarr_movie_id=movie['radarr_id'],
+                        tmdb_id=movie['tmdb_id'],
+                        imdb_id=movie.get('imdb_id'),
+                        title=movie['title'],
+                        year=movie.get('year'),
+                        overview=movie.get('overview', ''),
+                        release_date=datetime.datetime.fromisoformat(movie['release_date']).date() if movie.get('release_date') else None,
+                        release_type=movie.get('release_type'),
+                        trailer_url=movie['trailer_url'],
+                        local_path=result['path'],
+                        file_size_mb=result['size_mb'],
+                        duration_seconds=result.get('duration', 0),
+                        resolution=result.get('resolution', ''),
+                        poster_url=movie.get('poster_url'),
+                        fanart_url=movie.get('fanart_url'),
+                        downloaded_at=datetime.datetime.utcnow(),
+                        status='downloaded',
+                        is_enabled=True,
+                        play_count=0
+                    )
+                    db.add(trailer)
+                    current_count += 1
+                    results["downloaded"] += 1
+                    existing_radarr_ids.add(movie['radarr_id'])
+                    downloads_completed += 1
+                    
+                    # Update storage tracking
+                    storage_usage = downloader.get_storage_usage()
+                else:
+                    # Check if result contains YouTube bot block error
+                    error_code = str(result.get('error', '')) if result and isinstance(result, dict) else ''
+                    if 'YOUTUBE_BOT_BLOCK' in error_code or 'STALE_COOKIES' in error_code:
+                        error_msg = "⚠️ YouTube bot detection. Re-export cookies from Incognito: login → youtube.com/robots.txt → export"
+                        _nexup_sync_progress["status"] = f"YouTube blocked '{movie['title']}' - try re-exporting cookies"
+                        _nexup_sync_progress["cookie_error"] = True  # Flag for UI to show help
+                        results["errors"].append(f"{movie['title']}: {error_msg}")
+                        _file_log(f"NeX-Up sync: YOUTUBE BOT BLOCK - '{movie['title']}' - cookies may be invalid or IP is rate-limited")
+                    else:
+                        _nexup_sync_progress["status"] = f"Failed to download '{movie['title']}'"
+                        results["errors"].append(f"{movie['title']}: No trailer source available")
+                        _file_log(f"NeX-Up sync: Download FAILED for '{movie['title']}' - no trailer source worked")
+                    _nexup_sync_progress["errors"] = len(results["errors"])
+                    
+            except Exception as e:
+                _nexup_sync_progress["status"] = f"Error downloading '{movie['title']}'"
+                _nexup_sync_progress["errors"] = len(results["errors"]) + 1
+                _file_log(f"NeX-Up sync: ERROR downloading '{movie['title']}': {e}")
+                results["errors"].append(f"{movie['title']}: {str(e)}")
+        
+        # Update last sync time (use local time for display)
+        setting.nexup_last_sync = datetime.datetime.now()
+        db.commit()
+        
+        _nexup_sync_progress["status"] = f"Sync complete! Downloaded {results['downloaded']} trailers."
+        _nexup_sync_progress["progress"] = 100
+        _nexup_sync_progress["syncing"] = False
+        _file_log(f"NeX-Up sync complete: {results['downloaded']} downloaded, {results['expired']} expired")
+        
+    except Exception as e:
+        _nexup_sync_progress["status"] = f"Sync error: {str(e)}"
+        _nexup_sync_progress["syncing"] = False
+        _nexup_sync_progress["progress"] = 100
+        results["errors"].append(str(e))
+        _file_log(f"NeX-Up sync error: {e}")
+    
+    return results
+
+@app.get("/nexup/storage")
+def get_nexup_storage(db: Session = Depends(get_db)):
+    """Get storage usage for NeX-Up trailers"""
+    setting = db.query(models.Setting).first()
+    storage_path = getattr(setting, 'nexup_storage_path', None) if setting else None
+    
+    if not storage_path:
+        return {
+            "configured": False,
+            "path": None,
+            "total_size_mb": 0,
+            "total_size_gb": 0,
+            "file_count": 0,
+            "max_gb": getattr(setting, 'nexup_max_storage_gb', 5.0) if setting else 5.0
+        }
+    
+    from backend.radarr_connector import TrailerDownloader
+    
+    downloader = TrailerDownloader(storage_path)
+    usage = downloader.get_storage_usage()
+    
+    return {
+        "configured": True,
+        "path": storage_path,
+        "total_size_mb": usage['total_size_mb'],
+        "total_size_gb": usage['total_size_gb'],
+        "file_count": usage['file_count'],
+        "max_gb": getattr(setting, 'nexup_max_storage_gb', 5.0) if setting else 5.0,
+        "percentage_used": round((usage['total_size_gb'] / (getattr(setting, 'nexup_max_storage_gb', 5.0) or 5.0)) * 100, 1)
+    }
+
+@app.get("/nexup/trailers/playback")
+def get_nexup_playback_trailers(db: Session = Depends(get_db)):
+    """
+    Get trailers to include in current preroll playback.
+    Returns the configured number of trailers based on playback settings,
+    plus any generated dynamic preroll (e.g., "Coming Soon to X").
+    """
+    setting = db.query(models.Setting).first()
+    
+    if not setting or not getattr(setting, 'nexup_enabled', False):
+        return {"trailers": [], "enabled": False, "dynamic_preroll": None}
+    
+    count = getattr(setting, 'nexup_trailers_per_playback', 2) or 2
+    order = getattr(setting, 'nexup_playback_order', 'release_date') or 'release_date'
+    
+    query = db.query(models.ComingSoonTrailer).filter(
+        models.ComingSoonTrailer.is_enabled == True,
+        models.ComingSoonTrailer.status == 'downloaded'
+    )
+    
+    if order == 'release_date':
+        query = query.order_by(models.ComingSoonTrailer.release_date.asc())
+    elif order == 'random':
+        # For random, we'll shuffle in Python
+        all_trailers = query.all()
+        random.shuffle(all_trailers)
+        trailers = all_trailers[:count]
+    elif order == 'download_date':
+        query = query.order_by(models.ComingSoonTrailer.downloaded_at.desc())
+    
+    if order != 'random':
+        trailers = query.limit(count).all()
+    
+    # Check for dynamic preroll
+    dynamic_preroll = None
+    storage_path = getattr(setting, 'nexup_storage_path', None)
+    preroll_template = getattr(setting, 'nexup_dynamic_preroll_template', None)
+    
+    if storage_path and preroll_template:
+        preroll_path = Path(storage_path) / "dynamic_prerolls" / f"{preroll_template}_preroll.mp4"
+        if preroll_path.exists():
+            dynamic_preroll = {
+                "path": str(preroll_path),
+                "template": preroll_template,
+                "server_name": getattr(setting, 'nexup_dynamic_preroll_server_name', ''),
+                "duration": getattr(setting, 'nexup_dynamic_preroll_duration', 5)
+            }
+    
+    return {
+        "trailers": [
+            {
+                "id": t.id,
+                "title": t.title,
+                "year": t.year,
+                "path": t.local_path,
+                "release_date": t.release_date.isoformat() if t.release_date else None,
+                "days_until": (t.release_date - datetime.datetime.now().date()).days if t.release_date else None,
+                "poster_url": t.poster_url,
+                "duration_seconds": t.duration_seconds
+            }
+            for t in trailers
+        ],
+        "enabled": True,
+        "count": len(trailers),
+        "dynamic_preroll": dynamic_preroll
+    }
+
+# --- Dynamic Preroll Generation Endpoints ---
+
+@app.get("/nexup/preroll/templates")
+def get_preroll_templates():
+    """Get available dynamic preroll templates and color themes"""
+    from backend.dynamic_preroll import DynamicPrerollGenerator
+    
+    generator = DynamicPrerollGenerator()
+    templates = generator.get_available_templates()
+    color_themes = generator.get_color_themes()
+    
+    return {
+        "templates": templates,
+        "ffmpeg_available": generator.check_ffmpeg_available(),
+        "color_themes": color_themes
+    }
+
+@app.get("/nexup/preroll/ffmpeg-status")
+def get_ffmpeg_status():
+    """Check if FFmpeg is available for video generation"""
+    from backend.dynamic_preroll import DynamicPrerollGenerator
+    
+    generator = DynamicPrerollGenerator()
+    available = generator.check_ffmpeg_available()
+    
+    return {
+        "available": available,
+        "message": "FFmpeg is ready for video generation" if available else "FFmpeg not found. Please install FFmpeg to generate dynamic prerolls."
+    }
+
+@app.post("/nexup/preroll/generate")
+async def generate_dynamic_preroll(
+    template: str = "coming_soon_cinematic",
+    server_name: str = "Your Server",
+    duration: int = 5,
+    theme: str = "midnight",
+    db: Session = Depends(get_db)
+):
+    """
+    Generate a dynamic preroll video with visual effects.
+    
+    Args:
+        template: Template name ('coming_soon_cinematic', 'coming_soon_neon', 'coming_soon_minimal', 
+                                 'feature_presentation', 'feature_presentation_modern', 'now_showing')
+        server_name: Server name to display in the video
+        duration: Video duration in seconds (default 5)
+        theme: Color theme ('midnight', 'sunset', 'forest', 'royal', 'monochrome')
+    """
+    from backend.dynamic_preroll import DynamicPrerollGenerator, set_verbose_logger
+    
+    # Wire up verbose logging if enabled
+    if _is_verbose_logging_enabled():
+        def preroll_verbose_log(msg: str):
+            _file_log(f"[PREROLL] {msg}", level="DEBUG")
+            print(f"[PREROLL] {msg}")
+        set_verbose_logger(preroll_verbose_log)
+        _file_log(f"[PREROLL] === Starting preroll generation ===", level="DEBUG")
+        _file_log(f"[PREROLL] Template: {template}, Server: {server_name}, Duration: {duration}s, Theme: {theme}", level="DEBUG")
+    
+    # Get storage path
+    setting = db.query(models.Setting).first()
+    storage_path = getattr(setting, 'nexup_storage_path', None) if setting else None
+    
+    if not storage_path:
+        raise HTTPException(status_code=400, detail="NeX-Up storage path not configured")
+    
+    output_dir = Path(storage_path) / "dynamic_prerolls"
+    output_dir.mkdir(parents=True, exist_ok=True)
+    
+    generator = DynamicPrerollGenerator(str(output_dir))
+    
+    if not generator.check_ffmpeg_available():
+        raise HTTPException(status_code=500, detail="FFmpeg not found. Please install FFmpeg to generate dynamic prerolls.")
+    
+    # Generate the video using the template router
+    variables = {"server_name": server_name}
+    
+    try:
+        output_path = generator.generate_from_template(template, variables, duration, theme=theme)
+        
+        if output_path:
+            # Save settings for regeneration
+            db.execute(
+                models.Setting.__table__.update().values(
+                    nexup_dynamic_preroll_template=template,
+                    nexup_dynamic_preroll_server_name=server_name,
+                    nexup_dynamic_preroll_duration=duration,
+                    nexup_dynamic_preroll_theme=theme
+                )
+            )
+            db.commit()
+            
+            if _is_verbose_logging_enabled():
+                _file_log(f"[PREROLL] === Generation complete: {output_path} ===", level="DEBUG")
+            
+            return {
+                "success": True,
+                "path": str(output_path),
+                "template": template,
+                "server_name": server_name,
+                "duration": duration,
+                "theme": theme,
+                "message": f"Generated '{template}' preroll with {theme} theme successfully"
+            }
+        else:
+            raise HTTPException(status_code=500, detail="Failed to generate preroll video")
+    except Exception as e:
+        _file_log(f"Error generating dynamic preroll: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/nexup/preroll/generate-from-preview")
+async def generate_preroll_from_preview(
+    image_data: str = Body(..., description="Base64 encoded PNG image from CSS preview"),
+    duration: int = Body(5, description="Video duration in seconds"),
+    template: str = Body("custom", description="Template name for filename"),
+    server_name: str = Body("", description="Server name (for metadata)"),
+    theme: str = Body("custom", description="Theme name (for metadata)"),
+    db: Session = Depends(get_db)
+):
+    """
+    Generate a preroll video from a captured CSS preview image.
+    
+    This is the "What You See Is What You Get" approach - the frontend captures
+    the live CSS preview as a PNG image, and we create a video from it with
+    smooth fade in/out effects.
+    
+    Benefits:
+    - Pixel-perfect match to the CSS preview
+    - No complex FFmpeg text rendering needed
+    - Supports any CSS effects (gradients, shadows, custom fonts, etc.)
+    - Much simpler and more maintainable
+    
+    Args:
+        image_data: Base64 encoded PNG image (with or without data:image/png;base64, prefix)
+        duration: Video duration in seconds
+        template: Template name (used for filename)
+        server_name: Server name (stored for reference)
+        theme: Theme name (stored for reference)
+    """
+    import base64
+    from backend.dynamic_preroll import DynamicPrerollGenerator, set_verbose_logger
+    
+    # Wire up verbose logging if enabled
+    if _is_verbose_logging_enabled():
+        def preroll_verbose_log(msg: str):
+            _file_log(f"[PREROLL-IMG] {msg}", level="DEBUG")
+            print(f"[PREROLL-IMG] {msg}")
+        set_verbose_logger(preroll_verbose_log)
+        _file_log(f"[PREROLL-IMG] === Starting image-to-video generation ===", level="DEBUG")
+    
+    # Get storage path
+    setting = db.query(models.Setting).first()
+    storage_path = getattr(setting, 'nexup_storage_path', None) if setting else None
+    
+    if not storage_path:
+        raise HTTPException(status_code=400, detail="NeX-Up storage path not configured")
+    
+    output_dir = Path(storage_path) / "dynamic_prerolls"
+    output_dir.mkdir(parents=True, exist_ok=True)
+    
+    generator = DynamicPrerollGenerator(str(output_dir))
+    
+    if not generator.check_ffmpeg_available():
+        raise HTTPException(status_code=500, detail="FFmpeg not found. Please install FFmpeg to generate prerolls.")
+    
+    try:
+        # Decode base64 image
+        # Strip data URL prefix if present
+        if ',' in image_data:
+            image_data = image_data.split(',', 1)[1]
+        
+        image_bytes = base64.b64decode(image_data)
+        _file_log(f"[PREROLL-IMG] Decoded image: {len(image_bytes)} bytes")
+        
+        # Generate filename based on template AND theme (unique file per combination)
+        import re
+        safe_template = re.sub(r'[^a-zA-Z0-9_-]', '_', template)
+        safe_theme = re.sub(r'[^a-zA-Z0-9_-]', '_', theme) if theme else 'custom'
+        output_filename = f"{safe_template}_{safe_theme}_preroll.mp4"
+        
+        # Calculate fade duration - 1 second fades look smooth and professional
+        # For shorter videos, use proportionally shorter fades
+        fade_duration = max(0.5, min(1.0, duration * 0.2))
+        
+        output_path = generator.generate_from_image(
+            image_data=image_bytes,
+            duration=float(duration),
+            output_filename=output_filename,
+            width=1920,
+            height=1080,
+            fade_duration=fade_duration
+        )
+        
+        if output_path:
+            # Save settings for reference
+            db.execute(
+                models.Setting.__table__.update().values(
+                    nexup_dynamic_preroll_template=template,
+                    nexup_dynamic_preroll_server_name=server_name,
+                    nexup_dynamic_preroll_duration=duration,
+                    nexup_dynamic_preroll_theme=theme
+                )
+            )
+            db.commit()
+            
+            _file_log(f"[PREROLL-IMG] === Generation complete: {output_path} ===")
+            
+            return {
+                "success": True,
+                "path": str(output_path),
+                "filename": output_filename,
+                "template": template,
+                "server_name": server_name,
+                "duration": duration,
+                "theme": theme,
+                "method": "preview_capture",
+                "message": f"Generated preroll from CSS preview successfully"
+            }
+        else:
+            raise HTTPException(status_code=500, detail="Failed to generate video from preview image")
+            
+    except base64.binascii.Error as e:
+        _file_log(f"[PREROLL-IMG] Base64 decode error: {e}")
+        raise HTTPException(status_code=400, detail=f"Invalid base64 image data: {e}")
+    except Exception as e:
+        _file_log(f"[PREROLL-IMG] Error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/nexup/preroll/settings")
+def get_preroll_settings(db: Session = Depends(get_db)):
+    """Get saved dynamic preroll settings"""
+    setting = db.query(models.Setting).first()
+    
+    if not setting:
+        return {
+            "configured": False,
+            "template": "coming_soon",
+            "server_name": "",
+            "duration": 5,
+            "theme": "midnight"
+        }
+    
+    storage_path = getattr(setting, 'nexup_storage_path', None)
+    preroll_path = None
+    
+    if storage_path:
+        # Check if a preroll already exists
+        output_dir = Path(storage_path) / "dynamic_prerolls"
+        template = getattr(setting, 'nexup_dynamic_preroll_template', 'coming_soon')
+        expected_file = output_dir / f"{template}_preroll.mp4"
+        if expected_file.exists():
+            preroll_path = str(expected_file)
+    
+    return {
+        "configured": True,
+        "template": getattr(setting, 'nexup_dynamic_preroll_template', 'coming_soon'),
+        "server_name": getattr(setting, 'nexup_dynamic_preroll_server_name', ''),
+        "duration": getattr(setting, 'nexup_dynamic_preroll_duration', 5),
+        "theme": getattr(setting, 'nexup_dynamic_preroll_theme', 'midnight'),
+        "preroll_path": preroll_path
+    }
+
+@app.get("/nexup/preroll/list")
+def list_generated_prerolls(db: Session = Depends(get_db)):
+    """List all generated dynamic preroll videos"""
+    setting = db.query(models.Setting).first()
+    
+    if not setting:
+        return {"prerolls": []}
+    
+    storage_path = getattr(setting, 'nexup_storage_path', None)
+    if not storage_path:
+        return {"prerolls": []}
+    
+    output_dir = Path(storage_path) / "dynamic_prerolls"
+    prerolls = []
+    
+    if output_dir.exists():
+        for file in output_dir.glob("*_preroll.mp4"):
+            # Extract template name from filename (e.g., "coming_soon_cinematic_preroll.mp4" -> "coming_soon_cinematic")
+            template_id = file.stem.replace("_preroll", "")
+            
+            # Get file stats
+            stat = file.stat()
+            
+            prerolls.append({
+                "filename": file.name,
+                "template_id": template_id,
+                "path": str(file),
+                "size_bytes": stat.st_size,
+                "created_at": stat.st_mtime
+            })
+    
+    # Sort by creation time (newest first)
+    prerolls.sort(key=lambda x: x["created_at"], reverse=True)
+    
+    return {"prerolls": prerolls}
+
+@app.delete("/nexup/preroll/{filename}")
+def delete_specific_preroll(filename: str, db: Session = Depends(get_db)):
+    """Delete a specific generated dynamic preroll"""
+    setting = db.query(models.Setting).first()
+    
+    if not setting:
+        return {"success": False, "message": "No settings found"}
+    
+    storage_path = getattr(setting, 'nexup_storage_path', None)
+    if not storage_path:
+        return {"success": False, "message": "Storage path not configured"}
+    
+    # Sanitize filename
+    if ".." in filename or "/" in filename or "\\" in filename:
+        return {"success": False, "message": "Invalid filename"}
+    
+    file_path = Path(storage_path) / "dynamic_prerolls" / filename
+    
+    if file_path.exists():
+        try:
+            file_path.unlink()
+            return {"success": True, "message": f"Deleted {filename}"}
+        except Exception as e:
+            return {"success": False, "message": str(e)}
+    
+    return {"success": False, "message": "File not found"}
+
+@app.get("/nexup/preroll/video/{filename}")
+def serve_dynamic_preroll_video(filename: str, db: Session = Depends(get_db)):
+    """Serve a generated dynamic preroll video file for preview"""
+    setting = db.query(models.Setting).first()
+    
+    if not setting:
+        raise HTTPException(status_code=404, detail="Settings not found")
+    
+    storage_path = getattr(setting, 'nexup_storage_path', None)
+    if not storage_path:
+        raise HTTPException(status_code=404, detail="Storage path not configured")
+    
+    # Sanitize filename
+    if ".." in filename or "/" in filename or "\\" in filename:
+        raise HTTPException(status_code=400, detail="Invalid filename")
+    
+    video_path = Path(storage_path) / "dynamic_prerolls" / filename
+    
+    if not video_path.exists():
+        raise HTTPException(status_code=404, detail="Video not found")
+    
+    import mimetypes
+    mime_type, _ = mimetypes.guess_type(str(video_path))
+    if not mime_type or not mime_type.startswith("video/"):
+        mime_type = "video/mp4"
+    
+    # Add no-cache headers to prevent browser caching stale videos
+    from starlette.responses import FileResponse as StarletteFileResponse
+    response = StarletteFileResponse(str(video_path), media_type=mime_type)
+    response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+    response.headers["Pragma"] = "no-cache"
+    response.headers["Expires"] = "0"
+    return response
+
+@app.delete("/nexup/preroll")
+def delete_dynamic_preroll(db: Session = Depends(get_db)):
+    """Delete the generated dynamic preroll"""
+    setting = db.query(models.Setting).first()
+    
+    if not setting:
+        return {"success": False, "message": "No settings found"}
+    
+    storage_path = getattr(setting, 'nexup_storage_path', None)
+    if not storage_path:
+        return {"success": False, "message": "Storage path not configured"}
+    
+    output_dir = Path(storage_path) / "dynamic_prerolls"
+    deleted = []
+    
+    # Delete all preroll files
+    if output_dir.exists():
+        for file in output_dir.glob("*_preroll.mp4"):
+            try:
+                file.unlink()
+                deleted.append(str(file))
+            except Exception as e:
+                _file_log(f"Failed to delete {file}: {e}")
+    
+    # Clear settings
+    db.execute(
+        models.Setting.__table__.update().values(
+            nexup_dynamic_preroll_template=None,
+            nexup_dynamic_preroll_server_name=None,
+            nexup_dynamic_preroll_duration=None
+        )
+    )
+    db.commit()
+    
+    return {
+        "success": True,
+        "deleted": deleted,
+        "message": f"Deleted {len(deleted)} preroll file(s)"
+    }
+
+# NeX-Up Sequence Builder Integration
+@app.get("/nexup/sequence/presets")
+def get_nexup_sequence_presets(db: Session = Depends(get_db)):
+    """Get pre-built sequence presets for NeX-Up integration"""
+    setting = db.query(models.Setting).first()
+    
+    # Get the NeX-Up Movie Trailers category
+    nexup_category = db.query(models.Category).filter(
+        models.Category.name == "NeX-Up Movie Trailers"
+    ).first()
+    
+    # Get the NeX-Up TV Trailers category
+    tv_category = db.query(models.Category).filter(
+        models.Category.name == "NeX-Up TV Trailers"
+    ).first()
+    
+    # Get the NeX-Up Dynamic Prerolls category (or create if needed)
+    preroll_category = db.query(models.Category).filter(
+        models.Category.name == "NeX-Up Prerolls"
+    ).first()
+    
+    # Check if we have a dynamic preroll generated
+    has_dynamic_preroll = False
+    preroll_files = []
+    available_prerolls = []
+    if setting:
+        storage_path = getattr(setting, 'nexup_storage_path', None)
+        if storage_path:
+            preroll_dir = Path(storage_path) / "dynamic_prerolls"
+            if preroll_dir.exists():
+                preroll_files = list(preroll_dir.glob("*_preroll.mp4"))
+                has_dynamic_preroll = len(preroll_files) > 0
+                # Build list of available prerolls with display names
+                for pf in preroll_files:
+                    display_name = pf.stem.replace('_preroll', '').replace('_', ' ').title()
+                    available_prerolls.append({
+                        "filename": pf.name,
+                        "path": str(pf),
+                        "display_name": display_name
+                    })
+    
+    # Count trailers in each category
+    movie_trailer_count = db.query(models.Preroll).filter(
+        models.Preroll.category_id == nexup_category.id
+    ).count() if nexup_category else 0
+    
+    tv_trailer_count = db.query(models.Preroll).filter(
+        models.Preroll.category_id == tv_category.id
+    ).count() if tv_category else 0
+    
+    # Build presets based on available content
+    presets = []
+    trailers_per_playback = getattr(setting, 'nexup_trailers_per_playback', 2) if setting else 2
+    playback_order = getattr(setting, 'nexup_playback_order', 'release_date') if setting else 'release_date'
+    
+    # Preset 1: Coming Soon + Movie Trailers (classic)
+    if nexup_category and movie_trailer_count > 0:
+        presets.append({
+            "id": "coming_soon_trailers",
+            "name": "🎬 Coming Soon + Movie Trailers",
+            "description": f"Plays your Coming Soon intro followed by {trailers_per_playback} random movie trailer(s)",
+            "requires_dynamic_preroll": True,
+            "has_requirements": has_dynamic_preroll,
+            "trailer_source": "movies",
+            "blocks": [
+                {
+                    "type": "fixed",
+                    "source": "nexup_preroll",
+                    "label": "Coming Soon Intro",
+                    "description": "Your generated dynamic preroll"
+                },
+                {
+                    "type": "random",
+                    "category_id": nexup_category.id,
+                    "count": trailers_per_playback,
+                    "label": f"Movie Trailers ({trailers_per_playback})",
+                    "description": f"Random trailers ordered by {playback_order.replace('_', ' ')}"
+                }
+            ]
+        })
+    
+    # Preset 2: Coming Soon + TV Trailers
+    if tv_category and tv_trailer_count > 0:
+        presets.append({
+            "id": "coming_soon_tv_trailers",
+            "name": "📺 Coming Soon + TV Trailers",
+            "description": f"Plays your Coming Soon intro followed by {trailers_per_playback} random TV show trailer(s)",
+            "requires_dynamic_preroll": True,
+            "has_requirements": has_dynamic_preroll,
+            "trailer_source": "tv",
+            "blocks": [
+                {
+                    "type": "fixed",
+                    "source": "nexup_preroll",
+                    "label": "Coming Soon Intro"
+                },
+                {
+                    "type": "random",
+                    "category_id": tv_category.id,
+                    "count": trailers_per_playback,
+                    "label": f"TV Trailers ({trailers_per_playback})"
+                }
+            ]
+        })
+    
+    # Preset 3: Mixed - Movie + TV Trailers
+    if nexup_category and tv_category and movie_trailer_count > 0 and tv_trailer_count > 0:
+        presets.append({
+            "id": "mixed_trailers",
+            "name": "🎭 Mixed: Movies + TV",
+            "description": f"Coming Soon intro, then 1 movie trailer and 1 TV trailer",
+            "requires_dynamic_preroll": True,
+            "has_requirements": has_dynamic_preroll,
+            "trailer_source": "mixed",
+            "blocks": [
+                {
+                    "type": "fixed",
+                    "source": "nexup_preroll",
+                    "label": "Coming Soon Intro"
+                },
+                {
+                    "type": "random",
+                    "category_id": nexup_category.id,
+                    "count": 1,
+                    "label": "Movie Trailer"
+                },
+                {
+                    "type": "random",
+                    "category_id": tv_category.id,
+                    "count": 1,
+                    "label": "TV Trailer"
+                }
+            ]
+        })
+    
+    # Preset 4: Movie Trailers Only
+    if nexup_category and movie_trailer_count > 0:
+        presets.append({
+            "id": "movie_trailers_only",
+            "name": "🎞️ Movie Trailers Only",
+            "description": f"Plays {trailers_per_playback} random movie trailer(s) without an intro",
+            "requires_dynamic_preroll": False,
+            "has_requirements": True,
+            "trailer_source": "movies",
+            "blocks": [
+                {
+                    "type": "random",
+                    "category_id": nexup_category.id,
+                    "count": trailers_per_playback,
+                    "label": f"Movie Trailers ({trailers_per_playback})"
+                }
+            ]
+        })
+    
+    # Preset 5: TV Trailers Only
+    if tv_category and tv_trailer_count > 0:
+        presets.append({
+            "id": "tv_trailers_only",
+            "name": "📺 TV Trailers Only",
+            "description": f"Plays {trailers_per_playback} random TV show trailer(s) without an intro",
+            "requires_dynamic_preroll": False,
+            "has_requirements": True,
+            "trailer_source": "tv",
+            "blocks": [
+                {
+                    "type": "random",
+                    "category_id": tv_category.id,
+                    "count": trailers_per_playback,
+                    "label": f"TV Trailers ({trailers_per_playback})"
+                }
+            ]
+        })
+    
+    # Preset 6: Theater Experience (intro + 4 movie trailers)
+    if nexup_category and movie_trailer_count > 0:
+        presets.append({
+            "id": "theater_experience",
+            "name": "🌟 Theater Experience",
+            "description": "Full cinema experience with Coming Soon intro and 4 movie trailers",
+            "requires_dynamic_preroll": True,
+            "has_requirements": has_dynamic_preroll,
+            "trailer_source": "movies",
+            "blocks": [
+                {
+                    "type": "fixed",
+                    "source": "nexup_preroll",
+                    "label": "Coming Soon Intro"
+                },
+                {
+                    "type": "random",
+                    "category_id": nexup_category.id,
+                    "count": 4,
+                    "label": "Movie Trailers (4)"
+                }
+            ]
+        })
+    
+    return {
+        "presets": presets,
+        "nexup_category_id": nexup_category.id if nexup_category else None,
+        "tv_category_id": tv_category.id if tv_category else None,
+        "preroll_category_id": preroll_category.id if preroll_category else None,
+        "has_dynamic_preroll": has_dynamic_preroll,
+        "dynamic_preroll_files": [str(f.name) for f in preroll_files],
+        "available_prerolls": available_prerolls,
+        "movie_trailers_count": movie_trailer_count,
+        "tv_trailers_count": tv_trailer_count,
+        "trailers_count": movie_trailer_count + tv_trailer_count
+    }
+
+@app.post("/nexup/sequence/create")
+def create_nexup_sequence(
+    preset_id: str,
+    name: str = None,
+    description: str = None,
+    trailer_count: int = None,
+    movie_trailer_count: int = None,
+    tv_trailer_count: int = None,
+    include_preroll: bool = True,
+    selected_preroll_path: str = None,
+    playback_order: str = None,
+    db: Session = Depends(get_db)
+):
+    """Create a saved sequence from a NeX-Up preset
+    
+    playback_order options: 'random', 'release_date', 'download_date'
+    movie_trailer_count/tv_trailer_count: Used for mixed_trailers preset
+    """
+    _file_log(f"Creating NeX-Up sequence: preset={preset_id}, include_preroll={include_preroll}, selected_preroll_path={selected_preroll_path}")
+    setting = db.query(models.Setting).first()
+    
+    # Get the NeX-Up Movie Trailers category
+    nexup_category = db.query(models.Category).filter(
+        models.Category.name == "NeX-Up Movie Trailers"
+    ).first()
+    
+    # Get the NeX-Up TV Trailers category
+    tv_category = db.query(models.Category).filter(
+        models.Category.name == "NeX-Up TV Trailers"
+    ).first()
+    
+    # Determine which category to use based on preset
+    if preset_id in ["coming_soon_tv_trailers", "tv_trailers_only"]:
+        if not tv_category:
+            raise HTTPException(status_code=400, detail="NeX-Up TV Trailers category not found. Please configure Sonarr and sync TV trailers first.")
+        primary_category = tv_category
+        trailer_label = "TV Trailers"
+    elif preset_id == "mixed_trailers":
+        if not nexup_category or not tv_category:
+            raise HTTPException(status_code=400, detail="Both Movie and TV Trailers categories are required for mixed mode.")
+    else:
+        if not nexup_category:
+            raise HTTPException(status_code=400, detail="NeX-Up Movie Trailers category not found. Please configure NeX-Up first.")
+        primary_category = nexup_category
+        trailer_label = "Movie Trailers"
+    
+    # Get dynamic preroll if available - auto-register if not in database
+    preroll_preroll_ids = []
+    if include_preroll and setting:
+        storage_path = getattr(setting, 'nexup_storage_path', None)
+        if storage_path:
+            preroll_dir = Path(storage_path) / "dynamic_prerolls"
+            if preroll_dir.exists():
+                # If a specific preroll was selected, only use that one
+                if selected_preroll_path:
+                    # URL decode the path in case it was encoded
+                    from urllib.parse import unquote
+                    decoded_path = unquote(selected_preroll_path)
+                    preroll_path = Path(decoded_path)
+                    _file_log(f"Selected preroll path: {decoded_path}, exists: {preroll_path.exists()}")
+                    preroll_files = [preroll_path] if preroll_path.exists() else []
+                    if not preroll_files:
+                        _file_log(f"WARNING: Selected preroll path does not exist: {decoded_path}")
+                else:
+                    # Fallback to first preroll if none selected
+                    all_prerolls = list(preroll_dir.glob("*_preroll.mp4"))
+                    preroll_files = [all_prerolls[0]] if all_prerolls else []
+                    _file_log(f"Using fallback preroll, found {len(all_prerolls)} prerolls")
+                
+                if preroll_files:
+                    # Get or create the NeX-Up Prerolls category for auto-registration
+                    preroll_category = db.query(models.Category).filter(
+                        models.Category.name == "NeX-Up Prerolls"
+                    ).first()
+                    
+                    if not preroll_category:
+                        preroll_category = models.Category(
+                            name="NeX-Up Prerolls",
+                            description="Dynamic preroll intros generated by NeX-Up",
+                            plex_mode="shuffle",
+                            apply_to_plex=False,
+                            is_system=True
+                        )
+                        db.add(preroll_category)
+                        db.commit()
+                        db.refresh(preroll_category)
+                        _file_log("Auto-created NeX-Up Prerolls category for sequence")
+                    
+                    # Check and auto-register prerolls
+                    for pf in preroll_files:
+                        existing_preroll = db.query(models.Preroll).filter(
+                            models.Preroll.path == str(pf)
+                        ).first()
+                        
+                        if existing_preroll:
+                            preroll_preroll_ids.append(existing_preroll.id)
+                        else:
+                            # Auto-register the preroll
+                            display_name = pf.stem.replace('_preroll', '').replace('_', ' ').title()
+                            new_preroll = models.Preroll(
+                                filename=pf.name,
+                                path=str(pf),
+                                category_id=preroll_category.id,
+                                display_name=f"NeX-Up: {display_name}",
+                                thumbnail="",
+                                tags="[]",
+                                managed=False
+                            )
+                            db.add(new_preroll)
+                            db.commit()
+                            db.refresh(new_preroll)
+                            preroll_preroll_ids.append(new_preroll.id)
+                            _file_log(f"Auto-registered preroll for sequence: {pf.name}")
+    
+    _file_log(f"Preroll IDs collected: {preroll_preroll_ids}, include_preroll={include_preroll}")
+    
+    # Determine trailer count from settings or parameter
+    default_count = getattr(setting, 'nexup_trailers_per_playback', 2) if setting else 2
+    count = trailer_count if trailer_count else default_count
+    
+    # Determine block type based on playback order
+    # 'random' = random selection, 'release_date' or 'download_date' = sequential (first N items)
+    selection_type = "random" if playback_order == "random" or not playback_order else "sequential"
+    
+    # Build the sequence blocks
+    blocks = []
+    
+    if preset_id == "coming_soon_trailers" or preset_id == "theater_experience":
+        # Add preroll if available
+        if preroll_preroll_ids and include_preroll:
+            blocks.append({
+                "type": "fixed",
+                "preroll_ids": preroll_preroll_ids,
+                "label": "Coming Soon Intro"
+            })
+        
+        # Add movie trailers
+        blocks.append({
+            "type": selection_type,
+            "category_id": nexup_category.id,
+            "count": 4 if preset_id == "theater_experience" else count,
+            "label": "Movie Trailers",
+            "order": playback_order or "random"
+        })
+    
+    elif preset_id == "coming_soon_tv_trailers":
+        # Add preroll if available
+        if preroll_preroll_ids and include_preroll:
+            blocks.append({
+                "type": "fixed",
+                "preroll_ids": preroll_preroll_ids,
+                "label": "Coming Soon Intro"
+            })
+        
+        # Add TV trailers
+        blocks.append({
+            "type": selection_type,
+            "category_id": tv_category.id,
+            "count": count,
+            "label": "TV Trailers",
+            "order": playback_order or "random"
+        })
+    
+    elif preset_id == "mixed_trailers":
+        # Add preroll if available
+        if preroll_preroll_ids and include_preroll:
+            blocks.append({
+                "type": "fixed",
+                "preroll_ids": preroll_preroll_ids,
+                "label": "Coming Soon Intro"
+            })
+        
+        # Use explicit movie/tv counts if provided, otherwise split the total count
+        movie_count = movie_trailer_count if movie_trailer_count is not None else max(1, count // 2)
+        tv_count = tv_trailer_count if tv_trailer_count is not None else max(1, count // 2)
+        
+        # Add movie trailer(s) if count > 0
+        if movie_count > 0:
+            blocks.append({
+                "type": selection_type,
+                "category_id": nexup_category.id,
+                "count": movie_count,
+                "label": "Movie Trailers",
+                "order": playback_order or "random"
+            })
+        
+        # Add TV trailer(s) if count > 0
+        if tv_count > 0:
+            blocks.append({
+                "type": selection_type,
+                "category_id": tv_category.id,
+                "count": tv_count,
+                "label": "TV Trailers",
+                "order": playback_order or "random"
+            })
+    
+    elif preset_id == "movie_trailers_only":
+        # Add preroll if available
+        if preroll_preroll_ids and include_preroll:
+            blocks.append({
+                "type": "fixed",
+                "preroll_ids": preroll_preroll_ids,
+                "label": "Intro Preroll"
+            })
+        blocks.append({
+            "type": selection_type,
+            "category_id": nexup_category.id,
+            "count": count,
+            "label": "Movie Trailers",
+            "order": playback_order or "random"
+        })
+    
+    elif preset_id == "tv_trailers_only":
+        # Add preroll if available
+        if preroll_preroll_ids and include_preroll:
+            blocks.append({
+                "type": "fixed",
+                "preroll_ids": preroll_preroll_ids,
+                "label": "Intro Preroll"
+            })
+        blocks.append({
+            "type": selection_type,
+            "category_id": tv_category.id,
+            "count": count,
+            "label": "TV Trailers",
+            "order": playback_order or "random"
+        })
+    
+    elif preset_id == "custom":
+        # Allow fully custom configuration - default to movie trailers
+        if include_preroll and preroll_preroll_ids:
+            blocks.append({
+                "type": "fixed",
+                "preroll_ids": preroll_preroll_ids,
+                "label": "Preroll"
+            })
+        # Use movie category if available, otherwise TV
+        custom_category = nexup_category if nexup_category else tv_category
+        if custom_category:
+            blocks.append({
+                "type": selection_type,
+                "category_id": custom_category.id,
+                "count": count,
+                "label": "Movie Trailers" if nexup_category else "TV Trailers",
+                "order": playback_order or "random"
+            })
+    
+    if not blocks:
+        raise HTTPException(status_code=400, detail="No valid blocks could be created. Check your configuration.")
+    
+    # Create the saved sequence
+    sequence_name = name or f"NeX-Up {preset_id.replace('_', ' ').title()}"
+    sequence_desc = description or f"Auto-generated NeX-Up sequence"
+    
+    new_sequence = models.SavedSequence(
+        name=sequence_name,
+        description=sequence_desc,
+        blocks=json.dumps(blocks)
+    )
+    db.add(new_sequence)
+    db.commit()
+    db.refresh(new_sequence)
+    
+    _file_log(f"Created NeX-Up sequence: {sequence_name}")
+    
+    return {
+        "success": True,
+        "sequence": {
+            "id": new_sequence.id,
+            "name": new_sequence.name,
+            "description": new_sequence.description,
+            "blocks": blocks
+        },
+        "message": f"Sequence '{sequence_name}' created successfully!"
+    }
+
+@app.post("/nexup/preroll/register")
+def register_nexup_preroll(db: Session = Depends(get_db)):
+    """Register generated dynamic prerolls as preroll files in the NeX-Up Prerolls category"""
+    setting = db.query(models.Setting).first()
+    if not setting:
+        raise HTTPException(status_code=400, detail="Settings not configured")
+    
+    storage_path = getattr(setting, 'nexup_storage_path', None)
+    if not storage_path:
+        raise HTTPException(status_code=400, detail="NeX-Up storage path not configured")
+    
+    preroll_dir = Path(storage_path) / "dynamic_prerolls"
+    if not preroll_dir.exists():
+        return {"success": True, "registered": [], "message": "No prerolls to register"}
+    
+    # Get or create the NeX-Up Prerolls category
+    preroll_category = db.query(models.Category).filter(
+        models.Category.name == "NeX-Up Prerolls"
+    ).first()
+    
+    if not preroll_category:
+        preroll_category = models.Category(
+            name="NeX-Up Prerolls",
+            description="Dynamic preroll intros generated by NeX-Up (Coming Soon, Feature Presentation, etc.)",
+            plex_mode="shuffle",
+            apply_to_plex=False,
+            is_system=True
+        )
+        db.add(preroll_category)
+        db.commit()
+        db.refresh(preroll_category)
+        _file_log("Created NeX-Up Prerolls system category")
+    
+    registered = []
+    preroll_files = list(preroll_dir.glob("*_preroll.mp4"))
+    
+    for pf in preroll_files:
+        # Check if already registered
+        existing = db.query(models.Preroll).filter(
+            models.Preroll.path == str(pf)
+        ).first()
+        
+        if not existing:
+            # Create a display name from the filename
+            display_name = pf.stem.replace('_preroll', '').replace('_', ' ').title()
+            
+            new_preroll = models.Preroll(
+                filename=pf.name,
+                path=str(pf),
+                display_name=f"NeX-Up: {display_name}",
+                category_id=preroll_category.id,
+                thumbnail="",
+                tags="[]",
+                managed=False
+            )
+            db.add(new_preroll)
+            registered.append({
+                "filename": pf.name,
+                "display_name": display_name
+            })
+    
+    db.commit()
+    
+    return {
+        "success": True,
+        "registered": registered,
+        "category_id": preroll_category.id,
+        "message": f"Registered {len(registered)} new preroll(s)"
+    }
+
+# ==============================================================================
+# End NeX-Up Routes
+# ==============================================================================
 
 @app.get("/genres/recent-applications")
 def get_recent_genre_applications(limit: int = 10):
@@ -13662,6 +17852,193 @@ def _bootstrap_jellyfin_from_env() -> None:
     except Exception:
         # keep server healthy regardless of failures here
         pass
+
+# ============================================================================
+# Dashboard Statistics Endpoint
+# ============================================================================
+
+@app.get("/stats")
+def get_dashboard_stats(db: Session = Depends(get_db)):
+    """
+    Get aggregated statistics for the dashboard overview.
+    Returns preroll stats, category breakdown, schedule info, and NeX-Up data.
+    """
+    try:
+        # --- Preroll Statistics ---
+        prerolls = db.query(models.Preroll).all()
+        total_prerolls = len(prerolls)
+        total_duration = sum((p.duration or 0) for p in prerolls)
+        total_size_bytes = sum((p.file_size or 0) for p in prerolls)
+        
+        # Resolution breakdown (parse from filename or estimate from file size)
+        resolution_breakdown = {"4k": 0, "1080p": 0, "720p": 0, "480p": 0, "unknown": 0}
+        for p in prerolls:
+            filename = (p.filename or "").lower()
+            if "4k" in filename or "2160" in filename or "uhd" in filename:
+                resolution_breakdown["4k"] += 1
+            elif "1080" in filename:
+                resolution_breakdown["1080p"] += 1
+            elif "720" in filename:
+                resolution_breakdown["720p"] += 1
+            elif "480" in filename or "sd" in filename:
+                resolution_breakdown["480p"] += 1
+            else:
+                # Estimate based on file size per second
+                if p.duration and p.duration > 0 and p.file_size:
+                    bitrate = (p.file_size * 8) / p.duration  # bits per second
+                    if bitrate > 30_000_000:  # >30 Mbps likely 4K
+                        resolution_breakdown["4k"] += 1
+                    elif bitrate > 8_000_000:  # >8 Mbps likely 1080p
+                        resolution_breakdown["1080p"] += 1
+                    elif bitrate > 3_000_000:  # >3 Mbps likely 720p
+                        resolution_breakdown["720p"] += 1
+                    else:
+                        resolution_breakdown["480p"] += 1
+                else:
+                    resolution_breakdown["unknown"] += 1
+        
+        # --- Category Statistics ---
+        categories = db.query(models.Category).all()
+        category_stats = []
+        for cat in categories:
+            # Count prerolls in this category (primary + many-to-many)
+            primary_count = db.query(models.Preroll).filter(models.Preroll.category_id == cat.id).count()
+            # Also count many-to-many associations
+            m2m_count = db.query(models.preroll_categories).filter(
+                models.preroll_categories.c.category_id == cat.id
+            ).count()
+            total_in_cat = primary_count + m2m_count
+            
+            # Calculate storage for this category
+            cat_prerolls = db.query(models.Preroll).filter(models.Preroll.category_id == cat.id).all()
+            cat_size = sum((p.file_size or 0) for p in cat_prerolls)
+            
+            category_stats.append({
+                "id": cat.id,
+                "name": cat.name,
+                "preroll_count": total_in_cat,
+                "storage_bytes": cat_size,
+                "is_system": getattr(cat, "is_system", False)
+            })
+        
+        # Sort by preroll count descending
+        category_stats.sort(key=lambda x: x["preroll_count"], reverse=True)
+        
+        # --- Schedule Statistics ---
+        schedules = db.query(models.Schedule).all()
+        now = datetime.datetime.now()
+        
+        active_schedules = 0
+        inactive_schedules = 0
+        upcoming_schedules = 0
+        schedule_types = {"one-time": 0, "recurring": 0, "holiday": 0, "indefinite": 0}
+        
+        for s in schedules:
+            if not s.is_active:
+                inactive_schedules += 1
+            else:
+                # Check if currently in window
+                if s.start_date and s.start_date <= now:
+                    if s.end_date is None or s.end_date >= now:
+                        active_schedules += 1
+                    else:
+                        inactive_schedules += 1
+                elif s.start_date and s.start_date > now:
+                    upcoming_schedules += 1
+                else:
+                    inactive_schedules += 1
+            
+            # Count by type
+            stype = (s.type or "one-time").lower()
+            if "holiday" in stype:
+                schedule_types["holiday"] += 1
+            elif s.recurrence_pattern:
+                schedule_types["recurring"] += 1
+            elif s.end_date is None and s.start_date:
+                schedule_types["indefinite"] += 1
+            else:
+                schedule_types["one-time"] += 1
+        
+        # --- NeX-Up Statistics ---
+        setting = db.query(models.Setting).first()
+        nexup_stats = {
+            "enabled": False,
+            "radarr_connected": False,
+            "sonarr_connected": False,
+            "movie_trailers": 0,
+            "tv_trailers": 0,
+            "storage_used_gb": 0,
+            "storage_limit_gb": 5.0,
+            "storage_percent": 0
+        }
+        
+        if setting:
+            nexup_stats["enabled"] = getattr(setting, 'nexup_enabled', False) or getattr(setting, 'nexup_sonarr_enabled', False)
+            nexup_stats["radarr_connected"] = bool(getattr(setting, 'nexup_radarr_url', None) and getattr(setting, 'nexup_radarr_api_key', None))
+            nexup_stats["sonarr_connected"] = bool(getattr(setting, 'nexup_sonarr_url', None) and getattr(setting, 'nexup_sonarr_api_key', None))
+            nexup_stats["storage_limit_gb"] = getattr(setting, 'nexup_max_storage_gb', 5.0) or 5.0
+            
+            # Count trailers by category
+            movie_cat_id = getattr(setting, 'nexup_category_id', None)
+            tv_cat_id = getattr(setting, 'nexup_tv_category_id', None)
+            
+            if movie_cat_id:
+                nexup_stats["movie_trailers"] = db.query(models.Preroll).filter(models.Preroll.category_id == movie_cat_id).count()
+            if tv_cat_id:
+                nexup_stats["tv_trailers"] = db.query(models.Preroll).filter(models.Preroll.category_id == tv_cat_id).count()
+            
+            # Calculate storage usage
+            storage_path = getattr(setting, 'nexup_storage_path', None)
+            if storage_path and os.path.exists(storage_path):
+                total_storage = 0
+                try:
+                    for f in os.listdir(storage_path):
+                        fpath = os.path.join(storage_path, f)
+                        if os.path.isfile(fpath):
+                            total_storage += os.path.getsize(fpath)
+                    nexup_stats["storage_used_gb"] = round(total_storage / (1024**3), 2)
+                    if nexup_stats["storage_limit_gb"] > 0:
+                        nexup_stats["storage_percent"] = round((nexup_stats["storage_used_gb"] / nexup_stats["storage_limit_gb"]) * 100, 1)
+                except Exception:
+                    pass
+        
+        # --- Saved Sequences Statistics ---
+        saved_sequences = db.query(models.SavedSequence).count() if hasattr(models, 'SavedSequence') else 0
+        
+        # --- Recently Added Prerolls ---
+        recent_prerolls = db.query(models.Preroll).order_by(models.Preroll.upload_date.desc()).limit(5).all()
+        recent_list = [{
+            "id": p.id,
+            "filename": p.filename,
+            "display_name": getattr(p, "display_name", None),
+            "upload_date": p.upload_date.isoformat() if p.upload_date else None,
+            "category": {"id": p.category.id, "name": p.category.name} if p.category else None
+        } for p in recent_prerolls]
+        
+        return {
+            "prerolls": {
+                "total": total_prerolls,
+                "total_duration_seconds": total_duration,
+                "total_size_bytes": total_size_bytes,
+                "resolution_breakdown": resolution_breakdown
+            },
+            "categories": {
+                "total": len(categories),
+                "breakdown": category_stats[:10]  # Top 10 categories
+            },
+            "schedules": {
+                "total": len(schedules),
+                "active": active_schedules,
+                "inactive": inactive_schedules,
+                "upcoming": upcoming_schedules,
+                "types": schedule_types
+            },
+            "nexup": nexup_stats,
+            "saved_sequences": saved_sequences,
+            "recent_prerolls": recent_list
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to gather stats: {str(e)}")
 
 if __name__ == "__main__" and not getattr(sys, "frozen", False):
     import uvicorn

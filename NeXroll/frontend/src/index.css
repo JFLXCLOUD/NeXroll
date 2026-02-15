@@ -158,6 +158,54 @@ body.dark {
   --button-text: white;
 }
 
+/* Dark mode input styling - easier on the eyes */
+body.dark input[type="text"],
+body.dark input[type="password"],
+body.dark input[type="email"],
+body.dark input[type="url"],
+body.dark input[type="number"],
+body.dark input[type="search"],
+body.dark input[type="tel"],
+body.dark input:not([type]),
+body.dark select,
+body.dark textarea {
+  background-color: #2a2a2a !important;
+  color: #e0e0e0 !important;
+  border-color: #444 !important;
+}
+
+body.dark input[type="text"]::placeholder,
+body.dark input[type="password"]::placeholder,
+body.dark input[type="email"]::placeholder,
+body.dark input[type="url"]::placeholder,
+body.dark input[type="number"]::placeholder,
+body.dark input[type="search"]::placeholder,
+body.dark input[type="tel"]::placeholder,
+body.dark input:not([type])::placeholder,
+body.dark textarea::placeholder {
+  color: #888 !important;
+}
+
+body.dark input[type="text"]:focus,
+body.dark input[type="password"]:focus,
+body.dark input[type="email"]:focus,
+body.dark input[type="url"]:focus,
+body.dark input[type="number"]:focus,
+body.dark input[type="search"]:focus,
+body.dark input[type="tel"]:focus,
+body.dark input:not([type]):focus,
+body.dark select:focus,
+body.dark textarea:focus {
+  background-color: #333 !important;
+  border-color: #4f46e5 !important;
+  box-shadow: 0 0 0 2px rgba(79, 70, 229, 0.3) !important;
+}
+
+body.dark select option {
+  background-color: #2a2a2a;
+  color: #e0e0e0;
+}
+
 .app-container {
   min-height: 100vh;
   background-color: var(--bg-color);
@@ -369,6 +417,168 @@ body.dark {
 .nx-modal-body {
   padding: 1rem 1.25rem;
   overflow: auto;
+}
+
+/* ---------- Custom Confirm/Alert Dialogs ---------- */
+.nx-dialog-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.6);
+  backdrop-filter: blur(4px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 2rem;
+  z-index: 9999;
+  animation: nx-dialog-fade-in 0.15s ease-out;
+}
+
+@keyframes nx-dialog-fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+.nx-dialog {
+  background: var(--card-bg);
+  color: var(--text-color);
+  border-radius: 12px;
+  box-shadow: 0 20px 50px rgba(0, 0, 0, 0.35);
+  width: 100%;
+  max-width: 420px;
+  overflow: hidden;
+  animation: nx-dialog-scale-in 0.18s ease-out;
+}
+
+@keyframes nx-dialog-scale-in {
+  from { 
+    opacity: 0; 
+    transform: scale(0.92) translateY(-10px); 
+  }
+  to { 
+    opacity: 1; 
+    transform: scale(1) translateY(0); 
+  }
+}
+
+.nx-dialog-header {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 1.25rem 1.5rem 1rem;
+  border-bottom: 1px solid var(--border-color);
+}
+
+.nx-dialog-icon {
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.nx-dialog-icon.warning {
+  background: rgba(245, 158, 11, 0.15);
+  color: #f59e0b;
+}
+
+.nx-dialog-icon.danger {
+  background: rgba(239, 68, 68, 0.15);
+  color: #ef4444;
+}
+
+.nx-dialog-icon.info {
+  background: rgba(59, 130, 246, 0.15);
+  color: #3b82f6;
+}
+
+.nx-dialog-icon.success {
+  background: rgba(16, 185, 129, 0.15);
+  color: #10b981;
+}
+
+.nx-dialog-icon.error {
+  background: rgba(239, 68, 68, 0.15);
+  color: #ef4444;
+}
+
+.nx-dialog-title {
+  margin: 0;
+  font-size: 1.1rem;
+  font-weight: 600;
+  color: var(--text-color);
+}
+
+.nx-dialog-body {
+  padding: 1rem 1.5rem 1.5rem;
+}
+
+.nx-dialog-message {
+  margin: 0;
+  font-size: 0.95rem;
+  line-height: 1.5;
+  color: var(--text-secondary);
+  white-space: pre-wrap;
+}
+
+.nx-dialog-footer {
+  display: flex;
+  gap: 0.75rem;
+  justify-content: flex-end;
+  padding: 0 1.5rem 1.25rem;
+}
+
+.nx-dialog-btn {
+  padding: 0.6rem 1.25rem;
+  border-radius: 8px;
+  font-size: 0.9rem;
+  font-weight: 500;
+  cursor: pointer;
+  border: none;
+  transition: all 0.15s ease;
+}
+
+.nx-dialog-btn:focus {
+  outline: 2px solid var(--button-bg);
+  outline-offset: 2px;
+}
+
+.nx-dialog-btn.cancel {
+  background: var(--card-bg);
+  color: var(--text-color);
+  border: 1px solid var(--border-color);
+}
+
+.nx-dialog-btn.cancel:hover {
+  background: var(--hover-bg);
+}
+
+.nx-dialog-btn.confirm {
+  background: var(--button-bg);
+  color: white;
+}
+
+.nx-dialog-btn.confirm:hover {
+  opacity: 0.9;
+}
+
+.nx-dialog-btn.confirm.danger {
+  background: #ef4444;
+}
+
+.nx-dialog-btn.confirm.warning {
+  background: #f59e0b;
+}
+
+.nx-dialog-btn.ok {
+  background: var(--button-bg);
+  color: white;
+  min-width: 80px;
+}
+
+.nx-dialog-btn.ok:hover {
+  opacity: 0.9;
 }
 
 /* ---------- Form layout ---------- */

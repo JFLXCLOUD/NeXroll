@@ -329,7 +329,7 @@ const BlockEditor = ({ block, categories, prerolls, isNew, onSave, onCancel }) =
                       cursor: 'pointer'
                     }}
                   >
-                    {categories.map((cat) => (
+                    {[...categories].sort((a, b) => a.name.localeCompare(b.name)).map((cat) => (
                       <option 
                         key={cat.id} 
                         value={cat.id}

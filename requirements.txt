@@ -29,3 +29,8 @@ python-dotenv>=1.0.1
 
 # Timezone support
 pytz>=2024.2
+
+# NeX-Up Feature (Radarr Integration)
+httpx>=0.27.0
+yt-dlp>=2024.12.0
+psutil>=5.9.0

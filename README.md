@@ -28,6 +28,9 @@ NeXroll is a preroll manager for Plex and Jellyfin that makes setup effortless. 
 ### Calendar Year View
 ![Calendar Year View](docs/screenshots/Calendar_Year.png)
 
+### NeX-Up - Radarr & Sonarr Integration
+![NeX-Up Connections](docs/screenshots/Nex-Up_Connections.png)
+
 ### Community Prerolls
 ![Community Prerolls](docs/screenshots/community_prerolls.png)
 
@@ -35,6 +38,7 @@ NeXroll is a preroll manager for Plex and Jellyfin that makes setup effortless. 
 
 ## Main Features
 
+- **NeX-Up (NEW)** — Automatically download trailers for upcoming movies and TV shows from Radarr & Sonarr, with YouTube integration, dynamic intro generator, and sequence builder presets
 - **Preroll Management** — Upload videos, auto-generate thumbnails, organize with tags and multi-category assignments
 - **Smart Scheduling** — Daily, weekly, monthly, yearly schedules with recurrence patterns, fallback categories, and visual calendar views
 - **Sequence Builder** — Create ordered preroll sequences with random blocks and fixed selections

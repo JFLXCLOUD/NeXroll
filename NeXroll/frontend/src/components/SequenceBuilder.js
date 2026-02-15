@@ -32,7 +32,7 @@ import PatternImport from './PatternImport';
  *   {"type": "random", "category_id": 8, "count": 1}
  * ]
  */
-const SequenceBuilder = ({ blocks: externalBlocks = [], onBlocksChange, initialSequence = [], categories = [], prerolls = [], onSave, onCancel, onDelete, scheduleId = null, apiUrl, isEditing = false, initialName = '', initialDescription = '' }) => {
+const SequenceBuilder = ({ blocks: externalBlocks = [], onBlocksChange, initialSequence = [], categories = [], prerolls = [], onSave, onCancel, onDelete, scheduleId = null, apiUrl, isEditing = false, initialName = '', initialDescription = '', hideNameSection = false }) => {
   // Use external blocks if provided, otherwise use internal state
   const [internalBlocks, setInternalBlocks] = useState([]);
   // Use external blocks if onBlocksChange callback is provided (controlled mode)
@@ -242,7 +242,9 @@ const SequenceBuilder = ({ blocks: externalBlocks = [], onBlocksChange, initialS
         <div style={{
           display: 'flex',
           gap: '10px',
-          alignItems: 'center'
+          alignItems: 'center',
+          flexWrap: 'wrap',
+          justifyContent: 'flex-end'
         }}>
           {/* View Toggle */}
           {blocks.length > 0 && (
@@ -366,6 +368,9 @@ const SequenceBuilder = ({ blocks: externalBlocks = [], onBlocksChange, initialS
             Play Sequence
           </button>
           
+          {/* Save/Update/Delete/Cancel buttons - hidden when using a saved sequence in schedule creation */}
+          {!hideNameSection && (
+          <>
           <button 
             type="button"
             style={{
@@ -448,10 +453,13 @@ const SequenceBuilder = ({ blocks: externalBlocks = [], onBlocksChange, initialS
             <X size={16} />
             Cancel
           </button>
+          </>
+          )}
         </div>
       </div>
 
-      {/* Sequence Name and Description */}
+      {/* Sequence Name and Description - hidden when using a saved sequence in schedule creation */}
+      {!hideNameSection && (
       <div style={{
         marginBottom: '20px',
         padding: '15px',
@@ -515,6 +523,7 @@ const SequenceBuilder = ({ blocks: externalBlocks = [], onBlocksChange, initialS
           />
         </div>
       </div>
+      )}
 
       {/* Compact Statistics (always visible when blocks exist) */}
       {blocks.length > 0 && (

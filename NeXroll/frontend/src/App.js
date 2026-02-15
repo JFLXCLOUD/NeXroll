@@ -3,6 +3,7 @@ import { DndContext, closestCenter, PointerSensor, useSensor, useSensors } from 
 import { SortableContext, rectSortingStrategy, useSortable, arrayMove } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 import ReactMarkdown from 'react-markdown';
+import html2canvas from 'html2canvas';
 import RetroProgressBar from './components/RetroProgressBar';
 import TestSequenceBuilder from './TestSequenceBuilder';
 import SequenceBuilder from './components/SequenceBuilder';
@@ -11,13 +12,19 @@ import PatternExport from './components/PatternExport';
 import SequencePreviewModal from './components/SequencePreviewModal';
 import { validateSequence, stringifySequence, parseSequence, cloneSequenceWithIds } from './utils/sequenceValidator';
 import { 
-    Calendar, CalendarDays, Clock, Play, Edit, Save, Trash, Upload, 
+    Calendar, CalendarDays, Clock, Play, Edit, Save, Trash, Trash2, Upload, 
     Search, Folder, Film, BookOpen, Star, Plus, Settings, Target, CheckCircle, Link,
     Sun, Moon, RefreshCw, Download, AlertTriangle, Ban, Crown, Shuffle, Lock,
     ListOrdered, Palette, Lightbulb, Inbox, FolderOpen, Wrench, FileText, 
-    Bug, Zap, Loader2, Package, FlaskConical, TreePine, Check, XCircle, Video, ChevronRight,
-    Library, Clapperboard, Sparkles, PartyPopper, Users2, Theater, Eye, X, User, RefreshCcw, Menu
-  } from 'lucide-react';// API helpers that resolve the backend base dynamically (works in Docker and behind proxies)
+    Bug, Zap, Loader2, Package, FlaskConical, TreePine, Check, XCircle, Video, ChevronRight, ChevronDown,
+    Library, Clapperboard, Sparkles, PartyPopper, Users2, Theater, Eye, X, User, RefreshCcw, Menu,
+    Youtube, Globe, Key, Rocket, FileUp, ArrowRight, HardDrive, ListChecks, Unlink, LinkIcon,
+    Tv, ClipboardList, Info, RotateCw, LayoutDashboard, BarChart3, PieChart as PieChartIcon, Activity, TrendingUp, Server, Timer,
+    Database, Archive
+  } from 'lucide-react';
+import { BarChart, Bar, XAxis, YAxis, ResponsiveContainer, Cell, Tooltip } from 'recharts';
+
+// API helpers that resolve the backend base dynamically (works in Docker and behind proxies)
 const apiBase = () => {
   try {
     if (typeof window !== 'undefined') {
@@ -447,12 +454,23 @@ function App() {
   });
   const [schedulerStatus, setSchedulerStatus] = useState({ running: false, active_schedules: 0 });
   const [backupFile, setBackupFile] = useState(null);
+  const [backupProgress, setBackupProgress] = useState({ active: false, type: '', message: '' });
   const [communityTemplates, setCommunityTemplates] = useState([]);
   const [selectedSchedules, setSelectedSchedules] = useState([]);
-  const [darkMode, setDarkMode] = useState(false);
+  const [darkMode, setDarkMode] = useState(() => {
+    try {
+      const saved = localStorage.getItem('darkMode');
+      return saved ? JSON.parse(saved) : false;
+    } catch {
+      return false;
+    }
+  });
+  const [darkModeLoaded, setDarkModeLoaded] = useState(true);  // Mark as loaded since we init from localStorage
   const [editingSchedule, setEditingSchedule] = useState(null);
   const [editingPreroll, setEditingPreroll] = useState(null);
   const [editingCategory, setEditingCategory] = useState(null);
+  const [transcodeLoading, setTranscodeLoading] = useState(false);
+  const [videoInfo, setVideoInfo] = useState(null);
   const [stableTokenStatus, setStableTokenStatus] = useState({
     has_stable_token: false,
     config_file_exists: false,
@@ -490,6 +508,8 @@ function App() {
   const [stableTokenInput, setStableTokenInput] = useState('');
   const [systemVersion, setSystemVersion] = useState(null);
   const [ffmpegInfo, setFfmpegInfo] = useState(null);
+  const [systemDependencies, setSystemDependencies] = useState(null);
+  const [dependenciesLoading, setDependenciesLoading] = useState(false);
   const [updateInfo, setUpdateInfo] = useState(null);
   const [showUpdateBanner, setShowUpdateBanner] = useState(false);
   const [activeCategory, setActiveCategory] = useState(null);
@@ -645,6 +665,111 @@ const [applyingToServer, setApplyingToServer] = useState(false);
   const [clearWhenInactive, setClearWhenInactive] = useState(false);
   const [clearWhenInactiveLoading, setClearWhenInactiveLoading] = useState(false);
 
+  // NeX-Up State (Radarr integration for upcoming movie trailers)
+  const [nexupSettings, setNexupSettings] = useState({
+    enabled: false,
+    radarr_url: null,
+    radarr_connected: false,
+    storage_path: null,
+    quality: '1080',
+    days_ahead: 90,
+    max_trailers: 10,
+    max_storage_gb: 5.0,
+    trailers_per_playback: 2,
+    playback_order: 'release_date',
+    auto_refresh_hours: 24,
+    max_trailer_duration: 180,
+    last_sync: null,
+    category_id: null,
+    download_delay: 5,
+    max_concurrent: 1,
+    bulk_warning_threshold: 5,
+    // Sonarr settings
+    sonarr_enabled: false,
+    sonarr_url: null,
+    sonarr_connected: false,
+    tv_category_id: null,
+    // TMDB API Key (optional - for better trailer fetching)
+    tmdb_api_key: null
+  });
+  const [nexupLoading, setNexupLoading] = useState(false);
+  const [downloadingTrailerId, setDownloadingTrailerId] = useState(null); // Track which trailer is downloading
+  const [downloadProgress, setDownloadProgress] = useState(null); // { title: 'Movie Name', status: 'Downloading...' }
+  const [syncProgress, setSyncProgress] = useState(null); // { status: 'syncing', checked: 0, total: 0 }
+  const [nexupRadarrUrl, setNexupRadarrUrl] = useState('');
+  const [nexupRadarrApiKey, setNexupRadarrApiKey] = useState('');
+  const [nexupTrailers, setNexupTrailers] = useState([]);
+  const [nexupUpcoming, setNexupUpcoming] = useState([]);
+  const [nexupStorage, setNexupStorage] = useState(null);
+  const [showNexupUpcoming, setShowNexupUpcoming] = useState(false);
+  const [showNexupTrailers, setShowNexupTrailers] = useState(false);
+  const [showManualTrailerModal, setShowManualTrailerModal] = useState(false);
+  // Sonarr State
+  const [nexupSonarrUrl, setNexupSonarrUrl] = useState('');
+  const [nexupSonarrApiKey, setNexupSonarrApiKey] = useState('');
+  const [nexupTVTrailers, setNexupTVTrailers] = useState([]);
+  const [nexupUpcomingTV, setNexupUpcomingTV] = useState([]);
+  const [showNexupUpcomingTV, setShowNexupUpcomingTV] = useState(false);
+  const [showNexupTVTrailers, setShowNexupTVTrailers] = useState(false);
+  const [tvSyncProgress, setTVSyncProgress] = useState(null);
+  const [thumbnailProgress, setThumbnailProgress] = useState(null); // { status: 'Rebuilding...', phase: 'processing' }
+  const [librarySyncProgress, setLibrarySyncProgress] = useState(null); // { status: 'Syncing...', phase: 'init'|'done'|'error' }
+  const [communityIndexProgress, setCommunityIndexProgress] = useState(null); // { status: 'Building...', phase: 'init'|'done'|'error' }
+  const [nexupSyncProgress, setNexupSyncProgress] = useState(null); // { status: 'Syncing...', phase: 'init'|'done'|'error' }
+  const [updateCheckProgress, setUpdateCheckProgress] = useState(null); // { status: 'Checking...', phase: 'init'|'done'|'error' }
+  // Dynamic Preroll Generator State
+  const [dynamicPrerollSettings, setDynamicPrerollSettings] = useState({
+    template: 'coming_soon',
+    server_name: '',
+    duration: 5,
+    theme: 'midnight',
+    preroll_path: null
+  });
+  const [dynamicPrerollTemplates, setDynamicPrerollTemplates] = useState([]);
+  const [dynamicPrerollGenerating, setDynamicPrerollGenerating] = useState(false);
+  const [ffmpegAvailable, setFfmpegAvailable] = useState(false);
+  const [colorThemes, setColorThemes] = useState({});
+  const [previewingDynamicPreroll, setPreviewingDynamicPreroll] = useState(null); // For playing generated intros - stores the preroll object
+  const [generatedPrerolls, setGeneratedPrerolls] = useState([]); // List of all generated prerolls
+  const [generatedPrerollsCollapsed, setGeneratedPrerollsCollapsed] = useState(false); // Collapsible state
+  const [manualTrailerForm, setManualTrailerForm] = useState({
+    title: '',
+    tmdb_id: '',
+    url: '',
+    file_path: ''
+  });
+  // NeX-Up Sequence Builder State
+  const [nexupSequencePresets, setNexupSequencePresets] = useState([]);
+  const [nexupSequenceLoading, setNexupSequenceLoading] = useState(false);
+  const [nexupAvailablePrerolls, setNexupAvailablePrerolls] = useState([]);
+  const [nexupSequenceWizard, setNexupSequenceWizard] = useState({
+    step: 1,
+    selectedPreset: null,
+    selectedPrerollPath: null,
+    customTrailerCount: 2,
+    movieTrailerCount: 1,
+    tvTrailerCount: 1,
+    playbackOrder: 'random',
+    includePreroll: true,
+    sequenceName: '',
+    sequenceDescription: ''
+  });
+  const [showNexupSequenceWizard, setShowNexupSequenceWizard] = useState(false);
+
+  // YouTube Setup Wizard State
+  const [youtubeSetup, setYoutubeSetup] = useState({
+    status: null,
+    loading: false,
+    showWizard: false,
+    wizardStep: 1,
+    authMethod: 'browser', // 'browser' or 'cookies'
+    extracting: false,
+    testing: false,
+    testResult: null,
+    selectedBrowser: 'chrome',  // Browser to sign in to
+    uploading: false
+  });
+
   // UI Preferences state (stored in localStorage)
   const [confirmDeletions, setConfirmDeletions] = useState(() => {
     try { return JSON.parse(localStorage.getItem('confirmDeletions') || 'true'); } catch { return true; }
@@ -655,10 +780,30 @@ const [applyingToServer, setApplyingToServer] = useState(false);
   const [weekStartsOnSunday, setWeekStartsOnSunday] = useState(() => {
     try { return JSON.parse(localStorage.getItem('weekStartsOnSunday') || 'true'); } catch { return true; }
   });
+  
+  // Custom confirm/alert dialog state
+  const [confirmDialog, setConfirmDialog] = useState({
+    open: false,
+    title: 'Confirm',
+    message: '',
+    confirmText: 'OK',
+    cancelText: 'Cancel',
+    type: 'warning', // 'warning' | 'danger' | 'info'
+    resolver: null
+  });
+  const [alertDialog, setAlertDialog] = useState({
+    open: false,
+    title: 'Alert',
+    message: '',
+    type: 'info' // 'info' | 'success' | 'warning' | 'error'
+  });
+  
   // Category preroll management UI state
   const [categoryPrerolls, setCategoryPrerolls] = useState({});
   const [categoryPrerollsLoading, setCategoryPrerollsLoading] = useState({});
   const [categoryAddSelection, setCategoryAddSelection] = useState({});
+  const [categoryAddSearch, setCategoryAddSearch] = useState('');
+  const [categoryAddSelectedIds, setCategoryAddSelectedIds] = useState([]);
 // Calendar view state
 const [showCalendar, setShowCalendar] = useState(false);
 const [calendarMonth, setCalendarMonth] = useState(() => {
@@ -882,6 +1027,7 @@ const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
   const [editingSequenceId, setEditingSequenceId] = useState(null); // Track which sequence is being edited
   const [editingSequenceName, setEditingSequenceName] = useState(''); // Track sequence name when editing
   const [editingSequenceDescription, setEditingSequenceDescription] = useState(''); // Track description when editing
+  const [loadedSavedSequenceId, setLoadedSavedSequenceId] = useState(null); // Track when a saved sequence is loaded in schedule creation
 
   // Recurrence pattern state
   const [weekDays, setWeekDays] = useState([]);  // For weekly: ['monday', 'wednesday', 'friday']
@@ -915,6 +1061,7 @@ const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
   // Auto-match state
   const [autoMatchLoading, setAutoMatchLoading] = useState(false);
   const [similarMatches, setSimilarMatches] = useState([]);
+  const [showTagBrowser, setShowTagBrowser] = useState(false);
 
   // Filter state
   const [filterTags, setFilterTags] = useState('');
@@ -928,6 +1075,9 @@ const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
   const filterTagsRef = React.useRef(filterTags);
   React.useEffect(() => { filterCategoryRef.current = filterCategory; }, [filterCategory]);
   React.useEffect(() => { filterTagsRef.current = filterTags; }, [filterTags]);
+
+  // Ref for the live preview container (used for CSS-to-video capture)
+  const previewContainerRef = useRef(null);
 
   // Debounce hook for tag search (300ms delay to reduce unnecessary state updates)
   const filterTagsDebounceRef = useRef(null);
@@ -959,6 +1109,13 @@ const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
     }
   });
   const [bulkCategoryId, setBulkCategoryId] = useState('');
+  
+  // Bulk video scaling state
+  const [bulkScalingSelection, setBulkScalingSelection] = useState([]);
+  const [bulkScalingProgress, setBulkScalingProgress] = useState({ active: false, current: 0, total: 0, currentName: '', errors: [] });
+  const [scalingFilterResolution, setScalingFilterResolution] = useState('');
+  const [scalingVideoInfoCache, setScalingVideoInfoCache] = useState({});
+  const [loadingVideoInfo, setLoadingVideoInfo] = useState(false);
 
   // Helper function to handle fetch errors with proper error message extraction
   const handleFetchResponse = async (response) => {
@@ -976,19 +1133,17 @@ const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
     return response.json();
   };
 
-  // Load theme preference from localStorage
+  // Apply theme class on mount and when darkMode changes
   useEffect(() => {
-    const savedTheme = localStorage.getItem('darkMode');
-    if (savedTheme) {
-      setDarkMode(JSON.parse(savedTheme));
-    }
-  }, []);
-
-  // Save theme preference to localStorage
-  useEffect(() => {
-    localStorage.setItem('darkMode', JSON.stringify(darkMode));
     document.body.className = darkMode ? 'dark' : 'light';
   }, [darkMode]);
+
+  // Save theme preference to localStorage when user changes it
+  useEffect(() => {
+    if (darkModeLoaded) {
+      localStorage.setItem('darkMode', JSON.stringify(darkMode));
+    }
+  }, [darkMode, darkModeLoaded]);
 
   useEffect(() => {
     try { localStorage.setItem('prerollView', prerollView); } catch {}
@@ -1017,14 +1172,29 @@ const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
   }, [weekStartsOnSunday]);
 
   // Helper functions that respect user preferences
-  const showConfirm = (message) => {
-    if (!confirmDeletions) return true; // Skip confirmation if disabled
-    return window.confirm(message);
+  const showConfirm = (message, options = {}) => {
+    if (!confirmDeletions) return Promise.resolve(true); // Skip confirmation if disabled
+    
+    return new Promise((resolve) => {
+      setConfirmDialog({
+        open: true,
+        title: options.title || 'Confirm',
+        message: message,
+        confirmText: options.confirmText || 'OK',
+        cancelText: options.cancelText || 'Cancel',
+        type: options.type || 'warning',
+        resolver: resolve
+      });
+    });
   };
 
-  // Store original alert function to avoid recursion
-  const originalAlert = useRef(window.alert).current;
-  
+  const handleConfirmDialogClose = (confirmed) => {
+    if (confirmDialog.resolver) {
+      confirmDialog.resolver(confirmed);
+    }
+    setConfirmDialog(prev => ({ ...prev, open: false, resolver: null }));
+  };
+
   const showAlert = (message, type = 'info') => {
     // Determine if this is an error message
     const isError = type === 'error' || 
@@ -1034,13 +1204,31 @@ const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
                       message.toLowerCase().includes('cannot')
                     ));
     
+    // Determine dialog type based on message content
+    let dialogType = type;
+    if (type === 'info' && typeof message === 'string') {
+      if (message.toLowerCase().includes('success')) dialogType = 'success';
+      else if (isError) dialogType = 'error';
+    }
+    
     // Always show errors, but respect showNotifications for success/info messages
     if (isError || showNotifications) {
-      originalAlert(message);
+      setAlertDialog({
+        open: true,
+        title: dialogType === 'error' ? 'Error' : 
+               dialogType === 'success' ? 'Success' : 
+               dialogType === 'warning' ? 'Warning' : 'Notice',
+        message: message,
+        type: dialogType
+      });
     }
   };
 
-  // Override global alert to respect notifications setting
+  const handleAlertDialogClose = () => {
+    setAlertDialog(prev => ({ ...prev, open: false }));
+  };
+
+  // Override global alert to use custom dialog
   useEffect(() => {
     const origAlert = window.alert;
     window.alert = (message) => {
@@ -1410,13 +1598,14 @@ const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
       fetch(apiUrl('plex/stable-token/status')),
       fetch(apiUrl('system/version')),
       fetch(apiUrl('system/ffmpeg-info')),
+      fetch(apiUrl('system/dependencies')),
       fetch(apiUrl('genres/recent-applications')),
       fetch(apiUrl('settings/active-category')),
       fetch(apiUrl('scheduler/active-schedule-ids')),
       fetch(apiUrl('community-prerolls/index-status')),
       fetch(apiUrl('community-prerolls/downloaded-ids'))
     ]).then(responses => Promise.all(responses.map(safeJson)))
-      .then(([plex, jellyfin, prerolls, schedules, categories, holidays, scheduler, tags, templates, stableToken, sysVersion, ffmpeg, recentGenreApps, activeCat, activeScheduleIdsData, communityIndex, communityDownloaded]) => {
+      .then(([plex, jellyfin, prerolls, schedules, categories, holidays, scheduler, tags, templates, stableToken, sysVersion, ffmpeg, sysDeps, recentGenreApps, activeCat, activeScheduleIdsData, communityIndex, communityDownloaded]) => {
         setPlexStatus(plex.connected ? 'Connected' : 'Disconnected');
         setPlexServerInfo(plex);
         setJellyfinStatus(jellyfin.connected ? 'Connected' : 'Disconnected');
@@ -1435,6 +1624,7 @@ const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
         });
         setSystemVersion(sysVersion || null);
         setFfmpegInfo(ffmpeg || null);
+        setSystemDependencies(sysDeps || null);
         setRecentGenreApplications(Array.isArray(recentGenreApps?.applications) ? recentGenreApps.applications : []);
         // Set active category
         if (activeCat?.__error) {
@@ -1765,15 +1955,15 @@ const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
     let duplicateAction = 'allow'; // Default: allow duplicates
     if (duplicates.length > 0) {
       const duplicateNames = duplicates.map(d => `  • ${d.file.name}`).join('\n');
-      const message = `⚠️ DUPLICATE FILES DETECTED ⚠️\n\nThe following ${duplicates.length} file(s) already exist in your library:\n\n${duplicateNames}\n\n━━━━━━━━━━━━━━━━━━━━━━━━━\n\nClick OK to SKIP these duplicates\nClick Cancel to UPLOAD them anyway`;
+      const message = `The following ${duplicates.length} file(s) already exist in your library:\n\n${duplicateNames}\n\nClick OK to SKIP these duplicates\nClick Cancel to UPLOAD them anyway`;
       
-      const userChoice = window.confirm(message);
+      const userChoice = await showConfirm(message, { title: 'Duplicate Files Detected', type: 'warning', confirmText: 'Skip Duplicates', cancelText: 'Upload Anyway' });
       
       if (userChoice) {
         duplicateAction = 'skip';
-        alert(`✓ Skipping ${duplicates.length} duplicate file(s). Only new files will be uploaded.`);
+        alert(`Skipping ${duplicates.length} duplicate file(s). Only new files will be uploaded.`);
       } else {
-        alert(`✓ Allowing duplicates. All ${files.length} file(s) will be uploaded.`);
+        alert(`Allowing duplicates. All ${files.length} file(s) will be uploaded.`);
       }
     }
 
@@ -1923,15 +2113,19 @@ const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
         return;
       }
 
-      // Save sequence to library
-      try {
-        const sequenceName = scheduleForm.name.trim() + ' Sequence';
-        const sequenceDescription = `Sequence for schedule "${scheduleForm.name.trim()}"`;
-        console.log('Saving sequence to library:', sequenceName);
-        await saveSequence(sequenceName, sequenceDescription);
-      } catch (error) {
-        console.error('Failed to save sequence to library:', error);
-        // Continue anyway - sequence will still be saved in the schedule
+      // Only save sequence to library if NOT using an already-saved sequence
+      if (!loadedSavedSequenceId) {
+        try {
+          const sequenceName = scheduleForm.name.trim() + ' Sequence';
+          const sequenceDescription = `Sequence for schedule "${scheduleForm.name.trim()}"`;
+          console.log('Saving sequence to library:', sequenceName);
+          await saveSequence(sequenceName, sequenceDescription);
+        } catch (error) {
+          console.error('Failed to save sequence to library:', error);
+          // Continue anyway - sequence will still be saved in the schedule
+        }
+      } else {
+        console.log('Using existing saved sequence ID:', loadedSavedSequenceId, '- skipping library save');
       }
     } else {
       // Simple mode: validate category
@@ -1976,6 +2170,14 @@ const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
     }
     if (scheduleForm.type === 'weekly' && weekDays.length > 0) {
       recurrencePattern.weekDays = weekDays;
+      // Add time range for weekly schedules if specified
+      if (timeRange.start && timeRange.end) {
+        recurrencePattern.timeRange = timeRange;
+      }
+      // Add time range for weekly schedules if specified
+      if (timeRange.start && timeRange.end) {
+        recurrencePattern.timeRange = timeRange;
+      }
     }
     if (scheduleForm.type === 'monthly' && monthDays.length > 0) {
       recurrencePattern.monthDays = monthDays;
@@ -2014,7 +2216,17 @@ const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
         return res.json();
       })
       .then(data => {
-        alert('Schedule created successfully!');
+        // Check for potential conflicts with the new schedule
+        const newSchedule = { ...data, ...scheduleData };
+        const potentialConflicts = getScheduleConflicts(newSchedule);
+        
+        if (potentialConflicts.length > 0) {
+          const conflictNames = potentialConflicts.map(c => c.schedule.name).join(', ');
+          alert(`⚠️ Schedule created, but it conflicts with: ${conflictNames}\n\nBoth schedules have the same priority (${scheduleData.priority || 5}) and are exclusive. NeXroll will randomly choose one during overlap.\n\nTo fix: Edit one schedule to have a different priority.`);
+        } else {
+          alert('Schedule created successfully!');
+        }
+        
         setScheduleForm({
           name: '', type: 'monthly', start_date: '', end_date: '',
           category_id: '', shuffle: true, playlist: false, fallback_category_id: '', color: '',
@@ -2099,58 +2311,58 @@ const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
     }
   };
 
-  const handleApplyCategoryToPlex = (categoryId, categoryName) => {
+  const handleApplyCategoryToPlex = async (categoryId, categoryName) => {
     const message = `Apply category "${categoryName}" to Plex?\n\nThis will send ALL prerolls from this category to Plex.`;
-    if (window.confirm(message)) {
-      fetch(apiUrl(`categories/${categoryId}/apply-to-plex`), { method: 'POST' })
-        .then(res => {
-          if (!res.ok) {
-            return res.json().then(err => {
-              throw new Error(err.detail || 'Failed to apply category to Plex');
-            });
-          }
-          return res.json();
-        })
-        .then(data => {
-          let successMessage = `Category applied to Plex!\n\nPrerolls applied (${data.preroll_count} total):`;
-          if (data.prerolls && data.prerolls.length > 0) {
-            data.prerolls.forEach((preroll, index) => {
-              successMessage += `\n${index + 1}. ${preroll}`;
-            });
-          }
-          if (data.rotation_info) {
-            // rotation_info removed from UI per feedback
-          }
-          alert(successMessage);
-          
-          // Immediately update the active category in the UI
-          const appliedCategory = categories.find(cat => cat.id === categoryId);
-          if (appliedCategory) {
-            setActiveCategory(appliedCategory);
-            console.log(`[DEBUG] Immediately set activeCategory to: ${appliedCategory.name}`);
-          }
-          
-          fetchData();
-        })
-        .catch(error => {
-          alert('Failed to apply category to Plex: ' + error.message);
-        });
-    }
+    if (!await showConfirm(message, { title: 'Apply to Plex', type: 'info', confirmText: 'Apply' })) return;
+    
+    fetch(apiUrl(`categories/${categoryId}/apply-to-plex`), { method: 'POST' })
+      .then(res => {
+        if (!res.ok) {
+          return res.json().then(err => {
+            throw new Error(err.detail || 'Failed to apply category to Plex');
+          });
+        }
+        return res.json();
+      })
+      .then(data => {
+        let successMessage = `Category applied to Plex!\n\nPrerolls applied (${data.preroll_count} total):`;
+        if (data.prerolls && data.prerolls.length > 0) {
+          data.prerolls.forEach((preroll, index) => {
+            successMessage += `\n${index + 1}. ${preroll}`;
+          });
+        }
+        if (data.rotation_info) {
+          // rotation_info removed from UI per feedback
+        }
+        alert(successMessage);
+        
+        // Immediately update the active category in the UI
+        const appliedCategory = categories.find(cat => cat.id === categoryId);
+        if (appliedCategory) {
+          setActiveCategory(appliedCategory);
+          console.log(`[DEBUG] Immediately set activeCategory to: ${appliedCategory.name}`);
+        }
+        
+        fetchData();
+      })
+      .catch(error => {
+        alert('Failed to apply category to Plex: ' + error.message);
+      });
   };
 
 
-  const handleRemoveCategoryFromPlex = (categoryId, categoryName) => {
-    if (window.confirm(`Remove category "${categoryName}" from Plex?`)) {
-      fetch(apiUrl(`categories/${categoryId}/remove-from-plex`), { method: 'POST' })
-        .then(res => res.json())
-        .then(data => {
-          alert('Category removed from Plex!');
-          fetchData();
-        })
-        .catch(error => {
-          alert('Failed to remove category from Plex: ' + error.message);
-        });
-    }
+  const handleRemoveCategoryFromPlex = async (categoryId, categoryName) => {
+    if (!await showConfirm(`Remove category "${categoryName}" from Plex?`, { title: 'Remove from Plex', type: 'warning', confirmText: 'Remove' })) return;
+    
+    fetch(apiUrl(`categories/${categoryId}/remove-from-plex`), { method: 'POST' })
+      .then(res => res.json())
+      .then(data => {
+        alert('Category removed from Plex!');
+        fetchData();
+      })
+      .catch(error => {
+        alert('Failed to remove category from Plex: ' + error.message);
+      });
   };
 
     // Jellyfin Category Apply/Remove (real apply via Local Intros plugin)
@@ -2257,8 +2469,9 @@ const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
   const getCategoryStats = (category) => {
     const categoryPrerollsList = prerolls.filter(p => p.category_id === category.id);
     const associatedPrerolls = prerolls.filter(p => 
-      p.category_associations && 
-      p.category_associations.some(assoc => assoc.category_id === category.id)
+      p.categories && 
+      p.categories.some(c => c.id === category.id) &&
+      p.category_id !== category.id  // Exclude primary to avoid double counting
     );
     const totalPrerolls = categoryPrerollsList.length + associatedPrerolls.length;
     
@@ -2286,6 +2499,150 @@ const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
     };
   };
 
+  // ========== Schedule Conflict Detection ==========
+  
+  // Check if two time ranges overlap
+  const timeRangesOverlap = (start1, end1, start2, end2) => {
+    if (!start1 || !start2) return false;
+    
+    const toMinutes = (time) => {
+      if (!time) return null;
+      const [hours, minutes] = time.split(':').map(Number);
+      return hours * 60 + minutes;
+    };
+    
+    const s1 = toMinutes(start1);
+    const e1 = end1 ? toMinutes(end1) : 24 * 60 - 1; // Default to end of day
+    const s2 = toMinutes(start2);
+    const e2 = end2 ? toMinutes(end2) : 24 * 60 - 1;
+    
+    if (s1 === null || s2 === null) return false;
+    
+    // Handle overnight ranges (e.g., 10PM - 3AM)
+    const range1CrossesMidnight = e1 < s1;
+    const range2CrossesMidnight = e2 < s2;
+    
+    if (range1CrossesMidnight && range2CrossesMidnight) {
+      // Both cross midnight - they definitely overlap
+      return true;
+    } else if (range1CrossesMidnight) {
+      // Range 1 crosses midnight: check if range 2 overlaps either part
+      return (s2 <= e1) || (s2 >= s1) || (e2 >= s1) || (e2 <= e1);
+    } else if (range2CrossesMidnight) {
+      // Range 2 crosses midnight: check if range 1 overlaps either part
+      return (s1 <= e2) || (s1 >= s2) || (e1 >= s2) || (e1 <= e2);
+    } else {
+      // Normal ranges
+      return s1 < e2 && s2 < e1;
+    }
+  };
+  
+  // Check if two schedules could conflict (same days, overlapping times, same priority, both exclusive)
+  const getScheduleConflicts = (schedule) => {
+    if (!schedule || !schedule.exclusive) return [];
+    
+    const conflicts = [];
+    
+    // Parse this schedule's recurrence pattern
+    let thisPattern = {};
+    try {
+      thisPattern = schedule.recurrence_pattern ? JSON.parse(schedule.recurrence_pattern) : {};
+    } catch (e) {
+      thisPattern = {};
+    }
+    
+    const thisWeekDays = thisPattern.weekDays || [];
+    const thisTimeRange = thisPattern.timeRange || {};
+    
+    // Normalize priority (default to 5 if not set)
+    const thisPriority = schedule.priority ?? 5;
+    
+    // Check against all other schedules
+    schedules.forEach(other => {
+      if (other.id === schedule.id) return; // Skip self
+      if (!other.exclusive) return; // Only check exclusive schedules
+      if (!other.is_active) return; // Inactive schedules don't conflict
+      
+      // Normalize other priority (default to 5 if not set)
+      const otherPriority = other.priority ?? 5;
+      
+      // Different priorities don't conflict - higher priority wins deterministically
+      if (otherPriority !== thisPriority) return;
+      
+      // Parse other schedule's recurrence pattern
+      let otherPattern = {};
+      try {
+        otherPattern = other.recurrence_pattern ? JSON.parse(other.recurrence_pattern) : {};
+      } catch (e) {
+        otherPattern = {};
+      }
+      
+      const otherWeekDays = otherPattern.weekDays || [];
+      const otherTimeRange = otherPattern.timeRange || {};
+      
+      // Check if both are weekly schedules with overlapping days
+      if (schedule.type === 'weekly' && other.type === 'weekly') {
+        const overlappingDays = thisWeekDays.filter(d => otherWeekDays.includes(d));
+        if (overlappingDays.length === 0) return; // No common days
+        
+        // Check time range overlap
+        if (timeRangesOverlap(
+          thisTimeRange.start, thisTimeRange.end,
+          otherTimeRange.start, otherTimeRange.end
+        )) {
+          conflicts.push({
+            schedule: other,
+            overlappingDays,
+            thisTime: thisTimeRange,
+            otherTime: otherTimeRange
+          });
+        }
+      }
+      
+      // Check if both are daily schedules
+      else if (schedule.type === 'daily' && other.type === 'daily') {
+        // Check date range overlap
+        const thisStart = schedule.start_date ? new Date(schedule.start_date) : new Date(0);
+        const thisEnd = schedule.end_date ? new Date(schedule.end_date) : new Date('2099-12-31');
+        const otherStart = other.start_date ? new Date(other.start_date) : new Date(0);
+        const otherEnd = other.end_date ? new Date(other.end_date) : new Date('2099-12-31');
+        
+        if (thisStart <= otherEnd && otherStart <= thisEnd) {
+          // Date ranges overlap, check time ranges
+          if (timeRangesOverlap(
+            thisTimeRange.start, thisTimeRange.end,
+            otherTimeRange.start, otherTimeRange.end
+          )) {
+            conflicts.push({
+              schedule: other,
+              thisTime: thisTimeRange,
+              otherTime: otherTimeRange
+            });
+          }
+        }
+      }
+      
+      // Mixed types - check if they could potentially overlap
+      else if ((schedule.type === 'weekly' && other.type === 'daily') || 
+               (schedule.type === 'daily' && other.type === 'weekly')) {
+        // Simplified check - if time ranges overlap, flag it
+        if (timeRangesOverlap(
+          thisTimeRange.start, thisTimeRange.end,
+          otherTimeRange.start, otherTimeRange.end
+        )) {
+          conflicts.push({
+            schedule: other,
+            thisTime: thisTimeRange,
+            otherTime: otherTimeRange,
+            note: 'Different schedule types may overlap'
+          });
+        }
+      }
+    });
+    
+    return conflicts;
+  };
+
   // Bulk selection handlers
   const toggleSelectCategory = (categoryId) => {
     setSelectedCategoryIds(prev => 
@@ -2311,7 +2668,7 @@ const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
     }
     
     const confirmMsg = `Delete ${selectedCategoryIds.length} selected categories?\n\nThis will also remove all associated schedules and preroll assignments.`;
-    if (!window.confirm(confirmMsg)) return;
+    if (!await showConfirm(confirmMsg, { title: 'Delete Categories', type: 'danger', confirmText: 'Delete' })) return;
     
     try {
       await Promise.all(
@@ -2341,7 +2698,7 @@ const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
     }
     
     const confirmMsg = `Apply ${selectedCategoryIds.length} selected categories to ${server === 'plex' ? 'Plex' : 'Jellyfin'}?`;
-    if (!window.confirm(confirmMsg)) return;
+    if (!await showConfirm(confirmMsg, { title: 'Apply Categories', type: 'info', confirmText: 'Apply' })) return;
     
     try {
       const endpoint = server === 'plex' ? 'apply-to-plex' : 'apply-to-jellyfin';
@@ -2421,27 +2778,34 @@ const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
   };
 
   const handleBackupDatabase = () => {
+    setBackupProgress({ active: true, type: 'database-backup', message: 'Preparing database export...' });
     fetch(apiUrl('backup/database'))
       .then(res => res.json())
       .then(data => {
+        setBackupProgress({ active: true, type: 'database-backup', message: 'Creating download...' });
         const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
         const url = URL.createObjectURL(blob);
         const a = document.createElement('a');
         a.href = url;
-        a.download = `nexroll_backup_${new Date().toISOString().split('T')[0]}.json`;
+        a.download = `nexroll_database_${new Date().toISOString().split('T')[0]}.json`;
         document.body.appendChild(a);
         a.click();
         document.body.removeChild(a);
         URL.revokeObjectURL(url);
-        alert('Database backup downloaded!');
+        setBackupProgress({ active: false, type: '', message: '' });
+        showAlert('Database backup downloaded successfully!', 'success');
       })
       .catch(error => {
         console.error('Backup error:', error);
-        alert('Backup failed: ' + error.message);
+        setBackupProgress({ active: false, type: '', message: '' });
+        showAlert('Backup failed: ' + error.message, 'error');
       });
   };
 
   const handleBackupFiles = () => {
+    setBackupProgress({ active: true, type: 'system-backup', message: 'Creating comprehensive system backup... This may take a few minutes for large libraries.' });
+    
+    // Use fetch with blob response for large files
     fetch(apiUrl('backup/files'), {
       method: 'POST'
     })
@@ -2449,37 +2813,47 @@ const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
         if (!res.ok) {
           throw new Error(`HTTP error! status: ${res.status}`);
         }
-        return res.json();
+        // Get filename from content-disposition header if available
+        const contentDisposition = res.headers.get('content-disposition');
+        let filename = `nexroll_system_backup_${new Date().toISOString().split('T')[0]}.zip`;
+        if (contentDisposition) {
+          const match = contentDisposition.match(/filename="?([^"]+)"?/);
+          if (match) filename = match[1];
+        }
+        return res.blob().then(blob => ({ blob, filename }));
       })
-      .then(data => {
-        // Convert base64 or binary data to blob
-        const blob = new Blob([new Uint8Array(data.content)], { type: data.content_type });
+      .then(({ blob, filename }) => {
+        setBackupProgress({ active: true, type: 'system-backup', message: 'Download ready! Starting download...' });
         const url = URL.createObjectURL(blob);
         const a = document.createElement('a');
         a.href = url;
-        a.download = data.filename;
+        a.download = filename;
         document.body.appendChild(a);
         a.click();
         document.body.removeChild(a);
         URL.revokeObjectURL(url);
-        alert('Files backup downloaded!');
+        setBackupProgress({ active: false, type: '', message: '' });
+        showAlert('System backup downloaded successfully!', 'success');
       })
       .catch(error => {
-        console.error('File backup error:', error);
-        alert('File backup failed: ' + error.message);
+        console.error('System backup error:', error);
+        setBackupProgress({ active: false, type: '', message: '' });
+        showAlert('System backup failed: ' + error.message, 'error');
       });
   };
 
   const handleRestoreDatabase = () => {
     if (!backupFile) {
-      alert('Please select a backup file first');
+      showAlert('Please select a backup file first', 'warning');
       return;
     }
 
+    setBackupProgress({ active: true, type: 'database-restore', message: 'Reading backup file...' });
     const reader = new FileReader();
     reader.onload = (e) => {
       try {
         const backupData = JSON.parse(e.target.result);
+        setBackupProgress({ active: true, type: 'database-restore', message: 'Restoring database...' });
         fetch(apiUrl('restore/database'), {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -2494,16 +2868,22 @@ const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
             return res.json();
           })
           .then(data => {
-            alert('Database restored successfully!');
+            setBackupProgress({ active: false, type: '', message: '' });
+            showAlert('Database restored successfully! Refreshing data...', 'success');
             setBackupFile(null);
+            // Reset file input
+            const fileInput = document.querySelector('input[type="file"][accept=".json,.zip"]');
+            if (fileInput) fileInput.value = '';
             fetchData();
           })
           .catch(error => {
             console.error('Restore error:', error);
-            alert('Restore failed: ' + error.message);
+            setBackupProgress({ active: false, type: '', message: '' });
+            showAlert('Restore failed: ' + error.message, 'error');
           });
       } catch (error) {
-        alert('Invalid backup file format');
+        setBackupProgress({ active: false, type: '', message: '' });
+        showAlert('Invalid backup file format', 'error');
       }
     };
     reader.readAsText(backupFile);
@@ -2511,24 +2891,39 @@ const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
 
   const handleRestoreFiles = () => {
     if (!backupFile) {
-      alert('Please select a ZIP file first');
+      showAlert('Please select a ZIP file first', 'warning');
       return;
     }
 
+    setBackupProgress({ active: true, type: 'system-restore', message: 'Uploading and restoring system backup... This may take a few minutes.' });
     const formData = new FormData();
     formData.append('file', backupFile);
     fetch(apiUrl('restore/files'), {
       method: 'POST',
       body: formData
     })
-      .then(res => res.json())
+      .then(res => {
+        if (!res.ok) {
+          return res.json().then(error => {
+            throw new Error(error.detail || `HTTP ${res.status}: Restore failed`);
+          });
+        }
+        return res.json();
+      })
       .then(data => {
-        alert('Files restored successfully!');
+        setBackupProgress({ active: false, type: '', message: '' });
+        const restoredItems = data.restored ? data.restored.join(', ') : 'files';
+        showAlert(`System restored successfully! Restored: ${restoredItems}`, 'success');
         setBackupFile(null);
+        // Reset file input
+        const fileInput = document.querySelector('input[type="file"][accept=".json,.zip"]');
+        if (fileInput) fileInput.value = '';
+        fetchData();
       })
       .catch(error => {
-        console.error('File restore error:', error);
-        alert('File restore failed: ' + error.message);
+        console.error('System restore error:', error);
+        setBackupProgress({ active: false, type: '', message: '' });
+        showAlert('System restore failed: ' + error.message, 'error');
       });
   };
 
@@ -2596,8 +2991,8 @@ const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
       });
   };
 
-  const handleDeleteSchedule = (scheduleId) => {
-    if (!showConfirm('Are you sure you want to delete this schedule?')) return;
+  const handleDeleteSchedule = async (scheduleId) => {
+    if (!await showConfirm('Are you sure you want to delete this schedule?', { type: 'danger', title: 'Delete Schedule' })) return;
 
     fetch(apiUrl(`schedules/${scheduleId}`), {
       method: 'DELETE'
@@ -2760,6 +3155,10 @@ const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
     }
     if (scheduleForm.type === 'weekly' && weekDays.length > 0) {
       recurrencePattern.weekDays = weekDays;
+      // Add time range for weekly schedules if set
+      if (timeRange.start && timeRange.end) {
+        recurrencePattern.timeRange = timeRange;
+      }
     }
     if (scheduleForm.type === 'monthly' && monthDays.length > 0) {
       recurrencePattern.monthDays = monthDays;
@@ -2843,8 +3242,8 @@ const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
       });
   };
 
-  const handleDeletePreroll = (prerollId) => {
-    if (!showConfirm('Are you sure you want to delete this preroll?')) return;
+  const handleDeletePreroll = async (prerollId) => {
+    if (!await showConfirm('Are you sure you want to delete this preroll?', { type: 'danger', title: 'Delete Preroll' })) return;
 
     fetch(apiUrl(`prerolls/${prerollId}`), {
       method: 'DELETE'
@@ -2862,6 +3261,17 @@ const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
 
   const handleEditPreroll = (preroll) => {
     setEditingPreroll(preroll);
+    setVideoInfo(null); // Reset video info
+    // Fetch video info for the preroll
+    fetch(apiUrl(`prerolls/${preroll.id}/video-info`))
+      .then(handleFetchResponse)
+      .then(info => {
+        if (info.success) {
+          setVideoInfo(info);
+        }
+      })
+      .catch(err => console.log('Could not fetch video info:', err));
+    
     let tagsStr = '';
     try {
       if (preroll.tags) {
@@ -2883,6 +3293,44 @@ const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
       description: preroll.description || '',
       exclude_from_matching: preroll.exclude_from_matching || false
     });
+  };
+
+  const handleTranscodePreroll = async (resolution, replaceOriginal = true) => {
+    if (!editingPreroll) return;
+    
+    if (!await showConfirm(`Scale "${editingPreroll.display_name || editingPreroll.filename}" to ${resolution}?\n\n${replaceOriginal ? 'This will replace the original file.' : 'This will create a new file.'}\n\nThis may take a minute depending on video length.`, { title: 'Scale Video', type: 'warning', confirmText: 'Scale' })) {
+      return;
+    }
+    
+    setTranscodeLoading(true);
+    try {
+      const res = await fetch(apiUrl(`prerolls/${editingPreroll.id}/transcode`), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ resolution, replace_original: replaceOriginal })
+      });
+      const result = await handleFetchResponse(res);
+      
+      if (result.success) {
+        if (result.skipped) {
+          alert(`ℹ️ ${result.message}`);
+        } else {
+          alert(`✅ Successfully scaled to ${resolution}!\n\nNew size: ${result.new_size_mb} MB`);
+          // Refresh video info
+          const infoRes = await fetch(apiUrl(`prerolls/${editingPreroll.id}/video-info`));
+          const info = await infoRes.json();
+          if (info.success) setVideoInfo(info);
+          fetchData(); // Refresh preroll list
+        }
+      } else {
+        alert('Failed to scale video: ' + (result.detail || result.message || 'Unknown error'));
+      }
+    } catch (err) {
+      console.error('Transcode error:', err);
+      alert('Failed to scale video: ' + err.message);
+    } finally {
+      setTranscodeLoading(false);
+    }
   };
 
   const handleUpdatePreroll = (e) => {
@@ -2937,10 +3385,10 @@ const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
   const handleAutoMatchPreroll = async () => {
     if (!editingPreroll || autoMatchLoading) return;
     
-    const confirmed = window.confirm(
+    const confirmed = await showConfirm(
       `Attempt to automatically match "${editingPreroll.display_name || editingPreroll.filename}" to the Community Prerolls library?\n\n` +
-      'This will search for a matching title using fuzzy matching.\n\n' +
-      'Continue?'
+      'This will search for a matching title using fuzzy matching.',
+      { title: 'Auto-Match Preroll', type: 'info', confirmText: 'Match' }
     );
     
     if (!confirmed) return;
@@ -3014,8 +3462,9 @@ const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
   const handleSelectSimilarMatch = async (communityId, title) => {
     if (!editingPreroll) return;
     
-    const confirmed = window.confirm(
-      `Link this preroll to:\n\n"${title}"\n\nFrom the Community Prerolls library?`
+    const confirmed = await showConfirm(
+      `Link this preroll to:\n\n"${title}"\n\nFrom the Community Prerolls library?`,
+      { title: 'Link to Community Library', type: 'info', confirmText: 'Link' }
     );
     
     if (!confirmed) return;
@@ -3052,31 +3501,21 @@ const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
     }
   };
 
-  const handleDeleteCategory = (categoryId) => {
-    if (!showConfirm('Are you sure you want to delete this category? This may affect associated schedules and prerolls.')) return;
+  const handleDeleteCategory = async (categoryId) => {
+    if (!await showConfirm('Are you sure you want to delete this category? This may affect associated schedules and prerolls.', { type: 'danger', title: 'Delete Category' })) return;
 
-    fetch(apiUrl(`categories/${categoryId}`), {
-      method: 'DELETE'
-    })
-      .then(res => {
-        if (!res.ok) {
-          // Try to extract error detail from response
-          return res.json().then(errData => {
-            throw new Error(errData.detail || `HTTP error! status: ${res.status}`);
-          }).catch(() => {
-            throw new Error(`HTTP error! status: ${res.status}`);
-          });
-        }
-        return res.json();
-      })
-      .then(data => {
-        alert('Category deleted successfully!');
-        fetchData();
-      })
-      .catch(error => {
-        console.error('Delete category error:', error);
-        alert('Failed to delete category: ' + error.message);
-      });
+    try {
+      const res = await fetch(apiUrl(`categories/${categoryId}`), { method: 'DELETE' });
+      if (!res.ok) {
+        const errData = await res.json().catch(() => ({}));
+        throw new Error(errData.detail || `HTTP error! status: ${res.status}`);
+      }
+      alert('Category deleted successfully!');
+      fetchData();
+    } catch (error) {
+      console.error('Delete category error:', error);
+      alert(error.message || 'Failed to delete category');
+    }
   };
 
   const handleEditCategory = (category) => {
@@ -3218,7 +3657,7 @@ const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
       showAlert('Cannot remove the primary category here. Use "Edit Preroll" to change the primary category.', 'error');
       return;
     }
-    if (!showConfirm(`Remove "${preroll.display_name || preroll.filename}" from this category?`)) return;
+    if (!await showConfirm(`Remove "${preroll.display_name || preroll.filename}" from this category?`, { type: 'warning', title: 'Remove from Category' })) return;
     try {
       const res = await fetch(apiUrl(`categories/${categoryId}/prerolls/${preroll.id}`), { method: 'DELETE' });
       if (!res.ok) {
@@ -3236,27 +3675,42 @@ const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
     }
   };
 
-  const handleCategoryAddPreroll = async (categoryId) => {
+  const handleCategoryAddPreroll = async (categoryId, prerollIds = null) => {
     const sel = categoryAddSelection[categoryId] || {};
-    const prerollId = sel.prerollId || '';
-    if (!prerollId) {
-      alert('Please select a preroll to add');
+    const idsToAdd = prerollIds || (categoryAddSelectedIds.length > 0 ? categoryAddSelectedIds : (sel.prerollId ? [sel.prerollId] : []));
+    if (!idsToAdd || idsToAdd.length === 0) {
+      alert('Please select at least one preroll to add');
       return;
     }
+    const setPrimary = sel.setPrimary || false;
+    let successCount = 0;
+    let failCount = 0;
     try {
-      const res = await fetch(apiUrl(`categories/${categoryId}/prerolls/${prerollId}?set_primary=${sel.setPrimary ? 'true' : 'false'}`), { method: 'POST' });
-      if (!res.ok) {
-        const text = await res.text();
-        throw new Error(text || `HTTP ${res.status}`);
+      for (const prerollId of idsToAdd) {
+        try {
+          const res = await fetch(apiUrl(`categories/${categoryId}/prerolls/${prerollId}?set_primary=${setPrimary ? 'true' : 'false'}`), { method: 'POST' });
+          if (res.ok) {
+            successCount++;
+          } else {
+            failCount++;
+          }
+        } catch {
+          failCount++;
+        }
       }
-      await res.json().catch(() => null);
       setCategoryAddSelection(prev => ({ ...prev, [categoryId]: { prerollId: '', setPrimary: false } }));
+      setCategoryAddSelectedIds([]);
+      setCategoryAddSearch('');
       loadCategoryPrerolls(categoryId);
       fetchData();
-      alert(`Preroll added to category${sel.setPrimary ? ' and set as primary' : ''}!`);
+      if (failCount === 0) {
+        alert(`${successCount} preroll${successCount !== 1 ? 's' : ''} added to category${setPrimary ? ' and set as primary' : ''}!`);
+      } else {
+        alert(`Added ${successCount}, failed ${failCount}`);
+      }
     } catch (e) {
       console.error('Add preroll to category error:', e);
-      alert('Failed to add preroll to category: ' + e.message);
+      alert('Failed to add prerolls to category: ' + e.message);
     }
   };
 
@@ -3343,7 +3797,7 @@ const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
     const cid = parseInt(categoryId, 10);
     if (!cid || isNaN(cid)) { showAlert('Select a target category', 'error'); return; }
     if (selectedPrerollIds.length === 0) { showAlert('No prerolls selected', 'error'); return; }
-    if (!showConfirm(`Change primary category for ${selectedPrerollIds.length} preroll(s)? This will move files on disk.`)) return;
+    if (!await showConfirm(`Change primary category for ${selectedPrerollIds.length} preroll(s)? This will move files on disk.`, { type: 'warning', title: 'Change Category' })) return;
     let ok = 0, fail = 0;
     for (const id of selectedPrerollIds) {
       try {
@@ -3364,7 +3818,7 @@ const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
   const handleBulkDeleteSelected = async () => {
     const count = selectedPrerollIds.length;
     if (count === 0) { showAlert('No prerolls selected', 'error'); return; }
-    if (!showConfirm(`Delete ${count} selected preroll(s)?\n\nManaged files may be deleted from disk. External mapped files are protected and will not be removed.`)) return;
+    if (!await showConfirm(`Delete ${count} selected preroll(s)?\n\nManaged files may be deleted from disk. External mapped files are protected and will not be removed.`, { type: 'danger', title: 'Delete Prerolls' })) return;
     let ok = 0, fail = 0;
     for (const id of selectedPrerollIds) {
       try {
@@ -3405,41 +3859,71 @@ const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
     }
   };
 // === Dashboard Customization (Drag &amp; Drop, 4x2 grid) ===
-const DASH_KEYS = ["servers","prerolls","storage","schedules","scheduler","current_category","upcoming","community"];
+const DASH_KEYS = ["servers","prerolls","storage","schedules","scheduler","current_category","upcoming","resolution_chart","nexup","community"];
 
-const [dashLayout, setDashLayout] = useState({
-  grid: { cols: 4, rows: 2 },
-  order: DASH_KEYS.slice(),
-  hidden: [],
-  locked: false
+// Tile span configuration - which tiles take multiple columns
+const TILE_SPANS = {
+  upcoming: 2,  // Upcoming Schedules spans 2 columns
+  resolution_chart: 2  // Resolution chart spans 2 columns
+};
+
+// Initialize dashboard layout from localStorage synchronously to avoid render flash
+const [dashLayout, setDashLayout] = useState(() => {
+  const defaultLayout = {
+    grid: { cols: 4, rows: 2 },
+    order: DASH_KEYS.slice(),
+    hidden: ['community', 'nexup'],  // Community & NeX-Up hidden by default
+    locked: false
+  };
+  try {
+    const stored = localStorage.getItem('dashLayout');
+    if (stored) {
+      const data = JSON.parse(stored);
+      if (data && data.grid && Array.isArray(data.order)) {
+        // Ensure all DASH_KEYS are present in order (in case new tiles were added)
+        const storedOrder = data.order || [];
+        const storedHidden = data.hidden || [];
+        const allKeys = [...storedOrder];
+        for (const k of DASH_KEYS) {
+          if (!allKeys.includes(k) && !storedHidden.includes(k)) {
+            allKeys.push(k);
+          }
+        }
+        return {
+          grid: { 
+            cols: Math.max(1, Math.min(8, parseInt(data.grid.cols || 4, 10) || 4)),
+            rows: Math.max(1, Math.min(8, parseInt(data.grid.rows || 2, 10) || 2))
+          },
+          order: allKeys,
+          hidden: storedHidden.filter(k => DASH_KEYS.includes(k)),
+          locked: !!data.locked
+        };
+      }
+    }
+  } catch (e) {
+    console.warn('Failed to parse dashboard layout from localStorage:', e);
+  }
+  return defaultLayout;
 });
 const [dashSaving, setDashSaving] = useState(false);
 
 const visibleOrder = React.useMemo(
-  () => (dashLayout?.order || DASH_KEYS),
+  () => (dashLayout?.order || DASH_KEYS).filter(k => !(dashLayout?.hidden || []).includes(k)),
   [dashLayout]
 );
 
 const dashSensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 5 } }));
 
 const loadDashLayout = React.useCallback(async () => {
-  try {
-    // Try loading from localStorage first (primary storage)
-    const stored = localStorage.getItem('dashLayout');
-    if (stored) {
-      try {
-        const data = JSON.parse(stored);
-        if (data && data.grid && Array.isArray(data.order)) {
-          setDashLayout(data);
-          return;
-        }
-      } catch (e) {
-        console.warn('Failed to parse stored dashboard layout:', e);
-      }
-    }
-  } catch {}
-
-  // Fall back to backend if localStorage is empty or corrupted
+  // localStorage is already handled in useState initialization
+  // This function now only syncs from backend as a fallback
+  const stored = localStorage.getItem('dashLayout');
+  if (stored) {
+    // localStorage was already loaded synchronously in useState, skip backend check
+    return;
+  }
+  
+  // Fall back to backend if localStorage is empty
   try {
     const res = await fetch(apiUrl('/settings/dashboard-layout'));
     const data = await safeJson(res);
@@ -3463,8 +3947,7 @@ const loadDashLayout = React.useCallback(async () => {
     }
   } catch {}
   
-  // Use default layout if all else fails
-  setDashLayout({ grid: { cols: 4, rows: 2 }, order: DASH_KEYS.slice(), hidden: [], locked: false });
+  // Default layout is already set in useState, no action needed
 }, []);
 
 React.useEffect(() => { try { loadDashLayout(); } catch {} }, [loadDashLayout]);
@@ -3542,16 +4025,45 @@ const toggleDashLock = () => {
   setDashLayout(next);
 };
 
-const SortableTile = ({ id, disabled, children }) => {
+const SortableTile = ({ id, disabled, span = 1, onHide, children }) => {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id, disabled });
   const style = {
     transform: CSS.Transform.toString(transform),
     transition,
     cursor: disabled ? 'default' : 'grab',
-    zIndex: isDragging ? 5 : 1
+    zIndex: isDragging ? 5 : 1,
+    gridColumn: span > 1 ? `span ${span}` : undefined,
+    position: 'relative'
   };
   return (
     <div ref={setNodeRef} style={style} className={`nx-tile ${isDragging ? 'dragging' : ''}`} {...attributes} {...listeners}>
+      {!disabled && onHide && (
+        <button
+          onClick={(e) => { e.stopPropagation(); onHide(id); }}
+          style={{
+            position: 'absolute',
+            top: '4px',
+            right: '4px',
+            width: '20px',
+            height: '20px',
+            borderRadius: '50%',
+            border: 'none',
+            background: 'rgba(220, 53, 69, 0.85)',
+            color: '#fff',
+            cursor: 'pointer',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            fontSize: '12px',
+            fontWeight: 'bold',
+            zIndex: 10,
+            padding: 0
+          }}
+          title={`Hide ${id} tile`}
+        >
+          <X size={12} />
+        </button>
+      )}
       {children}
     </div>
   );
@@ -3561,7 +4073,7 @@ const SortableTile = ({ id, disabled, children }) => {
 const DashboardTiles = {
   servers: () => (
     <div className="card">
-      <h2>Servers</h2>
+      <h2 style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}><Server size={18} /> Servers</h2>
       <div style={{ display: 'grid', gap: '0.35rem' }}>
         {(() => {
           const s = getActiveConnectedServer();
@@ -3609,7 +4121,7 @@ const DashboardTiles = {
   ),
   prerolls: () => (
     <div className="card">
-      <h2>Prerolls</h2>
+      <h2 style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}><Film size={18} /> Prerolls</h2>
       <p>{prerolls.length} uploaded</p>
       <p style={{ fontSize: '0.9rem', color: 'var(--text-secondary, #666)' }}>
         {categories.filter(cat => prerolls.some(p => p.category_id === cat.id)).length} categories used
@@ -3618,19 +4130,19 @@ const DashboardTiles = {
   ),
   storage: () => (
     <div className="card">
-      <h2>Storage</h2>
+      <h2 style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}><HardDrive size={18} /> Storage</h2>
       <p>{formatBytes(totalStorageBytes)} used</p>
     </div>
   ),
   schedules: () => (
     <div className="card">
-      <h2>Schedules</h2>
+      <h2 style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}><Calendar size={18} /> Schedules</h2>
       <p>{schedules.filter(s => s.is_active).length} of {schedules.length} active</p>
     </div>
   ),
   scheduler: () => (
     <div className="card">
-      <h2>Scheduler</h2>
+      <h2 style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}><Timer size={18} /> Scheduler</h2>
       <p style={{ color: schedulerStatus.running ? 'var(--success-color, #28a745)' : 'var(--error-color, #dc3545)' }}>
         {schedulerStatus.running ? 'Running' : 'Stopped'}
       </p>
@@ -3641,7 +4153,7 @@ const DashboardTiles = {
   ),
   current_category: () => (
     <div className="card">
-      <h2>Current Category</h2>
+      <h2 style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}><Folder size={18} /> Currently Showing</h2>
       {activeCategory ? (
         <div>
           <p style={{ fontWeight: 'bold', color: 'var(--success-color, #28a745)' }}>
@@ -3661,13 +4173,13 @@ const DashboardTiles = {
   ),
   upcoming: () => (
     <div className="card">
-      <h2>Upcoming Schedules</h2>
+      <h2 style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}><CalendarDays size={18} /> Upcoming Schedules</h2>
       {(() => {
         const now = new Date();
-        // Get all schedules that haven't ended yet (excluding past schedules and disabled schedules)
-        const upcomingSchedules = schedules
+        // Get all schedules that are active or will become active
+        const allUpcomingSchedules = schedules
           .filter(s => {
-            // Must be active/enabled
+            // Must be enabled
             if (!s.is_active) return false;
             
             // Must have a next_run or start_date
@@ -3681,22 +4193,41 @@ const DashboardTiles = {
             // If no end_date, it's an ongoing schedule - include it
             return true;
           })
-          .sort((a, b) => {
-            const aTime = a.next_run ? new Date(a.next_run) : new Date(a.start_date);
-            const bTime = b.next_run ? new Date(b.next_run) : new Date(b.start_date);
-            return aTime - bTime;
+          .map(s => {
+            const startTime = s.start_date ? new Date(s.start_date) : null;
+            const endTime = s.end_date ? new Date(s.end_date) : null;
+            const isActiveNow = startTime && startTime <= now && (!endTime || endTime > now);
+            return { ...s, isActiveNow, sortTime: s.next_run ? new Date(s.next_run) : (startTime || now) };
           })
-          .slice(0, 2);
+          .sort((a, b) => {
+            // Active now schedules first, then by time
+            if (a.isActiveNow && !b.isActiveNow) return -1;
+            if (!a.isActiveNow && b.isActiveNow) return 1;
+            return a.sortTime - b.sortTime;
+          })
+          .slice(0, 5);  // Show up to 5 schedules
         
-        return upcomingSchedules.length > 0 ? (
+        return allUpcomingSchedules.length > 0 ? (
           <div style={{ display: 'grid', gap: '0.35rem' }}>
-            {upcomingSchedules.map(schedule => {
+            {allUpcomingSchedules.map(schedule => {
               const category = categories.find(c => c.id === schedule.category_id);
               const displayTime = schedule.next_run || schedule.start_date;
               return (
-                <div key={schedule.id} style={{ fontSize: '0.8rem', padding: '0.35rem 0.5rem', backgroundColor: 'var(--card-bg)', borderRadius: '4px' }}>
-                  <div style={{ fontWeight: 'bold', color: '#007bff', fontSize: '0.85rem' }}>
-                    {schedule.name}
+                <div key={schedule.id} style={{ fontSize: '0.8rem', padding: '0.35rem 0.5rem', backgroundColor: 'var(--card-bg)', borderRadius: '4px', border: schedule.isActiveNow ? '1px solid #28a745' : '1px solid var(--border-color)' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <span style={{ fontWeight: 'bold', color: '#007bff', fontSize: '0.85rem' }}>
+                      {schedule.name}
+                    </span>
+                    <span style={{ 
+                      fontSize: '0.65rem', 
+                      padding: '0.1rem 0.4rem', 
+                      borderRadius: '8px', 
+                      backgroundColor: schedule.isActiveNow ? '#28a745' : '#6c757d',
+                      color: '#fff',
+                      fontWeight: '600'
+                    }}>
+                      {schedule.isActiveNow ? 'Active Now' : 'Coming Up'}
+                    </span>
                   </div>
                   <div style={{ color: 'var(--text-secondary, #666)', fontSize: '0.75rem', marginTop: '0.1rem' }}>
                     {toLocalDisplay(displayTime)} → {category?.name || 'Unknown'}
@@ -3713,7 +4244,7 @@ const DashboardTiles = {
   ),
   recent_genres: () => (
     <div className="card">
-      <h2>Recent Genre Prerolls</h2>
+      <h2 style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}><Palette size={18} /> Recent Genre Prerolls</h2>
       {recentGenreApplications.length > 0 ? (
         <div style={{ display: 'grid', gap: '0.5rem' }}>
           {recentGenreApplications.map((app, idx) => (
@@ -3735,10 +4266,12 @@ const DashboardTiles = {
   community: () => {
     const indexedCount = communityIndexStatus?.total_prerolls || 0;
     const matchedCount = communityMatchedCount || 0;
+    const isStale = communityIndexStatus?.is_stale || false;
+    const ageDays = communityIndexStatus?.age_days || 0;
     
     return (
       <div className="card">
-        <h2>Community Prerolls</h2>
+        <h2 style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}><Users2 size={18} /> Community Prerolls</h2>
         {indexedCount > 0 || matchedCount > 0 ? (
           <div style={{ display: 'grid', gap: '0.5rem' }}>
             {indexedCount > 0 && (
@@ -3757,6 +4290,23 @@ const DashboardTiles = {
                 <span style={{ fontWeight: 'bold', color: '#3b82f6' }}>{matchedCount}</span>
               </div>
             )}
+            {isStale && (
+              <div style={{ 
+                display: 'flex', 
+                alignItems: 'center', 
+                gap: '0.35rem',
+                marginTop: '0.25rem',
+                padding: '0.35rem 0.5rem',
+                backgroundColor: 'rgba(245, 158, 11, 0.1)',
+                border: '1px solid rgba(245, 158, 11, 0.3)',
+                borderRadius: '4px',
+                fontSize: '0.8rem',
+                color: '#f59e0b'
+              }}>
+                <AlertTriangle size={12} />
+                <span>Stale ({Math.round(ageDays)}d old)</span>
+              </div>
+            )}
           </div>
         ) : (
           <p style={{ fontSize: '0.9rem', color: 'var(--text-secondary, #666)' }}>
@@ -3766,26 +4316,1380 @@ const DashboardTiles = {
       </div>
     );
   },
+  nexup: () => {
+    const movieCount = nexupTrailers?.length || 0;
+    const tvCount = nexupTVTrailers?.length || 0;
+    const radarrConnected = nexupSettings?.radarr_connected || false;
+    const sonarrConnected = nexupSettings?.sonarr_connected || false;
+    
+    return (
+      <div className="card">
+        <h2 style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+          <Clapperboard size={18} /> NeX-Up
+        </h2>
+        <div style={{ display: 'grid', gap: '0.5rem' }}>
+          {/* Connection Status */}
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <span style={{ fontSize: '0.9rem', color: 'var(--text-secondary, #666)', display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
+              <Video size={14} /> Radarr:
+            </span>
+            <span className={`nx-chip nx-status ${radarrConnected ? 'ok' : ''}`} style={{ fontSize: '0.75rem' }}>
+              {radarrConnected ? 'Connected' : 'Not Connected'}
+            </span>
+          </div>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <span style={{ fontSize: '0.9rem', color: 'var(--text-secondary, #666)', display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
+              <Tv size={14} /> Sonarr:
+            </span>
+            <span className={`nx-chip nx-status ${sonarrConnected ? 'ok' : ''}`} style={{ fontSize: '0.75rem' }}>
+              {sonarrConnected ? 'Connected' : 'Not Connected'}
+            </span>
+          </div>
+          {/* Trailer Counts */}
+          {(movieCount > 0 || tvCount > 0) && (
+            <div style={{ borderTop: '1px solid var(--border-color)', paddingTop: '0.5rem', marginTop: '0.25rem' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <span style={{ fontSize: '0.9rem', color: 'var(--text-secondary, #666)' }}>Movie Trailers:</span>
+                <span style={{ fontWeight: 'bold', color: '#ffc230' }}>{movieCount}</span>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <span style={{ fontSize: '0.9rem', color: 'var(--text-secondary, #666)' }}>TV Trailers:</span>
+                <span style={{ fontWeight: 'bold', color: '#ffc230' }}>{tvCount}</span>
+              </div>
+            </div>
+          )}
+          {!radarrConnected && !sonarrConnected && (
+            <p style={{ fontSize: '0.8rem', color: 'var(--text-secondary, #666)', margin: '0.25rem 0 0' }}>
+              Connect Radarr/Sonarr to fetch trailers
+            </p>
+          )}
+        </div>
+      </div>
+    );
+  },
+  resolution_chart: () => {
+    // Resolution distribution chart
+    const getResolutionLabel = (height) => {
+      if (height >= 2160) return '4K';
+      if (height >= 1080) return '1080p';
+      if (height >= 720) return '720p';
+      if (height >= 480) return '480p';
+      return 'SD';
+    };
+    
+    // Format duration in seconds to human readable
+    const formatDuration = (seconds) => {
+      if (!seconds || seconds <= 0) return '0s';
+      const mins = Math.floor(seconds / 60);
+      const secs = Math.round(seconds % 60);
+      if (mins === 0) return `${secs}s`;
+      return secs > 0 ? `${mins}m ${secs}s` : `${mins}m`;
+    };
+    
+    // Format file size to human readable
+    const formatFileSize = (bytes) => {
+      if (!bytes || bytes <= 0) return '0 B';
+      const units = ['B', 'KB', 'MB', 'GB'];
+      let size = bytes;
+      let unitIndex = 0;
+      while (size >= 1024 && unitIndex < units.length - 1) {
+        size /= 1024;
+        unitIndex++;
+      }
+      return `${size.toFixed(unitIndex > 0 ? 1 : 0)} ${units[unitIndex]}`;
+    };
+    
+    // Exclude NeX-Up trailers and dynamic prerolls
+    const nexupCatIds = [
+      nexupSettings.category_id,
+      nexupSettings.tv_category_id
+    ].filter(id => id != null);
+    
+    const isDynamic = (p) => {
+      const path = (p.path || '').toLowerCase();
+      const filename = (p.filename || '').toLowerCase();
+      return path.includes('dynamic_prerolls') || filename.endsWith('_preroll.mp4');
+    };
+    
+    const stats = { '4K': 0, '1080p': 0, '720p': 0, '480p': 0, 'SD': 0, 'Unknown': 0 };
+    const codecStats = {};
+    let totalDuration = 0;
+    let totalFileSize = 0;
+    let analyzedCount = 0;
+    
+    prerolls.forEach(p => {
+      if (nexupCatIds.includes(p.category_id) || isDynamic(p)) return;
+      const info = scalingVideoInfoCache[p.id];
+      if (!info || !info.success) {
+        stats['Unknown']++;
+      } else {
+        const label = getResolutionLabel(info.height);
+        stats[label]++;
+        analyzedCount++;
+        
+        // Codec stats
+        const codec = (info.codec || 'unknown').toUpperCase();
+        const codecLabel = codec === 'H264' || codec === 'AVC' ? 'H.264' : 
+                          codec === 'HEVC' || codec === 'H265' ? 'HEVC' : codec;
+        codecStats[codecLabel] = (codecStats[codecLabel] || 0) + 1;
+        
+        // Duration & size
+        if (info.duration) totalDuration += parseFloat(info.duration) || 0;
+        if (info.file_size) totalFileSize += parseInt(info.file_size) || 0;
+      }
+    });
+    
+    // Only show known resolutions (exclude Unknown from chart)
+    const chartData = [
+      { name: '4K', count: stats['4K'], color: '#8b5cf6' },
+      { name: '1080p', count: stats['1080p'], color: '#10b981' },
+      { name: '720p', count: stats['720p'], color: '#3b82f6' },
+      { name: '480p', count: stats['480p'], color: '#f59e0b' },
+      { name: 'SD', count: stats['SD'], color: '#ef4444' }
+    ].filter(d => d.count > 0);
+    
+    const total = Object.values(stats).reduce((a, b) => a + b, 0);
+    const loaded = total - stats['Unknown'];
+    
+    // Get top 2 codecs for display
+    const topCodecs = Object.entries(codecStats)
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 2)
+      .map(([codec, count]) => `${count} ${codec}`)
+      .join(', ');
+    
+    return (
+      <div className="card">
+        <h2 style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.75rem' }}>
+          <BarChart3 size={18} /> Video Quality
+        </h2>
+        {total === 0 ? (
+          <p style={{ fontSize: '0.9rem', color: 'var(--text-secondary)' }}>No prerolls uploaded</p>
+        ) : loaded === 0 ? (
+          <div style={{ fontSize: '0.9rem', color: 'var(--text-secondary)' }}>
+            <p style={{ margin: '0 0 0.5rem' }}>Resolution data not loaded</p>
+            <button
+              className="button button-secondary"
+              style={{ fontSize: '0.8rem', padding: '4px 10px' }}
+              onClick={() => setActiveTab('dashboard-video-scaling')}
+            >
+              Load in Video Scaling
+            </button>
+          </div>
+        ) : (
+          <>
+            <div style={{ height: 130 }}>
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart data={chartData} layout="vertical" margin={{ top: 0, right: 10, bottom: 0, left: 0 }}>
+                  <XAxis type="number" hide />
+                  <YAxis type="category" dataKey="name" width={45} tick={{ fontSize: 11, fill: 'var(--text-secondary)' }} axisLine={false} tickLine={false} />
+                  <Tooltip
+                    contentStyle={{ background: 'var(--card-bg)', border: '1px solid var(--border-color)', borderRadius: 6, fontSize: 12, color: 'var(--text-color)' }}
+                    labelStyle={{ color: 'var(--text-color)' }}
+                    itemStyle={{ color: 'var(--text-color)' }}
+                    formatter={(value) => [value, 'Count']}
+                    cursor={{ fill: 'transparent' }}
+                  />
+                  <Bar dataKey="count" radius={[0, 4, 4, 0]} isAnimationActive={false}>
+                    {chartData.map((entry, index) => (
+                      <Cell key={`cell-${index}`} fill={entry.color} />
+                    ))}
+                  </Bar>
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+            <div style={{ 
+              display: 'grid', 
+              gridTemplateColumns: '1fr 1fr', 
+              gap: '0.4rem 1rem', 
+              fontSize: '0.78rem', 
+              color: 'var(--text-secondary)',
+              marginTop: '0.5rem',
+              paddingTop: '0.5rem',
+              borderTop: '1px solid var(--border-color)'
+            }}>
+              {topCodecs && (
+                <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                  <span>Codecs:</span>
+                  <span style={{ color: 'var(--text-color)', fontWeight: 500 }}>{topCodecs}</span>
+                </div>
+              )}
+              {totalDuration > 0 && (
+                <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                  <span>Duration:</span>
+                  <span style={{ color: 'var(--text-color)', fontWeight: 500 }}>{formatDuration(totalDuration)}</span>
+                </div>
+              )}
+              {totalFileSize > 0 && (
+                <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                  <span>Total Size:</span>
+                  <span style={{ color: 'var(--text-color)', fontWeight: 500 }}>{formatFileSize(totalFileSize)}</span>
+                </div>
+              )}
+              {analyzedCount > 0 && totalDuration > 0 && (
+                <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                  <span>Avg Length:</span>
+                  <span style={{ color: 'var(--text-color)', fontWeight: 500 }}>{formatDuration(totalDuration / analyzedCount)}</span>
+                </div>
+              )}
+            </div>
+          </>
+        )}
+        <p style={{ fontSize: '0.78rem', color: 'var(--text-secondary)', marginTop: '0.5rem', display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+          {loaded}/{total} prerolls analyzed
+          {loadingVideoInfo && <Loader2 size={12} className="spin" />}
+        </p>
+      </div>
+    );
+  },
 };
 
-  const renderDashboard = () => (
+  // ============================================
+  // RENDER: Dashboard with Sub-Navigation
+  // ============================================
+  const renderDashboard = () => {
+    // Route based on activeTab
+    if (activeTab === 'dashboard/add') {
+      return renderDashboardAddPrerolls();
+    }
+    if (activeTab === 'dashboard/library') {
+      return renderDashboardLibrary();
+    }
+    if (activeTab === 'dashboard/scaling') {
+      return renderDashboardVideoScaling();
+    }
+    if (activeTab === 'dashboard/actions') {
+      return renderDashboardQuickActions();
+    }
+    // Default: Overview (tiles)
+    return renderDashboardOverview();
+  };
+
+  // ============================================
+  // Dashboard Video Scaling Sub-Page
+  // ============================================
+  const loadVideoInfoForPrerolls = React.useCallback(async (prerollIds) => {
+    if (!prerollIds.length) return;
+    setLoadingVideoInfo(true);
+    const newCache = { ...scalingVideoInfoCache };
+    
+    for (const id of prerollIds) {
+      if (newCache[id]) continue; // Already cached
+      try {
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 15000); // 15s timeout per file
+        const res = await fetch(apiUrl(`prerolls/${id}/video-info`), { signal: controller.signal });
+        clearTimeout(timeoutId);
+        const data = await res.json();
+        if (data.success) {
+          newCache[id] = data;
+        } else {
+          // Cache failed attempts to prevent infinite retries
+          newCache[id] = { success: false, error: data.error || 'Unknown error' };
+        }
+      } catch (e) {
+        console.warn(`Failed to load video info for preroll ${id}:`, e);
+        // Cache failed attempts with error info
+        newCache[id] = { success: false, error: e.name === 'AbortError' ? 'Request timeout' : String(e.message || e) };
+      }
+    }
+    
+    setScalingVideoInfoCache(newCache);
+    setLoadingVideoInfo(false);
+  }, [scalingVideoInfoCache]);
+
+  // Auto-load video info when on dashboard or scaling page
+  React.useEffect(() => {
+    if ((activeTab === 'dashboard' || activeTab === 'dashboard/scaling') && prerolls.length > 0) {
+      // Exclude NeX-Up trailers and dynamic prerolls from video info loading
+      const nexupCatIds = [nexupSettings.category_id, nexupSettings.tv_category_id].filter(id => id != null);
+      const isDynamic = (p) => {
+        const path = (p.path || '').toLowerCase();
+        const filename = (p.filename || '').toLowerCase();
+        return path.includes('dynamic_prerolls') || filename.endsWith('_preroll.mp4');
+      };
+      const idsToLoad = prerolls
+        .filter(p => !nexupCatIds.includes(p.category_id) && !isDynamic(p) && !scalingVideoInfoCache[p.id])
+        .map(p => p.id)
+        .slice(0, 20);
+      if (idsToLoad.length > 0 && !loadingVideoInfo) {
+        loadVideoInfoForPrerolls(idsToLoad);
+      }
+    }
+  }, [activeTab, prerolls, scalingVideoInfoCache, loadingVideoInfo, loadVideoInfoForPrerolls, nexupSettings.category_id, nexupSettings.tv_category_id]);
+
+  const handleBulkScale = async (targetResolution) => {
+    if (bulkScalingSelection.length === 0) {
+      alert('Please select at least one preroll to scale.');
+      return;
+    }
+    
+    const selectedPrerolls = prerolls.filter(p => bulkScalingSelection.includes(p.id));
+    const heights = { '1080p': 1080, '720p': 720, '480p': 480 };
+    const targetHeight = heights[targetResolution];
+    
+    // Filter out prerolls already at target resolution
+    const toScale = selectedPrerolls.filter(p => {
+      const info = scalingVideoInfoCache[p.id];
+      return !info || !info.success || info.height !== targetHeight;
+    });
+    
+    if (toScale.length === 0) {
+      alert(`All selected prerolls are already at ${targetResolution}.`);
+      return;
+    }
+    
+    if (!await showConfirm(`Scale ${toScale.length} preroll${toScale.length !== 1 ? 's' : ''} to ${targetResolution}?\n\nThis will replace the original files and may take several minutes.`, { title: 'Bulk Scale Videos', type: 'warning', confirmText: 'Scale All' })) {
+      return;
+    }
+    
+    setBulkScalingProgress({ active: true, current: 0, total: toScale.length, currentName: '', errors: [] });
+    const errors = [];
+    
+    for (let i = 0; i < toScale.length; i++) {
+      const preroll = toScale[i];
+      setBulkScalingProgress(prev => ({ 
+        ...prev, 
+        current: i + 1, 
+        currentName: preroll.display_name || preroll.filename 
+      }));
+      
+      try {
+        const res = await fetch(apiUrl(`prerolls/${preroll.id}/transcode`), {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ resolution: targetResolution, replace_original: true })
+        });
+        const result = await res.json();
+        
+        if (!result.success && !result.skipped) {
+          errors.push({ name: preroll.display_name || preroll.filename, error: result.detail || result.message || 'Unknown error' });
+        }
+        
+        // Update cache with new info
+        if (result.success && !result.skipped) {
+          const infoRes = await fetch(apiUrl(`prerolls/${preroll.id}/video-info`));
+          const info = await infoRes.json();
+          if (info.success) {
+            setScalingVideoInfoCache(prev => ({ ...prev, [preroll.id]: info }));
+          }
+        }
+      } catch (e) {
+        errors.push({ name: preroll.display_name || preroll.filename, error: e.message });
+      }
+    }
+    
+    setBulkScalingProgress({ active: false, current: 0, total: 0, currentName: '', errors });
+    setBulkScalingSelection([]);
+    fetchData();
+    
+    if (errors.length > 0) {
+      alert(`Scaling complete with ${errors.length} error(s):\n\n${errors.map(e => `• ${e.name}: ${e.error}`).join('\n')}`);
+    } else {
+      alert(`✅ Successfully scaled ${toScale.length} preroll${toScale.length !== 1 ? 's' : ''} to ${targetResolution}!`);
+    }
+  };
+
+  const renderDashboardVideoScaling = () => {
+    // Filter prerolls based on resolution filter
+    const getResolutionLabel = (height) => {
+      if (height >= 2160) return '4K';
+      if (height >= 1080) return '1080p';
+      if (height >= 720) return '720p';
+      if (height >= 480) return '480p';
+      return 'SD';
+    };
+    
+    // Exclude NeX-Up trailers (Radarr/Sonarr trailers have their own category)
+    const nexupCategoryIds = [
+      nexupSettings.category_id,
+      nexupSettings.tv_category_id
+    ].filter(id => id != null);
+    
+    // Also exclude generated dynamic prerolls (custom server intros)
+    const isDynamicPreroll = (p) => {
+      const path = (p.path || '').toLowerCase();
+      const filename = (p.filename || '').toLowerCase();
+      return path.includes('dynamic_prerolls') || filename.endsWith('_preroll.mp4');
+    };
+    
+    const scalablePrerolls = prerolls.filter(p => 
+      !nexupCategoryIds.includes(p.category_id) && !isDynamicPreroll(p)
+    );
+    
+    const filteredPrerolls = scalablePrerolls.filter(p => {
+      if (!scalingFilterResolution) return true;
+      const info = scalingVideoInfoCache[p.id];
+      if (!info || !info.success) return scalingFilterResolution === 'unknown';
+      const label = getResolutionLabel(info.height);
+      return label === scalingFilterResolution;
+    });
+    
+    const toggleSelection = (id) => {
+      setBulkScalingSelection(prev => 
+        prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]
+      );
+    };
+    
+    const selectAllFiltered = () => {
+      setBulkScalingSelection(filteredPrerolls.map(p => p.id));
+    };
+    
+    const clearSelection = () => {
+      setBulkScalingSelection([]);
+    };
+    
+    // Stats
+    const resolutionStats = {
+      '4K': 0,
+      '1080p': 0,
+      '720p': 0,
+      '480p': 0,
+      'SD': 0,
+      'unknown': 0
+    };
+    
+    prerolls.forEach(p => {
+      // Skip NeX-Up trailers and dynamic prerolls in stats
+      if (nexupCategoryIds.includes(p.category_id) || isDynamicPreroll(p)) return;
+      const info = scalingVideoInfoCache[p.id];
+      if (!info || !info.success) {
+        resolutionStats['unknown']++;
+      } else {
+        const label = getResolutionLabel(info.height);
+        resolutionStats[label]++;
+      }
+    });
+    
+    return (
+      <div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '1rem', marginBottom: '1rem' }}>
+          <h1 className="header" style={{ margin: 0 }}>Video Scaling</h1>
+        </div>
+        
+        {/* Info Banner */}
+        <div className="card" style={{ 
+          backgroundColor: 'rgba(99, 102, 241, 0.08)', 
+          border: '1px solid rgba(99, 102, 241, 0.2)',
+          marginBottom: '1rem'
+        }}>
+          <div style={{ display: 'flex', alignItems: 'flex-start', gap: '0.75rem' }}>
+            <Video size={20} style={{ color: '#6366f1', flexShrink: 0, marginTop: '2px' }} />
+            <div>
+              <strong style={{ color: 'var(--text-color)' }}>Bulk Video Scaling</strong>
+              <p style={{ margin: '0.25rem 0 0 0', fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
+                Scale multiple prerolls to optimize for remote streaming. Lower resolutions reduce buffering and bandwidth usage.
+                <br />
+                <span style={{ fontWeight: '500', color: '#10b981' }}>720p is recommended</span> for the best balance of quality and streaming performance.
+              </p>
+            </div>
+          </div>
+        </div>
+        
+        {/* Resolution Stats Cards */}
+        <div style={{ 
+          display: 'grid', 
+          gridTemplateColumns: 'repeat(auto-fit, minmax(120px, 1fr))', 
+          gap: '0.75rem',
+          marginBottom: '1rem'
+        }}>
+          {['4K', '1080p', '720p', '480p', 'SD', 'unknown'].map(res => (
+            <div 
+              key={res}
+              onClick={() => setScalingFilterResolution(scalingFilterResolution === res ? '' : res)}
+              className="card"
+              style={{ 
+                padding: '0.75rem',
+                cursor: 'pointer',
+                border: scalingFilterResolution === res ? '2px solid var(--button-bg)' : '1px solid var(--border-color)',
+                backgroundColor: scalingFilterResolution === res ? 'rgba(99, 102, 241, 0.08)' : 'var(--card-bg)',
+                transition: 'all 0.2s'
+              }}
+            >
+              <div style={{ 
+                fontSize: '1.5rem', 
+                fontWeight: 'bold', 
+                color: res === '4K' ? '#8b5cf6' :
+                       res === '1080p' ? '#3b82f6' :
+                       res === '720p' ? '#10b981' :
+                       res === '480p' ? '#f59e0b' :
+                       res === 'SD' ? '#ef4444' : '#6b7280'
+              }}>
+                {resolutionStats[res]}
+              </div>
+              <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>
+                {res === 'unknown' ? 'Unknown' : res}
+              </div>
+            </div>
+          ))}
+        </div>
+        
+        {/* Bulk Actions Bar */}
+        {bulkScalingProgress.active ? (
+          <div className="card" style={{ 
+            marginBottom: '1rem',
+            backgroundColor: 'rgba(59, 130, 246, 0.08)',
+            border: '1px solid rgba(59, 130, 246, 0.3)'
+          }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
+              <Loader2 size={24} className="spin" style={{ color: '#3b82f6' }} />
+              <div style={{ flex: 1 }}>
+                <div style={{ fontWeight: '500', color: 'var(--text-color)', marginBottom: '0.25rem' }}>
+                  Scaling {bulkScalingProgress.current} of {bulkScalingProgress.total}
+                </div>
+                <div style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
+                  {bulkScalingProgress.currentName}
+                </div>
+                <div style={{ 
+                  marginTop: '0.5rem',
+                  height: '6px',
+                  borderRadius: '3px',
+                  backgroundColor: 'rgba(59, 130, 246, 0.2)',
+                  overflow: 'hidden'
+                }}>
+                  <div style={{
+                    width: `${(bulkScalingProgress.current / bulkScalingProgress.total) * 100}%`,
+                    height: '100%',
+                    backgroundColor: '#3b82f6',
+                    transition: 'width 0.3s ease'
+                  }} />
+                </div>
+              </div>
+            </div>
+          </div>
+        ) : (
+          <div className="card" style={{ marginBottom: '1rem' }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '1rem' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
+                <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', cursor: 'pointer' }}>
+                  <input
+                    type="checkbox"
+                    checked={bulkScalingSelection.length === filteredPrerolls.length && filteredPrerolls.length > 0}
+                    onChange={(e) => e.target.checked ? selectAllFiltered() : clearSelection()}
+                    style={{ width: '16px', height: '16px' }}
+                  />
+                  <span style={{ fontSize: '0.9rem', color: 'var(--text-color)' }}>
+                    Select All ({filteredPrerolls.length})
+                  </span>
+                </label>
+                {bulkScalingSelection.length > 0 && (
+                  <button
+                    onClick={clearSelection}
+                    className="button button-secondary"
+                    style={{ padding: '0.35rem 0.75rem', fontSize: '0.8rem' }}
+                  >
+                    Clear ({bulkScalingSelection.length})
+                  </button>
+                )}
+              </div>
+              
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                <span style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>Scale to:</span>
+                <button
+                  onClick={() => handleBulkScale('1080p')}
+                  disabled={bulkScalingSelection.length === 0}
+                  className="button"
+                  style={{ 
+                    backgroundColor: '#3b82f6',
+                    opacity: bulkScalingSelection.length === 0 ? 0.5 : 1,
+                    padding: '0.5rem 1rem',
+                    fontSize: '0.85rem'
+                  }}
+                >
+                  <Video size={14} style={{ marginRight: '0.35rem' }} /> 1080p
+                </button>
+                <button
+                  onClick={() => handleBulkScale('720p')}
+                  disabled={bulkScalingSelection.length === 0}
+                  className="button"
+                  style={{ 
+                    backgroundColor: '#10b981',
+                    opacity: bulkScalingSelection.length === 0 ? 0.5 : 1,
+                    padding: '0.5rem 1rem',
+                    fontSize: '0.85rem'
+                  }}
+                >
+                  <Star size={14} style={{ marginRight: '0.35rem' }} /> 720p ⭐
+                </button>
+                <button
+                  onClick={() => handleBulkScale('480p')}
+                  disabled={bulkScalingSelection.length === 0}
+                  className="button"
+                  style={{ 
+                    backgroundColor: '#f59e0b',
+                    opacity: bulkScalingSelection.length === 0 ? 0.5 : 1,
+                    padding: '0.5rem 1rem',
+                    fontSize: '0.85rem'
+                  }}
+                >
+                  <Tv size={14} style={{ marginRight: '0.35rem' }} /> 480p
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+        
+        {/* Filter Info */}
+        {scalingFilterResolution && (
+          <div style={{ 
+            padding: '0.5rem 0.75rem', 
+            backgroundColor: 'rgba(99, 102, 241, 0.08)',
+            borderRadius: '6px',
+            marginBottom: '1rem',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between'
+          }}>
+            <span style={{ fontSize: '0.85rem', color: 'var(--text-color)' }}>
+              Showing {filteredPrerolls.length} prerolls at <strong>{scalingFilterResolution === 'unknown' ? 'Unknown resolution' : scalingFilterResolution}</strong>
+            </span>
+            <button
+              onClick={() => setScalingFilterResolution('')}
+              className="button button-secondary"
+              style={{ padding: '0.25rem 0.5rem', fontSize: '0.75rem' }}
+            >
+              Clear Filter
+            </button>
+          </div>
+        )}
+        
+        {/* Loading indicator */}
+        {loadingVideoInfo && (
+          <div style={{ 
+            padding: '0.5rem 0.75rem',
+            marginBottom: '1rem',
+            display: 'flex',
+            alignItems: 'center',
+            gap: '0.5rem',
+            fontSize: '0.85rem',
+            color: 'var(--text-secondary)'
+          }}>
+            <Loader2 size={14} className="spin" />
+            Loading video info...
+          </div>
+        )}
+        
+        {/* Preroll Grid */}
+        <div style={{ 
+          display: 'grid', 
+          gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', 
+          gap: '0.75rem' 
+        }}>
+          {filteredPrerolls.map(preroll => {
+            const info = scalingVideoInfoCache[preroll.id];
+            const isSelected = bulkScalingSelection.includes(preroll.id);
+            const resLabel = info && info.success ? getResolutionLabel(info.height) : null;
+            
+            return (
+              <div
+                key={preroll.id}
+                onClick={() => toggleSelection(preroll.id)}
+                className="card"
+                style={{
+                  padding: '0.75rem',
+                  cursor: 'pointer',
+                  border: isSelected ? '2px solid var(--button-bg)' : '1px solid var(--border-color)',
+                  backgroundColor: isSelected ? 'rgba(99, 102, 241, 0.08)' : 'var(--card-bg)',
+                  transition: 'all 0.15s'
+                }}
+              >
+                <div style={{ display: 'flex', gap: '0.75rem' }}>
+                  {/* Thumbnail */}
+                  <div style={{ 
+                    width: '80px', 
+                    height: '45px', 
+                    borderRadius: '4px', 
+                    overflow: 'hidden',
+                    backgroundColor: 'var(--bg-color)',
+                    flexShrink: 0,
+                    position: 'relative'
+                  }}>
+                    {preroll.thumbnail ? (
+                      <img
+                        src={apiUrl(`static/${preroll.thumbnail}`)}
+                        alt=""
+                        style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+                        onError={(e) => {
+                          try {
+                            const rel = preroll.thumbnail || '';
+                            const parts = rel.split('/');
+                            const category = parts[2] || 'Default';
+                            const filename = parts.slice(3).join('/') || (parts.length ? parts[parts.length - 1] : '');
+                            e.currentTarget.onerror = null;
+                            e.currentTarget.src = apiUrl(`thumbgen/${encodeURIComponent(category)}/${encodeURIComponent(filename)}`);
+                          } catch (_) {
+                            e.target.style.display = 'none';
+                          }
+                        }}
+                      />
+                    ) : (
+                      <div style={{ 
+                        width: '100%', 
+                        height: '100%', 
+                        display: 'flex', 
+                        alignItems: 'center', 
+                        justifyContent: 'center',
+                        color: 'var(--text-secondary)'
+                      }}>
+                        <Film size={20} />
+                      </div>
+                    )}
+                    {/* Checkbox overlay */}
+                    <div style={{
+                      position: 'absolute',
+                      top: '4px',
+                      left: '4px',
+                      width: '18px',
+                      height: '18px',
+                      borderRadius: '4px',
+                      backgroundColor: isSelected ? 'var(--button-bg)' : 'rgba(0,0,0,0.5)',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center'
+                    }}>
+                      {isSelected && <Check size={12} style={{ color: '#fff' }} />}
+                    </div>
+                  </div>
+                  
+                  {/* Info */}
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ 
+                      fontWeight: '500', 
+                      fontSize: '0.85rem', 
+                      color: 'var(--text-color)',
+                      whiteSpace: 'nowrap',
+                      overflow: 'hidden',
+                      textOverflow: 'ellipsis',
+                      marginBottom: '0.25rem'
+                    }}>
+                      {preroll.display_name || preroll.filename}
+                    </div>
+                    
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
+                      {info && info.success ? (
+                        <>
+                          <span style={{ 
+                            padding: '0.1rem 0.4rem', 
+                            borderRadius: '4px',
+                            fontSize: '0.7rem',
+                            fontWeight: '600',
+                            backgroundColor: resLabel === '4K' ? 'rgba(139, 92, 246, 0.15)' :
+                                           resLabel === '1080p' ? 'rgba(59, 130, 246, 0.15)' :
+                                           resLabel === '720p' ? 'rgba(16, 185, 129, 0.15)' :
+                                           resLabel === '480p' ? 'rgba(245, 158, 11, 0.15)' : 'rgba(239, 68, 68, 0.15)',
+                            color: resLabel === '4K' ? '#8b5cf6' :
+                                   resLabel === '1080p' ? '#3b82f6' :
+                                   resLabel === '720p' ? '#10b981' :
+                                   resLabel === '480p' ? '#f59e0b' : '#ef4444'
+                          }}>
+                            {info.width}×{info.height}
+                          </span>
+                          <span style={{ fontSize: '0.7rem', color: 'var(--text-secondary)' }}>
+                            {info.codec}
+                          </span>
+                        </>
+                      ) : info && info.success === false ? (
+                        <span style={{ fontSize: '0.7rem', color: '#ef4444' }} title={info.error || 'Failed to load video info'}>
+                          Unable to read
+                        </span>
+                      ) : (
+                        <span style={{ fontSize: '0.7rem', color: 'var(--text-secondary)' }}>
+                          <Loader2 size={10} className="spin" style={{ marginRight: '4px' }} />
+                          Loading...
+                        </span>
+                      )}
+                      
+                      {preroll.file_size && (
+                        <span style={{ fontSize: '0.7rem', color: 'var(--text-secondary)' }}>
+                          {(preroll.file_size / (1024 * 1024)).toFixed(1)} MB
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+        
+        {filteredPrerolls.length === 0 && (
+          <div className="card" style={{ textAlign: 'center', padding: '2rem', color: 'var(--text-secondary)' }}>
+            <Video size={32} style={{ opacity: 0.5, marginBottom: '0.5rem' }} />
+            <div>No prerolls found{scalingFilterResolution ? ` at ${scalingFilterResolution}` : ''}</div>
+          </div>
+        )}
+        
+        {/* Load More Info Button */}
+        {(() => {
+          const uncachedCount = scalablePrerolls.filter(p => !scalingVideoInfoCache[p.id]).length;
+          if (uncachedCount > 0 && !loadingVideoInfo) {
+            return (
+              <div style={{ textAlign: 'center', marginTop: '1rem' }}>
+                <button
+                  onClick={() => {
+                    const idsToLoad = scalablePrerolls
+                      .filter(p => !scalingVideoInfoCache[p.id])
+                      .map(p => p.id)
+                      .slice(0, 50);
+                    loadVideoInfoForPrerolls(idsToLoad);
+                  }}
+                  className="button button-secondary"
+                  style={{ padding: '0.5rem 1rem' }}
+                >
+                  <RefreshCw size={14} style={{ marginRight: '0.35rem' }} />
+                  Load Info for {Math.min(uncachedCount, 50)} More Prerolls
+                  {uncachedCount > 50 && ` (${uncachedCount} remaining)`}
+                </button>
+              </div>
+            );
+          }
+          return null;
+        })()}
+      </div>
+    );
+  };
+
+  // Dashboard Quick Actions Sub-Page
+  const renderDashboardQuickActions = () => (
     <div>
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '10px' }}>
-        <h1 className="header" style={{ margin: 0 }}>NeXroll Dashboard</h1>
-        <a 
-          href="https://github.com/JFLXCLOUD/NeXroll/stargazers" 
-          target="_blank" 
-          rel="noopener noreferrer"
-          style={{ textDecoration: 'none' }}
-        >
-          <img 
-            src="https://img.shields.io/github/stars/jflxcloud/nexroll?style=flat&color=grey&logo=github" 
-            alt="GitHub Stars"
-            style={{ height: '26px' }}
-          />
-        </a>
+      <div style={{ display: 'flex', alignItems: 'center', gap: '1rem', marginBottom: '1rem' }}>
+        <h1 className="header" style={{ margin: 0 }}>Quick Actions</h1>
       </div>
 
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: '1rem' }}>
+        {/* Apply to Plex/Jellyfin */}
+        <div className="card">
+          <h3 style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.75rem' }}>
+            <Target size={18} /> Apply to Server
+          </h3>
+          <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginBottom: '1rem' }}>
+            Apply the currently active category to your Plex or Jellyfin server.
+          </p>
+          <button
+            onClick={() => activeCategory && handleApplyCategoryToActiveServer(activeCategory.id, activeCategory.name)}
+            className="button"
+            disabled={!activeCategory}
+            style={{ width: '100%' }}
+          >
+            <Target size={14} style={{ marginRight: '0.35rem' }} />
+            {activeCategory ? `Apply "${activeCategory.name}"` : 'No Category Selected'}
+          </button>
+        </div>
+
+        {/* Refresh Thumbnails */}
+        <div className="card">
+          <h3 style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.75rem' }}>
+            <RefreshCw size={18} /> Regenerate Thumbnails
+          </h3>
+          <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginBottom: '1rem' }}>
+            Regenerate thumbnails for all prerolls in your library.
+          </p>
+          <button
+            onClick={handleReinitThumbnails}
+            className="button button-secondary"
+            disabled={thumbnailProgress && thumbnailProgress.phase === 'init'}
+            style={{ width: '100%' }}
+          >
+            {thumbnailProgress && thumbnailProgress.phase === 'init' ? (
+              <><Loader2 size={14} className="spin" style={{ marginRight: '0.35rem' }} /> Rebuilding...</>
+            ) : (
+              <><RefreshCw size={14} style={{ marginRight: '0.35rem' }} /> Reinitialize Thumbnails</>
+            )}
+          </button>
+          {thumbnailProgress && (
+            <div style={{ 
+              marginTop: '0.75rem', 
+              padding: '0.5rem 0.75rem', 
+              backgroundColor: 'var(--bg-color)', 
+              borderRadius: '6px',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '0.5rem',
+              fontSize: '0.9rem',
+              color: thumbnailProgress.phase === 'error' ? '#dc3545' : 
+                     thumbnailProgress.phase === 'done' ? '#28a745' : 'var(--text-secondary)'
+            }}>
+              {thumbnailProgress.phase === 'init' && (
+                <Loader2 size={16} className="spin" style={{ color: '#ffc230' }} />
+              )}
+              {thumbnailProgress.phase === 'done' && (
+                <Check size={16} style={{ color: '#28a745' }} />
+              )}
+              {thumbnailProgress.phase === 'error' && (
+                <AlertTriangle size={16} style={{ color: '#dc3545' }} />
+              )}
+              {thumbnailProgress.status}
+            </div>
+          )}
+        </div>
+
+        {/* Sync with Server */}
+        <div className="card">
+          <h3 style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.75rem' }}>
+            <RefreshCcw size={18} /> Sync Library
+          </h3>
+          <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginBottom: '1rem' }}>
+            Refresh all data from the backend - prerolls, categories, schedules.
+          </p>
+          <button
+            onClick={async () => {
+              if (librarySyncProgress?.phase === 'init') return;
+              setLibrarySyncProgress({ status: 'Syncing...', phase: 'init' });
+              try {
+                await fetchData();
+                setLibrarySyncProgress({ status: 'Synced!', phase: 'done' });
+                setTimeout(() => setLibrarySyncProgress(null), 3000);
+              } catch (err) {
+                setLibrarySyncProgress({ status: 'Sync failed', phase: 'error' });
+                setTimeout(() => setLibrarySyncProgress(null), 5000);
+              }
+            }}
+            disabled={librarySyncProgress?.phase === 'init'}
+            className="button button-secondary"
+            style={{ width: '100%' }}
+          >
+            {librarySyncProgress?.phase === 'init' ? (
+              <Loader2 size={14} className="spin" style={{ marginRight: '0.35rem' }} />
+            ) : (
+              <RefreshCcw size={14} style={{ marginRight: '0.35rem' }} />
+            )}
+            {librarySyncProgress?.phase === 'init' ? 'Syncing...' : 'Refresh All Data'}
+          </button>
+          {librarySyncProgress && (
+            <div style={{
+              marginTop: '0.5rem',
+              padding: '0.5rem',
+              borderRadius: '6px',
+              backgroundColor: 'var(--bg-color)',
+              fontSize: '0.8rem',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '0.5rem',
+              color: librarySyncProgress.phase === 'error' ? '#dc3545' : (librarySyncProgress.phase === 'done' ? '#28a745' : 'var(--text-secondary)')
+            }}>
+              {librarySyncProgress.phase === 'init' && (
+                <Loader2 size={16} className="spin" style={{ color: '#f0ad4e' }} />
+              )}
+              {librarySyncProgress.phase === 'done' && (
+                <Check size={16} style={{ color: '#28a745' }} />
+              )}
+              {librarySyncProgress.phase === 'error' && (
+                <AlertTriangle size={16} style={{ color: '#dc3545' }} />
+              )}
+              {librarySyncProgress.status}
+            </div>
+          )}
+        </div>
+
+        {/* Navigate to Categories */}
+        <div className="card">
+          <h3 style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.75rem' }}>
+            <Folder size={18} /> Manage Categories
+          </h3>
+          <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginBottom: '1rem' }}>
+            Create, edit, and organize your preroll categories.
+          </p>
+          <button
+            onClick={() => setActiveTab('categories')}
+            className="button button-secondary"
+            style={{ width: '100%' }}
+          >
+            <Folder size={14} style={{ marginRight: '0.35rem' }} />
+            Go to Categories
+          </button>
+        </div>
+
+        {/* Navigate to Schedules */}
+        <div className="card">
+          <h3 style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.75rem' }}>
+            <Calendar size={18} /> Manage Schedules
+          </h3>
+          <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginBottom: '1rem' }}>
+            Create and manage automated schedule rotations.
+          </p>
+          <button
+            onClick={() => setActiveTab('schedules')}
+            className="button button-secondary"
+            style={{ width: '100%' }}
+          >
+            <Calendar size={14} style={{ marginRight: '0.35rem' }} />
+            Go to Schedules
+          </button>
+        </div>
+
+        {/* NeX-Up Sync */}
+        <div className="card">
+          <h3 style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.75rem' }}>
+            <Clapperboard size={18} /> NeX-Up Sync
+          </h3>
+          <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginBottom: '1rem' }}>
+            Sync trailers from both Radarr and Sonarr.
+          </p>
+          <button
+            onClick={async () => {
+              if (nexupSyncProgress?.phase === 'init') return;
+              setNexupSyncProgress({ status: 'Syncing Radarr...', phase: 'init' });
+              let radarrResult = null;
+              let sonarrResult = null;
+              let radarrError = null;
+              let sonarrError = null;
+              
+              // Sync Radarr
+              try {
+                const res = await fetch(apiUrl('/nexup/sync'), { method: 'POST' });
+                if (res.ok) {
+                  radarrResult = await res.json();
+                } else {
+                  const err = await res.json().catch(() => ({}));
+                  radarrError = err.detail || 'Radarr sync failed';
+                }
+              } catch (e) {
+                radarrError = e.message || 'Radarr sync failed';
+              }
+              
+              // Sync Sonarr
+              setNexupSyncProgress({ status: 'Syncing Sonarr...', phase: 'init' });
+              try {
+                const res = await fetch(apiUrl('/nexup/sonarr/sync'), { method: 'POST' });
+                if (res.ok) {
+                  sonarrResult = await res.json();
+                } else {
+                  const err = await res.json().catch(() => ({}));
+                  sonarrError = err.detail || 'Sonarr sync failed';
+                }
+              } catch (e) {
+                sonarrError = e.message || 'Sonarr sync failed';
+              }
+              
+              // Build summary
+              const radarrDownloaded = radarrResult?.downloaded || 0;
+              const sonarrDownloaded = sonarrResult?.downloaded || 0;
+              const totalDownloaded = radarrDownloaded + sonarrDownloaded;
+              
+              // Check for YouTube bot block/cookie errors in the results
+              const radarrCookieError = radarrResult?.errors?.some(e => e.includes('bot detection') || e.includes('⚠️') || e.includes('cookies'));
+              const sonarrCookieError = sonarrResult?.errors?.some(e => e.includes('bot detection') || e.includes('⚠️') || e.includes('cookies'));
+              const hasCookieError = radarrCookieError || sonarrCookieError;
+              
+              if (radarrError && sonarrError) {
+                setNexupSyncProgress({ status: 'Both syncs failed', phase: 'error' });
+              } else if (hasCookieError) {
+                setNexupSyncProgress({ 
+                  status: `⚠️ YouTube blocked - re-export cookies from Incognito (login → robots.txt → export)`, 
+                  phase: 'error',
+                  cookieError: true
+                });
+              } else if (radarrError || sonarrError) {
+                setNexupSyncProgress({ 
+                  status: `Done! ${totalDownloaded} trailers (${radarrError ? 'Radarr failed' : 'Sonarr failed'})`, 
+                  phase: 'done' 
+                });
+              } else {
+                setNexupSyncProgress({ 
+                  status: `Done! ${totalDownloaded} new trailers (${radarrDownloaded} movies, ${sonarrDownloaded} TV)`, 
+                  phase: 'done' 
+                });
+              }
+              setTimeout(() => setNexupSyncProgress(null), hasCookieError ? 15000 : 5000);
+            }}
+            disabled={nexupSyncProgress?.phase === 'init'}
+            className="button button-secondary"
+            style={{ width: '100%' }}
+          >
+            {nexupSyncProgress?.phase === 'init' ? (
+              <Loader2 size={14} className="spin" style={{ marginRight: '0.35rem' }} />
+            ) : (
+              <Download size={14} style={{ marginRight: '0.35rem' }} />
+            )}
+            {nexupSyncProgress?.phase === 'init' ? 'Syncing...' : 'Sync All Trailers'}
+          </button>
+          {nexupSyncProgress && (
+            <div style={{
+              marginTop: '0.5rem',
+              padding: '0.5rem',
+              borderRadius: '6px',
+              backgroundColor: 'var(--bg-color)',
+              fontSize: '0.8rem',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '0.5rem',
+              color: nexupSyncProgress.phase === 'error' ? '#dc3545' : (nexupSyncProgress.phase === 'done' ? '#28a745' : 'var(--text-secondary)')
+            }}>
+              {nexupSyncProgress.phase === 'init' && (
+                <Loader2 size={16} className="spin" style={{ color: '#f0ad4e' }} />
+              )}
+              {nexupSyncProgress.phase === 'done' && (
+                <Check size={16} style={{ color: '#28a745' }} />
+              )}
+              {nexupSyncProgress.phase === 'error' && (
+                <AlertTriangle size={16} style={{ color: '#dc3545' }} />
+              )}
+              {nexupSyncProgress.status}
+            </div>
+          )}
+        </div>
+
+        {/* Check for Updates */}
+        <div className="card">
+          <h3 style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.75rem' }}>
+            <RefreshCw size={18} /> Check for Updates
+          </h3>
+          <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginBottom: '1rem' }}>
+            Check if a new version of NeXroll is available.
+          </p>
+          <button
+            onClick={async () => {
+              if (updateCheckProgress?.phase === 'init') return;
+              setUpdateCheckProgress({ status: 'Checking GitHub...', phase: 'init' });
+              try {
+                // Clear cache to force fresh check
+                localStorage.removeItem('nx_update_checked_at');
+                localStorage.removeItem('nx_latest_release_info');
+                
+                const res = await fetch('https://api.github.com/repos/JFLXCLOUD/NeXroll/releases/latest', {
+                  headers: { 'Accept': 'application/vnd.github+json' }
+                });
+                
+                if (!res.ok) throw new Error('Failed to check GitHub');
+                
+                const data = await res.json();
+                const latestVersion = (data.tag_name || '').replace(/^v/, '');
+                const currentVersion = systemVersion?.version || '0.0.0';
+                
+                // Simple version comparison
+                const isNewer = latestVersion.localeCompare(currentVersion, undefined, { numeric: true }) > 0;
+                
+                if (isNewer) {
+                  setUpdateCheckProgress({ status: `Update available: v${latestVersion}`, phase: 'done' });
+                  setUpdateInfo({ version: latestVersion, url: data.html_url, name: data.name });
+                  setShowUpdateBanner(true);
+                } else {
+                  setUpdateCheckProgress({ status: `You're up to date! (v${currentVersion})`, phase: 'done' });
+                }
+                setTimeout(() => setUpdateCheckProgress(null), 5000);
+              } catch (err) {
+                setUpdateCheckProgress({ status: 'Check failed: ' + (err.message || err), phase: 'error' });
+                setTimeout(() => setUpdateCheckProgress(null), 5000);
+              }
+            }}
+            disabled={updateCheckProgress?.phase === 'init'}
+            className="button button-secondary"
+            style={{ width: '100%' }}
+          >
+            {updateCheckProgress?.phase === 'init' ? (
+              <Loader2 size={14} className="spin" style={{ marginRight: '0.35rem' }} />
+            ) : (
+              <RefreshCw size={14} style={{ marginRight: '0.35rem' }} />
+            )}
+            {updateCheckProgress?.phase === 'init' ? 'Checking...' : 'Check for Updates'}
+          </button>
+          {updateCheckProgress && (
+            <div style={{
+              marginTop: '0.5rem',
+              padding: '0.5rem',
+              borderRadius: '6px',
+              backgroundColor: 'var(--bg-color)',
+              fontSize: '0.8rem',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '0.5rem',
+              color: updateCheckProgress.phase === 'error' ? '#dc3545' : (updateCheckProgress.phase === 'done' ? '#28a745' : 'var(--text-secondary)')
+            }}>
+              {updateCheckProgress.phase === 'init' && (
+                <Loader2 size={16} className="spin" style={{ color: '#f0ad4e' }} />
+              )}
+              {updateCheckProgress.phase === 'done' && (
+                <Check size={16} style={{ color: '#28a745' }} />
+              )}
+              {updateCheckProgress.phase === 'error' && (
+                <AlertTriangle size={16} style={{ color: '#dc3545' }} />
+              )}
+              {updateCheckProgress.status}
+            </div>
+          )}
+        </div>
+
+        {/* Community Prerolls */}
+        <div className="card">
+          <h3 style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.75rem' }}>
+            <Users2 size={18} /> Community Prerolls
+          </h3>
+          <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginBottom: '1rem' }}>
+            Discover and download prerolls shared by the community.
+          </p>
+          <button
+            onClick={() => setActiveTab('community-prerolls')}
+            className="button button-secondary"
+            style={{ width: '100%' }}
+          >
+            <Users2 size={14} style={{ marginRight: '0.35rem' }} />
+            Browse Community
+          </button>
+        </div>
+
+        {/* Build Community Index */}
+        <div className="card">
+          <h3 style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.75rem' }}>
+            <Zap size={18} /> Community Index
+          </h3>
+          <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginBottom: '1rem' }}>
+            Build/refresh the community prerolls index for faster searches.
+          </p>
+          <button
+            onClick={async () => {
+              if (communityIndexProgress?.phase === 'init' || communityIsBuilding) return;
+              setCommunityIndexProgress({ status: 'Building index...', phase: 'init' });
+              setCommunityIsBuilding(true);
+              setCommunityBuildProgress({
+                progress: 0,
+                current_dir: '',
+                files_found: 0,
+                dirs_visited: 0,
+                message: 'Starting...'
+              });
+              
+              // Start listening to progress updates via SSE
+              const eventSource = new EventSource(apiUrl('community-prerolls/build-progress'));
+              
+              eventSource.onmessage = (event) => {
+                const data = JSON.parse(event.data);
+                setCommunityBuildProgress(data);
+                setCommunityIndexProgress({ 
+                  status: data.message || `${data.progress}% - ${data.files_found} files found`, 
+                  phase: 'init' 
+                });
+                
+                if (!data.building && data.progress === 100) {
+                  eventSource.close();
+                  setTimeout(() => {
+                    setCommunityBuildProgress(null);
+                  }, 1000);
+                }
+              };
+              
+              eventSource.onerror = (error) => {
+                console.error('SSE error:', error);
+                eventSource.close();
+                setCommunityBuildProgress(null);
+                setCommunityIsBuilding(false);
+                setCommunityIndexProgress({ status: 'Index build failed', phase: 'error' });
+                setTimeout(() => setCommunityIndexProgress(null), 5000);
+              };
+              
+              try {
+                const response = await fetch(apiUrl('community-prerolls/build-index'));
+                
+                if (response.status === 429) {
+                  const error = await response.json();
+                  eventSource.close();
+                  setCommunityBuildProgress(null);
+                  setCommunityIsBuilding(false);
+                  setCommunityIndexProgress({ status: error.detail || 'Please wait before rebuilding', phase: 'error' });
+                  setTimeout(() => setCommunityIndexProgress(null), 5000);
+                  return;
+                }
+                
+                const data = await response.json();
+                
+                setTimeout(() => {
+                  setCommunityIsBuilding(false);
+                  setCommunityIndexProgress({ 
+                    status: `Done! ${data.total_prerolls} prerolls indexed`, 
+                    phase: 'done' 
+                  });
+                  fetchData(); // Refresh to get new index status
+                  setTimeout(() => setCommunityIndexProgress(null), 5000);
+                }, 1500);
+                
+              } catch (error) {
+                setCommunityBuildProgress(null);
+                eventSource.close();
+                setCommunityIsBuilding(false);
+                setCommunityIndexProgress({ status: `Failed: ${error.message}`, phase: 'error' });
+                setTimeout(() => setCommunityIndexProgress(null), 5000);
+              }
+            }}
+            disabled={communityIndexProgress?.phase === 'init' || communityIsBuilding}
+            className="button button-secondary"
+            style={{ width: '100%' }}
+          >
+            {(communityIndexProgress?.phase === 'init' || communityIsBuilding) ? (
+              <Loader2 size={14} className="spin" style={{ marginRight: '0.35rem' }} />
+            ) : (
+              <Zap size={14} style={{ marginRight: '0.35rem' }} />
+            )}
+            {(communityIndexProgress?.phase === 'init' || communityIsBuilding) ? 'Building...' : (communityIndexStatus?.exists ? 'Refresh Index' : 'Build Index')}
+          </button>
+          {communityIndexProgress && (
+            <div style={{
+              marginTop: '0.5rem',
+              padding: '0.5rem',
+              borderRadius: '6px',
+              backgroundColor: 'var(--bg-color)',
+              fontSize: '0.8rem',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '0.5rem',
+              color: communityIndexProgress.phase === 'error' ? '#dc3545' : (communityIndexProgress.phase === 'done' ? '#28a745' : 'var(--text-secondary)')
+            }}>
+              {communityIndexProgress.phase === 'init' && (
+                <Loader2 size={16} className="spin" style={{ color: '#f0ad4e' }} />
+              )}
+              {communityIndexProgress.phase === 'done' && (
+                <Check size={16} style={{ color: '#28a745' }} />
+              )}
+              {communityIndexProgress.phase === 'error' && (
+                <AlertTriangle size={16} style={{ color: '#dc3545' }} />
+              )}
+              {communityIndexProgress.status}
+            </div>
+          )}
+          {communityBuildProgress && communityIndexProgress?.phase === 'init' && (
+            <div style={{ marginTop: '0.5rem' }}>
+              <div style={{
+                height: '4px',
+                backgroundColor: 'var(--border-color)',
+                borderRadius: '2px',
+                overflow: 'hidden'
+              }}>
+                <div style={{
+                  height: '100%',
+                  width: `${communityBuildProgress.progress}%`,
+                  backgroundColor: '#14B8A6',
+                  transition: 'width 0.3s ease'
+                }} />
+              </div>
+              <div style={{ fontSize: '0.7rem', color: 'var(--text-secondary)', marginTop: '0.25rem' }}>
+                {communityBuildProgress.files_found} files • {communityBuildProgress.dirs_visited} dirs
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* Settings */}
+        <div className="card">
+          <h3 style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.75rem' }}>
+            <Settings size={18} /> Settings
+          </h3>
+          <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginBottom: '1rem' }}>
+            Configure paths, backup/restore, and app preferences.
+          </p>
+          <button
+            onClick={() => setActiveTab('settings')}
+            className="button button-secondary"
+            style={{ width: '100%' }}
+          >
+            <Settings size={14} style={{ marginRight: '0.35rem' }} />
+            Go to Settings
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+
+  // Dashboard Overview Sub-Page (Tiles)
+  const renderDashboardOverview = () => (
+    <div>
  
       <div className="card nx-dashboard-controls" style={{ marginBottom: '10px' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem', flexWrap: 'wrap' }}>
@@ -3826,20 +5730,25 @@ const DashboardTiles = {
               Drag to rearrange — lock to save
             </span>
           )}
-          <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: '0.6rem' }}>
-            <button
-              onClick={toggleTheme}
-              className="button"
-              title={darkMode ? 'Switch to Light Mode' : 'Switch to Dark Mode'}
-              style={{
-                padding: '6px 12px',
-                fontSize: '0.85rem',
-                minWidth: 'auto'
-              }}
-            >
-              {darkMode ? <><Sun size={14} style={{marginRight: '0.35rem'}} /> Light</> : <><Moon size={14} style={{marginRight: '0.35rem'}} /> Dark</>}
-            </button>
-          </div>
+          {!dashLayout.locked && (dashLayout?.hidden || []).length > 0 && (
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginLeft: '1rem' }}>
+              <span style={{ fontSize: '0.78rem', color: 'var(--text-secondary)' }}>Hidden tiles:</span>
+              {(dashLayout?.hidden || []).map(tileKey => (
+                <button
+                  key={tileKey}
+                  onClick={() => {
+                    const newHidden = (dashLayout.hidden || []).filter(h => h !== tileKey);
+                    setDashLayout({ ...dashLayout, hidden: newHidden });
+                  }}
+                  className="button button-secondary"
+                  style={{ padding: '2px 8px', fontSize: '0.72rem', display: 'flex', alignItems: 'center', gap: '4px' }}
+                  title={`Show ${tileKey} tile`}
+                >
+                  <Plus size={12} /> {tileKey}
+                </button>
+              ))}
+            </div>
+          )}
         </div>
       </div>
 
@@ -3851,17 +5760,33 @@ const DashboardTiles = {
             gap: '1rem'
           }}>
             {visibleOrder.map((key) => (
-              <SortableTile key={key} id={key} disabled={dashLayout.locked}>
+              <SortableTile 
+                key={key} 
+                id={key} 
+                disabled={dashLayout.locked} 
+                span={TILE_SPANS[key] || 1}
+                onHide={(tileId) => {
+                  const newHidden = [...(dashLayout.hidden || []), tileId];
+                  setDashLayout({ ...dashLayout, hidden: newHidden });
+                }}
+              >
                 {DashboardTiles[key] ? DashboardTiles[key]() : null}
               </SortableTile>
             ))}
           </div>
         </SortableContext>
       </DndContext>
+    </div>
+  );
+
+  // Dashboard Add Prerolls Sub-Page
+  const renderDashboardAddPrerolls = () => (
+    <div>
+      <div style={{ display: 'flex', alignItems: 'center', gap: '1rem', marginBottom: '1rem' }}>
+        <h1 className="header" style={{ margin: 0 }}>Add Prerolls</h1>
+      </div>
 
       <div className="upload-section">
-        <h2>Add Prerolls</h2>
-
         {/* Tab buttons for Upload vs Import */}
         <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '1rem' }}>
           <button
@@ -4021,7 +5946,7 @@ const DashboardTiles = {
                 }}
               >
                 <option value="">Select Category</option>
-                {categories.map(cat => (
+                {[...categories].sort((a, b) => a.name.localeCompare(b.name)).map(cat => (
                   <option key={cat.id} value={cat.id}>{cat.name}</option>
                 ))}
               </select>
@@ -4371,6 +6296,15 @@ const DashboardTiles = {
           </div>
         )}
       </div>
+    </div>
+  );
+
+  // Dashboard Library Sub-Page (Prerolls list/grid)
+  const renderDashboardLibrary = () => (
+    <div>
+      <div style={{ display: 'flex', alignItems: 'center', gap: '1rem', marginBottom: '1rem' }}>
+        <h1 className="header" style={{ margin: 0 }}>Preroll Library</h1>
+      </div>
 
       <div className="card">
         <div className="prerolls-header">
@@ -4421,7 +6355,7 @@ const DashboardTiles = {
                 className="filter-select"
               >
                 <option value="">All Categories</option>
-                {categories.map(cat => (
+                {[...categories].sort((a, b) => a.name.localeCompare(b.name)).map(cat => (
                   <option key={cat.id} value={cat.id}>{cat.name}</option>
                 ))}
               </select>
@@ -4500,7 +6434,7 @@ const DashboardTiles = {
                 disabled={selectedPrerollIds.length === 0}
               >
                 <option value="">Set Category...</option>
-                {categories.map(cat => (
+                {[...categories].sort((a, b) => a.name.localeCompare(b.name)).map(cat => (
                   <option key={cat.id} value={cat.id}>{cat.name}</option>
                 ))}
               </select>
@@ -5538,12 +7472,22 @@ const DashboardTiles = {
       const hasExclusive = exclusiveScheds.length > 0;
       const blendScheds = contentScheds.filter(s => s.blend_enabled && !s.exclusive);
       const hasBlend = blendScheds.length > 1;
-      const hasConflict = contentScheds.length > 1;
+      
+      // Check for true conflicts - multiple schedules competing (NOT same-priority exclusive conflicts)
+      // Same-priority exclusive conflicts are handled separately by getScheduleConflicts
+      const hasConflict = contentScheds.length > 1 && !hasBlend;
+      
+      // Check if multiple exclusive schedules have the same priority (true conflict requiring random selection)
+      const hasSamePriorityExclusiveConflict = exclusiveScheds.length > 1 && (() => {
+        const priorities = exclusiveScheds.map(s => s.priority ?? 5);
+        const uniquePriorities = [...new Set(priorities)];
+        return uniquePriorities.length < exclusiveScheds.length; // Some have same priority
+      })();
       
       let winner = null;
       if (contentScheds.length > 0) {
         if (hasExclusive) {
-          // Exclusive schedule wins
+          // Exclusive schedule wins - sort by priority (higher wins)
           const sorted = [...exclusiveScheds].sort((a, b) => (b.priority ?? 5) - (a.priority ?? 5));
           winner = sorted[0];
         } else if (hasBlend) {
@@ -5569,7 +7513,8 @@ const DashboardTiles = {
         winner,
         hasConflict,
         hasBlend,
-        hasExclusive
+        hasExclusive,
+        hasSamePriorityExclusiveConflict
       });
     }
 
@@ -5685,6 +7630,8 @@ const DashboardTiles = {
                 const range = getTimeRange(sched);
                 const isAllDay = range.start === 0 && range.end === 24;
                 const timeStr = isAllDay ? 'All Day' : `${formatHour(Math.floor(range.start))} - ${range.wrapsOvernight ? formatHour(Math.floor(range.rawEnd)) + ' (next day)' : formatHour(Math.floor(range.end))}`;
+                const samePriorityConflicts = getScheduleConflicts(sched);
+                const hasSamePriorityConflict = samePriorityConflicts.length > 0;
                 return (
                   <div key={idx} style={{
                     display: 'flex',
@@ -5695,9 +7642,14 @@ const DashboardTiles = {
                     borderRadius: '6px',
                     color: '#fff',
                     fontSize: '0.8rem',
-                    fontWeight: 500
-                  }}>
-                    {sched.exclusive && <Lock size={12} />}
+                    fontWeight: 500,
+                    border: hasSamePriorityConflict ? '2px solid #ff9800' : 'none',
+                    boxShadow: hasSamePriorityConflict ? '0 0 8px rgba(255, 152, 0, 0.5)' : 'none'
+                  }}
+                  title={hasSamePriorityConflict ? `⚠️ Same priority conflict with: ${samePriorityConflicts.map(c => c.schedule.name).join(', ')}\n\nBoth schedules are exclusive with the same priority.\nNeXroll will randomly pick one during overlapping times.\nSet different priorities to have deterministic behavior.` : ''}
+                  >
+                    {hasSamePriorityConflict && <AlertTriangle size={12} style={{ color: '#ffeb3b' }} />}
+                    {sched.exclusive && !hasSamePriorityConflict && <Lock size={12} />}
                     {sched.blend_enabled && !sched.exclusive && <Shuffle size={12} />}
                     <span>{sched.name}</span>
                     <span style={{ opacity: 0.8, fontSize: '0.75rem' }}>({timeStr})</span>
@@ -5773,17 +7725,47 @@ const DashboardTiles = {
                     const isWinner = hourData.winner === sched || (hourData.hasBlend && sched.blend_enabled);
                     const isExclusive = sched.exclusive;
                     const isBlending = hourData.hasBlend && sched.blend_enabled;
-                    const isLoser = hourData.hasConflict && !isWinner && !isBlending && !isExclusive;
+                    
+                    // Check for same-priority exclusive conflicts (random selection)
+                    const samePriorityConflicts = getScheduleConflicts(sched);
+                    const hasSamePriorityConflict = samePriorityConflicts.length > 0;
+                    
+                    // An exclusive schedule is a "loser" if it's not the winner AND there's another exclusive with higher priority
+                    // (Different from same-priority conflict where it's random)
+                    const isExclusiveLoser = isExclusive && !isWinner && hourData.hasExclusive && !hasSamePriorityConflict;
+                    
+                    // A non-exclusive schedule loses to any exclusive or higher priority schedule
+                    const isNonExclusiveLoser = !isExclusive && hourData.hasConflict && !isWinner && !isBlending;
+                    
+                    // Combined loser check
+                    const isLoser = isExclusiveLoser || isNonExclusiveLoser;
+                    
+                    // For same-priority conflicts, the non-winner is shown differently (random selection)
+                    const isSamePriorityLoser = hasSamePriorityConflict && !isWinner;
                     
                     // Get category/sequence info
                     const categoryName = sched.category_id 
                       ? (categories.find(c => c.id === sched.category_id)?.name || 'Unknown')
                       : (sched.sequence ? 'Sequence' : 'Unknown');
                     
+                    // Build tooltip
+                    let tooltipText = `${sched.name}\nCategory: ${categoryName}\nType: ${sched.type}\nPriority: ${sched.priority ?? 5}`;
+                    if (hasSamePriorityConflict) {
+                      tooltipText += `\n\n⚠️ SAME PRIORITY CONFLICT\nConflicts with: ${samePriorityConflicts.map(c => c.schedule.name).join(', ')}\n${isWinner ? '👑 Currently selected (random)' : '❌ Not selected (random)'}\nSet different priorities for deterministic behavior.`;
+                    } else if (isExclusive && isWinner) {
+                      tooltipText += '\n\n🔒 EXCLUSIVE - ACTIVE\nHighest priority exclusive schedule';
+                    } else if (isExclusive && isLoser) {
+                      tooltipText += '\n\n❌ OVERRIDDEN\nAnother exclusive schedule has higher priority';
+                    } else if (isBlending) {
+                      tooltipText += '\n🔀 Blending with other schedules';
+                    } else if (isLoser) {
+                      tooltipText += '\n⚠️ Overridden by higher priority schedule';
+                    }
+                    
                     return (
                       <div 
                         key={sIdx}
-                        title={`${sched.name}\nCategory: ${categoryName}\nType: ${sched.type}${isExclusive ? '\n🔒 Exclusive - overrides other schedules' : ''}${isBlending ? '\n🔀 Blending with other schedules' : ''}${isLoser ? '\n⚠️ Overridden by higher priority schedule' : ''}`}
+                        title={tooltipText}
                         style={{
                           display: 'flex',
                           alignItems: 'center',
@@ -5794,26 +7776,31 @@ const DashboardTiles = {
                           color: '#fff',
                           fontSize: '0.8rem',
                           fontWeight: 500,
-                          opacity: isLoser ? 0.5 : 1,
-                          textDecoration: isLoser ? 'line-through' : 'none',
-                          border: isExclusive 
-                            ? '2px solid rgba(20, 184, 166, 0.8)' 
-                            : isWinner && hourData.hasConflict && !isBlending
-                              ? '2px solid rgba(255, 215, 0, 0.8)'
-                              : isBlending
-                                ? '2px solid rgba(139, 92, 246, 0.8)'
-                                : 'none',
-                          boxShadow: isExclusive 
-                            ? '0 0 8px rgba(20, 184, 166, 0.4)' 
-                            : isWinner && hourData.hasConflict 
-                              ? '0 0 8px rgba(255, 215, 0, 0.4)'
-                              : 'none'
+                          opacity: (isLoser || isSamePriorityLoser) ? 0.5 : 1,
+                          textDecoration: (isLoser || isSamePriorityLoser) ? 'line-through' : 'none',
+                          border: hasSamePriorityConflict
+                            ? '2px solid rgba(255, 152, 0, 0.9)'
+                            : isExclusive 
+                              ? '2px solid rgba(20, 184, 166, 0.8)' 
+                              : isWinner && hourData.hasConflict && !isBlending
+                                ? '2px solid rgba(255, 215, 0, 0.8)'
+                                : isBlending
+                                  ? '2px solid rgba(139, 92, 246, 0.8)'
+                                  : 'none',
+                          boxShadow: hasSamePriorityConflict
+                            ? (isSamePriorityLoser ? 'none' : '0 0 8px rgba(255, 152, 0, 0.5)')
+                            : isExclusive 
+                              ? '0 0 8px rgba(20, 184, 166, 0.4)' 
+                              : isWinner && hourData.hasConflict 
+                                ? '0 0 8px rgba(255, 215, 0, 0.4)'
+                                : 'none'
                         }}
                       >
-                        {isExclusive && <Lock size={12} />}
-                        {isWinner && hourData.hasConflict && !isExclusive && !isBlending && <Crown size={12} />}
+                        {hasSamePriorityConflict && <AlertTriangle size={12} style={{ color: isSamePriorityLoser ? '#fff' : '#ffeb3b' }} />}
+                        {isExclusive && !hasSamePriorityConflict && <Lock size={12} />}
+                        {isWinner && hourData.hasConflict && !isExclusive && !isBlending && !hasSamePriorityConflict && <Crown size={12} />}
                         {isBlending && <Shuffle size={12} />}
-                        {isLoser && <AlertTriangle size={12} />}
+                        {isLoser && !hasSamePriorityConflict && <AlertTriangle size={12} />}
                         <span>{sched.name}</span>
                         <span style={{ 
                           opacity: 0.8, 
@@ -6270,6 +8257,10 @@ const DashboardTiles = {
               } catch (e) {}
             }
             
+            // Check for same-priority exclusive conflicts
+            const samePriorityConflicts = getScheduleConflicts(sched);
+            const hasSamePriorityConflict = samePriorityConflicts.length > 0;
+            
             return (
               <div key={idx} style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
                 <div style={{ 
@@ -6280,8 +8271,12 @@ const DashboardTiles = {
                   display: 'flex',
                   alignItems: 'center',
                   gap: '6px'
-                }}>
-                  {hasAnyExclusivesForSched ? (() => {
+                }}
+                title={hasSamePriorityConflict ? `⚠️ Same priority conflict with: ${samePriorityConflicts.map(c => c.schedule.name).join(', ')}\n\nBoth schedules are exclusive with the same priority.\nNeXroll will randomly pick one during overlapping times.\nSet different priorities to have deterministic behavior.` : ''}
+                >
+                  {hasSamePriorityConflict ? (
+                    <AlertTriangle size={14} style={{ color: '#ff9800', flexShrink: 0 }} title={`Same priority conflict with: ${samePriorityConflicts.map(c => c.schedule.name).join(', ')}`} />
+                  ) : hasAnyExclusivesForSched ? (() => {
                     // Get time range if available
                     let timeRangeStr = schedTimeRange ? ` (${schedTimeRange})` : '';
                     return <Lock size={14} style={{ color: '#14B8A6', flexShrink: 0 }} title={`Exclusive - wins over other schedules${timeRangeStr ? ' during ' + timeRangeStr : ''}`} />;
@@ -6507,15 +8502,29 @@ const DashboardTiles = {
             
             if (spans.length === 0) return null;
             
+            // Check for same-priority exclusive conflicts
+            const samePriorityConflicts = getScheduleConflicts(sched);
+            const hasSamePriorityConflict = samePriorityConflicts.length > 0;
+            
             return (
               <div key={idx} style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
                 <div style={{ 
                   minWidth: '150px', 
                   fontWeight: 500, 
                   fontSize: '0.9rem',
-                  color: 'var(--text-color)'
-                }}>{sched.name}</div>
-                <div style={{ flex: 1, position: 'relative', height: '32px', display: 'flex', border: '1px solid var(--border-color)', borderRadius: '4px' }}>
+                  color: 'var(--text-color)',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '6px'
+                }}
+                title={hasSamePriorityConflict ? `⚠️ Same priority conflict with: ${samePriorityConflicts.map(c => c.schedule.name).join(', ')}\n\nBoth schedules are exclusive with the same priority.\nNeXroll will randomly pick one during overlapping times.\nSet different priorities to have deterministic behavior.` : ''}
+                >
+                  {hasSamePriorityConflict && <AlertTriangle size={14} style={{ color: '#ff9800', flexShrink: 0 }} />}
+                  {sched.exclusive && !hasSamePriorityConflict && <Lock size={14} style={{ color: '#14B8A6', flexShrink: 0 }} />}
+                  {sched.blend_enabled && !sched.exclusive && <Shuffle size={14} style={{ color: '#8b5cf6', flexShrink: 0 }} />}
+                  {sched.name}
+                </div>
+                <div style={{ flex: 1, position: 'relative', height: '32px', display: 'flex', border: hasSamePriorityConflict ? '2px solid #ff9800' : '1px solid var(--border-color)', borderRadius: '4px' }}>
                   {days.map((day, dayIdx) => (
                     <div key={dayIdx} style={{ 
                       flex: 1, 
@@ -7208,6 +9217,10 @@ const DashboardTiles = {
                     const isInBlend = dayData.hasBlend && data.schedObjs.some(s => s.blend_enabled);
                     const isExclusive = dayData.hasExclusive && data.schedObjs.some(s => s.exclusive);
                     
+                    // Check for same-priority exclusive conflicts
+                    const samePriorityConflicts = data.schedObjs.filter(s => s.exclusive).flatMap(s => getScheduleConflicts(s));
+                    const hasSamePriorityConflict = samePriorityConflicts.length > 0;
+                    
                     // Check if this exclusive schedule has a time range (not full-day exclusive)
                     let exclusiveTimeRange = '';
                     let isTimeRestrictedExclusive = false;
@@ -7226,6 +9239,12 @@ const DashboardTiles = {
                     
                     // Full-day exclusive gets bold red styling; time-restricted exclusive gets subtle styling
                     const isFullDayExclusive = isExclusive && !isTimeRestrictedExclusive;
+                    
+                    // Add same-priority conflict warning to tooltip
+                    if (hasSamePriorityConflict) {
+                      const conflictNames = [...new Set(samePriorityConflicts.map(c => c.schedule.name))].join(', ');
+                      tooltipText += `\n\n⚠️ SAME PRIORITY CONFLICT with: ${conflictNames}\nNeXroll will randomly pick one. Set different priorities for deterministic behavior.`;
+                    }
                     
                     if (isExclusive) {
                       const timeRangeStr = exclusiveTimeRange ? ` during ${exclusiveTimeRange}` : '';
@@ -7252,13 +9271,15 @@ const DashboardTiles = {
                         backgroundColor: dayData.isFallback ? 'transparent' : (isInactive ? '#6c757d' : scheduleColor),
                         border: dayData.isFallback 
                           ? `2px dashed ${scheduleColor}` 
-                          : (isFullDayExclusive
-                            ? '2px solid rgba(239, 68, 68, 0.8)'
-                            : (isTimeRestrictedExclusive
-                              ? '1px dashed rgba(239, 68, 68, 0.5)'
-                              : (isInBlend 
-                                ? '2px solid rgba(139, 92, 246, 0.8)' 
-                                : (isWinner && dayData.hasConflict ? '2px solid rgba(255, 215, 0, 0.8)' : 'none')))),
+                          : (hasSamePriorityConflict
+                            ? '2px solid rgba(255, 152, 0, 0.9)'
+                            : (isFullDayExclusive
+                              ? '2px solid rgba(239, 68, 68, 0.8)'
+                              : (isTimeRestrictedExclusive
+                                ? '1px dashed rgba(239, 68, 68, 0.5)'
+                                : (isInBlend 
+                                  ? '2px solid rgba(139, 92, 246, 0.8)' 
+                                  : (isWinner && dayData.hasConflict ? '2px solid rgba(255, 215, 0, 0.8)' : 'none'))))),
                         color: dayData.isFallback ? scheduleColor : '#fff', 
                         borderRadius: '4px',
                         padding: '3px 6px', 
@@ -7269,13 +9290,15 @@ const DashboardTiles = {
                         textOverflow: 'ellipsis',
                         boxShadow: dayData.isFallback 
                           ? 'none' 
-                          : (isFullDayExclusive
-                              ? '0 2px 8px rgba(239, 68, 68, 0.4)'
-                              : (isInBlend
-                                  ? '0 2px 8px rgba(139, 92, 246, 0.4)'
-                                  : (isWinner && dayData.hasConflict 
-                                      ? '0 2px 8px rgba(255, 215, 0, 0.4)' 
-                                      : '0 1px 3px rgba(0,0,0,0.2)'))),
+                          : (hasSamePriorityConflict
+                              ? '0 2px 8px rgba(255, 152, 0, 0.5)'
+                              : (isFullDayExclusive
+                                ? '0 2px 8px rgba(239, 68, 68, 0.4)'
+                                : (isInBlend
+                                    ? '0 2px 8px rgba(139, 92, 246, 0.4)'
+                                    : (isWinner && dayData.hasConflict 
+                                        ? '0 2px 8px rgba(255, 215, 0, 0.4)' 
+                                        : '0 1px 3px rgba(0,0,0,0.2)')))),
                         opacity: dayData.isFallback 
                           ? 0.8 
                           : (dayData.hasConflict && !isWinner && !isInBlend && !isExclusive ? 0.5 : (isInactive ? 0.6 : 1)),
@@ -7284,12 +9307,13 @@ const DashboardTiles = {
                         alignItems: 'center',
                         gap: '3px'
                       }}>
-                        {isExclusive && <Lock size={10} style={{ flexShrink: 0, opacity: isTimeRestrictedExclusive ? 0.7 : 1 }} />}
+                        {hasSamePriorityConflict && <AlertTriangle size={10} style={{ flexShrink: 0, color: '#ffeb3b' }} />}
+                        {isExclusive && !hasSamePriorityConflict && <Lock size={10} style={{ flexShrink: 0, opacity: isTimeRestrictedExclusive ? 0.7 : 1 }} />}
                         {isExclusive && exclusiveTimeRange && (
                           <span style={{ fontSize: '0.55rem', opacity: 0.8, flexShrink: 0 }}>({exclusiveTimeRange})</span>
                         )}
                         {!isExclusive && isInBlend && <Shuffle size={10} style={{ flexShrink: 0 }} />}
-                        {!isExclusive && !isInBlend && isWinner && dayData.hasConflict && <Crown size={10} style={{ flexShrink: 0 }} />}
+                        {!isExclusive && !isInBlend && isWinner && dayData.hasConflict && !hasSamePriorityConflict && <Crown size={10} style={{ flexShrink: 0 }} />}
                         {isInactive && <Ban size={10} style={{ flexShrink: 0, opacity: 0.8 }} />}
                         <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>{displayName}</span>
                       </div>
@@ -8310,6 +10334,59 @@ const DashboardTiles = {
                     : 'Please select at least one day of the week'}
                 </p>
               </div>
+
+              {/* Time Range for Weekly Schedules */}
+              <div style={{ marginTop: '1.5rem' }}>
+                <label style={{ display: 'block', marginBottom: '0.75rem', fontSize: '0.95rem', fontWeight: 600, color: 'var(--text-color)' }}>
+                  <Clock size={16} style={{marginRight: '0.5rem', verticalAlign: 'middle'}} />
+                  Active Time Range (Optional)
+                </label>
+                <p style={{ fontSize: '0.85rem', color: '#666', marginBottom: '0.75rem' }}>
+                  Restrict this schedule to specific hours on the selected days. Leave empty to run all day.
+                </p>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
+                  <div>
+                    <label style={{ display: 'block', marginBottom: '0.25rem', fontSize: '0.85rem', color: 'var(--text-color)' }}>
+                      Start Time
+                    </label>
+                    <input
+                      type="time"
+                      value={timeRange.start || ''}
+                      onChange={(e) => setTimeRange({ ...timeRange, start: e.target.value })}
+                      style={{ 
+                        padding: '0.5rem', 
+                        borderRadius: '6px', 
+                        border: '2px solid var(--border-color)',
+                        width: '100%',
+                        fontSize: '0.95rem'
+                      }}
+                    />
+                  </div>
+                  <div>
+                    <label style={{ display: 'block', marginBottom: '0.25rem', fontSize: '0.85rem', color: 'var(--text-color)' }}>
+                      End Time
+                    </label>
+                    <input
+                      type="time"
+                      value={timeRange.end || ''}
+                      onChange={(e) => setTimeRange({ ...timeRange, end: e.target.value })}
+                      style={{ 
+                        padding: '0.5rem', 
+                        borderRadius: '6px', 
+                        border: '2px solid var(--border-color)',
+                        width: '100%',
+                        fontSize: '0.95rem'
+                      }}
+                    />
+                  </div>
+                </div>
+                {timeRange.start && timeRange.end && (
+                  <p style={{ fontSize: '0.85rem', color: '#28a745', marginTop: '0.5rem' }}>
+                    <Check size={14} style={{marginRight: '0.25rem', verticalAlign: 'middle'}} />
+                    Schedule active from {timeRange.start} to {timeRange.end}
+                  </p>
+                )}
+              </div>
             </div>
           )}
 
@@ -8494,7 +10571,7 @@ const DashboardTiles = {
                       }}
                     >
                       <option value="">Select a Category</option>
-                      {categories.map(cat => (
+                      {[...categories].sort((a, b) => a.name.localeCompare(b.name)).map(cat => (
                         <option key={cat.id} value={cat.id}>{cat.name}</option>
                       ))}
                     </select>
@@ -8640,15 +10717,18 @@ const DashboardTiles = {
                   <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'center' }}>
                     <select
                       className="nx-select"
-                      value=""
+                      value={loadedSavedSequenceId || ''}
                       onChange={(e) => {
                         if (e.target.value) {
                           const selectedSeq = savedSequences.find(s => s.id === parseInt(e.target.value));
                           if (selectedSeq) {
                             setSequenceBlocks(selectedSeq.blocks || []);
+                            setLoadedSavedSequenceId(parseInt(e.target.value));
                             showAlert(`Loaded sequence: ${selectedSeq.name}`, 'success');
-                            e.target.value = ''; // Reset dropdown
                           }
+                        } else {
+                          // User selected "-- Select a saved sequence --" (cleared)
+                          setLoadedSavedSequenceId(null);
                         }
                       }}
                       style={{ 
@@ -8666,11 +10746,12 @@ const DashboardTiles = {
                         </option>
                       ))}
                     </select>
-                    {sequenceBlocks.length > 0 && (
+                    {(sequenceBlocks.length > 0 || loadedSavedSequenceId) && (
                       <button
                         type="button"
                         onClick={() => {
                           setSequenceBlocks([]);
+                          setLoadedSavedSequenceId(null);
                           showAlert('Sequence cleared', 'info');
                         }}
                         className="button"
@@ -8701,6 +10782,7 @@ const DashboardTiles = {
                   scheduleId={null}
                   apiUrl={apiUrl}
                   onBlocksChange={setSequenceBlocks}
+                  hideNameSection={loadedSavedSequenceId !== null}
                   onSave={(name, description) => {
                     console.log('Sequence info:', name, description);
                   }}
@@ -8754,7 +10836,7 @@ const DashboardTiles = {
                   }}
                 >
                   <option value="">No Fallback</option>
-                  {categories.map(cat => (
+                  {[...categories].sort((a, b) => a.name.localeCompare(b.name)).map(cat => (
                     <option key={cat.id} value={cat.id}>{cat.name}</option>
                   ))}
                 </select>
@@ -8997,7 +11079,7 @@ const DashboardTiles = {
           paddingBottom: '1rem',
           borderBottom: '2px solid var(--border-color)'
         }}>
-          <h2 style={{ margin: 0 }}>Active Schedules</h2>
+          <h2 style={{ margin: 0 }}>Your Schedules</h2>
           <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'center' }}>
             {/* View Mode Toggle */}
             <div style={{ 
@@ -9118,11 +11200,10 @@ const DashboardTiles = {
               return matchesSearch && matchesType;
             });
 
-            // Calculate pagination
-            const totalPages = Math.ceil(filteredSchedules.length / schedulesPerPage);
-            const startIndex = (scheduleCurrentPage - 1) * schedulesPerPage;
-            const endIndex = startIndex + schedulesPerPage;
-            const paginatedSchedules = filteredSchedules.slice(startIndex, endIndex);
+            // Split into three groups
+            const runningSchedules = filteredSchedules.filter(s => activeScheduleIds.includes(s.id));
+            const enabledSchedules = filteredSchedules.filter(s => s.is_active && !activeScheduleIds.includes(s.id));
+            const disabledSchedules = filteredSchedules.filter(s => !s.is_active);
 
             // Show message if no schedules found
             if (filteredSchedules.length === 0) {
@@ -9146,9 +11227,8 @@ const DashboardTiles = {
               );
             }
 
-            return (
-              <>
-                {paginatedSchedules.map(schedule => {
+            // Helper to render a schedule card
+            const renderScheduleCard = (schedule) => {
             // Check if schedule is currently active using server-determined IDs
             // This ensures accuracy since the server knows exactly which schedules are active
             const isCurrentlyActive = activeScheduleIds.includes(schedule.id);
@@ -9288,6 +11368,31 @@ const DashboardTiles = {
                             <Lock size={12} /> Exclusive
                           </span>
                         )}
+                        {/* Schedule Conflict Warning */}
+                        {schedule.exclusive && (() => {
+                          const conflicts = getScheduleConflicts(schedule);
+                          if (conflicts.length > 0) {
+                            return (
+                              <span 
+                                style={{
+                                  backgroundColor: '#f59e0b',
+                                  color: 'white',
+                                  padding: '0.15rem 0.5rem',
+                                  borderRadius: '0.25rem',
+                                  fontWeight: 600,
+                                  display: 'inline-flex',
+                                  alignItems: 'center',
+                                  gap: '0.25rem',
+                                  cursor: 'help'
+                                }}
+                                title={`⚠️ Conflict with: ${conflicts.map(c => c.schedule.name).join(', ')}\n\nBoth schedules have the same priority (${schedule.priority || 5}) and are exclusive. NeXroll will randomly choose one during overlap.\n\nFix: Set different priorities for these schedules.`}
+                              >
+                                <AlertTriangle size={12} /> Conflict
+                              </span>
+                            );
+                          }
+                          return null;
+                        })()}
                         {(schedule.priority ?? 5) !== 5 && (
                           <span style={{
                             backgroundColor: (schedule.priority ?? 5) >= 8 ? '#ef4444' : (schedule.priority ?? 5) >= 5 ? '#14B8A6' : '#6b7280',
@@ -9517,6 +11622,33 @@ const DashboardTiles = {
                         <Lock size={14} /> Exclusive
                       </span>
                     )}
+                    
+                    {/* Schedule Conflict Warning (Detailed View) */}
+                    {schedule.exclusive && (() => {
+                      const conflicts = getScheduleConflicts(schedule);
+                      if (conflicts.length > 0) {
+                        return (
+                          <span 
+                            style={{
+                              backgroundColor: '#f59e0b',
+                              color: 'white',
+                              padding: '0.25rem 0.75rem',
+                              borderRadius: '0.25rem',
+                              fontSize: '0.8rem',
+                              fontWeight: 500,
+                              display: 'inline-flex',
+                              alignItems: 'center',
+                              gap: '0.25rem',
+                              cursor: 'help'
+                            }}
+                            title={`⚠️ Conflict with: ${conflicts.map(c => c.schedule.name).join(', ')}\n\nBoth schedules have the same priority (${schedule.priority || 5}) and are exclusive. NeXroll will randomly choose one during overlap.\n\nFix: Set different priorities for these schedules.`}
+                          >
+                            <AlertTriangle size={14} /> Conflict ({conflicts.length})
+                          </span>
+                        );
+                      }
+                      return null;
+                    })()}
 
                     {/* Priority Badge (only show if not default) */}
                     {(schedule.priority ?? 5) !== 5 && (
@@ -9644,86 +11776,78 @@ const DashboardTiles = {
                 </div>
               </div>
             );
-          })}
+            };
 
-                {/* Pagination Controls */}
-                {totalPages > 1 && (
-                  <div style={{ 
-                    display: 'flex', 
-                    justifyContent: 'center', 
-                    alignItems: 'center', 
-                    gap: '0.5rem',
-                    marginTop: '2rem',
-                    paddingTop: '1.5rem',
-                    borderTop: '1px solid var(--border-color)'
-                  }}>
-                    <button
-                      onClick={() => setScheduleCurrentPage(p => Math.max(1, p - 1))}
-                      disabled={scheduleCurrentPage === 1}
-                      style={{
-                        padding: '0.5rem 1rem',
-                        backgroundColor: scheduleCurrentPage === 1 ? 'var(--bg-color)' : 'var(--button-bg)',
-                        color: scheduleCurrentPage === 1 ? 'var(--text-secondary)' : 'white',
-                        border: '1px solid var(--border-color)',
-                        borderRadius: '0.375rem',
-                        fontSize: '0.9rem',
-                        fontWeight: 600,
-                        cursor: scheduleCurrentPage === 1 ? 'not-allowed' : 'pointer',
-                        opacity: scheduleCurrentPage === 1 ? 0.5 : 1
-                      }}
-                    >
-                      ← Previous
-                    </button>
-                    
-                    <div style={{ display: 'flex', gap: '0.25rem' }}>
-                      {Array.from({ length: totalPages }, (_, i) => i + 1).map(page => (
-                        <button
-                          key={page}
-                          onClick={() => setScheduleCurrentPage(page)}
-                          style={{
-                            padding: '0.5rem 0.75rem',
-                            backgroundColor: scheduleCurrentPage === page ? 'var(--button-bg)' : 'var(--bg-color)',
-                            color: scheduleCurrentPage === page ? 'white' : 'var(--text-color)',
-                            border: '1px solid var(--border-color)',
-                            borderRadius: '0.375rem',
-                            fontSize: '0.9rem',
-                            fontWeight: 600,
-                            cursor: 'pointer',
-                            minWidth: '40px'
-                          }}
-                        >
-                          {page}
-                        </button>
-                      ))}
-                    </div>
-                    
-                    <button
-                      onClick={() => setScheduleCurrentPage(p => Math.min(totalPages, p + 1))}
-                      disabled={scheduleCurrentPage === totalPages}
-                      style={{
-                        padding: '0.5rem 1rem',
-                        backgroundColor: scheduleCurrentPage === totalPages ? 'var(--bg-color)' : 'var(--button-bg)',
-                        color: scheduleCurrentPage === totalPages ? 'var(--text-secondary)' : 'white',
-                        border: '1px solid var(--border-color)',
-                        borderRadius: '0.375rem',
-                        fontSize: '0.9rem',
-                        fontWeight: 600,
-                        cursor: scheduleCurrentPage === totalPages ? 'not-allowed' : 'pointer',
-                        opacity: scheduleCurrentPage === totalPages ? 0.5 : 1
-                      }}
-                    >
-                      Next →
-                    </button>
-                    
-                    <div style={{ 
-                      marginLeft: '1rem', 
-                      fontSize: '0.9rem', 
-                      color: 'var(--text-secondary)',
-                      fontWeight: 500
-                    }}>
-                      Page {scheduleCurrentPage} of {totalPages} ({filteredSchedules.length} total)
-                    </div>
-                  </div>
+            // Section header helper
+            const renderSectionHeader = (title, icon, count, bgColor, borderColor) => (
+              <div style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: '0.75rem',
+                padding: '0.75rem 1rem',
+                background: bgColor,
+                borderRadius: '0.5rem',
+                border: `1px solid ${borderColor}`,
+                marginTop: '1.5rem',
+                marginBottom: '0.75rem'
+              }}>
+                {icon}
+                <span style={{ fontWeight: 600, fontSize: '1rem' }}>{title}</span>
+                <span style={{
+                  backgroundColor: borderColor,
+                  color: 'white',
+                  padding: '0.15rem 0.6rem',
+                  borderRadius: '1rem',
+                  fontSize: '0.8rem',
+                  fontWeight: 600
+                }}>
+                  {count}
+                </span>
+              </div>
+            );
+
+            return (
+              <>
+                {/* Currently Running Section */}
+                {runningSchedules.length > 0 && (
+                  <>
+                    {renderSectionHeader(
+                      'Currently Running',
+                      <Play size={18} style={{ color: '#22c55e' }} />,
+                      runningSchedules.length,
+                      'rgba(34, 197, 94, 0.1)',
+                      '#22c55e'
+                    )}
+                    {runningSchedules.map(schedule => renderScheduleCard(schedule))}
+                  </>
+                )}
+
+                {/* Enabled Schedules Section */}
+                {enabledSchedules.length > 0 && (
+                  <>
+                    {renderSectionHeader(
+                      'Enabled Schedules',
+                      <CheckCircle size={18} style={{ color: '#3b82f6' }} />,
+                      enabledSchedules.length,
+                      'rgba(59, 130, 246, 0.1)',
+                      '#3b82f6'
+                    )}
+                    {enabledSchedules.map(schedule => renderScheduleCard(schedule))}
+                  </>
+                )}
+
+                {/* Disabled Schedules Section */}
+                {disabledSchedules.length > 0 && (
+                  <>
+                    {renderSectionHeader(
+                      'Disabled Schedules',
+                      <Ban size={18} style={{ color: '#6b7280' }} />,
+                      disabledSchedules.length,
+                      'rgba(107, 114, 128, 0.1)',
+                      '#6b7280'
+                    )}
+                    {disabledSchedules.map(schedule => renderScheduleCard(schedule))}
+                  </>
                 )}
               </>
             );
@@ -9829,8 +11953,7 @@ const DashboardTiles = {
           width={820}
           zIndex={1000}
           allowBackgroundInteraction={!!editingPreroll}
-        >
-          <form onSubmit={handleUpdateCategory}>
+        >          <form onSubmit={handleUpdateCategory}>
             <div className="nx-form-grid">
               <div className="nx-field nx-span-2">
                 <label className="nx-label">Category Name</label>
@@ -9865,32 +11988,12 @@ const DashboardTiles = {
                 </select>
               </div>
             </div>
-            <div className="nx-actions">
-              <button type="submit" className="button">Update Category</button>
-              <button
-                type="button"
-                className="button"
-                onClick={handleUpdateCategoryAndApply}
-                style={{ backgroundColor: '#28a745' }}
-                title="Save changes and apply to connected server"
-              >
-                Save & Apply to Server
-              </button>
-              <button
-                type="button"
-                className="button-secondary"
-                onClick={() => { setEditingCategory(null); setNewCategory({ name: '', description: '' }); }}
-              >
-                Cancel
-              </button>
-            </div>
-          </form>
 
           <div style={{ borderTop: '1px solid var(--border-color)', margin: '1rem 0' }} />
 
           <div>
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '0.5rem' }}>
-              <h3 className="nx-modal-title" style={{ fontSize: '1rem', margin: 0 }}>Manage Prerolls</h3>
+              <h3 className="nx-modal-title" style={{ fontSize: '1rem', margin: 0 }}>Assigned Prerolls</h3>
               <button
                 type="button"
                 className="button-secondary"
@@ -9906,7 +12009,6 @@ const DashboardTiles = {
             ) : (
               <>
                 <div className="nx-field nx-span-2" style={{ marginBottom: '0.5rem' }}>
-                  <label className="nx-label">Assigned Prerolls</label>
                   {(categoryPrerolls[editingCategory.id] || []).length === 0 ? (
                     <p style={{ fontSize: '0.9rem', color: '#666', fontStyle: 'italic' }}>No prerolls assigned</p>
                   ) : (
@@ -9945,46 +12047,180 @@ const DashboardTiles = {
                   )}
                 </div>
 
-                <div className="nx-form-grid" style={{ marginTop: '0.5rem' }}>
-                  <div className="nx-field nx-span-2">
-                    <label className="nx-label">Add a Preroll to this Category</label>
-                    <select
-                      className="nx-select"
-                      value={(categoryAddSelection[editingCategory.id]?.prerollId) || ''}
-                      onChange={(e) => setCategoryAddSelection(prev => ({ ...prev, [editingCategory.id]: { ...(prev[editingCategory.id] || {}), prerollId: e.target.value } }))}
-                    >
-                      <option value="">Select preroll…</option>
-                      {availablePrerollsForCategory(editingCategory.id).map(p => (
-                        <option key={p.id} value={p.id}>
-                          {(p.display_name || p.filename) + (p.category_id ? ` — Primary: ${categories.find(c => c.id === p.category_id)?.name || 'Unknown'}` : '')}
-                        </option>
-                      ))}
-                    </select>
+                <div style={{ marginTop: '0.75rem' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '0.5rem' }}>
+                    <label className="nx-label" style={{ margin: 0 }}>Add Prerolls to this Category</label>
+                    {categoryAddSelectedIds.length > 0 && (
+                      <span style={{ fontSize: '0.85rem', color: 'var(--accent-color)', fontWeight: 500 }}>
+                        {categoryAddSelectedIds.length} selected
+                      </span>
+                    )}
                   </div>
-                  <div className="nx-field nx-span-2">
-                    <label className="nx-label" style={{ display: 'inline-flex', alignItems: 'center', gap: '0.5rem' }}>
+                  <input
+                    type="text"
+                    className="nx-input"
+                    placeholder="Search prerolls by name..."
+                    value={categoryAddSearch}
+                    onChange={(e) => setCategoryAddSearch(e.target.value)}
+                    style={{ marginBottom: '0.5rem' }}
+                  />
+                  <div style={{ 
+                    maxHeight: '200px', 
+                    overflowY: 'auto', 
+                    border: '1px solid var(--border-color)', 
+                    borderRadius: '8px', 
+                    padding: '0.5rem',
+                    background: 'var(--bg-secondary)'
+                  }}>
+                    {(() => {
+                      const available = availablePrerollsForCategory(editingCategory.id)
+                        .filter(p => {
+                          if (!categoryAddSearch.trim()) return true;
+                          const search = categoryAddSearch.toLowerCase();
+                          return (p.display_name || '').toLowerCase().includes(search) || 
+                                 (p.filename || '').toLowerCase().includes(search);
+                        });
+                      if (available.length === 0) {
+                        return <p style={{ fontSize: '0.85rem', color: '#666', fontStyle: 'italic', margin: '0.5rem 0' }}>No available prerolls{categoryAddSearch ? ' matching search' : ''}</p>;
+                      }
+                      return (
+                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(110px, 1fr))', gap: '0.5rem' }}>
+                          {available.map(p => {
+                            const isSelected = categoryAddSelectedIds.includes(p.id);
+                            return (
+                              <div
+                                key={p.id}
+                                onClick={() => {
+                                  setCategoryAddSelectedIds(prev => 
+                                    prev.includes(p.id) ? prev.filter(id => id !== p.id) : [...prev, p.id]
+                                  );
+                                }}
+                                style={{
+                                  cursor: 'pointer',
+                                  border: isSelected ? '2px solid var(--accent-color)' : '1px solid var(--border-color)',
+                                  borderRadius: '8px',
+                                  padding: '0.35rem',
+                                  background: isSelected ? 'rgba(var(--accent-rgb), 0.1)' : 'var(--card-bg)',
+                                  transition: 'all 0.15s ease'
+                                }}
+                              >
+                                <div style={{ position: 'relative', paddingBottom: '56.25%', marginBottom: '0.35rem' }}>
+                                  {p.thumbnail ? (
+                                    <img
+                                      src={apiUrl(`static/${p.thumbnail}`)}
+                                      alt=""
+                                      style={{
+                                        position: 'absolute',
+                                        top: 0,
+                                        left: 0,
+                                        width: '100%',
+                                        height: '100%',
+                                        objectFit: 'cover',
+                                        borderRadius: '4px'
+                                      }}
+                                    />
+                                  ) : (
+                                    <div style={{
+                                      position: 'absolute',
+                                      top: 0,
+                                      left: 0,
+                                      width: '100%',
+                                      height: '100%',
+                                      background: 'linear-gradient(135deg, #333 0%, #555 100%)',
+                                      borderRadius: '4px',
+                                      display: 'flex',
+                                      alignItems: 'center',
+                                      justifyContent: 'center'
+                                    }}>
+                                      <Film size={20} style={{ color: '#888' }} />
+                                    </div>
+                                  )}
+                                  {isSelected && (
+                                    <div style={{
+                                      position: 'absolute',
+                                      top: '4px',
+                                      right: '4px',
+                                      width: '20px',
+                                      height: '20px',
+                                      borderRadius: '50%',
+                                      background: 'var(--accent-color)',
+                                      display: 'flex',
+                                      alignItems: 'center',
+                                      justifyContent: 'center'
+                                    }}>
+                                      <Check size={12} style={{ color: 'white' }} />
+                                    </div>
+                                  )}
+                                </div>
+                                <div style={{ fontSize: '0.75rem', lineHeight: 1.2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                  {p.display_name || p.filename}
+                                </div>
+                                <div style={{ fontSize: '0.65rem', color: '#888', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                  {categories.find(c => c.id === p.category_id)?.name || 'No category'}
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      );
+                    })()}
+                  </div>
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginTop: '0.75rem', flexWrap: 'wrap', gap: '0.5rem' }}>
+                    <label className="nx-label" style={{ display: 'inline-flex', alignItems: 'center', gap: '0.5rem', margin: 0 }}>
                       <input
                         type="checkbox"
                         checked={Boolean(categoryAddSelection[editingCategory.id]?.setPrimary)}
                         onChange={(e) => setCategoryAddSelection(prev => ({ ...prev, [editingCategory.id]: { ...(prev[editingCategory.id] || {}), setPrimary: e.target.checked } }))}
                       />
-                      Set as Primary (moves the file under this category)
+                      Set as Primary (moves files)
                     </label>
-                  </div>
-                  <div className="nx-actions nx-span-2" style={{ justifyContent: 'flex-start' }}>
-                    <button
-                      type="button"
-                      className="button"
-                      disabled={!categoryAddSelection[editingCategory.id]?.prerollId}
-                      onClick={() => handleCategoryAddPreroll(editingCategory.id)}
-                    >
-                      <Plus size={14} style={{marginRight: '0.35rem'}} /> Add to Category
-                    </button>
+                    <div style={{ display: 'flex', gap: '0.5rem' }}>
+                      {categoryAddSelectedIds.length > 0 && (
+                        <button
+                          type="button"
+                          className="button-secondary"
+                          onClick={() => setCategoryAddSelectedIds([])}
+                        >
+                          Clear
+                        </button>
+                      )}
+                      <button
+                        type="button"
+                        className="button"
+                        disabled={categoryAddSelectedIds.length === 0}
+                        onClick={() => handleCategoryAddPreroll(editingCategory.id)}
+                      >
+                        <Plus size={14} style={{marginRight: '0.35rem'}} /> Add {categoryAddSelectedIds.length > 0 ? `${categoryAddSelectedIds.length} Selected` : 'Selected'}
+                      </button>
+                    </div>
                   </div>
                 </div>
               </>
             )}
           </div>
+
+          <div style={{ borderTop: '1px solid var(--border-color)', margin: '1rem 0' }} />
+
+            <div className="nx-actions">
+              <button type="submit" className="button">Update Category</button>
+              <button
+                type="button"
+                className="button"
+                onClick={handleUpdateCategoryAndApply}
+                style={{ backgroundColor: '#28a745' }}
+                title="Save changes and apply to connected server"
+              >
+                Save & Apply to Server
+              </button>
+              <button
+                type="button"
+                className="button-secondary"
+                onClick={() => { setEditingCategory(null); setNewCategory({ name: '', description: '' }); }}
+              >
+                Cancel
+              </button>
+            </div>
+          </form>
         </Modal>
       )}
 
@@ -10220,15 +12456,52 @@ const DashboardTiles = {
             )}
           </div>
         )}
+
+        {/* Quick Stats Bar */}
+        {categoryView === 'grid' && (
+          <div style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: '1.5rem',
+            padding: '0.75rem 1rem',
+            backgroundColor: 'var(--bg-secondary)',
+            borderRadius: '0.5rem',
+            border: '1px solid var(--border-color)',
+            marginBottom: '1rem',
+            fontSize: '0.9rem',
+            color: 'var(--text-secondary)'
+          }}>
+            {(() => {
+              const all = getFilteredCategories();
+              const scheduled = all.filter(c => schedules.some(s => s.is_active && s.category_id === c.id));
+              const withPrerolls = all.filter(c => {
+                const stats = getCategoryStats(c);
+                return stats.totalPrerolls > 0;
+              });
+              const empty = all.filter(c => {
+                const stats = getCategoryStats(c);
+                return stats.totalPrerolls === 0;
+              });
+              return (
+                <>
+                  <span><strong>{all.length}</strong> categories</span>
+                  <span style={{ color: '#22c55e' }}><Calendar size={14} style={{ marginRight: '0.35rem', verticalAlign: 'middle' }} /><strong>{scheduled.length}</strong> scheduled</span>
+                  <span style={{ color: '#3b82f6' }}><Video size={14} style={{ marginRight: '0.35rem', verticalAlign: 'middle' }} /><strong>{withPrerolls.length}</strong> with prerolls</span>
+                  <span style={{ color: '#6b7280' }}><Folder size={14} style={{ marginRight: '0.35rem', verticalAlign: 'middle' }} /><strong>{empty.length}</strong> empty</span>
+                </>
+              );
+            })()}
+          </div>
+        )}
         
         {/* Grid View */}
-        <div style={{ display: categoryView === 'grid' ? 'grid' : 'none', gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))', gap: '1rem' }}>
+        <div style={{ display: categoryView === 'grid' ? 'block' : 'none' }}>
           {(() => {
             const filtered = getFilteredCategories();
             
             if (filtered.length === 0) {
               return (
-                <div style={{ gridColumn: '1 / -1', textAlign: 'center', padding: '3rem 1rem', color: 'var(--text-secondary)' }}>
+                <div style={{ textAlign: 'center', padding: '3rem 1rem', color: 'var(--text-secondary)' }}>
                   {categorySearchQuery ? (
                     <>
                       <div style={{ fontSize: '3rem', marginBottom: '1rem' }}><Search size={48} /></div>
@@ -10253,8 +12526,48 @@ const DashboardTiles = {
                 </div>
               );
             }
-            
-            return filtered.map(category => {
+
+            // Split categories into groups
+            const scheduledCategories = filtered.filter(c => schedules.some(s => s.is_active && s.category_id === c.id));
+            const withPrerollsCategories = filtered.filter(c => {
+              const stats = getCategoryStats(c);
+              return stats.totalPrerolls > 0 && !schedules.some(s => s.is_active && s.category_id === c.id);
+            });
+            const emptyCategories = filtered.filter(c => {
+              const stats = getCategoryStats(c);
+              return stats.totalPrerolls === 0;
+            });
+
+            // Section header helper
+            const renderCategorySectionHeader = (title, icon, count, bgColor, borderColor) => (
+              <div style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: '0.75rem',
+                padding: '0.75rem 1rem',
+                background: bgColor,
+                borderRadius: '0.5rem',
+                border: `1px solid ${borderColor}`,
+                marginTop: '1.5rem',
+                marginBottom: '0.75rem'
+              }}>
+                {icon}
+                <span style={{ fontWeight: 600, fontSize: '1rem' }}>{title}</span>
+                <span style={{
+                  backgroundColor: borderColor,
+                  color: 'white',
+                  padding: '0.15rem 0.6rem',
+                  borderRadius: '1rem',
+                  fontSize: '0.8rem',
+                  fontWeight: 600
+                }}>
+                  {count}
+                </span>
+              </div>
+            );
+
+            // Card renderer with accent border - condensed version
+            const renderCategoryCard = (category, accentColor) => {
             // Calculate statistics for this category
             const stats = getCategoryStats(category);
             const isSelected = selectedCategoryIds.includes(category.id);
@@ -10262,45 +12575,43 @@ const DashboardTiles = {
             return (
             <div 
               key={category.id} 
-              onClick={() => bulkActionMode && toggleSelectCategory(category.id)}
+              onClick={() => bulkActionMode ? toggleSelectCategory(category.id) : handleEditCategory(category)}
               style={{ 
                 border: `2px solid ${isSelected && bulkActionMode ? '#ffc107' : 'var(--border-color)'}`, 
-                padding: '1.25rem', 
+                borderLeft: `4px solid ${accentColor}`,
+                padding: '0.75rem 1rem', 
                 borderRadius: '8px', 
                 backgroundColor: isSelected && bulkActionMode ? 'rgba(255, 193, 7, 0.1)' : 'var(--card-bg)',
-                boxShadow: isSelected && bulkActionMode ? '0 4px 12px rgba(255, 193, 7, 0.3)' : '0 2px 4px rgba(0,0,0,0.1)',
+                boxShadow: isSelected && bulkActionMode ? '0 4px 12px rgba(255, 193, 7, 0.3)' : '0 1px 3px rgba(0,0,0,0.08)',
                 transition: 'all 0.2s',
-                cursor: bulkActionMode ? 'pointer' : 'default',
-                position: 'relative'
+                cursor: 'pointer',
+                position: 'relative',
+                zIndex: categoryMenuOpen === category.id ? 100 : 1
               }}
               onMouseEnter={(e) => {
-                if (!bulkActionMode) {
-                  e.currentTarget.style.transform = 'translateY(-2px)';
-                  e.currentTarget.style.boxShadow = '0 4px 8px rgba(0,0,0,0.15)';
-                }
+                e.currentTarget.style.transform = 'translateY(-1px)';
+                e.currentTarget.style.boxShadow = '0 3px 6px rgba(0,0,0,0.12)';
               }}
               onMouseLeave={(e) => {
-                if (!bulkActionMode) {
-                  e.currentTarget.style.transform = 'translateY(0)';
-                  e.currentTarget.style.boxShadow = '0 2px 4px rgba(0,0,0,0.1)';
-                }
+                e.currentTarget.style.transform = 'translateY(0)';
+                e.currentTarget.style.boxShadow = '0 1px 3px rgba(0,0,0,0.08)';
               }}
             >
               {/* Bulk Selection Checkbox */}
               {bulkActionMode && (
                 <div style={{
                   position: 'absolute',
-                  top: '0.5rem',
-                  left: '0.5rem',
-                  width: '1.5rem',
-                  height: '1.5rem',
+                  top: '0.4rem',
+                  left: '0.4rem',
+                  width: '1.25rem',
+                  height: '1.25rem',
                   borderRadius: '4px',
                   backgroundColor: isSelected ? '#ffc107' : 'var(--bg-color)',
                   border: '2px solid ' + (isSelected ? '#ffc107' : 'var(--border-color)'),
                   display: 'flex',
                   alignItems: 'center',
                   justifyContent: 'center',
-                  fontSize: '1rem',
+                  fontSize: '0.8rem',
                   fontWeight: 'bold',
                   color: isSelected ? 'white' : 'transparent'
                 }}>
@@ -10308,59 +12619,66 @@ const DashboardTiles = {
                 </div>
               )}
               
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '0.75rem' }}>
-                <div style={{ flex: 1 }}>
-                  <h3 style={{ margin: '0 0 0.5rem 0', fontSize: '1.1rem', color: 'var(--text-color)' }}>{category.name}</h3>
-                  
-                  {/* Statistics Badges */}
-                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.4rem', marginBottom: '0.5rem' }}>
-                    <div style={{ 
-                      display: 'inline-block',
-                      fontSize: '0.75rem', 
-                      padding: '0.2rem 0.5rem',
-                      borderRadius: '12px',
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  {/* Name and preroll count inline */}
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.35rem' }}>
+                    <h3 style={{ 
+                      margin: 0, 
+                      fontSize: '1rem', 
+                      color: 'var(--text-color)',
+                      whiteSpace: 'nowrap',
+                      overflow: 'hidden',
+                      textOverflow: 'ellipsis'
+                    }}>{category.name}</h3>
+                    <span style={{ 
+                      fontSize: '0.7rem', 
+                      padding: '0.15rem 0.4rem',
+                      borderRadius: '10px',
                       backgroundColor: stats.totalPrerolls > 0 ? '#28a745' : '#6c757d',
                       color: 'white',
-                      fontWeight: '600'
+                      fontWeight: '600',
+                      flexShrink: 0
                     }}>
-                      <Video size={14} style={{marginRight: '0.35rem'}} /> {stats.totalPrerolls} preroll{stats.totalPrerolls !== 1 ? 's' : ''}
-                    </div>
+                      {stats.totalPrerolls}
+                    </span>
+                  </div>
+                  
+                  {/* Secondary info badges */}
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.3rem' }}>
                     {stats.totalDuration > 0 && (
-                      <div style={{ 
-                        display: 'inline-block',
-                        fontSize: '0.75rem', 
-                        padding: '0.2rem 0.5rem',
-                        borderRadius: '12px',
-                        backgroundColor: '#17a2b8',
-                        color: 'white',
-                        fontWeight: '600'
+                      <span style={{ 
+                        fontSize: '0.7rem', 
+                        padding: '0.1rem 0.35rem',
+                        borderRadius: '8px',
+                        backgroundColor: 'rgba(23, 162, 184, 0.15)',
+                        color: '#17a2b8',
+                        fontWeight: '500'
                       }}>
-                        ⏱️ {formatDuration(stats.totalDuration)}
-                      </div>
+                        {formatDuration(stats.totalDuration)}
+                      </span>
                     )}
                     {stats.hasActiveSchedules && (
-                      <div style={{ 
-                        display: 'inline-flex',
-                        alignItems: 'center',
-                        gap: '0.25rem',
-                        fontSize: '0.75rem', 
-                        padding: '0.2rem 0.5rem',
-                        borderRadius: '12px',
-                        backgroundColor: '#ffc107',
-                        color: '#000',
-                        fontWeight: '600'
+                      <span style={{ 
+                        fontSize: '0.7rem', 
+                        padding: '0.1rem 0.35rem',
+                        borderRadius: '8px',
+                        backgroundColor: 'rgba(255, 193, 7, 0.15)',
+                        color: '#d97706',
+                        fontWeight: '500'
                       }}
                       title={`Active Schedules: ${stats.scheduleNames.join(', ')}`}
                       >
-                        <Calendar size={12} /> {stats.activeSchedules} schedule{stats.activeSchedules !== 1 ? 's' : ''}
-                      </div>
+                        <Calendar size={10} style={{ marginRight: '0.2rem', verticalAlign: 'middle' }} />
+                        {stats.activeSchedules}
+                      </span>
                     )}
                   </div>
                 </div>
                 
                 {/* Quick Actions Menu */}
                 {!bulkActionMode && (
-                  <div style={{ position: 'relative' }}>
+                  <div style={{ position: 'relative', flexShrink: 0 }}>
                     <button
                       onClick={(e) => {
                         e.stopPropagation();
@@ -10368,7 +12686,7 @@ const DashboardTiles = {
                       }}
                       className="nx-iconbtn"
                       title="More actions"
-                      style={{ fontSize: '1.2rem' }}
+                      style={{ fontSize: '1.1rem', padding: '0.25rem' }}
                     >
                       ⋮
                     </button>
@@ -10386,7 +12704,7 @@ const DashboardTiles = {
                           borderRadius: '8px',
                           boxShadow: '0 4px 12px rgba(0,0,0,0.15)',
                           zIndex: 1000,
-                          minWidth: '180px',
+                          minWidth: '160px',
                           overflow: 'hidden'
                         }}
                         onClick={(e) => e.stopPropagation()}
@@ -10398,12 +12716,12 @@ const DashboardTiles = {
                           }}
                           style={{
                             width: '100%',
-                            padding: '0.75rem 1rem',
+                            padding: '0.6rem 0.85rem',
                             border: 'none',
                             backgroundColor: 'transparent',
                             textAlign: 'left',
                             cursor: 'pointer',
-                            fontSize: '0.9rem',
+                            fontSize: '0.85rem',
                             color: 'var(--text-color)',
                             display: 'flex',
                             alignItems: 'center',
@@ -10412,7 +12730,7 @@ const DashboardTiles = {
                           onMouseEnter={(e) => e.currentTarget.style.backgroundColor = 'var(--hover-bg)'}
                           onMouseLeave={(e) => e.currentTarget.style.backgroundColor = 'transparent'}
                         >
-                          <Edit size={16} /> Edit
+                          <Edit size={14} /> Edit
                         </button>
                         <button
                           onClick={() => {
@@ -10421,12 +12739,12 @@ const DashboardTiles = {
                           }}
                           style={{
                             width: '100%',
-                            padding: '0.75rem 1rem',
+                            padding: '0.6rem 0.85rem',
                             border: 'none',
                             backgroundColor: 'transparent',
                             textAlign: 'left',
                             cursor: 'pointer',
-                            fontSize: '0.9rem',
+                            fontSize: '0.85rem',
                             color: 'var(--text-color)',
                             display: 'flex',
                             alignItems: 'center',
@@ -10435,37 +12753,9 @@ const DashboardTiles = {
                           onMouseEnter={(e) => e.currentTarget.style.backgroundColor = 'var(--hover-bg)'}
                           onMouseLeave={(e) => e.currentTarget.style.backgroundColor = 'transparent'}
                         >
-                          <Film size={16} /> Apply to Server
+                          <Film size={14} /> Apply to Server
                         </button>
-                        <button
-                          onClick={() => {
-                            navigator.clipboard.writeText(JSON.stringify({
-                              name: category.name,
-                              description: category.description,
-                              plex_mode: category.plex_mode
-                            }, null, 2));
-                            alert('Category details copied to clipboard!');
-                            setCategoryMenuOpen(null);
-                          }}
-                          style={{
-                            width: '100%',
-                            padding: '0.75rem 1rem',
-                            border: 'none',
-                            backgroundColor: 'transparent',
-                            textAlign: 'left',
-                            cursor: 'pointer',
-                            fontSize: '0.9rem',
-                            color: 'var(--text-color)',
-                            display: 'flex',
-                            alignItems: 'center',
-                            gap: '0.5rem'
-                          }}
-                          onMouseEnter={(e) => e.currentTarget.style.backgroundColor = 'var(--hover-bg)'}
-                          onMouseLeave={(e) => e.currentTarget.style.backgroundColor = 'transparent'}
-                        >
-                          <FileText size={14} style={{marginRight: '0.35rem'}} /> Copy Details
-                        </button>
-                        <div style={{ borderTop: '1px solid var(--border-color)', margin: '0.25rem 0' }} />
+                        <div style={{ borderTop: '1px solid var(--border-color)', margin: '0.2rem 0' }} />
                         <button
                           onClick={() => {
                             handleDeleteCategory(category.id);
@@ -10473,12 +12763,12 @@ const DashboardTiles = {
                           }}
                           style={{
                             width: '100%',
-                            padding: '0.75rem 1rem',
+                            padding: '0.6rem 0.85rem',
                             border: 'none',
                             backgroundColor: 'transparent',
                             textAlign: 'left',
                             cursor: 'pointer',
-                            fontSize: '0.9rem',
+                            fontSize: '0.85rem',
                             color: '#dc3545',
                             display: 'flex',
                             alignItems: 'center',
@@ -10487,77 +12777,68 @@ const DashboardTiles = {
                           onMouseEnter={(e) => e.currentTarget.style.backgroundColor = 'rgba(220, 53, 69, 0.1)'}
                           onMouseLeave={(e) => e.currentTarget.style.backgroundColor = 'transparent'}
                         >
-                          <Trash size={16} /> Delete
+                          <Trash size={14} /> Delete
                         </button>
                       </div>
                     )}
                   </div>
                 )}
               </div>
-              
-              <p style={{ fontSize: '0.9rem', marginBottom: '0.75rem', color: 'var(--text-secondary)', minHeight: '1.2em' }}>
-                {category.description || <em style={{ opacity: 0.6 }}>No description</em>}
-              </p>
-
-              {/* Apply to Server */}
-              <div style={{ 
-                borderTop: '1px solid var(--border-color)', 
-                paddingTop: '0.75rem', 
-                marginTop: '0.75rem',
-                display: 'flex',
-                flexDirection: 'column',
-                gap: '0.5rem'
-              }}>
-                <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
-                  <button
-                    onClick={() => handleApplyCategoryToActiveServer(category.id, category.name)}
-                    className="button"
-                    style={{ 
-                      fontSize: '0.8rem', 
-                      padding: '0.4rem 0.75rem',
-                      flex: '1 1 auto',
-                      minWidth: 'fit-content'
-                    }}
-                    disabled={(() => { const s = getActiveConnectedServer(); return !s || s === 'conflict'; })() || applyingToServer}
-                    title={applyingToServer ? "Applying to server..." : "Apply this category to the connected server"}
-                  >
-                    {applyingToServer ? <><Clock size={14} style={{marginRight: '6px'}} /> Applying...</> : <><Film size={14} style={{marginRight: '6px'}} /> Apply to Server</>}
-                  </button>
-                  {plexStatus === 'Connected' && category.apply_to_plex && (
-                    <button
-                      onClick={() => handleRemoveCategoryFromPlex(category.id, category.name)}
-                      className="button"
-                      style={{ 
-                        fontSize: '0.8rem', 
-                        padding: '0.4rem 0.75rem', 
-                        backgroundColor: '#6c757d',
-                        flex: '0 1 auto'
-                      }}
-                      title="Remove from Plex"
-                    >
-                      <XCircle size={14} style={{marginRight: '0.35rem'}} /> Remove
-                    </button>
-                  )}
-                </div>
-
-                {/* Manage Prerolls */}
-                <button
-                  onClick={() => handleEditCategory(category)}
-                  className="button"
-                  style={{ 
-                    fontSize: '0.8rem', 
-                    padding: '0.4rem 0.75rem', 
-                    backgroundColor: '#17a2b8',
-                    width: '100%'
-                  }}
-                  title="Manage prerolls in this category"
-                >
-                  <Folder size={14} style={{marginRight: '0.35rem'}} /> Manage Prerolls
-                </button>
-              </div>
             </div>
           );
-            });
+            };
+
+            return (
+              <>
+                {/* Scheduled Categories Section */}
+                {scheduledCategories.length > 0 && (
+                  <>
+                    {renderCategorySectionHeader(
+                      'Scheduled Categories',
+                      <Calendar size={18} style={{ color: '#22c55e' }} />,
+                      scheduledCategories.length,
+                      'rgba(34, 197, 94, 0.1)',
+                      '#22c55e'
+                    )}
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))', gap: '0.75rem' }}>
+                      {scheduledCategories.map(category => renderCategoryCard(category, '#22c55e'))}
+                    </div>
+                  </>
+                )}
+
+                {/* With Prerolls Section */}
+                {withPrerollsCategories.length > 0 && (
+                  <>
+                    {renderCategorySectionHeader(
+                      'Categories with Prerolls',
+                      <Video size={18} style={{ color: '#3b82f6' }} />,
+                      withPrerollsCategories.length,
+                      'rgba(59, 130, 246, 0.1)',
+                      '#3b82f6'
+                    )}
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))', gap: '0.75rem' }}>
+                      {withPrerollsCategories.map(category => renderCategoryCard(category, '#3b82f6'))}
+                    </div>
+                  </>
+                )}
+
+                {/* Empty Categories Section */}
+                {emptyCategories.length > 0 && (
+                  <>
+                    {renderCategorySectionHeader(
+                      'Empty Categories',
+                      <Folder size={18} style={{ color: '#6b7280' }} />,
+                      emptyCategories.length,
+                      'rgba(107, 114, 128, 0.1)',
+                      '#6b7280'
+                    )}
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))', gap: '0.75rem' }}>
+                      {emptyCategories.map(category => renderCategoryCard(category, '#6b7280'))}
+                    </div>
+                  </>
+                )}
+              </>
+            );
           })()}
         </div>
         
@@ -10637,15 +12918,17 @@ const DashboardTiles = {
                       // Calculate actual preroll counts including primary and secondary associations
                       const aPrimaryCount = prerolls.filter(p => p.category_id === a.id).length;
                       const aSecondaryCount = prerolls.filter(p => 
-                        p.category_associations && 
-                        p.category_associations.some(assoc => assoc.category_id === a.id)
+                        p.categories && 
+                        p.categories.some(c => c.id === a.id) &&
+                        p.category_id !== a.id
                       ).length;
                       compareA = aPrimaryCount + aSecondaryCount;
                       
                       const bPrimaryCount = prerolls.filter(p => p.category_id === b.id).length;
                       const bSecondaryCount = prerolls.filter(p => 
-                        p.category_associations && 
-                        p.category_associations.some(assoc => assoc.category_id === b.id)
+                        p.categories && 
+                        p.categories.some(c => c.id === b.id) &&
+                        p.category_id !== b.id
                       ).length;
                       compareB = bPrimaryCount + bSecondaryCount;
                       break;
@@ -10797,28 +13080,35 @@ const DashboardTiles = {
                           >
                             <Film size={14} />
                           </button>
-                          <button
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              handleEditCategory(category);
-                            }}
-                            className="nx-iconbtn"
-                            title="Edit category"
-                            style={{ fontSize: '0.9rem' }}
-                          >
-                            ✏️
-                          </button>
-                          <button
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              handleDeleteCategory(category.id);
-                            }}
-                            className="nx-iconbtn nx-iconbtn--danger"
-                            title="Delete category"
-                            style={{ fontSize: '0.9rem' }}
-                          >
-                            <Trash size={14} />
-                          </button>
+                          {!category.is_system && (
+                            <>
+                              <button
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  handleEditCategory(category);
+                                }}
+                                className="nx-iconbtn"
+                                title="Edit category"
+                                style={{ fontSize: '0.9rem' }}
+                              >
+                                ✏️
+                              </button>
+                              <button
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  handleDeleteCategory(category.id);
+                                }}
+                                className="nx-iconbtn nx-iconbtn--danger"
+                                title="Delete category"
+                                style={{ fontSize: '0.9rem' }}
+                              >
+                                <Trash size={14} />
+                              </button>
+                            </>
+                          )}
+                          {category.is_system && (
+                            <span style={{ fontSize: '0.75rem', color: '#888', fontStyle: 'italic' }}>System</span>
+                          )}
                         </div>
                       )}
                     </td>
@@ -10968,25 +13258,25 @@ const DashboardTiles = {
   };
 
 
-  const handleDisconnectPlex = () => {
-    if (window.confirm('Are you sure you want to disconnect from Plex? This will clear all stored connection settings.')) {
-      fetch(apiUrl('plex/disconnect'), {
-        method: 'POST'
+  const handleDisconnectPlex = async () => {
+    if (!await showConfirm('Are you sure you want to disconnect from Plex? This will clear all stored connection settings.', { title: 'Disconnect Plex', type: 'danger', confirmText: 'Disconnect' })) return;
+    
+    fetch(apiUrl('plex/disconnect'), {
+      method: 'POST'
+    })
+      .then(res => res.json())
+      .then(data => {
+        alert('Successfully disconnected from Plex!');
+        // Clear local state
+        setPlexConfig({ url: '', token: '', library: '' });
+        setPlexStatus('Disconnected');
+        setPlexServerInfo(null);
+        fetchData();
       })
-        .then(res => res.json())
-        .then(data => {
-          alert('Successfully disconnected from Plex!');
-          // Clear local state
-          setPlexConfig({ url: '', token: '', library: '' });
-          setPlexStatus('Disconnected');
-          setPlexServerInfo(null);
-          fetchData();
-        })
-        .catch(error => {
-          console.error('Plex disconnect error:', error);
-          alert('Failed to disconnect from Plex: ' + error.message);
-        });
-    }
+      .catch(error => {
+        console.error('Plex disconnect error:', error);
+        alert('Failed to disconnect from Plex: ' + error.message);
+      });
   };
 
   // Jellyfin connect/disconnect handlers
@@ -11019,8 +13309,8 @@ const DashboardTiles = {
       });
   };
 
-  const handleDisconnectJellyfin = () => {
-    if (!window.confirm('Are you sure you want to disconnect from Jellyfin? This will clear all stored connection settings.')) return;
+  const handleDisconnectJellyfin = async () => {
+    if (!await showConfirm('Are you sure you want to disconnect from Jellyfin? This will clear all stored connection settings.', { title: 'Disconnect Jellyfin', type: 'danger', confirmText: 'Disconnect' })) return;
     fetch(apiUrl('jellyfin/disconnect'), {
       method: 'POST'
     })
@@ -11483,11 +13773,42 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
     }
   };
 
-  const recheckFfmpeg = () => {
-    fetch(apiUrl('system/ffmpeg-info'))
-      .then(res => res.json())
-      .then(data => setFfmpegInfo(data))
-      .catch(() => setFfmpegInfo(null));
+  const recheckFfmpeg = async () => {
+    setDependenciesLoading(true);
+    try {
+      // Fetch comprehensive system dependencies
+      const depsRes = await fetch(apiUrl('system/dependencies'));
+      if (depsRes.ok) {
+        const depsData = await depsRes.json();
+        setSystemDependencies(depsData);
+        // Also update ffmpegInfo for backward compatibility
+        if (depsData.dependencies) {
+          setFfmpegInfo({
+            ffmpeg_present: depsData.dependencies.ffmpeg?.available || false,
+            ffmpeg_version: depsData.dependencies.ffmpeg?.version || null,
+            ffprobe_present: depsData.dependencies.ffprobe?.available || false,
+            ffprobe_version: depsData.dependencies.ffprobe?.version || null
+          });
+        }
+      } else {
+        // Fallback to old endpoint
+        const res = await fetch(apiUrl('system/ffmpeg-info'));
+        const data = await res.json();
+        setFfmpegInfo(data);
+      }
+    } catch (e) {
+      console.error('Failed to check dependencies:', e);
+      // Try fallback
+      try {
+        const res = await fetch(apiUrl('system/ffmpeg-info'));
+        const data = await res.json();
+        setFfmpegInfo(data);
+      } catch {
+        setFfmpegInfo(null);
+      }
+    } finally {
+      setDependenciesLoading(false);
+    }
   };
 
   const handleViewChangelog = async () => {
@@ -11508,7 +13829,7 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
   };
 
   const handleReinitThumbnails = async () => {
-    if (!window.confirm('Rebuild all thumbnails now? This may take several minutes depending on your library size.')) return;
+    setThumbnailProgress({ status: 'Starting thumbnail rebuild...', phase: 'init' });
     try {
       const res = await fetch(apiUrl('thumbnails/rebuild?force=true'), { method: 'POST' });
       const text = await res.text();
@@ -11518,11 +13839,19 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
         const msg = (data && (data.detail || data.message)) || text || `HTTP ${res.status}`;
         throw new Error(msg);
       }
-      alert(`Thumbnails rebuilt:\nProcessed: ${data.processed}\nGenerated: ${data.generated}\nSkipped: ${data.skipped}\nFailures: ${data.failures}`);
+      setThumbnailProgress({ 
+        status: `Complete! Processed: ${data.processed}, Generated: ${data.generated}, Skipped: ${data.skipped}`, 
+        phase: 'done',
+        data 
+      });
       fetchData();
+      // Clear the success message after 5 seconds
+      setTimeout(() => setThumbnailProgress(null), 5000);
     } catch (err) {
       console.error('Thumbnail rebuild error:', err);
-      alert('Thumbnail rebuild failed: ' + err.message);
+      setThumbnailProgress({ status: `Failed: ${err.message}`, phase: 'error' });
+      // Clear error after 5 seconds
+      setTimeout(() => setThumbnailProgress(null), 5000);
     }
   };
 
@@ -11798,6 +14127,1094 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
     }
   };
 
+  // NeX-Up Functions (Radarr integration for upcoming movie trailers)
+  const loadNexupSettings = async () => {
+    try {
+      const res = await fetch(apiUrl('/nexup/settings'));
+      if (res.ok) {
+        const data = await res.json();
+        setNexupSettings(data);
+      }
+    } catch (err) {
+      console.error('Failed to load NeX-Up settings:', err);
+    }
+  };
+
+  const loadNexupTrailers = async () => {
+    try {
+      const res = await fetch(apiUrl('/nexup/trailers'));
+      if (res.ok) {
+        const data = await res.json();
+        setNexupTrailers(data.trailers || []);
+      }
+    } catch (err) {
+      console.error('Failed to load NeX-Up trailers:', err);
+    }
+  };
+
+  const loadNexupStorage = async () => {
+    try {
+      const res = await fetch(apiUrl('/nexup/storage'));
+      if (res.ok) {
+        const data = await res.json();
+        setNexupStorage(data);
+      }
+    } catch (err) {
+      console.error('Failed to load NeX-Up storage:', err);
+    }
+  };
+
+  // YouTube Setup Functions
+  const loadYoutubeStatus = async () => {
+    setYoutubeSetup(prev => ({ ...prev, loading: true }));
+    try {
+      const res = await fetch(apiUrl('/nexup/youtube/status'));
+      if (res.ok) {
+        const data = await res.json();
+        setYoutubeSetup(prev => ({ ...prev, status: data, loading: false }));
+      }
+    } catch (err) {
+      console.error('Failed to load YouTube status:', err);
+      setYoutubeSetup(prev => ({ ...prev, loading: false }));
+    }
+  };
+
+  const handleYoutubeOpenBrowser = async () => {
+    try {
+      await fetch(apiUrl(`/nexup/youtube/open-browser?browser=${youtubeSetup.selectedBrowser}`), { method: 'POST' });
+      setYoutubeSetup(prev => ({ ...prev, wizardStep: 2 }));
+    } catch (err) {
+      alert('Failed to open browser: ' + (err?.message || err));
+    }
+  };
+
+  const handleYoutubeUploadCookies = async (event) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    
+    setYoutubeSetup(prev => ({ ...prev, uploading: true }));
+    try {
+      const formData = new FormData();
+      formData.append('file', file);
+      
+      const res = await fetch(apiUrl('/nexup/youtube/upload-cookies'), {
+        method: 'POST',
+        body: formData
+      });
+      const data = await res.json();
+      
+      if (data.success) {
+        setYoutubeSetup(prev => ({ 
+          ...prev, 
+          uploading: false, 
+          wizardStep: 4,
+          testResult: { success: true, message: 'Cookies file uploaded successfully!' }
+        }));
+        loadYoutubeStatus();
+      } else {
+        setYoutubeSetup(prev => ({ 
+          ...prev, 
+          uploading: false,
+          testResult: { success: false, message: data.error || 'Failed to upload cookies' }
+        }));
+      }
+    } catch (err) {
+      setYoutubeSetup(prev => ({ 
+        ...prev, 
+        uploading: false,
+        testResult: { success: false, message: err?.message || 'Upload failed' }
+      }));
+    }
+  };
+
+  const handleYoutubeExtractCookies = async () => {
+    setYoutubeSetup(prev => ({ ...prev, extracting: true }));
+    try {
+      const res = await fetch(apiUrl(`/nexup/youtube/extract-cookies?browser=${youtubeSetup.selectedBrowser}`), { method: 'POST' });
+      const data = await res.json();
+      
+      if (data.success) {
+        setYoutubeSetup(prev => ({ 
+          ...prev, 
+          extracting: false, 
+          wizardStep: 4,
+          testResult: { success: true, message: `Cookies extracted from ${data.browser}!` }
+        }));
+        loadYoutubeStatus();
+      } else {
+        setYoutubeSetup(prev => ({ 
+          ...prev, 
+          extracting: false,
+          testResult: { success: false, message: data.error || 'Failed to extract cookies' }
+        }));
+      }
+    } catch (err) {
+      setYoutubeSetup(prev => ({ 
+        ...prev, 
+        extracting: false,
+        testResult: { success: false, message: err?.message || 'Failed to extract cookies' }
+      }));
+    }
+  };
+
+  const handleYoutubeTestDownload = async () => {
+    setYoutubeSetup(prev => ({ ...prev, testing: true }));
+    try {
+      const res = await fetch(apiUrl('/nexup/youtube/test-download'), { method: 'POST' });
+      const data = await res.json();
+      
+      setYoutubeSetup(prev => ({ 
+        ...prev, 
+        testing: false,
+        testResult: data,
+        wizardStep: data.success ? 4 : prev.wizardStep
+      }));
+      
+      if (data.success) {
+        loadYoutubeStatus();
+      }
+    } catch (err) {
+      setYoutubeSetup(prev => ({ 
+        ...prev, 
+        testing: false,
+        testResult: { success: false, message: err?.message || 'Test failed' }
+      }));
+    }
+  };
+
+  // NOTE: OAuth is no longer supported by yt-dlp (as of 2025)
+  // These functions are kept commented for potential future use
+  /*
+  const handleYoutubeStartOAuth = async () => {
+    setYoutubeSetup(prev => ({ ...prev, loading: true, testResult: null }));
+    try {
+      const res = await fetch(apiUrl('/nexup/youtube/oauth/start'), { method: 'POST' });
+      const data = await res.json();
+      
+      if (data.success) {
+        setYoutubeSetup(prev => ({ 
+          ...prev, 
+          loading: false,
+          oauthSession: data.session_id,
+          oauthVerificationUrl: data.verification_url,
+          oauthUserCode: data.user_code,
+          wizardStep: 3
+        }));
+        window.open(data.verification_url, '_blank');
+      } else {
+        setYoutubeSetup(prev => ({ 
+          ...prev, 
+          loading: false,
+          testResult: { success: false, message: data.error || 'Failed to start OAuth' }
+        }));
+      }
+    } catch (err) {
+      setYoutubeSetup(prev => ({ 
+        ...prev, 
+        loading: false,
+        testResult: { success: false, message: err?.message || 'Failed to start OAuth' }
+      }));
+    }
+  };
+
+  const handleYoutubeCompleteOAuth = async () => {
+    if (!youtubeSetup.oauthSession) return;
+    
+    setYoutubeSetup(prev => ({ ...prev, oauthPolling: true, testResult: null }));
+    try {
+      const res = await fetch(apiUrl(`/nexup/youtube/oauth/complete/${youtubeSetup.oauthSession}`), { method: 'POST' });
+      const data = await res.json();
+      
+      if (data.success) {
+        setYoutubeSetup(prev => ({ 
+          ...prev, 
+          oauthPolling: false,
+          wizardStep: 4,
+          testResult: { success: true, message: data.message || 'OAuth setup complete!' }
+        }));
+        loadYoutubeStatus();
+      } else if (data.status === 'pending') {
+        setYoutubeSetup(prev => ({ 
+          ...prev, 
+          oauthPolling: false,
+          testResult: { success: false, message: data.message || 'Please complete authorization in your browser first' }
+        }));
+      } else {
+        setYoutubeSetup(prev => ({ 
+          ...prev, 
+          oauthPolling: false,
+          testResult: { success: false, message: data.error || 'OAuth failed' }
+        }));
+      }
+    } catch (err) {
+      setYoutubeSetup(prev => ({ 
+        ...prev, 
+        oauthPolling: false,
+        testResult: { success: false, message: err?.message || 'OAuth failed' }
+      }));
+    }
+  };
+  */
+
+  const handleConnectRadarr = async () => {
+    if (!nexupRadarrUrl || !nexupRadarrApiKey) {
+      alert('Please enter both Radarr URL and API key');
+      return;
+    }
+    
+    setNexupLoading(true);
+    try {
+      const res = await fetch(apiUrl(`/nexup/radarr/connect?url=${encodeURIComponent(nexupRadarrUrl)}&api_key=${encodeURIComponent(nexupRadarrApiKey)}`), {
+        method: 'POST'
+      });
+      const data = await res.json();
+      
+      if (data.success) {
+        alert(`Connected to ${data.appName || 'Radarr'} v${data.version || 'Unknown'}!`);
+        setNexupRadarrUrl('');
+        setNexupRadarrApiKey('');
+        loadNexupSettings();
+      } else {
+        alert('Failed to connect: ' + (data.message || 'Unknown error'));
+      }
+    } catch (err) {
+      alert('Connection error: ' + (err?.message || err));
+    } finally {
+      setNexupLoading(false);
+    }
+  };
+
+  const handleDisconnectRadarr = async () => {
+    if (!await showConfirm('Disconnect from Radarr? This will not delete downloaded trailers.', { title: 'Disconnect Radarr', type: 'warning', confirmText: 'Disconnect' })) return;
+    
+    try {
+      const res = await fetch(apiUrl('/nexup/radarr/disconnect'), { method: 'DELETE' });
+      if (res.ok) {
+        alert('Disconnected from Radarr');
+        loadNexupSettings();
+      }
+    } catch (err) {
+      alert('Failed to disconnect: ' + (err?.message || err));
+    }
+  };
+
+  // Sonarr Connection Functions
+  const handleConnectSonarr = async () => {
+    if (!nexupSonarrUrl || !nexupSonarrApiKey) {
+      alert('Please enter both Sonarr URL and API key');
+      return;
+    }
+    
+    setNexupLoading(true);
+    try {
+      const res = await fetch(apiUrl(`/nexup/sonarr/connect?url=${encodeURIComponent(nexupSonarrUrl)}&api_key=${encodeURIComponent(nexupSonarrApiKey)}`), {
+        method: 'POST'
+      });
+      const data = await res.json();
+      
+      if (data.success) {
+        alert(`Connected to ${data.appName || 'Sonarr'} v${data.version || 'Unknown'}!`);
+        setNexupSonarrUrl('');
+        setNexupSonarrApiKey('');
+        loadNexupSettings();
+      } else {
+        alert('Failed to connect: ' + (data.message || 'Unknown error'));
+      }
+    } catch (err) {
+      alert('Connection error: ' + (err?.message || err));
+    } finally {
+      setNexupLoading(false);
+    }
+  };
+
+  const handleDisconnectSonarr = async () => {
+    if (!await showConfirm('Disconnect from Sonarr? This will not delete downloaded TV trailers.', { title: 'Disconnect Sonarr', type: 'warning', confirmText: 'Disconnect' })) return;
+    
+    try {
+      const res = await fetch(apiUrl('/nexup/sonarr/disconnect'), { method: 'DELETE' });
+      if (res.ok) {
+        alert('Disconnected from Sonarr');
+        loadNexupSettings();
+      }
+    } catch (err) {
+      alert('Failed to disconnect: ' + (err?.message || err));
+    }
+  };
+
+  const loadNexupUpcomingTV = async () => {
+    setNexupLoading(true);
+    try {
+      const res = await fetch(apiUrl('/nexup/sonarr/upcoming'));
+      if (res.ok) {
+        const data = await res.json();
+        setNexupUpcomingTV(data.shows || []);
+      }
+    } catch (err) {
+      alert('Failed to load upcoming TV shows: ' + (err?.message || err));
+    } finally {
+      setNexupLoading(false);
+    }
+  };
+
+  const loadNexupTVTrailers = async () => {
+    try {
+      const res = await fetch(apiUrl('/nexup/sonarr/trailers'));
+      if (res.ok) {
+        const data = await res.json();
+        setNexupTVTrailers(data || []);
+      }
+    } catch (err) {
+      console.error('Failed to load TV trailers:', err);
+    }
+  };
+
+  const handleDownloadTVTrailer = async (sonarrId, seasonNumber, showTitle) => {
+    if (!nexupSettings.storage_path) {
+      alert('Please configure a storage path in NeX-Up settings first');
+      return;
+    }
+    
+    setDownloadingTrailerId(`tv_${sonarrId}_${seasonNumber}`);
+    setDownloadProgress({ title: showTitle || 'Unknown show', status: 'Downloading trailer from YouTube...' });
+    try {
+      const res = await fetch(apiUrl(`/nexup/trailers/download/tv?sonarr_series_id=${sonarrId}&season_number=${seasonNumber}`));
+      
+      if (!res.ok) {
+        const errorData = await res.json().catch(() => ({}));
+        throw new Error(errorData.detail || `Server error: ${res.status}`);
+      }
+      
+      const data = await res.json();
+      
+      if (data.success) {
+        alert(`Trailer downloaded successfully for ${showTitle}!`);
+        loadNexupTVTrailers();
+        loadNexupUpcomingTV();
+      } else {
+        alert('Download failed: ' + (data.message || 'Unknown error'));
+      }
+    } catch (err) {
+      alert('Download error: ' + (err?.message || err));
+    } finally {
+      setDownloadingTrailerId(null);
+      setDownloadProgress(null);
+    }
+  };
+
+  const handleSyncSonarr = async () => {
+    if (!nexupSettings.storage_path) {
+      alert('Please configure a storage path first');
+      return;
+    }
+    
+    setNexupLoading(true);
+    setTVSyncProgress({ status: 'Starting TV trailer sync...', phase: 'init' });
+    
+    // Start SSE listener for real-time progress
+    const eventSource = new EventSource(apiUrl('/nexup/sync-progress'));
+    
+    eventSource.onmessage = (event) => {
+      try {
+        const data = JSON.parse(event.data);
+        setTVSyncProgress({ 
+          status: data.status, 
+          phase: data.syncing ? 'downloading' : 'done',
+          progress: data.progress,
+          downloaded: data.downloaded,
+          total: data.total
+        });
+        
+        // Close connection when done
+        if (!data.syncing && data.progress >= 100) {
+          eventSource.close();
+        }
+      } catch (e) {
+        console.warn('SSE parse error:', e);
+      }
+    };
+    
+    eventSource.onerror = () => {
+      eventSource.close();
+    };
+    
+    try {
+      const res = await fetch(apiUrl('/nexup/sonarr/sync'), { method: 'POST' });
+      
+      if (!res.ok) {
+        const errorData = await res.json().catch(() => ({}));
+        throw new Error(errorData.detail || `Server error: ${res.status}`);
+      }
+      
+      const data = await res.json();
+      eventSource.close();
+      setTVSyncProgress({ status: 'Sync complete!', phase: 'done' });
+      
+      let message = `TV Sync complete!\n`;
+      message += `• Checked: ${data.checked} upcoming shows\n`;
+      message += `• Eligible: ${data.eligible || 0}\n`;
+      message += `• Downloaded: ${data.downloaded} new trailers\n`;
+      
+      if (data.skipped_no_trailer > 0) {
+        message += `• Skipped (no trailer found): ${data.skipped_no_trailer}\n`;
+      }
+      if (data.skipped_already_exists > 0) {
+        message += `• Skipped (already have): ${data.skipped_already_exists}\n`;
+      }
+      
+      if (data.errors && data.errors.length > 0) {
+        message += `\n\n⚠️ Errors:\n${data.errors.slice(0, 3).join('\n')}`;
+        if (data.errors.length > 3) {
+          message += `\n...and ${data.errors.length - 3} more`;
+        }
+      }
+      
+      if (data.help) {
+        message += `\n\n💡 ${data.help}`;
+      }
+      
+      alert(message);
+      loadNexupSettings();
+      loadNexupTVTrailers();
+    } catch (err) {
+      eventSource.close();
+      alert('TV Sync failed: ' + (err?.message || err));
+    } finally {
+      setNexupLoading(false);
+      setTVSyncProgress(null);
+    }
+  };
+
+  const handleDeleteTVTrailer = async (trailerId) => {
+    if (!await showConfirm('Delete this TV trailer? This will also remove the file.', { title: 'Delete TV Trailer', type: 'danger', confirmText: 'Delete' })) return;
+    
+    try {
+      const res = await fetch(apiUrl(`/nexup/trailers/tv/${trailerId}`), { method: 'DELETE' });
+      if (res.ok) {
+        loadNexupTVTrailers();
+      }
+    } catch (err) {
+      alert('Failed to delete: ' + (err?.message || err));
+    }
+  };
+
+  const handleToggleTVTrailer = async (trailerId) => {
+    try {
+      const res = await fetch(apiUrl(`/nexup/trailers/tv/${trailerId}/toggle`), { method: 'PUT' });
+      if (res.ok) {
+        loadNexupTVTrailers();
+      }
+    } catch (err) {
+      alert('Failed to toggle: ' + (err?.message || err));
+    }
+  };
+
+  const handleUpdateNexupSettings = async (updates) => {
+    try {
+      const params = new URLSearchParams();
+      Object.entries(updates).forEach(([key, value]) => {
+        if (value !== undefined && value !== null) {
+          params.append(key, value);
+        }
+      });
+      
+      const res = await fetch(apiUrl('/nexup/settings?' + params.toString()), {
+        method: 'PUT'
+      });
+      
+      if (res.ok) {
+        // Reload settings to get updated values
+        loadNexupSettings();
+        loadNexupStorage();
+      }
+    } catch (err) {
+      alert('Failed to update settings: ' + (err?.message || err));
+    }
+  };
+
+  const handleSyncNexup = async () => {
+    if (!nexupSettings.storage_path) {
+      alert('Please configure a storage path first');
+      return;
+    }
+    
+    // Check how many trailers need to be downloaded
+    const bulkThreshold = nexupSettings.bulk_warning_threshold || 5;
+    if (bulkThreshold > 0) {
+      try {
+        // Quick check to see how many trailers will be downloaded
+        const previewRes = await fetch(apiUrl('/nexup/radarr/upcoming'));
+        if (previewRes.ok) {
+          const previewData = await previewRes.json();
+          const existingTrailerIds = new Set(nexupTrailers.map(t => t.radarr_movie_id));
+          const needsDownload = (previewData.movies || []).filter(m => 
+            m.has_trailer && !existingTrailerIds.has(m.id)
+          );
+          
+          if (needsDownload.length >= bulkThreshold) {
+            const delay = nexupSettings.download_delay || 5;
+            const estimatedTime = Math.ceil((needsDownload.length * delay) / 60);
+            const confirmed = await showConfirm(
+              `About to download ${needsDownload.length} trailers.\n\n` +
+              `With a ${delay}s delay between downloads, this will take approximately ${estimatedTime > 0 ? estimatedTime + ' minute(s)' : 'less than a minute'}.\n\n` +
+              `Downloading many trailers at once may trigger YouTube rate limiting.`,
+              { title: 'Rate Limit Warning', type: 'warning', confirmText: 'Continue' }
+            );
+            if (!confirmed) {
+              return;
+            }
+          }
+        }
+      } catch (err) {
+        // If preview fails, continue anyway
+        console.warn('Could not preview downloads:', err);
+      }
+    }
+    
+    setNexupLoading(true);
+    setSyncProgress({ status: 'Starting auto-download...', phase: 'init' });
+    
+    // Start SSE listener for real-time progress
+    const eventSource = new EventSource(apiUrl('/nexup/sync-progress'));
+    
+    eventSource.onmessage = (event) => {
+      try {
+        const data = JSON.parse(event.data);
+        setSyncProgress({ 
+          status: data.status, 
+          phase: data.syncing ? 'downloading' : 'done',
+          progress: data.progress,
+          downloaded: data.downloaded,
+          total: data.total
+        });
+        
+        // Close connection when done
+        if (!data.syncing && data.progress >= 100) {
+          eventSource.close();
+        }
+      } catch (e) {
+        console.warn('SSE parse error:', e);
+      }
+    };
+    
+    eventSource.onerror = () => {
+      eventSource.close();
+    };
+    
+    try {
+      const res = await fetch(apiUrl('/nexup/sync'), { method: 'POST' });
+      
+      if (!res.ok) {
+        const errorData = await res.json().catch(() => ({}));
+        throw new Error(errorData.detail || `Server error: ${res.status}`);
+      }
+      
+      const data = await res.json();
+      eventSource.close();
+      setSyncProgress({ status: 'Sync complete!', phase: 'done' });
+      
+      let message = `Sync complete!\n`;
+      message += `• Checked: ${data.checked} upcoming movies\n`;
+      message += `• Eligible: ${data.eligible || 0} (with trailers, releasing soon)\n`;
+      message += `• Downloaded: ${data.downloaded} new trailers\n`;
+      message += `• Expired: ${data.expired} (movies now in library)`;
+      
+      if (data.errors && data.errors.length > 0) {
+        message += `\n\n⚠️ Errors:\n${data.errors.slice(0, 3).join('\n')}`;
+        if (data.errors.length > 3) {
+          message += `\n...and ${data.errors.length - 3} more`;
+        }
+      }
+      
+      if (data.help) {
+        message += `\n\n💡 ${data.help}`;
+      }
+      
+      alert(message);
+      loadNexupSettings();
+      loadNexupTrailers();
+      loadNexupStorage();
+    } catch (err) {
+      eventSource.close();
+      alert('Sync failed: ' + (err?.message || err));
+    } finally {
+      setNexupLoading(false);
+      setSyncProgress(null);
+    }
+  };
+
+  const handleLoadNexupUpcoming = async () => {
+    setNexupLoading(true);
+    try {
+      const res = await fetch(apiUrl('/nexup/radarr/upcoming'));
+      if (res.ok) {
+        const data = await res.json();
+        setNexupUpcoming(data.movies || []);
+      }
+    } catch (err) {
+      alert('Failed to load upcoming movies: ' + (err?.message || err));
+    } finally {
+      setNexupLoading(false);
+    }
+  };
+
+  const handleDownloadTrailer = async (radarrMovieId, movieTitle) => {
+    if (!nexupSettings.storage_path) {
+      alert('Please configure a storage path in NeX-Up settings first');
+      return;
+    }
+    
+    setDownloadingTrailerId(radarrMovieId);
+    setDownloadProgress({ title: movieTitle || 'Unknown movie', status: 'Downloading trailer from YouTube...' });
+    try {
+      const res = await fetch(apiUrl(`/nexup/trailers/download?radarr_movie_id=${radarrMovieId}`), {
+        method: 'POST'
+      });
+      
+      // Check if response is ok before parsing JSON
+      if (!res.ok) {
+        const errorData = await res.json().catch(() => ({}));
+        const errorMsg = errorData.detail || `Server error: ${res.status}`;
+        throw new Error(errorMsg);
+      }
+      
+      const data = await res.json();
+      
+      if (data.success) {
+        alert(`✅ Downloaded trailer for "${data.message || movieTitle || 'movie'}" (${data.file_size_mb?.toFixed(1) || '?'} MB)`);
+        loadNexupTrailers();
+        loadNexupStorage();
+        handleLoadNexupUpcoming(); // Refresh to show downloaded status
+      } else {
+        alert('⚠️ Download failed: ' + (data.message || 'Unknown error'));
+      }
+    } catch (err) {
+      // More descriptive error messages
+      let errorMsg = err?.message || String(err);
+      if (errorMsg.includes('Failed to download trailer')) {
+        errorMsg = `Could not download trailer for "${movieTitle || 'this movie'}".\n\nPossible reasons:\n• YouTube bot detection (try again later)\n• Trailer video is age-restricted\n• Video is not available in your region\n\n💡 Tip: Export browser cookies to a youtube_cookies.txt file in your NeX-Up storage folder for better reliability.`;
+      } else if (errorMsg.includes('No trailer available')) {
+        errorMsg = `No trailer URL found for "${movieTitle || 'this movie'}". The movie may not have a trailer available in Radarr yet.`;
+      }
+      alert('❌ Download error:\n\n' + errorMsg);
+    } finally {
+      setDownloadingTrailerId(null);
+      setDownloadProgress(null);
+    }
+  };
+
+  const handleDeleteTrailer = async (trailerId, title) => {
+    if (!await showConfirm(`Delete trailer for "${title}"?`, { title: 'Delete Trailer', type: 'danger', confirmText: 'Delete' })) return;
+    
+    try {
+      const res = await fetch(apiUrl(`/nexup/trailers/${trailerId}`), { method: 'DELETE' });
+      if (res.ok) {
+        loadNexupTrailers();
+        loadNexupStorage();
+      }
+    } catch (err) {
+      alert('Failed to delete: ' + (err?.message || err));
+    }
+  };
+
+  const handleToggleTrailer = async (trailerId) => {
+    try {
+      const res = await fetch(apiUrl(`/nexup/trailers/${trailerId}/toggle`), { method: 'PUT' });
+      if (res.ok) {
+        loadNexupTrailers();
+      }
+    } catch (err) {
+      alert('Failed to toggle: ' + (err?.message || err));
+    }
+  };
+
+  const handleManualTrailerSubmit = async (e) => {
+    e.preventDefault();
+    
+    if (!manualTrailerForm.title.trim()) {
+      alert('Please enter a movie title');
+      return;
+    }
+    
+    if (!manualTrailerForm.url && !manualTrailerForm.file_path) {
+      alert('Please provide either a URL or file path for the trailer');
+      return;
+    }
+    
+    if (!nexupSettings.storage_path) {
+      alert('Please configure a storage path in NeX-Up settings first');
+      return;
+    }
+    
+    setNexupLoading(true);
+    try {
+      const params = new URLSearchParams();
+      params.append('title', manualTrailerForm.title.trim());
+      if (manualTrailerForm.tmdb_id) params.append('tmdb_id', manualTrailerForm.tmdb_id);
+      if (manualTrailerForm.url) params.append('url', manualTrailerForm.url.trim());
+      if (manualTrailerForm.file_path) params.append('file_path', manualTrailerForm.file_path.trim());
+      
+      const res = await fetch(apiUrl(`/nexup/trailers/manual?${params.toString()}`), {
+        method: 'POST'
+      });
+      const data = await res.json();
+      
+      if (res.ok && (data.success || data.trailer_id)) {
+        alert(`Successfully added trailer for "${manualTrailerForm.title}"`);
+        setShowManualTrailerModal(false);
+        setManualTrailerForm({ title: '', tmdb_id: '', url: '', file_path: '' });
+        loadNexupTrailers();
+        loadNexupStorage();
+      } else {
+        // Handle both FastAPI HTTPException format (detail) and our format (message)
+        const errorMsg = data.detail || data.message || data.error || 'Unknown error';
+        alert('Failed to add trailer: ' + errorMsg);
+      }
+    } catch (err) {
+      alert('Error adding trailer: ' + (err?.message || err));
+    } finally {
+      setNexupLoading(false);
+    }
+  };
+
+  // Load NeX-Up data on mount
+  React.useEffect(() => {
+    loadNexupSettings();
+    loadNexupTrailers();
+    loadNexupStorage();
+    loadDynamicPrerollSettings();
+    loadGeneratedPrerolls();
+    loadYoutubeStatus();
+  }, []);
+
+  // Dynamic Preroll Generator Functions
+  const loadGeneratedPrerolls = async () => {
+    try {
+      const res = await fetch(apiUrl('/nexup/preroll/list'));
+      if (res.ok) {
+        const data = await res.json();
+        setGeneratedPrerolls(data.prerolls || []);
+      }
+    } catch (err) {
+      console.error('Failed to load generated prerolls:', err);
+    }
+  };
+
+  const loadDynamicPrerollSettings = async () => {
+    try {
+      // Load templates and ffmpeg status
+      const templatesRes = await fetch(apiUrl('/nexup/preroll/templates'));
+      if (templatesRes.ok) {
+        const data = await templatesRes.json();
+        setDynamicPrerollTemplates(data.templates || []);
+        setFfmpegAvailable(data.ffmpeg_available);
+        setColorThemes(data.color_themes || {});
+      }
+      
+      // Load saved settings
+      const settingsRes = await fetch(apiUrl('/nexup/preroll/settings'));
+      if (settingsRes.ok) {
+        const data = await settingsRes.json();
+        setDynamicPrerollSettings({
+          template: data.template || 'coming_soon',
+          server_name: data.server_name || '',
+          duration: data.duration || 5,
+          theme: data.theme || 'midnight',
+          preroll_path: data.preroll_path
+        });
+      }
+    } catch (err) {
+      console.error('Failed to load dynamic preroll settings:', err);
+    }
+  };
+
+  const handleGenerateDynamicPreroll = async () => {
+    if (!dynamicPrerollSettings.server_name.trim()) {
+      alert('Please enter your server name');
+      return;
+    }
+    
+    setDynamicPrerollGenerating(true);
+    try {
+      const params = new URLSearchParams({
+        template: dynamicPrerollSettings.template,
+        server_name: dynamicPrerollSettings.server_name,
+        duration: dynamicPrerollSettings.duration,
+        theme: dynamicPrerollSettings.theme || 'midnight'
+      });
+      
+      const res = await fetch(apiUrl(`/nexup/preroll/generate?${params.toString()}`), {
+        method: 'POST'
+      });
+      const data = await res.json();
+      
+      if (data.success) {
+        alert(`Generated "${data.template}" preroll successfully!`);
+        setDynamicPrerollSettings(prev => ({
+          ...prev,
+          preroll_path: data.path
+        }));
+        // Refresh the list of generated prerolls
+        loadGeneratedPrerolls();
+      } else {
+        alert('Failed to generate preroll: ' + (data.detail || data.message || 'Unknown error'));
+      }
+    } catch (err) {
+      alert('Error generating preroll: ' + (err?.message || err));
+    } finally {
+      setDynamicPrerollGenerating(false);
+    }
+  };
+
+  // Generate video from CSS preview capture (WYSIWYG approach)
+  const handleGenerateFromPreview = async () => {
+    if (!dynamicPrerollSettings.server_name.trim()) {
+      alert('Please enter your server name');
+      return;
+    }
+    
+    if (!previewContainerRef.current) {
+      alert('Preview container not found.');
+      return;
+    }
+    
+    setDynamicPrerollGenerating(true);
+    try {
+      // Get the preview element
+      const previewEl = previewContainerRef.current;
+      
+      // Capture the CSS preview at high resolution (1920x1080 target)
+      // Use scale factor based on preview size to get exact 1920x1080
+      const previewWidth = previewEl.offsetWidth;
+      const targetWidth = 1920;
+      const scaleFactor = Math.max(3, Math.ceil(targetWidth / previewWidth));
+      
+      const canvas = await html2canvas(previewContainerRef.current, {
+        scale: scaleFactor,
+        useCORS: true,
+        backgroundColor: null,  // Let the CSS background show through
+        logging: false,
+        allowTaint: true,
+        width: previewEl.offsetWidth,
+        height: previewEl.offsetHeight,
+        // Capture with animations at a good frame
+        onclone: (clonedDoc, clonedEl) => {
+          // Pause CSS animations for a clean capture
+          const style = clonedDoc.createElement('style');
+          style.textContent = `
+            *, *::before, *::after { 
+              animation-play-state: paused !important;
+              animation-delay: -0.5s !important;
+            }
+          `;
+          clonedDoc.head.appendChild(style);
+        }
+      });
+      
+      // Convert canvas to base64 PNG
+      const imageData = canvas.toDataURL('image/png', 1.0);
+      
+      // Send to backend to generate video with fade effects
+      const res = await fetch(apiUrl('/nexup/preroll/generate-from-preview'), {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          image_data: imageData,
+          duration: dynamicPrerollSettings.duration,
+          template: dynamicPrerollSettings.template,
+          server_name: dynamicPrerollSettings.server_name,
+          theme: dynamicPrerollSettings.theme || 'custom'
+        })
+      });
+      
+      const data = await res.json();
+      
+      if (data.success) {
+        alert(`✨ Generated preroll from preview successfully!\n\nThe video is an exact match of what you see in the preview with smooth fade in/out effects.`);
+        setDynamicPrerollSettings(prev => ({
+          ...prev,
+          preroll_path: data.path
+        }));
+        // Refresh the list of generated prerolls
+        loadGeneratedPrerolls();
+      } else {
+        alert('Failed to generate preroll: ' + (data.detail || data.message || 'Unknown error'));
+      }
+    } catch (err) {
+      console.error('Error generating from preview:', err);
+      alert('Error generating preroll from preview: ' + (err?.message || err));
+    } finally {
+      setDynamicPrerollGenerating(false);
+    }
+  };
+
+  const handleDeleteSpecificPreroll = async (filename) => {
+    if (!await showConfirm(`Delete "${filename}"?`, { title: 'Delete File', type: 'danger', confirmText: 'Delete' })) return;
+    
+    try {
+      const res = await fetch(apiUrl(`/nexup/preroll/${encodeURIComponent(filename)}`), { method: 'DELETE' });
+      const data = await res.json();
+      
+      if (data.success) {
+        // Refresh the list
+        loadGeneratedPrerolls();
+        // Clear preroll_path if it was the active one
+        if (dynamicPrerollSettings.preroll_path?.includes(filename)) {
+          setDynamicPrerollSettings(prev => ({ ...prev, preroll_path: null }));
+        }
+      } else {
+        alert('Failed to delete: ' + (data.message || 'Unknown error'));
+      }
+    } catch (err) {
+      alert('Error deleting preroll: ' + (err?.message || err));
+    }
+  };
+
+  const handleDeleteDynamicPreroll = async () => {
+    if (!await showConfirm('Delete the generated preroll video?', { title: 'Delete Preroll', type: 'danger', confirmText: 'Delete' })) return;
+    
+    try {
+      const res = await fetch(apiUrl('/nexup/preroll'), { method: 'DELETE' });
+      const data = await res.json();
+      
+      if (data.success) {
+        alert('Dynamic preroll deleted');
+        setDynamicPrerollSettings(prev => ({
+          ...prev,
+          preroll_path: null
+        }));
+        // Refresh the list
+        loadGeneratedPrerolls();
+      }
+    } catch (err) {
+      alert('Failed to delete preroll: ' + (err?.message || err));
+    }
+  };
+
+  // NeX-Up Sequence Builder Functions
+  const loadNexupSequencePresets = async () => {
+    try {
+      setNexupSequenceLoading(true);
+      
+      // First sync trailers to preroll records (for sequence builder compatibility)
+      await fetch(apiUrl('/nexup/trailers/sync-prerolls'), { method: 'POST' });
+      
+      // Refresh prerolls list to include synced trailers
+      const prerollsRes = await fetch(apiUrl('/prerolls'));
+      const prerollsData = await prerollsRes.json();
+      setPrerolls(Array.isArray(prerollsData) ? prerollsData : []);
+      
+      const res = await fetch(apiUrl('/nexup/sequence/presets'));
+      const data = await res.json();
+      setNexupSequencePresets(data.presets || []);
+      setNexupAvailablePrerolls(data.available_prerolls || []);
+      // Auto-select first preroll if available
+      if (data.available_prerolls?.length > 0) {
+        setNexupSequenceWizard(prev => ({ 
+          ...prev, 
+          selectedPrerollPath: data.available_prerolls[0].path 
+        }));
+      }
+      return data;
+    } catch (err) {
+      console.error('Failed to load sequence presets:', err);
+      return { presets: [] };
+    } finally {
+      setNexupSequenceLoading(false);
+    }
+  };
+
+  const handleRegisterPreroll = async () => {
+    try {
+      const res = await fetch(apiUrl('/nexup/preroll/register'), { method: 'POST' });
+      const data = await res.json();
+      if (data.success && data.registered.length > 0) {
+        alert(`Registered ${data.registered.length} preroll(s) to your library!`);
+        // Reload presets to update status
+        loadNexupSequencePresets();
+      }
+      return data;
+    } catch (err) {
+      console.error('Failed to register preroll:', err);
+      return { success: false };
+    }
+  };
+
+  const handleCreateNexupSequence = async () => {
+    const { selectedPreset, selectedPrerollPath, customTrailerCount, includePreroll, sequenceName, sequenceDescription } = nexupSequenceWizard;
+    
+    if (!selectedPreset) {
+      alert('Please select a sequence preset');
+      return;
+    }
+    
+    if (includePreroll && !selectedPrerollPath && nexupAvailablePrerolls.length > 0) {
+      alert('Please select which preroll to use');
+      return;
+    }
+    
+    try {
+      setNexupSequenceLoading(true);
+      
+      // First register the preroll if needed
+      if (includePreroll) {
+        await handleRegisterPreroll();
+      }
+      
+      const params = new URLSearchParams({
+        preset_id: selectedPreset,
+        include_preroll: includePreroll.toString()
+      });
+      
+      if (customTrailerCount) params.set('trailer_count', customTrailerCount.toString());
+      if (sequenceName) params.set('name', sequenceName);
+      if (sequenceDescription) params.set('description', sequenceDescription);
+      if (includePreroll && selectedPrerollPath) params.set('selected_preroll_path', selectedPrerollPath);
+      if (nexupSequenceWizard.playbackOrder) params.set('playback_order', nexupSequenceWizard.playbackOrder);
+      // For mixed mode, pass movie and TV counts separately
+      if (selectedPreset === 'mixed_trailers') {
+        params.set('movie_trailer_count', nexupSequenceWizard.movieTrailerCount.toString());
+        params.set('tv_trailer_count', nexupSequenceWizard.tvTrailerCount.toString());
+      }
+      
+      console.log('Creating sequence with params:', {
+        preset_id: selectedPreset,
+        include_preroll: includePreroll,
+        selected_preroll_path: selectedPrerollPath,
+        full_url: `/nexup/sequence/create?${params.toString()}`
+      });
+      
+      const res = await fetch(apiUrl(`/nexup/sequence/create?${params.toString()}`), {
+        method: 'POST'
+      });
+      const data = await res.json();
+      
+      if (data.success) {
+        alert(`Sequence "${data.sequence.name}" created successfully!\n\nGo to the Sequences page to view and use it in your schedules.`);
+        setShowNexupSequenceWizard(false);
+        setNexupSequenceWizard({
+          step: 1,
+          selectedPreset: null,
+          selectedPrerollPath: nexupAvailablePrerolls.length > 0 ? nexupAvailablePrerolls[0].path : null,
+          customTrailerCount: 2,
+          movieTrailerCount: 1,
+          tvTrailerCount: 1,
+          playbackOrder: 'random',
+          includePreroll: true,
+          sequenceName: '',
+          sequenceDescription: ''
+        });
+      } else {
+        alert('Failed to create sequence: ' + (data.detail || 'Unknown error'));
+      }
+    } catch (err) {
+      alert('Failed to create sequence: ' + (err?.message || err));
+    } finally {
+      setNexupSequenceLoading(false);
+    }
+  };
+
   const cancelEditGenreMap = () => {
     setGmEditing(null);
     setGmForm({ genre: '', category_id: '' });
@@ -11856,7 +15273,7 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
 
   const deleteGenreMap = async (mapId) => {
     if (!mapId) return;
-    if (!window.confirm('Delete this genre mapping?')) return;
+    if (!await showConfirm('Delete this genre mapping?', { title: 'Delete Mapping', type: 'danger', confirmText: 'Delete' })) return;
     try {
       const res = await fetch(apiUrl(`/genres/map/${mapId}`), { method: 'DELETE' });
       const data = await safeJson(res);
@@ -12094,402 +15511,3209 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
     }
   }, [activeTab, loadGenreMaps, loadGenreSettings, loadVerboseLogging, loadPassiveMode, loadClearWhenInactive]);
 
-  const renderSettings = () => (
-    <div>
-      <h1 className="header">Settings</h1>
+  // Auto-load NeX-Up data when opening any NeX-Up tab
+  React.useEffect(() => {
+    if (activeTab.startsWith('nexup')) {
+      loadNexupSettings();
+      loadNexupTrailers();
+      loadNexupTVTrailers();
+      loadNexupStorage();
+    }
+  }, [activeTab]);
 
-      <details className="card" open>
-        <summary style={{ cursor: 'pointer' }}>
-          <h2 style={{ display: 'inline' }}>NeXroll Settings</h2>
-        </summary>
+  // ============================================
+  // RENDER: NeX-Up Page with Sub-Navigation
+  // ============================================
+  const renderNexUp = () => {
+    // Route based on activeTab
+    if (activeTab === 'nexup/trailers') {
+      return renderNexUpTrailers();
+    }
+    if (activeTab === 'nexup/settings') {
+      return renderNexUpSettings();
+    }
+    if (activeTab === 'nexup/generator') {
+      return renderNexUpGenerator();
+    }
+    // Default: Connections page
+    return renderNexUpConnections();
+  };
+
+  // NeX-Up Connections Sub-Page
+  const renderNexUpConnections = () => (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
+      <div>
+        <h1 className="header" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+          <Clapperboard size={32} /> NeX-Up
+        </h1>
+        <p style={{ marginBottom: '0', color: 'var(--text-color)', fontSize: '1rem' }}>
+          Connect to Radarr and Sonarr to automatically fetch trailers for upcoming movies and TV shows.
+        </p>
+      </div>
+
+      {/* Radarr Connection Card */}
+      <div className="card">
+        <h2 style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+          <Video size={24} /> Radarr Connection
+        </h2>
         
-        {/* Theme Settings */}
-        <div style={{ marginTop: '1rem', paddingBottom: '1rem', borderBottom: '1px solid var(--border-color)' }}>
-          <h3 style={{ marginBottom: '0.75rem' }}>Theme</h3>
-          <p style={{ marginBottom: '1rem', color: '#888', fontSize: '0.9rem' }}>
-            Choose between light and dark themes for the interface.
-          </p>
+        {!nexupSettings.radarr_connected ? (
+          <div>
+            <p style={{ fontSize: '0.9rem', color: '#666', marginBottom: '1rem' }}>
+              Connect to your Radarr server to fetch upcoming movie information and trailers.
+            </p>
+            <div style={{ display: 'grid', gap: '1rem', maxWidth: '500px' }}>
+              <div>
+                <label style={{ display: 'block', marginBottom: '0.5rem', fontWeight: 'bold' }}>
+                  Radarr URL
+                </label>
+                <input
+                  type="text"
+                  placeholder="http://localhost:7878"
+                  value={nexupRadarrUrl}
+                  onChange={(e) => setNexupRadarrUrl(e.target.value)}
+                  style={{ width: '100%', padding: '0.5rem', borderRadius: '4px', border: '1px solid var(--border-color)' }}
+                />
+              </div>
+              <div>
+                <label style={{ display: 'block', marginBottom: '0.5rem', fontWeight: 'bold' }}>
+                  API Key
+                </label>
+                <input
+                  type="password"
+                  placeholder="Enter your Radarr API key"
+                  value={nexupRadarrApiKey}
+                  onChange={(e) => setNexupRadarrApiKey(e.target.value)}
+                  style={{ width: '100%', padding: '0.5rem', borderRadius: '4px', border: '1px solid var(--border-color)' }}
+                />
+                <p style={{ fontSize: '0.8rem', color: '#888', marginTop: '0.25rem' }}>
+                  Find your API key in Radarr → Settings → General → Security
+                </p>
+              </div>
+              <button
+                onClick={handleConnectRadarr}
+                disabled={nexupLoading || !nexupRadarrUrl || !nexupRadarrApiKey}
+                className="button"
+                style={{ backgroundColor: '#ffc230' }}
+              >
+                {nexupLoading ? 'Connecting...' : 'Connect to Radarr'}
+              </button>
+            </div>
+          </div>
+        ) : (
+          <>
+            <div style={{ 
+              display: 'flex', 
+              alignItems: 'center', 
+              gap: '1rem', 
+              padding: '1rem', 
+              backgroundColor: 'var(--card-bg)', 
+              border: '1px solid #ffc230', 
+              borderRadius: '8px',
+              marginBottom: '1rem'
+            }}>
+              <CheckCircle size={32} color="#ffc230" />
+              <div style={{ flex: 1 }}>
+                <strong style={{ color: '#ffc230' }}>Connected to Radarr</strong>
+                <p style={{ margin: 0, fontSize: '0.9rem', color: '#666' }}>
+                  {nexupSettings.radarr_url}
+                </p>
+              </div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                  <label className="nx-rockerswitch" style={{ transform: 'scale(0.85)' }}>
+                    <input
+                      type="checkbox"
+                      checked={nexupSettings.enabled}
+                      onChange={(e) => handleUpdateNexupSettings({ enabled: e.target.checked })}
+                    />
+                    <span className="nx-rockerswitch-slider"></span>
+                  </label>
+                  <span style={{ fontSize: '0.85rem', fontWeight: 'bold', color: nexupSettings.enabled ? '#ffc230' : '#666' }}>
+                    {nexupSettings.enabled ? 'On' : 'Off'}
+                  </span>
+                </div>
+                <button
+                  onClick={handleDisconnectRadarr}
+                  className="button"
+                  style={{ backgroundColor: '#dc3545' }}
+                >
+                  Disconnect
+                </button>
+              </div>
+            </div>
+            
+            {/* Radarr Quick Actions */}
+            <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap', alignItems: 'center' }}>
+              <button
+                onClick={() => { loadNexupSettings(); loadNexupTrailers(); loadNexupStorage(); handleLoadNexupUpcoming(); }}
+                disabled={nexupLoading}
+                className="button"
+                style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}
+                title="Refresh all movie data from Radarr"
+              >
+                <RefreshCw size={16} /> Refresh
+              </button>
+              <button
+                onClick={handleSyncNexup}
+                disabled={nexupLoading || syncProgress}
+                className="button"
+                style={{ backgroundColor: '#ffc230', display: 'flex', alignItems: 'center', gap: '0.5rem' }}
+                title="Automatically download trailers for upcoming movies"
+              >
+                {syncProgress ? <><Loader2 size={16} className="spin" /> Syncing...</> : <><Download size={16} /> Auto-Download</>}
+              </button>
+              <button
+                onClick={() => { handleLoadNexupUpcoming(); setShowNexupUpcoming(true); }}
+                className="button"
+                style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}
+              >
+                <ListChecks size={16} /> Upcoming ({nexupUpcoming.length})
+              </button>
+              <button
+                onClick={() => setActiveTab('nexup/trailers')}
+                className="button"
+                style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}
+              >
+                <Film size={16} /> Trailers ({nexupTrailers.length})
+              </button>
+            </div>
+            {syncProgress && (
+              <div style={{ 
+                marginTop: '0.75rem', 
+                padding: '0.5rem 0.75rem', 
+                backgroundColor: 'var(--bg-color)', 
+                borderRadius: '6px',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '0.5rem',
+                fontSize: '0.9rem',
+                color: 'var(--text-secondary)'
+              }}>
+                <Loader2 size={16} className="spin" style={{ color: '#ffc230' }} /> 
+                {syncProgress.status}
+                {syncProgress.total > 0 && syncProgress.phase === 'downloading' && (
+                  <span style={{ marginLeft: 'auto', fontWeight: 'bold', color: '#ffc230' }}>
+                    {syncProgress.downloaded || 0}/{syncProgress.total}
+                  </span>
+                )}
+              </div>
+            )}
+            {downloadProgress && (
+              <div style={{ 
+                marginTop: '0.75rem', 
+                padding: '0.5rem 0.75rem', 
+                backgroundColor: 'var(--bg-color)', 
+                borderRadius: '6px',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '0.5rem',
+                fontSize: '0.9rem',
+                color: 'var(--text-secondary)'
+              }}>
+                <Loader2 size={16} className="spin" style={{ color: '#007bff' }} /> 
+                <span><strong>{downloadProgress.title}</strong> - {downloadProgress.status}</span>
+              </div>
+            )}
+            {nexupSettings.last_sync && (
+              <p style={{ fontSize: '0.85rem', color: '#666', marginTop: '0.5rem', marginBottom: 0 }}>
+                Last synced: {new Date(nexupSettings.last_sync).toLocaleString()}
+              </p>
+            )}
+          </>
+        )}
+      </div>
+
+      {/* Sonarr Connection Card */}
+      <div className="card">
+        <h2 style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+          <Tv size={24} /> Sonarr Connection
+        </h2>
+        
+        {!nexupSettings.sonarr_connected ? (
+          <div>
+            <p style={{ fontSize: '0.9rem', color: '#666', marginBottom: '1rem' }}>
+              Connect to your Sonarr server to fetch upcoming TV shows and season trailers.
+            </p>
+            <div style={{ display: 'grid', gap: '1rem', maxWidth: '500px' }}>
+              <div>
+                <label style={{ display: 'block', marginBottom: '0.5rem', fontWeight: 'bold' }}>
+                  Sonarr URL
+                </label>
+                <input
+                  type="text"
+                  placeholder="http://localhost:8989"
+                  value={nexupSonarrUrl}
+                  onChange={(e) => setNexupSonarrUrl(e.target.value)}
+                  style={{ width: '100%', padding: '0.5rem', borderRadius: '4px', border: '1px solid var(--border-color)' }}
+                />
+              </div>
+              <div>
+                <label style={{ display: 'block', marginBottom: '0.5rem', fontWeight: 'bold' }}>
+                  API Key
+                </label>
+                <input
+                  type="password"
+                  placeholder="Enter your Sonarr API key"
+                  value={nexupSonarrApiKey}
+                  onChange={(e) => setNexupSonarrApiKey(e.target.value)}
+                  style={{ width: '100%', padding: '0.5rem', borderRadius: '4px', border: '1px solid var(--border-color)' }}
+                />
+                <p style={{ fontSize: '0.8rem', color: '#888', marginTop: '0.25rem' }}>
+                  Find your API key in Sonarr → Settings → General → Security
+                </p>
+              </div>
+              <button
+                onClick={handleConnectSonarr}
+                disabled={nexupLoading || !nexupSonarrUrl || !nexupSonarrApiKey}
+                className="button"
+                style={{ backgroundColor: '#17a2b8' }}
+              >
+                {nexupLoading ? 'Connecting...' : 'Connect to Sonarr'}
+              </button>
+            </div>
+          </div>
+        ) : (
+          <>
+            <div style={{ 
+              display: 'flex', 
+              alignItems: 'center', 
+              gap: '1rem', 
+              padding: '1rem', 
+              backgroundColor: 'var(--card-bg)', 
+              border: '1px solid #17a2b8', 
+              borderRadius: '8px',
+              marginBottom: '1rem'
+            }}>
+              <CheckCircle size={32} color="#17a2b8" />
+              <div style={{ flex: 1 }}>
+                <strong style={{ color: '#17a2b8' }}>Connected to Sonarr</strong>
+                <p style={{ margin: 0, fontSize: '0.9rem', color: '#666' }}>
+                  {nexupSettings.sonarr_url}
+                </p>
+              </div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                  <label className="nx-rockerswitch" style={{ transform: 'scale(0.85)' }}>
+                    <input
+                      type="checkbox"
+                      checked={nexupSettings.sonarr_enabled}
+                      onChange={(e) => handleUpdateNexupSettings({ sonarr_enabled: e.target.checked })}
+                    />
+                    <span className="nx-rockerswitch-slider"></span>
+                  </label>
+                  <span style={{ fontSize: '0.85rem', fontWeight: 'bold', color: nexupSettings.sonarr_enabled ? '#17a2b8' : '#666' }}>
+                    {nexupSettings.sonarr_enabled ? 'On' : 'Off'}
+                  </span>
+                </div>
+                <button
+                  onClick={handleDisconnectSonarr}
+                  className="button"
+                  style={{ backgroundColor: '#dc3545' }}
+                >
+                  Disconnect
+                </button>
+              </div>
+            </div>
+            
+            {/* Sonarr Quick Actions */}
+            <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap', alignItems: 'center' }}>
+              <button
+                onClick={() => { loadNexupUpcomingTV(); }}
+                disabled={nexupLoading}
+                className="button"
+                style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}
+                title="Refresh TV show data from Sonarr"
+              >
+                <RefreshCw size={16} /> Refresh
+              </button>
+              <button
+                onClick={handleSyncSonarr}
+                disabled={nexupLoading || tvSyncProgress}
+                className="button"
+                style={{ backgroundColor: '#17a2b8', display: 'flex', alignItems: 'center', gap: '0.5rem' }}
+                title="Automatically download trailers for upcoming TV shows"
+              >
+                {tvSyncProgress ? <><Loader2 size={16} className="spin" /> Syncing...</> : <><Download size={16} /> Auto-Download</>}
+              </button>
+              <button
+                onClick={() => { loadNexupUpcomingTV(); setShowNexupUpcomingTV(true); }}
+                className="button"
+                style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}
+              >
+                <ListChecks size={16} /> Upcoming ({nexupUpcomingTV.length})
+              </button>
+              <button
+                onClick={() => setActiveTab('nexup/trailers')}
+                className="button"
+                style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}
+              >
+                <Tv size={16} /> Trailers ({nexupTVTrailers.length})
+              </button>
+            </div>
+            {tvSyncProgress && (
+              <div style={{ 
+                marginTop: '0.75rem', 
+                padding: '0.5rem 0.75rem', 
+                backgroundColor: 'var(--bg-color)', 
+                borderRadius: '6px',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '0.5rem',
+                fontSize: '0.9rem',
+                color: 'var(--text-secondary)'
+              }}>
+                <Loader2 size={16} className="spin" style={{ color: '#17a2b8' }} /> 
+                {tvSyncProgress.status}
+                {tvSyncProgress.total > 0 && tvSyncProgress.phase === 'downloading' && (
+                  <span style={{ marginLeft: 'auto', fontWeight: 'bold', color: '#17a2b8' }}>
+                    {tvSyncProgress.downloaded || 0}/{tvSyncProgress.total}
+                  </span>
+                )}
+              </div>
+            )}
+            {nexupSettings.last_sonarr_sync && (
+              <p style={{ fontSize: '0.85rem', color: '#666', marginTop: '0.5rem', marginBottom: 0 }}>
+                Last synced: {new Date(nexupSettings.last_sonarr_sync).toLocaleString()}
+              </p>
+            )}
+          </>
+        )}
+      </div>
+    </div>
+  );
+
+  // NeX-Up Trailers Sub-Page
+  const renderNexUpTrailers = () => (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
+      <div>
+        <h1 className="header" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+          <Film size={32} /> Your Trailers
+        </h1>
+        <p style={{ marginBottom: '0', color: 'var(--text-color)', fontSize: '1rem' }}>
+          Manage downloaded trailers from Radarr and Sonarr. Trailers are automatically removed when movies/shows are added to your library.
+        </p>
+      </div>
+
+      {/* Movie Trailers Section */}
+      <div className="card">
+        <h2 style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.5rem' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-            <label className="nx-rockerswitch">
-              <input
-                type="checkbox"
-                checked={darkMode}
-                onChange={toggleTheme}
-              />
-              <span className="nx-rockerswitch-slider"></span>
-            </label>
-            <span style={{ fontWeight: 'bold', color: 'var(--text-color)' }}>
-              {darkMode ? 'Dark Mode' : 'Light Mode'}
-            </span>
+            <Video size={24} style={{ color: '#ffc230' }} /> Movie Trailers
+          </div>
+          <span style={{ fontSize: '1rem', fontWeight: 'normal', color: 'var(--text-secondary)' }}>
+            {nexupTrailers.length} trailer{nexupTrailers.length !== 1 ? 's' : ''}
+          </span>
+        </h2>
+        
+        {!nexupSettings.radarr_connected ? (
+          <div style={{ 
+            padding: '2rem', 
+            textAlign: 'center', 
+            backgroundColor: 'var(--bg-color)', 
+            borderRadius: '8px',
+            border: '1px dashed var(--border-color)'
+          }}>
+            <Video size={48} style={{ color: '#666', marginBottom: '1rem' }} />
+            <p style={{ color: '#888', marginBottom: '1rem' }}>Connect to Radarr to download movie trailers</p>
+            <button
+              onClick={() => setActiveTab('nexup')}
+              className="button"
+              style={{ backgroundColor: '#ffc230' }}
+            >
+              Go to Connections
+            </button>
+          </div>
+        ) : nexupTrailers.length === 0 ? (
+          <div style={{ 
+            padding: '2rem', 
+            textAlign: 'center', 
+            backgroundColor: 'var(--bg-color)', 
+            borderRadius: '8px',
+            border: '1px dashed var(--border-color)'
+          }}>
+            <Film size={48} style={{ color: '#666', marginBottom: '1rem' }} />
+            <p style={{ color: '#888', marginBottom: '1rem' }}>No movie trailers downloaded yet</p>
+            <button
+              onClick={handleSyncNexup}
+              disabled={nexupLoading || syncProgress}
+              className="button"
+              style={{ backgroundColor: '#ffc230' }}
+            >
+              {syncProgress ? <><Loader2 size={16} className="spin" style={{ marginRight: '0.5rem' }} />Syncing...</> : 'Download Trailers'}
+            </button>
+            {syncProgress && (
+              <div style={{ 
+                marginTop: '1rem', 
+                padding: '0.5rem 0.75rem', 
+                backgroundColor: 'var(--card-bg)', 
+                borderRadius: '6px',
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '0.5rem',
+                fontSize: '0.9rem'
+              }}>
+                <Loader2 size={16} className="spin" style={{ color: '#ffc230' }} /> 
+                {syncProgress.status}
+                {syncProgress.total > 0 && syncProgress.phase === 'downloading' && (
+                  <span style={{ marginLeft: '0.5rem', fontWeight: 'bold', color: '#ffc230' }}>
+                    {syncProgress.downloaded || 0}/{syncProgress.total}
+                  </span>
+                )}
+              </div>
+            )}
+          </div>
+        ) : (
+          <>
+            <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '1rem', flexWrap: 'wrap' }}>
+              <button
+                onClick={() => { loadNexupTrailers(); }}
+                disabled={nexupLoading}
+                className="button"
+                style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}
+              >
+                <RefreshCw size={16} /> Refresh
+              </button>
+              <button
+                onClick={handleSyncNexup}
+                disabled={nexupLoading || syncProgress}
+                className="button"
+                style={{ backgroundColor: '#ffc230', display: 'flex', alignItems: 'center', gap: '0.5rem' }}
+              >
+                {syncProgress ? <><Loader2 size={16} className="spin" /> Syncing...</> : <><Download size={16} /> Sync</>}
+              </button>
+              <button
+                onClick={() => setShowManualTrailerModal(true)}
+                className="button"
+                style={{ backgroundColor: '#6c757d', display: 'flex', alignItems: 'center', gap: '0.5rem' }}
+              >
+                <Plus size={16} /> Add Manual
+              </button>
+            </div>
+            {syncProgress && (
+              <div style={{ 
+                marginBottom: '1rem', 
+                padding: '0.5rem 0.75rem', 
+                backgroundColor: 'var(--bg-color)', 
+                borderRadius: '6px',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '0.5rem',
+                fontSize: '0.9rem'
+              }}>
+                <Loader2 size={16} className="spin" style={{ color: '#ffc230' }} /> 
+                {syncProgress.status}
+                {syncProgress.total > 0 && syncProgress.phase === 'downloading' && (
+                  <span style={{ marginLeft: 'auto', fontWeight: 'bold', color: '#ffc230' }}>
+                    {syncProgress.downloaded || 0}/{syncProgress.total}
+                  </span>
+                )}
+              </div>
+            )}
+            <div style={{ display: 'grid', gap: '0.75rem' }}>
+              {nexupTrailers.map(trailer => (
+                <div 
+                  key={trailer.id}
+                  style={{ 
+                    display: 'flex', 
+                    alignItems: 'center', 
+                    justifyContent: 'space-between',
+                    padding: '0.75rem 1rem',
+                    backgroundColor: 'var(--bg-color)',
+                    borderRadius: '8px',
+                    border: `1px solid ${trailer.is_enabled ? 'var(--border-color)' : 'rgba(255,0,0,0.3)'}`,
+                    opacity: trailer.is_enabled ? 1 : 0.7
+                  }}
+                >
+                  <div style={{ flex: 1 }}>
+                    <div style={{ fontWeight: 'bold', color: 'var(--text-color)' }}>{trailer.title}</div>
+                    <div style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
+                      {trailer.release_date ? `Releases: ${new Date(trailer.release_date).toLocaleDateString()}` : 'Release date unknown'}
+                    </div>
+                  </div>
+                  <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+                    <button
+                      onClick={() => handleToggleTrailer(trailer.id)}
+                      className="button"
+                      style={{ 
+                        backgroundColor: trailer.is_enabled ? '#28a745' : '#6c757d',
+                        padding: '0.4rem 0.75rem',
+                        fontSize: '0.85rem'
+                      }}
+                    >
+                      {trailer.is_enabled ? 'Enabled' : 'Disabled'}
+                    </button>
+                    <button
+                      onClick={() => handleDeleteTrailer(trailer.id, trailer.title)}
+                      className="button"
+                      style={{ backgroundColor: '#dc3545', padding: '0.4rem 0.75rem' }}
+                    >
+                      <Trash2 size={14} />
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </>
+        )}
+      </div>
+
+      {/* TV Show Trailers Section */}
+      <div className="card">
+        <h2 style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.5rem' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+            <Tv size={24} style={{ color: '#17a2b8' }} /> TV Show Trailers
+          </div>
+          <span style={{ fontSize: '1rem', fontWeight: 'normal', color: 'var(--text-secondary)' }}>
+            {nexupTVTrailers.length} trailer{nexupTVTrailers.length !== 1 ? 's' : ''}
+          </span>
+        </h2>
+        
+        {!nexupSettings.sonarr_connected ? (
+          <div style={{ 
+            padding: '2rem', 
+            textAlign: 'center', 
+            backgroundColor: 'var(--bg-color)', 
+            borderRadius: '8px',
+            border: '1px dashed var(--border-color)'
+          }}>
+            <Tv size={48} style={{ color: '#666', marginBottom: '1rem' }} />
+            <p style={{ color: '#888', marginBottom: '1rem' }}>Connect to Sonarr to download TV trailers</p>
+            <button
+              onClick={() => setActiveTab('nexup')}
+              className="button"
+              style={{ backgroundColor: '#17a2b8' }}
+            >
+              Go to Connections
+            </button>
+          </div>
+        ) : nexupTVTrailers.length === 0 ? (
+          <div style={{ 
+            padding: '2rem', 
+            textAlign: 'center', 
+            backgroundColor: 'var(--bg-color)', 
+            borderRadius: '8px',
+            border: '1px dashed var(--border-color)'
+          }}>
+            <Tv size={48} style={{ color: '#666', marginBottom: '1rem' }} />
+            <p style={{ color: '#888', marginBottom: '1rem' }}>No TV trailers downloaded yet</p>
+            <button
+              onClick={handleSyncSonarr}
+              disabled={nexupLoading || tvSyncProgress}
+              className="button"
+              style={{ backgroundColor: '#17a2b8' }}
+            >
+              {tvSyncProgress ? <><Loader2 size={16} className="spin" style={{ marginRight: '0.5rem' }} />Syncing...</> : 'Download Trailers'}
+            </button>
+            {tvSyncProgress && (
+              <div style={{ 
+                marginTop: '1rem', 
+                padding: '0.5rem 0.75rem', 
+                backgroundColor: 'var(--card-bg)', 
+                borderRadius: '6px',
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '0.5rem',
+                fontSize: '0.9rem'
+              }}>
+                <Loader2 size={16} className="spin" style={{ color: '#17a2b8' }} /> 
+                {tvSyncProgress.status}
+                {tvSyncProgress.total > 0 && tvSyncProgress.phase === 'downloading' && (
+                  <span style={{ marginLeft: '0.5rem', fontWeight: 'bold', color: '#17a2b8' }}>
+                    {tvSyncProgress.downloaded || 0}/{tvSyncProgress.total}
+                  </span>
+                )}
+              </div>
+            )}
+          </div>
+        ) : (
+          <>
+            <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '1rem', flexWrap: 'wrap' }}>
+              <button
+                onClick={() => { loadNexupTVTrailers(); }}
+                disabled={nexupLoading}
+                className="button"
+                style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}
+              >
+                <RefreshCw size={16} /> Refresh
+              </button>
+              <button
+                onClick={handleSyncSonarr}
+                disabled={nexupLoading || tvSyncProgress}
+                className="button"
+                style={{ backgroundColor: '#17a2b8', display: 'flex', alignItems: 'center', gap: '0.5rem' }}
+              >
+                {tvSyncProgress ? <><Loader2 size={16} className="spin" /> Syncing...</> : <><Download size={16} /> Sync</>}
+              </button>
+            </div>
+            {tvSyncProgress && (
+              <div style={{ 
+                marginBottom: '1rem', 
+                padding: '0.5rem 0.75rem', 
+                backgroundColor: 'var(--bg-color)', 
+                borderRadius: '6px',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '0.5rem',
+                fontSize: '0.9rem'
+              }}>
+                <Loader2 size={16} className="spin" style={{ color: '#17a2b8' }} /> 
+                {tvSyncProgress.status}
+                {tvSyncProgress.total > 0 && tvSyncProgress.phase === 'downloading' && (
+                  <span style={{ marginLeft: 'auto', fontWeight: 'bold', color: '#17a2b8' }}>
+                    {tvSyncProgress.downloaded || 0}/{tvSyncProgress.total}
+                  </span>
+                )}
+              </div>
+            )}
+            <div style={{ display: 'grid', gap: '0.75rem' }}>
+              {nexupTVTrailers.map(trailer => (
+                <div 
+                  key={trailer.id}
+                  style={{ 
+                    display: 'flex', 
+                    alignItems: 'center', 
+                    justifyContent: 'space-between',
+                    padding: '0.75rem 1rem',
+                    backgroundColor: 'var(--bg-color)',
+                    borderRadius: '8px',
+                    border: `1px solid ${trailer.is_enabled ? 'var(--border-color)' : 'rgba(255,0,0,0.3)'}`,
+                    opacity: trailer.is_enabled ? 1 : 0.7
+                  }}
+                >
+                  <div style={{ flex: 1 }}>
+                    <div style={{ fontWeight: 'bold', color: 'var(--text-color)' }}>{trailer.title}</div>
+                    <div style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
+                      {trailer.release_date ? `Airs: ${new Date(trailer.release_date).toLocaleDateString()}` : 'Air date unknown'}
+                    </div>
+                  </div>
+                  <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+                    <button
+                      onClick={() => handleToggleTVTrailer(trailer.id)}
+                      className="button"
+                      style={{ 
+                        backgroundColor: trailer.is_enabled ? '#28a745' : '#6c757d',
+                        padding: '0.4rem 0.75rem',
+                        fontSize: '0.85rem'
+                      }}
+                    >
+                      {trailer.is_enabled ? 'Enabled' : 'Disabled'}
+                    </button>
+                    <button
+                      onClick={() => handleDeleteTVTrailer(trailer.id)}
+                      className="button"
+                      style={{ backgroundColor: '#dc3545', padding: '0.4rem 0.75rem' }}
+                    >
+                      <Trash2 size={14} />
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </>
+        )}
+      </div>
+
+      {/* Storage Info */}
+      {nexupStorage && (
+        <div className="card">
+          <h2 style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+            <HardDrive size={24} /> Storage
+          </h2>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: '1rem' }}>
+            <div style={{ 
+              padding: '1rem', 
+              backgroundColor: 'var(--bg-color)', 
+              borderRadius: '8px', 
+              textAlign: 'center' 
+            }}>
+              <div style={{ fontSize: '1.5rem', fontWeight: 'bold', color: 'var(--text-color)' }}>
+                {(nexupStorage.total_size_gb || 0).toFixed(2)} GB
+              </div>
+              <div style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>Used</div>
+            </div>
+            <div style={{ 
+              padding: '1rem', 
+              backgroundColor: 'var(--bg-color)', 
+              borderRadius: '8px', 
+              textAlign: 'center' 
+            }}>
+              <div style={{ fontSize: '1.5rem', fontWeight: 'bold', color: 'var(--text-color)' }}>
+                {nexupStorage.file_count || 0}
+              </div>
+              <div style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>Files</div>
+            </div>
+            <div style={{ 
+              padding: '1rem', 
+              backgroundColor: 'var(--bg-color)', 
+              borderRadius: '8px', 
+              textAlign: 'center' 
+            }}>
+              <div style={{ fontSize: '1.5rem', fontWeight: 'bold', color: 'var(--text-color)' }}>
+                {nexupStorage.max_gb || 5} GB
+              </div>
+              <div style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>Limit</div>
+            </div>
           </div>
         </div>
+      )}
+    </div>
+  );
 
-        {/* Timezone Settings */}
-        <div style={{ marginTop: '1rem', paddingBottom: '1rem', borderBottom: '1px solid var(--border-color)' }}>
-          <h3 style={{ marginBottom: '0.75rem' }}>Timezone</h3>
-          <p style={{ marginBottom: '1rem', color: '#888', fontSize: '0.9rem' }}>
-            Set your timezone to ensure schedules run at the correct local time.
-          </p>
-          <div style={{ display: 'flex', gap: '1rem', alignItems: 'flex-end', flexWrap: 'wrap' }}>
-            <div style={{ flex: 1, minWidth: '250px' }}>
-              <label style={{ display: 'block', marginBottom: '0.5rem', fontWeight: 'bold', color: 'var(--text-color)' }}>
-                Current Timezone:
-              </label>
-              <select
-                value={currentTimezone}
-                onChange={(e) => saveTimezone(e.target.value)}
-                disabled={timezoneLoading || timezoneSaving}
-                style={{
-                  width: '100%',
-                  padding: '0.5rem',
-                  borderRadius: '0.25rem',
-                  border: '2px solid var(--border-color)',
-                  backgroundColor: darkMode ? '#2a2a2a' : '#ffffff',
-                  color: darkMode ? '#ffffff' : '#000000',
-                  cursor: timezoneSaving ? 'not-allowed' : 'pointer',
-                  fontSize: '1rem',
-                  opacity: timezoneLoading || timezoneSaving ? 0.6 : 1
+  // NeX-Up Settings Sub-Page
+  const renderNexUpSettings = () => (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
+      <div>
+        <h1 className="header" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+          <Settings size={32} /> NeX-Up Settings
+        </h1>
+        <p style={{ marginBottom: '0', color: 'var(--text-color)', fontSize: '1rem' }}>
+          Configure storage, download preferences, and authentication settings.
+        </p>
+      </div>
+
+      {/* Rest of content when connected */}
+      {nexupSettings.radarr_connected && (
+        <>
+          {/* YouTube Authentication Card */}
+          <div className="card">
+            <h2 style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+              <Youtube size={24} /> YouTube Authentication
+            </h2>
+            <p style={{ color: '#888', marginBottom: '1rem' }}>
+              YouTube requires authentication to download trailers. Set this up with one click.
+            </p>
+            
+            <div style={{ 
+              display: 'flex', 
+              alignItems: 'center', 
+              gap: '1rem',
+              padding: '1rem',
+              backgroundColor: youtubeSetup.status?.configured 
+                ? 'rgba(40, 167, 69, 0.1)' 
+                : 'rgba(255, 193, 7, 0.1)',
+              borderRadius: '8px',
+              border: `1px solid ${youtubeSetup.status?.configured ? '#28a745' : '#ffc107'}`
+            }}>
+              <div style={{ 
+                width: '50px',
+                display: 'flex',
+                justifyContent: 'center'
+              }}>
+                {youtubeSetup.loading 
+                  ? <Loader2 size={32} className="spin" color="#ffc107" />
+                  : youtubeSetup.status?.configured 
+                    ? <CheckCircle size={32} color="#28a745" />
+                    : <AlertTriangle size={32} color="#ffc107" />}
+              </div>
+              <div style={{ flex: 1 }}>
+                <div style={{ fontWeight: 'bold', marginBottom: '0.25rem' }}>
+                  {youtubeSetup.loading 
+                    ? 'Checking status...' 
+                    : youtubeSetup.status?.configured 
+                      ? 'YouTube Ready' 
+                      : 'Setup Required'}
+                </div>
+                <div style={{ fontSize: '0.85rem', color: '#888' }}>
+                  {youtubeSetup.status?.message || 'Loading...'}
+                </div>
+                {youtubeSetup.status?.method && (
+                  <div style={{ fontSize: '0.8rem', color: '#666', marginTop: '0.25rem' }}>
+                    Method: {
+                      youtubeSetup.status.method === 'oauth' ? '🔐 OAuth (Recommended)' :
+                      youtubeSetup.status.method === 'cookies_file' ? '🍪 Exported cookies file' : 
+                      `🌐 ${youtubeSetup.status.browser} browser cookies`
+                    }
+                  </div>
+                )}
+              </div>
+              <button
+                onClick={() => setYoutubeSetup(prev => ({ ...prev, showWizard: true, wizardStep: 1, testResult: null }))}
+                className="button"
+                style={{ 
+                  backgroundColor: youtubeSetup.status?.configured ? '#6c757d' : 'var(--button-bg)',
+                  whiteSpace: 'nowrap',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '0.5rem'
                 }}
               >
-                {availableTimezones.length === 0 ? (
-                  <option value="UTC">Loading timezones...</option>
-                ) : (
-                  availableTimezones.map((tz) => (
-                    <option key={tz.value} value={tz.value} style={{ backgroundColor: darkMode ? '#2a2a2a' : '#ffffff', color: darkMode ? '#ffffff' : '#000000' }}>
-                      {tz.label}
-                    </option>
-                  ))
-                )}
-              </select>
-              <p style={{ fontSize: '0.85rem', color: darkMode ? '#999' : '#666', marginTop: '0.25rem' }}>
-                {timezoneLoading && 'Loading timezones...'}
-                {timezoneSaving && 'Saving...'}
-                {!timezoneLoading && !timezoneSaving && `Selected: ${currentTimezone}`}
-              </p>
-            </div>
-          </div>
-        </div>
-
-        {/* Confirmation Dialogs */}
-        <div style={{ marginTop: '1rem', paddingBottom: '1rem', borderBottom: '1px solid var(--border-color)' }}>
-          <h3 style={{ marginBottom: '0.75rem' }}>Confirmation Dialogs</h3>
-          <p style={{ marginBottom: '1rem', color: '#888', fontSize: '0.9rem' }}>
-            Control whether you see confirmation prompts before deleting items.
-          </p>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-            <label className="nx-rockerswitch">
-              <input
-                type="checkbox"
-                checked={confirmDeletions}
-                onChange={(e) => setConfirmDeletions(e.target.checked)}
-              />
-              <span className="nx-rockerswitch-slider"></span>
-            </label>
-            <span style={{ fontWeight: 'bold', color: 'var(--text-color)' }}>
-              {confirmDeletions ? 'Show Confirmation Prompts' : 'Skip Confirmation Prompts'}
-            </span>
-          </div>
-          <p style={{ fontSize: '0.85rem', color: '#666', marginTop: '0.5rem' }}>
-            When enabled, you'll be asked to confirm before deleting schedules, categories, or prerolls.
-          </p>
-        </div>
-
-        {/* Notification Preferences */}
-        <div style={{ marginTop: '1rem', paddingBottom: '1rem', borderBottom: '1px solid var(--border-color)' }}>
-          <h3 style={{ marginBottom: '0.75rem' }}>Notifications</h3>
-          <p style={{ marginBottom: '1rem', color: '#888', fontSize: '0.9rem' }}>
-            Control success and informational alert notifications.
-          </p>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-            <label className="nx-rockerswitch">
-              <input
-                type="checkbox"
-                checked={showNotifications}
-                onChange={(e) => setShowNotifications(e.target.checked)}
-              />
-              <span className="nx-rockerswitch-slider"></span>
-            </label>
-            <span style={{ fontWeight: 'bold', color: 'var(--text-color)' }}>
-              {showNotifications ? 'Show Notifications' : 'Hide Notifications'}
-            </span>
-          </div>
-          <p style={{ fontSize: '0.85rem', color: '#666', marginTop: '0.5rem' }}>
-            When disabled, only critical error messages will be shown. Success and info messages will be suppressed.
-          </p>
-        </div>
-
-        {/* Verbose Logging */}
-        <div style={{ marginTop: '1rem' }}>
-          <h3 style={{ marginBottom: '0.75rem' }}>Verbose Logging (Beta Testing)</h3>
-          <p style={{ marginBottom: '1rem', color: '#888', fontSize: '0.9rem' }}>
-            Enable verbose logging to see detailed debug information in the console. This helps troubleshoot issues during beta testing.
-          </p>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-            <label className="nx-rockerswitch">
-              <input
-                type="checkbox"
-                checked={verboseLogging}
-                onChange={(e) => updateVerboseLogging(e.target.checked)}
-                disabled={verboseLoggingLoading}
-              />
-              <span className="nx-rockerswitch-slider"></span>
-            </label>
-            <span style={{ fontWeight: 'bold', color: 'var(--text-color)' }}>
-              {verboseLogging ? 'Verbose Logging Enabled' : 'Verbose Logging Disabled'}
-            </span>
-          </div>
-          {verboseLogging && (
-            <div style={{ marginTop: '0.75rem', padding: '0.75rem', backgroundColor: 'var(--card-bg)', border: '1px solid var(--border-color)', borderRadius: '4px' }}>
-              <p style={{ margin: 0, fontSize: '0.9rem', color: '#4CAF50' }}>
-                ✓ Verbose logging is active. Check the console (F12) and application logs for detailed information.
-              </p>
-            </div>
-          )}
-        </div>
-
-        {/* Coexistence Mode (Passive Mode) */}
-        <div style={{ marginTop: '1.5rem' }}>
-          <h3 style={{ marginBottom: '0.75rem' }}>Coexistence Mode</h3>
-          <p style={{ marginBottom: '1rem', color: '#888', fontSize: '0.9rem' }}>
-            Enable this if you use another preroll manager (like Preroll Plus) alongside NeXroll. When enabled, NeXroll will <strong>only</strong> manage prerolls during active schedules and stay hands-off at all other times, allowing your other preroll manager to control prerolls outside scheduled times.
-          </p>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-            <label className="nx-rockerswitch">
-              <input
-                type="checkbox"
-                checked={passiveMode}
-                onChange={(e) => updatePassiveMode(e.target.checked)}
-                disabled={passiveModeLoading}
-              />
-              <span className="nx-rockerswitch-slider"></span>
-            </label>
-            <span style={{ fontWeight: 'bold', color: 'var(--text-color)' }}>
-              {passiveMode ? 'Coexistence Mode Enabled' : 'Coexistence Mode Disabled'}
-            </span>
-          </div>
-          {passiveMode && (
-            <div style={{ marginTop: '0.75rem', padding: '0.75rem', backgroundColor: 'var(--card-bg)', border: '1px solid #2196F3', borderRadius: '4px' }}>
-              <p style={{ margin: 0, fontSize: '0.9rem', color: '#2196F3' }}>
-                ✓ Coexistence mode is active. NeXroll will only apply prerolls during active schedules. Outside of scheduled times, your other preroll manager can control Plex's preroll settings.
-              </p>
-            </div>
-          )}
-          {!passiveMode && (
-            <div style={{ marginTop: '0.75rem', padding: '0.75rem', backgroundColor: 'var(--card-bg)', border: '1px solid var(--border-color)', borderRadius: '4px' }}>
-              <p style={{ margin: 0, fontSize: '0.9rem', color: '#888' }}>
-                ℹ️ Standard mode: NeXroll manages prerolls at all times, including applying fallback categories when no schedules are active.
-              </p>
-            </div>
-          )}
-        </div>
-
-        {/* Clear When Inactive */}
-        <div style={{ marginTop: '1.5rem' }}>
-          <h3 style={{ marginBottom: '0.75rem' }}>Clear Prerolls When Inactive</h3>
-          <p style={{ marginBottom: '1rem', color: '#888', fontSize: '0.9rem' }}>
-            When enabled, NeXroll will <strong>clear</strong> the Plex preroll field when no schedules are active. This means no prerolls will play outside of your scheduled times.
-          </p>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-            <label className="nx-rockerswitch">
-              <input
-                type="checkbox"
-                checked={clearWhenInactive}
-                onChange={(e) => updateClearWhenInactive(e.target.checked)}
-                disabled={clearWhenInactiveLoading || passiveMode}
-              />
-              <span className="nx-rockerswitch-slider"></span>
-            </label>
-            <span style={{ fontWeight: 'bold', color: 'var(--text-color)' }}>
-              {clearWhenInactive ? 'Clear When Inactive Enabled' : 'Clear When Inactive Disabled'}
-            </span>
-          </div>
-          {passiveMode && (
-            <div style={{ marginTop: '0.75rem', padding: '0.75rem', backgroundColor: 'var(--card-bg)', border: '1px solid #ff9800', borderRadius: '4px' }}>
-              <p style={{ margin: 0, fontSize: '0.9rem', color: '#ff9800' }}>
-                ⚠️ This setting is disabled while Coexistence Mode is active. Coexistence Mode already keeps NeXroll hands-off outside of schedules.
-              </p>
-            </div>
-          )}
-          {!passiveMode && clearWhenInactive && (
-            <div style={{ marginTop: '0.75rem', padding: '0.75rem', backgroundColor: 'var(--card-bg)', border: '1px solid #2196F3', borderRadius: '4px' }}>
-              <p style={{ margin: 0, fontSize: '0.9rem', color: '#2196F3' }}>
-                ✓ Prerolls will be cleared from Plex when no schedules are active. Movies will play without any preroll outside of scheduled times.
-              </p>
-            </div>
-          )}
-          {!passiveMode && !clearWhenInactive && (
-            <div style={{ marginTop: '0.75rem', padding: '0.75rem', backgroundColor: 'var(--card-bg)', border: '1px solid var(--border-color)', borderRadius: '4px' }}>
-              <p style={{ margin: 0, fontSize: '0.9rem', color: '#888' }}>
-                ℹ️ Prerolls will remain in Plex when no schedules are active (either using a fallback category or leaving the current preroll unchanged).
-              </p>
-            </div>
-          )}
-        </div>
-      </details>
-
-      <details className="card">
-        <summary style={{ cursor: 'pointer' }}>
-          <h2 style={{ display: 'inline' }}>Plex Settings</h2>
-        </summary>
-      {/* Path Mappings moved under Plex Settings */}
-      <div style={{ marginTop: '1rem', borderTop: '1px solid var(--border-color)', paddingTop: '0.5rem' }}>
-        <h3 style={{ marginTop: 0 }}>Path Mappings (Plex)</h3>
-        <p style={{ marginBottom: '0.5rem', color: 'var(--text-color)' }}>
-          Define how local or UNC paths should be translated to Plex-readable paths when applying prerolls.
-          Longest-prefix rule applies; Windows local prefixes are matched case-insensitively.
-        </p>
-
-        <div style={{ display: 'grid', gap: '0.5rem' }}>
-          {(pathMappings || []).map((m, idx) => (
-            <div key={idx} style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
-              <input
-                type="text"
-                placeholder="Local/UNC Prefix (e.g., \\\\NAS\\share\\prerolls or C:\\Media\\Prerolls)"
-                value={m.local}
-                onChange={(e) => updateMappingRow(idx, 'local', e.target.value)}
-                style={{ flex: 1, padding: '0.5rem' }}
-              />
-              <span style={{ fontWeight: 'bold' }}>→</span>
-              <input
-                type="text"
-                placeholder="Plex Prefix (e.g., /mnt/NAS/prerolls or /Volumes/Media/Prerolls)"
-                value={m.plex}
-                onChange={(e) => updateMappingRow(idx, 'plex', e.target.value)}
-                style={{ flex: 1, padding: '0.5rem' }}
-              />
-              <button
-                type="button"
-                className="button"
-                onClick={() => removeMappingRow(idx)}
-                style={{ backgroundColor: '#dc3545' }}
-                title="Remove this mapping"
-              >
-                Remove
+                {youtubeSetup.status?.configured 
+                  ? <><RefreshCw size={16} /> Reconfigure</> 
+                  : <><Rocket size={16} /> Setup YouTube</>}
               </button>
             </div>
-          ))}
-
-          <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
-            <button type="button" className="button" onClick={addMappingRow}><Plus size={14} style={{marginRight: '0.35rem'}} /> Add Row</button>
-            <button type="button" className="button" onClick={loadPathMappings} disabled={pathMappingsLoading}>↻ Reload</button>
-            <button type="button" className="button" onClick={savePathMappings} disabled={pathMappingsLoading} style={{ backgroundColor: '#28a745' }}>
-              <Save size={14} style={{marginRight: '0.35rem'}} /> Save
-            </button>
+            
+            {/* YouTube Bot Detection Warning */}
+            <div style={{ 
+              marginTop: '1rem',
+              padding: '1rem',
+              backgroundColor: 'rgba(23, 162, 184, 0.1)',
+              borderRadius: '8px',
+              border: '1px solid #17a2b8',
+              fontSize: '0.9rem'
+            }}>
+              <div style={{ display: 'flex', alignItems: 'flex-start', gap: '0.75rem' }}>
+                <Info size={20} color="#17a2b8" style={{ flexShrink: 0, marginTop: '2px' }} />
+                <div>
+                  <div style={{ fontWeight: 'bold', marginBottom: '0.5rem', color: '#17a2b8' }}>
+                    YouTube Bot Detection
+                  </div>
+                  <div style={{ color: '#aaa', lineHeight: '1.5' }}>
+                    YouTube actively blocks automated trailer downloads. If downloads fail with "Sign in to confirm you're not a bot":
+                    <ul style={{ margin: '0.5rem 0 0 1rem', paddingLeft: '0' }}>
+                      <li><strong>VPN users:</strong> Try refreshing your IP or disconnecting temporarily</li>
+                      <li><strong>Rate limiting:</strong> Wait a few hours if you've downloaded many trailers</li>
+                      <li><strong>Cookie export:</strong> Use Incognito → login → go to youtube.com/robots.txt → export cookies</li>
+                    </ul>
+                  </div>
+                </div>
+              </div>
+            </div>
           </div>
-        </div>
 
-        <div style={{ marginTop: '0.75rem' }}>
-          <h3 style={{ margin: 0, marginBottom: '0.25rem' }}>Test Translation</h3>
-          <p style={{ fontSize: '0.9rem', color: '#666', marginBottom: '0.5rem' }}>
-            Paste one or more local/UNC paths below to preview their translated Plex paths.
-          </p>
-          <textarea
-            rows="4"
-            value={mappingTestInput}
-            onChange={(e) => setMappingTestInput(e.target.value)}
-            placeholder={`Example:
-\\\\NAS\\share\\prerolls\\winter\\snow.mp4
-C:\\\\Media\\\\Prerolls\\\\summer\\\\beach.mp4`}
-            style={{ width: '100%', padding: '0.5rem', resize: 'vertical' }}
-          />
-          <div style={{ marginTop: '0.5rem' }}>
-            <button type="button" className="button" onClick={runMappingsTest}><FlaskConical size={14} style={{marginRight: '0.35rem'}} /> Run Test</button>
-          </div>
-          {Array.isArray(mappingTestResults) && mappingTestResults.length > 0 && (
-            <div style={{ marginTop: '0.5rem' }}>
-              <ul style={{ margin: 0, paddingLeft: '1rem' }}>
-                {mappingTestResults.map((r, i) => (
-                  <li key={i} style={{ fontSize: '0.9rem', color: r.matched ? 'green' : '#555' }}>
-                    <code>{r.input}</code> → <code>{r.output || '(no change)'}</code>
-                  </li>
-                ))}
-              </ul>
+          {/* YouTube Setup Wizard Modal - OUTSIDE the main content flow */}
+          {youtubeSetup.showWizard && (
+            <div 
+              style={{
+                position: 'fixed',
+                top: 0,
+                left: 0,
+                right: 0,
+                bottom: 0,
+                backgroundColor: 'rgba(0, 0, 0, 0.8)',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                zIndex: 10000
+              }}
+              onClick={() => setYoutubeSetup(prev => ({ ...prev, showWizard: false }))}
+            >
+              <div 
+                style={{ 
+                  maxWidth: '550px',
+                  width: '90%',
+                  maxHeight: '90vh',
+                  overflow: 'auto',
+                  backgroundColor: 'var(--card-bg, #1e1e2e)',
+                  borderRadius: '12px',
+                  boxShadow: '0 25px 50px rgba(0, 0, 0, 0.5)',
+                  border: '1px solid var(--border-color)'
+                }} 
+                onClick={(e) => e.stopPropagation()}
+              >
+                <div style={{ 
+                  padding: '1.5rem',
+                  borderBottom: '1px solid var(--border-color)',
+                  display: 'flex',
+                  justifyContent: 'space-between',
+                  alignItems: 'center'
+                }}>
+                  <h2 style={{ margin: 0, fontSize: '1.5rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                    <Youtube size={28} /> YouTube Setup Wizard
+                  </h2>
+                  <button 
+                    onClick={() => setYoutubeSetup(prev => ({ ...prev, showWizard: false }))}
+                    style={{
+                      background: 'none',
+                      border: 'none',
+                      fontSize: '2rem',
+                      cursor: 'pointer',
+                      color: 'var(--text-color)',
+                      lineHeight: 1,
+                      padding: '0 0.5rem'
+                    }}
+                  >×</button>
+                </div>
+                <div style={{ padding: '1.5rem' }}>
+                  {/* Progress Indicator */}
+                  <div style={{ 
+                    display: 'flex', 
+                    justifyContent: 'center', 
+                    gap: '0.5rem', 
+                    marginBottom: '1.5rem' 
+                  }}>
+                    {[1, 2, 3, 4].map(step => (
+                      <div 
+                        key={step}
+                        style={{
+                          width: '40px',
+                          height: '40px',
+                          borderRadius: '50%',
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          fontWeight: 'bold',
+                          backgroundColor: youtubeSetup.wizardStep >= step ? 'var(--button-bg)' : 'var(--bg-color)',
+                          color: youtubeSetup.wizardStep >= step ? 'white' : '#888',
+                          border: '2px solid var(--border-color)'
+                        }}
+                      >
+                        {youtubeSetup.wizardStep > step ? <Check size={18} /> : step}
+                      </div>
+                    ))}
+                  </div>
+
+                  {/* Step 1: Introduction & Method Selection */}
+                  {youtubeSetup.wizardStep === 1 && (
+                    <div style={{ textAlign: 'center' }}>
+                      <div style={{ marginBottom: '1rem' }}><Key size={64} color="var(--button-bg)" /></div>
+                      <h3 style={{ marginBottom: '1rem' }}>YouTube Requires Authentication</h3>
+                      <p style={{ color: '#888', marginBottom: '1.5rem' }}>
+                        YouTube has bot protection that requires authentication.
+                        Choose how you want to set this up:
+                      </p>
+                      
+                      {/* Method Selection Cards */}
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem', marginBottom: '1.5rem' }}>
+                        {/* Browser Cookies Method - Recommended */}
+                        <div 
+                          onClick={() => setYoutubeSetup(prev => ({ ...prev, authMethod: 'browser' }))}
+                          style={{ 
+                            padding: '1rem', 
+                            backgroundColor: youtubeSetup.authMethod === 'browser' ? 'rgba(40, 167, 69, 0.2)' : 'var(--bg-color)', 
+                            borderRadius: '8px',
+                            border: youtubeSetup.authMethod === 'browser' ? '2px solid #28a745' : '2px solid var(--border-color)',
+                            cursor: 'pointer',
+                            textAlign: 'left',
+                            transition: 'all 0.2s'
+                          }}
+                        >
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', marginBottom: '0.5rem' }}>
+                            <Globe size={24} color="#28a745" />
+                            <strong style={{ fontSize: '1.1rem' }}>Extract Browser Cookies</strong>
+                            <span style={{ 
+                              backgroundColor: '#28a745', 
+                              color: 'white', 
+                              padding: '0.15rem 0.5rem', 
+                              borderRadius: '4px', 
+                              fontSize: '0.75rem' 
+                            }}>EASIEST</span>
+                          </div>
+                          <p style={{ margin: 0, fontSize: '0.9rem', color: '#888' }}>
+                            Sign in to YouTube in your browser, then we'll extract the cookies automatically.
+                            Requires closing the browser briefly during extraction.
+                          </p>
+                        </div>
+                        
+                        {/* Manual Upload Method */}
+                        <div 
+                          onClick={() => setYoutubeSetup(prev => ({ ...prev, authMethod: 'cookies' }))}
+                          style={{ 
+                            padding: '1rem', 
+                            backgroundColor: youtubeSetup.authMethod === 'cookies' ? 'rgba(23, 162, 184, 0.2)' : 'var(--bg-color)', 
+                            borderRadius: '8px',
+                            border: youtubeSetup.authMethod === 'cookies' ? '2px solid #17a2b8' : '2px solid var(--border-color)',
+                            cursor: 'pointer',
+                            textAlign: 'left',
+                            transition: 'all 0.2s'
+                          }}
+                        >
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', marginBottom: '0.5rem' }}>
+                            <FileUp size={24} color="#17a2b8" />
+                            <strong style={{ fontSize: '1.1rem' }}>Upload Cookies File</strong>
+                            <span style={{ fontSize: '0.8rem', color: '#888' }}>(Advanced)</span>
+                          </div>
+                          <p style={{ margin: 0, fontSize: '0.9rem', color: '#888' }}>
+                            Already exported a cookies.txt file using a browser extension? Upload it directly.
+                            Use extensions like "Get cookies.txt LOCALLY" for Chrome/Edge.
+                          </p>
+                          <p style={{ margin: '0.5rem 0 0 0', fontSize: '0.85rem', color: '#6c757d', fontStyle: 'italic' }}>
+                            💡 Tip: Use an Incognito/Private browser window when logging into YouTube and exporting cookies for best results.
+                          </p>
+                        </div>
+                      </div>
+                      
+                      {youtubeSetup.testResult && !youtubeSetup.testResult.success && (
+                        <div style={{ 
+                          padding: '1rem', 
+                          backgroundColor: '#f8d7da', 
+                          borderRadius: '8px',
+                          marginBottom: '1rem',
+                          color: '#721c24',
+                          textAlign: 'left'
+                        }}>
+                          {youtubeSetup.testResult.message}
+                        </div>
+                      )}
+                      
+                      {youtubeSetup.authMethod === 'browser' && (
+                        <button
+                          onClick={() => setYoutubeSetup(prev => ({ ...prev, wizardStep: 2 }))}
+                          className="button"
+                          style={{ padding: '0.75rem 2rem' }}
+                        >
+                          Continue →
+                        </button>
+                      )}
+                      
+                      {/* Manual upload for cookies method */}
+                      {youtubeSetup.authMethod === 'cookies' && (
+                        <div style={{ marginTop: '1rem' }}>
+                          <label 
+                            className="button" 
+                            style={{ 
+                              display: 'inline-flex',
+                              alignItems: 'center',
+                              gap: '0.5rem',
+                              cursor: 'pointer',
+                              padding: '0.75rem 2rem'
+                            }}
+                          >
+                            <FileUp size={16} /> Select Cookies File
+                            <input 
+                              type="file" 
+                              accept=".txt"
+                              onChange={handleYoutubeUploadCookies}
+                              style={{ display: 'none' }}
+                              disabled={youtubeSetup.uploading}
+                            />
+                          </label>
+                          {youtubeSetup.uploading && <span style={{ marginLeft: '0.5rem', display: 'inline-flex', alignItems: 'center', gap: '0.25rem' }}><Loader2 size={16} className="spin" /> Uploading...</span>}
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  {/* Step 2: Browser Selection & Sign In (for browser cookies method) */}
+                  {youtubeSetup.wizardStep === 2 && (
+                    <div style={{ textAlign: 'center' }}>
+                      <div style={{ marginBottom: '1rem' }}><Globe size={64} color="var(--button-bg)" /></div>
+                      <h3 style={{ marginBottom: '1rem' }}>Step 1: Select Browser & Sign In</h3>
+                      
+                      {/* Browser Selection */}
+                      <div style={{ 
+                        padding: '1rem', 
+                        backgroundColor: 'var(--bg-color)', 
+                        borderRadius: '8px',
+                        marginBottom: '1rem'
+                      }}>
+                        <label style={{ display: 'block', fontWeight: 'bold', marginBottom: '0.5rem' }}>
+                          Which browser will you use?
+                        </label>
+                        <select
+                          value={youtubeSetup.selectedBrowser}
+                          onChange={(e) => setYoutubeSetup(prev => ({ ...prev, selectedBrowser: e.target.value }))}
+                          style={{ 
+                            width: '100%', 
+                            padding: '0.75rem', 
+                            borderRadius: '6px', 
+                            border: '1px solid var(--border-color)',
+                            fontSize: '1rem',
+                            backgroundColor: 'var(--card-bg)'
+                          }}
+                        >
+                          <option value="chrome">Google Chrome</option>
+                          <option value="edge">Microsoft Edge</option>
+                          <option value="firefox">Mozilla Firefox</option>
+                          <option value="brave">Brave Browser</option>
+                        </select>
+                      </div>
+                      
+                      <p style={{ color: '#888', marginBottom: '0.5rem' }}>
+                        Sign in to YouTube using <strong>{youtubeSetup.selectedBrowser.charAt(0).toUpperCase() + youtubeSetup.selectedBrowser.slice(1)}</strong>.
+                      </p>
+                      
+                      {/* Important tip */}
+                      <div style={{ 
+                        padding: '1rem', 
+                        backgroundColor: '#17a2b8',
+                        color: 'white',
+                        borderRadius: '8px',
+                        textAlign: 'left',
+                        marginBottom: '1.5rem'
+                      }}>
+                        <strong style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}><Lightbulb size={18} /> Tip:</strong>
+                        <p style={{ margin: '0.5rem 0 0 0', fontSize: '0.9rem' }}>
+                          Use a <strong>different browser</strong> than the one viewing NeXroll.
+                        </p>
+                      </div>
+                      
+                      <button
+                        onClick={handleYoutubeOpenBrowser}
+                        className="button"
+                        style={{ padding: '0.75rem 2rem', marginBottom: '1rem', display: 'flex', alignItems: 'center', gap: '0.5rem', margin: '0 auto 1rem auto' }}
+                      >
+                        <Rocket size={18} /> Open YouTube in {youtubeSetup.selectedBrowser.charAt(0).toUpperCase() + youtubeSetup.selectedBrowser.slice(1)}
+                      </button>
+                      <p style={{ fontSize: '0.85rem', color: '#888' }}>
+                        Already signed in? Just proceed to the next step.
+                      </p>
+                      <div style={{ marginTop: '1.5rem', display: 'flex', gap: '1rem', justifyContent: 'center' }}>
+                        <button
+                          onClick={() => setYoutubeSetup(prev => ({ ...prev, wizardStep: 1 }))}
+                          className="button"
+                          style={{ backgroundColor: '#6c757d' }}
+                        >
+                          ← Back
+                        </button>
+                        <button
+                          onClick={() => setYoutubeSetup(prev => ({ ...prev, wizardStep: 3 }))}
+                          className="button"
+                          style={{ backgroundColor: '#28a745', padding: '0.75rem 2rem' }}
+                        >
+                          I'm Signed In →
+                        </button>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Step 3: Browser Cookie Extraction */}
+                  {youtubeSetup.wizardStep === 3 && (
+                    <div style={{ textAlign: 'center' }}>
+                      <div style={{ marginBottom: '1rem' }}><Lock size={64} color="var(--button-bg)" /></div>
+                      <h3 style={{ marginBottom: '1rem' }}>Step 2: Close {youtubeSetup.selectedBrowser.charAt(0).toUpperCase() + youtubeSetup.selectedBrowser.slice(1)}</h3>
+                      <p style={{ color: '#888', marginBottom: '1rem' }}>
+                        <strong>Important:</strong> Close <strong>{youtubeSetup.selectedBrowser.charAt(0).toUpperCase() + youtubeSetup.selectedBrowser.slice(1)}</strong> completely
+                        so we can read the login cookies.
+                      </p>
+                      <div style={{ 
+                        padding: '1rem', 
+                        backgroundColor: '#d4edda', 
+                        borderRadius: '8px',
+                        marginBottom: '1rem',
+                        textAlign: 'left',
+                        color: '#155724'
+                      }}>
+                        <strong style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}><CheckCircle size={18} /> Good News:</strong>
+                        <p style={{ margin: '0.5rem 0 0 0', fontSize: '0.9rem' }}>
+                          You only need to close <strong>{youtubeSetup.selectedBrowser.charAt(0).toUpperCase() + youtubeSetup.selectedBrowser.slice(1)}</strong> - 
+                          you can keep using other browsers (like this one viewing NeXroll)!
+                        </p>
+                      </div>
+                      <div style={{ 
+                        padding: '1rem', 
+                        backgroundColor: '#fff3cd', 
+                        borderRadius: '8px',
+                        marginBottom: '1.5rem',
+                        textAlign: 'left',
+                        color: '#856404'
+                      }}>
+                        <strong style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}><AlertTriangle size={18} /> Why close the browser?</strong>
+                        <p style={{ margin: '0.5rem 0 0 0', fontSize: '0.9rem' }}>
+                          Browsers lock their cookie database while running. 
+                          Closing {youtubeSetup.selectedBrowser.charAt(0).toUpperCase() + youtubeSetup.selectedBrowser.slice(1)} allows us to safely read your YouTube login.
+                        </p>
+                      </div>
+                      
+                      {youtubeSetup.testResult && !youtubeSetup.testResult.success && (
+                        <div style={{ 
+                          padding: '1rem', 
+                          backgroundColor: '#f8d7da', 
+                          borderRadius: '8px',
+                          marginBottom: '1rem',
+                          color: '#721c24'
+                        }}>
+                          {youtubeSetup.testResult.message}
+                        </div>
+                      )}
+                      
+                      <div style={{ display: 'flex', gap: '1rem', justifyContent: 'center' }}>
+                        <button
+                          onClick={() => setYoutubeSetup(prev => ({ ...prev, wizardStep: 2 }))}
+                          className="button"
+                          style={{ backgroundColor: '#6c757d' }}
+                        >
+                          ← Back
+                        </button>
+                        <button
+                          onClick={handleYoutubeExtractCookies}
+                          className="button"
+                          disabled={youtubeSetup.extracting}
+                          style={{ padding: '0.75rem 2rem' }}
+                        >
+                          {youtubeSetup.extracting 
+                            ? <><Loader2 size={16} className="spin" /> Extracting Cookies...</>
+                            : <><Key size={16} /> Extract Cookies Now</>}
+                        </button>
+                      </div>
+                      <p style={{ fontSize: '0.8rem', color: '#888', marginTop: '1rem' }}>
+                        Make sure {youtubeSetup.selectedBrowser.charAt(0).toUpperCase() + youtubeSetup.selectedBrowser.slice(1)} is completely closed before clicking.
+                      </p>
+                    </div>
+                  )}
+
+                  {/* Step 4: Success */}
+                  {youtubeSetup.wizardStep === 4 && (
+                    <div style={{ textAlign: 'center' }}>
+                      <div style={{ marginBottom: '1rem' }}><PartyPopper size={64} color="#28a745" /></div>
+                      <h3 style={{ marginBottom: '1rem', color: '#28a745' }}>YouTube is Ready!</h3>
+                      <p style={{ color: '#888', marginBottom: '1.5rem' }}>
+                        Your YouTube authentication is set up successfully. 
+                        You can now download trailers without issues.
+                      </p>
+                      
+                      {youtubeSetup.testResult && (
+                        <div style={{ 
+                          padding: '1rem', 
+                          backgroundColor: youtubeSetup.testResult.success ? '#d4edda' : '#f8d7da', 
+                          borderRadius: '8px',
+                          marginBottom: '1.5rem',
+                          color: youtubeSetup.testResult.success ? '#155724' : '#721c24'
+                        }}>
+                          {youtubeSetup.testResult.message}
+                        </div>
+                      )}
+                      
+                      <div style={{ display: 'flex', gap: '1rem', justifyContent: 'center' }}>
+                        <button
+                          onClick={handleYoutubeTestDownload}
+                          className="button"
+                          disabled={youtubeSetup.testing}
+                          style={{ backgroundColor: '#6c757d' }}
+                        >
+                          {youtubeSetup.testing 
+                            ? <><Loader2 size={16} className="spin" /> Testing...</>
+                            : <><FlaskConical size={16} /> Test Download</>}
+                        </button>
+                        <button
+                          onClick={() => setYoutubeSetup(prev => ({ ...prev, showWizard: false }))}
+                          className="button"
+                          style={{ backgroundColor: '#28a745' }}
+                        >
+                                                    <Check size={16} /> Done
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </div>
             </div>
           )}
+
+          {/* Storage Card */}
+          <div className="card">
+            <h2 style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+              <HardDrive size={24} /> Storage
+            </h2>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))', gap: '1.5rem' }}>
+              <div>
+                <label style={{ display: 'block', marginBottom: '0.5rem', fontWeight: 'bold' }}>
+                  Trailer Storage Path
+                </label>
+                <input
+                  type="text"
+                  placeholder="C:\NeXroll\Trailers or /opt/nexroll/trailers"
+                  value={nexupSettings.storage_path || ''}
+                  onChange={(e) => handleUpdateNexupSettings({ storage_path: e.target.value })}
+                  style={{ width: '100%', padding: '0.5rem', borderRadius: '4px', border: '1px solid var(--border-color)' }}
+                />
+                <p style={{ fontSize: '0.8rem', color: '#888', marginTop: '0.25rem' }}>
+                  Where downloaded trailers will be stored temporarily
+                </p>
+              </div>
+              
+              {nexupStorage && nexupStorage.configured && (
+                <div style={{ 
+                  padding: '1rem', 
+                  backgroundColor: 'var(--bg-color)', 
+                  borderRadius: '8px', 
+                  border: '1px solid var(--border-color)' 
+                }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.5rem' }}>
+                    <span>Storage Used:</span>
+                    <strong>{nexupStorage.total_size_gb.toFixed(2)} GB / {nexupStorage.max_gb} GB</strong>
+                  </div>
+                  <div style={{ 
+                    height: '10px', 
+                    backgroundColor: '#e0e0e0', 
+                    borderRadius: '5px', 
+                    overflow: 'hidden' 
+                  }}>
+                    <div style={{ 
+                      height: '100%', 
+                      width: `${Math.min(nexupStorage.percentage_used, 100)}%`,
+                      backgroundColor: nexupStorage.percentage_used > 90 ? '#dc3545' : nexupStorage.percentage_used > 70 ? '#ffc107' : '#28a745',
+                      borderRadius: '5px',
+                      transition: 'width 0.3s'
+                    }} />
+                  </div>
+                  <p style={{ fontSize: '0.85rem', color: '#666', marginTop: '0.5rem', marginBottom: 0 }}>
+                    {nexupStorage.file_count} trailer(s) stored
+                  </p>
+                </div>
+              )}
+            </div>
+          </div>
+
+          {/* Settings Grid */}
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(350px, 1fr))', gap: '1rem' }}>
+            {/* Download Settings Card */}
+            <div className="card">
+              <h2 style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                <Download size={24} /> Download Settings
+              </h2>
+              <div style={{ display: 'grid', gap: '1rem' }}>
+                <div>
+                  <label style={{ display: 'block', marginBottom: '0.5rem', fontWeight: 'bold' }}>
+                    Trailer Quality
+                  </label>
+                  <select
+                    value={nexupSettings.quality || '1080'}
+                    onChange={(e) => handleUpdateNexupSettings({ quality: e.target.value })}
+                    style={{ width: '100%', padding: '0.5rem', borderRadius: '4px', border: '1px solid var(--border-color)' }}
+                  >
+                    <option value="720">720p (Smaller files)</option>
+                    <option value="1080">1080p (Recommended)</option>
+                    <option value="4k">4K (Large files)</option>
+                    <option value="best">Best Available</option>
+                  </select>
+                  <p style={{ fontSize: '0.8rem', color: '#888', marginTop: '0.25rem' }}>
+                    Quality for newly downloaded trailers
+                  </p>
+                </div>
+                
+                <div>
+                  <label style={{ display: 'block', marginBottom: '0.5rem', fontWeight: 'bold' }}>
+                    Auto-Refresh Interval
+                  </label>
+                  <select
+                    value={nexupSettings.auto_refresh_hours || 24}
+                    onChange={(e) => handleUpdateNexupSettings({ auto_refresh_hours: parseInt(e.target.value) })}
+                    style={{ width: '100%', padding: '0.5rem', borderRadius: '4px', border: '1px solid var(--border-color)' }}
+                  >
+                    <option value="0">Disabled (manual only)</option>
+                    <option value="6">Every 6 hours</option>
+                    <option value="12">Every 12 hours</option>
+                    <option value="24">Daily</option>
+                    <option value="48">Every 2 days</option>
+                    <option value="168">Weekly</option>
+                  </select>
+                  <p style={{ fontSize: '0.8rem', color: '#888', marginTop: '0.25rem' }}>
+                    How often to automatically sync trailers from Radarr/Sonarr
+                  </p>
+                </div>
+                
+                <div>
+                  <label style={{ display: 'block', marginBottom: '0.5rem', fontWeight: 'bold' }}>
+                    Max Trailer Duration
+                  </label>
+                  <select
+                    value={nexupSettings.max_trailer_duration || 180}
+                    onChange={(e) => handleUpdateNexupSettings({ max_trailer_duration: parseInt(e.target.value) })}
+                    style={{ width: '100%', padding: '0.5rem', borderRadius: '4px', border: '1px solid var(--border-color)' }}
+                  >
+                    <option value="0">No limit</option>
+                    <option value="90">1.5 minutes</option>
+                    <option value="120">2 minutes</option>
+                    <option value="150">2.5 minutes</option>
+                    <option value="180">3 minutes</option>
+                    <option value="240">4 minutes</option>
+                    <option value="300">5 minutes</option>
+                    <option value="600">10 minutes</option>
+                  </select>
+                  <p style={{ fontSize: '0.8rem', color: '#888', marginTop: '0.25rem' }}>
+                    Skip trailers longer than this duration (0 = no limit)
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            {/* Limits Card */}
+            <div className="card">
+              <h2 style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                <Target size={24} /> Limits
+              </h2>
+              <div style={{ display: 'grid', gap: '1rem' }}>
+                <div>
+                  <label style={{ display: 'block', marginBottom: '0.5rem', fontWeight: 'bold' }}>
+                    Days Ahead to Look
+                  </label>
+                  <select
+                    value={nexupSettings.days_ahead || 90}
+                    onChange={(e) => handleUpdateNexupSettings({ days_ahead: parseInt(e.target.value) })}
+                    style={{ width: '100%', padding: '0.5rem', borderRadius: '4px', border: '1px solid var(--border-color)' }}
+                  >
+                    <option value="30">30 days</option>
+                    <option value="60">60 days</option>
+                    <option value="90">90 days</option>
+                    <option value="180">6 months</option>
+                    <option value="365">1 year</option>
+                  </select>
+                  <p style={{ fontSize: '0.8rem', color: '#888', marginTop: '0.25rem' }}>
+                    How far into the future to look for upcoming movies
+                  </p>
+                </div>
+                
+                <div>
+                  <label style={{ display: 'block', marginBottom: '0.5rem', fontWeight: 'bold' }}>
+                    Max Trailers to Keep
+                  </label>
+                  <select
+                    value={nexupSettings.max_trailers || 10}
+                    onChange={(e) => handleUpdateNexupSettings({ max_trailers: parseInt(e.target.value) })}
+                    style={{ width: '100%', padding: '0.5rem', borderRadius: '4px', border: '1px solid var(--border-color)' }}
+                  >
+                    {[5, 10, 15, 20, 25, 30].map(n => (
+                      <option key={n} value={n}>{n} trailers</option>
+                    ))}
+                  </select>
+                </div>
+                
+                <div>
+                  <label style={{ display: 'block', marginBottom: '0.5rem', fontWeight: 'bold' }}>
+                    Max Storage (GB)
+                  </label>
+                  <select
+                    value={nexupSettings.max_storage_gb || 5}
+                    onChange={(e) => handleUpdateNexupSettings({ max_storage_gb: parseFloat(e.target.value) })}
+                    style={{ width: '100%', padding: '0.5rem', borderRadius: '4px', border: '1px solid var(--border-color)' }}
+                  >
+                    {[2, 5, 10, 15, 20, 50].map(n => (
+                      <option key={n} value={n}>{n} GB</option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+            </div>
+
+            {/* Rate Limiting Card */}
+            <div className="card">
+              <h2 style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                <Clock size={24} /> Rate Limiting
+              </h2>
+              <p style={{ marginBottom: '1rem', color: '#888' }}>
+                Prevent YouTube from blocking your IP by spacing out downloads
+              </p>
+              <div style={{ display: 'grid', gap: '1rem' }}>
+                <div>
+                  <label style={{ display: 'block', marginBottom: '0.5rem', fontWeight: 'bold' }}>
+                    Delay Between Downloads
+                  </label>
+                  <select
+                    value={nexupSettings.download_delay || 5}
+                    onChange={(e) => handleUpdateNexupSettings({ download_delay: parseInt(e.target.value) })}
+                    style={{ width: '100%', padding: '0.5rem', borderRadius: '4px', border: '1px solid var(--border-color)' }}
+                  >
+                    <option value="0">No delay (fastest, higher risk)</option>
+                    <option value="3">3 seconds</option>
+                    <option value="5">5 seconds (recommended)</option>
+                    <option value="10">10 seconds</option>
+                    <option value="15">15 seconds</option>
+                    <option value="30">30 seconds (safest)</option>
+                    <option value="60">60 seconds</option>
+                  </select>
+                  <p style={{ fontSize: '0.8rem', color: '#888', marginTop: '0.25rem' }}>
+                    Wait time between each trailer download to avoid rate limiting
+                  </p>
+                </div>
+                
+                <div>
+                  <label style={{ display: 'block', marginBottom: '0.5rem', fontWeight: 'bold' }}>
+                    Max Concurrent Downloads
+                  </label>
+                  <select
+                    value={nexupSettings.max_concurrent || 1}
+                    onChange={(e) => handleUpdateNexupSettings({ max_concurrent: parseInt(e.target.value) })}
+                    style={{ width: '100%', padding: '0.5rem', borderRadius: '4px', border: '1px solid var(--border-color)' }}
+                  >
+                    <option value="1">1 at a time (safest)</option>
+                    <option value="2">2 concurrent</option>
+                    <option value="3">3 concurrent</option>
+                  </select>
+                  <p style={{ fontSize: '0.8rem', color: '#888', marginTop: '0.25rem' }}>
+                    How many trailers can download simultaneously
+                  </p>
+                </div>
+                
+                <div>
+                  <label style={{ display: 'block', marginBottom: '0.5rem', fontWeight: 'bold' }}>
+                    Bulk Download Warning
+                  </label>
+                  <select
+                    value={nexupSettings.bulk_warning_threshold || 5}
+                    onChange={(e) => handleUpdateNexupSettings({ bulk_warning_threshold: parseInt(e.target.value) })}
+                    style={{ width: '100%', padding: '0.5rem', borderRadius: '4px', border: '1px solid var(--border-color)' }}
+                  >
+                    <option value="3">Warn at 3+ trailers</option>
+                    <option value="5">Warn at 5+ trailers</option>
+                    <option value="10">Warn at 10+ trailers</option>
+                    <option value="20">Warn at 20+ trailers</option>
+                    <option value="0">Disabled (no warning)</option>
+                  </select>
+                  <p style={{ fontSize: '0.8rem', color: '#888', marginTop: '0.25rem' }}>
+                    Show a confirmation when downloading many trailers at once
+                  </p>
+                </div>
+
+                <div style={{ 
+                  padding: '0.75rem', 
+                  backgroundColor: 'rgba(255, 193, 7, 0.1)', 
+                  borderRadius: '8px',
+                  border: '1px solid rgba(255, 193, 7, 0.3)'
+                }}>
+                  <p style={{ fontSize: '0.85rem', color: '#ffc107', margin: 0 }}>
+                    <strong>💡 Tip:</strong> If YouTube blocks your downloads, try increasing the delay 
+                    or wait a few hours before trying again. Using authenticated cookies can help prevent blocks.
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            {/* TMDB API Key Card */}
+            <div className="card">
+              <h2 style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                🎬 TMDB API Key (Optional)
+              </h2>
+              <p style={{ marginBottom: '1rem', color: '#888' }}>
+                Provide your own TMDB API key for more reliable trailer fetching. Without this, the built-in key may hit rate limits.
+              </p>
+              <div style={{ display: 'grid', gap: '1rem' }}>
+                <div>
+                  <label style={{ display: 'block', marginBottom: '0.5rem', fontWeight: 'bold' }}>
+                    TMDB API Key
+                  </label>
+                  <input
+                    type="text"
+                    placeholder="Enter your TMDB API key (optional)"
+                    value={nexupSettings.tmdb_api_key || ''}
+                    onChange={(e) => handleUpdateNexupSettings({ tmdb_api_key: e.target.value || null })}
+                    style={{ width: '75%', padding: '0.5rem', borderRadius: '4px', border: '1px solid var(--border-color)' }}
+                    autoComplete="off"
+                  />
+                  <p style={{ fontSize: '0.8rem', color: '#888', marginTop: '0.25rem' }}>
+                    Get a free API key from <a href="https://www.themoviedb.org/settings/api" target="_blank" rel="noopener noreferrer" style={{ color: '#00d4ff' }}>themoviedb.org</a>
+                  </p>
+                </div>
+                
+                {nexupSettings.tmdb_api_key && (
+                  <div style={{ 
+                    padding: '0.75rem', 
+                    backgroundColor: 'rgba(40, 167, 69, 0.1)', 
+                    borderRadius: '8px',
+                    border: '1px solid rgba(40, 167, 69, 0.3)'
+                  }}>
+                    <p style={{ fontSize: '0.85rem', color: '#28a745', margin: 0 }}>
+                      ✓ Custom TMDB API key configured
+                    </p>
+                  </div>
+                )}
+                
+                <div style={{ 
+                  padding: '0.75rem', 
+                  backgroundColor: 'rgba(255, 193, 7, 0.1)', 
+                  borderRadius: '8px',
+                  border: '1px solid rgba(255, 193, 7, 0.3)'
+                }}>
+                  <p style={{ fontSize: '0.85rem', color: '#ffc107', margin: 0 }}>
+                    <strong>💡 Note:</strong> TMDB is used to find trailer URLs for movies and TV shows. 
+                    If trailers aren't being found, try adding your own API key. For TV shows, IMDB is used as a fallback.
+                  </p>
+                </div>
+              </div>
+            </div>
+          </div>
+        </>
+      )}
+
+      {!nexupSettings.radarr_connected && (
+        <div style={{ 
+          padding: '2rem', 
+          textAlign: 'center', 
+          backgroundColor: 'var(--bg-color)', 
+          borderRadius: '8px',
+          border: '1px dashed var(--border-color)'
+        }}>
+          <Settings size={48} style={{ color: '#666', marginBottom: '1rem' }} />
+          <p style={{ color: '#888', marginBottom: '1rem' }}>Connect to Radarr first to configure settings</p>
+          <button
+            onClick={() => setActiveTab('nexup')}
+            className="button"
+            style={{ backgroundColor: '#ffc230' }}
+          >
+            Go to Connections
+          </button>
+        </div>
+      )}
+    </div>
+  );
+
+  // NeX-Up Generator Sub-Page
+  const renderNexUpGenerator = () => (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
+      <div>
+        <h1 className="header" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+          <Sparkles size={32} /> Preroll Generator
+        </h1>
+        <p style={{ marginBottom: '0', color: 'var(--text-color)', fontSize: '1rem' }}>
+          Create custom cinematic intro videos and build sequences for your preroll rotation.
+        </p>
+      </div>
+
+      {nexupSettings.radarr_connected ? (
+        <>
+          {/* Dynamic Preroll Generator Card */}
+          <div className="card">
+            <h2 style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+              <Sparkles size={24} /> Dynamic Preroll Generator
+            </h2>
+            <p style={{ color: '#888', marginBottom: '1rem' }}>
+              Generate a custom cinematic intro video that plays before your trailers.
+            </p>
+            
+            {!ffmpegAvailable ? (
+              <div style={{ 
+                padding: '1rem', 
+                backgroundColor: '#fff3cd', 
+                border: '1px solid #ffc107', 
+                borderRadius: '8px',
+                marginBottom: '1rem'
+              }}>
+                <strong style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}><AlertTriangle size={18} /> FFmpeg Required</strong>
+                <p style={{ margin: '0.5rem 0 0 0', fontSize: '0.9rem' }}>
+                  FFmpeg must be installed to generate dynamic prerolls. 
+                  <a href="https://ffmpeg.org/download.html" target="_blank" rel="noopener noreferrer" style={{ marginLeft: '0.5rem' }}>
+                    Download FFmpeg →
+                  </a>
+                </p>
+              </div>
+            ) : (
+              <>
+                {/* Template Selection Grid */}
+                <div style={{ marginBottom: '1.5rem' }}>
+                  <label style={{ marginBottom: '0.75rem', fontWeight: 'bold', fontSize: '0.95rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                    <Palette size={18} /> Choose Template Style
+                  </label>
+                  <div style={{ 
+                    display: 'grid', 
+                    gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', 
+                    gap: '0.75rem' 
+                  }}>
+                    {dynamicPrerollTemplates.map(t => (
+                      <div 
+                        key={t.id}
+                        onClick={() => setDynamicPrerollSettings(prev => ({ ...prev, template: t.id }))}
+                        style={{ 
+                          padding: '1rem',
+                          borderRadius: '10px',
+                          border: dynamicPrerollSettings.template === t.id 
+                            ? '2px solid #00d4ff' 
+                            : '2px solid var(--border-color)',
+                          backgroundColor: dynamicPrerollSettings.template === t.id 
+                            ? 'rgba(0, 212, 255, 0.15)' 
+                            : 'var(--card-bg, #1e1e2e)',
+                          cursor: 'pointer',
+                          transition: 'all 0.2s ease',
+                          position: 'relative'
+                        }}
+                      >
+                        {dynamicPrerollSettings.template === t.id && (
+                          <span style={{ 
+                            position: 'absolute', 
+                            top: '8px', 
+                            right: '8px',
+                            color: '#00d4ff',
+                            fontWeight: 'bold'
+                          }}>✓</span>
+                        )}
+                        <div style={{ fontWeight: 'bold', marginBottom: '0.25rem', color: 'var(--text-color, #fff)' }}>
+                          {t.name}
+                        </div>
+                        <div style={{ fontSize: '0.85rem', color: 'var(--text-secondary, #aaa)' }}>
+                          {t.description}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Color Theme Selection - Available for all templates */}
+                {Object.keys(colorThemes).length > 0 && (
+                  <div style={{ marginBottom: '1.5rem' }}>
+                    <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.75rem', fontWeight: 'bold', fontSize: '0.95rem' }}>
+                      <Palette size={18} /> Color Theme
+                    </label>
+                    <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
+                      {Object.entries(colorThemes).map(([themeId, colors]) => (
+                        <button
+                          key={themeId}
+                          onClick={() => setDynamicPrerollSettings(prev => ({ ...prev, theme: themeId }))}
+                          style={{
+                            padding: '0.5rem 1rem',
+                            borderRadius: '20px',
+                            border: dynamicPrerollSettings.theme === themeId 
+                              ? '2px solid #00d4ff' 
+                              : '2px solid var(--border-color)',
+                            backgroundColor: dynamicPrerollSettings.theme === themeId 
+                              ? 'rgba(0, 212, 255, 0.15)' 
+                              : 'var(--card-bg, #1e1e2e)',
+                            color: 'var(--text-color, #fff)',
+                            cursor: 'pointer',
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: '0.5rem',
+                            textTransform: 'capitalize'
+                          }}
+                        >
+                          <div style={{ 
+                            display: 'flex', 
+                            gap: '3px' 
+                          }}>
+                            <span style={{ 
+                              width: '14px', 
+                              height: '14px', 
+                              borderRadius: '50%', 
+                              backgroundColor: colors.bg,
+                              border: '1px solid rgba(255,255,255,0.2)'
+                            }}></span>
+                            <span style={{ 
+                              width: '14px', 
+                              height: '14px', 
+                              borderRadius: '50%', 
+                              backgroundColor: colors.primary 
+                            }}></span>
+                            <span style={{ 
+                              width: '14px', 
+                              height: '14px', 
+                              borderRadius: '50%', 
+                              backgroundColor: colors.secondary 
+                            }}></span>
+                          </div>
+                          {themeId}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* Settings Row */}
+                <div style={{ 
+                  display: 'grid', 
+                  gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', 
+                  gap: '1rem',
+                  marginBottom: '1rem'
+                }}>
+                  <div>
+                    <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.5rem', fontWeight: 'bold' }}>
+                      <Tv size={16} /> Server Name
+                    </label>
+                    <input
+                      type="text"
+                      placeholder="My Plex Server"
+                      value={dynamicPrerollSettings.server_name}
+                      onChange={(e) => setDynamicPrerollSettings(prev => ({ ...prev, server_name: e.target.value }))}
+                      style={{ 
+                        width: '60%', 
+                        padding: '0.75rem', 
+                        borderRadius: '8px', 
+                        border: '1px solid var(--border-color)',
+                        fontSize: '1rem'
+                      }}
+                    />
+                    <p style={{ fontSize: '0.8rem', color: '#888', marginTop: '0.25rem' }}>
+                      Displayed as "Coming Soon to [Your Server Name]"
+                    </p>
+                  </div>
+                  
+                  <div>
+                    <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.5rem', fontWeight: 'bold' }}>
+                      <Clock size={16} /> Duration
+                    </label>
+                    <select
+                      value={dynamicPrerollSettings.duration}
+                      onChange={(e) => setDynamicPrerollSettings(prev => ({ ...prev, duration: parseInt(e.target.value) }))}
+                      style={{ 
+                        width: '100%', 
+                        padding: '0.75rem', 
+                        borderRadius: '8px', 
+                        border: '1px solid var(--border-color)',
+                        fontSize: '1rem'
+                      }}
+                    >
+                      {[3, 4, 5, 6, 7, 8, 10].map(n => (
+                        <option key={n} value={n}>{n} seconds</option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
+
+                {/* Live Preview Section */}
+                <div style={{ marginBottom: '1.5rem' }}>
+                  <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.75rem', fontWeight: 'bold', fontSize: '0.95rem' }}>
+                    <Eye size={18} /> Live Preview
+                  </label>
+                  <div 
+                    ref={previewContainerRef}
+                    style={{
+                    position: 'relative',
+                    width: '100%',
+                    maxWidth: '640px',
+                    aspectRatio: '16/9',
+                    borderRadius: '12px',
+                    overflow: 'hidden',
+                    border: '2px solid var(--border-color)',
+                    boxShadow: '0 8px 32px rgba(0,0,0,0.4)'
+                  }}>
+                    {/* Animated Background - brightened for video capture */}
+                    <div style={{
+                      position: 'absolute',
+                      inset: 0,
+                      background: colorThemes[dynamicPrerollSettings.theme]?.bg 
+                        ? `linear-gradient(135deg, ${colorThemes[dynamicPrerollSettings.theme].bg.replace('0x', '#')} 0%, ${colorThemes[dynamicPrerollSettings.theme].bg.replace('0x', '#')} 100%)`
+                        : 'linear-gradient(135deg, #1a1a3a 0%, #2a2a4e 100%)',
+                      animation: 'previewBgPulse 4s ease-in-out infinite'
+                    }} />
+                    
+                    {/* Animated particles/stars effect */}
+                    <div style={{
+                      position: 'absolute',
+                      inset: 0,
+                      background: `radial-gradient(circle at 20% 30%, ${(colorThemes[dynamicPrerollSettings.theme]?.primary || '#00d4ff').replace('0x', '#')}15 0%, transparent 50%),
+                                   radial-gradient(circle at 80% 70%, ${(colorThemes[dynamicPrerollSettings.theme]?.secondary || '#7b2cbf').replace('0x', '#')}15 0%, transparent 50%)`,
+                      animation: 'previewParticles 6s ease-in-out infinite'
+                    }} />
+                    
+                    {/* Template-specific preview content */}
+                    <div style={{
+                      position: 'absolute',
+                      inset: 0,
+                      display: 'flex',
+                      flexDirection: 'column',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      padding: '2rem',
+                      textAlign: 'center'
+                    }}>
+                      {/* Coming Soon template - matches FFmpeg output layout */}
+                      {dynamicPrerollSettings.template === 'coming_soon' && (
+                        <>
+                          {/* "COMING SOON" - main title */}
+                          <div style={{
+                            fontSize: 'clamp(1.4rem, 5vw, 2.2rem)',
+                            fontWeight: 'bold',
+                            letterSpacing: '0.1em',
+                            textTransform: 'uppercase',
+                            color: (colorThemes[dynamicPrerollSettings.theme]?.primary || '#fff').replace('0x', '#'),
+                            textShadow: `0 0 20px ${(colorThemes[dynamicPrerollSettings.theme]?.secondary || '#00d4ff').replace('0x', '#')}80,
+                                         0 0 40px ${(colorThemes[dynamicPrerollSettings.theme]?.secondary || '#00d4ff').replace('0x', '#')}40`,
+                            animation: 'previewFadeIn 1s ease-out'
+                          }}>
+                            COMING SOON
+                          </div>
+                          {/* "to" - smaller middle text */}
+                          <div style={{
+                            fontSize: 'clamp(0.8rem, 2.5vw, 1.1rem)',
+                            fontWeight: 'normal',
+                            color: (colorThemes[dynamicPrerollSettings.theme]?.primary || '#fff').replace('0x', '#'),
+                            opacity: 0.85,
+                            margin: '0.3rem 0',
+                            animation: 'previewFadeIn 1.2s ease-out 0.3s both'
+                          }}>
+                            to
+                          </div>
+                          {/* Server name - accent colored */}
+                          <div style={{
+                            fontSize: 'clamp(1.1rem, 4vw, 1.7rem)',
+                            fontWeight: 'bold',
+                            color: (colorThemes[dynamicPrerollSettings.theme]?.secondary || '#00d4ff').replace('0x', '#'),
+                            textShadow: `0 0 15px ${(colorThemes[dynamicPrerollSettings.theme]?.secondary || '#00d4ff').replace('0x', '#')}60`,
+                            animation: 'previewFadeIn 1.5s ease-out 0.5s both'
+                          }}>
+                            {dynamicPrerollSettings.server_name || 'Your Server'}
+                          </div>
+                        </>
+                      )}
+                      
+                      {/* Feature Presentation template - matches FFmpeg output */}
+                      {dynamicPrerollSettings.template === 'feature_presentation' && (
+                        <>
+                          {/* Top decorative line */}
+                          <div style={{
+                            width: '60%',
+                            height: '2px',
+                            background: `linear-gradient(90deg, transparent, ${(colorThemes[dynamicPrerollSettings.theme]?.primary || '#ffd700').replace('0x', '#')}, transparent)`,
+                            marginBottom: '1rem',
+                            animation: 'previewLineExpand 1.2s ease-out'
+                          }} />
+                          {/* Main "FEATURE PRESENTATION" text */}
+                          <div style={{
+                            fontSize: 'clamp(1rem, 3.5vw, 1.8rem)',
+                            fontWeight: 'bold',
+                            letterSpacing: '0.15em',
+                            color: (colorThemes[dynamicPrerollSettings.theme]?.primary || '#ffd700').replace('0x', '#'),
+                            textShadow: `0 0 30px ${(colorThemes[dynamicPrerollSettings.theme]?.primary || '#ffd700').replace('0x', '#')}60`,
+                            animation: 'previewFadeIn 1s ease-out'
+                          }}>
+                            FEATURE PRESENTATION
+                          </div>
+                          {/* "at [Server Name]" text below */}
+                          {dynamicPrerollSettings.server_name && (
+                            <div style={{
+                              fontSize: 'clamp(0.6rem, 2vw, 0.9rem)',
+                              fontWeight: 'normal',
+                              color: '#ffffff',
+                              opacity: 0.8,
+                              marginTop: '0.75rem',
+                              animation: 'previewFadeIn 1.5s ease-out 0.5s both'
+                            }}>
+                              at {dynamicPrerollSettings.server_name}
+                            </div>
+                          )}
+                          {/* Bottom decorative line */}
+                          <div style={{
+                            width: '60%',
+                            height: '2px',
+                            background: `linear-gradient(90deg, transparent, ${(colorThemes[dynamicPrerollSettings.theme]?.primary || '#ffd700').replace('0x', '#')}, transparent)`,
+                            marginTop: '1rem',
+                            animation: 'previewLineExpand 1.2s ease-out 0.3s both'
+                          }} />
+                        </>
+                      )}
+                      
+                      {/* Now Showing template - matches FFmpeg output */}
+                      {dynamicPrerollSettings.template === 'now_showing' && (
+                        <>
+                          <div style={{
+                            fontSize: 'clamp(1.2rem, 4vw, 2rem)',
+                            fontWeight: 'bold',
+                            letterSpacing: '0.1em',
+                            color: (colorThemes[dynamicPrerollSettings.theme]?.primary || '#ff006e').replace('0x', '#'),
+                            textShadow: `0 0 20px ${(colorThemes[dynamicPrerollSettings.theme]?.primary || '#ff006e').replace('0x', '#')}80`,
+                            animation: 'previewPulse 2s ease-in-out infinite'
+                          }}>
+                            NOW SHOWING
+                          </div>
+                          {/* Decorative underline */}
+                          <div style={{
+                            width: '150px',
+                            height: '3px',
+                            backgroundColor: (colorThemes[dynamicPrerollSettings.theme]?.secondary || '#888').replace('0x', '#'),
+                            marginTop: '0.5rem',
+                            animation: 'previewLineExpand 1s ease-out'
+                          }} />
+                          {/* Server name - only show if provided */}
+                          {dynamicPrerollSettings.server_name && (
+                            <div style={{
+                              fontSize: 'clamp(0.6rem, 2vw, 0.9rem)',
+                              fontWeight: 'normal',
+                              color: (colorThemes[dynamicPrerollSettings.theme]?.secondary || '#888').replace('0x', '#'),
+                              marginTop: '0.75rem',
+                              animation: 'previewFadeIn 1s ease-out 0.5s both'
+                            }}>
+                              at {dynamicPrerollSettings.server_name}
+                            </div>
+                          )}
+                        </>
+                      )}
+                    </div>
+                    
+                  </div>
+                  <p style={{ fontSize: '0.8rem', color: '#888', marginTop: '0.5rem' }}>
+                    The video will look exactly like this preview with a smooth fade in and fade out.
+                  </p>
+                </div>
+              </>
+            )}
+            
+            {ffmpegAvailable && (
+              <div style={{ 
+                marginTop: '1rem', 
+                display: 'flex', 
+                alignItems: 'center', 
+                gap: '1rem', 
+                flexWrap: 'wrap',
+                padding: '1rem',
+                backgroundColor: 'var(--bg-color)',
+                borderRadius: '10px',
+                border: '1px solid var(--border-color)'
+              }}>
+                <button
+                  onClick={handleGenerateFromPreview}
+                  disabled={dynamicPrerollGenerating || !dynamicPrerollSettings.server_name.trim()}
+                  className="button"
+                  style={{ 
+                    backgroundColor: dynamicPrerollGenerating ? '#666' : '#28a745',
+                    padding: '0.75rem 1.5rem',
+                    fontSize: '1rem',
+                    fontWeight: 'bold'
+                  }}
+                >
+                  {dynamicPrerollGenerating 
+                    ? <><Loader2 size={16} className="spin" /> Generating Video...</>
+                    : <><Sparkles size={16} /> Generate Preroll</>}
+                </button>
+                {!dynamicPrerollSettings.server_name.trim() && (
+                  <span style={{ fontSize: '0.85rem', color: '#888' }}>Enter a server name to generate</span>
+                )}
+              </div>
+            )}
+
+            {/* Your Generated Prerolls Section */}
+            {generatedPrerolls.length > 0 && (
+              <div style={{ 
+                marginTop: '1.5rem', 
+                padding: '1rem', 
+                backgroundColor: 'var(--bg-color)', 
+                borderRadius: '10px',
+                border: '1px solid var(--border-color)'
+              }}>
+                <h3 
+                  onClick={() => setGeneratedPrerollsCollapsed(!generatedPrerollsCollapsed)}
+                  style={{ 
+                    margin: 0, 
+                    display: 'flex', 
+                    alignItems: 'center', 
+                    gap: '0.5rem', 
+                    fontSize: '1.1rem',
+                    cursor: 'pointer',
+                    userSelect: 'none'
+                  }}
+                >
+                  {generatedPrerollsCollapsed ? <ChevronRight size={20} /> : <ChevronDown size={20} />}
+                  <Film size={20} style={{ color: '#ffd700' }} />
+                  Your Generated Prerolls ({generatedPrerolls.length})
+                </h3>
+                {!generatedPrerollsCollapsed && (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem', marginTop: '1rem' }}>
+                  {generatedPrerolls.map((preroll) => {
+                    const template = dynamicPrerollTemplates.find(t => t.id === preroll.template_id);
+                    const templateName = template?.name || preroll.template_id.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
+                    const fileSizeMB = (preroll.size_bytes / (1024 * 1024)).toFixed(1);
+                    const createdDate = new Date(preroll.created_at * 1000).toLocaleDateString();
+                    
+                    return (
+                      <div 
+                        key={preroll.filename}
+                        style={{ 
+                          display: 'flex', 
+                          alignItems: 'center', 
+                          justifyContent: 'space-between',
+                          padding: '0.75rem 1rem',
+                          backgroundColor: 'var(--card-bg)',
+                          borderRadius: '8px',
+                          border: '1px solid var(--border-color)',
+                          gap: '1rem',
+                          flexWrap: 'wrap'
+                        }}
+                      >
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', flex: 1, minWidth: '200px' }}>
+                          <Sparkles size={20} style={{ color: '#ffd700', flexShrink: 0 }} />
+                          <div>
+                            <div style={{ fontWeight: 'bold', color: 'var(--text-color)' }}>
+                              {templateName}
+                            </div>
+                            <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>
+                              {fileSizeMB} MB • Created {createdDate}
+                            </div>
+                          </div>
+                        </div>
+                        <div style={{ display: 'flex', gap: '0.5rem', flexShrink: 0 }}>
+                          <button
+                            onClick={() => setPreviewingDynamicPreroll(preroll)}
+                            className="button"
+                            style={{ 
+                              backgroundColor: '#007bff', 
+                              display: 'flex', 
+                              alignItems: 'center', 
+                              gap: '0.25rem',
+                              padding: '0.4rem 0.75rem',
+                              fontSize: '0.85rem'
+                            }}
+                            title="Preview this preroll"
+                          >
+                            <Play size={14} /> Play
+                          </button>
+                          <button
+                            onClick={() => handleDeleteSpecificPreroll(preroll.filename)}
+                            className="button"
+                            style={{ 
+                              backgroundColor: '#dc3545', 
+                              display: 'flex', 
+                              alignItems: 'center', 
+                              gap: '0.25rem',
+                              padding: '0.4rem 0.75rem',
+                              fontSize: '0.85rem'
+                            }}
+                            title="Delete this preroll"
+                          >
+                            <Trash2 size={14} />
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+                )}
+              </div>
+            )}
+          </div>
+
+        </>
+      ) : (
+        <div style={{ 
+          padding: '2rem', 
+          textAlign: 'center', 
+          backgroundColor: 'var(--bg-color)', 
+          borderRadius: '8px',
+          border: '1px dashed var(--border-color)'
+        }}>
+          <Sparkles size={48} style={{ color: '#666', marginBottom: '1rem' }} />
+          <p style={{ color: '#888', marginBottom: '1rem' }}>Connect to Radarr first to use the preroll generator</p>
+          <button
+            onClick={() => setActiveTab('nexup')}
+            className="button"
+            style={{ backgroundColor: '#ffc230' }}
+          >
+            Go to Connections
+          </button>
+        </div>
+      )}
+    </div>
+  );
+
+  // Settings Sub-Navigation
+  const renderSettingsSubNav = () => {
+    const tabs = [
+      { 
+        id: 'settings', 
+        icon: <Settings size={16} />, 
+        label: 'General', 
+        description: 'Theme, timezone, notifications, and preferences'
+      },
+      { 
+        id: 'settings/paths', 
+        icon: <ArrowRight size={16} />, 
+        label: 'Path Mappings', 
+        description: 'Configure path translations for Plex'
+      },
+      { 
+        id: 'settings/backup', 
+        icon: <Download size={16} />, 
+        label: 'Backup & Restore', 
+        description: 'Export and import your NeXroll data'
+      },
+      { 
+        id: 'settings/system', 
+        icon: <Info size={16} />, 
+        label: 'System', 
+        description: 'System information and diagnostics'
+      }
+    ];
+
+    return (
+      <>
+        {/* Main Tab Bar */}
+        <div style={{ 
+          borderBottom: '2px solid var(--border-color)',
+          display: 'flex',
+          gap: '0.25rem',
+          marginBottom: '0.75rem'
+        }}>
+          {tabs.map(tab => (
+            <button
+              key={tab.id}
+              onClick={() => setActiveTab(tab.id)}
+              style={{
+                padding: '0.875rem 1.25rem',
+                border: 'none',
+                borderBottom: activeTab === tab.id ? '3px solid var(--button-bg)' : '3px solid transparent',
+                backgroundColor: activeTab === tab.id ? 'var(--bg-color)' : 'transparent',
+                color: activeTab === tab.id ? 'var(--button-bg)' : 'var(--text-color)',
+                cursor: 'pointer',
+                fontSize: '0.9rem',
+                fontWeight: activeTab === tab.id ? 600 : 400,
+                transition: 'all 0.2s',
+                marginBottom: '-2px',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '0.5rem',
+                borderRadius: '8px 8px 0 0'
+              }}
+              onMouseEnter={(e) => {
+                if (activeTab !== tab.id) {
+                  e.currentTarget.style.backgroundColor = 'var(--bg-color)';
+                  e.currentTarget.style.color = 'var(--button-bg)';
+                }
+              }}
+              onMouseLeave={(e) => {
+                if (activeTab !== tab.id) {
+                  e.currentTarget.style.backgroundColor = 'transparent';
+                  e.currentTarget.style.color = 'var(--text-color)';
+                }
+              }}
+              title={tab.description}
+            >
+              <span style={{ display: 'flex', alignItems: 'center' }}>{tab.icon}</span>
+              <span>{tab.label}</span>
+            </button>
+          ))}
+        </div>
+
+        {/* Context Bar */}
+        <div style={{
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          padding: '0.75rem 1rem',
+          backgroundColor: 'var(--bg-color)',
+          borderRadius: '8px',
+          border: '1px solid var(--border-color)',
+          marginBottom: '1rem'
+        }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+            <span style={{ display: 'flex', alignItems: 'center' }}>
+              {tabs.find(t => t.id === activeTab)?.icon || <Settings size={20} />}
+            </span>
+            <div>
+              <div style={{ fontSize: '0.95rem', fontWeight: 600, color: 'var(--text-color)' }}>
+                {tabs.find(t => t.id === activeTab)?.label || 'General'}
+              </div>
+              <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', marginTop: '0.15rem' }}>
+                {tabs.find(t => t.id === activeTab)?.description || ''}
+              </div>
+            </div>
+          </div>
+        </div>
+      </>
+    );
+  };
+
+  // Settings - General Tab
+  const renderSettingsGeneral = () => (
+    <div className="card">
+      <h2>NeXroll Settings</h2>
+      
+      {/* Theme Settings */}
+      <div style={{ marginTop: '1rem', paddingBottom: '1rem', borderBottom: '1px solid var(--border-color)' }}>
+        <h3 style={{ marginBottom: '0.75rem' }}>Theme</h3>
+        <p style={{ marginBottom: '1rem', color: '#888', fontSize: '0.9rem' }}>
+          Choose between light and dark themes for the interface.
+        </p>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+          <label className="nx-rockerswitch">
+            <input
+              type="checkbox"
+              checked={darkMode}
+              onChange={toggleTheme}
+            />
+            <span className="nx-rockerswitch-slider"></span>
+          </label>
+          <span style={{ fontWeight: 'bold', color: 'var(--text-color)' }}>
+            {darkMode ? 'Dark Mode' : 'Light Mode'}
+          </span>
         </div>
       </div>
-      </details>
 
-      <details className="card">
-        <summary style={{ cursor: 'pointer' }}>
-          <h2 style={{ display: 'inline' }}>Backup & Restore</h2>
-        </summary>
-        <p style={{ marginBottom: '1rem', color: 'var(--text-color)' }}>
-          Create backups of your NeXroll data and restore from previous backups.
+      {/* Timezone Settings */}
+      <div style={{ marginTop: '1rem', paddingBottom: '1rem', borderBottom: '1px solid var(--border-color)' }}>
+        <h3 style={{ marginBottom: '0.75rem' }}>Timezone</h3>
+        <p style={{ marginBottom: '1rem', color: '#888', fontSize: '0.9rem' }}>
+          Set your timezone to ensure schedules run at the correct local time.
         </p>
-
-        <div style={{ display: 'grid', gap: '1rem' }}>
-          <div>
-            <h3 style={{ marginBottom: '0.5rem' }}>Database Backup</h3>
-            <p style={{ fontSize: '0.9rem', color: '#666', marginBottom: '0.5rem' }}>
-              Export all schedules, categories, and preroll metadata to JSON
+        <div style={{ display: 'flex', gap: '1rem', alignItems: 'flex-end', flexWrap: 'wrap' }}>
+          <div style={{ flex: 1, minWidth: '250px' }}>
+            <label style={{ display: 'block', marginBottom: '0.5rem', fontWeight: 'bold', color: 'var(--text-color)' }}>
+              Current Timezone:
+            </label>
+            <select
+              value={currentTimezone}
+              onChange={(e) => saveTimezone(e.target.value)}
+              disabled={timezoneLoading || timezoneSaving}
+              style={{
+                width: '100%',
+                padding: '0.5rem',
+                borderRadius: '0.25rem',
+                border: '2px solid var(--border-color)',
+                backgroundColor: darkMode ? '#2a2a2a' : '#ffffff',
+                color: darkMode ? '#ffffff' : '#000000',
+                cursor: timezoneSaving ? 'not-allowed' : 'pointer',
+                fontSize: '1rem',
+                opacity: timezoneLoading || timezoneSaving ? 0.6 : 1
+              }}
+            >
+              {availableTimezones.length === 0 ? (
+                <option value="UTC">Loading timezones...</option>
+              ) : (
+                availableTimezones.map((tz) => (
+                  <option key={tz.value} value={tz.value} style={{ backgroundColor: darkMode ? '#2a2a2a' : '#ffffff', color: darkMode ? '#ffffff' : '#000000' }}>
+                    {tz.label}
+                  </option>
+                ))
+              )}
+            </select>
+            <p style={{ fontSize: '0.85rem', color: darkMode ? '#999' : '#666', marginTop: '0.25rem' }}>
+              {timezoneLoading && 'Loading timezones...'}
+              {timezoneSaving && 'Saving...'}
+              {!timezoneLoading && !timezoneSaving && `Selected: ${currentTimezone}`}
             </p>
-            <button onClick={handleBackupDatabase} className="button">
-              <Download size={14} style={{marginRight: '0.35rem'}} /> Download Database Backup
-            </button>
           </div>
+        </div>
+      </div>
 
-          <div>
-            <h3 style={{ marginBottom: '0.5rem' }}>Files Backup</h3>
-            <p style={{ fontSize: '0.9rem', color: '#666', marginBottom: '0.5rem' }}>
-              Export all preroll video files and thumbnails to ZIP
-            </p>
-            <button onClick={handleBackupFiles} className="button">
-              <Package size={14} style={{marginRight: '0.35rem'}} /> Download Files Backup
-            </button>
-          </div>
-
-          <div>
-            <h3 style={{ marginBottom: '0.5rem' }}>Restore from Backup</h3>
-            <p style={{ fontSize: '0.9rem', color: '#666', marginBottom: '0.5rem' }}>
-              Select a backup file to restore (JSON for database, ZIP for files)
-            </p>
+      {/* Confirmation Dialogs */}
+      <div style={{ marginTop: '1rem', paddingBottom: '1rem', borderBottom: '1px solid var(--border-color)' }}>
+        <h3 style={{ marginBottom: '0.75rem' }}>Confirmation Dialogs</h3>
+        <p style={{ marginBottom: '1rem', color: '#888', fontSize: '0.9rem' }}>
+          Control whether you see confirmation prompts before deleting items.
+        </p>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+          <label className="nx-rockerswitch">
             <input
-              type="file"
-              onChange={(e) => setBackupFile(e.target.files[0])}
-              accept=".json,.zip"
-              style={{ marginBottom: '0.5rem' }}
+              type="checkbox"
+              checked={confirmDeletions}
+              onChange={(e) => setConfirmDeletions(e.target.checked)}
             />
-            <div style={{ display: 'flex', gap: '0.5rem' }}>
-              <button
-                onClick={handleRestoreDatabase}
-                className="button"
-                disabled={!backupFile || !backupFile.name.endsWith('.json')}
-              >
-                <RefreshCw size={14} style={{marginRight: '0.35rem'}} /> Restore Database
-              </button>
-              <button
-                onClick={handleRestoreFiles}
-                className="button"
-                disabled={!backupFile || !backupFile.name.endsWith('.zip')}
-              >
-                <FolderOpen size={14} style={{marginRight: '0.35rem'}} /> Restore Files
-              </button>
+            <span className="nx-rockerswitch-slider"></span>
+          </label>
+          <span style={{ fontWeight: 'bold', color: 'var(--text-color)' }}>
+            {confirmDeletions ? 'Show Confirmation Prompts' : 'Skip Confirmation Prompts'}
+          </span>
+        </div>
+        <p style={{ fontSize: '0.85rem', color: '#666', marginTop: '0.5rem' }}>
+          When enabled, you'll be asked to confirm before deleting schedules, categories, or prerolls.
+        </p>
+      </div>
+
+      {/* Notification Preferences */}
+      <div style={{ marginTop: '1rem', paddingBottom: '1rem', borderBottom: '1px solid var(--border-color)' }}>
+        <h3 style={{ marginBottom: '0.75rem' }}>Notifications</h3>
+        <p style={{ marginBottom: '1rem', color: '#888', fontSize: '0.9rem' }}>
+          Control success and informational alert notifications.
+        </p>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+          <label className="nx-rockerswitch">
+            <input
+              type="checkbox"
+              checked={showNotifications}
+              onChange={(e) => setShowNotifications(e.target.checked)}
+            />
+            <span className="nx-rockerswitch-slider"></span>
+          </label>
+          <span style={{ fontWeight: 'bold', color: 'var(--text-color)' }}>
+            {showNotifications ? 'Show Notifications' : 'Hide Notifications'}
+          </span>
+        </div>
+        <p style={{ fontSize: '0.85rem', color: '#666', marginTop: '0.5rem' }}>
+          When disabled, only critical error messages will be shown. Success and info messages will be suppressed.
+        </p>
+      </div>
+
+      {/* Verbose Logging */}
+      <div style={{ marginTop: '1rem', paddingBottom: '1rem', borderBottom: '1px solid var(--border-color)' }}>
+        <h3 style={{ marginBottom: '0.75rem' }}>Verbose Logging (Beta Testing)</h3>
+        <p style={{ marginBottom: '1rem', color: '#888', fontSize: '0.9rem' }}>
+          Enable verbose logging to see detailed debug information in the console. This helps troubleshoot issues during beta testing.
+        </p>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+          <label className="nx-rockerswitch">
+            <input
+              type="checkbox"
+              checked={verboseLogging}
+              onChange={(e) => updateVerboseLogging(e.target.checked)}
+              disabled={verboseLoggingLoading}
+            />
+            <span className="nx-rockerswitch-slider"></span>
+          </label>
+          <span style={{ fontWeight: 'bold', color: 'var(--text-color)' }}>
+            {verboseLogging ? 'Verbose Logging Enabled' : 'Verbose Logging Disabled'}
+          </span>
+        </div>
+        {verboseLogging && (
+          <div style={{ marginTop: '0.75rem', padding: '0.75rem', backgroundColor: 'var(--card-bg)', border: '1px solid var(--border-color)', borderRadius: '4px' }}>
+            <p style={{ margin: 0, fontSize: '0.9rem', color: '#4CAF50', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+              <Check size={14} /> Verbose logging is active. Check the console (F12) and application logs for detailed information.
+            </p>
+          </div>
+        )}
+      </div>
+
+      {/* Coexistence Mode (Passive Mode) */}
+      <div style={{ marginTop: '1rem', paddingBottom: '1rem', borderBottom: '1px solid var(--border-color)' }}>
+        <h3 style={{ marginBottom: '0.75rem' }}>Coexistence Mode</h3>
+        <p style={{ marginBottom: '1rem', color: '#888', fontSize: '0.9rem' }}>
+          Enable this if you use another preroll manager (like Preroll Plus) alongside NeXroll. When enabled, NeXroll will <strong>only</strong> manage prerolls during active schedules and stay hands-off at all other times, allowing your other preroll manager to control prerolls outside scheduled times.
+        </p>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+          <label className="nx-rockerswitch">
+            <input
+              type="checkbox"
+              checked={passiveMode}
+              onChange={(e) => updatePassiveMode(e.target.checked)}
+              disabled={passiveModeLoading}
+            />
+            <span className="nx-rockerswitch-slider"></span>
+          </label>
+          <span style={{ fontWeight: 'bold', color: 'var(--text-color)' }}>
+            {passiveMode ? 'Coexistence Mode Enabled' : 'Coexistence Mode Disabled'}
+          </span>
+        </div>
+        {passiveMode && (
+          <div style={{ marginTop: '0.75rem', padding: '0.75rem', backgroundColor: 'var(--card-bg)', border: '1px solid #2196F3', borderRadius: '4px' }}>
+            <p style={{ margin: 0, fontSize: '0.9rem', color: '#2196F3', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+              <Check size={14} /> Coexistence mode is active. NeXroll will only apply prerolls during active schedules. Outside of scheduled times, your other preroll manager can control Plex's preroll settings.
+            </p>
+          </div>
+        )}
+        {!passiveMode && (
+          <div style={{ marginTop: '0.75rem', padding: '0.75rem', backgroundColor: 'var(--card-bg)', border: '1px solid var(--border-color)', borderRadius: '4px' }}>
+            <p style={{ margin: 0, fontSize: '0.9rem', color: '#888', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+              <Info size={14} /> Standard mode: NeXroll manages prerolls at all times, including applying fallback categories when no schedules are active.
+            </p>
+          </div>
+        )}
+      </div>
+
+      {/* Clear When Inactive */}
+      <div style={{ marginTop: '1rem' }}>
+        <h3 style={{ marginBottom: '0.75rem' }}>Clear Prerolls When Inactive</h3>
+        <p style={{ marginBottom: '1rem', color: '#888', fontSize: '0.9rem' }}>
+          When enabled, NeXroll will <strong>clear</strong> the Plex preroll field when no schedules are active. This means no prerolls will play outside of your scheduled times.
+        </p>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+          <label className="nx-rockerswitch">
+            <input
+              type="checkbox"
+              checked={clearWhenInactive}
+              onChange={(e) => updateClearWhenInactive(e.target.checked)}
+              disabled={clearWhenInactiveLoading || passiveMode}
+            />
+            <span className="nx-rockerswitch-slider"></span>
+          </label>
+          <span style={{ fontWeight: 'bold', color: 'var(--text-color)' }}>
+            {clearWhenInactive ? 'Clear When Inactive Enabled' : 'Clear When Inactive Disabled'}
+          </span>
+        </div>
+        {passiveMode && (
+          <div style={{ marginTop: '0.75rem', padding: '0.75rem', backgroundColor: 'var(--card-bg)', border: '1px solid #ff9800', borderRadius: '4px' }}>
+            <p style={{ margin: 0, fontSize: '0.9rem', color: '#ff9800', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+              <AlertTriangle size={14} /> This setting is disabled while Coexistence Mode is active. Coexistence Mode already keeps NeXroll hands-off outside of schedules.
+            </p>
+          </div>
+        )}
+        {!passiveMode && clearWhenInactive && (
+          <div style={{ marginTop: '0.75rem', padding: '0.75rem', backgroundColor: 'var(--card-bg)', border: '1px solid #2196F3', borderRadius: '4px' }}>
+            <p style={{ margin: 0, fontSize: '0.9rem', color: '#2196F3', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+              <Check size={14} /> Prerolls will be cleared from Plex when no schedules are active. Movies will play without any preroll outside of scheduled times.
+            </p>
+          </div>
+        )}
+        {!passiveMode && !clearWhenInactive && (
+          <div style={{ marginTop: '0.75rem', padding: '0.75rem', backgroundColor: 'var(--card-bg)', border: '1px solid var(--border-color)', borderRadius: '4px' }}>
+            <p style={{ margin: 0, fontSize: '0.9rem', color: '#888', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+              <Info size={14} /> Prerolls will remain in Plex when no schedules are active (either using a fallback category or leaving the current preroll unchanged).
+            </p>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+
+  // Settings - Path Mappings Tab
+  const renderSettingsPaths = () => (
+    <div className="card">
+      <h2>Path Mappings (Plex)</h2>
+      <p style={{ marginBottom: '1rem', color: 'var(--text-color)' }}>
+        Define how local or UNC paths should be translated to Plex-readable paths when applying prerolls.
+        Longest-prefix rule applies; Windows local prefixes are matched case-insensitively.
+      </p>
+
+      <div style={{ display: 'grid', gap: '0.5rem' }}>
+        {(pathMappings || []).map((m, idx) => (
+          <div key={idx} style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+            <input
+              type="text"
+              placeholder="Local/UNC Prefix (e.g., \\\\NAS\\share\\prerolls or C:\\Media\\Prerolls)"
+              value={m.local}
+              onChange={(e) => updateMappingRow(idx, 'local', e.target.value)}
+              style={{ flex: 1, padding: '0.5rem' }}
+            />
+            <ArrowRight size={16} style={{ fontWeight: 'bold' }} />
+            <input
+              type="text"
+              placeholder="Plex Prefix (e.g., /mnt/NAS/prerolls or /Volumes/Media/Prerolls)"
+              value={m.plex}
+              onChange={(e) => updateMappingRow(idx, 'plex', e.target.value)}
+              style={{ flex: 1, padding: '0.5rem' }}
+            />
+            <button
+              type="button"
+              className="button"
+              onClick={() => removeMappingRow(idx)}
+              style={{ backgroundColor: '#dc3545' }}
+              title="Remove this mapping"
+            >
+              Remove
+            </button>
+          </div>
+        ))}
+
+        <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
+          <button type="button" className="button" onClick={addMappingRow}><Plus size={14} style={{marginRight: '0.35rem'}} /> Add Row</button>
+          <button type="button" className="button" onClick={loadPathMappings} disabled={pathMappingsLoading}><RotateCw size={14} style={{marginRight: '0.35rem'}} /> Reload</button>
+          <button type="button" className="button" onClick={savePathMappings} disabled={pathMappingsLoading} style={{ backgroundColor: '#28a745' }}>
+            <Save size={14} style={{marginRight: '0.35rem'}} /> Save
+          </button>
+        </div>
+      </div>
+
+      <div style={{ marginTop: '1.5rem', paddingTop: '1rem', borderTop: '1px solid var(--border-color)' }}>
+        <h3 style={{ margin: 0, marginBottom: '0.5rem' }}>Test Translation</h3>
+        <p style={{ fontSize: '0.9rem', color: '#666', marginBottom: '0.5rem' }}>
+          Paste one or more local/UNC paths below to preview their translated Plex paths.
+        </p>
+        <textarea
+          rows="4"
+          value={mappingTestInput}
+          onChange={(e) => setMappingTestInput(e.target.value)}
+          placeholder={`Example:
+\\\\NAS\\share\\prerolls\\winter\\snow.mp4
+C:\\\\Media\\\\Prerolls\\\\summer\\\\beach.mp4`}
+          style={{ width: '100%', padding: '0.5rem', resize: 'vertical' }}
+        />
+        <div style={{ marginTop: '0.5rem' }}>
+          <button type="button" className="button" onClick={runMappingsTest}><FlaskConical size={14} style={{marginRight: '0.35rem'}} /> Run Test</button>
+        </div>
+        {Array.isArray(mappingTestResults) && mappingTestResults.length > 0 && (
+          <div style={{ marginTop: '0.5rem' }}>
+            <ul style={{ margin: 0, paddingLeft: '1rem' }}>
+              {mappingTestResults.map((r, i) => (
+                <li key={i} style={{ fontSize: '0.9rem', color: r.matched ? 'green' : '#555' }}>
+                  <code>{r.input}</code> → <code>{r.output || '(no change)'}</code>
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+
+  // Settings - Backup & Restore Tab
+  const renderSettingsBackup = () => (
+    <div className="card">
+      <h2 style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+        <Archive size={20} /> Backup & Restore
+      </h2>
+      <p style={{ marginBottom: '1.5rem', color: 'var(--text-secondary)' }}>
+        Create backups of your NeXroll data and restore from previous backups.
+      </p>
+
+      {/* Progress Indicator */}
+      {backupProgress.active && (
+        <div style={{
+          padding: '1rem',
+          marginBottom: '1.5rem',
+          backgroundColor: 'rgba(59, 130, 246, 0.1)',
+          border: '1px solid rgba(59, 130, 246, 0.3)',
+          borderRadius: '8px',
+          display: 'flex',
+          alignItems: 'center',
+          gap: '0.75rem'
+        }}>
+          <div style={{
+            width: '24px',
+            height: '24px',
+            border: '3px solid rgba(59, 130, 246, 0.3)',
+            borderTopColor: '#3b82f6',
+            borderRadius: '50%',
+            animation: 'spin 1s linear infinite'
+          }} />
+          <div>
+            <div style={{ fontWeight: 600, color: '#3b82f6' }}>
+              {backupProgress.type.includes('backup') ? 'Creating Backup...' : 'Restoring...'}
+            </div>
+            <div style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
+              {backupProgress.message}
             </div>
           </div>
         </div>
-        </details>
+      )}
 
-      <div className="card">
-        <h2>System Information</h2>
-        <div style={{ display: 'grid', gap: '0.5rem', fontSize: '0.9rem' }}>
-          <div><strong>Prerolls:</strong> {prerolls.length}</div>
-          <div><strong>Categories:</strong> {categories.length}</div>
-          <div><strong>Schedules:</strong> {schedules.length}</div>
-          <div><strong>Holiday Presets:</strong> {holidayPresets.length}</div>
-          <div><strong>Community Templates:</strong> {communityTemplates.length}</div>
-          <div><strong>Scheduler Status:</strong> {schedulerStatus.running ? 'Running' : 'Stopped'}</div>
-          <div><strong>Theme:</strong> {darkMode ? 'Dark' : 'Light'}</div>
-          <div><strong>Installed Version:</strong> {systemVersion?.api_version || 'unknown'}</div>
-          {systemVersion?.install_dir && <div><strong>Install Dir:</strong> {systemVersion.install_dir}</div>}
-          <div><strong>FFmpeg:</strong> {ffmpegInfo ? (ffmpegInfo.ffmpeg_present ? ffmpegInfo.ffmpeg_version : 'Not found') : 'Detecting...'}</div>
-          <div><strong>FFprobe:</strong> {ffmpegInfo ? (ffmpegInfo.ffprobe_present ? ffmpegInfo.ffprobe_version : 'Not found') : 'Detecting...'}</div>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))', gap: '1.5rem' }}>
+        {/* Database Backup Card */}
+        <div style={{
+          padding: '1.25rem',
+          backgroundColor: 'var(--bg-secondary)',
+          border: '1px solid var(--border-color)',
+          borderRadius: '8px',
+          display: 'flex',
+          flexDirection: 'column'
+        }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.75rem' }}>
+            <Database size={18} style={{ color: '#3b82f6' }} />
+            <h3 style={{ margin: 0, fontSize: '1rem' }}>Database Backup</h3>
+          </div>
+          <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginBottom: '1rem', flex: 1 }}>
+            Export all schedules, categories, preroll metadata, sequences, and settings to a portable JSON file.
+          </p>
+          <button 
+            onClick={handleBackupDatabase} 
+            className="button"
+            disabled={backupProgress.active}
+            style={{ width: '100%', marginTop: 'auto' }}
+          >
+            <Download size={14} style={{marginRight: '0.35rem'}} /> Download Database Backup
+          </button>
         </div>
-        <div style={{ marginTop: '0.75rem' }}>
-          <button onClick={recheckFfmpeg} className="button"><Search size={14} style={{marginRight: '0.35rem'}} /> Re-check FFmpeg</button>
-          <button onClick={handleShowSystemPaths} className="button" style={{ marginLeft: '0.5rem' }}><FolderOpen size={14} style={{marginRight: '0.35rem'}} /> Show Resolved Paths</button>
-          <button onClick={handleDownloadDiagnostics} className="button" style={{ marginLeft: '0.5rem' }}><Wrench size={14} style={{marginRight: '0.35rem'}} /> Download Diagnostics</button>
-          <button onClick={handleViewChangelog} className="button" style={{ marginLeft: '0.5rem' }}><FileText size={14} style={{marginRight: '0.35rem'}} /> View Changelog</button>
+
+        {/* System & Files Backup Card */}
+        <div style={{
+          padding: '1.25rem',
+          backgroundColor: 'var(--bg-secondary)',
+          border: '1px solid var(--border-color)',
+          borderRadius: '8px',
+          display: 'flex',
+          flexDirection: 'column'
+        }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.75rem' }}>
+            <HardDrive size={18} style={{ color: '#22c55e' }} />
+            <h3 style={{ margin: 0, fontSize: '1rem' }}>System & Files Backup</h3>
+          </div>
+          <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginBottom: '0.5rem' }}>
+            Comprehensive backup including:
+          </p>
+          <ul style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', margin: '0 0 1rem 1rem', paddingLeft: '0.5rem', flex: 1 }}>
+            <li>Database (nexroll.db + JSON export)</li>
+            <li>All preroll video files</li>
+            <li>All thumbnails</li>
+            <li>Settings & Configuration</li>
+          </ul>
+          <button 
+            onClick={handleBackupFiles} 
+            className="button"
+            disabled={backupProgress.active}
+            style={{ width: '100%', backgroundColor: '#22c55e' }}
+          >
+            <Package size={14} style={{marginRight: '0.35rem'}} /> Download System Backup
+          </button>
+        </div>
+      </div>
+
+      {/* Restore Section */}
+      <div style={{
+        marginTop: '2rem',
+        padding: '1.5rem',
+        backgroundColor: 'var(--bg-secondary)',
+        border: '1px solid var(--border-color)',
+        borderRadius: '8px'
+      }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.75rem' }}>
+          <RotateCw size={18} style={{ color: '#f59e0b' }} />
+          <h3 style={{ margin: 0, fontSize: '1rem' }}>Restore from Backup</h3>
+        </div>
+        <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginBottom: '1rem' }}>
+          Select a backup file to restore. Use <strong>.json</strong> files for database-only restore, or <strong>.zip</strong> files for full system restore.
+        </p>
+        
+        <div style={{
+          padding: '1rem',
+          border: '2px dashed var(--border-color)',
+          borderRadius: '8px',
+          marginBottom: '1rem',
+          backgroundColor: 'var(--card-bg)'
+        }}>
+          <input
+            type="file"
+            onChange={(e) => setBackupFile(e.target.files[0])}
+            accept=".json,.zip"
+            disabled={backupProgress.active}
+            style={{ width: '100%' }}
+          />
+          {backupFile && (
+            <div style={{ 
+              marginTop: '0.75rem', 
+              padding: '0.5rem 0.75rem', 
+              backgroundColor: 'rgba(59, 130, 246, 0.1)', 
+              borderRadius: '4px',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '0.5rem',
+              fontSize: '0.85rem'
+            }}>
+              <FileText size={14} style={{ color: '#3b82f6' }} />
+              <span><strong>Selected:</strong> {backupFile.name}</span>
+              <span style={{ color: 'var(--text-secondary)' }}>
+                ({(backupFile.size / 1024 / 1024).toFixed(2)} MB)
+              </span>
+            </div>
+          )}
+        </div>
+
+        <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap' }}>
+          <button
+            onClick={handleRestoreDatabase}
+            className="button"
+            disabled={backupProgress.active || !backupFile || !backupFile.name.endsWith('.json')}
+            style={{ 
+              flex: '1 1 200px',
+              backgroundColor: backupFile?.name?.endsWith('.json') ? '#3b82f6' : undefined,
+              opacity: (!backupFile || !backupFile.name.endsWith('.json')) ? 0.5 : 1
+            }}
+          >
+            <Database size={14} style={{marginRight: '0.35rem'}} /> Restore Database (.json)
+          </button>
+          <button
+            onClick={handleRestoreFiles}
+            className="button"
+            disabled={backupProgress.active || !backupFile || !backupFile.name.endsWith('.zip')}
+            style={{ 
+              flex: '1 1 200px',
+              backgroundColor: backupFile?.name?.endsWith('.zip') ? '#22c55e' : undefined,
+              opacity: (!backupFile || !backupFile.name.endsWith('.zip')) ? 0.5 : 1
+            }}
+          >
+            <HardDrive size={14} style={{marginRight: '0.35rem'}} /> Restore System (.zip)
+          </button>
+        </div>
+
+        <div style={{ 
+          marginTop: '1rem', 
+          padding: '0.75rem', 
+          backgroundColor: 'rgba(245, 158, 11, 0.1)', 
+          border: '1px solid rgba(245, 158, 11, 0.3)',
+          borderRadius: '6px',
+          fontSize: '0.8rem',
+          color: '#d97706'
+        }}>
+          <strong>⚠️ Warning:</strong> Restoring will overwrite existing data. Make sure you have a current backup before proceeding.
+        </div>
+      </div>
+    </div>
+  );
+
+  // Settings - System Tab
+  const renderSettingsSystem = () => (
+    <div>
+      {/* Version & Application Info */}
+      <div className="card">
+        <h2 style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+          <Info size={20} /> NeXroll Information
+        </h2>
+        <div style={{ 
+          display: 'grid', 
+          gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', 
+          gap: '1rem',
+          marginBottom: '1rem'
+        }}>
+          {/* Version Card */}
+          <div style={{
+            padding: '1rem',
+            backgroundColor: 'var(--card-bg)',
+            border: '1px solid var(--border-color)',
+            borderRadius: '8px'
+          }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.75rem', color: 'var(--accent-color)' }}>
+              <Package size={18} />
+              <span style={{ fontWeight: 'bold' }}>Version</span>
+            </div>
+            <div style={{ fontSize: '1.5rem', fontWeight: 'bold', marginBottom: '0.25rem' }}>
+              {systemVersion?.api_version || 'unknown'}
+            </div>
+            {systemVersion?.registry_version && systemVersion?.registry_version !== systemVersion?.api_version && (
+              <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>
+                Registry: {systemVersion.registry_version}
+              </div>
+            )}
+          </div>
+
+          {/* Scheduler Status Card */}
+          <div style={{
+            padding: '1rem',
+            backgroundColor: 'var(--card-bg)',
+            border: '1px solid var(--border-color)',
+            borderRadius: '8px'
+          }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.75rem', color: schedulerStatus.running ? '#28a745' : '#dc3545' }}>
+              <Clock size={18} />
+              <span style={{ fontWeight: 'bold' }}>Scheduler</span>
+            </div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+              <span style={{ 
+                width: '10px', 
+                height: '10px', 
+                borderRadius: '50%', 
+                backgroundColor: schedulerStatus.running ? '#28a745' : '#dc3545',
+                display: 'inline-block'
+              }}></span>
+              <span style={{ fontSize: '1.1rem', fontWeight: '500' }}>
+                {schedulerStatus.running ? 'Running' : 'Stopped'}
+              </span>
+            </div>
+          </div>
+
+          {/* Theme Card */}
+          <div style={{
+            padding: '1rem',
+            backgroundColor: 'var(--card-bg)',
+            border: '1px solid var(--border-color)',
+            borderRadius: '8px'
+          }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.75rem', color: 'var(--accent-color)' }}>
+              <Palette size={18} />
+              <span style={{ fontWeight: 'bold' }}>Theme</span>
+            </div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '1.1rem' }}>
+              {darkMode ? <Moon size={18} /> : <Sun size={18} />}
+              <span>{darkMode ? 'Dark Mode' : 'Light Mode'}</span>
+            </div>
+          </div>
+        </div>
+
+        {/* Install Directory */}
+        {systemVersion?.install_dir && (
+          <div style={{ 
+            padding: '0.75rem 1rem',
+            backgroundColor: 'var(--card-bg)',
+            border: '1px solid var(--border-color)',
+            borderRadius: '8px',
+            marginBottom: '1rem',
+            display: 'flex',
+            alignItems: 'center',
+            gap: '0.5rem'
+          }}>
+            <FolderOpen size={16} style={{ color: 'var(--accent-color)', flexShrink: 0 }} />
+            <span style={{ fontWeight: '500', marginRight: '0.5rem' }}>Install Directory:</span>
+            <code style={{ 
+              fontSize: '0.85rem', 
+              backgroundColor: 'var(--bg-color)', 
+              padding: '0.25rem 0.5rem', 
+              borderRadius: '4px',
+              wordBreak: 'break-all'
+            }}>
+              {systemVersion.install_dir}
+            </code>
+          </div>
+        )}
+
+        {/* Quick Actions */}
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem' }}>
+          <button onClick={handleViewChangelog} className="button">
+            <FileText size={14} style={{marginRight: '0.35rem'}} /> View Changelog
+          </button>
+          <button onClick={handleDownloadDiagnostics} className="button">
+            <Download size={14} style={{marginRight: '0.35rem'}} /> Download Diagnostics
+          </button>
+          <button onClick={handleShowSystemPaths} className="button">
+            <FolderOpen size={14} style={{marginRight: '0.35rem'}} /> Show Resolved Paths
+          </button>
+        </div>
+      </div>
+
+      {/* Library Statistics */}
+      <div className="card">
+        <h2 style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+          <Library size={20} /> Library Statistics
+        </h2>
+        <div style={{ 
+          display: 'grid', 
+          gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', 
+          gap: '0.75rem'
+        }}>
+          <div style={{
+            padding: '1rem',
+            backgroundColor: 'var(--card-bg)',
+            border: '1px solid var(--border-color)',
+            borderRadius: '8px',
+            textAlign: 'center'
+          }}>
+            <Film size={24} style={{ color: 'var(--accent-color)', marginBottom: '0.5rem' }} />
+            <div style={{ fontSize: '1.5rem', fontWeight: 'bold' }}>{prerolls.length}</div>
+            <div style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>Prerolls</div>
+          </div>
+          <div style={{
+            padding: '1rem',
+            backgroundColor: 'var(--card-bg)',
+            border: '1px solid var(--border-color)',
+            borderRadius: '8px',
+            textAlign: 'center'
+          }}>
+            <Folder size={24} style={{ color: '#ffc230', marginBottom: '0.5rem' }} />
+            <div style={{ fontSize: '1.5rem', fontWeight: 'bold' }}>{categories.length}</div>
+            <div style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>Categories</div>
+          </div>
+          <div style={{
+            padding: '1rem',
+            backgroundColor: 'var(--card-bg)',
+            border: '1px solid var(--border-color)',
+            borderRadius: '8px',
+            textAlign: 'center'
+          }}>
+            <Calendar size={24} style={{ color: '#17a2b8', marginBottom: '0.5rem' }} />
+            <div style={{ fontSize: '1.5rem', fontWeight: 'bold' }}>{schedules.length}</div>
+            <div style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>Schedules</div>
+          </div>
+          <div style={{
+            padding: '1rem',
+            backgroundColor: 'var(--card-bg)',
+            border: '1px solid var(--border-color)',
+            borderRadius: '8px',
+            textAlign: 'center'
+          }}>
+            <PartyPopper size={24} style={{ color: '#e83e8c', marginBottom: '0.5rem' }} />
+            <div style={{ fontSize: '1.5rem', fontWeight: 'bold' }}>{holidayPresets.length}</div>
+            <div style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>Holiday Presets</div>
+          </div>
+          <div style={{
+            padding: '1rem',
+            backgroundColor: 'var(--card-bg)',
+            border: '1px solid var(--border-color)',
+            borderRadius: '8px',
+            textAlign: 'center'
+          }}>
+            <Users2 size={24} style={{ color: '#6f42c1', marginBottom: '0.5rem' }} />
+            <div style={{ fontSize: '1.5rem', fontWeight: 'bold' }}>{communityIndexStatus?.total_prerolls || 0}</div>
+            <div style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>Community Prerolls</div>
+          </div>
+        </div>
+      </div>
+
+      {/* System Dependencies */}
+      <div className="card">
+        <h2 style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+          <Wrench size={20} /> System Dependencies
+        </h2>
+        <div style={{ display: 'grid', gap: '0.75rem' }}>
+          {/* Python Status */}
+          <div style={{
+            padding: '0.75rem 1rem',
+            backgroundColor: 'var(--card-bg)',
+            border: '1px solid var(--border-color)',
+            borderRadius: '8px',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            flexWrap: 'wrap',
+            gap: '0.5rem'
+          }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+              <div style={{
+                width: '32px',
+                height: '32px',
+                borderRadius: '6px',
+                backgroundColor: 'rgba(40, 167, 69, 0.15)',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center'
+              }}>
+                <CheckCircle size={18} style={{ color: '#28a745' }} />
+              </div>
+              <div>
+                <div style={{ fontWeight: '500' }}>Python</div>
+                <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>
+                  {systemDependencies?.dependencies?.python?.version ? `Python ${systemDependencies.dependencies.python.version}` : 'Running'}
+                </div>
+              </div>
+            </div>
+            <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>
+              NeXroll backend runtime
+            </div>
+          </div>
+
+          {/* FFmpeg Status */}
+          <div style={{
+            padding: '0.75rem 1rem',
+            backgroundColor: 'var(--card-bg)',
+            border: '1px solid var(--border-color)',
+            borderRadius: '8px',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            flexWrap: 'wrap',
+            gap: '0.5rem'
+          }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+              <div style={{
+                width: '32px',
+                height: '32px',
+                borderRadius: '6px',
+                backgroundColor: ffmpegInfo?.ffmpeg_present ? 'rgba(40, 167, 69, 0.15)' : 'rgba(220, 53, 69, 0.15)',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center'
+              }}>
+                {ffmpegInfo?.ffmpeg_present ? 
+                  <CheckCircle size={18} style={{ color: '#28a745' }} /> : 
+                  <XCircle size={18} style={{ color: '#dc3545' }} />
+                }
+              </div>
+              <div>
+                <div style={{ fontWeight: '500' }}>FFmpeg</div>
+                <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>
+                  {ffmpegInfo ? (ffmpegInfo.ffmpeg_present ? ffmpegInfo.ffmpeg_version : 'Not installed') : 'Detecting...'}
+                </div>
+              </div>
+            </div>
+            <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>
+              Video processing & preroll generation
+            </div>
+          </div>
+
+          {/* FFprobe Status */}
+          <div style={{
+            padding: '0.75rem 1rem',
+            backgroundColor: 'var(--card-bg)',
+            border: '1px solid var(--border-color)',
+            borderRadius: '8px',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            flexWrap: 'wrap',
+            gap: '0.5rem'
+          }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+              <div style={{
+                width: '32px',
+                height: '32px',
+                borderRadius: '6px',
+                backgroundColor: ffmpegInfo?.ffprobe_present ? 'rgba(40, 167, 69, 0.15)' : 'rgba(220, 53, 69, 0.15)',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center'
+              }}>
+                {ffmpegInfo?.ffprobe_present ? 
+                  <CheckCircle size={18} style={{ color: '#28a745' }} /> : 
+                  <XCircle size={18} style={{ color: '#dc3545' }} />
+                }
+              </div>
+              <div>
+                <div style={{ fontWeight: '500' }}>FFprobe</div>
+                <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>
+                  {ffmpegInfo ? (ffmpegInfo.ffprobe_present ? ffmpegInfo.ffprobe_version : 'Not installed') : 'Detecting...'}
+                </div>
+              </div>
+            </div>
+            <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>
+              Video analysis & metadata extraction
+            </div>
+          </div>
+
+          {/* yt-dlp Status */}
+          <div style={{
+            padding: '0.75rem 1rem',
+            backgroundColor: 'var(--card-bg)',
+            border: '1px solid var(--border-color)',
+            borderRadius: '8px',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            flexWrap: 'wrap',
+            gap: '0.5rem'
+          }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+              <div style={{
+                width: '32px',
+                height: '32px',
+                borderRadius: '6px',
+                backgroundColor: systemDependencies?.dependencies?.yt_dlp?.available ? 'rgba(40, 167, 69, 0.15)' : 'rgba(220, 53, 69, 0.15)',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center'
+              }}>
+                {systemDependencies?.dependencies?.yt_dlp?.available ? 
+                  <CheckCircle size={18} style={{ color: '#28a745' }} /> : 
+                  <XCircle size={18} style={{ color: '#dc3545' }} />
+                }
+              </div>
+              <div>
+                <div style={{ fontWeight: '500' }}>yt-dlp</div>
+                <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>
+                  {systemDependencies?.dependencies?.yt_dlp?.available 
+                    ? systemDependencies.dependencies.yt_dlp.version 
+                    : (systemDependencies ? 'Not available' : 'Detecting...')}
+                </div>
+              </div>
+            </div>
+            <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>
+              YouTube & trailer downloads (NeX-Up)
+            </div>
+          </div>
+
+          {/* Deno Status */}
+          <div style={{
+            padding: '0.75rem 1rem',
+            backgroundColor: 'var(--card-bg)',
+            border: '1px solid var(--border-color)',
+            borderRadius: '8px',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            flexWrap: 'wrap',
+            gap: '0.5rem'
+          }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+              <div style={{
+                width: '32px',
+                height: '32px',
+                borderRadius: '6px',
+                backgroundColor: systemDependencies?.dependencies?.deno?.available ? 'rgba(40, 167, 69, 0.15)' : 'rgba(255, 193, 7, 0.15)',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center'
+              }}>
+                {systemDependencies?.dependencies?.deno?.available ? 
+                  <CheckCircle size={18} style={{ color: '#28a745' }} /> : 
+                  <AlertTriangle size={18} style={{ color: '#ffc107' }} />
+                }
+              </div>
+              <div>
+                <div style={{ fontWeight: '500' }}>Deno</div>
+                <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>
+                  {systemDependencies?.dependencies?.deno?.available 
+                    ? systemDependencies.dependencies.deno.version 
+                    : (systemDependencies ? 'Not installed (optional)' : 'Detecting...')}
+                </div>
+              </div>
+            </div>
+            <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>
+              JavaScript runtime for YouTube extraction
+            </div>
+          </div>
+
+          {/* System Info */}
+          {systemDependencies?.system && (
+            <div style={{
+              padding: '0.75rem 1rem',
+              backgroundColor: 'var(--card-bg)',
+              border: '1px solid var(--border-color)',
+              borderRadius: '8px',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '1rem',
+              flexWrap: 'wrap'
+            }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                <Globe size={16} style={{ color: 'var(--text-secondary)' }} />
+                <span style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
+                  {systemDependencies.system.platform} {systemDependencies.system.architecture}
+                </span>
+              </div>
+              <div style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
+                {systemDependencies.system.hostname}
+              </div>
+            </div>
+          )}
+
+          {/* Re-check Button with Loading Indicator */}
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', alignItems: 'flex-start' }}>
+            <button 
+              onClick={recheckFfmpeg} 
+              className="button" 
+              disabled={dependenciesLoading}
+              style={{ opacity: dependenciesLoading ? 0.7 : 1 }}
+            >
+              <RefreshCw size={14} className={dependenciesLoading ? 'spin' : ''} style={{marginRight: '0.35rem'}} /> 
+              {dependenciesLoading ? 'Checking...' : 'Re-check Dependencies'}
+            </button>
+            
+            {/* Progress indicator */}
+            {dependenciesLoading && (
+              <div style={{
+                padding: '0.75rem 1rem',
+                backgroundColor: 'rgba(23, 162, 184, 0.1)',
+                border: '1px solid rgba(23, 162, 184, 0.3)',
+                borderRadius: '8px',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '0.5rem',
+                width: '100%'
+              }}>
+                <Loader2 size={16} className="spin" style={{ color: '#17a2b8' }} />
+                <span style={{ fontSize: '0.9rem', color: 'var(--text-color)' }}>
+                  Scanning system for installed dependencies...
+                </span>
+              </div>
+            )}
+          </div>
         </div>
       </div>
 
@@ -12508,7 +18732,7 @@ C:\\\\Media\\\\Prerolls\\\\summer\\\\beach.mp4`}
         }}>
           <h3 style={{ marginTop: 0, marginBottom: '0.75rem' }}><FileText size={16} style={{marginRight: '0.35rem', verticalAlign: 'middle'}} /> Before Reporting</h3>
           <ol style={{ fontSize: '0.9rem', color: 'var(--text-secondary)', paddingLeft: '1.5rem', margin: 0 }}>
-            <li>Download diagnostics using the button above (🧰 Download Diagnostics)</li>
+            <li>Download diagnostics using the button above (<Wrench size={12} style={{verticalAlign: 'middle'}} /> Download Diagnostics)</li>
             <li>Check existing issues to avoid duplicates</li>
             <li>Include your NeXroll version: <strong>{systemVersion?.api_version || 'unknown'}</strong></li>
             <li>Attach the diagnostics bundle to your issue</li>
@@ -12532,7 +18756,7 @@ C:\\\\Media\\\\Prerolls\\\\summer\\\\beach.mp4`}
             className="button"
             style={{ textDecoration: 'none', backgroundColor: '#28a745' }}
           >
-            💡 Request a Feature
+            <Lightbulb size={14} style={{marginRight: '0.35rem'}} /> Request a Feature
           </a>
           <a 
             href="https://github.com/JFLXCLOUD/NeXroll/issues" 
@@ -12541,12 +18765,47 @@ C:\\\\Media\\\\Prerolls\\\\summer\\\\beach.mp4`}
             className="button"
             style={{ textDecoration: 'none' }}
           >
-            📖 View All Issues
+            <BookOpen size={14} style={{marginRight: '0.35rem'}} /> View All Issues
           </a>
         </div>
       </div>
     </div>
   );
+
+  // Main Settings Router
+  const renderSettings = () => {
+    if (activeTab === 'settings/paths') {
+      return (
+        <div>
+          {renderSettingsSubNav()}
+          {renderSettingsPaths()}
+        </div>
+      );
+    }
+    if (activeTab === 'settings/backup') {
+      return (
+        <div>
+          {renderSettingsSubNav()}
+          {renderSettingsBackup()}
+        </div>
+      );
+    }
+    if (activeTab === 'settings/system') {
+      return (
+        <div>
+          {renderSettingsSubNav()}
+          {renderSettingsSystem()}
+        </div>
+      );
+    }
+    // Default: General settings
+    return (
+      <div>
+        {renderSettingsSubNav()}
+        {renderSettingsGeneral()}
+      </div>
+    );
+  };
 
   const renderJellyfin = () => (
     <div>
@@ -12941,7 +19200,7 @@ C:\\\\Media\\\\Prerolls\\\\summer\\\\beach.mp4`}
                       
                       // Check compatibility
                       if (data.compatibility?.minVersion && data.compatibility.minVersion > '1.0') {
-                        if (!window.confirm(`This sequence requires version ${data.compatibility.minVersion}. Import anyway?`)) {
+                        if (!await showConfirm(`This sequence requires version ${data.compatibility.minVersion}. Import anyway?`, { title: 'Version Compatibility', type: 'warning', confirmText: 'Import Anyway' })) {
                           return;
                         }
                       }
@@ -13142,10 +19401,70 @@ C:\\\\Media\\\\Prerolls\\\\summer\\\\beach.mp4`}
     setActiveTab('schedules/builder');
   };
 
-  // Load saved sequences when viewing library
+  // Clean and validate sequence blocks before using them
+  const cleanSequenceBlocks = (blocks) => {
+    if (!blocks || !Array.isArray(blocks)) return [];
+    
+    return blocks.filter(block => {
+      if (!block || !block.type) return false;
+      
+      const blockType = block.type.toLowerCase();
+      
+      // Fixed blocks need preroll_ids
+      if (blockType === 'fixed') {
+        return block.preroll_ids && Array.isArray(block.preroll_ids) && block.preroll_ids.length > 0;
+      }
+      
+      // Random and sequential blocks need category_id or category_name
+      if (blockType === 'random' || blockType === 'sequential') {
+        return block.category_id || block.category_name;
+      }
+      
+      // Other block types (separator, etc.) are allowed
+      return true;
+    });
+  };
+
+  // Create a new schedule using a saved sequence
+  const createScheduleFromSequence = (sequence) => {
+    // Clean the sequence blocks (filter out invalid/incomplete blocks)
+    const cleanedBlocks = cleanSequenceBlocks(sequence.blocks || []);
+    
+    if (cleanedBlocks.length === 0) {
+      showAlert(`Sequence "${sequence.name}" has no valid blocks. Please edit the sequence first.`, 'error');
+      return;
+    }
+    
+    if (cleanedBlocks.length < (sequence.blocks?.length || 0)) {
+      showAlert(`Warning: ${(sequence.blocks?.length || 0) - cleanedBlocks.length} invalid block(s) were removed from the sequence.`, 'warning');
+    }
+    
+    // Load the cleaned sequence blocks
+    setSequenceBlocks(cleanedBlocks);
+    // Set schedule mode to advanced since we're using a sequence
+    setScheduleMode('advanced');
+    // Pre-fill the schedule name based on sequence name
+    setScheduleForm(prev => ({
+      ...prev,
+      name: sequence.name ? `${sequence.name} Schedule` : ''
+    }));
+    // Clear any editing state (this is a new schedule, not editing the sequence)
+    setEditingSequenceId(null);
+    setEditingSequenceName('');
+    setEditingSequenceDescription('');
+    // Navigate to create schedule page
+    setActiveTab('schedules/create');
+    showAlert(`Loaded "${sequence.name}" - configure your schedule settings below`, 'success');
+  };
+
+  // Load saved sequences when viewing library or create schedule page
   React.useEffect(() => {
-    if (activeTab === 'schedules/library') {
+    if (activeTab === 'schedules/library' || activeTab === 'schedules/create') {
       loadSavedSequences();
+    }
+    // Reset loaded sequence tracking when leaving create page
+    if (activeTab !== 'schedules/create') {
+      setLoadedSavedSequenceId(null);
     }
   }, [activeTab]);
 
@@ -13529,6 +19848,25 @@ C:\\\\Media\\\\Prerolls\\\\summer\\\\beach.mp4`}
                     className="button"
                     onClick={(e) => {
                       e.stopPropagation();
+                      createScheduleFromSequence(sequence);
+                    }}
+                    style={{ 
+                      padding: '0.4rem 0.75rem', 
+                      fontSize: '0.8rem',
+                      backgroundColor: '#f59e0b',
+                      borderColor: '#f59e0b',
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '0.35rem'
+                    }}
+                    title="Use this sequence to create a new schedule"
+                  >
+                    <Calendar size={13} /> Schedule
+                  </button>
+                  <button 
+                    className="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
                       loadSequenceIntoBuilder(sequence);
                     }}
                     style={{ 
@@ -13544,9 +19882,9 @@ C:\\\\Media\\\\Prerolls\\\\summer\\\\beach.mp4`}
                   </button>
                   <button 
                     className="button"
-                    onClick={(e) => {
+                    onClick={async (e) => {
                       e.stopPropagation();
-                      if (window.confirm(`Delete sequence "${sequence.name}"?`)) {
+                      if (await showConfirm(`Delete sequence "${sequence.name}"?`, { title: 'Delete Sequence', type: 'danger', confirmText: 'Delete' })) {
                         deleteSequence(sequence.id, sequence.name);
                       }
                     }}
@@ -13687,10 +20025,10 @@ C:\\\\Media\\\\Prerolls\\\\summer\\\\beach.mp4`}
     const handleBuildIndex = async () => {
       if (communityIsBuilding) return;
       
-      const confirmed = window.confirm(
+      const confirmed = await showConfirm(
         'Building the index will take 3-5 minutes and scan the entire Typical Nerds library.\n\n' +
-        'This will make future searches MUCH faster (milliseconds instead of seconds).\n\n' +
-        'Continue?'
+        'This will make future searches MUCH faster (milliseconds instead of seconds).',
+        { title: 'Build Search Index', type: 'info', confirmText: 'Build Index' }
       );
       
       if (!confirmed) return;
@@ -13768,16 +20106,15 @@ C:\\\\Media\\\\Prerolls\\\\summer\\\\beach.mp4`}
       if (communityIsMigrating) return;
       
       const confirmMessage = 
-        '⚠️ This will CLEAR all existing community preroll links and rematch them with the improved matching algorithm.\n\n' +
+        'This will CLEAR all existing community preroll links and rematch them with the improved matching algorithm.\n\n' +
         'Use this if:\n' +
         '• Previous matches were incorrect\n' +
         '• You want to take advantage of improved matching\n' +
         '• You have many mismatched prerolls\n\n' +
-        '⚠️ WARNING: This will reset ALL community preroll connections!\n\n' +
-        'Your preroll files will NOT be modified or deleted.\n\n' +
-        'Continue?';
+        'WARNING: This will reset ALL community preroll connections!\n\n' +
+        'Your preroll files will NOT be modified or deleted.';
       
-      const confirmed = window.confirm(confirmMessage);
+      const confirmed = await showConfirm(confirmMessage, { title: 'Rematch All Prerolls', type: 'warning', confirmText: 'Rematch All' });
       if (!confirmed) return;
       
       setCommunityIsMigrating(true);
@@ -13844,13 +20181,11 @@ C:\\\\Media\\\\Prerolls\\\\summer\\\\beach.mp4`}
       const confirmMessage = matchAll
         ? 'This will attempt to match ALL your existing prerolls to the community library.\n\n' +
           'This is useful if you manually downloaded community prerolls before using NeXroll.\n\n' +
-          'Note: Only prerolls with matching titles will be marked as downloaded.\n\n' +
-          'Continue?'
+          'Note: Only prerolls with matching titles will be marked as downloaded.'
         : 'This will match prerolls that were downloaded from the community library but don\'t have tracking IDs yet.\n\n' +
-          'This is a safe operation and won\'t modify your preroll files.\n\n' +
-          'Continue?';
+          'This is a safe operation and won\'t modify your preroll files.';
       
-      const confirmed = window.confirm(confirmMessage);
+      const confirmed = await showConfirm(confirmMessage, { title: 'Match Prerolls', type: 'info', confirmText: 'Match' });
       if (!confirmed) return;
       
       setCommunityIsMigrating(true);
@@ -14371,7 +20706,7 @@ C:\\\\Media\\\\Prerolls\\\\summer\\\\beach.mp4`}
                   }}
                   title={communityIndexStatus.exists ? 'Refresh index to get latest prerolls' : 'Build index for instant searches'}
                 >
-                  {communityIsBuilding ? <><Loader2 size={14} style={{marginRight: '0.35rem'}} className="animate-spin" /> Building...</> : (communityIndexStatus.exists ? <><RefreshCw size={14} style={{marginRight: '0.35rem'}} /> Refresh Index</> : <><Zap size={14} style={{marginRight: '0.35rem'}} /> Build Index</>)}
+                  {communityIsBuilding ? <><Loader2 size={14} style={{marginRight: '0.35rem'}} className="spin" /> Building...</> : (communityIndexStatus.exists ? <><RefreshCw size={14} style={{marginRight: '0.35rem'}} /> Refresh Index</> : <><Zap size={14} style={{marginRight: '0.35rem'}} /> Build Index</>)}
                 </button>
                 <button
                   onClick={() => handleMatchExisting(true)}
@@ -14384,7 +20719,7 @@ C:\\\\Media\\\\Prerolls\\\\summer\\\\beach.mp4`}
                   }}
                   title="Match your existing prerolls to the community library"
                 >
-                  {communityIsMigrating ? <><Loader2 size={14} style={{marginRight: '0.35rem'}} className="animate-spin" /> Matching...</> : <><Link size={14} style={{marginRight: '0.35rem'}} /> Match Existing Prerolls</>}
+                  {communityIsMigrating ? <><Loader2 size={14} style={{marginRight: '0.35rem'}} className="spin" /> Matching...</> : <><Link size={14} style={{marginRight: '0.35rem'}} /> Match Existing Prerolls</>}
                 </button>
                 {communityIndexStatus.exists && (
                   <button
@@ -14401,7 +20736,7 @@ C:\\\\Media\\\\Prerolls\\\\summer\\\\beach.mp4`}
                     }}
                     title="Clear all existing matches and rematch with improved algorithm"
                   >
-                    {communityIsMigrating ? <><Loader2 size={14} style={{marginRight: '0.35rem'}} className="animate-spin" /> Rematching...</> : <><RefreshCcw size={14} style={{marginRight: '0.35rem'}} /> Rematch All</>}
+                    {communityIsMigrating ? <><Loader2 size={14} style={{marginRight: '0.35rem'}} className="spin" /> Rematching...</> : <><RefreshCcw size={14} style={{marginRight: '0.35rem'}} /> Rematch All</>}
                   </button>
                 )}
               </div>
@@ -14626,7 +20961,7 @@ C:\\\\Media\\\\Prerolls\\\\summer\\\\beach.mp4`}
                   e.target.style.transform = 'translateY(0)';
                 }}
               >
-                {communityIsSearching ? <Loader2 size={18} className="animate-spin" /> : <Search size={18} />}
+                {communityIsSearching ? <Loader2 size={18} className="spin" /> : <Search size={18} />}
                 <span>{communityIsSearching ? 'Searching...' : 'Search'}</span>
               </button>
             </div>
@@ -14778,7 +21113,7 @@ C:\\\\Media\\\\Prerolls\\\\summer\\\\beach.mp4`}
                         }}
                       >
                         <option value="" style={{ backgroundColor: darkMode ? '#2a2a2a' : 'white', color: darkMode ? '#ffffff' : '#333' }}>Select category...</option>
-                        {categories.map(cat => (
+                        {[...categories].sort((a, b) => a.name.localeCompare(b.name)).map(cat => (
                           <option key={cat.id} value={cat.id} style={{ backgroundColor: darkMode ? '#2a2a2a' : 'white', color: darkMode ? '#ffffff' : '#333' }}>
                             {cat.name}
                           </option>
@@ -15017,7 +21352,7 @@ C:\\\\Media\\\\Prerolls\\\\summer\\\\beach.mp4`}
                       }}
                     >
                       <option value="">Select Category</option>
-                      {categories.map(cat => (
+                      {[...categories].sort((a, b) => a.name.localeCompare(b.name)).map(cat => (
                         <option key={cat.id} value={cat.id}>{cat.name}</option>
                       ))}
                     </select>
@@ -15133,7 +21468,13 @@ C:\\\\Media\\\\Prerolls\\\\summer\\\\beach.mp4`}
             Categories
           </button>
           <button
-            className={`tab-button ${activeTab === 'settings' ? 'active' : ''}`}
+            className={`tab-button ${activeTab === 'nexup' ? 'active' : ''}`}
+            onClick={() => { setActiveTab('nexup'); setMobileMenuOpen(false); }}
+          >
+            NeX-Up
+          </button>
+          <button
+            className={`tab-button ${activeTab.startsWith('settings') ? 'active' : ''}`}
             onClick={() => { setActiveTab('settings'); setMobileMenuOpen(false); }}
           >
             Settings
@@ -15151,7 +21492,46 @@ C:\\\\Media\\\\Prerolls\\\\summer\\\\beach.mp4`}
             Community Prerolls
           </button>
         </div>
-        <div className="tabbar-right" style={{ display: 'flex', alignItems: 'center', paddingRight: '48px' }}>
+        <div className="tabbar-right" style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', paddingRight: '48px' }}>
+          {/* Service Status Indicator */}
+          <span style={{ 
+            display: 'inline-flex', 
+            alignItems: 'center', 
+            gap: '0.35rem',
+            fontSize: '0.75rem', 
+            padding: '0.25rem 0.6rem', 
+            borderRadius: '12px', 
+            backgroundColor: systemVersion ? '#28a74520' : '#dc354520',
+            color: systemVersion ? '#28a745' : '#dc3545',
+            fontWeight: '600'
+          }}>
+            <span style={{ 
+              width: '8px', 
+              height: '8px', 
+              borderRadius: '50%', 
+              backgroundColor: systemVersion ? '#28a745' : '#dc3545'
+            }} />
+            {systemVersion ? 'Online' : 'Offline'}
+          </span>
+          
+          {/* Theme Toggle Button */}
+          <button
+            onClick={toggleTheme}
+            className="button"
+            title={darkMode ? 'Switch to Light Mode' : 'Switch to Dark Mode'}
+            style={{
+              padding: '6px 10px',
+              fontSize: '0.8rem',
+              minWidth: 'auto',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '0.25rem'
+            }}
+          >
+            {darkMode ? <Sun size={14} /> : <Moon size={14} />}
+          </button>
+          
+          {/* Logo */}
           <a href="https://github.com/JFLXCLOUD/NeXroll" target="_blank" rel="noopener noreferrer">
             <img
               src={darkMode ? "/NeXroll_Logo_WHT.png" : "/NeXroll_Logo_BLK.png"}
@@ -15258,6 +21638,64 @@ C:\\\\Media\\\\Prerolls\\\\summer\\\\beach.mp4`}
       )}
 
      <div className="dashboard">
+       {/* Dashboard Sub-Nav Tab Bar */}
+       {activeTab.startsWith('dashboard') && (
+         <div style={{ 
+           position: 'sticky',
+           top: '38px',
+           zIndex: 800,
+           backgroundColor: 'var(--bg-color)',
+           paddingTop: '1rem',
+           borderBottom: '2px solid var(--border-color)',
+           display: 'flex',
+           gap: '0.25rem'
+         }}>
+           {[
+             { id: 'dashboard', icon: <LayoutDashboard size={16} />, label: 'Overview' },
+             { id: 'dashboard/add', icon: <Upload size={16} />, label: 'Add Prerolls' },
+             { id: 'dashboard/library', icon: <Film size={16} />, label: 'Library' },
+             { id: 'dashboard/scaling', icon: <Video size={16} />, label: 'Video Scaling' },
+             { id: 'dashboard/actions', icon: <Zap size={16} />, label: 'Quick Actions' }
+           ].map(tab => (
+             <button
+               key={tab.id}
+               onClick={() => setActiveTab(tab.id)}
+               style={{
+                 padding: '0.875rem 1.25rem',
+                 border: 'none',
+                 borderBottom: activeTab === tab.id ? '3px solid var(--button-bg)' : '3px solid transparent',
+                 backgroundColor: activeTab === tab.id ? 'var(--bg-color)' : 'transparent',
+                 color: activeTab === tab.id ? 'var(--button-bg)' : 'var(--text-color)',
+                 cursor: 'pointer',
+                 fontSize: '0.9rem',
+                 fontWeight: activeTab === tab.id ? 600 : 400,
+                 transition: 'all 0.2s',
+                 marginBottom: '-2px',
+                 display: 'flex',
+                 alignItems: 'center',
+                 gap: '0.5rem',
+                 borderRadius: '8px 8px 0 0'
+               }}
+               onMouseEnter={(e) => {
+                 if (activeTab !== tab.id) {
+                   e.currentTarget.style.backgroundColor = 'var(--bg-color)';
+                   e.currentTarget.style.color = 'var(--button-bg)';
+                 }
+               }}
+               onMouseLeave={(e) => {
+                 if (activeTab !== tab.id) {
+                   e.currentTarget.style.backgroundColor = 'transparent';
+                   e.currentTarget.style.color = 'var(--text-color)';
+                 }
+               }}
+             >
+               <span style={{ display: 'flex', alignItems: 'center' }}>{tab.icon}</span>
+               <span>{tab.label}</span>
+             </button>
+           ))}
+         </div>
+       )}
+
        {/* Schedule Sub-Nav Tab Bar - Rendered at dashboard level for proper sticky behavior */}
        {activeTab.startsWith('schedules') && (
          <div style={{ 
@@ -15315,13 +21753,665 @@ C:\\\\Media\\\\Prerolls\\\\summer\\\\beach.mp4`}
            ))}
          </div>
        )}
-       {activeTab === 'dashboard' && renderDashboard()}
+       
+       {/* NeX-Up Sub-Nav Tab Bar */}
+       {activeTab.startsWith('nexup') && (
+         <div style={{ 
+           position: 'sticky',
+           top: '38px',
+           zIndex: 800,
+           backgroundColor: 'var(--bg-color)',
+           paddingTop: '1rem',
+           borderBottom: '2px solid var(--border-color)',
+           display: 'flex',
+           gap: '0.25rem'
+         }}>
+           {[
+             { id: 'nexup', icon: <Link size={16} />, label: 'Connections' },
+             { id: 'nexup/trailers', icon: <Film size={16} />, label: 'Your Trailers' },
+             { id: 'nexup/settings', icon: <Settings size={16} />, label: 'Settings' },
+             { id: 'nexup/generator', icon: <Sparkles size={16} />, label: 'Generator' }
+           ].map((tab, index, arr) => (
+             <React.Fragment key={tab.id}>
+               <button
+                 onClick={() => setActiveTab(tab.id)}
+                 style={{
+                   padding: '0.875rem 1.25rem',
+                   border: 'none',
+                   borderBottom: activeTab === tab.id ? '3px solid #ffc230' : '3px solid transparent',
+                   backgroundColor: activeTab === tab.id ? 'var(--bg-color)' : 'transparent',
+                   color: activeTab === tab.id ? '#ffc230' : 'var(--text-color)',
+                   cursor: 'pointer',
+                   fontSize: '0.9rem',
+                   fontWeight: activeTab === tab.id ? 600 : 400,
+                   transition: 'all 0.2s',
+                   marginBottom: '-2px',
+                   display: 'flex',
+                   alignItems: 'center',
+                   gap: '0.5rem',
+                   borderRadius: '8px 8px 0 0'
+                 }}
+                 onMouseEnter={(e) => {
+                   if (activeTab !== tab.id) {
+                     e.currentTarget.style.backgroundColor = 'var(--bg-color)';
+                     e.currentTarget.style.color = '#ffc230';
+                   }
+                 }}
+                 onMouseLeave={(e) => {
+                   if (activeTab !== tab.id) {
+                     e.currentTarget.style.backgroundColor = 'transparent';
+                     e.currentTarget.style.color = 'var(--text-color)';
+                   }
+                 }}
+               >
+                 <span style={{ display: 'flex', alignItems: 'center' }}>{tab.icon}</span>
+                 <span>{tab.label}</span>
+               </button>
+               {/* Create NeX-Up Sequence Button - Right after Generator tab */}
+               {tab.id === 'nexup/generator' && (
+                 <button
+                   onClick={() => {
+                     loadNexupSequencePresets();
+                     setShowNexupSequenceWizard(true);
+                   }}
+                   disabled={!nexupSettings.storage_path}
+                   style={{
+                     padding: '0.65rem 1.25rem',
+                     marginLeft: 'auto',
+                     border: 'none',
+                     background: nexupSettings.storage_path 
+                       ? 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)' 
+                       : '#555',
+                     color: 'white',
+                     cursor: nexupSettings.storage_path ? 'pointer' : 'not-allowed',
+                     fontSize: '0.9rem',
+                     fontWeight: 600,
+                     transition: 'all 0.3s',
+                     display: 'flex',
+                     alignItems: 'center',
+                     gap: '0.5rem',
+                     borderRadius: '8px',
+                     opacity: nexupSettings.storage_path ? 1 : 0.5,
+                     boxShadow: nexupSettings.storage_path 
+                       ? '0 4px 15px rgba(102, 126, 234, 0.4)' 
+                       : 'none'
+                   }}
+                   onMouseEnter={(e) => {
+                     if (nexupSettings.storage_path) {
+                       e.currentTarget.style.transform = 'translateY(-2px)';
+                       e.currentTarget.style.boxShadow = '0 6px 20px rgba(102, 126, 234, 0.5)';
+                     }
+                   }}
+                   onMouseLeave={(e) => {
+                     if (nexupSettings.storage_path) {
+                       e.currentTarget.style.transform = 'translateY(0)';
+                       e.currentTarget.style.boxShadow = '0 4px 15px rgba(102, 126, 234, 0.4)';
+                     }
+                   }}
+                   title={nexupSettings.storage_path ? 'Create a NeX-Up sequence for Plex' : 'Configure NeX-Up storage path first'}
+                 >
+                   <Sparkles size={18} />
+                   <span>+ Create Sequence</span>
+                 </button>
+               )}
+             </React.Fragment>
+           ))}
+         </div>
+       )}
+       
+       {activeTab.startsWith('dashboard') && renderDashboard()}
        {activeTab.startsWith('schedules') && renderSchedules()}
        {activeTab === 'categories' && renderCategories()}
-       {activeTab === 'settings' && renderSettings()}
+       {activeTab.startsWith('nexup') && renderNexUp()}
+       {activeTab.startsWith('settings') && renderSettings()}
        {activeTab === 'connect' && renderConnect()}
        {activeTab === 'community-prerolls' && renderCommunityPrerolls()}
      </div>
+
+     {/* NeX-Up Sequence Wizard Modal - Global (accessible from any NeX-Up tab) */}
+     {showNexupSequenceWizard && (
+       <div style={{
+         position: 'fixed',
+         top: 0,
+         left: 0,
+         right: 0,
+         bottom: 0,
+         backgroundColor: 'rgba(0,0,0,0.7)',
+         display: 'flex',
+         alignItems: 'center',
+         justifyContent: 'center',
+         zIndex: 1000
+       }}>
+         <div style={{
+           backgroundColor: 'var(--card-bg)',
+           borderRadius: '16px',
+           padding: '2rem',
+           maxWidth: '700px',
+           width: '90%',
+           maxHeight: '85vh',
+           overflowY: 'auto',
+           border: '1px solid var(--border-color)'
+         }}>
+           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem' }}>
+             <h2 style={{ margin: 0, color: 'var(--text-color)', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+               <Clapperboard size={24} /> Create NeX-Up Sequence
+             </h2>
+             <button
+               onClick={() => setShowNexupSequenceWizard(false)}
+               style={{
+                 background: 'none',
+                 border: 'none',
+                 fontSize: '1.5rem',
+                 cursor: 'pointer',
+                 color: 'var(--text-secondary)'
+               }}
+             >×</button>
+           </div>
+           
+           {/* Step Indicator */}
+           <div style={{ 
+             display: 'flex', 
+             justifyContent: 'center', 
+             gap: '1rem', 
+             marginBottom: '2rem' 
+           }}>
+             {[1, 2, 3].map(step => (
+               <div
+                 key={step}
+                 style={{
+                   display: 'flex',
+                   alignItems: 'center',
+                   gap: '0.5rem',
+                   opacity: nexupSequenceWizard.step >= step ? 1 : 0.4
+                 }}
+               >
+                 <span style={{
+                   width: '32px',
+                   height: '32px',
+                   borderRadius: '50%',
+                   display: 'flex',
+                   alignItems: 'center',
+                   justifyContent: 'center',
+                   backgroundColor: nexupSequenceWizard.step >= step ? '#667eea' : 'var(--bg-color)',
+                   color: nexupSequenceWizard.step >= step ? 'white' : 'var(--text-secondary)',
+                   fontWeight: 'bold'
+                 }}>{step}</span>
+                 <span style={{ fontSize: '0.9rem', color: 'var(--text-color)' }}>
+                   {step === 1 ? 'Choose Preset' : step === 2 ? 'Customize' : 'Name & Create'}
+                 </span>
+               </div>
+             ))}
+           </div>
+
+           {/* Step 1: Choose Preset */}
+           {nexupSequenceWizard.step === 1 && (
+             <div>
+               <p style={{ marginBottom: '1rem', color: 'var(--text-secondary)' }}>
+                 Select a preset to start with. You can customize it in the next step.
+               </p>
+               
+               {nexupSequenceLoading ? (
+                 <div style={{ textAlign: 'center', padding: '2rem' }}>Loading presets...</div>
+               ) : (
+                 <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+                   {nexupSequencePresets.map(preset => (
+                     <div
+                       key={preset.id}
+                       onClick={() => preset.has_requirements && setNexupSequenceWizard(prev => ({ 
+                         ...prev, 
+                         selectedPreset: preset.id,
+                         // Auto-set includePreroll based on preset type
+                         includePreroll: preset.id !== 'movie_trailers_only' && preset.id !== 'tv_trailers_only'
+                       }))}
+                       style={{
+                         padding: '1.25rem',
+                         borderRadius: '12px',
+                         border: nexupSequenceWizard.selectedPreset === preset.id 
+                           ? '2px solid #667eea' 
+                           : '2px solid var(--border-color)',
+                         backgroundColor: nexupSequenceWizard.selectedPreset === preset.id 
+                           ? 'rgba(102, 126, 234, 0.1)' 
+                           : 'var(--bg-color)',
+                         cursor: preset.has_requirements ? 'pointer' : 'not-allowed',
+                         opacity: preset.has_requirements ? 1 : 0.6
+                       }}
+                     >
+                       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+                         <div>
+                           <strong style={{ fontSize: '1.1rem', color: 'var(--text-color)' }}>{preset.name}</strong>
+                           <p style={{ margin: '0.5rem 0 0 0', color: 'var(--text-secondary)' }}>
+                             {preset.description}
+                           </p>
+                         </div>
+                         {nexupSequenceWizard.selectedPreset === preset.id && (
+                           <Check size={24} color="#667eea" />
+                         )}
+                       </div>
+                       {preset.requires_dynamic_preroll && !preset.has_requirements && (
+                         <p style={{ margin: '0.5rem 0 0 0', color: '#f59e0b', fontSize: '0.85rem', display: 'flex', alignItems: 'center', gap: '0.25rem' }}>
+                           <AlertTriangle size={14} /> Requires a generated dynamic preroll
+                         </p>
+                       )}
+                     </div>
+                   ))}
+                   
+                   {/* Custom Option - Always available */}
+                   <div
+                     onClick={() => setNexupSequenceWizard(prev => ({ ...prev, selectedPreset: 'custom', includePreroll: true }))}
+                     style={{
+                       padding: '1.25rem',
+                       borderRadius: '12px',
+                       border: nexupSequenceWizard.selectedPreset === 'custom' 
+                         ? '2px solid #667eea' 
+                         : '2px dashed var(--border-color)',
+                       backgroundColor: nexupSequenceWizard.selectedPreset === 'custom' 
+                         ? 'rgba(102, 126, 234, 0.1)' 
+                         : 'var(--bg-color)',
+                       cursor: 'pointer'
+                     }}
+                   >
+                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+                       <div>
+                         <strong style={{ fontSize: '1.1rem', color: 'var(--text-color)' }}>🛠️ Custom</strong>
+                         <p style={{ margin: '0.5rem 0 0 0', color: 'var(--text-secondary)' }}>
+                           Build your own sequence - choose exactly what preroll and how many trailers to include
+                         </p>
+                       </div>
+                       {nexupSequenceWizard.selectedPreset === 'custom' && (
+                         <Check size={24} color="#667eea" />
+                       )}
+                     </div>
+                   </div>
+                   
+                   {nexupSequencePresets.length === 0 && !nexupSequenceLoading && (
+                     <div style={{ textAlign: 'center', padding: '2rem', color: 'var(--text-secondary)' }}>
+                       No presets available. Make sure you have configured NeX-Up and have trailers downloaded.
+                     </div>
+                   )}
+                 </div>
+               )}
+               
+               <div style={{ marginTop: '2rem', display: 'flex', justifyContent: 'flex-end', gap: '1rem' }}>
+                 <button
+                   onClick={() => setShowNexupSequenceWizard(false)}
+                   className="button"
+                   style={{ backgroundColor: '#6c757d' }}
+                 >
+                   Cancel
+                 </button>
+                 <button
+                   onClick={() => setNexupSequenceWizard(prev => ({ ...prev, step: 2 }))}
+                   disabled={!nexupSequenceWizard.selectedPreset}
+                   className="button"
+                   style={{ backgroundColor: '#667eea' }}
+                 >
+                   Next →
+                 </button>
+               </div>
+             </div>
+           )}
+
+           {/* Step 2: Customize */}
+           {nexupSequenceWizard.step === 2 && (
+             <div>
+               <p style={{ marginBottom: '1.5rem', color: 'var(--text-secondary)' }}>
+                 Customize your sequence settings.
+               </p>
+               
+               <div style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
+                 
+                 {/* Theater Experience - Show fixed info */}
+                 {nexupSequenceWizard.selectedPreset === 'theater_experience' && (
+                   <div style={{ 
+                     padding: '1rem', 
+                     backgroundColor: 'rgba(102, 126, 234, 0.1)', 
+                     borderRadius: '8px',
+                     border: '1px solid rgba(102, 126, 234, 0.3)'
+                   }}>
+                     <strong style={{ color: 'var(--text-color)', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                       <Sparkles size={18} color="#667eea" /> Theater Experience Settings
+                     </strong>
+                     <p style={{ margin: '0.5rem 0 0 0', color: 'var(--text-secondary)', fontSize: '0.9rem' }}>
+                       This preset plays your Coming Soon intro followed by 4 movie trailers for a full cinema experience.
+                     </p>
+                   </div>
+                 )}
+
+                 {/* Preroll Selection - Show for presets that include preroll */}
+                 {nexupSequenceWizard.includePreroll && (
+                   <div>
+                     <label style={{ display: 'block', marginBottom: '0.5rem', fontWeight: 'bold', color: 'var(--text-color)' }}>
+                       Select Intro Preroll
+                     </label>
+                     {nexupAvailablePrerolls.length > 0 ? (
+                       <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+                         {nexupAvailablePrerolls.map((preroll, idx) => (
+                           <div
+                             key={idx}
+                             onClick={() => setNexupSequenceWizard(prev => ({ 
+                               ...prev, 
+                               selectedPrerollPath: preroll.path 
+                             }))}
+                             style={{
+                               padding: '0.75rem 1rem',
+                               borderRadius: '8px',
+                               border: nexupSequenceWizard.selectedPrerollPath === preroll.path 
+                                 ? '2px solid #667eea' 
+                                 : '1px solid var(--border-color)',
+                               backgroundColor: nexupSequenceWizard.selectedPrerollPath === preroll.path 
+                                 ? 'rgba(102, 126, 234, 0.1)' 
+                                 : 'var(--bg-color)',
+                               cursor: 'pointer',
+                               display: 'flex',
+                               alignItems: 'center',
+                               justifyContent: 'space-between'
+                             }}
+                           >
+                             <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                               <Sparkles size={20} color="#667eea" />
+                               <span style={{ color: 'var(--text-color)' }}>{preroll.display_name}</span>
+                             </div>
+                             {nexupSequenceWizard.selectedPrerollPath === preroll.path && (
+                               <Check size={18} color="#667eea" />
+                             )}
+                           </div>
+                         ))}
+                       </div>
+                     ) : (
+                       <p style={{ fontSize: '0.85rem', color: '#f59e0b', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                         <AlertTriangle size={14} /> No prerolls generated yet - generate one using the Dynamic Preroll Generator
+                       </p>
+                     )}
+                   </div>
+                 )}
+
+                 {/* Custom preset - Include Preroll toggle */}
+                 {nexupSequenceWizard.selectedPreset === 'custom' && (
+                   <div>
+                     <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', marginBottom: '0.75rem' }}>
+                       <label className="nx-rockerswitch">
+                         <input
+                           type="checkbox"
+                           checked={nexupSequenceWizard.includePreroll}
+                           onChange={(e) => setNexupSequenceWizard(prev => ({ 
+                             ...prev, 
+                             includePreroll: e.target.checked 
+                           }))}
+                         />
+                         <span className="nx-rockerswitch-slider"></span>
+                       </label>
+                       <span style={{ fontWeight: 'bold', color: 'var(--text-color)' }}>
+                         Include Intro Preroll
+                       </span>
+                     </div>
+                   </div>
+                 )}
+
+                 {/* Mixed Trailers - Movie and TV count selectors */}
+                 {nexupSequenceWizard.selectedPreset === 'mixed_trailers' && (
+                   <>
+                     <div>
+                       <label style={{ display: 'block', marginBottom: '0.5rem', fontWeight: 'bold', color: 'var(--text-color)' }}>
+                         🎬 Movie Trailers
+                       </label>
+                       <select
+                         value={nexupSequenceWizard.movieTrailerCount}
+                         onChange={(e) => setNexupSequenceWizard(prev => ({ 
+                           ...prev, 
+                           movieTrailerCount: parseInt(e.target.value) 
+                         }))}
+                         style={{
+                           width: '100%',
+                           padding: '0.75rem',
+                           borderRadius: '8px',
+                           border: '1px solid var(--border-color)',
+                           backgroundColor: 'var(--bg-color)',
+                           color: 'var(--text-color)',
+                           fontSize: '1rem'
+                         }}
+                       >
+                         {[0, 1, 2, 3, 4].map(n => (
+                           <option key={n} value={n}>{n} movie trailer{n !== 1 ? 's' : ''}</option>
+                         ))}
+                       </select>
+                     </div>
+                     <div>
+                       <label style={{ display: 'block', marginBottom: '0.5rem', fontWeight: 'bold', color: 'var(--text-color)' }}>
+                         📺 TV Trailers
+                       </label>
+                       <select
+                         value={nexupSequenceWizard.tvTrailerCount}
+                         onChange={(e) => setNexupSequenceWizard(prev => ({ 
+                           ...prev, 
+                           tvTrailerCount: parseInt(e.target.value) 
+                         }))}
+                         style={{
+                           width: '100%',
+                           padding: '0.75rem',
+                           borderRadius: '8px',
+                           border: '1px solid var(--border-color)',
+                           backgroundColor: 'var(--bg-color)',
+                           color: 'var(--text-color)',
+                           fontSize: '1rem'
+                         }}
+                       >
+                         {[0, 1, 2, 3, 4].map(n => (
+                           <option key={n} value={n}>{n} TV trailer{n !== 1 ? 's' : ''}</option>
+                         ))}
+                       </select>
+                     </div>
+                     <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginTop: '-0.5rem' }}>
+                       Total: {nexupSequenceWizard.movieTrailerCount + nexupSequenceWizard.tvTrailerCount} trailer{nexupSequenceWizard.movieTrailerCount + nexupSequenceWizard.tvTrailerCount !== 1 ? 's' : ''}
+                     </p>
+                   </>
+                 )}
+                 
+                 {/* Single Trailer Count - For non-mixed, non-theater presets */}
+                 {nexupSequenceWizard.selectedPreset !== 'mixed_trailers' && 
+                  nexupSequenceWizard.selectedPreset !== 'theater_experience' && (
+                   <div>
+                     <label style={{ display: 'block', marginBottom: '0.5rem', fontWeight: 'bold', color: 'var(--text-color)' }}>
+                       Number of Trailers
+                     </label>
+                     <select
+                       value={nexupSequenceWizard.customTrailerCount}
+                       onChange={(e) => setNexupSequenceWizard(prev => ({ 
+                         ...prev, 
+                         customTrailerCount: parseInt(e.target.value) 
+                       }))}
+                       style={{
+                         width: '100%',
+                         padding: '0.75rem',
+                         borderRadius: '8px',
+                         border: '1px solid var(--border-color)',
+                         backgroundColor: 'var(--bg-color)',
+                         color: 'var(--text-color)',
+                         fontSize: '1rem'
+                       }}
+                     >
+                       {[1, 2, 3, 4, 5, 6].map(n => (
+                         <option key={n} value={n}>{n} trailer{n > 1 ? 's' : ''}</option>
+                       ))}
+                     </select>
+                   </div>
+                 )}
+                 
+                 {/* Playback Order - For all presets except theater_experience */}
+                 {nexupSequenceWizard.selectedPreset !== 'theater_experience' && (
+                   <div>
+                     <label style={{ display: 'block', marginBottom: '0.5rem', fontWeight: 'bold', color: 'var(--text-color)' }}>
+                       Trailer Selection Order
+                     </label>
+                     <select
+                       value={nexupSequenceWizard.playbackOrder}
+                       onChange={(e) => setNexupSequenceWizard(prev => ({ 
+                         ...prev, 
+                         playbackOrder: e.target.value 
+                       }))}
+                       style={{
+                         width: '100%',
+                         padding: '0.75rem',
+                         borderRadius: '8px',
+                         border: '1px solid var(--border-color)',
+                         backgroundColor: 'var(--bg-color)',
+                         color: 'var(--text-color)',
+                         fontSize: '1rem'
+                       }}
+                     >
+                       <option value="random">Random (different trailers each time)</option>
+                       <option value="release_date">By Release Date (soonest first)</option>
+                       <option value="download_date">By Download Date (newest first)</option>
+                     </select>
+                     <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginTop: '0.25rem' }}>
+                       How trailers are selected from your NeX-Up library
+                     </p>
+                   </div>
+                 )}
+               </div>
+               
+               <div style={{ marginTop: '2rem', display: 'flex', justifyContent: 'space-between', gap: '1rem' }}>
+                 <button
+                   onClick={() => setNexupSequenceWizard(prev => ({ ...prev, step: 1 }))}
+                   className="button"
+                   style={{ backgroundColor: '#6c757d' }}
+                 >
+                   ← Back
+                 </button>
+                 <button
+                   onClick={() => setNexupSequenceWizard(prev => ({ ...prev, step: 3 }))}
+                   className="button"
+                   style={{ backgroundColor: '#667eea' }}
+                 >
+                   Next →
+                 </button>
+               </div>
+             </div>
+           )}
+
+           {/* Step 3: Name & Create */}
+           {nexupSequenceWizard.step === 3 && (
+             <div>
+               <p style={{ marginBottom: '1.5rem', color: 'var(--text-secondary)' }}>
+                 Give your sequence a name and create it.
+               </p>
+               
+               <div style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
+                 <div>
+                   <label style={{ display: 'block', marginBottom: '0.5rem', fontWeight: 'bold', color: 'var(--text-color)' }}>
+                     Sequence Name
+                   </label>
+                   <input
+                     type="text"
+                     value={nexupSequenceWizard.sequenceName}
+                     onChange={(e) => setNexupSequenceWizard(prev => ({ 
+                       ...prev, 
+                       sequenceName: e.target.value 
+                     }))}
+                     placeholder="e.g., Movie Night Trailers"
+                     style={{
+                       width: '100%',
+                       padding: '0.75rem',
+                       borderRadius: '8px',
+                       border: '1px solid var(--border-color)',
+                       backgroundColor: 'var(--bg-color)',
+                       color: 'var(--text-color)',
+                       fontSize: '1rem'
+                     }}
+                   />
+                 </div>
+                 
+                 <div>
+                   <label style={{ display: 'block', marginBottom: '0.5rem', fontWeight: 'bold', color: 'var(--text-color)' }}>
+                     Description (optional)
+                   </label>
+                   <textarea
+                     value={nexupSequenceWizard.sequenceDescription}
+                     onChange={(e) => setNexupSequenceWizard(prev => ({ 
+                       ...prev, 
+                       sequenceDescription: e.target.value 
+                     }))}
+                     placeholder="What this sequence is for..."
+                     rows={3}
+                     style={{
+                       width: '100%',
+                       padding: '0.75rem',
+                       borderRadius: '8px',
+                       border: '1px solid var(--border-color)',
+                       backgroundColor: 'var(--bg-color)',
+                       color: 'var(--text-color)',
+                       fontSize: '1rem',
+                       resize: 'vertical'
+                     }}
+                   />
+                 </div>
+                 
+                 {/* Preview */}
+                 <div style={{
+                   padding: '1rem',
+                   borderRadius: '10px',
+                   backgroundColor: 'var(--bg-color)',
+                   border: '1px solid var(--border-color)'
+                 }}>
+                   <strong style={{ color: 'var(--text-color)', marginBottom: '0.75rem', display: 'block' }}>
+                     Sequence Preview:
+                   </strong>
+                   <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+                     {nexupSequenceWizard.includePreroll && nexupSequenceWizard.selectedPrerollPath && (
+                       <div style={{ 
+                         display: 'flex', 
+                         alignItems: 'center', 
+                         gap: '0.5rem',
+                         padding: '0.5rem 0.75rem',
+                         backgroundColor: 'rgba(102, 126, 234, 0.1)',
+                         borderRadius: '6px',
+                         border: '1px solid rgba(102, 126, 234, 0.3)'
+                       }}>
+                         <Sparkles size={18} color="#667eea" />
+                         <span style={{ color: 'var(--text-color)' }}>
+                           {nexupAvailablePrerolls.find(p => p.path === nexupSequenceWizard.selectedPrerollPath)?.display_name || 'Intro Preroll'}
+                         </span>
+                         <span style={{ color: 'var(--text-secondary)', fontSize: '0.85rem', marginLeft: 'auto' }}>Fixed</span>
+                       </div>
+                     )}
+                     <div style={{ 
+                       display: 'flex', 
+                       alignItems: 'center', 
+                       gap: '0.5rem',
+                       padding: '0.5rem 0.75rem',
+                       backgroundColor: 'rgba(40, 167, 69, 0.1)',
+                       borderRadius: '6px',
+                       border: '1px solid rgba(40, 167, 69, 0.3)'
+                     }}>
+                       <Film size={18} color="#28a745" />
+                       <span style={{ color: 'var(--text-color)' }}>{nexupSequenceWizard.customTrailerCount} NeX-Up Trailer{nexupSequenceWizard.customTrailerCount > 1 ? 's' : ''}</span>
+                       <span style={{ color: 'var(--text-secondary)', fontSize: '0.85rem', marginLeft: 'auto' }}>Random</span>
+                     </div>
+                   </div>
+                 </div>
+               </div>
+               
+               <div style={{ marginTop: '2rem', display: 'flex', justifyContent: 'space-between', gap: '1rem' }}>
+                 <button
+                   onClick={() => setNexupSequenceWizard(prev => ({ ...prev, step: 2 }))}
+                   className="button"
+                   style={{ backgroundColor: '#6c757d' }}
+                 >
+                   ← Back
+                 </button>
+                 <button
+                   onClick={handleCreateNexupSequence}
+                   disabled={nexupSequenceLoading}
+                   className="button"
+                   style={{ backgroundColor: '#28a745' }}
+                 >
+                   {nexupSequenceLoading ? 'Creating...' : '✓ Create Sequence'}
+                 </button>
+               </div>
+             </div>
+           )}
+         </div>
+       </div>
+     )}
 
      {/* Edit Preroll Modal - Global (can be triggered from any tab) */}
      {editingPreroll && (
@@ -15365,7 +22455,7 @@ C:\\\\Media\\\\Prerolls\\\\summer\\\\beach.mp4`}
                    <button
                      type="button"
                      onClick={async () => {
-                       if (!window.confirm('Are you sure you want to unmatch this preroll from the Community Prerolls library?')) {
+                       if (!await showConfirm('Are you sure you want to unmatch this preroll from the Community Prerolls library?', { title: 'Unmatch Preroll', type: 'warning', confirmText: 'Unmatch' })) {
                          return;
                        }
                        try {
@@ -15584,6 +22674,116 @@ C:\\\\Media\\\\Prerolls\\\\summer\\\\beach.mp4`}
              </div>
            )}
 
+           {/* Video Scaling Section */}
+           {editingPreroll && (
+             <div style={{ 
+               marginBottom: '1rem', 
+               padding: '0.75rem', 
+               backgroundColor: 'rgba(99, 102, 241, 0.08)', 
+               border: '1px solid rgba(99, 102, 241, 0.2)',
+               borderRadius: '6px'
+             }}>
+               <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.75rem' }}>
+                 <Clapperboard size={16} style={{ color: '#6366f1' }} />
+                 <strong style={{ color: 'var(--text-color)' }}>Video Scaling</strong>
+               </div>
+               
+               {/* Current Resolution Info */}
+               <div style={{ marginBottom: '0.75rem' }}>
+                 <div style={{ fontSize: '0.85rem', color: 'var(--text-color)', marginBottom: '0.25rem' }}>
+                   <strong>Current:</strong>{' '}
+                   {videoInfo ? (
+                     <span style={{ 
+                       padding: '0.15rem 0.4rem', 
+                       backgroundColor: 'rgba(16, 185, 129, 0.15)',
+                       color: '#059669',
+                       borderRadius: '4px',
+                       fontWeight: '600',
+                       fontSize: '0.8rem'
+                     }}>
+                       {videoInfo.width}×{videoInfo.height} ({videoInfo.resolution_label})
+                     </span>
+                   ) : (
+                     <span style={{ color: 'var(--text-secondary)' }}>Loading...</span>
+                   )}
+                   {videoInfo && (
+                     <span style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginLeft: '0.5rem' }}>
+                       {videoInfo.codec} • {editingPreroll?.file_size ? `${(editingPreroll.file_size / (1024 * 1024)).toFixed(1)} MB` : ''}
+                     </span>
+                   )}
+                 </div>
+               </div>
+               
+               {/* Scale Buttons */}
+               <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', marginBottom: '0.5rem' }}>
+                 Scale for remote streaming:
+               </div>
+               <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
+                 <button
+                   type="button"
+                   onClick={() => handleTranscodePreroll('1080p')}
+                   disabled={transcodeLoading || (videoInfo?.height === 1080)}
+                   className="button"
+                   style={{ 
+                     backgroundColor: videoInfo?.height === 1080 ? '#6b7280' : '#3b82f6',
+                     opacity: transcodeLoading ? 0.6 : 1,
+                     cursor: transcodeLoading || videoInfo?.height === 1080 ? 'not-allowed' : 'pointer',
+                     padding: '0.4rem 0.75rem',
+                     fontSize: '0.8rem'
+                   }}
+                   title="1920×1080 - Full HD quality"
+                 >
+                   {transcodeLoading ? <Loader2 size={12} className="spin" /> : <Video size={12} />} 1080p
+                 </button>
+                 <button
+                   type="button"
+                   onClick={() => handleTranscodePreroll('720p')}
+                   disabled={transcodeLoading || (videoInfo?.height === 720)}
+                   className="button"
+                   style={{ 
+                     backgroundColor: videoInfo?.height === 720 ? '#6b7280' : '#10b981',
+                     opacity: transcodeLoading ? 0.6 : 1,
+                     cursor: transcodeLoading || videoInfo?.height === 720 ? 'not-allowed' : 'pointer',
+                     padding: '0.4rem 0.75rem',
+                     fontSize: '0.8rem'
+                   }}
+                   title="1280×720 - Recommended for remote streaming"
+                 >
+                   {transcodeLoading ? <Loader2 size={12} className="spin" /> : <Star size={12} />} 720p ⭐
+                 </button>
+                 <button
+                   type="button"
+                   onClick={() => handleTranscodePreroll('480p')}
+                   disabled={transcodeLoading || (videoInfo?.height === 480)}
+                   className="button"
+                   style={{ 
+                     backgroundColor: videoInfo?.height === 480 ? '#6b7280' : '#f59e0b',
+                     opacity: transcodeLoading ? 0.6 : 1,
+                     cursor: transcodeLoading || videoInfo?.height === 480 ? 'not-allowed' : 'pointer',
+                     padding: '0.4rem 0.75rem',
+                     fontSize: '0.8rem'
+                   }}
+                   title="854×480 - Low bandwidth"
+                 >
+                   {transcodeLoading ? <Loader2 size={12} className="spin" /> : <Tv size={12} />} 480p
+                 </button>
+               </div>
+               {transcodeLoading && (
+                 <div style={{ 
+                   marginTop: '0.5rem', 
+                   display: 'flex', 
+                   alignItems: 'center', 
+                   gap: '0.5rem',
+                   color: 'var(--text-secondary)',
+                   fontSize: '0.8rem'
+                 }}>
+                   <span className="nx-spinner" style={{ width: '14px', height: '14px', borderWidth: '2px' }}></span>
+                   Transcoding... This may take a minute.
+                 </div>
+               )}
+             </div>
+           )}
+
            {editingPreroll.filename && (
              <div style={{ 
                marginBottom: '1rem', 
@@ -15712,116 +22912,119 @@ C:\\\\Media\\\\Prerolls\\\\summer\\\\beach.mp4`}
                  </div>
                )}
                {/* Tag input with autocomplete */}
-               <div style={{ position: 'relative' }}>
+               <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'flex-start' }}>
                  <input
                    className="nx-input"
                    type="text"
-                   placeholder="Type to add tags (comma separated) or select from suggestions"
+                   placeholder="Add tags (comma separated)"
                    value={editForm.tags}
                    onChange={(e) => setEditForm({ ...editForm, tags: e.target.value })}
-                   style={{ paddingRight: '80px' }}
+                   style={{ flex: 1, maxWidth: '250px' }}
                  />
-                 {/* Quick add button for available tags */}
+                 {/* Browse button for available tags */}
                  {availableTags.length > 0 && (
-                   <div style={{
-                     position: 'absolute',
-                     right: '8px',
-                     top: '50%',
-                     transform: 'translateY(-50%)',
-                     display: 'flex',
-                     gap: '4px'
-                   }}>
+                   <div style={{ position: 'relative' }}>
                      <button
                        type="button"
-                       onClick={(e) => {
-                         const currentTags = editForm.tags.split(',').map(t => t.trim()).filter(Boolean);
-                         const dropdown = document.createElement('div');
-                         dropdown.style.cssText = `
-                           position: fixed;
-                           background: var(--card-bg);
-                           border: 2px solid var(--border-color);
-                           borderRadius: 8px;
-                           boxShadow: 0 4px 12px rgba(0,0,0,0.15);
-                           padding: 0.5rem;
-                           maxHeight: 300px;
-                           overflowY: auto;
-                           zIndex: 10000;
-                         `;
-                         const rect = e.target.getBoundingClientRect();
-                         dropdown.style.top = rect.bottom + 5 + 'px';
-                         dropdown.style.right = window.innerWidth - rect.right + 'px';
-                         
-                         const title = document.createElement('div');
-                         title.textContent = 'Available Tags';
-                         title.style.cssText = 'font-weight: 600; margin-bottom: 0.5rem; color: var(--text-color); font-size: 0.9rem;';
-                         dropdown.appendChild(title);
-                         
-                         availableTags.forEach(tag => {
-                           const isAdded = currentTags.includes(tag);
-                           const btn = document.createElement('button');
-                           btn.type = 'button';
-                           btn.textContent = isAdded ? `✓ ${tag}` : `+ ${tag}`;
-                           btn.style.cssText = `
-                             display: block;
-                             width: 100%;
-                             text-align: left;
-                             padding: 0.5rem;
-                             margin: 0.2rem 0;
-                             background: ${isAdded ? 'rgba(99, 102, 241, 0.15)' : 'transparent'};
-                             border: 1px solid ${isAdded ? 'rgba(99, 102, 241, 0.3)' : 'var(--border-color)'};
-                             borderRadius: 4px;
-                             cursor: pointer;
-                             color: var(--text-color);
-                             font-size: 0.85rem;
-                           `;
-                           btn.onmouseover = () => btn.style.backgroundColor = 'rgba(99, 102, 241, 0.25)';
-                           btn.onmouseout = () => btn.style.backgroundColor = isAdded ? 'rgba(99, 102, 241, 0.15)' : 'transparent';
-                           btn.onclick = () => {
-                             if (!isAdded) {
-                               const newTags = [...currentTags, tag].join(', ');
-                               setEditForm({ ...editForm, tags: newTags });
-                             } else {
-                               const newTags = currentTags.filter(t => t !== tag).join(', ');
-                               setEditForm({ ...editForm, tags: newTags });
-                             }
-                             document.body.removeChild(dropdown);
-                           };
-                           dropdown.appendChild(btn);
-                         });
-                         
-                         const closeBtn = document.createElement('button');
-                         closeBtn.type = 'button';
-                         closeBtn.textContent = 'Close';
-                         closeBtn.style.cssText = `
-                           width: 100%;
-                           padding: 0.5rem;
-                           margin-top: 0.5rem;
-                           background: var(--button-bg);
-                           color: white;
-                           border: none;
-                           borderRadius: 4px;
-                           cursor: pointer;
-                           font-size: 0.85rem;
-                         `;
-                         closeBtn.onclick = () => document.body.removeChild(dropdown);
-                         dropdown.appendChild(closeBtn);
-                         
-                         document.body.appendChild(dropdown);
-                       }}
+                       onClick={() => setShowTagBrowser(!showTagBrowser)}
                        className="button"
                        style={{
-                         padding: '0.25rem 0.5rem',
-                         fontSize: '0.75rem',
+                         padding: '0.5rem 0.75rem',
+                         fontSize: '0.8rem',
                          backgroundColor: '#6366f1',
                          color: 'white',
                          border: 'none',
                          borderRadius: '4px',
-                         cursor: 'pointer'
+                         cursor: 'pointer',
+                         display: 'flex',
+                         alignItems: 'center',
+                         gap: '0.3rem',
+                         whiteSpace: 'nowrap'
                        }}
                        title="Browse and add from existing tags"
                      >
-                       📋 Browse
+                       <ListChecks size={14} /> Browse
                      </button>
+                     {/* Dropdown inside modal */}
+                     {showTagBrowser && (
+                       <div style={{
+                         position: 'absolute',
+                         top: '100%',
+                         right: 0,
+                         marginTop: '4px',
+                         background: 'var(--card-bg, white)',
+                         border: '2px solid var(--border-color, #ddd)',
+                         borderRadius: '8px',
+                         boxShadow: '0 4px 12px rgba(0,0,0,0.15)',
+                         padding: '0.75rem',
+                         minWidth: '200px',
+                         maxHeight: '300px',
+                         overflowY: 'auto',
+                         zIndex: 100
+                       }}>
+                         <div style={{ 
+                           fontWeight: '600', 
+                           marginBottom: '0.5rem', 
+                           color: 'var(--text-color)', 
+                           fontSize: '0.9rem',
+                           borderBottom: '1px solid var(--border-color, #ddd)',
+                           paddingBottom: '0.5rem'
+                         }}>
+                           Available Tags
+                         </div>
+                         {availableTags.map(tag => {
+                           const currentTags = editForm.tags.split(',').map(t => t.trim()).filter(Boolean);
+                           const isAdded = currentTags.includes(tag);
+                           return (
+                             <button
+                               key={tag}
+                               type="button"
+                               onClick={() => {
+                                 if (!isAdded) {
+                                   const newTags = [...currentTags, tag].join(', ');
+                                   setEditForm({ ...editForm, tags: newTags });
+                                 } else {
+                                   const newTags = currentTags.filter(t => t !== tag).join(', ');
+                                   setEditForm({ ...editForm, tags: newTags });
+                                 }
+                               }}
+                               style={{
+                                 display: 'block',
+                                 width: '100%',
+                                 textAlign: 'left',
+                                 padding: '0.5rem',
+                                 margin: '0.2rem 0',
+                                 background: isAdded ? 'rgba(99, 102, 241, 0.15)' : 'transparent',
+                                 border: `1px solid ${isAdded ? 'rgba(99, 102, 241, 0.3)' : 'var(--border-color, #ddd)'}`,
+                                 borderRadius: '4px',
+                                 cursor: 'pointer',
+                                 color: 'var(--text-color)',
+                                 fontSize: '0.85rem'
+                               }}
+                             >
+                               {isAdded ? '✓ ' : '+ '}{tag}
+                             </button>
+                           );
+                         })}
+                         <button
+                           type="button"
+                           onClick={() => setShowTagBrowser(false)}
+                           style={{
+                             width: '100%',
+                             padding: '0.5rem',
+                             marginTop: '0.5rem',
+                             background: 'var(--button-bg, #6366f1)',
+                             color: 'white',
+                             border: 'none',
+                             borderRadius: '4px',
+                             cursor: 'pointer',
+                             fontSize: '0.85rem'
+                           }}
+                         >
+                           Close
+                         </button>
+                       </div>
+                     )}
                    </div>
                  )}
                </div>
@@ -15856,6 +23059,7 @@ C:\\\\Media\\\\Prerolls\\\\summer\\\\beach.mp4`}
                  Prevent this preroll from being automatically matched to the Community Prerolls library
                </div>
              </div>
+             
              <div className="nx-field nx-span-2">
                <label className="nx-label">Description</label>
                <textarea
@@ -16026,6 +23230,104 @@ C:\\\\Media\\\\Prerolls\\\\summer\\\\beach.mp4`}
        </div>
      )}
 
+     {/* Dynamic Preroll Video Preview Modal */}
+     {previewingDynamicPreroll && (
+       <div 
+         style={{
+           position: 'fixed',
+           top: 0,
+           left: 0,
+           right: 0,
+           bottom: 0,
+           backgroundColor: 'rgba(0,0,0,0.8)',
+           display: 'flex',
+           alignItems: 'center',
+           justifyContent: 'center',
+           zIndex: 9999
+         }}
+         onClick={() => setPreviewingDynamicPreroll(null)}
+       >
+         <div 
+           style={{
+             backgroundColor: 'var(--card-bg)',
+             padding: '20px',
+             borderRadius: '12px',
+             maxWidth: '90%',
+             maxHeight: '90%',
+             position: 'relative',
+             border: '1px solid rgba(255,255,255,0.1)'
+           }}
+           onClick={(e) => e.stopPropagation()}
+         >
+           <div style={{ 
+             display: 'flex', 
+             justifyContent: 'space-between', 
+             alignItems: 'center',
+             marginBottom: '1rem'
+           }}>
+             <h3 style={{ margin: 0, color: 'var(--text-color)', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+               <Sparkles size={22} style={{ color: '#ffd700' }} />
+               {(() => {
+                 const templateId = previewingDynamicPreroll?.template_id || dynamicPrerollSettings.template;
+                 const template = dynamicPrerollTemplates.find(t => t.id === templateId);
+                 return template?.name || templateId?.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase()) || 'Dynamic Preroll Preview';
+               })()}
+             </h3>
+             <button 
+               onClick={() => setPreviewingDynamicPreroll(null)}
+               style={{
+                 background: 'transparent',
+                 border: 'none',
+                 fontSize: '1.5rem',
+                 cursor: 'pointer',
+                 color: 'var(--text-color)',
+                 padding: '0.25rem 0.5rem'
+               }}
+               title="Close preview"
+             >
+               ✕
+             </button>
+           </div>
+           <div>
+             <video
+               key={`video-${previewingDynamicPreroll?.filename}-${previewingDynamicPreroll?.created_at || Date.now()}`}
+               controls
+               autoPlay
+               style={{ 
+                 width: '100%', 
+                 maxHeight: '70vh',
+                 borderRadius: '8px',
+                 backgroundColor: '#000'
+               }}
+               onError={(e) => {
+                 console.error('Dynamic preroll video error:', e);
+                 alert('Failed to load video. The file may not be accessible.');
+               }}
+             >
+               <source src={apiUrl(`nexup/preroll/video/${encodeURIComponent(previewingDynamicPreroll?.filename || dynamicPrerollSettings.preroll_path?.split('/').pop().split('\\').pop() || '')}?t=${previewingDynamicPreroll?.created_at || Date.now()}`)} type="video/mp4" />
+               Your browser does not support the video tag.
+             </video>
+           </div>
+           <div style={{ 
+             marginTop: '1rem', 
+             fontSize: '0.85rem', 
+             color: 'var(--text-secondary)',
+             display: 'flex',
+             gap: '1rem',
+             flexWrap: 'wrap',
+             alignItems: 'center'
+           }}>
+             {previewingDynamicPreroll?.size_bytes && (
+               <span>📁 Size: {(previewingDynamicPreroll.size_bytes / (1024 * 1024)).toFixed(1)} MB</span>
+             )}
+             {previewingDynamicPreroll?.created_at && (
+               <span>📅 Created: {new Date(previewingDynamicPreroll.created_at * 1000).toLocaleDateString()}</span>
+             )}
+           </div>
+         </div>
+       </div>
+     )}
+
      {/* Changelog Modal - shown on first launch after update */}
      {showChangelogModal && (
        <Modal
@@ -16163,6 +23465,7 @@ C:\\\\Media\\\\Prerolls\\\\summer\\\\beach.mp4`}
       {editingSchedule && (
         <Modal
           title="Edit Schedule"
+          width={900}
           onClose={() => {
             setEditingSchedule(null);
             setScheduleForm({
@@ -16295,52 +23598,91 @@ C:\\\\Media\\\\Prerolls\\\\summer\\\\beach.mp4`}
 
               {/* Weekly Schedule: Day of Week Selector */}
               {scheduleForm.type === 'weekly' && (
-                <div className="nx-field nx-span-2">
-                  <label className="nx-label">Repeat On</label>
-                  <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap', marginTop: '0.5rem' }}>
-                    {['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'].map((day) => {
-                      const dayLower = day.toLowerCase();
-                      const isSelected = weekDays.includes(dayLower);
-                      return (
-                        <label
-                          key={day}
-                          style={{
-                            display: 'flex',
-                            alignItems: 'center',
-                            padding: '0.5rem 0.75rem',
-                            backgroundColor: isSelected ? 'var(--button-bg)' : 'var(--bg-color)',
-                            color: isSelected ? 'white' : 'var(--text-color)',
-                            borderRadius: '0.25rem',
-                            border: '2px solid ' + (isSelected ? 'var(--button-bg)' : 'var(--border-color)'),
-                            cursor: 'pointer',
-                            fontSize: '0.9rem',
-                            transition: 'all 0.2s',
-                            userSelect: 'none'
-                          }}
-                        >
-                          <input
-                            type="checkbox"
-                            checked={isSelected}
-                            onChange={(e) => {
-                              if (e.target.checked) {
-                                setWeekDays([...weekDays, dayLower]);
-                              } else {
-                                setWeekDays(weekDays.filter(d => d !== dayLower));
-                              }
+                <>
+                  <div className="nx-field nx-span-2">
+                    <label className="nx-label">Repeat On</label>
+                    <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap', marginTop: '0.5rem' }}>
+                      {['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'].map((day) => {
+                        const dayLower = day.toLowerCase();
+                        const isSelected = weekDays.includes(dayLower);
+                        return (
+                          <label
+                            key={day}
+                            style={{
+                              display: 'flex',
+                              alignItems: 'center',
+                              padding: '0.5rem 0.75rem',
+                              backgroundColor: isSelected ? 'var(--button-bg)' : 'var(--bg-color)',
+                              color: isSelected ? 'white' : 'var(--text-color)',
+                              borderRadius: '0.25rem',
+                              border: '2px solid ' + (isSelected ? 'var(--button-bg)' : 'var(--border-color)'),
+                              cursor: 'pointer',
+                              fontSize: '0.9rem',
+                              transition: 'all 0.2s',
+                              userSelect: 'none'
                             }}
-                            style={{ marginRight: '0.5rem' }}
-                          />
-                          <span>{day.substring(0, 3)}</span>
-                        </label>
-                      );
-                    })}
+                          >
+                            <input
+                              type="checkbox"
+                              checked={isSelected}
+                              onChange={(e) => {
+                                if (e.target.checked) {
+                                  setWeekDays([...weekDays, dayLower]);
+                                } else {
+                                  setWeekDays(weekDays.filter(d => d !== dayLower));
+                                }
+                              }}
+                              style={{ marginRight: '0.5rem' }}
+                            />
+                            <span>{day.substring(0, 3)}</span>
+                          </label>
+                        );
+                      })}
+                    </div>
+                    {weekDays.length === 0 && (
+                      <p style={{ fontSize: '0.85rem', color: '#dc3545', marginTop: '0.5rem', marginBottom: 0 }}>
+                        ⚠️ Select at least one day
+                      </p>
+                    )}
                   </div>
-                  {weekDays.length === 0 && (
-                    <p style={{ fontSize: '0.85rem', color: '#dc3545', marginTop: '0.5rem', marginBottom: 0 }}>
-                      ⚠️ Select at least one day
+
+                  {/* Weekly Schedule: Time Range (Optional) */}
+                  <div className="nx-field nx-span-2" style={{ padding: '1rem', backgroundColor: 'var(--card-bg)', borderRadius: '0.5rem', border: '1px solid var(--border-color)' }}>
+                    <label className="nx-label" style={{ marginBottom: '0.75rem', fontWeight: 600, display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                      <Clock size={16} /> Active Time Range (Optional)
+                    </label>
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
+                      <div>
+                        <label style={{ display: 'block', marginBottom: '0.5rem', fontSize: '0.9rem', color: '#666' }}>Start Time</label>
+                        <input
+                          type="time"
+                          className="nx-input"
+                          value={timeRange.start || ''}
+                          onChange={(e) => setTimeRange({...timeRange, start: e.target.value})}
+                          style={{ width: '100%' }}
+                        />
+                      </div>
+                      <div>
+                        <label style={{ display: 'block', marginBottom: '0.5rem', fontSize: '0.9rem', color: '#666' }}>End Time</label>
+                        <input
+                          type="time"
+                          className="nx-input"
+                          value={timeRange.end || ''}
+                          onChange={(e) => setTimeRange({...timeRange, end: e.target.value})}
+                          style={{ width: '100%' }}
+                        />
+                      </div>
+                    </div>
+                    <p style={{ fontSize: '0.85rem', color: '#666', marginTop: '0.5rem', marginBottom: 0 }}>
+                      💡 Optionally set a time window for when this schedule is active (e.g., 8:00 AM - 12:00 PM)
                     </p>
-                  )}
-                </div>
+                    {timeRange.start && timeRange.end && (
+                      <p style={{ fontSize: '0.85rem', color: '#10b981', marginTop: '0.5rem', marginBottom: 0, fontWeight: 500 }}>
+                        ✓ Schedule will run from {timeRange.start} to {timeRange.end}
+                      </p>
+                    )}
+                  </div>
+                </>
               )}
 
               {/* Monthly Schedule: Day of Month Selector */}
@@ -16433,7 +23775,7 @@ C:\\\\Media\\\\Prerolls\\\\summer\\\\beach.mp4`}
                     required
                   >
                     <option value="">Select Category</option>
-                    {categories.map(cat => (
+                    {[...categories].sort((a, b) => a.name.localeCompare(b.name)).map(cat => (
                       <option key={cat.id} value={cat.id}>{cat.name}</option>
                     ))}
                   </select>
@@ -16447,7 +23789,7 @@ C:\\\\Media\\\\Prerolls\\\\summer\\\\beach.mp4`}
                   onChange={(e) => setScheduleForm({...scheduleForm, fallback_category_id: e.target.value})}
                 >
                   <option value="">No Fallback</option>
-                  {categories.map(cat => (
+                  {[...categories].sort((a, b) => a.name.localeCompare(b.name)).map(cat => (
                     <option key={cat.id} value={cat.id}>{cat.name}</option>
                   ))}
                 </select>
@@ -16540,6 +23882,7 @@ C:\\\\Media\\\\Prerolls\\\\summer\\\\beach.mp4`}
                     prerolls={prerolls}
                     scheduleId={editingSchedule?.id || null}
                     apiUrl={apiUrl}
+                    hideNameSection={true}
                     onSave={(blocks) => {
                       setSequenceBlocks(blocks);
                       console.log('Sequence updated:', blocks);
@@ -16894,6 +24237,683 @@ C:\\\\Media\\\\Prerolls\\\\summer\\\\beach.mp4`}
                     })}
                 </div>
               )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* NeX-Up: Upcoming Movies Modal */}
+      {showNexupUpcoming && (
+        <div className="nx-modal-overlay" onClick={() => setShowNexupUpcoming(false)}>
+          <div 
+            className="nx-modal" 
+            onClick={(e) => e.stopPropagation()}
+            style={{ maxWidth: '900px', maxHeight: '85vh' }}
+          >
+            <div className="nx-modal-header">
+              <h2 className="nx-modal-title" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                <Clapperboard size={24} /> Upcoming Movies from Radarr
+              </h2>
+              <button 
+                onClick={() => setShowNexupUpcoming(false)}
+                className="nx-modal-close"
+              >
+                ×
+              </button>
+            </div>
+            <div className="nx-modal-body" style={{ padding: '1rem', overflowY: 'auto' }}>
+            
+            <button 
+              onClick={handleLoadNexupUpcoming}
+              disabled={nexupLoading}
+              className="button"
+              style={{ marginBottom: '1rem' }}
+            >
+              {nexupLoading ? 'Loading...' : '🔄 Refresh List'}
+            </button>
+            
+            {nexupUpcoming.length === 0 ? (
+              <p style={{ color: '#666', textAlign: 'center', padding: '2rem' }}>
+                {nexupLoading ? 'Loading upcoming movies...' : 'No upcoming movies found. Click "Refresh List" to load from Radarr.'}
+              </p>
+            ) : (
+              <div style={{ display: 'grid', gap: '1rem' }}>
+                {nexupUpcoming.map((movie) => (
+                  <div 
+                    key={movie.radarr_id}
+                    style={{
+                      display: 'flex',
+                      gap: '1rem',
+                      padding: '1rem',
+                      backgroundColor: 'var(--card-bg)',
+                      borderRadius: '8px',
+                      border: '1px solid var(--border-color)'
+                    }}
+                  >
+                    {movie.poster_url && (
+                      <img 
+                        src={movie.poster_url} 
+                        alt={movie.title}
+                        style={{ width: '80px', height: '120px', objectFit: 'cover', borderRadius: '4px' }}
+                        onError={(e) => e.target.style.display = 'none'}
+                      />
+                    )}
+                    <div style={{ flex: 1 }}>
+                      <h3 style={{ margin: '0 0 0.5rem 0' }}>
+                        {movie.title} {movie.year && `(${movie.year})`}
+                      </h3>
+                      {movie.release_date && (
+                        <p style={{ margin: '0 0 0.5rem 0', fontSize: '0.9rem' }}>
+                          <strong>Release:</strong> {new Date(movie.release_date).toLocaleDateString()} 
+                          {movie.days_until_release !== null && (
+                            <span style={{ 
+                              marginLeft: '0.5rem',
+                              padding: '0.2rem 0.5rem',
+                              borderRadius: '4px',
+                              fontSize: '0.8rem',
+                              backgroundColor: movie.days_until_release <= 7 ? '#28a745' : movie.days_until_release <= 30 ? '#ffc107' : '#6c757d',
+                              color: movie.days_until_release <= 30 ? '#000' : '#fff'
+                            }}>
+                              {movie.days_until_release <= 0 ? 'Available Now!' : `In ${movie.days_until_release} days`}
+                            </span>
+                          )}
+                        </p>
+                      )}
+                      <p style={{ margin: '0', fontSize: '0.85rem', color: '#666', maxHeight: '40px', overflow: 'hidden' }}>
+                        {movie.overview?.substring(0, 150)}{movie.overview?.length > 150 ? '...' : ''}
+                      </p>
+                    </div>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', alignItems: 'flex-end' }}>
+                      {movie.downloaded ? (
+                        <span style={{ 
+                          padding: '0.5rem 1rem',
+                          borderRadius: '4px',
+                          backgroundColor: '#28a745',
+                          color: 'white',
+                          fontSize: '0.85rem',
+                          fontWeight: 500
+                        }}>
+                          ✓ Downloaded
+                        </span>
+                      ) : movie.trailer_url ? (
+                        <button
+                          onClick={() => handleDownloadTrailer(movie.radarr_id, movie.title)}
+                          disabled={downloadingTrailerId === movie.radarr_id || nexupLoading}
+                          className="button"
+                          style={{ 
+                            backgroundColor: downloadingTrailerId === movie.radarr_id ? '#6c757d' : '#007bff',
+                            minWidth: '160px',
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            gap: '0.5rem'
+                          }}
+                        >
+                          {downloadingTrailerId === movie.radarr_id ? (
+                            <><Loader2 size={16} className="spin" /> Downloading...</>
+                          ) : (
+                            <>⬇️ Download Trailer</>
+                          )}
+                        </button>
+                      ) : (
+                        <span style={{ 
+                          padding: '0.5rem 1rem',
+                          borderRadius: '4px',
+                          backgroundColor: '#6c757d',
+                          color: 'white',
+                          fontSize: '0.85rem'
+                        }}>
+                          No Trailer
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* NeX-Up: Manage Trailers Modal */}
+      {showNexupTrailers && (
+        <div className="nx-modal-overlay" onClick={() => setShowNexupTrailers(false)}>
+          <div 
+            className="nx-modal" 
+            onClick={(e) => e.stopPropagation()}
+            style={{ maxWidth: '900px', maxHeight: '85vh' }}
+          >
+            <div className="nx-modal-header">
+              <h2 className="nx-modal-title" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                <Film size={24} /> Downloaded Trailers
+              </h2>
+              <button 
+                onClick={() => setShowNexupTrailers(false)}
+                className="nx-modal-close"
+              >
+                ×
+              </button>
+            </div>
+            <div className="nx-modal-body" style={{ padding: '1rem', overflowY: 'auto' }}>
+            
+            <button 
+              onClick={loadNexupTrailers}
+              disabled={nexupLoading}
+              className="button"
+              style={{ marginBottom: '1rem' }}
+            >
+              {nexupLoading ? 'Loading...' : '🔄 Refresh List'}
+            </button>
+            
+            {nexupTrailers.length === 0 ? (
+              <p style={{ color: '#666', textAlign: 'center', padding: '2rem' }}>
+                No trailers downloaded yet. Use "Sync with Radarr" or "Add Trailer" to add trailers.
+              </p>
+            ) : (
+              <div style={{ display: 'grid', gap: '1rem' }}>
+                {nexupTrailers.map((trailer) => (
+                  <div 
+                    key={trailer.id}
+                    style={{
+                      display: 'flex',
+                      gap: '1rem',
+                      padding: '1rem',
+                      backgroundColor: 'var(--card-bg)',
+                      borderRadius: '8px',
+                      border: `1px solid ${trailer.is_enabled ? 'var(--border-color)' : '#dc3545'}`,
+                      opacity: trailer.is_enabled ? 1 : 0.7
+                    }}
+                  >
+                    {trailer.poster_url && (
+                      <img 
+                        src={trailer.poster_url} 
+                        alt={trailer.title}
+                        style={{ width: '60px', height: '90px', objectFit: 'cover', borderRadius: '4px' }}
+                        onError={(e) => e.target.style.display = 'none'}
+                      />
+                    )}
+                    <div style={{ flex: 1 }}>
+                      <h3 style={{ margin: '0 0 0.5rem 0', fontSize: '1.1rem' }}>
+                        {trailer.title} {trailer.year && `(${trailer.year})`}
+                      </h3>
+                      <div style={{ display: 'flex', gap: '1rem', flexWrap: 'wrap', fontSize: '0.85rem', color: '#666' }}>
+                        {trailer.release_date && (
+                          <span>
+                            📅 {new Date(trailer.release_date).toLocaleDateString()}
+                            {trailer.days_until !== null && trailer.days_until > 0 && ` (in ${trailer.days_until} days)`}
+                          </span>
+                        )}
+                        {trailer.file_size_mb && <span>💾 {trailer.file_size_mb.toFixed(1)} MB</span>}
+                        {trailer.resolution && <span>📺 {trailer.resolution}</span>}
+                        {trailer.play_count > 0 && <span style={{ display: 'inline-flex', alignItems: 'center', gap: '0.25rem' }}><Play size={14} /> Played {trailer.play_count}x</span>}
+                      </div>
+                    </div>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', alignItems: 'flex-end' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                        <label className="nx-rockerswitch" style={{ transform: 'scale(0.8)' }}>
+                          <input
+                            type="checkbox"
+                            checked={trailer.is_enabled}
+                            onChange={() => handleToggleTrailer(trailer.id)}
+                          />
+                          <span className="nx-rockerswitch-slider"></span>
+                        </label>
+                        <span style={{ fontSize: '0.8rem', color: trailer.is_enabled ? '#28a745' : '#dc3545' }}>
+                          {trailer.is_enabled ? 'Enabled' : 'Disabled'}
+                        </span>
+                      </div>
+                      <button
+                        onClick={() => handleDeleteTrailer(trailer.id, trailer.title)}
+                        className="button"
+                        style={{ backgroundColor: '#dc3545', fontSize: '0.85rem', padding: '0.4rem 0.75rem' }}
+                      >
+                        🗑️ Delete
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* NeX-Up: Upcoming TV Shows Modal */}
+      {showNexupUpcomingTV && (
+        <div className="nx-modal-overlay" onClick={() => setShowNexupUpcomingTV(false)}>
+          <div 
+            className="nx-modal" 
+            onClick={(e) => e.stopPropagation()}
+            style={{ maxWidth: '900px', maxHeight: '85vh' }}
+          >
+            <div className="nx-modal-header">
+              <h2 className="nx-modal-title" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                <Tv size={24} /> Upcoming TV Shows from Sonarr
+              </h2>
+              <button 
+                onClick={() => setShowNexupUpcomingTV(false)}
+                className="nx-modal-close"
+              >
+                ×
+              </button>
+            </div>
+            <div className="nx-modal-body" style={{ padding: '1rem', overflowY: 'auto' }}>
+            
+            <button 
+              onClick={loadNexupUpcomingTV}
+              disabled={nexupLoading}
+              className="button"
+              style={{ marginBottom: '1rem' }}
+            >
+              {nexupLoading ? 'Loading...' : '🔄 Refresh List'}
+            </button>
+            
+            {nexupUpcomingTV.length === 0 ? (
+              <p style={{ color: '#666', textAlign: 'center', padding: '2rem' }}>
+                {nexupLoading ? 'Loading upcoming TV shows...' : 'No upcoming TV shows found. Click "Refresh List" to load from Sonarr.'}
+              </p>
+            ) : (
+              <div style={{ display: 'grid', gap: '1rem' }}>
+                {nexupUpcomingTV.map((show, idx) => (
+                  <div 
+                    key={`${show.sonarr_series_id || idx}_${show.season_number || 0}`}
+                    style={{
+                      display: 'flex',
+                      gap: '1rem',
+                      padding: '1rem',
+                      backgroundColor: 'var(--card-bg)',
+                      borderRadius: '8px',
+                      border: `1px solid ${show.downloaded ? '#28a745' : 'var(--border-color)'}`
+                    }}
+                  >
+                    {show.poster_url && (
+                      <img 
+                        src={show.poster_url} 
+                        alt={show.title}
+                        style={{ width: '60px', height: '90px', objectFit: 'cover', borderRadius: '4px' }}
+                        onError={(e) => e.target.style.display = 'none'}
+                      />
+                    )}
+                    <div style={{ flex: 1 }}>
+                      <h3 style={{ margin: '0 0 0.25rem 0', fontSize: '1.1rem' }}>
+                        {show.title} {show.year && `(${show.year})`}
+                      </h3>
+                      {show.season_number && (
+                        <p style={{ margin: '0 0 0.25rem 0', fontSize: '0.9rem', color: '#17a2b8', fontWeight: 500 }}>
+                          Season {show.season_number} {show.release_type === 'season_premiere' ? '(Season Premiere)' : show.release_type === 'series_premiere' ? '(Series Premiere)' : ''}
+                        </p>
+                      )}
+                      {(show.release_date || show.air_date) && (
+                        <p style={{ margin: '0 0 0.5rem 0', fontSize: '0.9rem' }}>
+                          <strong>Release:</strong> {new Date(show.release_date || show.air_date).toLocaleDateString()}
+                          {show.days_until_release !== null && show.days_until_release !== undefined && (
+                            <span style={{ 
+                              marginLeft: '0.5rem',
+                              padding: '0.2rem 0.5rem',
+                              borderRadius: '4px',
+                              fontSize: '0.8rem',
+                              backgroundColor: show.days_until_release <= 7 ? '#28a745' : show.days_until_release <= 30 ? '#ffc107' : '#6c757d',
+                              color: show.days_until_release <= 30 ? '#000' : '#fff'
+                            }}>
+                              {show.days_until_release <= 0 ? 'Available Now!' : `In ${show.days_until_release} days`}
+                            </span>
+                          )}
+                        </p>
+                      )}
+                      {show.network && (
+                        <p style={{ margin: '0 0 0.25rem 0', fontSize: '0.85rem', color: '#666' }}>
+                          📺 {show.network}
+                        </p>
+                      )}
+                      <p style={{ margin: '0', fontSize: '0.85rem', color: '#666', maxHeight: '40px', overflow: 'hidden' }}>
+                        {show.overview?.substring(0, 150)}{show.overview?.length > 150 ? '...' : ''}
+                      </p>
+                    </div>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', alignItems: 'flex-end' }}>
+                      {show.downloaded ? (
+                        <span style={{ 
+                          padding: '0.5rem 1rem',
+                          borderRadius: '4px',
+                          backgroundColor: '#28a745',
+                          color: 'white',
+                          fontSize: '0.85rem',
+                          fontWeight: 500
+                        }}>
+                          ✓ Downloaded
+                        </span>
+                      ) : show.trailer_url ? (
+                        <button
+                          onClick={() => handleDownloadTVTrailer(show.sonarr_series_id, show.season_number, show.title)}
+                          disabled={downloadingTrailerId === `tv_${show.sonarr_series_id}_${show.season_number}` || nexupLoading}
+                          className="button"
+                          style={{ 
+                            backgroundColor: downloadingTrailerId === `tv_${show.sonarr_series_id}_${show.season_number}` ? '#6c757d' : '#17a2b8',
+                            minWidth: '160px',
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            gap: '0.5rem'
+                          }}
+                        >
+                          {downloadingTrailerId === `tv_${show.sonarr_series_id}_${show.season_number}` ? (
+                            <><Loader2 size={16} className="spin" /> Downloading...</>
+                          ) : (
+                            <>⬇️ Download Trailer</>
+                          )}
+                        </button>
+                      ) : (
+                        <span style={{ 
+                          padding: '0.5rem 1rem',
+                          borderRadius: '4px',
+                          backgroundColor: '#6c757d',
+                          color: 'white',
+                          fontSize: '0.85rem'
+                        }}>
+                          No Trailer
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* NeX-Up: Manage TV Trailers Modal */}
+      {showNexupTVTrailers && (
+        <div className="nx-modal-overlay" onClick={() => setShowNexupTVTrailers(false)}>
+          <div 
+            className="nx-modal" 
+            onClick={(e) => e.stopPropagation()}
+            style={{ maxWidth: '900px', maxHeight: '85vh' }}
+          >
+            <div className="nx-modal-header">
+              <h2 className="nx-modal-title" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                <Tv size={24} /> Downloaded TV Trailers
+              </h2>
+              <button 
+                onClick={() => setShowNexupTVTrailers(false)}
+                className="nx-modal-close"
+              >
+                ×
+              </button>
+            </div>
+            <div className="nx-modal-body" style={{ padding: '1rem', overflowY: 'auto' }}>
+            
+            <button 
+              onClick={loadNexupTVTrailers}
+              disabled={nexupLoading}
+              className="button"
+              style={{ marginBottom: '1rem' }}
+            >
+              {nexupLoading ? 'Loading...' : '🔄 Refresh List'}
+            </button>
+            
+            {nexupTVTrailers.length === 0 ? (
+              <p style={{ color: '#666', textAlign: 'center', padding: '2rem' }}>
+                No TV trailers downloaded yet. Use "Auto-Download TV Trailers" to add trailers for upcoming shows.
+              </p>
+            ) : (
+              <div style={{ display: 'grid', gap: '1rem' }}>
+                {nexupTVTrailers.map((trailer) => (
+                  <div 
+                    key={trailer.id}
+                    style={{
+                      display: 'flex',
+                      gap: '1rem',
+                      padding: '1rem',
+                      backgroundColor: 'var(--card-bg)',
+                      borderRadius: '8px',
+                      border: `1px solid ${trailer.is_enabled ? 'var(--border-color)' : '#dc3545'}`,
+                      opacity: trailer.is_enabled ? 1 : 0.7
+                    }}
+                  >
+                    {trailer.poster_url && (
+                      <img 
+                        src={trailer.poster_url} 
+                        alt={trailer.title}
+                        style={{ width: '60px', height: '90px', objectFit: 'cover', borderRadius: '4px' }}
+                        onError={(e) => e.target.style.display = 'none'}
+                      />
+                    )}
+                    <div style={{ flex: 1 }}>
+                      <h3 style={{ margin: '0 0 0.25rem 0', fontSize: '1.1rem' }}>
+                        {trailer.title} {trailer.year && `(${trailer.year})`}
+                      </h3>
+                      {trailer.season_number && (
+                        <p style={{ margin: '0 0 0.25rem 0', fontSize: '0.9rem', color: '#17a2b8', fontWeight: 500 }}>
+                          Season {trailer.season_number}
+                        </p>
+                      )}
+                      <div style={{ display: 'flex', gap: '1rem', flexWrap: 'wrap', fontSize: '0.85rem', color: '#666' }}>
+                        {trailer.release_date && (
+                          <span>
+                            📅 {new Date(trailer.release_date).toLocaleDateString()}
+                            {trailer.days_until !== null && trailer.days_until > 0 && ` (in ${trailer.days_until} days)`}
+                          </span>
+                        )}
+                        {trailer.network && <span>📺 {trailer.network}</span>}
+                        {trailer.file_size_mb && <span>💾 {trailer.file_size_mb.toFixed(1)} MB</span>}
+                        {trailer.resolution && <span>🖥️ {trailer.resolution}</span>}
+                        {trailer.play_count > 0 && <span style={{ display: 'inline-flex', alignItems: 'center', gap: '0.25rem' }}><Play size={14} /> Played {trailer.play_count}x</span>}
+                      </div>
+                    </div>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', alignItems: 'flex-end' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                        <label className="nx-rockerswitch" style={{ transform: 'scale(0.8)' }}>
+                          <input
+                            type="checkbox"
+                            checked={trailer.is_enabled}
+                            onChange={() => handleToggleTVTrailer(trailer.id)}
+                          />
+                          <span className="nx-rockerswitch-slider"></span>
+                        </label>
+                        <span style={{ fontSize: '0.8rem', color: trailer.is_enabled ? '#28a745' : '#dc3545' }}>
+                          {trailer.is_enabled ? 'Enabled' : 'Disabled'}
+                        </span>
+                      </div>
+                      <button
+                        onClick={() => handleDeleteTVTrailer(trailer.id)}
+                        className="button"
+                        style={{ backgroundColor: '#dc3545', fontSize: '0.85rem', padding: '0.4rem 0.75rem' }}
+                      >
+                        🗑️ Delete
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Manual Trailer Addition Modal */}
+      {showManualTrailerModal && (
+        <div className="nx-modal-overlay" onClick={() => setShowManualTrailerModal(false)}>
+          <div 
+            className="nx-modal" 
+            onClick={(e) => e.stopPropagation()}
+            style={{ maxWidth: '600px' }}
+          >
+            <div className="nx-modal-header">
+              <h2 className="nx-modal-title">➕ Add Trailer Manually</h2>
+              <button 
+                onClick={() => setShowManualTrailerModal(false)}
+                className="nx-modal-close"
+              >
+                ×
+              </button>
+            </div>
+            <div className="nx-modal-body" style={{ padding: '1rem' }}>
+            <p style={{ color: '#666', marginBottom: '1.5rem', fontSize: '0.9rem' }}>
+              Add a trailer from a local file or URL. This is useful when automatic trailer downloads are blocked by YouTube.
+            </p>
+            
+            <form onSubmit={handleManualTrailerSubmit}>
+              <div style={{ marginBottom: '1rem' }}>
+                <label style={{ display: 'block', marginBottom: '0.3rem', fontWeight: 500 }}>
+                  Movie Title <span style={{ color: '#dc3545' }}>*</span>
+                </label>
+                <input
+                  type="text"
+                  value={manualTrailerForm.title}
+                  onChange={(e) => setManualTrailerForm({...manualTrailerForm, title: e.target.value})}
+                  placeholder="e.g., Dune: Part Two"
+                  className="input"
+                  style={{ width: '100%' }}
+                />
+              </div>
+              
+              <div style={{ marginBottom: '1rem' }}>
+                <label style={{ display: 'block', marginBottom: '0.3rem', fontWeight: 500 }}>
+                  TMDB ID <span style={{ color: '#666', fontWeight: 'normal' }}>(optional - for poster)</span>
+                </label>
+                <input
+                  type="text"
+                  value={manualTrailerForm.tmdb_id}
+                  onChange={(e) => setManualTrailerForm({...manualTrailerForm, tmdb_id: e.target.value})}
+                  placeholder="e.g., 693134"
+                  className="input"
+                  style={{ width: '100%' }}
+                />
+                <small style={{ color: '#666' }}>Find this at themoviedb.org in the movie URL</small>
+              </div>
+              
+              <div style={{ 
+                padding: '1rem', 
+                backgroundColor: 'var(--card-bg)', 
+                borderRadius: '8px', 
+                border: '1px solid var(--border-color)',
+                marginBottom: '1rem'
+              }}>
+                <p style={{ margin: '0 0 1rem 0', fontWeight: 500 }}>
+                  Trailer Source <span style={{ color: '#dc3545' }}>*</span>
+                  <span style={{ fontWeight: 'normal', color: '#666', marginLeft: '0.5rem' }}>(provide one)</span>
+                </p>
+                
+                <div style={{ marginBottom: '1rem' }}>
+                  <label style={{ display: 'block', marginBottom: '0.3rem' }}>
+                    🔗 URL (YouTube, Vimeo, etc.)
+                  </label>
+                  <input
+                    type="text"
+                    value={manualTrailerForm.url}
+                    onChange={(e) => setManualTrailerForm({...manualTrailerForm, url: e.target.value, file_path: ''})}
+                    placeholder="https://www.youtube.com/watch?v=..."
+                    className="input"
+                    style={{ width: '100%' }}
+                    disabled={!!manualTrailerForm.file_path}
+                  />
+                </div>
+                
+                <div style={{ textAlign: 'center', color: '#666', marginBottom: '1rem' }}>— OR —</div>
+                
+                <div>
+                  <label style={{ display: 'block', marginBottom: '0.3rem' }}>
+                    📁 Local File Path
+                  </label>
+                  <input
+                    type="text"
+                    value={manualTrailerForm.file_path}
+                    onChange={(e) => setManualTrailerForm({...manualTrailerForm, file_path: e.target.value, url: ''})}
+                    placeholder="C:\Trailers\movie_trailer.mp4"
+                    className="input"
+                    style={{ width: '100%' }}
+                    disabled={!!manualTrailerForm.url}
+                  />
+                  <small style={{ color: '#666' }}>The file will be copied to your NeX-Up storage folder</small>
+                </div>
+              </div>
+              
+              <div style={{ display: 'flex', gap: '0.5rem', justifyContent: 'flex-end' }}>
+                <button
+                  type="button"
+                  onClick={() => setShowManualTrailerModal(false)}
+                  className="button"
+                  style={{ backgroundColor: '#6c757d' }}
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={nexupLoading}
+                  className="button"
+                  style={{ backgroundColor: '#28a745' }}
+                >
+                  {nexupLoading ? 'Adding...' : '➕ Add Trailer'}
+                </button>
+              </div>
+            </form>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Custom Confirm Dialog */}
+      {confirmDialog.open && (
+        <div className="nx-dialog-overlay" onClick={() => handleConfirmDialogClose(false)}>
+          <div className="nx-dialog" onClick={(e) => e.stopPropagation()}>
+            <div className="nx-dialog-header">
+              <div className={`nx-dialog-icon ${confirmDialog.type}`}>
+                {confirmDialog.type === 'danger' ? <AlertTriangle size={22} /> :
+                 confirmDialog.type === 'warning' ? <AlertTriangle size={22} /> :
+                 <Info size={22} />}
+              </div>
+              <h3 className="nx-dialog-title">{confirmDialog.title}</h3>
+            </div>
+            <div className="nx-dialog-body">
+              <p className="nx-dialog-message">{confirmDialog.message}</p>
+            </div>
+            <div className="nx-dialog-footer">
+              <button 
+                className="nx-dialog-btn cancel" 
+                onClick={() => handleConfirmDialogClose(false)}
+              >
+                {confirmDialog.cancelText}
+              </button>
+              <button 
+                className={`nx-dialog-btn confirm ${confirmDialog.type}`}
+                onClick={() => handleConfirmDialogClose(true)}
+                autoFocus
+              >
+                {confirmDialog.confirmText}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Custom Alert Dialog */}
+      {alertDialog.open && (
+        <div className="nx-dialog-overlay" onClick={handleAlertDialogClose}>
+          <div className="nx-dialog" onClick={(e) => e.stopPropagation()}>
+            <div className="nx-dialog-header">
+              <div className={`nx-dialog-icon ${alertDialog.type}`}>
+                {alertDialog.type === 'error' ? <XCircle size={22} /> :
+                 alertDialog.type === 'success' ? <CheckCircle size={22} /> :
+                 alertDialog.type === 'warning' ? <AlertTriangle size={22} /> :
+                 <Info size={22} />}
+              </div>
+              <h3 className="nx-dialog-title">{alertDialog.title}</h3>
+            </div>
+            <div className="nx-dialog-body">
+              <p className="nx-dialog-message">{alertDialog.message}</p>
+            </div>
+            <div className="nx-dialog-footer">
+              <button 
+                className="nx-dialog-btn ok"
+                onClick={handleAlertDialogClose}
+                autoFocus
+              >
+                OK
+              </button>
             </div>
           </div>
         </div>

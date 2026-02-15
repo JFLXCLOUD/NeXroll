@@ -75,6 +75,8 @@ class Scheduler:
         # Track blend mode state for verification
         self._blend_mode_active: bool = False
         self._blend_expected_preroll: Optional[str] = None
+        # Track last NeX-Up auto-sync time
+        self._last_nexup_sync_time: Optional[datetime.datetime] = None
 
     def start(self):
         """Start the scheduler in a background thread"""
@@ -108,8 +110,378 @@ class Scheduler:
                 self._verify_and_reapply_if_needed()
             except Exception as e:
                 _scheduler_log(f"Verification error: {e}", level="ERROR")
+            try:
+                # Check for NeX-Up auto-sync
+                self._check_nexup_auto_sync()
+            except Exception as e:
+                _scheduler_log(f"NeX-Up auto-sync error: {e}", level="ERROR")
             # Use configurable interval (default 60s, set via SCHEDULER_INTERVAL env var)
             time.sleep(self._scheduler_check_interval)
+
+    def _check_nexup_auto_sync(self):
+        """
+        Check if NeX-Up auto-sync should run based on auto_refresh_hours setting.
+        Automatically syncs Radarr and Sonarr for new trailers on the configured interval.
+        """
+        import asyncio
+        
+        db = SessionLocal()
+        try:
+            setting = db.query(models.Setting).first()
+            if not setting:
+                return
+            
+            # Check if NeX-Up is enabled and auto-refresh is configured
+            auto_refresh_hours = getattr(setting, 'nexup_auto_refresh_hours', 24)
+            if not auto_refresh_hours or auto_refresh_hours <= 0:
+                return  # Auto-sync disabled
+            
+            # Check if we have storage path configured
+            storage_path = getattr(setting, 'nexup_storage_path', None)
+            if not storage_path:
+                return  # Storage not configured
+            
+            now = datetime.datetime.utcnow()
+            
+            # Check if enough time has passed since last auto-sync
+            if self._last_nexup_sync_time:
+                hours_since_sync = (now - self._last_nexup_sync_time).total_seconds() / 3600
+                if hours_since_sync < auto_refresh_hours:
+                    return  # Not time yet
+            else:
+                # First run - check last_sync from database
+                last_sync = getattr(setting, 'nexup_last_sync', None)
+                if last_sync:
+                    hours_since_sync = (now - last_sync).total_seconds() / 3600
+                    if hours_since_sync < auto_refresh_hours:
+                        self._last_nexup_sync_time = last_sync
+                        return  # Not time yet
+            
+            _scheduler_log(f"NeX-Up auto-sync starting (interval: every {auto_refresh_hours}h)")
+            
+            # Perform Radarr sync if configured
+            radarr_url = getattr(setting, 'nexup_radarr_url', None)
+            radarr_api_key = getattr(setting, 'nexup_radarr_api_key', None)
+            nexup_enabled = getattr(setting, 'nexup_enabled', False)
+            
+            if nexup_enabled and radarr_url and radarr_api_key:
+                try:
+                    _scheduler_log("NeX-Up auto-sync: Syncing Radarr movie trailers...")
+                    asyncio.run(self._sync_radarr_trailers(db, setting))
+                except Exception as e:
+                    _scheduler_log(f"NeX-Up auto-sync: Radarr sync error: {e}", level="ERROR")
+            
+            # Perform Sonarr sync if configured
+            sonarr_enabled = getattr(setting, 'nexup_sonarr_enabled', False)
+            sonarr_url = getattr(setting, 'nexup_sonarr_url', None)
+            sonarr_api_key = getattr(setting, 'nexup_sonarr_api_key', None)
+            
+            if sonarr_enabled and sonarr_url and sonarr_api_key:
+                try:
+                    _scheduler_log("NeX-Up auto-sync: Syncing Sonarr TV trailers...")
+                    asyncio.run(self._sync_sonarr_trailers(db, setting))
+                except Exception as e:
+                    _scheduler_log(f"NeX-Up auto-sync: Sonarr sync error: {e}", level="ERROR")
+            
+            # Update last sync time
+            self._last_nexup_sync_time = now
+            _scheduler_log(f"NeX-Up auto-sync completed. Next sync in {auto_refresh_hours}h")
+            
+        except Exception as e:
+            _scheduler_log(f"NeX-Up auto-sync error: {e}", level="ERROR")
+        finally:
+            db.close()
+
+    async def _sync_radarr_trailers(self, db: Session, setting):
+        """Sync trailers from Radarr (called by auto-sync)"""
+        import os
+        from pathlib import Path
+        from backend.radarr_connector import RadarrConnector, TrailerDownloader
+        
+        connector = RadarrConnector(setting.nexup_radarr_url, setting.nexup_radarr_api_key)
+        storage_path = setting.nexup_storage_path
+        quality = getattr(setting, 'nexup_quality', '1080') or '1080'
+        max_duration = getattr(setting, 'nexup_max_trailer_duration', 180) or 0
+        
+        # Debug: Log storage path and cookie file status
+        cookies_file = Path(storage_path) / 'youtube_cookies.txt' if storage_path else None
+        _scheduler_log(f"NeX-Up sync: storage_path={storage_path}")
+        _scheduler_log(f"NeX-Up sync: cookies_file={cookies_file} (exists={cookies_file.exists() if cookies_file else False})")
+        
+        downloader = TrailerDownloader(storage_path, quality, max_duration=max_duration)
+        
+        days_ahead = getattr(setting, 'nexup_days_ahead', 90) or 90
+        max_trailers = getattr(setting, 'nexup_max_trailers', 10) or 10
+        download_delay = getattr(setting, 'nexup_download_delay', 5) or 5
+        
+        # Get upcoming movies
+        all_movies = await connector.get_all_movies_raw()
+        upcoming = connector.parse_upcoming_from_raw(all_movies, days_ahead)
+        
+        # Get existing trailer IDs
+        existing_ids = {t.radarr_movie_id for t in db.query(models.ComingSoonTrailer).all()}
+        
+        # Clean up expired/downloaded movies
+        downloaded_movies = {m['id'] for m in all_movies if m.get('hasFile', False)}
+        for trailer in db.query(models.ComingSoonTrailer).all():
+            if trailer.radarr_movie_id in downloaded_movies:
+                if trailer.local_path and os.path.exists(trailer.local_path):
+                    try:
+                        os.remove(trailer.local_path)
+                    except:
+                        pass
+                db.delete(trailer)
+                _scheduler_log(f"NeX-Up: Expired trailer for downloaded movie '{trailer.title}'")
+        db.commit()
+        
+        # Download new trailers
+        current_count = db.query(models.ComingSoonTrailer).count()
+        downloaded = 0
+        
+        for movie in upcoming:
+            if current_count >= max_trailers:
+                break
+            if movie['radarr_id'] in existing_ids:
+                continue
+            if not movie.get('trailer_url'):
+                continue
+            
+            import time
+            if downloaded > 0:
+                time.sleep(download_delay)
+            
+            result = await downloader.download_trailer(
+                url=movie.get('trailer_url', ''),
+                title=movie['title'],
+                tmdb_id=movie.get('tmdb_id'),
+                year=movie.get('year')
+            )
+            
+            if result and result.get('path'):
+                # Create trailer record
+                new_trailer = models.ComingSoonTrailer(
+                    radarr_movie_id=movie['radarr_id'],
+                    tmdb_id=movie.get('tmdb_id'),
+                    title=movie['title'],
+                    year=movie.get('year'),
+                    release_date=datetime.datetime.strptime(movie['release_date'], '%Y-%m-%d').date() if movie.get('release_date') else None,
+                    trailer_url=movie.get('trailer_url', ''),
+                    local_path=result['path'],
+                    downloaded_at=datetime.datetime.utcnow(),
+                    file_size_mb=result.get('size_mb'),
+                    duration_seconds=result.get('duration'),
+                    is_enabled=True
+                )
+                db.add(new_trailer)
+                db.commit()
+                
+                # Create preroll
+                self._create_preroll_for_trailer(db, new_trailer, setting, is_tv=False)
+                
+                downloaded += 1
+                current_count += 1
+                _scheduler_log(f"NeX-Up auto-sync: Downloaded trailer for '{movie['title']}'")
+        
+        # Update last sync time
+        setting.nexup_last_sync = datetime.datetime.utcnow()
+        db.commit()
+        
+        _scheduler_log(f"NeX-Up Radarr auto-sync: Downloaded {downloaded} new movie trailers")
+
+    async def _sync_sonarr_trailers(self, db: Session, setting):
+        """Sync trailers from Sonarr (called by auto-sync)"""
+        import os
+        from pathlib import Path
+        from backend.sonarr_connector import SonarrConnector
+        from backend.radarr_connector import TrailerDownloader
+        
+        connector = SonarrConnector(setting.nexup_sonarr_url, setting.nexup_sonarr_api_key)
+        storage_path = setting.nexup_storage_path
+        quality = getattr(setting, 'nexup_quality', '1080') or '1080'
+        max_duration = getattr(setting, 'nexup_max_trailer_duration', 180) or 0
+        
+        # Debug: Log storage path and cookie file status
+        cookies_file = Path(storage_path) / 'youtube_cookies.txt' if storage_path else None
+        _scheduler_log(f"NeX-Up Sonarr sync: storage_path={storage_path}")
+        _scheduler_log(f"NeX-Up Sonarr sync: cookies_file={cookies_file} (exists={cookies_file.exists() if cookies_file else False})")
+        
+        downloader = TrailerDownloader(storage_path, quality, max_duration=max_duration)
+        
+        days_ahead = getattr(setting, 'nexup_days_ahead', 90) or 90
+        max_trailers = getattr(setting, 'nexup_max_trailers', 10) or 10
+        download_delay = getattr(setting, 'nexup_download_delay', 5) or 5
+        
+        # ========================================
+        # CLEANUP: Expire trailers for aired shows
+        # ========================================
+        _scheduler_log("NeX-Up Sonarr auto-sync: Checking for expired TV trailers...")
+        
+        # Get all series from Sonarr to check download status
+        all_series = await connector.get_all_series()
+        
+        # Build a map of series_id -> {season_number: episodeFileCount}
+        series_download_status = {}
+        for series in all_series:
+            series_id = series.get('id')
+            series_download_status[series_id] = {
+                'title': series.get('title', 'Unknown'),
+                'seasons': {}
+            }
+            for season in series.get('seasons', []):
+                season_num = season.get('seasonNumber', 0)
+                stats = season.get('statistics', {})
+                series_download_status[series_id]['seasons'][season_num] = stats.get('episodeFileCount', 0)
+        
+        # Get existing trailers and check for expired ones
+        existing_trailers = db.query(models.ComingSoonTVTrailer).filter(
+            models.ComingSoonTVTrailer.status == 'downloaded'
+        ).all()
+        
+        today = datetime.datetime.now().date()
+        grace_period_days = 5  # Keep trailer for 5 days after air date
+        expired_count = 0
+        
+        for trailer in existing_trailers:
+            should_expire = False
+            expire_reason = ""
+            
+            # Check 1: Has Sonarr downloaded episodes for this season?
+            series_info = series_download_status.get(trailer.sonarr_series_id)
+            if series_info:
+                season_file_count = series_info['seasons'].get(trailer.season_number, 0)
+                if season_file_count > 0:
+                    should_expire = True
+                    expire_reason = f"Season has {season_file_count} episode(s) downloaded"
+            
+            # Check 2: Has the release date passed by more than grace period?
+            if not should_expire and trailer.release_date:
+                release_date = trailer.release_date.date() if hasattr(trailer.release_date, 'date') else trailer.release_date
+                days_since_release = (today - release_date).days
+                if days_since_release > grace_period_days:
+                    should_expire = True
+                    expire_reason = f"Aired {days_since_release} days ago"
+            
+            if should_expire:
+                _scheduler_log(f"NeX-Up Sonarr auto-sync: Expiring trailer for '{trailer.title}' S{trailer.season_number} - {expire_reason}")
+                
+                # Delete trailer file
+                if trailer.local_path and os.path.exists(trailer.local_path):
+                    try:
+                        os.remove(trailer.local_path)
+                    except Exception as e:
+                        _scheduler_log(f"NeX-Up Sonarr auto-sync: Failed to delete file: {e}", level="ERROR")
+                
+                # Also remove from prerolls if it exists
+                preroll = db.query(models.Preroll).filter(
+                    models.Preroll.path == trailer.local_path
+                ).first()
+                if preroll:
+                    db.delete(preroll)
+                
+                db.delete(trailer)
+                expired_count += 1
+        
+        if expired_count > 0:
+            db.commit()
+            _scheduler_log(f"NeX-Up Sonarr auto-sync: Expired {expired_count} TV trailers")
+        
+        # ========================================
+        # DOWNLOAD: Get new trailers
+        # ========================================
+        
+        # Get upcoming shows
+        upcoming = await connector.get_upcoming_shows(days_ahead=days_ahead)
+        
+        # Get existing trailer IDs (re-fetch after cleanup)
+        existing_ids = {t.sonarr_series_id for t in db.query(models.ComingSoonTVTrailer).all()}
+        
+        # Download new trailers
+        current_count = db.query(models.ComingSoonTVTrailer).count()
+        downloaded = 0
+        
+        for show in upcoming:
+            if current_count >= max_trailers:
+                break
+            if show['sonarr_id'] in existing_ids:
+                continue
+            if not show.get('trailer_url'):
+                continue
+            
+            import time
+            if downloaded > 0:
+                time.sleep(download_delay)
+            
+            result = await downloader.download_trailer(
+                url=show.get('trailer_url', ''),
+                title=show['title'],
+                tvdb_id=show.get('tvdb_id')
+            )
+            
+            if result and result.get('path'):
+                # Create TV trailer record
+                new_trailer = models.ComingSoonTVTrailer(
+                    sonarr_series_id=show['sonarr_id'],
+                    tvdb_id=show.get('tvdb_id'),
+                    title=show['title'],
+                    year=show.get('year'),
+                    release_date=datetime.datetime.strptime(show['release_date'], '%Y-%m-%d').date() if show.get('release_date') else None,
+                    trailer_url=show.get('trailer_url', ''),
+                    local_path=result['path'],
+                    downloaded_at=datetime.datetime.utcnow(),
+                    file_size_mb=result.get('size_mb'),
+                    duration_seconds=result.get('duration'),
+                    is_enabled=True
+                )
+                db.add(new_trailer)
+                db.commit()
+                
+                # Create preroll
+                self._create_preroll_for_trailer(db, new_trailer, setting, is_tv=True)
+                
+                downloaded += 1
+                current_count += 1
+                _scheduler_log(f"NeX-Up auto-sync: Downloaded trailer for TV show '{show['title']}'")
+        
+        # Update last sync time
+        setting.nexup_last_sonarr_sync = datetime.datetime.utcnow()
+        db.commit()
+        
+        _scheduler_log(f"NeX-Up Sonarr auto-sync: Downloaded {downloaded} new TV trailers")
+
+    def _create_preroll_for_trailer(self, db: Session, trailer, setting, is_tv: bool = False):
+        """Create a preroll entry for a downloaded trailer"""
+        import os
+        
+        if is_tv:
+            category_id = getattr(setting, 'nexup_tv_category_id', None)
+        else:
+            category_id = getattr(setting, 'nexup_category_id', None)
+        
+        if not category_id:
+            return
+        
+        # Check if preroll already exists
+        existing = db.query(models.Preroll).filter(
+            models.Preroll.path == trailer.local_path
+        ).first()
+        
+        if existing:
+            return
+        
+        # Create preroll
+        filename = os.path.basename(trailer.local_path)
+        new_preroll = models.Preroll(
+            filename=filename,
+            display_name=f"[Trailer] {trailer.title}",
+            path=trailer.local_path,
+            category_id=category_id,
+            description=f"Coming soon trailer for {trailer.title}" + (f" ({trailer.year})" if trailer.year else ""),
+            duration=trailer.duration_seconds,
+            file_size=trailer.file_size_mb * 1024 * 1024 if trailer.file_size_mb else None,
+            managed=True
+        )
+        db.add(new_preroll)
+        db.commit()
 
     def _apply_preroll_to_jellyfin_api(self, category_id: int, db: Session) -> bool:
         """

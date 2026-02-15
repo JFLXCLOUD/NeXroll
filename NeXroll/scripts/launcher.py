@@ -4,6 +4,33 @@ PyInstaller launcher for NeXroll.
 Imports backend.main which auto-starts the FastAPI server when frozen.
 """
 import sys  # noqa: F401
+import ctypes
+
+# Single-instance check for the backend server
+MUTEX_NAME = "Global\\NeXroll_Backend_SingleInstance_Mutex"
+
+def _check_single_instance():
+    """Check if another backend instance is running. Exit if so."""
+    try:
+        kernel32 = ctypes.windll.kernel32
+        ERROR_ALREADY_EXISTS = 183
+        
+        mutex = kernel32.CreateMutexW(None, True, MUTEX_NAME)
+        last_error = kernel32.GetLastError()
+        
+        if last_error == ERROR_ALREADY_EXISTS:
+            # Another instance is already running
+            if mutex:
+                kernel32.CloseHandle(mutex)
+            print("NeXroll backend is already running. Exiting.")
+            sys.exit(0)
+        # Keep mutex handle alive (don't close it) so the mutex persists
+    except Exception as e:
+        # If mutex fails, continue anyway (fallback behavior)
+        print(f"Single-instance check failed: {e}")
+
+# Check for single instance before loading the heavy backend
+_check_single_instance()
 
 # Preload backend submodules to ensure PyInstaller includes them
 try:
