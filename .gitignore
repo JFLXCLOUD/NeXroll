@@ -60,6 +60,7 @@ installers/
 *.exe
 *.msi
 *.nsi
+RELEASE_NOTES_*.md
 
 # Testing and temp files
 testing/
