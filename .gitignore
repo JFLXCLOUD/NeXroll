@@ -30,6 +30,8 @@ yarn-error.log*
 
 # React build cache
 #NeXroll/frontend/build/
+!NeXroll/frontend/build/
+!NeXroll/frontend/build/**
 NeXroll/frontend/.eslintcache
 
 # IDEs
