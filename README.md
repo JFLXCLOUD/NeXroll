@@ -17,7 +17,7 @@ NeXroll is a preroll manager for Plex and Jellyfin that makes setup effortless. 
 ## Screenshots
 
 ### Dashboard
-![Dashboard]()
+![Dashboard](docs/screenshots/dashboard.png)
 
 ### Preroll Management
 ![Prerolls](docs/screenshots/prerolls.png)
