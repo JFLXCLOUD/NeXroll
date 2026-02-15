@@ -42,6 +42,19 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: NeXroll/frontend/package-lock.json
+
+      - name: Build frontend
+        working-directory: NeXroll/frontend
+        run: |
+          npm ci
+          npm run build
+
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
 
