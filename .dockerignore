@@ -74,7 +74,6 @@ NeXroll/.venv/
 NeXroll/venv/
 NeXroll/__pycache__/
 NeXroll/frontend/node_modules/
-NeXroll/frontend/build/
 
 # Icons and misc
 NeXroll_ICON/
