@@ -51,6 +51,8 @@ jobs:
 
       - name: Build frontend
         working-directory: NeXroll/frontend
+        env:
+          CI: false
         run: |
           npm ci
           npm run build
