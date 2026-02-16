@@ -53,6 +53,10 @@ services:
       retries: 3
       start_period: 10s
     
+    # Allow container to reach host services (Plex, Radarr, Sonarr on host)
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    
     # Optional: Add labels for reverse proxy (Traefik example)
     # labels:
     #   - "traefik.enable=true"
