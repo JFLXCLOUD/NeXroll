@@ -4163,7 +4163,15 @@ const DashboardTiles = {
             Mode: {activeCategory.plex_mode === 'playlist' ? 'Sequential' : 'Shuffle'}
           </p>
           <p style={{ fontSize: '0.9rem', color: 'var(--text-secondary, #666)' }}>
-            Prerolls: {prerolls.filter(p => p.category_id === activeCategory.id).length}
+            Prerolls: {(() => {
+              const primaryCount = prerolls.filter(p => p.category_id === activeCategory.id).length;
+              const secondaryCount = prerolls.filter(p => 
+                p.categories && 
+                p.categories.some(c => c.id === activeCategory.id) &&
+                p.category_id !== activeCategory.id
+              ).length;
+              return primaryCount + secondaryCount;
+            })()}
           </p>
         </div>
       ) : (
