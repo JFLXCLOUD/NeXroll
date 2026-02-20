@@ -16054,7 +16054,7 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
       return;
     }
     try {
-      const res = await fetch(apiUrl(`/nexup/preroll/delete/${encodeURIComponent(filename)}`), {
+      const res = await fetch(apiUrl(`/nexup/preroll/${encodeURIComponent(filename)}`), {
         method: 'DELETE'
       });
       if (res.ok) {
