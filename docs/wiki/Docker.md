@@ -9,7 +9,10 @@ NeXroll can be run in Docker containers for easy deployment and management. Offi
 docker pull jbrns/nexroll:latest
 
 # Specific version
-docker pull jbrns/nexroll:1.9.6
+docker pull jbrns/nexroll:1.10.14
+
+# Beta channel (pre-release features)
+docker pull jbrns/nexroll:beta
 ```
 
 ### Supported Architectures

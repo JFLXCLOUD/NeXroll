@@ -221,6 +221,24 @@ body.dark select option {
   margin: 0 auto;
 }
 
+/* ========== Sticky Sub-Navigation ========== */
+.nx-subnav {
+  position: -webkit-sticky !important;
+  position: sticky !important;
+  top: 62px !important;
+  z-index: 800 !important;
+  background-color: var(--bg-color);
+  padding-top: 1rem;
+  border-bottom: 2px solid var(--border-color);
+  display: flex;
+  gap: 0.25rem;
+}
+
+/* Ensure no ancestor breaks sticky behavior */
+.dashboard {
+  overflow: visible !important;
+}
+
 .header {
   font-size: 2rem;
   font-weight: bold;

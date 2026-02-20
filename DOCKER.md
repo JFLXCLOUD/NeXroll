@@ -13,6 +13,20 @@ URLs (default):
 - API health: http://HOST:9393/health
 - API docs: http://HOST:9393/docs
 
+## Docker Image Tags
+
+| Tag | Description |
+|-----|-------------|
+| `jbrns/nexroll:latest` | Latest stable release (recommended for production) |
+| `jbrns/nexroll:beta` | Latest beta/pre-release version (for testing new features) |
+| `jbrns/nexroll:1.10.14` | Specific version (pin to a known good version) |
+| `jbrns/nexroll:1.11.0-beta.1` | Specific beta version |
+
+**To use the beta channel**, change your image tag:
+```yaml
+image: jbrns/nexroll:beta
+```
+
 
 ## 1) Prerequisites
 
@@ -30,7 +44,7 @@ docker-compose.yml
 version: "3.8"
 services:
   nexroll:
-    image: jbrns/nexroll:1.3.7
+    image: jbrns/nexroll:latest
     network_mode: "host"
     environment:
       - NEXROLL_PORT=9393
@@ -64,7 +78,7 @@ If you cannot use host networking (e.g., Docker Desktop on Windows/macOS), use n
 version: "3.8"
 services:
   nexroll:
-    image: jbrns/nexroll:1.4.4
+    image: jbrns/nexroll:latest
     ports:
       - "9393:9393"
     environment:

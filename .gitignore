@@ -71,6 +71,7 @@ tmp/
 *.tmp
 *.log
 *.bak
+*.local.md
 
 # Secrets
 .env

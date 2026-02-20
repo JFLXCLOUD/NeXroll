@@ -280,6 +280,46 @@ class Setting(Base):
     nexup_dynamic_preroll_duration = Column(Integer, nullable=True)  # Duration of generated preroll in seconds
     nexup_dynamic_preroll_theme = Column(String, nullable=True)  # Color theme: 'midnight', 'sunset', 'forest', 'royal', 'monochrome'
     
+    # Coming Soon List Auto-Regeneration Settings
+    nexup_coming_soon_list_auto_regen = Column(Boolean, default=False)  # Auto-regenerate Coming Soon List after sync
+    nexup_coming_soon_list_layout = Column(String, default='grid')  # Layout to use: 'grid', 'list', or 'both'
+    nexup_coming_soon_list_source = Column(String, default='both')  # Source: 'movies', 'shows', or 'both'
+    nexup_coming_soon_list_duration = Column(Integer, default=10)  # Duration in seconds
+    nexup_coming_soon_list_max_items = Column(Integer, default=8)  # Max items to show
+    nexup_coming_soon_list_bg_color = Column(String, default='#141428')  # Background color
+    nexup_coming_soon_list_text_color = Column(String, default='#ffffff')  # Text color
+    nexup_coming_soon_list_accent_color = Column(String, default='#00d4ff')  # Accent color
+    nexup_coming_soon_list_server_name = Column(String, default='')  # Server name to display
+    
+    # Authentication Settings (Optional - for PWA/remote access)
+    auth_enabled = Column(Boolean, default=False)  # Master toggle - auth is OPTIONAL
+    auth_session_timeout_hours = Column(Integer, default=24)  # Session duration in hours
+    auth_allow_registration = Column(Boolean, default=False)  # Allow new user registration
+    auth_require_https = Column(Boolean, default=False)  # Require HTTPS for login (production mode)
+    
+    # Update System Settings
+    update_check_interval = Column(String, default='daily')  # 'never', 'startup', 'hourly', 'daily', 'weekly'
+    update_include_prerelease = Column(Boolean, default=False)  # Include beta/pre-release versions
+    update_last_check = Column(DateTime, nullable=True)  # Last time we checked for updates
+    update_dismissed_version = Column(String, nullable=True)  # Version user dismissed
+    
+    # Enhanced Logging Settings
+    log_level = Column(String, default='INFO')  # 'DEBUG', 'INFO', 'WARNING', 'ERROR'
+    log_retention_days = Column(Integer, default=30)  # How long to keep logs in database
+    log_to_database = Column(Boolean, default=True)  # Enable database logging (for UI viewer)
+    log_request_logging = Column(Boolean, default=True)  # Log all API requests with timing
+    log_scheduler_logging = Column(Boolean, default=True)  # Log scheduler activity
+    log_api_logging = Column(Boolean, default=True)  # Log external API calls (Plex, Radarr, etc.)
+    
+    # Filler Category Settings - Used when no schedules are active (different from per-schedule fallback)
+    # The filler kicks in when there are NO active schedules at all, filling the gap globally
+    filler_enabled = Column(Boolean, default=False)  # Enable filler category feature
+    filler_type = Column(String, default='category')  # 'category', 'sequence', or 'coming_soon'
+    filler_category_id = Column(Integer, ForeignKey("categories.id"), nullable=True)  # Category to use as filler
+    filler_sequence_id = Column(Integer, ForeignKey("saved_sequences.id"), nullable=True)  # Sequence to use as filler
+    filler_coming_soon_layout = Column(String, default='grid')  # 'grid' or 'list' for Coming Soon List
+    filler_active = Column(String, nullable=True)  # Tracks active filler: "category:ID", "sequence:ID", "coming_soon:layout", or null
+
     def get_json_value(self, key):
         """Get a JSON value from a column"""
         try:
@@ -295,3 +335,83 @@ class Setting(Base):
             return True
         except:
             return False
+
+
+class APIKey(Base):
+    """API Keys for external system authentication"""
+    __tablename__ = "api_keys"
+
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String, nullable=False)  # User-friendly name for the key
+    key_hash = Column(String, nullable=False, index=True)  # SHA256 hash of the API key
+    key_prefix = Column(String(8), nullable=False)  # First 8 chars for identification (e.g., "nx_abc123")
+    permissions = Column(String, default='full')  # 'read' or 'full'
+    expires_at = Column(DateTime, nullable=True)  # Optional expiration date
+    created_at = Column(DateTime, default=datetime.datetime.utcnow)
+    last_used_at = Column(DateTime, nullable=True)  # Track last usage
+    is_active = Column(Boolean, default=True)  # Soft revoke without deleting
+    description = Column(Text, nullable=True)  # Optional description/notes
+
+
+class User(Base):
+    """User accounts for web UI authentication (optional feature)"""
+    __tablename__ = "users"
+
+    id = Column(Integer, primary_key=True, index=True)
+    username = Column(String, unique=True, nullable=False, index=True)
+    password_hash = Column(String, nullable=False)  # bcrypt hash
+    display_name = Column(String, nullable=True)  # Friendly display name
+    email = Column(String, nullable=True)  # Optional email
+    role = Column(String, default='user')  # 'admin' or 'user'
+    is_active = Column(Boolean, default=True)  # Account enabled/disabled
+    created_at = Column(DateTime, default=datetime.datetime.utcnow)
+    last_login_at = Column(DateTime, nullable=True)  # Track last login
+    failed_login_attempts = Column(Integer, default=0)  # For lockout protection
+    locked_until = Column(DateTime, nullable=True)  # Account lockout timestamp
+
+
+class Session(Base):
+    """User sessions for web UI authentication"""
+    __tablename__ = "sessions"
+
+    id = Column(Integer, primary_key=True, index=True)
+    session_token = Column(String, unique=True, nullable=False, index=True)  # Random token
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    created_at = Column(DateTime, default=datetime.datetime.utcnow)
+    expires_at = Column(DateTime, nullable=False)
+    ip_address = Column(String, nullable=True)  # Client IP for security
+    user_agent = Column(String, nullable=True)  # Browser/client info
+    is_valid = Column(Boolean, default=True)  # Can be invalidated on logout
+
+    user = relationship("User")
+
+
+class AuthAuditLog(Base):
+    """Audit log for authentication events (login, logout, failed attempts)"""
+    __tablename__ = "auth_audit_logs"
+
+    id = Column(Integer, primary_key=True, index=True)
+    timestamp = Column(DateTime, default=datetime.datetime.utcnow, nullable=False, index=True)
+    event_type = Column(String, nullable=False, index=True)  # 'login_success', 'login_failed', 'logout', 'account_locked', 'user_created', 'user_deleted', 'password_changed'
+    username = Column(String, nullable=True, index=True)  # Username involved (nullable for system events)
+    user_id = Column(Integer, nullable=True)  # User ID if applicable
+    ip_address = Column(String, nullable=True)  # Client IP
+    user_agent = Column(String, nullable=True)  # Browser/client info
+    details = Column(String, nullable=True)  # Additional details (e.g., "locked after 5 failed attempts")
+
+
+class LogEntry(Base):
+    """Structured application log entries for the enhanced logging system"""
+    __tablename__ = "log_entries"
+
+    id = Column(Integer, primary_key=True, index=True)
+    timestamp = Column(DateTime, default=datetime.datetime.utcnow, nullable=False, index=True)
+    level = Column(String, nullable=False, index=True)  # 'DEBUG', 'INFO', 'WARNING', 'ERROR', 'CRITICAL'
+    category = Column(String, nullable=False, index=True)  # 'system', 'scheduler', 'api', 'user', 'plex', 'jellyfin', 'nexup'
+    source = Column(String, nullable=True)  # Module/function name (e.g., 'scheduler.apply_prerolls')
+    message = Column(Text, nullable=False)  # Log message
+    details = Column(Text, nullable=True)  # JSON string with additional context
+    request_id = Column(String, nullable=True, index=True)  # Request ID for correlating logs
+    user_id = Column(Integer, nullable=True)  # User ID if action was user-initiated
+    duration_ms = Column(Integer, nullable=True)  # Duration in milliseconds for timed operations
+    ip_address = Column(String, nullable=True)  # Client IP for API requests

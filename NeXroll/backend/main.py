@@ -23,6 +23,8 @@ import uuid
 import time
 import re
 import asyncio
+import secrets
+import bcrypt
 
 class DashboardSection(BaseModel):
     id: str
@@ -212,6 +214,16 @@ def ensure_schema() -> None:
                 ("nexup_last_sonarr_sync", "nexup_last_sonarr_sync DATETIME"),
                 # Max trailer duration filter
                 ("nexup_max_trailer_duration", "nexup_max_trailer_duration INTEGER DEFAULT 180"),
+                # Coming Soon List auto-regeneration settings
+                ("nexup_coming_soon_list_auto_regen", "nexup_coming_soon_list_auto_regen BOOLEAN DEFAULT 0"),
+                ("nexup_coming_soon_list_layout", "nexup_coming_soon_list_layout TEXT DEFAULT 'grid'"),
+                ("nexup_coming_soon_list_source", "nexup_coming_soon_list_source TEXT DEFAULT 'both'"),
+                ("nexup_coming_soon_list_duration", "nexup_coming_soon_list_duration INTEGER DEFAULT 10"),
+                ("nexup_coming_soon_list_max_items", "nexup_coming_soon_list_max_items INTEGER DEFAULT 8"),
+                ("nexup_coming_soon_list_bg_color", "nexup_coming_soon_list_bg_color TEXT DEFAULT '#141428'"),
+                ("nexup_coming_soon_list_text_color", "nexup_coming_soon_list_text_color TEXT DEFAULT '#ffffff'"),
+                ("nexup_coming_soon_list_accent_color", "nexup_coming_soon_list_accent_color TEXT DEFAULT '#00d4ff'"),
+                ("nexup_coming_soon_list_server_name", "nexup_coming_soon_list_server_name TEXT DEFAULT ''"),
             ]
             for col, ddl in nexup_columns:
                 if not _sqlite_has_column("settings", col):
@@ -281,6 +293,155 @@ def ensure_schema() -> None:
             # Schedules: ensure exclusive column for exclusive override mode
             if not _sqlite_has_column("schedules", "exclusive"):
                 _sqlite_add_column("schedules", "exclusive BOOLEAN DEFAULT 0")
+            
+            # Create api_keys table for external API authentication
+            with engine.connect() as conn:
+                conn.exec_driver_sql("""
+                    CREATE TABLE IF NOT EXISTS api_keys (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        name TEXT NOT NULL,
+                        key_hash TEXT NOT NULL,
+                        key_prefix TEXT NOT NULL,
+                        permissions TEXT DEFAULT 'full',
+                        expires_at DATETIME,
+                        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                        last_used_at DATETIME,
+                        is_active BOOLEAN DEFAULT 1,
+                        description TEXT
+                    )
+                """)
+                conn.exec_driver_sql("CREATE INDEX IF NOT EXISTS idx_api_keys_hash ON api_keys(key_hash)")
+                conn.exec_driver_sql("CREATE INDEX IF NOT EXISTS idx_api_keys_prefix ON api_keys(key_prefix)")
+                conn.commit()
+            
+            # Create users table for optional web UI authentication
+            with engine.connect() as conn:
+                conn.exec_driver_sql("""
+                    CREATE TABLE IF NOT EXISTS users (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        username TEXT NOT NULL UNIQUE,
+                        password_hash TEXT NOT NULL,
+                        display_name TEXT,
+                        email TEXT,
+                        role TEXT DEFAULT 'user',
+                        is_active BOOLEAN DEFAULT 1,
+                        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                        last_login_at DATETIME,
+                        failed_login_attempts INTEGER DEFAULT 0,
+                        locked_until DATETIME
+                    )
+                """)
+                conn.exec_driver_sql("CREATE UNIQUE INDEX IF NOT EXISTS idx_users_username ON users(username)")
+                conn.commit()
+            
+            # Create sessions table for user session management
+            with engine.connect() as conn:
+                conn.exec_driver_sql("""
+                    CREATE TABLE IF NOT EXISTS sessions (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        session_token TEXT NOT NULL UNIQUE,
+                        user_id INTEGER NOT NULL,
+                        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                        expires_at DATETIME NOT NULL,
+                        ip_address TEXT,
+                        user_agent TEXT,
+                        is_valid BOOLEAN DEFAULT 1,
+                        FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+                    )
+                """)
+                conn.exec_driver_sql("CREATE UNIQUE INDEX IF NOT EXISTS idx_sessions_token ON sessions(session_token)")
+                conn.exec_driver_sql("CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id)")
+                conn.commit()
+            
+            # Create auth audit log table for authentication event tracking
+            with engine.connect() as conn:
+                conn.exec_driver_sql("""
+                    CREATE TABLE IF NOT EXISTS auth_audit_logs (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
+                        event_type TEXT NOT NULL,
+                        username TEXT,
+                        user_id INTEGER,
+                        ip_address TEXT,
+                        user_agent TEXT,
+                        details TEXT
+                    )
+                """)
+                conn.exec_driver_sql("CREATE INDEX IF NOT EXISTS idx_auth_audit_timestamp ON auth_audit_logs(timestamp)")
+                conn.exec_driver_sql("CREATE INDEX IF NOT EXISTS idx_auth_audit_event ON auth_audit_logs(event_type)")
+                conn.exec_driver_sql("CREATE INDEX IF NOT EXISTS idx_auth_audit_username ON auth_audit_logs(username)")
+                conn.commit()
+            
+            # Add authentication settings columns to settings table
+            auth_columns = [
+                ("auth_enabled", "auth_enabled BOOLEAN DEFAULT 0"),
+                ("auth_session_timeout_hours", "auth_session_timeout_hours INTEGER DEFAULT 24"),
+                ("auth_allow_registration", "auth_allow_registration BOOLEAN DEFAULT 0"),
+                ("auth_require_https", "auth_require_https BOOLEAN DEFAULT 0"),
+            ]
+            for col_name, col_def in auth_columns:
+                if not _sqlite_has_column("settings", col_name):
+                    _sqlite_add_column("settings", col_def)
+            
+            # Add update system settings columns
+            update_columns = [
+                ("update_check_interval", "update_check_interval TEXT DEFAULT 'daily'"),
+                ("update_include_prerelease", "update_include_prerelease BOOLEAN DEFAULT 0"),
+                ("update_last_check", "update_last_check DATETIME"),
+                ("update_dismissed_version", "update_dismissed_version TEXT"),
+            ]
+            for col_name, col_def in update_columns:
+                if not _sqlite_has_column("settings", col_name):
+                    _sqlite_add_column("settings", col_def)
+            
+            # Create log_entries table for enhanced logging system
+            with engine.connect() as conn:
+                conn.exec_driver_sql("""
+                    CREATE TABLE IF NOT EXISTS log_entries (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
+                        level TEXT NOT NULL,
+                        category TEXT NOT NULL,
+                        source TEXT,
+                        message TEXT NOT NULL,
+                        details TEXT,
+                        request_id TEXT,
+                        user_id INTEGER,
+                        duration_ms INTEGER,
+                        ip_address TEXT
+                    )
+                """)
+                conn.exec_driver_sql("CREATE INDEX IF NOT EXISTS idx_log_timestamp ON log_entries(timestamp)")
+                conn.exec_driver_sql("CREATE INDEX IF NOT EXISTS idx_log_level ON log_entries(level)")
+                conn.exec_driver_sql("CREATE INDEX IF NOT EXISTS idx_log_category ON log_entries(category)")
+                conn.exec_driver_sql("CREATE INDEX IF NOT EXISTS idx_log_request ON log_entries(request_id)")
+                conn.commit()
+            
+            # Add enhanced logging settings columns
+            log_columns = [
+                ("log_level", "log_level TEXT DEFAULT 'INFO'"),
+                ("log_retention_days", "log_retention_days INTEGER DEFAULT 30"),
+                ("log_to_database", "log_to_database BOOLEAN DEFAULT 1"),
+                ("log_request_logging", "log_request_logging BOOLEAN DEFAULT 0"),
+                ("log_scheduler_logging", "log_scheduler_logging BOOLEAN DEFAULT 1"),
+                ("log_api_logging", "log_api_logging BOOLEAN DEFAULT 1"),
+            ]
+            for col_name, col_def in log_columns:
+                if not _sqlite_has_column("settings", col_name):
+                    _sqlite_add_column("settings", col_def)
+            
+            # Add filler category settings columns
+            filler_columns = [
+                ("filler_enabled", "filler_enabled BOOLEAN DEFAULT 0"),
+                ("filler_type", "filler_type TEXT DEFAULT 'category'"),
+                ("filler_category_id", "filler_category_id INTEGER"),
+                ("filler_sequence_id", "filler_sequence_id INTEGER"),
+                ("filler_coming_soon_layout", "filler_coming_soon_layout TEXT DEFAULT 'grid'"),
+                ("filler_active", "filler_active TEXT"),
+            ]
+            for col_name, col_def in filler_columns:
+                if not _sqlite_has_column("settings", col_name):
+                    _sqlite_add_column("settings", col_def)
     except Exception as e:
         print(f"Schema ensure error: {e}")
 
@@ -386,6 +547,11 @@ def ensure_settings_schema_now() -> None:
                 "genre_override_ttl_seconds": "INTEGER",
                 "dashboard_tile_order": "TEXT",
                 "dashboard_layout": "TEXT",
+                # Update System Settings
+                "update_check_interval": "TEXT",
+                "update_include_prerelease": "BOOLEAN",
+                "update_last_check": "DATETIME",
+                "update_dismissed_version": "TEXT",
             }
             for col, ddl in need.items():
                 if col not in cols:
@@ -1530,6 +1696,99 @@ async def _log_errors_mw(request, call_next):
     except Exception:
         pass
     return response
+
+
+# Request logging middleware for enhanced logging system
+@app.middleware("http")
+async def _request_logging_mw(request: Request, call_next):
+    """Log API requests with timing for the enhanced logging system"""
+    # Skip logging for static files and certain paths
+    path = request.url.path
+    
+    # Always skip static/asset files
+    skip_always = ('/static/', '/asset-manifest.json', '/manifest.json', '/sw.js', '/favicon.ico', '/logs')
+    if any(path.startswith(sp) for sp in skip_always):
+        return await call_next(request)
+    
+    # Skip common polling/status endpoints to reduce noise (only for GET requests)
+    # These are called frequently for UI updates and don't add debugging value
+    skip_polling = (
+        '/plex/status', '/jellyfin/status', '/settings/active-category',
+        '/scheduler/active-schedule-ids', '/genres/recent-applications',
+        '/system/version', '/system/dependencies', '/system/ffmpeg-info',
+        '/update/settings', '/community-prerolls/index-status',
+        '/community-prerolls/downloaded-ids', '/auth/status'
+    )
+    if request.method == 'GET' and path in skip_polling:
+        return await call_next(request)
+    
+    # Generate request ID for correlation
+    request_id = str(uuid.uuid4())[:8]
+    
+    # Start timing
+    start_time = time.time()
+    
+    try:
+        response = await call_next(request)
+        
+        # Calculate duration
+        duration_ms = int((time.time() - start_time) * 1000)
+        status = getattr(response, "status_code", 200)
+        
+        # Only log to database if request logging is enabled in settings
+        try:
+            log_settings = _get_log_settings()
+            if not log_settings.get("log_request_logging", False):
+                return response  # Skip logging if disabled
+            
+            # Determine log level based on status code
+            if status >= 500:
+                level = "ERROR"
+            elif status >= 400:
+                level = "WARNING"
+            elif duration_ms > 5000:  # Slow request warning
+                level = "WARNING"
+            else:
+                level = "INFO"
+            
+            # Format message
+            message = f"{request.method} {path} - {status} ({duration_ms}ms)"
+            
+            # Log to database in background
+            client_ip = request.client.host if request.client else None
+            log_event(
+                level=level,
+                category="api",
+                message=message,
+                source="request_middleware",
+                request_id=request_id,
+                duration_ms=duration_ms,
+                ip_address=client_ip,
+                details={"method": request.method, "path": path, "status": status}
+            )
+        except Exception:
+            pass  # Don't fail request if logging fails
+        
+        return response
+    except Exception as e:
+        # Log errors
+        duration_ms = int((time.time() - start_time) * 1000)
+        try:
+            client_ip = request.client.host if request.client else None
+            log_event(
+                level="ERROR",
+                category="api",
+                message=f"{request.method} {path} - Exception: {str(e)[:200]}",
+                source="request_middleware",
+                request_id=request_id,
+                duration_ms=duration_ms,
+                ip_address=client_ip
+            )
+        except Exception:
+            pass
+        raise
+
+
 # Cache-busting middleware: prevent stale cached HTML/manifest causing "React App" title
 @app.middleware("http")
 async def _no_cache_index_mw(request, call_next):
@@ -2562,6 +2821,2402 @@ window.addEventListener('DOMContentLoaded', () => {
 </body>
 </html>"""
     return Response(content=html, media_type="text/html")
+
+# ============================================================================
+# API Keys Management - External API Authentication
+# ============================================================================
+
+import secrets
+
+def _generate_api_key() -> str:
+    """Generate a secure random API key with 'nx_' prefix"""
+    # Generate 32 bytes of random data, encode as base64, remove padding
+    random_bytes = secrets.token_bytes(32)
+    key_part = base64.urlsafe_b64encode(random_bytes).decode('utf-8').rstrip('=')
+    return f"nx_{key_part}"
+
+def _hash_api_key(key: str) -> str:
+    """Hash an API key using SHA256"""
+    return hashlib.sha256(key.encode('utf-8')).hexdigest()
+
+def _get_key_prefix(key: str) -> str:
+    """Get the first 8 characters of an API key for display"""
+    return key[:8] if len(key) >= 8 else key
+
+
+@app.get("/api/keys")
+def list_api_keys(db: Session = Depends(get_db)):
+    """List all API keys (without showing full key values)"""
+    keys = db.query(models.APIKey).order_by(models.APIKey.created_at.desc()).all()
+    return {
+        "keys": [
+            {
+                "id": key.id,
+                "name": key.name,
+                "key_prefix": key.key_prefix,
+                "permissions": key.permissions,
+                "expires_at": key.expires_at.isoformat() if key.expires_at else None,
+                "created_at": key.created_at.isoformat() if key.created_at else None,
+                "last_used_at": key.last_used_at.isoformat() if key.last_used_at else None,
+                "is_active": key.is_active,
+                "description": key.description
+            }
+            for key in keys
+        ]
+    }
+
+
+@app.post("/api/keys")
+def create_api_key(
+    name: str = Query(..., description="Friendly name for the API key"),
+    permissions: str = Query("full", description="Permissions: 'read' or 'full'"),
+    expires_days: Optional[int] = Query(None, description="Days until expiration (None = never)"),
+    description: Optional[str] = Query(None, description="Optional description"),
+    db: Session = Depends(get_db)
+):
+    """Create a new API key. The full key is only shown once!"""
+    # Validate permissions
+    if permissions not in ['read', 'full']:
+        raise HTTPException(status_code=400, detail="Permissions must be 'read' or 'full'")
+    
+    # Generate the key
+    raw_key = _generate_api_key()
+    key_hash = _hash_api_key(raw_key)
+    key_prefix = _get_key_prefix(raw_key)
+    
+    # Calculate expiration
+    expires_at = None
+    if expires_days and expires_days > 0:
+        expires_at = datetime.datetime.utcnow() + datetime.timedelta(days=expires_days)
+    
+    # Create the API key record
+    api_key = models.APIKey(
+        name=name,
+        key_hash=key_hash,
+        key_prefix=key_prefix,
+        permissions=permissions,
+        expires_at=expires_at,
+        description=description,
+        is_active=True
+    )
+    db.add(api_key)
+    db.commit()
+    db.refresh(api_key)
+    
+    _file_log(f"API key created: {name} (prefix: {key_prefix})")
+    
+    return {
+        "id": api_key.id,
+        "name": api_key.name,
+        "key": raw_key,  # Only time the full key is shown!
+        "key_prefix": key_prefix,
+        "permissions": permissions,
+        "expires_at": expires_at.isoformat() if expires_at else None,
+        "message": "Save this key now - it will not be shown again!"
+    }
+
+
+@app.put("/api/keys/{key_id}")
+def update_api_key(
+    key_id: int,
+    name: Optional[str] = Query(None),
+    permissions: Optional[str] = Query(None),
+    is_active: Optional[bool] = Query(None),
+    description: Optional[str] = Query(None),
+    db: Session = Depends(get_db)
+):
+    """Update an existing API key's settings"""
+    api_key = db.query(models.APIKey).filter(models.APIKey.id == key_id).first()
+    if not api_key:
+        raise HTTPException(status_code=404, detail="API key not found")
+    
+    if name is not None:
+        api_key.name = name
+    if permissions is not None:
+        if permissions not in ['read', 'full']:
+            raise HTTPException(status_code=400, detail="Permissions must be 'read' or 'full'")
+        api_key.permissions = permissions
+    if is_active is not None:
+        api_key.is_active = is_active
+    if description is not None:
+        api_key.description = description
+    
+    db.commit()
+    
+    return {"success": True, "message": "API key updated"}
+
+
+@app.delete("/api/keys/{key_id}")
+def delete_api_key(key_id: int, db: Session = Depends(get_db)):
+    """Permanently delete an API key"""
+    api_key = db.query(models.APIKey).filter(models.APIKey.id == key_id).first()
+    if not api_key:
+        raise HTTPException(status_code=404, detail="API key not found")
+    
+    key_name = api_key.name
+    key_prefix = api_key.key_prefix
+    db.delete(api_key)
+    db.commit()
+    
+    _file_log(f"API key deleted: {key_name} (prefix: {key_prefix})")
+    
+    return {"success": True, "message": "API key deleted"}
+
+
+def validate_api_key(api_key: str, required_permission: str = "read", db: Session = None) -> Optional[models.APIKey]:
+    """
+    Validate an API key and return the APIKey object if valid.
+    Returns None if invalid.
+    """
+    if not api_key:
+        return None
+    
+    key_hash = _hash_api_key(api_key)
+    
+    # Query for matching key
+    key_record = db.query(models.APIKey).filter(
+        models.APIKey.key_hash == key_hash,
+        models.APIKey.is_active == True
+    ).first()
+    
+    if not key_record:
+        return None
+    
+    # Check expiration
+    if key_record.expires_at and key_record.expires_at < datetime.datetime.utcnow():
+        return None
+    
+    # Check permissions
+    if required_permission == "full" and key_record.permissions != "full":
+        return None
+    
+    # Update last used timestamp
+    key_record.last_used_at = datetime.datetime.utcnow()
+    db.commit()
+    
+    return key_record
+
+
+@app.get("/api/keys/validate")
+def validate_api_key_endpoint(
+    api_key: str = Query(..., description="The API key to validate"),
+    db: Session = Depends(get_db)
+):
+    """Validate an API key and return its permissions"""
+    key_record = validate_api_key(api_key, "read", db)
+    
+    if not key_record:
+        return {"valid": False, "message": "Invalid or expired API key"}
+    
+    return {
+        "valid": True,
+        "name": key_record.name,
+        "permissions": key_record.permissions,
+        "expires_at": key_record.expires_at.isoformat() if key_record.expires_at else None
+    }
+
+
+# FastAPI dependency for API key authentication
+# Use: Depends(require_api_key) or Depends(require_api_key_full)
+
+from fastapi.security import APIKeyHeader, APIKeyQuery
+
+api_key_header = APIKeyHeader(name="X-Api-Key", auto_error=False)
+api_key_query = APIKeyQuery(name="api_key", auto_error=False)
+
+
+async def get_api_key(
+    api_key_header_value: Optional[str] = Depends(api_key_header),
+    api_key_query_value: Optional[str] = Depends(api_key_query)
+) -> Optional[str]:
+    """Extract API key from header or query parameter"""
+    return api_key_header_value or api_key_query_value
+
+
+async def require_api_key(
+    api_key: Optional[str] = Depends(get_api_key),
+    db: Session = Depends(get_db)
+) -> models.APIKey:
+    """
+    Dependency that requires a valid API key (read or full permission).
+    Use: Depends(require_api_key)
+    """
+    if not api_key:
+        raise HTTPException(
+            status_code=401,
+            detail="API key required. Provide via X-Api-Key header or api_key query parameter."
+        )
+    
+    key_record = validate_api_key(api_key, "read", db)
+    if not key_record:
+        raise HTTPException(status_code=401, detail="Invalid or expired API key")
+    
+    return key_record
+
+
+async def require_api_key_full(
+    api_key: Optional[str] = Depends(get_api_key),
+    db: Session = Depends(get_db)
+) -> models.APIKey:
+    """
+    Dependency that requires a valid API key with FULL permission.
+    Use: Depends(require_api_key_full)
+    """
+    if not api_key:
+        raise HTTPException(
+            status_code=401,
+            detail="API key required. Provide via X-Api-Key header or api_key query parameter."
+        )
+    
+    key_record = validate_api_key(api_key, "full", db)
+    if not key_record:
+        raise HTTPException(status_code=401, detail="Invalid, expired, or insufficient permissions")
+    
+    return key_record
+
+
+async def optional_api_key(
+    api_key: Optional[str] = Depends(get_api_key),
+    db: Session = Depends(get_db)
+) -> Optional[models.APIKey]:
+    """
+    Dependency that optionally validates API key if provided.
+    Returns None if no key provided, key_record if valid, raises error if invalid.
+    Use: Depends(optional_api_key)
+    """
+    if not api_key:
+        return None
+    
+    key_record = validate_api_key(api_key, "read", db)
+    if not key_record:
+        raise HTTPException(status_code=401, detail="Invalid or expired API key")
+    
+    return key_record
+
+
+# ============================================================================
+# External API Endpoints (require API key authentication)
+# ============================================================================
+
+@app.get("/external/status")
+async def external_status(
+    api_key_record: models.APIKey = Depends(require_api_key),
+    db: Session = Depends(get_db)
+):
+    """
+    Get NeXroll system status via external API.
+    Requires API key authentication.
+    """
+    settings = db.query(models.Setting).first()
+    preroll_count = db.query(models.Preroll).count()
+    category_count = db.query(models.Category).count()
+    schedule_count = db.query(models.Schedule).count()
+    
+    return {
+        "status": "ok",
+        "version": getattr(app, "version", "unknown"),
+        "authenticated_as": api_key_record.name,
+        "permissions": api_key_record.permissions,
+        "plex_connected": bool(settings and settings.plex_url),
+        "jellyfin_connected": bool(settings and settings.jellyfin_url),
+        "preroll_count": preroll_count,
+        "category_count": category_count,
+        "schedule_count": schedule_count
+    }
+
+
+@app.get("/external/prerolls")
+async def external_list_prerolls(
+    api_key_record: models.APIKey = Depends(require_api_key),
+    db: Session = Depends(get_db)
+):
+    """
+    List all prerolls via external API.
+    Requires API key authentication.
+    """
+    prerolls = db.query(models.Preroll).all()
+    return {
+        "count": len(prerolls),
+        "prerolls": [
+            {
+                "id": p.id,
+                "filename": p.filename,
+                "display_name": p.display_name,
+                "path": p.path,
+                "duration": p.duration,
+                "file_size": p.file_size
+            }
+            for p in prerolls
+        ]
+    }
+
+
+@app.get("/external/schedules")
+async def external_list_schedules(
+    api_key_record: models.APIKey = Depends(require_api_key),
+    db: Session = Depends(get_db)
+):
+    """
+    List all schedules via external API.
+    Requires API key authentication.
+    """
+    schedules = db.query(models.Schedule).all()
+    return {
+        "count": len(schedules),
+        "schedules": [
+            {
+                "id": s.id,
+                "name": s.name,
+                "schedule_type": s.schedule_type,
+                "enabled": s.enabled,
+                "start_date": s.start_date.isoformat() if s.start_date else None,
+                "end_date": s.end_date.isoformat() if s.end_date else None
+            }
+            for s in schedules
+        ]
+    }
+
+
+@app.post("/external/sync-plex")
+async def external_sync_plex(
+    api_key_record: models.APIKey = Depends(require_api_key_full),
+    db: Session = Depends(get_db)
+):
+    """
+    Trigger Plex preroll sync via external API.
+    Requires API key with FULL permissions.
+    """
+    settings = db.query(models.Setting).first()
+    if not settings or not settings.plex_url:
+        raise HTTPException(status_code=400, detail="Plex not configured")
+    
+    try:
+        connector = PlexConnector(settings.plex_url, settings.plex_token)
+        scheduler.sync_prerolls_to_plex()
+        return {"success": True, "message": "Plex sync triggered"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Sync failed: {str(e)}")
+
+
+@app.get("/external/now-showing")
+async def external_now_showing(
+    api_key_record: models.APIKey = Depends(require_api_key),
+    db: Session = Depends(get_db)
+):
+    """
+    Get currently active category and preroll information.
+    Shows what is currently applied to Plex.
+    """
+    setting = db.query(models.Setting).first()
+    
+    # Get active category
+    active_category = None
+    if setting and getattr(setting, "active_category", None):
+        category = db.query(models.Category).filter(
+            models.Category.id == setting.active_category
+        ).first()
+        if category:
+            # Get preroll count for this category
+            preroll_count = db.query(models.Preroll).filter(
+                models.Preroll.category_id == category.id
+            ).count()
+            active_category = {
+                "id": category.id,
+                "name": category.name,
+                "plex_mode": getattr(category, "plex_mode", "shuffle"),
+                "preroll_count": preroll_count
+            }
+    
+    # Get current preroll string from Plex
+    current_preroll = None
+    if setting and setting.plex_url:
+        try:
+            connector = PlexConnector(setting.plex_url, setting.plex_token)
+            current_preroll = connector.get_current_preroll()
+        except Exception:
+            pass
+    
+    # Get currently active schedules
+    active_schedules = []
+    try:
+        if hasattr(scheduler, '_get_active_schedules'):
+            for s in scheduler._get_active_schedules():
+                active_schedules.append({
+                    "id": s.id,
+                    "name": s.name,
+                    "schedule_type": s.schedule_type
+                })
+    except Exception:
+        pass
+    
+    return {
+        "active_category": active_category,
+        "current_preroll_string": current_preroll,
+        "has_preroll": bool(current_preroll),
+        "active_schedules": active_schedules,
+        "active_schedule_count": len(active_schedules)
+    }
+
+
+@app.get("/external/active-schedules")
+async def external_active_schedules(
+    api_key_record: models.APIKey = Depends(require_api_key),
+    db: Session = Depends(get_db)
+):
+    """
+    Get detailed information about currently active schedules.
+    """
+    active_schedules = []
+    try:
+        if hasattr(scheduler, '_get_active_schedules'):
+            for s in scheduler._get_active_schedules():
+                # Get associated category info
+                category_info = None
+                if s.category_id:
+                    cat = db.query(models.Category).filter(models.Category.id == s.category_id).first()
+                    if cat:
+                        category_info = {"id": cat.id, "name": cat.name}
+                
+                active_schedules.append({
+                    "id": s.id,
+                    "name": s.name,
+                    "schedule_type": s.schedule_type,
+                    "category": category_info,
+                    "start_date": s.start_date.isoformat() if s.start_date else None,
+                    "end_date": s.end_date.isoformat() if s.end_date else None,
+                    "enabled": s.enabled
+                })
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error fetching schedules: {str(e)}")
+    
+    return {
+        "active_schedules": active_schedules,
+        "count": len(active_schedules)
+    }
+
+
+@app.get("/external/categories")
+async def external_categories(
+    api_key_record: models.APIKey = Depends(require_api_key),
+    db: Session = Depends(get_db)
+):
+    """
+    Get all categories with preroll counts.
+    """
+    categories = db.query(models.Category).all()
+    result = []
+    
+    for cat in categories:
+        preroll_count = db.query(models.Preroll).filter(
+            models.Preroll.category_id == cat.id
+        ).count()
+        result.append({
+            "id": cat.id,
+            "name": cat.name,
+            "plex_mode": getattr(cat, "plex_mode", "shuffle"),
+            "is_system": getattr(cat, "is_system", False),
+            "preroll_count": preroll_count
+        })
+    
+    return {"categories": result, "count": len(result)}
+
+
+@app.get("/external/coming-soon")
+async def external_coming_soon(
+    source: str = "both",
+    limit: int = 10,
+    api_key_record: models.APIKey = Depends(require_api_key),
+    db: Session = Depends(get_db)
+):
+    """
+    Get upcoming movies and TV shows from NeX-Up (Radarr/Sonarr).
+    
+    Parameters:
+    - source: "movies", "shows", or "both"
+    - limit: Maximum items to return (default 10)
+    """
+    from datetime import datetime, timedelta
+    
+    result = {"movies": [], "shows": []}
+    today = datetime.now().date()
+    
+    # Get upcoming movies from Radarr trailers
+    if source in ["movies", "both"]:
+        try:
+            trailers = db.query(models.ComingSoonTrailer).filter(
+                models.ComingSoonTrailer.physical_release_date >= today
+            ).order_by(
+                models.ComingSoonTrailer.physical_release_date.asc()
+            ).limit(limit).all()
+            
+            for t in trailers:
+                result["movies"].append({
+                    "title": t.movie_title,
+                    "release_date": t.physical_release_date.isoformat() if t.physical_release_date else None,
+                    "year": t.year,
+                    "has_trailer": t.status == "downloaded" and t.local_path is not None,
+                    "tmdb_id": t.tmdb_id
+                })
+        except Exception:
+            pass
+    
+    # Get upcoming TV shows from Sonarr
+    if source in ["shows", "both"]:
+        try:
+            # Query coming_soon_tv_trailers table
+            from sqlalchemy import text
+            tv_query = text("""
+                SELECT series_title, air_date, tvdb_id, status, local_path
+                FROM coming_soon_tv_trailers
+                WHERE air_date >= :today
+                ORDER BY air_date ASC
+                LIMIT :limit
+            """)
+            tv_results = db.execute(tv_query, {"today": today.isoformat(), "limit": limit}).fetchall()
+            
+            for row in tv_results:
+                result["shows"].append({
+                    "title": row[0],
+                    "air_date": row[1],
+                    "tvdb_id": row[2],
+                    "has_trailer": row[3] == "downloaded" and row[4] is not None
+                })
+        except Exception:
+            pass
+    
+    return {
+        "coming_soon": result,
+        "movie_count": len(result["movies"]),
+        "show_count": len(result["shows"])
+    }
+
+
+@app.get("/external/sequences")
+async def external_sequences(
+    api_key_record: models.APIKey = Depends(require_api_key),
+    db: Session = Depends(get_db)
+):
+    """
+    Get all saved sequences.
+    """
+    sequences = db.query(models.SavedSequence).all()
+    result = []
+    
+    for seq in sequences:
+        result.append({
+            "id": seq.id,
+            "name": seq.name,
+            "description": getattr(seq, "description", None),
+            "created_at": seq.created_at.isoformat() if seq.created_at else None
+        })
+    
+    return {"sequences": result, "count": len(result)}
+
+
+# =============================================================================
+# External API - Write Operations (require FULL access)
+# =============================================================================
+
+class ExternalCategoryCreate(BaseModel):
+    name: str
+    description: Optional[str] = None
+    plex_mode: Optional[str] = "shuffle"
+
+
+class ExternalPrerollRegister(BaseModel):
+    path: str  # Absolute path to the video file
+    display_name: Optional[str] = None
+    category_id: Optional[int] = None
+    tags: Optional[List[str]] = None
+
+
+class ExternalScheduleCreate(BaseModel):
+    name: str
+    schedule_type: str = "date_range"  # date_range, daily, weekly, monthly, yearly
+    start_date: str  # ISO format datetime
+    end_date: Optional[str] = None
+    category_id: Optional[int] = None
+    sequence_id: Optional[int] = None
+    fallback_category_id: Optional[int] = None
+    priority: int = 5
+    blend_enabled: bool = False
+    exclusive: bool = False
+    enabled: bool = True
+
+
+@app.post("/external/categories")
+async def external_create_category(
+    category: ExternalCategoryCreate,
+    api_key_record: models.APIKey = Depends(require_api_key_full),
+    db: Session = Depends(get_db)
+):
+    """
+    Create a new category via external API.
+    Requires API key with FULL permissions.
+    """
+    name = (category.name or "").strip()
+    if not name:
+        raise HTTPException(status_code=422, detail="Category name is required")
+    
+    # Check for duplicate
+    existing = db.query(models.Category).filter(models.Category.name == name).first()
+    if existing:
+        raise HTTPException(status_code=409, detail="Category with this name already exists")
+    
+    # Normalize plex_mode
+    mode = (category.plex_mode or "shuffle").strip().lower()
+    if mode not in ("shuffle", "playlist"):
+        mode = "shuffle"
+    
+    db_category = models.Category(
+        name=name,
+        description=(category.description or "").strip() or None,
+        plex_mode=mode,
+        apply_to_plex=False
+    )
+    
+    try:
+        db.add(db_category)
+        db.commit()
+        db.refresh(db_category)
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"Failed to create category: {str(e)}")
+    
+    return {
+        "success": True,
+        "category": {
+            "id": db_category.id,
+            "name": db_category.name,
+            "description": db_category.description,
+            "plex_mode": db_category.plex_mode
+        }
+    }
+
+
+@app.post("/external/prerolls/register")
+async def external_register_preroll(
+    preroll: ExternalPrerollRegister,
+    api_key_record: models.APIKey = Depends(require_api_key_full),
+    db: Session = Depends(get_db)
+):
+    """
+    Register an existing video file as a preroll.
+    The file must exist on the server's filesystem.
+    Requires API key with FULL permissions.
+    """
+    path = (preroll.path or "").strip()
+    if not path:
+        raise HTTPException(status_code=422, detail="File path is required")
+    
+    # Check file exists
+    if not os.path.exists(path):
+        raise HTTPException(status_code=404, detail=f"File not found: {path}")
+    
+    # Check if already registered
+    existing = db.query(models.Preroll).filter(models.Preroll.path == path).first()
+    if existing:
+        return {
+            "success": True,
+            "already_exists": True,
+            "preroll": {
+                "id": existing.id,
+                "filename": existing.filename,
+                "display_name": existing.display_name,
+                "path": existing.path
+            }
+        }
+    
+    # Get category if specified
+    category_id = preroll.category_id
+    if category_id:
+        category = db.query(models.Category).filter(models.Category.id == category_id).first()
+        if not category:
+            raise HTTPException(status_code=404, detail=f"Category not found: {category_id}")
+    
+    # Create preroll record
+    filename = os.path.basename(path)
+    display_name = preroll.display_name or os.path.splitext(filename)[0].replace('_', ' ').replace('-', ' ').title()
+    tags = json.dumps(preroll.tags) if preroll.tags else "[]"
+    
+    db_preroll = models.Preroll(
+        filename=filename,
+        path=path,
+        display_name=display_name,
+        category_id=category_id,
+        thumbnail="",
+        tags=tags,
+        managed=False  # External files are not managed by NeXroll
+    )
+    
+    try:
+        db.add(db_preroll)
+        db.commit()
+        db.refresh(db_preroll)
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"Failed to register preroll: {str(e)}")
+    
+    return {
+        "success": True,
+        "preroll": {
+            "id": db_preroll.id,
+            "filename": db_preroll.filename,
+            "display_name": db_preroll.display_name,
+            "path": db_preroll.path,
+            "category_id": db_preroll.category_id
+        }
+    }
+
+
+@app.post("/external/prerolls/{preroll_id}/assign-category/{category_id}")
+async def external_assign_preroll_category(
+    preroll_id: int,
+    category_id: int,
+    api_key_record: models.APIKey = Depends(require_api_key_full),
+    db: Session = Depends(get_db)
+):
+    """
+    Assign a preroll to a category.
+    Requires API key with FULL permissions.
+    """
+    preroll = db.query(models.Preroll).filter(models.Preroll.id == preroll_id).first()
+    if not preroll:
+        raise HTTPException(status_code=404, detail="Preroll not found")
+    
+    category = db.query(models.Category).filter(models.Category.id == category_id).first()
+    if not category:
+        raise HTTPException(status_code=404, detail="Category not found")
+    
+    # Add to categories (many-to-many)
+    try:
+        assigned_ids = {c.id for c in (preroll.categories or [])}
+        if category_id not in assigned_ids:
+            preroll.categories = (preroll.categories or []) + [category]
+        db.commit()
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"Failed to assign category: {str(e)}")
+    
+    return {
+        "success": True,
+        "preroll_id": preroll_id,
+        "category_id": category_id,
+        "category_name": category.name
+    }
+
+
+@app.post("/external/schedules")
+async def external_create_schedule(
+    schedule: ExternalScheduleCreate,
+    api_key_record: models.APIKey = Depends(require_api_key_full),
+    db: Session = Depends(get_db)
+):
+    """
+    Create a new schedule via external API.
+    Requires API key with FULL permissions.
+    
+    schedule_type options: date_range, daily, weekly, monthly, yearly
+    """
+    name = (schedule.name or "").strip()
+    if not name:
+        raise HTTPException(status_code=422, detail="Schedule name is required")
+    
+    # Must have category or sequence
+    if not schedule.category_id and not schedule.sequence_id:
+        raise HTTPException(status_code=400, detail="Schedule must have either category_id or sequence_id")
+    
+    # Validate category if provided
+    if schedule.category_id:
+        category = db.query(models.Category).filter(models.Category.id == schedule.category_id).first()
+        if not category:
+            raise HTTPException(status_code=404, detail=f"Category not found: {schedule.category_id}")
+    
+    # Validate fallback category if provided
+    if schedule.fallback_category_id:
+        fallback = db.query(models.Category).filter(models.Category.id == schedule.fallback_category_id).first()
+        if not fallback:
+            raise HTTPException(status_code=404, detail=f"Fallback category not found: {schedule.fallback_category_id}")
+    
+    # Parse dates
+    try:
+        start_date = None
+        if schedule.start_date:
+            sd = schedule.start_date
+            if 'Z' in sd:
+                sd = sd.replace('Z', '')
+            if '+' in sd and 'T' in sd:
+                sd = sd.split('+')[0]
+            start_date = datetime.datetime.fromisoformat(sd)
+        
+        end_date = None
+        if schedule.end_date:
+            ed = schedule.end_date
+            if 'Z' in ed:
+                ed = ed.replace('Z', '')
+            if '+' in ed and 'T' in ed:
+                ed = ed.split('+')[0]
+            end_date = datetime.datetime.fromisoformat(ed)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=f"Invalid date format: {str(e)}")
+    
+    # Build sequence JSON if sequence_id provided
+    sequence_json = None
+    if schedule.sequence_id:
+        saved_seq = db.query(models.SavedSequence).filter(models.SavedSequence.id == schedule.sequence_id).first()
+        if not saved_seq:
+            raise HTTPException(status_code=404, detail=f"Sequence not found: {schedule.sequence_id}")
+        sequence_json = saved_seq.sequence_data
+    
+    db_schedule = models.Schedule(
+        name=name,
+        type=schedule.schedule_type,
+        start_date=start_date,
+        end_date=end_date,
+        category_id=schedule.category_id,
+        fallback_category_id=schedule.fallback_category_id,
+        sequence=sequence_json,
+        is_active=schedule.enabled,
+        blend_enabled=schedule.blend_enabled,
+        priority=schedule.priority,
+        exclusive=schedule.exclusive
+    )
+    
+    try:
+        db.add(db_schedule)
+        db.commit()
+        db.refresh(db_schedule)
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"Failed to create schedule: {str(e)}")
+    
+    return {
+        "success": True,
+        "schedule": {
+            "id": db_schedule.id,
+            "name": db_schedule.name,
+            "type": db_schedule.type,
+            "start_date": db_schedule.start_date.isoformat() if db_schedule.start_date else None,
+            "end_date": db_schedule.end_date.isoformat() if db_schedule.end_date else None,
+            "category_id": db_schedule.category_id,
+            "enabled": db_schedule.is_active,
+            "priority": db_schedule.priority
+        }
+    }
+
+
+@app.delete("/external/schedules/{schedule_id}")
+async def external_delete_schedule(
+    schedule_id: int,
+    api_key_record: models.APIKey = Depends(require_api_key_full),
+    db: Session = Depends(get_db)
+):
+    """
+    Delete a schedule via external API.
+    Requires API key with FULL permissions.
+    """
+    schedule = db.query(models.Schedule).filter(models.Schedule.id == schedule_id).first()
+    if not schedule:
+        raise HTTPException(status_code=404, detail="Schedule not found")
+    
+    try:
+        db.delete(schedule)
+        db.commit()
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"Failed to delete schedule: {str(e)}")
+    
+    return {"success": True, "message": f"Schedule {schedule_id} deleted"}
+
+
+@app.put("/external/schedules/{schedule_id}/toggle")
+async def external_toggle_schedule(
+    schedule_id: int,
+    enabled: bool = True,
+    api_key_record: models.APIKey = Depends(require_api_key_full),
+    db: Session = Depends(get_db)
+):
+    """
+    Enable or disable a schedule via external API.
+    Requires API key with FULL permissions.
+    """
+    schedule = db.query(models.Schedule).filter(models.Schedule.id == schedule_id).first()
+    if not schedule:
+        raise HTTPException(status_code=404, detail="Schedule not found")
+    
+    schedule.is_active = enabled
+    
+    try:
+        db.commit()
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"Failed to update schedule: {str(e)}")
+    
+    return {
+        "success": True,
+        "schedule_id": schedule_id,
+        "enabled": enabled
+    }
+
+
+@app.post("/external/apply-category/{category_id}")
+async def external_apply_category(
+    category_id: int,
+    api_key_record: models.APIKey = Depends(require_api_key_full),
+    db: Session = Depends(get_db)
+):
+    """
+    Apply a category's prerolls to Plex immediately.
+    Requires API key with FULL permissions.
+    """
+    category = db.query(models.Category).filter(models.Category.id == category_id).first()
+    if not category:
+        raise HTTPException(status_code=404, detail="Category not found")
+    
+    setting = db.query(models.Setting).first()
+    if not setting or not setting.plex_url:
+        raise HTTPException(status_code=400, detail="Plex not configured")
+    
+    # Get prerolls for this category
+    prerolls = db.query(models.Preroll).filter(models.Preroll.category_id == category_id).all()
+    if not prerolls:
+        raise HTTPException(status_code=400, detail="Category has no prerolls")
+    
+    # Build preroll string
+    paths = [p.path for p in prerolls if p.path and os.path.exists(p.path)]
+    if not paths:
+        raise HTTPException(status_code=400, detail="No valid preroll files found")
+    
+    plex_mode = getattr(category, "plex_mode", "shuffle")
+    if plex_mode == "playlist":
+        preroll_string = ",".join(paths)
+    else:
+        preroll_string = ";".join(paths)
+    
+    # Apply to Plex
+    try:
+        connector = PlexConnector(setting.plex_url, setting.plex_token)
+        connector.set_preroll(preroll_string)
+        
+        # Update active category
+        setting.active_category = category_id
+        db.commit()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to apply to Plex: {str(e)}")
+    
+    return {
+        "success": True,
+        "category_id": category_id,
+        "category_name": category.name,
+        "preroll_count": len(paths),
+        "plex_mode": plex_mode
+    }
+
+
+# =============================================================================
+# Authentication System (Optional - disabled by default)
+# =============================================================================
+
+class LoginRequest(BaseModel):
+    username: str
+    password: str
+    remember_me: bool = False
+
+
+class RegisterRequest(BaseModel):
+    username: str
+    password: str
+    display_name: Optional[str] = None
+    role: Optional[str] = 'user'
+
+
+class ChangePasswordRequest(BaseModel):
+    current_password: str
+    new_password: str
+
+
+def _hash_password(password: str) -> str:
+    """Hash a password using bcrypt"""
+    return bcrypt.hashpw(password.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
+
+
+def _verify_password(password: str, hashed: str) -> bool:
+    """Verify a password against its hash"""
+    try:
+        return bcrypt.checkpw(password.encode('utf-8'), hashed.encode('utf-8'))
+    except Exception:
+        return False
+
+
+def _generate_session_token() -> str:
+    """Generate a cryptographically secure session token"""
+    return secrets.token_urlsafe(32)
+
+
+def _get_client_info(request: Request) -> tuple:
+    """Extract client IP and user agent from request"""
+    ip = request.client.host if request.client else None
+    user_agent = request.headers.get("user-agent", "")[:500]  # Limit length
+    return ip, user_agent
+
+
+def _log_auth_event(db: Session, event_type: str, username: str = None, user_id: int = None, 
+                    ip_address: str = None, user_agent: str = None, details: str = None):
+    """Log an authentication event to the audit log"""
+    try:
+        log_entry = models.AuthAuditLog(
+            event_type=event_type,
+            username=username,
+            user_id=user_id,
+            ip_address=ip_address,
+            user_agent=user_agent[:500] if user_agent else None,  # Limit length
+            details=details[:1000] if details else None  # Limit length
+        )
+        db.add(log_entry)
+        db.commit()
+    except Exception as e:
+        print(f"Failed to log auth event: {e}")
+        # Don't fail the main operation if logging fails
+        db.rollback()
+
+
+# ============== Enhanced Logging System ==============
+# Log levels hierarchy: DEBUG < INFO < WARNING < ERROR < CRITICAL
+LOG_LEVEL_PRIORITY = {"DEBUG": 10, "INFO": 20, "WARNING": 30, "ERROR": 40, "CRITICAL": 50}
+
+def _get_log_settings(db: Session = None) -> dict:
+    """Get current logging settings from database"""
+    close_db = False
+    if db is None:
+        db = SessionLocal()
+        close_db = True
+    try:
+        setting = db.query(models.Setting).first()
+        return {
+            "log_level": getattr(setting, 'log_level', 'INFO') or 'INFO',
+            "log_retention_days": getattr(setting, 'log_retention_days', 30) or 30,
+            "log_to_database": getattr(setting, 'log_to_database', True),
+            "log_request_logging": getattr(setting, 'log_request_logging', False),
+            "log_scheduler_logging": getattr(setting, 'log_scheduler_logging', True),
+            "log_api_logging": getattr(setting, 'log_api_logging', True),
+        }
+    finally:
+        if close_db:
+            db.close()
+
+
+def _should_log(level: str, settings: dict = None) -> bool:
+    """Check if a log level should be logged based on current settings"""
+    if settings is None:
+        settings = _get_log_settings()
+    min_level = settings.get("log_level", "INFO")
+    return LOG_LEVEL_PRIORITY.get(level, 0) >= LOG_LEVEL_PRIORITY.get(min_level, 20)
+
+
+def log_event(level: str, category: str, message: str, source: str = None, 
+              details: dict = None, request_id: str = None, user_id: int = None,
+              duration_ms: int = None, ip_address: str = None, db: Session = None):
+    """
+    Log an event to the database for the enhanced logging system.
+    
+    Args:
+        level: DEBUG, INFO, WARNING, ERROR, or CRITICAL
+        category: system, scheduler, api, user, plex, jellyfin, nexup
+        message: Human-readable log message
+        source: Module/function name (e.g., 'scheduler.apply_prerolls')
+        details: Optional dict of additional context
+        request_id: Optional request ID for correlation
+        user_id: Optional user ID if user-initiated
+        duration_ms: Optional duration in ms for timed operations
+        ip_address: Optional client IP
+        db: Optional database session (will create one if not provided)
+    """
+    close_db = False
+    if db is None:
+        db = SessionLocal()
+        close_db = True
+    
+    try:
+        settings = _get_log_settings(db)
+        
+        # Check if database logging is enabled
+        if not settings.get("log_to_database", True):
+            return
+        
+        # Check log level threshold
+        if not _should_log(level, settings):
+            return
+        
+        # Check category-specific settings
+        if category == "scheduler" and not settings.get("log_scheduler_logging", True):
+            return
+        if category == "api" and not settings.get("log_api_logging", True):
+            return
+        
+        # Create log entry
+        log_entry = models.LogEntry(
+            level=level.upper(),
+            category=category,
+            source=source[:200] if source else None,
+            message=message[:2000] if message else "",  # Limit message length
+            details=json.dumps(details)[:5000] if details else None,
+            request_id=request_id[:100] if request_id else None,
+            user_id=user_id,
+            duration_ms=duration_ms,
+            ip_address=ip_address[:50] if ip_address else None
+        )
+        db.add(log_entry)
+        db.commit()
+    except Exception as e:
+        print(f"Failed to log event: {e}")
+        db.rollback()
+    finally:
+        if close_db:
+            db.close()
+
+
+def cleanup_old_logs(retention_days: int = None, db: Session = None):
+    """Remove logs older than retention period"""
+    close_db = False
+    if db is None:
+        db = SessionLocal()
+        close_db = True
+    
+    try:
+        if retention_days is None:
+            settings = _get_log_settings(db)
+            retention_days = settings.get("log_retention_days", 30)
+        
+        cutoff = datetime.datetime.utcnow() - datetime.timedelta(days=retention_days)
+        deleted = db.query(models.LogEntry).filter(
+            models.LogEntry.timestamp < cutoff
+        ).delete(synchronize_session=False)
+        db.commit()
+        return deleted
+    except Exception as e:
+        print(f"Failed to cleanup logs: {e}")
+        db.rollback()
+        return 0
+    finally:
+        if close_db:
+            db.close()
+
+
+def _is_local_request(request: Request) -> bool:
+    """Check if request is from localhost (trusted local access)"""
+    client_ip = request.client.host if request.client else ""
+    # Check for localhost addresses
+    local_ips = ("127.0.0.1", "::1", "localhost")
+    # Also check X-Forwarded-For in case of proxy
+    forwarded = request.headers.get("X-Real-IP") or request.headers.get("X-Forwarded-For", "").split(",")[0].strip()
+    return client_ip in local_ips or forwarded in local_ips
+
+
+def _check_auth_enabled(db: Session) -> bool:
+    """Check if authentication is enabled"""
+    setting = db.query(models.Setting).first()
+    return getattr(setting, 'auth_enabled', False) if setting else False
+
+
+def _validate_session(session_token: str, db: Session) -> Optional[models.User]:
+    """Validate a session token and return the user if valid"""
+    if not session_token:
+        return None
+    
+    session = db.query(models.Session).filter(
+        models.Session.session_token == session_token,
+        models.Session.is_valid == True,
+        models.Session.expires_at > datetime.datetime.utcnow()
+    ).first()
+    
+    if not session:
+        return None
+    
+    user = db.query(models.User).filter(
+        models.User.id == session.user_id,
+        models.User.is_active == True
+    ).first()
+    
+    return user
+
+
+def get_current_user_optional(request: Request, db: Session = Depends(get_db)) -> Optional[models.User]:
+    """Get current user from session cookie if auth is enabled, otherwise return None"""
+    if not _check_auth_enabled(db):
+        return None  # Auth disabled, no user check needed
+    
+    session_token = request.cookies.get("nexroll_session")
+    return _validate_session(session_token, db) if session_token else None
+
+
+def require_auth(request: Request, db: Session = Depends(get_db)) -> models.User:
+    """Require authentication if enabled - returns user or raises 401"""
+    if not _check_auth_enabled(db):
+        # Auth disabled, return a virtual admin user
+        return None
+    
+    session_token = request.cookies.get("nexroll_session")
+    user = _validate_session(session_token, db) if session_token else None
+    
+    if not user:
+        raise HTTPException(status_code=401, detail="Authentication required")
+    
+    return user
+
+
+@app.get("/auth/status")
+async def auth_status(request: Request, db: Session = Depends(get_db)):
+    """
+    Check authentication status and whether auth is enabled.
+    This endpoint is always accessible (needed for login page to know if auth is required).
+    """
+    setting = db.query(models.Setting).first()
+    auth_enabled = getattr(setting, 'auth_enabled', False) if setting else False
+    
+    # Check if user is logged in
+    user = None
+    if auth_enabled:
+        session_token = request.cookies.get("nexroll_session")
+        user = _validate_session(session_token, db) if session_token else None
+    
+    # Check if any users exist (for first-time setup)
+    user_count = db.query(models.User).count()
+    
+    return {
+        "auth_enabled": auth_enabled,
+        "authenticated": user is not None,
+        "user": {
+            "id": user.id,
+            "username": user.username,
+            "display_name": user.display_name,
+            "role": user.role
+        } if user else None,
+        "users_exist": user_count > 0,
+        "allow_registration": getattr(setting, 'auth_allow_registration', False) if setting else False
+    }
+
+
+@app.post("/auth/login")
+async def auth_login(
+    request: Request,
+    login: LoginRequest,
+    db: Session = Depends(get_db)
+):
+    """
+    Login with username and password.
+    Returns session cookie on success.
+    """
+    setting = db.query(models.Setting).first()
+    if not setting or not getattr(setting, 'auth_enabled', False):
+        raise HTTPException(status_code=400, detail="Authentication is not enabled")
+    
+    ip, user_agent = _get_client_info(request)
+    
+    # Find user
+    user = db.query(models.User).filter(
+        models.User.username == login.username.strip().lower()
+    ).first()
+    
+    if not user:
+        _log_auth_event(db, 'login_failed', username=login.username.strip().lower(), 
+                       ip_address=ip, user_agent=user_agent, details='User not found')
+        raise HTTPException(status_code=401, detail="Invalid username or password")
+    
+    # Check if account is locked
+    if user.locked_until and user.locked_until > datetime.datetime.utcnow():
+        remaining = (user.locked_until - datetime.datetime.utcnow()).seconds // 60
+        _log_auth_event(db, 'login_failed', username=user.username, user_id=user.id,
+                       ip_address=ip, user_agent=user_agent, details=f'Account locked ({remaining} min remaining)')
+        raise HTTPException(status_code=423, detail=f"Account locked. Try again in {remaining} minutes.")
+    
+    # Check if account is active
+    if not user.is_active:
+        _log_auth_event(db, 'login_failed', username=user.username, user_id=user.id,
+                       ip_address=ip, user_agent=user_agent, details='Account disabled')
+        raise HTTPException(status_code=403, detail="Account is disabled")
+    
+    # Verify password
+    if not _verify_password(login.password, user.password_hash):
+        # Increment failed attempts
+        user.failed_login_attempts = (user.failed_login_attempts or 0) + 1
+        
+        # Lock account after 5 failed attempts
+        if user.failed_login_attempts >= 5:
+            user.locked_until = datetime.datetime.utcnow() + datetime.timedelta(minutes=15)
+            db.commit()
+            _log_auth_event(db, 'account_locked', username=user.username, user_id=user.id,
+                           ip_address=ip, user_agent=user_agent, details='Locked after 5 failed attempts')
+            raise HTTPException(status_code=423, detail="Account locked due to too many failed attempts. Try again in 15 minutes.")
+        
+        db.commit()
+        _log_auth_event(db, 'login_failed', username=user.username, user_id=user.id,
+                       ip_address=ip, user_agent=user_agent, details=f'Invalid password (attempt {user.failed_login_attempts}/5)')
+        raise HTTPException(status_code=401, detail="Invalid username or password")
+    
+    # Success - reset failed attempts
+    user.failed_login_attempts = 0
+    user.locked_until = None
+    user.last_login_at = datetime.datetime.utcnow()
+    
+    # Create session
+    session_hours = getattr(setting, 'auth_session_timeout_hours', 24)
+    if login.remember_me:
+        session_hours = 24 * 30  # 30 days for "remember me"
+    
+    session = models.Session(
+        session_token=_generate_session_token(),
+        user_id=user.id,
+        expires_at=datetime.datetime.utcnow() + datetime.timedelta(hours=session_hours),
+        ip_address=ip,
+        user_agent=user_agent
+    )
+    db.add(session)
+    db.commit()
+    
+    # Log successful login
+    _log_auth_event(db, 'login_success', username=user.username, user_id=user.id,
+                   ip_address=ip, user_agent=user_agent, 
+                   details=f'Session duration: {session_hours}h' + (' (remember me)' if login.remember_me else ''))
+    
+    # Create response with cookie
+    response = Response(
+        content=json.dumps({
+            "success": True,
+            "user": {
+                "id": user.id,
+                "username": user.username,
+                "display_name": user.display_name,
+                "role": user.role
+            }
+        }),
+        media_type="application/json"
+    )
+    
+    # Set secure cookie
+    max_age = session_hours * 3600
+    response.set_cookie(
+        key="nexroll_session",
+        value=session.session_token,
+        max_age=max_age,
+        httponly=True,
+        samesite="lax",
+        secure=getattr(setting, 'auth_require_https', False)
+    )
+    
+    return response
+
+
+@app.post("/auth/logout")
+async def auth_logout(request: Request, db: Session = Depends(get_db)):
+    """
+    Logout - invalidate session and clear cookie.
+    """
+    session_token = request.cookies.get("nexroll_session")
+    ip, user_agent = _get_client_info(request)
+    
+    if session_token:
+        # Invalidate session in database
+        session = db.query(models.Session).filter(
+            models.Session.session_token == session_token
+        ).first()
+        if session:
+            # Get user info for logging
+            user = db.query(models.User).filter(models.User.id == session.user_id).first()
+            session.is_valid = False
+            db.commit()
+            if user:
+                _log_auth_event(db, 'logout', username=user.username, user_id=user.id,
+                               ip_address=ip, user_agent=user_agent)
+    
+    # Clear cookie
+    response = Response(
+        content=json.dumps({"success": True, "message": "Logged out"}),
+        media_type="application/json"
+    )
+    response.delete_cookie("nexroll_session")
+    
+    return response
+
+
+@app.post("/auth/register")
+async def auth_register(
+    request: Request,
+    register: RegisterRequest,
+    db: Session = Depends(get_db)
+):
+    """
+    Register a new user (if registration is allowed or no users exist yet).
+    First user registered becomes admin automatically.
+    """
+    setting = db.query(models.Setting).first()
+    auth_enabled = getattr(setting, 'auth_enabled', False) if setting else False
+    allow_registration = getattr(setting, 'auth_allow_registration', False) if setting else False
+    
+    # Check existing users
+    user_count = db.query(models.User).count()
+    
+    # Allow registration if: no users exist (first user setup) OR registration is enabled
+    if user_count > 0 and not allow_registration:
+        raise HTTPException(status_code=403, detail="Registration is not allowed")
+    
+    # Validate username
+    username = register.username.strip().lower()
+    if len(username) < 3:
+        raise HTTPException(status_code=422, detail="Username must be at least 3 characters")
+    if not username.isalnum():
+        raise HTTPException(status_code=422, detail="Username must be alphanumeric")
+    
+    # Validate password
+    if len(register.password) < 6:
+        raise HTTPException(status_code=422, detail="Password must be at least 6 characters")
+    
+    # Check if username exists
+    existing = db.query(models.User).filter(models.User.username == username).first()
+    if existing:
+        raise HTTPException(status_code=409, detail="Username already exists")
+    
+    # Create user
+    is_first_user = user_count == 0
+    user = models.User(
+        username=username,
+        password_hash=_hash_password(register.password),
+        display_name=register.display_name or username,
+        role='admin' if is_first_user else 'user',
+        is_active=True
+    )
+    
+    db.add(user)
+    
+    # If this is the first user, enable auth automatically
+    if is_first_user and setting:
+        setting.auth_enabled = True
+    
+    db.commit()
+    db.refresh(user)
+    
+    # Log registration
+    ip, user_agent = _get_client_info(request)
+    _log_auth_event(db, 'user_registered', username=user.username, user_id=user.id,
+                   ip_address=ip, user_agent=user_agent,
+                   details=f'Role: {user.role}' + (' (first user - auth enabled)' if is_first_user else ''))
+    
+    return {
+        "success": True,
+        "message": "User created successfully" + (" (admin)" if is_first_user else ""),
+        "user": {
+            "id": user.id,
+            "username": user.username,
+            "display_name": user.display_name,
+            "role": user.role
+        },
+        "auth_enabled": is_first_user  # Auth is now enabled if first user
+    }
+
+
+@app.get("/auth/users")
+async def auth_list_users(
+    request: Request,
+    db: Session = Depends(get_db)
+):
+    """
+    List all users (admin only, or local access always allowed).
+    """
+    user = get_current_user_optional(request, db)
+    
+    # Allow local requests without auth (for local UI management)
+    # If auth is enabled and not local, require admin
+    if _check_auth_enabled(db) and not _is_local_request(request):
+        if not user or user.role != 'admin':
+            raise HTTPException(status_code=403, detail="Admin access required")
+    
+    users = db.query(models.User).all()
+    
+    return {
+        "users": [
+            {
+                "id": u.id,
+                "username": u.username,
+                "display_name": u.display_name,
+                "role": u.role,
+                "is_active": u.is_active,
+                "created_at": u.created_at.isoformat() if u.created_at else None,
+                "last_login_at": u.last_login_at.isoformat() if u.last_login_at else None
+            }
+            for u in users
+        ]
+    }
+
+
+@app.post("/auth/users")
+async def auth_create_user(
+    request: Request,
+    register: RegisterRequest,
+    db: Session = Depends(get_db)
+):
+    """
+    Create a new user (admin only or local access).
+    This bypasses registration restrictions for admin user management.
+    """
+    user = get_current_user_optional(request, db)
+    
+    # Allow local requests without auth
+    if _check_auth_enabled(db) and not _is_local_request(request):
+        if not user or user.role != 'admin':
+            raise HTTPException(status_code=403, detail="Admin access required")
+    
+    # Validate username
+    username = register.username.strip().lower()
+    if len(username) < 3:
+        raise HTTPException(status_code=422, detail="Username must be at least 3 characters")
+    if not username.isalnum():
+        raise HTTPException(status_code=422, detail="Username must be alphanumeric")
+    
+    # Validate password
+    if len(register.password) < 6:
+        raise HTTPException(status_code=422, detail="Password must be at least 6 characters")
+    
+    # Check if username exists
+    existing = db.query(models.User).filter(models.User.username == username).first()
+    if existing:
+        raise HTTPException(status_code=409, detail="Username already exists")
+    
+    # Create user with specified role (default to 'user')
+    role = getattr(register, 'role', 'user') or 'user'
+    if role not in ('user', 'admin'):
+        role = 'user'
+    
+    new_user = models.User(
+        username=username,
+        password_hash=_hash_password(register.password),
+        display_name=register.display_name or username,
+        role=role,
+        is_active=True
+    )
+    
+    db.add(new_user)
+    db.commit()
+    db.refresh(new_user)
+    
+    # Log user creation by admin
+    ip, user_agent = _get_client_info(request)
+    current_admin = get_current_user_optional(request, db)
+    _log_auth_event(db, 'user_created', username=new_user.username, user_id=new_user.id,
+                   ip_address=ip, user_agent=user_agent,
+                   details=f'Created by {current_admin.username if current_admin else "local admin"}. Role: {new_user.role}')
+    
+    return {
+        "success": True,
+        "message": f"User '{username}' created successfully",
+        "user": {
+            "id": new_user.id,
+            "username": new_user.username,
+            "display_name": new_user.display_name,
+            "role": new_user.role
+        }
+    }
+
+
+@app.delete("/auth/users/{user_id}")
+async def auth_delete_user(
+    user_id: int,
+    request: Request,
+    db: Session = Depends(get_db)
+):
+    """
+    Delete a user (admin only or local access, cannot delete self when logged in).
+    """
+    current_user = get_current_user_optional(request, db)
+    
+    # Allow local requests without auth
+    if _check_auth_enabled(db) and not _is_local_request(request):
+        if not current_user or current_user.role != 'admin':
+            raise HTTPException(status_code=403, detail="Admin access required")
+        if current_user.id == user_id:
+            raise HTTPException(status_code=400, detail="Cannot delete your own account")
+    
+    user = db.query(models.User).filter(models.User.id == user_id).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    
+    deleted_username = user.username  # Save before deletion
+    
+    # Delete user sessions first
+    db.query(models.Session).filter(models.Session.user_id == user_id).delete()
+    
+    # Delete user
+    db.delete(user)
+    db.commit()
+    
+    # Log user deletion
+    ip, user_agent = _get_client_info(request)
+    _log_auth_event(db, 'user_deleted', username=deleted_username, user_id=user_id,
+                   ip_address=ip, user_agent=user_agent,
+                   details=f'Deleted by {current_user.username if current_user else "local admin"}')
+    
+    return {"success": True, "message": f"User {deleted_username} deleted"}
+
+
+@app.put("/auth/users/{user_id}/toggle")
+async def auth_toggle_user(
+    user_id: int,
+    request: Request,
+    db: Session = Depends(get_db)
+):
+    """
+    Enable/disable a user account (admin only or local access, cannot disable self when logged in).
+    """
+    current_user = get_current_user_optional(request, db)
+    
+    # Allow local requests without auth
+    if _check_auth_enabled(db) and not _is_local_request(request):
+        if not current_user or current_user.role != 'admin':
+            raise HTTPException(status_code=403, detail="Admin access required")
+        if current_user.id == user_id:
+            raise HTTPException(status_code=400, detail="Cannot disable your own account")
+    
+    user = db.query(models.User).filter(models.User.id == user_id).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    
+    user.is_active = not user.is_active
+    
+    # Invalidate sessions if disabling
+    if not user.is_active:
+        db.query(models.Session).filter(models.Session.user_id == user_id).update({"is_valid": False})
+    
+    db.commit()
+    
+    return {"success": True, "is_active": user.is_active}
+
+
+@app.post("/auth/change-password")
+async def auth_change_password(
+    request: Request,
+    change: ChangePasswordRequest,
+    db: Session = Depends(get_db)
+):
+    """
+    Change current user's password.
+    """
+    user = get_current_user_optional(request, db)
+    
+    if _check_auth_enabled(db) and not user:
+        raise HTTPException(status_code=401, detail="Authentication required")
+    
+    if not user:
+        raise HTTPException(status_code=400, detail="No user context")
+    
+    # Verify current password
+    if not _verify_password(change.current_password, user.password_hash):
+        raise HTTPException(status_code=401, detail="Current password is incorrect")
+    
+    # Validate new password
+    if len(change.new_password) < 6:
+        raise HTTPException(status_code=422, detail="New password must be at least 6 characters")
+    
+    # Update password
+    user.password_hash = _hash_password(change.new_password)
+    db.commit()
+    
+    # Log password change
+    ip, user_agent = _get_client_info(request)
+    _log_auth_event(db, 'password_changed', username=user.username, user_id=user.id,
+                   ip_address=ip, user_agent=user_agent)
+    
+    return {"success": True, "message": "Password changed successfully"}
+
+
+@app.get("/auth/settings")
+async def auth_get_settings(
+    request: Request,
+    db: Session = Depends(get_db)
+):
+    """
+    Get authentication settings (admin only or local access).
+    """
+    user = get_current_user_optional(request, db)
+    
+    # Allow local requests without auth
+    if _check_auth_enabled(db) and not _is_local_request(request):
+        if not user or user.role != 'admin':
+            raise HTTPException(status_code=403, detail="Admin access required")
+    
+    setting = db.query(models.Setting).first()
+    
+    return {
+        "auth_enabled": getattr(setting, 'auth_enabled', False) if setting else False,
+        "session_timeout_hours": getattr(setting, 'auth_session_timeout_hours', 24) if setting else 24,
+        "allow_registration": getattr(setting, 'auth_allow_registration', False) if setting else False,
+        "require_https": getattr(setting, 'auth_require_https', False) if setting else False
+    }
+
+
+@app.put("/auth/settings")
+async def auth_update_settings(
+    request: Request,
+    db: Session = Depends(get_db)
+):
+    """
+    Update authentication settings (admin only or local access).
+    """
+    user = get_current_user_optional(request, db)
+    
+    # Allow local requests without auth
+    if _check_auth_enabled(db) and not _is_local_request(request):
+        if not user or user.role != 'admin':
+            raise HTTPException(status_code=403, detail="Admin access required")
+    
+    body = await request.json()
+    setting = db.query(models.Setting).first()
+    
+    if not setting:
+        setting = models.Setting(plex_url=None, plex_token=None)
+        db.add(setting)
+    
+    # Update settings
+    if 'auth_enabled' in body:
+        setting.auth_enabled = bool(body['auth_enabled'])
+    if 'session_timeout_hours' in body:
+        setting.auth_session_timeout_hours = max(1, min(720, int(body['session_timeout_hours'])))
+    if 'allow_registration' in body:
+        setting.auth_allow_registration = bool(body['allow_registration'])
+    if 'require_https' in body:
+        setting.auth_require_https = bool(body['require_https'])
+    
+    db.commit()
+    
+    return {
+        "success": True,
+        "auth_enabled": setting.auth_enabled,
+        "session_timeout_hours": setting.auth_session_timeout_hours,
+        "allow_registration": setting.auth_allow_registration,
+        "require_https": setting.auth_require_https
+    }
+
+
+@app.get("/auth/audit-logs")
+async def auth_get_audit_logs(
+    request: Request,
+    db: Session = Depends(get_db),
+    limit: int = 100,
+    event_type: Optional[str] = None,
+    username: Optional[str] = None
+):
+    """
+    Get authentication audit logs (admin only or local access).
+    Supports filtering by event_type and username.
+    """
+    user = get_current_user_optional(request, db)
+    
+    # Allow local requests without auth
+    if _check_auth_enabled(db) and not _is_local_request(request):
+        if not user or user.role != 'admin':
+            raise HTTPException(status_code=403, detail="Admin access required")
+    
+    # Build query with optional filters
+    query = db.query(models.AuthAuditLog)
+    
+    if event_type:
+        query = query.filter(models.AuthAuditLog.event_type == event_type)
+    if username:
+        query = query.filter(models.AuthAuditLog.username.ilike(f"%{username}%"))
+    
+    # Order by most recent first and apply limit
+    logs = query.order_by(models.AuthAuditLog.timestamp.desc()).limit(min(limit, 500)).all()
+    
+    return {
+        "logs": [
+            {
+                "id": log.id,
+                "timestamp": log.timestamp.isoformat() if log.timestamp else None,
+                "event_type": log.event_type,
+                "username": log.username,
+                "user_id": log.user_id,
+                "ip_address": log.ip_address,
+                "user_agent": log.user_agent[:100] if log.user_agent else None,  # Truncate for response
+                "details": log.details
+            }
+            for log in logs
+        ],
+        "total": len(logs)
+    }
+
+
+@app.delete("/auth/audit-logs")
+async def auth_clear_audit_logs(
+    request: Request,
+    db: Session = Depends(get_db),
+    older_than_days: int = 90
+):
+    """
+    Clear old audit logs (admin only or local access).
+    Deletes logs older than specified days (default 90).
+    """
+    user = get_current_user_optional(request, db)
+    
+    # Allow local requests without auth
+    if _check_auth_enabled(db) and not _is_local_request(request):
+        if not user or user.role != 'admin':
+            raise HTTPException(status_code=403, detail="Admin access required")
+    
+    cutoff = datetime.datetime.utcnow() - datetime.timedelta(days=older_than_days)
+    deleted = db.query(models.AuthAuditLog).filter(
+        models.AuthAuditLog.timestamp < cutoff
+    ).delete()
+    db.commit()
+    
+    return {"success": True, "deleted": deleted, "message": f"Deleted {deleted} logs older than {older_than_days} days"}
+
+
+# ============================================================================
+# UPDATE SYSTEM SETTINGS ENDPOINTS
+# ============================================================================
+
+@app.get("/update/settings")
+async def update_get_settings(
+    request: Request,
+    db: Session = Depends(get_db)
+):
+    """
+    Get update check settings.
+    """
+    setting = db.query(models.Setting).first()
+    
+    return {
+        "check_interval": getattr(setting, 'update_check_interval', 'daily') if setting else 'daily',
+        "include_prerelease": getattr(setting, 'update_include_prerelease', False) if setting else False,
+        "last_check": getattr(setting, 'update_last_check', None) if setting else None,
+        "dismissed_version": getattr(setting, 'update_dismissed_version', None) if setting else None
+    }
+
+
+@app.put("/update/settings")
+async def update_settings(
+    request: Request,
+    db: Session = Depends(get_db)
+):
+    """
+    Update update check settings.
+    """
+    body = await request.json()
+    setting = db.query(models.Setting).first()
+    
+    if not setting:
+        setting = models.Setting(plex_url=None, plex_token=None)
+        db.add(setting)
+    
+    # Update settings
+    valid_intervals = ['never', 'startup', 'hourly', 'daily', 'weekly']
+    if 'check_interval' in body:
+        interval = body['check_interval']
+        if interval in valid_intervals:
+            setting.update_check_interval = interval
+    if 'include_prerelease' in body:
+        setting.update_include_prerelease = bool(body['include_prerelease'])
+    if 'dismissed_version' in body:
+        setting.update_dismissed_version = body['dismissed_version'] if body['dismissed_version'] else None
+    
+    db.commit()
+    
+    return {
+        "success": True,
+        "check_interval": setting.update_check_interval,
+        "include_prerelease": setting.update_include_prerelease,
+        "dismissed_version": setting.update_dismissed_version
+    }
+
+
+@app.post("/update/check")
+async def update_check_now(
+    request: Request,
+    db: Session = Depends(get_db)
+):
+    """
+    Manually trigger an update check and return latest release info.
+    """
+    import urllib.request
+    import json as json_module
+    from datetime import datetime
+    
+    setting = db.query(models.Setting).first()
+    include_prerelease = getattr(setting, 'update_include_prerelease', False) if setting else False
+    
+    try:
+        # Determine which API endpoint to use
+        if include_prerelease:
+            # Get all releases and find the first one
+            api_url = "https://api.github.com/repos/JFLXCLOUD/NeXroll/releases"
+        else:
+            # Get latest stable release
+            api_url = "https://api.github.com/repos/JFLXCLOUD/NeXroll/releases/latest"
+        
+        req = urllib.request.Request(
+            api_url,
+            headers={'User-Agent': 'NeXroll-UpdateChecker'}
+        )
+        
+        with urllib.request.urlopen(req, timeout=10) as response:
+            data = json_module.loads(response.read().decode())
+        
+        # If we got a list (prereleases), take the first one
+        if isinstance(data, list):
+            if len(data) > 0:
+                data = data[0]
+            else:
+                return {"success": False, "error": "No releases found"}
+        
+        # Update last check time
+        if setting:
+            setting.update_last_check = datetime.now()
+            db.commit()
+        
+        return {
+            "success": True,
+            "version": data.get('tag_name', ''),
+            "name": data.get('name', ''),
+            "body": data.get('body', ''),
+            "html_url": data.get('html_url', ''),
+            "published_at": data.get('published_at', ''),
+            "prerelease": data.get('prerelease', False),
+            "draft": data.get('draft', False)
+        }
+    except Exception as e:
+        _file_log(f"/update/check error: {e}", level="ERROR")
+        return {"success": False, "error": str(e)}
+
+
+# ============================================================================
+# ENHANCED LOGGING SYSTEM ENDPOINTS
+# ============================================================================
+
+@app.get("/logs")
+async def logs_get(
+    request: Request,
+    db: Session = Depends(get_db),
+    limit: int = 100,
+    level: Optional[str] = None,
+    category: Optional[str] = None,
+    search: Optional[str] = None,
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None
+):
+    """
+    Get application logs with filtering options.
+    
+    Query params:
+    - limit: Max number of logs to return (default 100, max 1000)
+    - level: Filter by log level (DEBUG, INFO, WARNING, ERROR, CRITICAL)
+    - category: Filter by category (system, scheduler, api, user, plex, jellyfin, nexup)
+    - search: Search in message text
+    - start_date: Filter logs after this date (ISO format)
+    - end_date: Filter logs before this date (ISO format)
+    """
+    user = get_current_user_optional(request, db)
+    
+    # Allow local requests without auth
+    if _check_auth_enabled(db) and not _is_local_request(request):
+        if not user or user.role != 'admin':
+            raise HTTPException(status_code=403, detail="Admin access required")
+    
+    # Build query with filters
+    query = db.query(models.LogEntry)
+    
+    if level:
+        query = query.filter(models.LogEntry.level == level.upper())
+    if category:
+        query = query.filter(models.LogEntry.category == category.lower())
+    if search:
+        query = query.filter(models.LogEntry.message.ilike(f"%{search}%"))
+    if start_date:
+        try:
+            start = datetime.datetime.fromisoformat(start_date.replace('Z', '+00:00'))
+            query = query.filter(models.LogEntry.timestamp >= start)
+        except:
+            pass
+    if end_date:
+        try:
+            end = datetime.datetime.fromisoformat(end_date.replace('Z', '+00:00'))
+            query = query.filter(models.LogEntry.timestamp <= end)
+        except:
+            pass
+    
+    # Get total count before limiting
+    total = query.count()
+    
+    # Order by most recent first and apply limit
+    logs = query.order_by(models.LogEntry.timestamp.desc()).limit(min(limit, 1000)).all()
+    
+    return {
+        "logs": [
+            {
+                "id": log.id,
+                "timestamp": log.timestamp.isoformat() if log.timestamp else None,
+                "level": log.level,
+                "category": log.category,
+                "source": log.source,
+                "message": log.message,
+                "details": json.loads(log.details) if log.details else None,
+                "request_id": log.request_id,
+                "user_id": log.user_id,
+                "duration_ms": log.duration_ms,
+                "ip_address": log.ip_address
+            }
+            for log in logs
+        ],
+        "total": total,
+        "limit": limit
+    }
+
+
+@app.get("/logs/stats")
+async def logs_get_stats(
+    request: Request,
+    db: Session = Depends(get_db)
+):
+    """
+    Get log statistics (counts by level and category).
+    """
+    user = get_current_user_optional(request, db)
+    
+    # Allow local requests without auth
+    if _check_auth_enabled(db) and not _is_local_request(request):
+        if not user or user.role != 'admin':
+            raise HTTPException(status_code=403, detail="Admin access required")
+    
+    # Count by level
+    level_counts = {}
+    for level in ['DEBUG', 'INFO', 'WARNING', 'ERROR', 'CRITICAL']:
+        count = db.query(models.LogEntry).filter(models.LogEntry.level == level).count()
+        level_counts[level] = count
+    
+    # Count by category
+    category_counts = {}
+    for category in ['system', 'scheduler', 'api', 'user', 'plex', 'jellyfin', 'nexup']:
+        count = db.query(models.LogEntry).filter(models.LogEntry.category == category).count()
+        if count > 0:
+            category_counts[category] = count
+    
+    # Get oldest and newest log timestamps
+    oldest = db.query(models.LogEntry).order_by(models.LogEntry.timestamp.asc()).first()
+    newest = db.query(models.LogEntry).order_by(models.LogEntry.timestamp.desc()).first()
+    
+    total = db.query(models.LogEntry).count()
+    
+    return {
+        "total": total,
+        "by_level": level_counts,
+        "by_category": category_counts,
+        "oldest": oldest.timestamp.isoformat() if oldest else None,
+        "newest": newest.timestamp.isoformat() if newest else None
+    }
+
+
+@app.get("/logs/export")
+async def logs_export(
+    request: Request,
+    db: Session = Depends(get_db),
+    format: str = "json",
+    level: Optional[str] = None,
+    category: Optional[str] = None,
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
+    limit: int = 10000
+):
+    """
+    Export logs as JSON or CSV file.
+    
+    Query params:
+    - format: 'json' or 'csv' (default json)
+    - level, category, start_date, end_date: Same filters as GET /logs
+    - limit: Max logs to export (default 10000)
+    """
+    user = get_current_user_optional(request, db)
+    
+    # Allow local requests without auth
+    if _check_auth_enabled(db) and not _is_local_request(request):
+        if not user or user.role != 'admin':
+            raise HTTPException(status_code=403, detail="Admin access required")
+    
+    # Build query with filters
+    query = db.query(models.LogEntry)
+    
+    if level:
+        query = query.filter(models.LogEntry.level == level.upper())
+    if category:
+        query = query.filter(models.LogEntry.category == category.lower())
+    if start_date:
+        try:
+            start = datetime.datetime.fromisoformat(start_date.replace('Z', '+00:00'))
+            query = query.filter(models.LogEntry.timestamp >= start)
+        except:
+            pass
+    if end_date:
+        try:
+            end = datetime.datetime.fromisoformat(end_date.replace('Z', '+00:00'))
+            query = query.filter(models.LogEntry.timestamp <= end)
+        except:
+            pass
+    
+    # Get logs
+    logs = query.order_by(models.LogEntry.timestamp.desc()).limit(min(limit, 50000)).all()
+    
+    timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+    
+    if format.lower() == "csv":
+        # Export as CSV
+        import csv
+        import io
+        
+        output = io.StringIO()
+        writer = csv.writer(output)
+        writer.writerow(["timestamp", "level", "category", "source", "message", "details", "request_id", "duration_ms", "ip_address"])
+        
+        for log in logs:
+            writer.writerow([
+                log.timestamp.isoformat() if log.timestamp else "",
+                log.level,
+                log.category,
+                log.source or "",
+                log.message,
+                log.details or "",
+                log.request_id or "",
+                log.duration_ms or "",
+                log.ip_address or ""
+            ])
+        
+        content = output.getvalue()
+        return Response(
+            content=content,
+            media_type="text/csv",
+            headers={"Content-Disposition": f"attachment; filename=nexroll_logs_{timestamp}.csv"}
+        )
+    else:
+        # Export as JSON
+        data = {
+            "exported_at": datetime.datetime.now().isoformat(),
+            "total": len(logs),
+            "logs": [
+                {
+                    "timestamp": log.timestamp.isoformat() if log.timestamp else None,
+                    "level": log.level,
+                    "category": log.category,
+                    "source": log.source,
+                    "message": log.message,
+                    "details": json.loads(log.details) if log.details else None,
+                    "request_id": log.request_id,
+                    "duration_ms": log.duration_ms,
+                    "ip_address": log.ip_address
+                }
+                for log in logs
+            ]
+        }
+        
+        return Response(
+            content=json.dumps(data, indent=2),
+            media_type="application/json",
+            headers={"Content-Disposition": f"attachment; filename=nexroll_logs_{timestamp}.json"}
+        )
+
+
+@app.get("/logs/file")
+async def logs_get_file(
+    request: Request,
+    db: Session = Depends(get_db),
+    limit: int = 200,
+    level: Optional[str] = None
+):
+    """
+    Read log entries from app.log file.
+    Returns parsed log entries from the file-based logging system.
+    
+    Query params:
+    - limit: Max number of recent entries to return (default 200)
+    - level: Filter by level (DEBUG, INFO, WARNING, ERROR)
+    """
+    user = get_current_user_optional(request, db)
+    
+    # Allow local requests without auth
+    if _check_auth_enabled(db) and not _is_local_request(request):
+        if not user or user.role != 'admin':
+            raise HTTPException(status_code=403, detail="Admin access required")
+    
+    logs = []
+    try:
+        log_path = _log_file_path()
+        if not os.path.exists(log_path):
+            return {"logs": [], "file_path": log_path, "file_exists": False}
+        
+        # Read file in reverse order to get most recent entries first
+        with open(log_path, "r", encoding="utf-8", errors="ignore") as f:
+            lines = f.readlines()
+        
+        # Parse log lines: [YYYY-MM-DD HH:MM:SS] [LEVEL] message
+        import re
+        log_pattern = re.compile(r'^\[(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})\] \[(\w+)\] (.*)$')
+        
+        for line in reversed(lines):
+            line = line.strip()
+            if not line:
+                continue
+            
+            match = log_pattern.match(line)
+            if match:
+                timestamp_str, log_level, message = match.groups()
+                
+                # Apply level filter if specified
+                if level and log_level.upper() != level.upper():
+                    continue
+                
+                logs.append({
+                    "timestamp": timestamp_str,
+                    "level": log_level.upper(),
+                    "message": message,
+                    "source": "app.log"
+                })
+                
+                if len(logs) >= limit:
+                    break
+        
+        # Get file info
+        file_size = os.path.getsize(log_path)
+        file_modified = datetime.datetime.fromtimestamp(os.path.getmtime(log_path)).isoformat()
+        
+        return {
+            "logs": logs,
+            "total_in_file": len(lines),
+            "file_path": log_path,
+            "file_exists": True,
+            "file_size_kb": round(file_size / 1024, 1),
+            "file_modified": file_modified
+        }
+    except Exception as e:
+        return {"logs": [], "error": str(e), "file_exists": False}
+
+
+@app.delete("/logs")
+async def logs_clear(
+    request: Request,
+    db: Session = Depends(get_db),
+    older_than_days: Optional[int] = None,
+    level: Optional[str] = None,
+    category: Optional[str] = None
+):
+    """
+    Clear logs with optional filters.
+    
+    Query params:
+    - older_than_days: Delete logs older than X days (if not specified, uses retention setting)
+    - level: Only delete logs of this level
+    - category: Only delete logs of this category
+    """
+    user = get_current_user_optional(request, db)
+    
+    # Allow local requests without auth
+    if _check_auth_enabled(db) and not _is_local_request(request):
+        if not user or user.role != 'admin':
+            raise HTTPException(status_code=403, detail="Admin access required")
+    
+    query = db.query(models.LogEntry)
+    
+    # Apply filters
+    if older_than_days is not None:
+        cutoff = datetime.datetime.utcnow() - datetime.timedelta(days=older_than_days)
+        query = query.filter(models.LogEntry.timestamp < cutoff)
+    elif level is None and category is None:
+        # If no filters, use retention setting as safety
+        settings = _get_log_settings(db)
+        cutoff = datetime.datetime.utcnow() - datetime.timedelta(days=settings.get("log_retention_days", 30))
+        query = query.filter(models.LogEntry.timestamp < cutoff)
+    
+    if level:
+        query = query.filter(models.LogEntry.level == level.upper())
+    if category:
+        query = query.filter(models.LogEntry.category == category.lower())
+    
+    deleted = query.delete(synchronize_session=False)
+    db.commit()
+    
+    return {"success": True, "deleted": deleted}
+
+
+@app.get("/logs/settings")
+async def logs_get_settings(
+    request: Request,
+    db: Session = Depends(get_db)
+):
+    """Get logging settings."""
+    user = get_current_user_optional(request, db)
+    
+    # Allow local requests without auth
+    if _check_auth_enabled(db) and not _is_local_request(request):
+        if not user or user.role != 'admin':
+            raise HTTPException(status_code=403, detail="Admin access required")
+    
+    setting = db.query(models.Setting).first()
+    
+    return {
+        "log_level": getattr(setting, 'log_level', 'INFO') if setting else 'INFO',
+        "log_retention_days": getattr(setting, 'log_retention_days', 30) if setting else 30,
+        "log_to_database": getattr(setting, 'log_to_database', True) if setting else True,
+        "log_request_logging": getattr(setting, 'log_request_logging', True) if setting else True,
+        "log_scheduler_logging": getattr(setting, 'log_scheduler_logging', True) if setting else True,
+        "log_api_logging": getattr(setting, 'log_api_logging', True) if setting else True
+    }
+
+
+@app.put("/logs/settings")
+async def logs_update_settings(
+    request: Request,
+    db: Session = Depends(get_db)
+):
+    """Update logging settings."""
+    user = get_current_user_optional(request, db)
+    
+    # Allow local requests without auth
+    if _check_auth_enabled(db) and not _is_local_request(request):
+        if not user or user.role != 'admin':
+            raise HTTPException(status_code=403, detail="Admin access required")
+    
+    body = await request.json()
+    setting = db.query(models.Setting).first()
+    
+    if not setting:
+        setting = models.Setting(plex_url=None, plex_token=None)
+        db.add(setting)
+    
+    # Update settings
+    valid_levels = ['DEBUG', 'INFO', 'WARNING', 'ERROR', 'CRITICAL']
+    if 'log_level' in body and body['log_level'].upper() in valid_levels:
+        setting.log_level = body['log_level'].upper()
+    if 'log_retention_days' in body:
+        days = int(body['log_retention_days'])
+        setting.log_retention_days = max(1, min(days, 365))  # 1-365 days
+    if 'log_to_database' in body:
+        setting.log_to_database = bool(body['log_to_database'])
+    if 'log_request_logging' in body:
+        setting.log_request_logging = bool(body['log_request_logging'])
+    if 'log_scheduler_logging' in body:
+        setting.log_scheduler_logging = bool(body['log_scheduler_logging'])
+    if 'log_api_logging' in body:
+        setting.log_api_logging = bool(body['log_api_logging'])
+    
+    db.commit()
+    
+    # Log the settings change
+    log_event('INFO', 'system', 'Logging settings updated', source='logs_update_settings',
+              details={k: v for k, v in body.items()}, db=db)
+    
+    return {
+        "success": True,
+        "log_level": setting.log_level,
+        "log_retention_days": setting.log_retention_days,
+        "log_to_database": setting.log_to_database,
+        "log_request_logging": setting.log_request_logging,
+        "log_scheduler_logging": setting.log_scheduler_logging,
+        "log_api_logging": setting.log_api_logging
+    }
+
+
 @app.post("/plex/connect")
 def connect_plex(request: PlexConnectRequest, db: Session = Depends(get_db)):
     url = (request.url or "").strip()
@@ -2610,6 +5265,7 @@ def connect_plex(request: PlexConnectRequest, db: Session = Depends(get_db)):
 
             db.commit()
             _file_log(f"/plex/connect: ✓ Connection successful - URL: {url}, Token storage: {provider_name}")
+            log_event('INFO', 'plex', 'Plex server connected successfully', details={"url": url})
             return {
                 "connected": True,
                 "message": "Successfully connected to Plex server",
@@ -3626,6 +6282,8 @@ def upload_preroll(
         except Exception as e:
             _file_log(f"upload_preroll: Error auto-applying to Plex: {e}")
 
+    log_event('INFO', 'user', f"Preroll '{preroll.filename}' uploaded", details={"preroll_id": preroll.id, "category_id": preroll.category_id})
+
     return {
         "uploaded": True,
         "id": preroll.id,
@@ -4454,6 +7112,7 @@ def delete_preroll(preroll_id: int, db: Session = Depends(get_db)):
             dbapi_conn.rollback()
             raise e
 
+        log_event('INFO', 'user', f"Preroll '{preroll.filename}' deleted", details={"preroll_id": preroll_id})
         return {"message": "Preroll deleted successfully"}
     except HTTPException:
         raise
@@ -4814,12 +7473,18 @@ def delete_category(category_id: int, db: Session = Depends(get_db)):
         # Best-effort; continue with deletion attempt
         pass
 
+    category_name = category.name
     db.delete(category)
     try:
         db.commit()
     except IntegrityError as e:
         db.rollback()
         raise HTTPException(status_code=500, detail=f"Failed to delete category due to integrity constraints: {e}")
+    
+    # Log the action
+    log_event('INFO', 'user', f"Category '{category_name}' deleted", source='delete_category',
+              details={'category_id': category_id, 'category_name': category_name})
+    
     return {"message": "Category deleted"}
 
 # Category endpoints
@@ -4859,6 +7524,8 @@ def create_category(category: CategoryCreate, db: Session = Depends(get_db)):
     except Exception as e:
         db.rollback()
         raise HTTPException(status_code=500, detail=f"Failed to create category: {str(e)}")
+
+    log_event('INFO', 'user', f"Category '{db_category.name}' created", details={"category_id": db_category.id})
 
     return {
         "id": db_category.id,
@@ -4923,6 +7590,8 @@ def update_category(category_id: int, category: CategoryCreate, db: Session = De
     except Exception as e:
         db.rollback()
         raise HTTPException(status_code=500, detail=f"Failed to update category: {str(e)}")
+
+    log_event('INFO', 'user', f"Category '{db_category.name}' updated", details={"category_id": db_category.id})
 
     return {
         "id": db_category.id,
@@ -5469,6 +8138,7 @@ def create_schedule(schedule: ScheduleCreate, db: Session = Depends(get_db)):
         _file_log(f"Schedule create failed: {e}")
         raise HTTPException(status_code=500, detail=f"Failed to create schedule: {str(e)}")
     db.refresh(db_schedule)
+    log_event('INFO', 'scheduler', f"Schedule '{db_schedule.name}' created", details={"schedule_id": db_schedule.id, "type": db_schedule.type})
 
     # Load the category relationship for the response
     created_schedule = db.query(models.Schedule).options(joinedload(models.Schedule.category)).filter(models.Schedule.id == db_schedule.id).first()
@@ -5686,16 +8356,100 @@ def _apply_schedule_win_lose_logic(db: Session, is_being_enabled: bool, is_being
     # Filter to schedules that are currently in their time window
     current_schedules = [s for s in active_schedules if _is_schedule_active(s)]
     
+    # Helper: Apply filler content to Plex
+    def _apply_filler_to_plex() -> bool:
+        """Apply filler category/sequence/coming-soon to Plex. Returns True if applied."""
+        setting = db.query(models.Setting).first()
+        if not setting or not setting.plex_url or not setting.plex_token:
+            return False
+        
+        filler_enabled = getattr(setting, "filler_enabled", False)
+        if not filler_enabled:
+            return False
+        
+        filler_type = getattr(setting, "filler_type", "category")
+        plex_connector = PlexConnector(setting.plex_url, setting.plex_token)
+        
+        try:
+            if filler_type == "category":
+                filler_category_id = getattr(setting, "filler_category_id", None)
+                if filler_category_id:
+                    prerolls = db.query(models.Preroll) \
+                        .outerjoin(models.preroll_categories, models.Preroll.id == models.preroll_categories.c.preroll_id) \
+                        .filter(or_(models.Preroll.category_id == filler_category_id,
+                                    models.preroll_categories.c.category_id == filler_category_id)) \
+                        .distinct().all()
+                    if prerolls:
+                        preroll_paths = [os.path.abspath(p.path) for p in prerolls]
+                        preroll_string = ';'.join(preroll_paths)
+                        plex_connector.set_preroll(preroll_string)
+                        setting.filler_active = f"category:{filler_category_id}"
+                        setting.active_category = None
+                        db.commit()
+                        print(f"TOGGLE: Applied FILLER category {filler_category_id} with {len(prerolls)} prerolls")
+                        return True
+                        
+            elif filler_type == "sequence":
+                filler_sequence_id = getattr(setting, "filler_sequence_id", None)
+                if filler_sequence_id:
+                    seq_record = db.query(models.SavedSequence).filter(models.SavedSequence.id == filler_sequence_id).first()
+                    if seq_record:
+                        seq_data = json.loads(seq_record.sequence_data) if isinstance(seq_record.sequence_data, str) else seq_record.sequence_data
+                        preroll_paths = []
+                        for block in seq_data:
+                            block_type = block.get("type")
+                            if block_type == "fixed":
+                                for pid in block.get("prerolls", []):
+                                    preroll = db.query(models.Preroll).filter(models.Preroll.id == pid).first()
+                                    if preroll:
+                                        preroll_paths.append(os.path.abspath(preroll.path))
+                            elif block_type == "random":
+                                available = []
+                                for pid in block.get("prerolls", []):
+                                    preroll = db.query(models.Preroll).filter(models.Preroll.id == pid).first()
+                                    if preroll:
+                                        available.append(os.path.abspath(preroll.path))
+                                if available:
+                                    count = block.get("count", 1)
+                                    selected = random.sample(available, min(count, len(available)))
+                                    preroll_paths.extend(selected)
+                        if preroll_paths:
+                            plex_connector.set_preroll(';'.join(preroll_paths))
+                            setting.filler_active = f"sequence:{filler_sequence_id}"
+                            setting.active_category = None
+                            db.commit()
+                            print(f"TOGGLE: Applied FILLER sequence {filler_sequence_id} with {len(preroll_paths)} prerolls")
+                            return True
+                            
+            elif filler_type == "coming_soon":
+                filler_layout = getattr(setting, "filler_coming_soon_layout", "grid")
+                storage_path = getattr(setting, "nexup_storage_path", None)
+                if storage_path:
+                    from pathlib import Path
+                    video_path = Path(storage_path) / "dynamic_prerolls" / f"coming_soon_{filler_layout}.mp4"
+                    if video_path.exists():
+                        plex_connector.set_preroll(str(video_path))
+                        setting.filler_active = f"coming_soon:{filler_layout}"
+                        setting.active_category = None
+                        db.commit()
+                        print(f"TOGGLE: Applied FILLER Coming Soon List ({filler_layout})")
+                        return True
+        except Exception as e:
+            print(f"TOGGLE: Error applying filler: {e}")
+        
+        return False
+    
     if is_being_enabled:
         # Schedule was just enabled - check if it should win
         if _is_schedule_active(updated_schedule):
             # This schedule is in its active window
             if current_schedules:
-                # Win/lose logic: Prefer the schedule that ends soonest, then earliest start, then lowest id
+                # Win/lose logic: Priority (highest wins), then ends soonest, then earliest start, then lowest id
                 def _sort_key(s):
+                    priority = getattr(s, "priority", 5)
                     end = s.end_date if s.end_date else datetime.datetime.max
                     start = s.start_date or datetime.datetime.min
-                    return (end, start, s.id)
+                    return (-priority, end, start, s.id)  # Negative priority so higher values sort first
                 
                 current_schedules.sort(key=_sort_key)
                 winner = current_schedules[0]
@@ -5707,6 +8461,7 @@ def _apply_schedule_win_lose_logic(db: Session, is_being_enabled: bool, is_being
                         setting = db.query(models.Setting).first()
                         if setting:
                             setting.active_category = updated_schedule.category_id
+                            setting.filler_active = None  # Clear filler state when schedule takes over
                             db.commit()
                 else:
                     # Another schedule wins
@@ -5718,6 +8473,7 @@ def _apply_schedule_win_lose_logic(db: Session, is_being_enabled: bool, is_being
                     setting = db.query(models.Setting).first()
                     if setting:
                         setting.active_category = updated_schedule.category_id
+                        setting.filler_active = None  # Clear filler state when schedule takes over
                         db.commit()
         else:
             print(f"TOGGLE: Newly enabled schedule '{updated_schedule.name}' (ID {updated_schedule.id}) is not yet in its active time window")
@@ -5725,11 +8481,12 @@ def _apply_schedule_win_lose_logic(db: Session, is_being_enabled: bool, is_being
     elif is_being_disabled:
         # Schedule was just disabled - check if another schedule should take over
         if current_schedules:
-            # Win/lose logic: Pick the winning schedule
+            # Win/lose logic: Priority (highest wins), then ends soonest, then earliest start, then lowest id
             def _sort_key(s):
+                priority = getattr(s, "priority", 5)
                 end = s.end_date if s.end_date else datetime.datetime.max
                 start = s.start_date or datetime.datetime.min
-                return (end, start, s.id)
+                return (-priority, end, start, s.id)  # Negative priority so higher values sort first
             
             current_schedules.sort(key=_sort_key)
             winner = current_schedules[0]
@@ -5740,20 +8497,41 @@ def _apply_schedule_win_lose_logic(db: Session, is_being_enabled: bool, is_being
                 setting = db.query(models.Setting).first()
                 if setting:
                     setting.active_category = winner.category_id
+                    setting.filler_active = None  # Clear filler state
                     db.commit()
         else:
-            # No active schedules remaining - clear Plex prerolls
-            print(f"TOGGLE: Schedule '{updated_schedule.name}' (ID {updated_schedule.id}) disabled and no other active schedules found, clearing Plex prerolls")
-            try:
-                setting = db.query(models.Setting).first()
-                if setting and setting.plex_url and setting.plex_token:
-                    plex_connector = PlexConnector(setting.plex_url, setting.plex_token)
-                    plex_connector.set_preroll('')
-                    setting.active_category = None
-                    db.commit()
-                    print(f"TOGGLE: Cleared Plex prerolls")
-            except Exception as clear_error:
-                print(f"TOGGLE: Error clearing Plex prerolls: {clear_error}")
+            # No active schedules remaining - try to apply filler, otherwise clear
+            print(f"TOGGLE: Schedule '{updated_schedule.name}' (ID {updated_schedule.id}) disabled and no other active schedules found")
+            setting = db.query(models.Setting).first()
+            
+            # Check if clear_when_inactive is enabled - if so, just clear
+            clear_when_inactive = getattr(setting, "clear_when_inactive", False) if setting else False
+            
+            if clear_when_inactive:
+                try:
+                    if setting and setting.plex_url and setting.plex_token:
+                        plex_connector = PlexConnector(setting.plex_url, setting.plex_token)
+                        plex_connector.set_preroll('')
+                        setting.active_category = None
+                        setting.filler_active = None
+                        db.commit()
+                        print(f"TOGGLE: Cleared Plex prerolls (clear_when_inactive enabled)")
+                except Exception as clear_error:
+                    print(f"TOGGLE: Error clearing Plex prerolls: {clear_error}")
+            else:
+                # Try to apply filler
+                if not _apply_filler_to_plex():
+                    # No filler configured or failed - clear prerolls
+                    try:
+                        if setting and setting.plex_url and setting.plex_token:
+                            plex_connector = PlexConnector(setting.plex_url, setting.plex_token)
+                            plex_connector.set_preroll('')
+                            setting.active_category = None
+                            setting.filler_active = None
+                            db.commit()
+                            print(f"TOGGLE: Cleared Plex prerolls (no filler configured)")
+                    except Exception as clear_error:
+                        print(f"TOGGLE: Error clearing Plex prerolls: {clear_error}")
 
 @app.put("/schedules/{schedule_id}")
 def update_schedule(schedule_id: int, schedule: ScheduleCreate, db: Session = Depends(get_db)):
@@ -5800,6 +8578,7 @@ def update_schedule(schedule_id: int, schedule: ScheduleCreate, db: Session = De
     was_active = db_schedule.is_active
     is_being_disabled = was_active and not schedule.is_active
     is_being_enabled = not was_active and schedule.is_active
+    schedule_name = db_schedule.name
     
     # Update fields
     db_schedule.name = schedule.name
@@ -5833,6 +8612,17 @@ def update_schedule(schedule_id: int, schedule: ScheduleCreate, db: Session = De
     except Exception as apply_error:
         print(f"SCHEDULER: Warning - Failed to apply schedule changes to Plex: {apply_error}")
     
+    # Log meaningful action
+    if is_being_disabled:
+        log_event('INFO', 'scheduler', f"Schedule '{schedule_name}' disabled", source='update_schedule',
+                  details={'schedule_id': schedule_id, 'schedule_name': schedule_name, 'action': 'disabled'})
+    elif is_being_enabled:
+        log_event('INFO', 'scheduler', f"Schedule '{schedule_name}' enabled", source='update_schedule',
+                  details={'schedule_id': schedule_id, 'schedule_name': schedule_name, 'action': 'enabled'})
+    else:
+        log_event('INFO', 'scheduler', f"Schedule '{schedule_name}' updated", source='update_schedule',
+                  details={'schedule_id': schedule_id, 'schedule_name': schedule_name, 'action': 'updated'})
+    
     return {"message": "Schedule updated"}
 
 @app.delete("/schedules/{schedule_id}")
@@ -5841,6 +8631,7 @@ def delete_schedule(schedule_id: int, db: Session = Depends(get_db)):
     if not db_schedule:
         raise HTTPException(status_code=404, detail="Schedule not found")
 
+    schedule_name = db_schedule.name
     db.delete(db_schedule)
     try:
         db.commit()
@@ -5848,6 +8639,10 @@ def delete_schedule(schedule_id: int, db: Session = Depends(get_db)):
         db.rollback()
         _file_log(f"Schedule delete failed for id={schedule_id}: {e}")
         raise HTTPException(status_code=500, detail=f"Failed to delete schedule: {str(e)}")
+    
+    log_event('INFO', 'scheduler', f"Schedule '{schedule_name}' deleted", source='delete_schedule',
+              details={'schedule_id': schedule_id, 'schedule_name': schedule_name})
+    
     return {"message": "Schedule deleted"}
 
 # ============================================================================
@@ -5895,6 +8690,8 @@ def create_saved_sequence(sequence: SavedSequenceCreate, db: Session = Depends(g
         db.refresh(new_sequence)
         
         _file_log(f"Saved new sequence: {sequence.name} with {len(sequence.blocks)} blocks")
+        log_event('INFO', 'nexup', f"NeX-Up sequence '{sequence.name}' created", 
+                  source='create_sequence', details={"sequence_id": new_sequence.id, "blocks": len(sequence.blocks)}, db=db)
         
         return {
             "id": new_sequence.id,
@@ -5945,6 +8742,8 @@ def update_saved_sequence(sequence_id: int, sequence: SavedSequenceUpdate, db: S
         db.refresh(db_sequence)
         
         _file_log(f"Updated sequence: {db_sequence.name} (ID: {sequence_id})")
+        log_event('INFO', 'nexup', f"NeX-Up sequence '{db_sequence.name}' updated", 
+                  source='update_sequence', details={"sequence_id": sequence_id}, db=db)
         
         return {
             "id": db_sequence.id,
@@ -5957,6 +8756,7 @@ def update_saved_sequence(sequence_id: int, sequence: SavedSequenceUpdate, db: S
     except Exception as e:
         db.rollback()
         _file_log(f"Failed to update sequence {sequence_id}: {e}")
+        log_event('ERROR', 'nexup', f"Failed to update sequence: {e}", source='update_sequence', db=db)
         raise HTTPException(status_code=500, detail=f"Failed to update sequence: {str(e)}")
 
 @app.delete("/sequences/{sequence_id}")
@@ -5972,11 +8772,14 @@ def delete_saved_sequence(sequence_id: int, db: Session = Depends(get_db)):
         db.commit()
         
         _file_log(f"Deleted sequence: {sequence_name} (ID: {sequence_id})")
+        log_event('INFO', 'nexup', f"NeX-Up sequence '{sequence_name}' deleted", 
+                  source='delete_sequence', details={"sequence_id": sequence_id}, db=db)
         
         return {"message": "Sequence deleted successfully"}
     except Exception as e:
         db.rollback()
         _file_log(f"Failed to delete sequence {sequence_id}: {e}")
+        log_event('ERROR', 'nexup', f"Failed to delete sequence: {e}", source='delete_sequence', db=db)
         raise HTTPException(status_code=500, detail=f"Failed to delete sequence: {str(e)}")
 
 @app.get("/sequences/preview-video/{preview_id}/{video_path:path}")
@@ -8301,11 +11104,13 @@ def initialize_community_templates(db: Session = Depends(get_db)):
 @app.post("/scheduler/start")
 def start_scheduler():
     scheduler.start()
+    log_event('INFO', 'scheduler', 'Scheduler started', source='scheduler_control')
     return {"message": "Scheduler started"}
 
 @app.post("/scheduler/stop")
 def stop_scheduler():
     scheduler.stop()
+    log_event('INFO', 'scheduler', 'Scheduler stopped', source='scheduler_control')
     return {"message": "Scheduler stopped"}
 
 @app.get("/scheduler/status")
@@ -10432,6 +13237,8 @@ def create_or_update_genre_map(payload: GenreMapCreate, db: Session = Depends(ge
     try:
         db.commit()
         db.refresh(m)
+        log_event('INFO', 'user', f"Genre map created: '{genre_raw}' → '{cat.name}'", 
+                  source='create_genre_map', details={"genre": genre_raw, "category_id": cat.id, "category_name": cat.name}, db=db)
     except Exception as e:
         db.rollback()
         # Handle possible unique constraint violation
@@ -10474,6 +13281,8 @@ def update_genre_map(map_id: int, payload: GenreMapUpdate, db: Session = Depends
     try:
         db.commit()
         db.refresh(m)
+        log_event('INFO', 'user', f"Genre map updated: '{m.genre}'", 
+                  source='update_genre_map', details={"map_id": m.id, "genre": m.genre, "category_id": m.category_id}, db=db)
     except Exception as e:
         db.rollback()
         raise HTTPException(status_code=500, detail=f"Failed to update mapping: {e}")
@@ -10485,9 +13294,12 @@ def delete_genre_map(map_id: int, db: Session = Depends(get_db)):
     m = db.query(models.GenreMap).filter(models.GenreMap.id == map_id).first()
     if not m:
         raise HTTPException(status_code=404, detail="Mapping not found")
+    genre_name = m.genre
     try:
         db.delete(m)
         db.commit()
+        log_event('INFO', 'user', f"Genre map deleted: '{genre_name}'", 
+                  source='delete_genre_map', details={"map_id": map_id, "genre": genre_name}, db=db)
     except Exception as e:
         db.rollback()
         raise HTTPException(status_code=500, detail=f"Failed to delete mapping: {e}")
@@ -10567,10 +13379,64 @@ def get_active_category(db: Session = Depends(get_db)):
     """Get the currently applied category"""
     try:
         setting = db.query(models.Setting).first()
-        if not setting or not getattr(setting, "active_category", None):
+        if not setting:
             return {"active_category": None}
-
+        
+        # Check if filler is active (stored as "type:value" string)
+        filler_active = getattr(setting, "filler_active", None)
+        if filler_active:
+            parts = filler_active.split(":", 1)
+            if len(parts) == 2:
+                filler_type, filler_value = parts
+                if filler_type == "coming_soon":
+                    return {
+                        "active_category": {
+                            "id": -9999,
+                            "name": f"Filler: Coming Soon List ({filler_value})",
+                            "plex_mode": "single",
+                            "is_filler": True,
+                            "filler_type": "coming_soon"
+                        }
+                    }
+                elif filler_type == "sequence":
+                    try:
+                        sequence_id = int(filler_value)
+                        sequence = db.query(models.SavedSequence).filter(models.SavedSequence.id == sequence_id).first()
+                        if sequence:
+                            return {
+                                "active_category": {
+                                    "id": -sequence_id,
+                                    "name": f"Filler: {sequence.name}",
+                                    "plex_mode": "sequence",
+                                    "is_filler": True,
+                                    "filler_type": "sequence",
+                                    "sequence_id": sequence_id
+                                }
+                            }
+                    except ValueError:
+                        pass
+                elif filler_type == "category":
+                    try:
+                        cat_id = int(filler_value)
+                        category = db.query(models.Category).filter(models.Category.id == cat_id).first()
+                        if category:
+                            return {
+                                "active_category": {
+                                    "id": category.id,
+                                    "name": f"Filler: {category.name}",
+                                    "plex_mode": getattr(category, "plex_mode", "shuffle"),
+                                    "is_filler": True,
+                                    "filler_type": "category"
+                                }
+                            }
+                    except ValueError:
+                        pass
+        
+        # Normal category lookup
         category_id = getattr(setting, "active_category", None)
+        if category_id is None:
+            return {"active_category": None}
+        
         category = db.query(models.Category).filter(models.Category.id == category_id).first()
         if not category:
             return {"active_category": None}
@@ -10877,6 +13743,111 @@ def update_clear_when_inactive(clear_when_inactive: bool, db: Session = Depends(
     return {"message": f"Clear when inactive {status}", "clear_when_inactive": clear_when_inactive}
 
 # ==============================================================================
+# Filler Category: Global gap filler when no schedules are active
+# ==============================================================================
+
+@app.get("/settings/filler")
+def get_filler_settings(db: Session = Depends(get_db)):
+    """Get filler category settings (global gap filler when no schedules are active)"""
+    setting = db.query(models.Setting).first()
+    if not setting:
+        return {
+            "enabled": False,
+            "type": "category",
+            "category_id": None,
+            "sequence_id": None,
+            "coming_soon_layout": "grid"
+        }
+    
+    return {
+        "enabled": getattr(setting, 'filler_enabled', False),
+        "type": getattr(setting, 'filler_type', 'category'),
+        "category_id": getattr(setting, 'filler_category_id', None),
+        "sequence_id": getattr(setting, 'filler_sequence_id', None),
+        "coming_soon_layout": getattr(setting, 'filler_coming_soon_layout', 'grid')
+    }
+
+@app.put("/settings/filler")
+def update_filler_settings(
+    enabled: bool = None,
+    filler_type: str = None,
+    category_id: int = None,
+    sequence_id: int = None,
+    coming_soon_layout: str = None,
+    db: Session = Depends(get_db)
+):
+    """
+    Update filler category settings.
+    
+    Filler is applied when NO schedules are active AND no per-schedule fallback is set.
+    This is different from the fallback_category_id on individual schedules.
+    
+    - type: 'category', 'sequence', or 'coming_soon'
+    - category_id: Category ID to use when type is 'category'
+    - sequence_id: SavedSequence ID to use when type is 'sequence'
+    - coming_soon_layout: 'grid' or 'list' when type is 'coming_soon'
+    """
+    setting = db.query(models.Setting).first()
+    if not setting:
+        setting = models.Setting(plex_url=None, plex_token=None)
+        db.add(setting)
+        db.commit()
+        db.refresh(setting)
+    
+    if enabled is not None:
+        setting.filler_enabled = enabled
+    if filler_type is not None:
+        if filler_type not in ['category', 'sequence', 'coming_soon']:
+            return {"error": f"Invalid filler type: {filler_type}. Must be 'category', 'sequence', or 'coming_soon'"}
+        setting.filler_type = filler_type
+    if category_id is not None:
+        # Validate category exists
+        cat = db.query(models.Category).filter(models.Category.id == category_id).first()
+        if not cat:
+            return {"error": f"Category ID {category_id} not found"}
+        setting.filler_category_id = category_id
+    if sequence_id is not None:
+        # Validate sequence exists
+        seq = db.query(models.SavedSequence).filter(models.SavedSequence.id == sequence_id).first()
+        if not seq:
+            return {"error": f"Sequence ID {sequence_id} not found"}
+        setting.filler_sequence_id = sequence_id
+    if coming_soon_layout is not None:
+        if coming_soon_layout not in ['grid', 'list']:
+            return {"error": f"Invalid coming_soon_layout: {coming_soon_layout}. Must be 'grid' or 'list'"}
+        setting.filler_coming_soon_layout = coming_soon_layout
+    
+    setting.updated_at = datetime.datetime.utcnow()
+    db.commit()
+    
+    filler_status = "enabled" if setting.filler_enabled else "disabled"
+    print(f"Filler category {filler_status} (type: {setting.filler_type})")
+    _file_log(f"Filler category {filler_status} (type: {setting.filler_type})")
+    log_event('INFO', 'system', f"Filler {filler_status}", 
+              source='update_filler_settings', 
+              details={"type": setting.filler_type, "enabled": setting.filler_enabled,
+                       "category_id": setting.filler_category_id, "sequence_id": setting.filler_sequence_id}, db=db)
+    
+    # If filler is enabled, immediately apply it to Plex
+    applied = False
+    if setting.filler_enabled:
+        try:
+            applied = scheduler.apply_filler_now()
+        except Exception as e:
+            print(f"Error applying filler immediately: {e}")
+            _file_log(f"Error applying filler immediately: {e}")
+    
+    return {
+        "message": f"Filler category updated" + (" and applied to Plex" if applied else ""),
+        "enabled": setting.filler_enabled,
+        "type": setting.filler_type,
+        "category_id": setting.filler_category_id,
+        "sequence_id": setting.filler_sequence_id,
+        "coming_soon_layout": setting.filler_coming_soon_layout,
+        "applied": applied
+    }
+
+# ==============================================================================
 # NeX-Up: Radarr Integration for Upcoming Movie Trailers
 # ==============================================================================
 
@@ -10972,7 +13943,17 @@ def get_nexup_settings(db: Session = Depends(get_db)):
         "sonarr_url": getattr(setting, 'nexup_sonarr_url', None),
         "sonarr_connected": bool(getattr(setting, 'nexup_sonarr_url', None) and getattr(setting, 'nexup_sonarr_api_key', None)),
         "tv_category_id": getattr(setting, 'nexup_tv_category_id', None),
-        "last_sonarr_sync": getattr(setting, 'nexup_last_sonarr_sync', None).isoformat() if getattr(setting, 'nexup_last_sonarr_sync', None) else None
+        "last_sonarr_sync": getattr(setting, 'nexup_last_sonarr_sync', None).isoformat() if getattr(setting, 'nexup_last_sonarr_sync', None) else None,
+        # Coming Soon List auto-regeneration settings
+        "coming_soon_list_auto_regen": getattr(setting, 'nexup_coming_soon_list_auto_regen', False),
+        "coming_soon_list_layout": getattr(setting, 'nexup_coming_soon_list_layout', 'grid'),
+        "coming_soon_list_source": getattr(setting, 'nexup_coming_soon_list_source', 'both'),
+        "coming_soon_list_duration": getattr(setting, 'nexup_coming_soon_list_duration', 10),
+        "coming_soon_list_max_items": getattr(setting, 'nexup_coming_soon_list_max_items', 8),
+        "coming_soon_list_bg_color": getattr(setting, 'nexup_coming_soon_list_bg_color', '#141428'),
+        "coming_soon_list_text_color": getattr(setting, 'nexup_coming_soon_list_text_color', '#ffffff'),
+        "coming_soon_list_accent_color": getattr(setting, 'nexup_coming_soon_list_accent_color', '#00d4ff'),
+        "coming_soon_list_server_name": getattr(setting, 'nexup_coming_soon_list_server_name', '')
     }
 
 @app.put("/nexup/settings")
@@ -10992,6 +13973,15 @@ def update_nexup_settings(
     max_concurrent: Optional[int] = None,
     bulk_warning_threshold: Optional[int] = None,
     tmdb_api_key: Optional[str] = None,
+    coming_soon_list_auto_regen: Optional[bool] = None,
+    coming_soon_list_layout: Optional[str] = None,
+    coming_soon_list_source: Optional[str] = None,
+    coming_soon_list_duration: Optional[int] = None,
+    coming_soon_list_max_items: Optional[int] = None,
+    coming_soon_list_bg_color: Optional[str] = None,
+    coming_soon_list_text_color: Optional[str] = None,
+    coming_soon_list_accent_color: Optional[str] = None,
+    coming_soon_list_server_name: Optional[str] = None,
     db: Session = Depends(get_db)
 ):
     """Update NeX-Up settings"""
@@ -11084,6 +14074,25 @@ def update_nexup_settings(
         setting.nexup_bulk_warning_threshold = max(1, min(50, bulk_warning_threshold))  # 1-50 trailers
     if tmdb_api_key is not None:
         setting.nexup_tmdb_api_key = tmdb_api_key if tmdb_api_key.strip() else None
+    # Coming Soon List auto-regeneration settings
+    if coming_soon_list_auto_regen is not None:
+        setting.nexup_coming_soon_list_auto_regen = coming_soon_list_auto_regen
+    if coming_soon_list_layout is not None:
+        setting.nexup_coming_soon_list_layout = coming_soon_list_layout
+    if coming_soon_list_source is not None:
+        setting.nexup_coming_soon_list_source = coming_soon_list_source
+    if coming_soon_list_duration is not None:
+        setting.nexup_coming_soon_list_duration = max(5, min(30, coming_soon_list_duration))
+    if coming_soon_list_max_items is not None:
+        setting.nexup_coming_soon_list_max_items = max(4, min(12, coming_soon_list_max_items))
+    if coming_soon_list_bg_color is not None:
+        setting.nexup_coming_soon_list_bg_color = coming_soon_list_bg_color
+    if coming_soon_list_text_color is not None:
+        setting.nexup_coming_soon_list_text_color = coming_soon_list_text_color
+    if coming_soon_list_accent_color is not None:
+        setting.nexup_coming_soon_list_accent_color = coming_soon_list_accent_color
+    if coming_soon_list_server_name is not None:
+        setting.nexup_coming_soon_list_server_name = coming_soon_list_server_name
     
     setting.updated_at = datetime.datetime.utcnow()
     db.commit()
@@ -11636,6 +14645,112 @@ def toggle_tv_trailer(trailer_id: int, db: Session = Depends(get_db)):
     
     return {"success": True, "is_enabled": trailer.is_enabled}
 
+# Helper function to auto-regenerate Coming Soon List after sync
+async def _auto_regenerate_coming_soon_list(db: Session):
+    """Auto-regenerate Coming Soon List if enabled in settings."""
+    try:
+        setting = db.query(models.Setting).first()
+        if not setting:
+            return
+        
+        auto_regen = getattr(setting, 'nexup_coming_soon_list_auto_regen', False)
+        if not auto_regen:
+            _file_log("Coming Soon List auto-regen: Disabled, skipping")
+            return
+        
+        _file_log("Coming Soon List auto-regen: Starting automatic regeneration")
+        
+        # Get saved settings
+        layout = getattr(setting, 'nexup_coming_soon_list_layout', 'grid')
+        source = getattr(setting, 'nexup_coming_soon_list_source', 'both')
+        duration = getattr(setting, 'nexup_coming_soon_list_duration', 10)
+        max_items = getattr(setting, 'nexup_coming_soon_list_max_items', 8)
+        bg_color = getattr(setting, 'nexup_coming_soon_list_bg_color', '#141428')
+        text_color = getattr(setting, 'nexup_coming_soon_list_text_color', '#ffffff')
+        accent_color = getattr(setting, 'nexup_coming_soon_list_accent_color', '#00d4ff')
+        server_name = getattr(setting, 'nexup_coming_soon_list_server_name', '')
+        storage_path = getattr(setting, 'nexup_storage_path', None)
+        
+        if not storage_path:
+            _file_log("Coming Soon List auto-regen: No storage path configured")
+            return
+        
+        # Use server name from settings if not specified
+        if not server_name or not server_name.strip():
+            server_name = setting.plex_server_name or getattr(setting, 'jellyfin_server_name', None) or "Your Server"
+        
+        from backend.dynamic_preroll import DynamicPrerollGenerator
+        
+        # Fetch items from downloaded trailers
+        items = []
+        now = datetime.datetime.now()
+        
+        # Get movies from ComingSoonTrailer table (downloaded movie trailers)
+        if source in ["movies", "both"]:
+            movie_trailers = db.query(models.ComingSoonTrailer).filter(
+                models.ComingSoonTrailer.status == 'downloaded',
+                models.ComingSoonTrailer.is_enabled == True,
+                models.ComingSoonTrailer.release_date >= now
+            ).order_by(models.ComingSoonTrailer.release_date.asc()).all()
+            
+            for t in movie_trailers:
+                items.append({
+                    'title': t.title,
+                    'release_date': t.release_date.isoformat() if t.release_date else '',
+                    'poster_url': t.poster_url,
+                    'type': 'movie'
+                })
+        
+        # Get shows from ComingSoonTVTrailer table (downloaded TV trailers)
+        if source in ["shows", "both"]:
+            tv_trailers = db.query(models.ComingSoonTVTrailer).filter(
+                models.ComingSoonTVTrailer.status == 'downloaded',
+                models.ComingSoonTVTrailer.is_enabled == True,
+                models.ComingSoonTVTrailer.release_date >= now
+            ).order_by(models.ComingSoonTVTrailer.release_date.asc()).all()
+            
+            for t in tv_trailers:
+                title = t.title
+                if t.season_number and t.season_number > 1:
+                    title = f"{title} (S{t.season_number})"
+                items.append({
+                    'title': title,
+                    'release_date': t.release_date.isoformat() if t.release_date else '',
+                    'poster_url': t.poster_url,
+                    'type': 'show'
+                })
+        
+        if not items:
+            _file_log("Coming Soon List auto-regen: No items to display")
+            return
+        
+        # Sort by release date and limit
+        items.sort(key=lambda x: x.get('release_date') or '9999-12-31')
+        items = items[:max_items]
+        
+        # Generate the video in dynamic_prerolls subdirectory
+        output_dir = Path(storage_path) / "dynamic_prerolls"
+        output_dir.mkdir(parents=True, exist_ok=True)
+        
+        generator = DynamicPrerollGenerator(str(output_dir))
+        output_path = generator.generate_coming_soon_list(
+            items=items,
+            server_name=server_name,
+            layout=layout,
+            duration=duration,
+            bg_color=bg_color,
+            text_color=text_color,
+            accent_color=accent_color
+        )
+        
+        if output_path:
+            _file_log(f"Coming Soon List auto-regen: Success - {output_path}")
+        else:
+            _file_log("Coming Soon List auto-regen: Failed to generate")
+            
+    except Exception as e:
+        _file_log(f"Coming Soon List auto-regen: Error - {str(e)}", level="ERROR")
+
 @app.post("/nexup/sonarr/sync")
 async def sync_sonarr_trailers(db: Session = Depends(get_db)):
     """Sync TV show trailers from Sonarr - download new ones, expire old ones"""
@@ -11911,6 +15026,9 @@ async def sync_sonarr_trailers(db: Session = Depends(get_db)):
     # Add help message if no downloads and many skipped
     if results['downloaded'] == 0 and skipped_no_trailer > 0:
         results["help"] = f"No trailers were found for {skipped_no_trailer} shows. This usually happens because TMDB doesn't have trailers for these shows yet. Try adding a TMDB API key in settings for better results."
+    
+    # Auto-regenerate Coming Soon List if enabled
+    await _auto_regenerate_coming_soon_list(db)
     
     return results
 
@@ -13314,6 +16432,9 @@ async def sync_nexup(db: Session = Depends(get_db)):
         results["errors"].append(str(e))
         _file_log(f"NeX-Up sync error: {e}")
     
+    # Auto-regenerate Coming Soon List if enabled
+    await _auto_regenerate_coming_soon_list(db)
+    
     return results
 
 @app.get("/nexup/storage")
@@ -13525,6 +16646,291 @@ async def generate_dynamic_preroll(
         raise HTTPException(status_code=500, detail=str(e))
 
 
+def _register_coming_soon_list_to_category(db: Session, output_path: Path, layout: str):
+    """Register a Coming Soon List video to the Coming Soon Lists system category"""
+    try:
+        # Get or create the Coming Soon Lists category
+        category = db.query(models.Category).filter(
+            models.Category.name == "Coming Soon Lists"
+        ).first()
+        
+        if not category:
+            category = models.Category(
+                name="Coming Soon Lists",
+                description="Generated Coming Soon list videos showing upcoming releases. Managed by NeX-Up.",
+                plex_mode="shuffle",
+                apply_to_plex=False,
+                is_system=True
+            )
+            db.add(category)
+            db.commit()
+            db.refresh(category)
+            _file_log("Created Coming Soon Lists system category")
+        
+        # Check if already registered
+        existing = db.query(models.Preroll).filter(
+            models.Preroll.path == str(output_path)
+        ).first()
+        
+        if existing:
+            # Update the existing record
+            existing.category_id = category.id
+            db.commit()
+            _file_log(f"Updated existing Coming Soon List registration: {output_path.name}")
+        else:
+            # Create display name based on layout
+            display_name = f"Coming Soon List ({layout.title()})"
+            
+            new_preroll = models.Preroll(
+                filename=output_path.name,
+                path=str(output_path),
+                display_name=display_name,
+                category_id=category.id,
+                thumbnail="",
+                tags="[]",
+                managed=False
+            )
+            db.add(new_preroll)
+            db.commit()
+            _file_log(f"Registered Coming Soon List to category: {output_path.name}")
+    except Exception as e:
+        _file_log(f"Error registering Coming Soon List to category: {e}")
+
+
+@app.post("/nexup/preroll/generate-coming-soon-list")
+async def generate_coming_soon_list(
+    layout: str = "list",  # "list" or "grid"
+    source: str = "both",  # "movies", "shows", or "both"
+    duration: int = 10,
+    max_items: int = 8,
+    bg_color: str = "#141428",
+    text_color: str = "#ffffff",
+    accent_color: str = "#00d4ff",
+    server_name: str = None,  # Optional custom server name override
+    db: Session = Depends(get_db)
+):
+    """
+    Generate a Coming Soon List video showing upcoming movies and shows.
+    Sources items from Your Trailers (downloaded trailers only).
+    
+    Args:
+        layout: "list" for text-only, "grid" for poster grid
+        source: "movies" (movies only), "shows" (TV only), or "both"
+        duration: Video duration in seconds (default 10)
+        max_items: Maximum number of items to show (default 8)
+        bg_color: Background color (hex)
+        text_color: Text color (hex)
+        accent_color: Accent color (hex)
+        server_name: Optional custom server name to display
+    """
+    from backend.dynamic_preroll import DynamicPrerollGenerator, set_verbose_logger
+    
+    # Wire up verbose logging if enabled
+    if _is_verbose_logging_enabled():
+        def preroll_verbose_log(msg: str):
+            _file_log(f"[COMING-SOON-LIST] {msg}", level="DEBUG")
+            print(f"[COMING-SOON-LIST] {msg}")
+        set_verbose_logger(preroll_verbose_log)
+        _file_log(f"[COMING-SOON-LIST] === Starting generation ===", level="DEBUG")
+    
+    setting = db.query(models.Setting).first()
+    if not setting:
+        raise HTTPException(status_code=400, detail="Settings not configured")
+    
+    storage_path = getattr(setting, 'nexup_storage_path', None)
+    if not storage_path:
+        raise HTTPException(status_code=400, detail="NeX-Up storage path not configured")
+    
+    # Use provided server_name, or fall back to settings
+    if not server_name or not server_name.strip():
+        server_name = setting.plex_server_name or getattr(setting, 'jellyfin_server_name', None) or "Your Server"
+    
+    # Fetch from downloaded trailers (Your Trailers page) instead of Radarr/Sonarr API
+    items = []
+    now = datetime.datetime.now()
+    
+    # Get movies from ComingSoonTrailer table (downloaded movie trailers)
+    if source in ["movies", "both"]:
+        movie_trailers = db.query(models.ComingSoonTrailer).filter(
+            models.ComingSoonTrailer.status == 'downloaded',
+            models.ComingSoonTrailer.is_enabled == True,
+            models.ComingSoonTrailer.release_date >= now  # Only future releases
+        ).order_by(models.ComingSoonTrailer.release_date.asc()).all()
+        
+        for t in movie_trailers:
+            items.append({
+                'title': t.title,
+                'release_date': t.release_date.isoformat() if t.release_date else '',
+                'poster_url': t.poster_url,
+                'type': 'movie'
+            })
+        _file_log(f"[COMING-SOON-LIST] Found {len(movie_trailers)} downloaded movie trailers")
+    
+    # Get shows from ComingSoonTVTrailer table (downloaded TV trailers)
+    if source in ["shows", "both"]:
+        tv_trailers = db.query(models.ComingSoonTVTrailer).filter(
+            models.ComingSoonTVTrailer.status == 'downloaded',
+            models.ComingSoonTVTrailer.is_enabled == True,
+            models.ComingSoonTVTrailer.release_date >= now  # Only future releases
+        ).order_by(models.ComingSoonTVTrailer.release_date.asc()).all()
+        
+        for t in tv_trailers:
+            title = t.title
+            if t.season_number and t.season_number > 1:
+                title = f"{title} (S{t.season_number})"
+            items.append({
+                'title': title,
+                'release_date': t.release_date.isoformat() if t.release_date else '',
+                'poster_url': t.poster_url,
+                'type': 'show'
+            })
+        _file_log(f"[COMING-SOON-LIST] Found {len(tv_trailers)} downloaded TV trailers")
+    
+    if not items:
+        raise HTTPException(status_code=400, detail="No downloaded trailers found. Download some trailers in Your Trailers first.")
+    
+    # Sort by release date
+    items.sort(key=lambda x: x.get('release_date') or '9999-12-31')
+    
+    # Convert colors from CSS hex to FFmpeg format
+    bg_ffmpeg = bg_color.replace('#', '0x')
+    text_ffmpeg = text_color.replace('#', '0x')
+    accent_ffmpeg = accent_color.replace('#', '0x')
+    
+    # Generate the video
+    output_dir = Path(storage_path) / "dynamic_prerolls"
+    output_dir.mkdir(parents=True, exist_ok=True)
+    
+    generator = DynamicPrerollGenerator(str(output_dir))
+    
+    if not generator.check_ffmpeg_available():
+        raise HTTPException(status_code=500, detail="FFmpeg not found. Please install FFmpeg to generate this video.")
+    
+    output_filename = f"coming_soon_{layout}.mp4"
+    
+    try:
+        output_path = generator.generate_coming_soon_list(
+            items=items,
+            server_name=server_name,
+            duration=float(duration),
+            output_filename=output_filename,
+            layout=layout,
+            bg_color=bg_ffmpeg,
+            text_color=text_ffmpeg,
+            accent_color=accent_ffmpeg,
+            max_items=max_items
+        )
+        
+        if output_path:
+            _file_log(f"[COMING-SOON-LIST] Generated: {output_path}")
+            
+            # Save server name to settings (shared with Dynamic Preroll Generator)
+            if server_name and server_name.strip():
+                setting.nexup_dynamic_preroll_server_name = server_name.strip()
+                db.commit()
+            
+            # Auto-register to Coming Soon Lists system category
+            _register_coming_soon_list_to_category(db, Path(output_path), layout)
+            
+            return {
+                "success": True,
+                "path": str(output_path),
+                "layout": layout,
+                "items_count": min(len(items), max_items),
+                "source": source,
+                "duration": duration,
+                "message": f"Generated Coming Soon list with {min(len(items), max_items)} items"
+            }
+        else:
+            raise HTTPException(status_code=500, detail="Failed to generate Coming Soon list video")
+    except Exception as e:
+        _file_log(f"Error generating Coming Soon list: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/nexup/preroll/coming-soon-list/preview")
+async def preview_coming_soon_list(
+    source: str = "both",
+    max_items: int = 8,
+    db: Session = Depends(get_db)
+):
+    """
+    Preview what items would appear in a Coming Soon List video.
+    Sources items from Your Trailers (downloaded trailers only).
+    """
+    setting = db.query(models.Setting).first()
+    if not setting:
+        return {"items": [], "error": "Settings not configured"}
+    
+    items = []
+    now = datetime.datetime.now()
+    
+    def calc_days_until(release_dt):
+        if not release_dt:
+            return None
+        try:
+            if hasattr(release_dt, 'date'):
+                release_date = release_dt.date()
+            else:
+                release_date = release_dt
+            return (release_date - datetime.datetime.now().date()).days
+        except:
+            return None
+    
+    # Get movies from downloaded trailers
+    if source in ["movies", "both"]:
+        movie_trailers = db.query(models.ComingSoonTrailer).filter(
+            models.ComingSoonTrailer.status == 'downloaded',
+            models.ComingSoonTrailer.is_enabled == True,
+            models.ComingSoonTrailer.release_date >= now
+        ).order_by(models.ComingSoonTrailer.release_date.asc()).all()
+        
+        for t in movie_trailers:
+            items.append({
+                'title': t.title,
+                'release_date': t.release_date.isoformat() if t.release_date else '',
+                'poster_url': t.poster_url,
+                'type': 'movie',
+                'days_until_release': calc_days_until(t.release_date)
+            })
+    
+    # Get shows from downloaded trailers
+    if source in ["shows", "both"]:
+        tv_trailers = db.query(models.ComingSoonTVTrailer).filter(
+            models.ComingSoonTVTrailer.status == 'downloaded',
+            models.ComingSoonTVTrailer.is_enabled == True,
+            models.ComingSoonTVTrailer.release_date >= now
+        ).order_by(models.ComingSoonTVTrailer.release_date.asc()).all()
+        
+        for t in tv_trailers:
+            title = t.title
+            if t.season_number and t.season_number > 1:
+                title = f"{title} (S{t.season_number})"
+            items.append({
+                'title': title,
+                'release_date': t.release_date.isoformat() if t.release_date else '',
+                'poster_url': t.poster_url,
+                'type': 'show',
+                'days_until_release': calc_days_until(t.release_date)
+            })
+    
+    # Sort by release date
+    items.sort(key=lambda x: x.get('release_date') or '9999-12-31')
+    
+    # Count totals for each type
+    movie_count = len([i for i in items if i['type'] == 'movie'])
+    show_count = len([i for i in items if i['type'] == 'show'])
+    
+    return {
+        "items": items[:max_items],
+        "total_available": len(items),
+        "showing": min(len(items), max_items),
+        "movie_count": movie_count,
+        "show_count": show_count,
+        "has_trailers": len(items) > 0
+    }
+
+
 @app.post("/nexup/preroll/generate-from-preview")
 async def generate_preroll_from_preview(
     image_data: str = Body(..., description="Base64 encoded PNG image from CSS preview"),
@@ -13683,16 +17089,18 @@ def list_generated_prerolls(db: Session = Depends(get_db)):
     setting = db.query(models.Setting).first()
     
     if not setting:
-        return {"prerolls": []}
+        return {"prerolls": [], "coming_soon_lists": []}
     
     storage_path = getattr(setting, 'nexup_storage_path', None)
     if not storage_path:
-        return {"prerolls": []}
+        return {"prerolls": [], "coming_soon_lists": []}
     
     output_dir = Path(storage_path) / "dynamic_prerolls"
     prerolls = []
+    coming_soon_lists = []
     
     if output_dir.exists():
+        # List dynamic prerolls (*_preroll.mp4)
         for file in output_dir.glob("*_preroll.mp4"):
             # Extract template name from filename (e.g., "coming_soon_cinematic_preroll.mp4" -> "coming_soon_cinematic")
             template_id = file.stem.replace("_preroll", "")
@@ -13707,11 +17115,31 @@ def list_generated_prerolls(db: Session = Depends(get_db)):
                 "size_bytes": stat.st_size,
                 "created_at": stat.st_mtime
             })
+        
+        # List coming soon list videos (coming_soon_grid.mp4, coming_soon_list.mp4)
+        for file in output_dir.glob("coming_soon_*.mp4"):
+            # Skip general dynamic prerolls that end with _preroll
+            if file.stem.endswith('_preroll'):
+                continue
+            # Extract layout type from filename (e.g., "coming_soon_grid.mp4" -> "grid")
+            layout_type = file.stem.replace("coming_soon_", "")
+            
+            # Get file stats
+            stat = file.stat()
+            
+            coming_soon_lists.append({
+                "filename": file.name,
+                "layout": layout_type,
+                "path": str(file),
+                "size_bytes": stat.st_size,
+                "created_at": stat.st_mtime
+            })
     
     # Sort by creation time (newest first)
     prerolls.sort(key=lambda x: x["created_at"], reverse=True)
+    coming_soon_lists.sort(key=lambda x: x["created_at"], reverse=True)
     
-    return {"prerolls": prerolls}
+    return {"prerolls": prerolls, "coming_soon_lists": coming_soon_lists}
 
 @app.delete("/nexup/preroll/{filename}")
 def delete_specific_preroll(filename: str, db: Session = Depends(get_db)):
@@ -13734,6 +17162,16 @@ def delete_specific_preroll(filename: str, db: Session = Depends(get_db)):
     if file_path.exists():
         try:
             file_path.unlink()
+            
+            # Also remove from prerolls table if registered
+            existing = db.query(models.Preroll).filter(
+                models.Preroll.path == str(file_path)
+            ).first()
+            if existing:
+                db.delete(existing)
+                db.commit()
+                _file_log(f"Removed preroll registration for {filename}")
+            
             return {"success": True, "message": f"Deleted {filename}"}
         except Exception as e:
             return {"success": False, "message": str(e)}

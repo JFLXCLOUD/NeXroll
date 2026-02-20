@@ -6,9 +6,9 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: 'Version tag (e.g., v1.9.6)'
+        description: 'Version tag (e.g., v1.10.14)'
         required: true
-        default: 'v1.9.6'
+        default: 'v1.10.14'
 
 env:
   REGISTRY: docker.io
@@ -27,17 +27,27 @@ jobs:
         run: |
           if [ "${{ github.event_name }}" = "release" ]; then
             VERSION="${{ github.event.release.tag_name }}"
+            IS_PRERELEASE="${{ github.event.release.prerelease }}"
           elif [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
             VERSION="${{ github.event.inputs.version }}"
+            # Check if version contains beta/rc/alpha
+            if [[ "$VERSION" =~ (beta|rc|alpha) ]]; then
+              IS_PRERELEASE="true"
+            else
+              IS_PRERELEASE="false"
+            fi
           else
             VERSION="${{ github.ref_name }}"
+            IS_PRERELEASE="false"
           fi
           # Remove 'v' prefix for Docker tag
           VERSION_NUM="${VERSION#v}"
           echo "version=${VERSION_NUM}" >> $GITHUB_OUTPUT
           echo "tag=${VERSION}" >> $GITHUB_OUTPUT
+          echo "is_prerelease=${IS_PRERELEASE}" >> $GITHUB_OUTPUT
           echo "Version: ${VERSION_NUM}"
           echo "Tag: ${VERSION}"
+          echo "Is Pre-release: ${IS_PRERELEASE}"
 
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -69,6 +79,22 @@ jobs:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
+      - name: Determine Docker tags
+        id: docker_tags
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          IS_PRERELEASE="${{ steps.version.outputs.is_prerelease }}"
+          
+          if [ "$IS_PRERELEASE" = "true" ]; then
+            # Pre-release: tag with version and 'beta'
+            echo "tags=${{ env.IMAGE_NAME }}:${VERSION},${{ env.IMAGE_NAME }}:beta" >> $GITHUB_OUTPUT
+            echo "Using beta tags: ${VERSION}, beta"
+          else
+            # Stable release: tag with version and 'latest'
+            echo "tags=${{ env.IMAGE_NAME }}:${VERSION},${{ env.IMAGE_NAME }}:latest" >> $GITHUB_OUTPUT
+            echo "Using stable tags: ${VERSION}, latest"
+          fi
+
       - name: Build and push Docker image
         uses: docker/build-push-action@v5
         with:
@@ -76,9 +102,7 @@ jobs:
           file: ./Dockerfile
           platforms: linux/amd64,linux/arm64
           push: true
-          tags: |
-            ${{ env.IMAGE_NAME }}:${{ steps.version.outputs.version }}
-            ${{ env.IMAGE_NAME }}:latest
+          tags: ${{ steps.docker_tags.outputs.tags }}
           build-args: |
             VERSION=${{ steps.version.outputs.tag }}
           cache-from: type=gha

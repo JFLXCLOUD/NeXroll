@@ -1,5 +1,190 @@
 # Changelog
 
+## [1.11.0] - 02-19-2026
+
+### New Feature 1: Coming Soon List Generator
+
+Generate dynamic video prerolls that showcase your upcoming movies and TV shows from Radarr and Sonarr.
+
+#### Features
+- **Two Layout Styles**:
+  - **List Mode** - Clean text-only layout with titles and release dates
+  - **Grid Mode** - Visual poster grid with movie/show artwork (220x330px posters)
+- **Content Sources** - Choose from Movies only, Shows only, or Both
+- **Color Customization** - Full control over background, text, and accent colors
+- **Configurable Duration** - Set video length from 5 to 20 seconds
+- **Max Items** - Control how many titles are displayed (4-12 items)
+- **Auto-regeneration** - Automatically re-generate when NeX-Up syncs with Radarr/Sonarr
+- **System Category Integration** - Videos auto-register to "Coming Soon Lists" category
+- **Sequence Builder Ready** - Generated videos appear in available prerolls for sequences
+- **Video Preview Modal** - Watch generated videos in a centered modal overlay
+
+#### Technical Details
+- Uses FFmpeg for video generation
+- Automatically downloads poster images for grid layout
+- Falls back to text layout if poster download fails
+- Staggered fade-in animations for each item
+
+---
+
+### New Feature 2: Authentication System
+
+Secure NeXroll access with API keys and optional username/password authentication.
+
+#### API Key Authentication
+- **Generate API Keys** - Create unique API keys for external access (nx_... format)
+- **API Key Management UI** - View, create, revoke API keys in Settings > API Keys tab
+- **Key Permissions** - Scoped permissions (read-only, full access)
+- **Key Expiration** - Optional expiration dates (24h, 7d, 30d, 90d, 1y, never)
+- **Secure Storage** - SHA256 hashed keys in database (only prefix stored for display)
+
+#### External API Endpoints
+- `GET /external/status` - System status and connection info
+- `GET /external/prerolls` - List all prerolls
+- `GET /external/schedules` - List all schedules
+- `GET /external/now-showing` - Current active category, preroll string, active schedules
+- `GET /external/active-schedules` - Detailed info on currently active schedules
+- `GET /external/categories` - All categories with preroll counts
+- `GET /external/coming-soon` - Upcoming movies/TV from NeX-Up (source, limit params)
+- `GET /external/sequences` - All saved sequences
+- `POST /external/sync-plex` - Trigger Plex sync (requires full access)
+- `POST /external/categories` - Create a new category (requires full access)
+- `POST /external/prerolls/register` - Register existing video as preroll (requires full access)
+- `POST /external/prerolls/{id}/assign-category/{category_id}` - Assign preroll to category
+- `POST /external/schedules` - Create a new schedule (requires full access)
+- `DELETE /external/schedules/{id}` - Delete a schedule (requires full access)
+- `PUT /external/schedules/{id}/toggle` - Enable/disable schedule (requires full access)
+- `POST /external/apply-category/{id}` - Apply category to Plex immediately
+
+#### Username/Password Authentication
+- **User Accounts** - Create admin and user accounts
+- **Login Page** - Login form before accessing NeXroll
+- **Session Management** - Secure session tokens with expiration
+- **Password Hashing** - Secure bcrypt password storage
+- **Remember Me** - Optional "remember me" for longer sessions (30 days)
+- **Logout** - Secure logout functionality
+
+#### Security Features
+- **HTTPS Support** - Configurable "Require HTTPS" setting in auth settings
+- **CORS Configuration** - FastAPI middleware with configurable origins
+- **Failed Login Protection** - Account lockout after 5 failed attempts (15 min)
+- **Audit Log** - Log authentication events with viewer UI
+
+---
+
+### New Feature 3: Enhanced Update System
+
+Improved update detection with configurable checking and notifications.
+
+#### Update Detection
+- **Auto-Check on Startup** - Check for updates when NeXroll starts
+- **Configurable Check Interval** - How often to check (startup, hourly, daily, weekly, never)
+- **Pre-release Channel** - Option to include beta/pre-release versions
+- **Changelog Display** - Show what's new with markdown rendering
+
+#### Update Notifications
+- **Dashboard Notification** - Prominent update card on dashboard overview
+- **Version Comparison** - Show current vs available version
+- **Update Notes Summary** - Release notes with markdown support
+- **Dismiss/Remind Later** - Dismiss synced to backend for persistence
+
+---
+
+### New Feature 4: Enhanced Logging System
+
+Better debugging and troubleshooting capabilities.
+
+#### Log Management
+- **Log Viewer UI** - View logs directly in NeXroll web interface (Settings > Logs tab)
+- **Log Level Filtering** - Filter by DEBUG, INFO, WARNING, ERROR, CRITICAL
+- **Log Search** - Search through log entries by message text
+- **Log Export** - Download logs as JSON or CSV file
+- **Log Rotation** - Automatic cleanup of old logs (configurable retention days)
+
+#### Structured Logging
+- **JSON Log Format** - Structured logging with details JSON field
+- **Request Logging** - Log all API requests with timing (duration_ms)
+- **Category-based Logging** - Logs categorized by: system, scheduler, api, user, plex, jellyfin, nexup
+- **Request ID Correlation** - Each request gets unique ID for log correlation
+
+#### Log Settings
+- **Log Level Configuration** - Set minimum log level (DEBUG, INFO, WARNING, ERROR)
+- **Retention Period** - Configure how many days to keep logs (1-365)
+- **Toggle Database Logging** - Enable/disable logging to database
+- **Toggle Request Logging** - Enable/disable API request logging
+- **Toggle Scheduler Logging** - Enable/disable scheduler activity logs
+- **Toggle API Logging** - Enable/disable external API call logs
+
+#### Log Endpoints
+- `GET /logs` - Get logs with filtering (level, category, search, limit)
+- `GET /logs/stats` - Get log statistics (counts by level/category)
+- `GET /logs/export` - Export logs as JSON or CSV
+- `DELETE /logs` - Clear old logs
+- `GET /logs/settings` - Get logging settings
+- `PUT /logs/settings` - Update logging settings
+
+---
+
+### New Feature 5: Filler Category
+
+A global fallback system to fill gaps in your schedule when no schedules are active.
+
+#### What It Does
+- **Fills Schedule Gaps** - Automatically applies prerolls when NO schedules are active
+- **Different from Per-Schedule Fallback** - Per-schedule fallback only applies when THAT schedule ends; Filler applies globally when ALL schedules are inactive
+- **Three Filler Types**:
+  - **Category** - Use any category as the gap filler
+  - **Sequence** - Use a saved NeX-Up sequence as the gap filler
+  - **Coming Soon List** - Use a generated Coming Soon List (grid or list layout) as the gap filler
+
+#### Configuration
+- Settings > General > Filler Category section
+- Toggle to enable/disable
+- Select filler type and configure the source
+- Respects Coexistence Mode and Clear When Inactive settings
+
+#### Priority Order
+1. **Active Schedule** - Highest priority, schedule's category is applied
+2. **Per-Schedule Fallback** - If schedule has a fallback, it's used when that schedule ends
+3. **Filler Category** - Global fallback when NO schedules are active and no per-schedule fallback exists
+4. **Unchanged** - If filler is disabled, Plex prerolls remain unchanged
+
+#### API Endpoints
+- `GET /settings/filler` - Get filler settings
+- `PUT /settings/filler` - Update filler settings (enabled, type, category_id, sequence_id, coming_soon_layout)
+
+---
+
+### Improvements
+
+#### Dashboard Enhancements
+- **Weekly Calendar Preview** - Mini calendar on Dashboard Overview showing this week's scheduled prerolls
+- **View Full Calendar Button** - Quick navigation to the full Calendar View from dashboard
+- **Filler Category Display** - Shows filler category events on days with no active schedules
+
+#### Sticky Sub-Navigation
+- **All Sub-Navs Now Stick** - Dashboard, Schedules, NeX-Up, and Settings sub-navigation bars properly stick below the main header when scrolling
+- **Unified Positioning** - Consistent 70px offset for all sub-navigation bars
+
+#### Coming Soon List Generator
+- **Cleaner Filenames** - Generated videos now use simpler filenames: `coming_soon_grid.mp4` and `coming_soon_list.mp4`
+
+#### Docker & Deployment
+- **Docker Beta Channel** - Added beta tag support for pre-release Docker images
+- **bcrypt Dependency** - Added bcrypt>=4.0.0 to requirements.txt for password hashing
+- **GitHub Workflow** - Updated docker-build.yml with automatic pre-release detection and conditional tagging
+
+---
+
+### Bug Fixes
+
+- **Admin Role Fix** - Fixed issue where creating a user with Admin role would save as User instead. The RegisterRequest model was missing the `role` field.
+- **View Full Calendar Navigation** - Fixed "View Full Calendar" button not switching to Calendar View properly
+- **Schedule from Sequence Fix** - Fixed clicking "Schedule" on a saved sequence creating a duplicate sequence in the library. Now properly tracks the loaded sequence ID and hides the name/description fields.
+- **Dashboard Data Loading** - Filler settings and NeX-Up trailer counts now load on startup so they display immediately on the Dashboard and Calendar without needing to visit Settings/NeX-Up pages first.
+
+---
+
 ## [1.10.14] - 02-14-2026
 
 ### New Feature: NeX-Up - Radarr & Sonarr Trailer Integration

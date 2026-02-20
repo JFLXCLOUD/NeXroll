@@ -1142,6 +1142,436 @@ class DynamicPrerollGenerator:
                 except:
                     pass
 
+    # =========================================================================
+    # COMING SOON LIST GENERATOR
+    # =========================================================================
+    
+    def generate_coming_soon_list(
+        self,
+        items: List[Dict[str, Any]],
+        server_name: str = "Your Server",
+        duration: float = 10.0,
+        output_filename: str = "coming_soon_list.mp4",
+        layout: str = "list",  # "list" or "grid"
+        bg_color: str = "0x141428",
+        text_color: str = "0xffffff",
+        accent_color: str = "0x00d4ff",
+        width: int = 1920,
+        height: int = 1080,
+        max_items: int = 8
+    ) -> Optional[str]:
+        """
+        Generate a Coming Soon List video showing upcoming movies/shows.
+        
+        Args:
+            items: List of dicts with 'title', 'release_date', 'poster_url' (optional)
+            server_name: Server name to display in header
+            duration: Total video duration in seconds
+            output_filename: Output filename
+            layout: "list" for text-only, "grid" for poster grid
+            bg_color: Background color (hex)
+            text_color: Main text color (hex)
+            accent_color: Accent/highlight color (hex)
+            width: Video width
+            height: Video height
+            max_items: Maximum number of items to show
+            
+        Returns:
+            Path to generated video or None on failure
+        """
+        if not self.is_available():
+            logger.error("FFmpeg not available")
+            return None
+        
+        if not self.output_dir:
+            logger.error("Output directory not set")
+            return None
+        
+        _verbose_log(f"=== generate_coming_soon_list ===")
+        _verbose_log(f"Items: {len(items)}, Layout: {layout}, Duration: {duration}s")
+        _verbose_log(f"Server name: '{server_name}'")
+        _verbose_log(f"Colors - BG: {bg_color}, Text: {text_color}, Accent: {accent_color}")
+        
+        # Limit items
+        items = items[:max_items]
+        
+        if not items:
+            logger.warning("No items to display in Coming Soon List")
+            return None
+        
+        if layout == "grid":
+            return self._generate_list_grid_layout(
+                items, server_name, duration, output_filename,
+                bg_color, text_color, accent_color, width, height
+            )
+        else:
+            return self._generate_list_text_layout(
+                items, server_name, duration, output_filename,
+                bg_color, text_color, accent_color, width, height
+            )
+    
+    def _generate_list_text_layout(
+        self,
+        items: List[Dict[str, Any]],
+        server_name: str,
+        duration: float,
+        output_filename: str,
+        bg_color: str,
+        text_color: str,
+        accent_color: str,
+        width: int,
+        height: int
+    ) -> Optional[str]:
+        """Generate text-only list layout (no posters)"""
+        output_path = self.output_dir / output_filename
+        escaped_server = self._escape_text(server_name)
+        _verbose_log(f"Text layout - Server name: '{server_name}' -> escaped: '{escaped_server}'")
+        
+        _, font_param = self._get_font_path('arial')
+        _, bold_font_param = self._get_font_path('arial_bold')
+        
+        # Calculate layout
+        header_y = 80
+        subtitle_y = 175
+        list_start_y = 270
+        line_height = 90
+        
+        # Build filter string
+        filter_parts = []
+        
+        # Header: "Coming Soon to [Server Name]"
+        filter_parts.append(
+            f"drawtext=text='COMING SOON':fontsize=80:fontcolor={accent_color}{bold_font_param}:"
+            f"x=(w-text_w)/2:y={header_y}:shadowcolor=black@0.6:shadowx=2:shadowy=2"
+        )
+        
+        filter_parts.append(
+            f"drawtext=text='to {escaped_server}':fontsize=50:fontcolor={text_color}@0.9{font_param}:"
+            f"x=(w-text_w)/2:y={subtitle_y}:alpha='if(lt(t,0.5),0,if(lt(t,1),(t-0.5)/0.5,1))'"
+        )
+        
+        # Divider line
+        line_y = subtitle_y + 60
+        filter_parts.append(
+            f"drawbox=x={width//4}:y={line_y}:w={width//2}:h=3:c={accent_color}@0.6:t=fill"
+        )
+        
+        # Item list with staggered fade-in
+        for i, item in enumerate(items):
+            title = self._escape_text(item.get('title', 'Unknown'))[:40]  # Truncate long titles
+            
+            # Format release date
+            release_date = item.get('release_date', '')
+            if release_date:
+                try:
+                    from datetime import datetime
+                    dt = datetime.fromisoformat(release_date.replace('Z', '+00:00'))
+                    date_str = dt.strftime('%b %d, %Y')
+                except:
+                    date_str = release_date[:10] if len(release_date) >= 10 else release_date
+            else:
+                date_str = "TBA"
+            
+            item_y = list_start_y + (i * line_height)
+            fade_delay = 0.8 + (i * 0.15)  # Staggered fade-in
+            
+            # Title (left-aligned with padding)
+            filter_parts.append(
+                f"drawtext=text='{title}':fontsize=42:fontcolor={text_color}{font_param}:"
+                f"x=200:y={item_y}:alpha='if(lt(t,{fade_delay}),0,if(lt(t,{fade_delay+0.4}),"
+                f"(t-{fade_delay})/0.4,1))'"
+            )
+            
+            # Date (right-aligned)
+            filter_parts.append(
+                f"drawtext=text='{date_str}':fontsize=36:fontcolor={accent_color}@0.9{font_param}:"
+                f"x=w-text_w-200:y={item_y+5}:alpha='if(lt(t,{fade_delay}),0,if(lt(t,{fade_delay+0.4}),"
+                f"(t-{fade_delay})/0.4,1))'"
+            )
+            
+            # Subtle dot separator
+            filter_parts.append(
+                f"drawtext=text='●':fontsize=16:fontcolor={accent_color}@0.5{font_param}:"
+                f"x=165:y={item_y+12}:alpha='if(lt(t,{fade_delay}),0,if(lt(t,{fade_delay+0.4}),"
+                f"(t-{fade_delay})/0.4,1))'"
+            )
+        
+        # Fades
+        filter_parts.append(f"fade=t=in:st=0:d=0.8,fade=t=out:st={duration-0.8}:d=0.8")
+        
+        filter_str = ",".join(filter_parts)
+        
+        # Use vignette fallback for list (gradient + many drawtext elements causes FFmpeg issues)
+        return self._run_ffmpeg_vignette_fallback(
+            filter_str, output_path, duration, width, height, bg_color
+        )
+    
+    def _generate_list_grid_layout(
+        self,
+        items: List[Dict[str, Any]],
+        server_name: str,
+        duration: float,
+        output_filename: str,
+        bg_color: str,
+        text_color: str,
+        accent_color: str,
+        width: int,
+        height: int
+    ) -> Optional[str]:
+        """
+        Generate grid layout with poster images.
+        Downloads posters, overlays them in a grid, adds titles.
+        """
+        import tempfile
+        import httpx
+        import asyncio
+        
+        output_path = self.output_dir / output_filename
+        escaped_server = self._escape_text(server_name)
+        _verbose_log(f"Grid layout - Server name: '{server_name}' -> escaped: '{escaped_server}'")
+        
+        _, font_param = self._get_font_path('arial')
+        _, bold_font_param = self._get_font_path('arial_bold')
+        
+        # Create temp directory for poster images
+        temp_dir = tempfile.mkdtemp(prefix="nexroll_posters_")
+        poster_paths = []
+        valid_items = []
+        
+        try:
+            # Download poster images synchronously
+            _verbose_log(f"Downloading posters to {temp_dir}")
+            _verbose_log(f"Items to process: {len(items[:8])}")
+            
+            for i, item in enumerate(items[:8]):  # Max 8 for grid
+                poster_url = item.get('poster_url')
+                _verbose_log(f"Item {i}: {item.get('title', 'Unknown')} - poster_url: {poster_url[:50] if poster_url else 'None'}...")
+                
+                if poster_url:
+                    try:
+                        # Use synchronous httpx for simplicity
+                        import httpx
+                        with httpx.Client(timeout=10.0, follow_redirects=True) as client:
+                            response = client.get(poster_url)
+                            if response.status_code == 200:
+                                # Save poster to temp file
+                                content_type = response.headers.get('content-type', '')
+                                ext = '.jpg' if 'jpeg' in content_type or 'jpg' in content_type else '.png'
+                                poster_path = os.path.join(temp_dir, f"poster_{i}{ext}")
+                                with open(poster_path, 'wb') as f:
+                                    f.write(response.content)
+                                poster_paths.append(poster_path)
+                                valid_items.append(item)
+                                _verbose_log(f"Downloaded poster {i}: {poster_path} ({len(response.content)} bytes)")
+                            else:
+                                _verbose_log(f"Failed to download poster {i}: HTTP {response.status_code}")
+                    except Exception as e:
+                        _verbose_log(f"Error downloading poster {i}: {e}")
+                else:
+                    _verbose_log(f"No poster URL for item {i}: {item.get('title', 'Unknown')}")
+            
+            _verbose_log(f"Downloaded {len(poster_paths)} posters successfully")
+            
+            if not valid_items:
+                _verbose_log("No valid posters downloaded, falling back to text layout")
+                return self._generate_list_text_layout(
+                    items, server_name, duration, output_filename,
+                    bg_color, text_color, accent_color, width, height
+                )
+            
+            # Build grid layout with FFmpeg
+            # Calculate grid: 2x4, 3x3, or 4x2 based on count
+            num_items = len(valid_items)
+            if num_items <= 4:
+                cols, rows = 2, 2
+            elif num_items <= 6:
+                cols, rows = 3, 2
+            else:
+                cols, rows = 4, 2
+            
+            # Larger poster sizes for better visibility
+            poster_width = 220
+            poster_height = 330
+            spacing_x = 40
+            spacing_y = 20
+            
+            grid_width = cols * poster_width + (cols - 1) * spacing_x
+            grid_height = rows * poster_height + (rows - 1) * spacing_y
+            
+            start_x = (width - grid_width) // 2
+            start_y = 180  # Leave room for header
+            
+            # Build complex filterchain
+            inputs = [f'-i "{p}"' for p in poster_paths]
+            
+            # Base: create background
+            filter_complex = []
+            
+            # Scale each poster and overlay
+            overlay_chain = f"[base]"
+            for i, poster_path in enumerate(poster_paths):
+                col = i % cols
+                row = i // cols
+                x = start_x + col * (poster_width + spacing_x)
+                y = start_y + row * (poster_height + spacing_y + 50)  # Extra for title
+                
+                # Scale poster
+                filter_complex.append(f"[{i+1}:v]scale={poster_width}:{poster_height}[p{i}]")
+                # Overlay with fade-in
+                fade_delay = 0.5 + i * 0.1
+                filter_complex.append(
+                    f"{overlay_chain}[p{i}]overlay=x={x}:y={y}:"
+                    f"enable='gte(t,{fade_delay})'[tmp{i}]"
+                )
+                overlay_chain = f"[tmp{i}]"
+            
+            # Add text overlays for titles (simpler approach - skip for now, use text directly)
+            # For now, generate simpler version without embedded titles
+            
+            # Build FFmpeg command for grid with poster overlays
+            cmd = [
+                self.ffmpeg_path,
+                '-y',
+                '-f', 'lavfi',
+                '-i', f'color=c={bg_color}:s={width}x{height}:d={duration}:r=30',
+            ]
+            
+            # Add poster inputs
+            for poster_path in poster_paths:
+                cmd.extend(['-i', poster_path])
+            
+            # Build filter
+            filter_parts = []
+            
+            # Label base
+            filter_parts.append(f"[0:v]null[base]")
+            
+            current_label = "[base]"
+            for i, poster_path in enumerate(poster_paths):
+                col = i % cols
+                row = i // cols
+                x = start_x + col * (poster_width + spacing_x)
+                y = start_y + row * (poster_height + spacing_y + 35)  # Space for date below
+                
+                # Scale poster
+                filter_parts.append(f"[{i+1}:v]scale={poster_width}:{poster_height},format=rgba[p{i}]")
+                
+                # Overlay (simplified - no enable expression to avoid escaping issues)
+                next_label = f"[ovr{i}]"
+                filter_parts.append(
+                    f"{current_label}[p{i}]overlay=x={x}:y={y}{next_label}"
+                )
+                current_label = next_label
+            
+            # Build text overlays for release dates only
+            text_filters = []
+            for i, item in enumerate(valid_items):
+                col = i % cols
+                row = i // cols
+                x = start_x + col * (poster_width + spacing_x)
+                y = start_y + row * (poster_height + spacing_y + 35)
+                
+                # Format release date
+                release_date = item.get('release_date', '')
+                if release_date:
+                    try:
+                        from datetime import datetime
+                        dt = datetime.fromisoformat(release_date.replace('Z', '+00:00'))
+                        date_str = dt.strftime('%b %d')
+                    except:
+                        date_str = release_date[:10] if len(release_date) >= 10 else release_date
+                else:
+                    date_str = "TBA"
+                date_str = self._escape_text(date_str)
+                
+                # Center text under poster - only release date
+                text_center_x = x + poster_width // 2
+                date_y = y + poster_height + 12
+                
+                # Release date only (centered, accent color) - larger font
+                text_filters.append(
+                    f"drawtext=text='{date_str}':fontsize=20:fontcolor={accent_color}@0.9{font_param}:"
+                    f"x={text_center_x}-(text_w/2):y={date_y}:shadowcolor=black@0.4:shadowx=1:shadowy=1"
+                )
+            
+            # Add header text and footer
+            header_filter = (
+                f"drawtext=text='COMING SOON':fontsize=55:fontcolor={accent_color}{bold_font_param}:"
+                f"x=(w-text_w)/2:y=60:shadowcolor=black@0.5:shadowx=2:shadowy=2,"
+                f"drawtext=text='to {escaped_server}':fontsize=32:fontcolor={text_color}@0.9{font_param}:"
+                f"x=(w-text_w)/2:y=130"
+            )
+            
+            # Combine: poster overlays + text overlays + header + fades
+            all_text = ",".join(text_filters)
+            final_filter = f"{header_filter},{all_text},fade=t=in:st=0:d=0.6,fade=t=out:st={duration-0.6}:d=0.6"
+            
+            filter_parts.append(f"{current_label}{final_filter}[out]")
+            
+            filter_complex_str = ";".join(filter_parts)
+            
+            # Add audio null source - this becomes the last input
+            # Input indices: 0=color, 1 to len(poster_paths)=posters, len(poster_paths)+1=anullsrc
+            audio_index = len(poster_paths) + 1
+            cmd.extend(['-f', 'lavfi', '-i', f'anullsrc=r=48000:cl=stereo:d={duration}'])
+            
+            _verbose_log(f"Audio input index: {audio_index}")
+            
+            cmd.extend([
+                '-filter_complex', filter_complex_str,
+                '-map', '[out]',
+                '-map', f'{audio_index}:a',  # Map audio from anullsrc input
+                '-c:v', 'libx264', '-preset', 'fast', '-crf', '20',
+                '-c:a', 'aac', '-b:a', '128k',
+                '-shortest',
+                '-pix_fmt', 'yuv420p',
+                str(output_path)
+            ])
+            
+            _verbose_log(f"FFmpeg command (grid): {' '.join(str(c) for c in cmd[:20])}... (truncated)")
+            _verbose_log(f"Filter complex: {filter_complex_str[:300]}...")
+            
+            result = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                timeout=120,
+                startupinfo=STARTUPINFO,
+                creationflags=CREATE_NO_WINDOW
+            )
+            
+            _verbose_log(f"FFmpeg return code: {result.returncode}")
+            if result.stderr:
+                _verbose_log(f"FFmpeg stderr: {result.stderr[:500]}")
+            
+            if result.returncode == 0 and output_path.exists():
+                file_size = output_path.stat().st_size
+                _verbose_log(f"SUCCESS! Generated grid video: {output_path} ({file_size} bytes)")
+                return str(output_path)
+            else:
+                _verbose_log(f"Grid generation failed, falling back to text layout")
+                return self._generate_list_text_layout(
+                    items, server_name, duration, output_filename,
+                    bg_color, text_color, accent_color, width, height
+                )
+                
+        except Exception as e:
+            _verbose_log(f"Error in grid layout: {e}")
+            logger.error(f"Error generating grid layout: {e}")
+            # Fallback to text layout
+            return self._generate_list_text_layout(
+                items, server_name, duration, output_filename,
+                bg_color, text_color, accent_color, width, height
+            )
+        finally:
+            # Clean up temp directory
+            try:
+                import shutil as sh
+                sh.rmtree(temp_dir, ignore_errors=True)
+                _verbose_log(f"Cleaned up temp directory: {temp_dir}")
+            except:
+                pass
+
 
 def check_ffmpeg_available() -> Dict[str, Any]:
     """Check if FFmpeg is available and get version info"""

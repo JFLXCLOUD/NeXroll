@@ -34,3 +34,6 @@ pytz>=2024.2
 httpx>=0.27.0
 yt-dlp>=2024.12.0
 psutil>=5.9.0
+
+# Authentication
+bcrypt>=4.0.0

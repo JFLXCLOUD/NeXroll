@@ -416,7 +416,7 @@ GET /health
 ```json
 {
   "status": "healthy",
-  "version": "1.9.6"
+  "version": "1.11.0"
 }
 ```
 
@@ -429,7 +429,7 @@ GET /version
 **Response:**
 ```json
 {
-  "version": "1.9.6",
+  "version": "1.11.0",
   "build": "2024-12-23"
 }
 ```

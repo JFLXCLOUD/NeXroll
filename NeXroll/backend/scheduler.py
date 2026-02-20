@@ -92,6 +92,88 @@ class Scheduler:
         if self.thread:
             self.thread.join()
 
+    def apply_filler_now(self):
+        """
+        Immediately apply filler category/sequence/coming-soon to Plex.
+        Called when filler settings are saved and enabled.
+        Returns True if applied successfully, False otherwise.
+        """
+        db = SessionLocal()
+        try:
+            setting = db.query(models.Setting).first()
+            if not setting:
+                _scheduler_log("Settings not found; cannot apply filler", level="ERROR")
+                return False
+            
+            filler_enabled = getattr(setting, "filler_enabled", False)
+            if not filler_enabled:
+                _scheduler_log("Filler is not enabled; skipping apply")
+                # Clear filler_active if disabled
+                setting.filler_active = None
+                db.commit()
+                return False
+            
+            filler_type = getattr(setting, "filler_type", "category")
+            _scheduler_log(f"Applying filler immediately (type: {filler_type})")
+            
+            if filler_type == "category":
+                filler_category_id = getattr(setting, "filler_category_id", None)
+                if filler_category_id:
+                    applied_ok = self._apply_category_to_plex(filler_category_id, db, schedule=None)
+                    if applied_ok:
+                        # Use filler_active to track filler state (not active_category to avoid FK issues)
+                        setting.filler_active = f"category:{filler_category_id}"
+                        setting.active_category = None  # Clear normal category tracking
+                        db.commit()
+                        _scheduler_log(f"Filler category {filler_category_id} applied immediately")
+                        return True
+                    else:
+                        _scheduler_log(f"Failed to apply filler category {filler_category_id}", level="ERROR")
+                        return False
+                else:
+                    _scheduler_log("Filler type is category but no category selected", level="WARNING")
+                    return False
+                    
+            elif filler_type == "sequence":
+                filler_sequence_id = getattr(setting, "filler_sequence_id", None)
+                if filler_sequence_id:
+                    applied_ok = self._apply_saved_sequence_to_plex(filler_sequence_id, db)
+                    if applied_ok:
+                        # Use filler_active to track sequence filler state
+                        setting.filler_active = f"sequence:{filler_sequence_id}"
+                        setting.active_category = None  # Clear normal category tracking
+                        db.commit()
+                        _scheduler_log(f"Filler sequence {filler_sequence_id} applied immediately")
+                        return True
+                    else:
+                        _scheduler_log(f"Failed to apply filler sequence {filler_sequence_id}", level="ERROR")
+                        return False
+                else:
+                    _scheduler_log("Filler type is sequence but no sequence selected", level="WARNING")
+                    return False
+                    
+            elif filler_type == "coming_soon":
+                filler_layout = getattr(setting, "filler_coming_soon_layout", "grid")
+                applied_ok = self._apply_coming_soon_list_to_plex(filler_layout, db)
+                if applied_ok:
+                    # Use filler_active to track coming soon filler state
+                    setting.filler_active = f"coming_soon:{filler_layout}"
+                    setting.active_category = None  # Clear normal category tracking
+                    db.commit()
+                    _scheduler_log(f"Filler Coming Soon List ({filler_layout}) applied immediately")
+                    return True
+                else:
+                    _scheduler_log(f"Failed to apply filler Coming Soon List", level="ERROR")
+                    return False
+            else:
+                _scheduler_log(f"Unknown filler type: {filler_type}", level="ERROR")
+                return False
+        except Exception as e:
+            _scheduler_log(f"Error applying filler immediately: {e}", level="ERROR")
+            return False
+        finally:
+            db.close()
+
     def _run_scheduler(self):
         """Main scheduler loop - runs based on SCHEDULER_INTERVAL (default 60s)"""
         _scheduler_log(f"Scheduler started (interval: {self._scheduler_check_interval}s)")
@@ -183,6 +265,15 @@ class Scheduler:
                 except Exception as e:
                     _scheduler_log(f"NeX-Up auto-sync: Sonarr sync error: {e}", level="ERROR")
             
+            # Auto-regenerate Coming Soon List videos if enabled
+            auto_regen = getattr(setting, 'nexup_coming_soon_list_auto_regen', False)
+            if auto_regen:
+                try:
+                    _scheduler_log("NeX-Up auto-sync: Regenerating Coming Soon List videos...")
+                    self._regenerate_coming_soon_lists(db, setting)
+                except Exception as e:
+                    _scheduler_log(f"NeX-Up auto-sync: Coming Soon List regeneration error: {e}", level="ERROR")
+            
             # Update last sync time
             self._last_nexup_sync_time = now
             _scheduler_log(f"NeX-Up auto-sync completed. Next sync in {auto_refresh_hours}h")
@@ -191,6 +282,141 @@ class Scheduler:
             _scheduler_log(f"NeX-Up auto-sync error: {e}", level="ERROR")
         finally:
             db.close()
+
+    def _regenerate_coming_soon_lists(self, db: Session, setting):
+        """Regenerate Coming Soon List videos after sync"""
+        from pathlib import Path
+        from backend.dynamic_preroll import DynamicPrerollGenerator
+        import datetime
+        
+        storage_path = getattr(setting, 'nexup_storage_path', None)
+        if not storage_path:
+            return
+        
+        layout = getattr(setting, 'nexup_coming_soon_list_layout', 'grid')
+        source = getattr(setting, 'nexup_coming_soon_list_source', 'both')
+        duration = getattr(setting, 'nexup_coming_soon_list_duration', 10) or 10
+        max_items = getattr(setting, 'nexup_coming_soon_list_max_items', 8) or 8
+        server_name = getattr(setting, 'nexup_dynamic_preroll_server_name', None) or \
+                      getattr(setting, 'plex_server_name', None) or "Your Server"
+        
+        # Get items from downloaded trailers
+        items = []
+        now = datetime.datetime.now()
+        
+        if source in ["movies", "both"]:
+            movie_trailers = db.query(models.ComingSoonTrailer).filter(
+                models.ComingSoonTrailer.status == 'downloaded',
+                models.ComingSoonTrailer.is_enabled == True,
+                models.ComingSoonTrailer.release_date >= now
+            ).order_by(models.ComingSoonTrailer.release_date.asc()).all()
+            
+            for t in movie_trailers:
+                items.append({
+                    'title': t.title,
+                    'release_date': t.release_date.isoformat() if t.release_date else '',
+                    'poster_url': t.poster_url,
+                    'type': 'movie'
+                })
+        
+        if source in ["shows", "both"]:
+            tv_trailers = db.query(models.ComingSoonTVTrailer).filter(
+                models.ComingSoonTVTrailer.status == 'downloaded',
+                models.ComingSoonTVTrailer.is_enabled == True,
+                models.ComingSoonTVTrailer.release_date >= now
+            ).order_by(models.ComingSoonTVTrailer.release_date.asc()).all()
+            
+            for t in tv_trailers:
+                title = t.title
+                if t.season_number and t.season_number > 1:
+                    title = f"{title} (S{t.season_number})"
+                items.append({
+                    'title': title,
+                    'release_date': t.release_date.isoformat() if t.release_date else '',
+                    'poster_url': t.poster_url,
+                    'type': 'show'
+                })
+        
+        if not items:
+            _scheduler_log("NeX-Up auto-regen: No downloaded trailers found, skipping Coming Soon List generation")
+            return
+        
+        items.sort(key=lambda x: x.get('release_date') or '9999-12-31')
+        
+        output_dir = Path(storage_path) / "dynamic_prerolls"
+        output_dir.mkdir(parents=True, exist_ok=True)
+        
+        generator = DynamicPrerollGenerator(str(output_dir))
+        if not generator.check_ffmpeg_available():
+            _scheduler_log("NeX-Up auto-regen: FFmpeg not found, skipping Coming Soon List generation", level="ERROR")
+            return
+        
+        layouts_to_generate = ['grid', 'list'] if layout == 'both' else [layout]
+        
+        for l in layouts_to_generate:
+            try:
+                output_filename = f"coming_soon_{l}.mp4"
+                output_path = generator.generate_coming_soon_list(
+                    items=items,
+                    server_name=server_name,
+                    duration=float(duration),
+                    output_filename=output_filename,
+                    layout=l,
+                    bg_color="0x141428",
+                    text_color="0xffffff",
+                    accent_color="0x00d4ff",
+                    max_items=max_items
+                )
+                if output_path:
+                    _scheduler_log(f"NeX-Up auto-regen: Generated {output_filename}")
+                    # Register to category
+                    self._register_coming_soon_list_to_category(db, Path(output_path), l)
+            except Exception as e:
+                _scheduler_log(f"NeX-Up auto-regen: Error generating {l} layout: {e}", level="ERROR")
+
+    def _register_coming_soon_list_to_category(self, db: Session, output_path, layout: str):
+        """Register a Coming Soon List video to the Coming Soon Lists system category"""
+        try:
+            category = db.query(models.Category).filter(
+                models.Category.name == "Coming Soon Lists"
+            ).first()
+            
+            if not category:
+                category = models.Category(
+                    name="Coming Soon Lists",
+                    description="Generated Coming Soon list videos showing upcoming releases. Managed by NeX-Up.",
+                    plex_mode="shuffle",
+                    apply_to_plex=False,
+                    is_system=True
+                )
+                db.add(category)
+                db.commit()
+                db.refresh(category)
+                _scheduler_log("Created Coming Soon Lists system category")
+            
+            existing = db.query(models.Preroll).filter(
+                models.Preroll.path == str(output_path)
+            ).first()
+            
+            if existing:
+                existing.category_id = category.id
+                db.commit()
+            else:
+                display_name = f"Coming Soon List ({layout.title()})"
+                new_preroll = models.Preroll(
+                    filename=output_path.name,
+                    path=str(output_path),
+                    display_name=display_name,
+                    category_id=category.id,
+                    thumbnail="",
+                    tags="[]",
+                    managed=False
+                )
+                db.add(new_preroll)
+                db.commit()
+                _scheduler_log(f"Registered Coming Soon List to category: {output_path.name}")
+        except Exception as e:
+            _scheduler_log(f"Error registering Coming Soon List to category: {e}", level="ERROR")
 
     async def _sync_radarr_trailers(self, db: Session, setting):
         """Sync trailers from Radarr (called by auto-sync)"""
@@ -1025,10 +1251,11 @@ class Scheduler:
                         self._last_logged_state = state_key
                         self._last_logged_time = now
                     # Clear prerolls by setting empty string
-                    if setting.active_category is not None:
+                    if setting.active_category is not None or getattr(setting, "filler_active", None) is not None:
                         cleared_ok = self._clear_plex_prerolls(db)
                         if cleared_ok:
                             setting.active_category = None
+                            setting.filler_active = None  # Also clear filler state
                             db.commit()
                 else:
                     # Use fallback from most recently active schedule
@@ -1041,11 +1268,74 @@ class Scheduler:
                             self._last_logged_state = state_key
                             self._last_logged_time = now
                     else:
-                        state_key = "no_schedules"
-                        if self._last_logged_state != state_key:
-                            _scheduler_log(f"No active schedules and no fallback defined; Plex preroll will remain unchanged")
-                            self._last_logged_state = state_key
-                            self._last_logged_time = now
+                        # Check for Filler Category setting (global gap filler)
+                        filler_enabled = getattr(setting, "filler_enabled", False)
+                        filler_type = getattr(setting, "filler_type", "category")
+                        
+                        if filler_enabled:
+                            # Apply filler based on type
+                            filler_applied = False
+                            
+                            if filler_type == "category":
+                                filler_category_id = getattr(setting, "filler_category_id", None)
+                                if filler_category_id:
+                                    desired_category_id = filler_category_id
+                                    state_key = f"filler_category:{filler_category_id}"
+                                    if self._last_logged_state != state_key:
+                                        _scheduler_log(f"No active schedules; using FILLER category {filler_category_id}")
+                                        self._last_logged_state = state_key
+                                        self._last_logged_time = now
+                                    # Set filler_active to track filler state
+                                    setting.filler_active = f"category:{filler_category_id}"
+                                    filler_applied = True
+                                    
+                            elif filler_type == "sequence":
+                                filler_sequence_id = getattr(setting, "filler_sequence_id", None)
+                                if filler_sequence_id:
+                                    state_key = f"filler_sequence:{filler_sequence_id}"
+                                    if self._last_logged_state != state_key:
+                                        _scheduler_log(f"No active schedules; using FILLER sequence {filler_sequence_id}")
+                                        self._last_logged_state = state_key
+                                        self._last_logged_time = now
+                                    # Apply the sequence directly
+                                    applied_ok = self._apply_saved_sequence_to_plex(filler_sequence_id, db)
+                                    if applied_ok:
+                                        # Use filler_active to track filler state
+                                        setting.filler_active = f"sequence:{filler_sequence_id}"
+                                        setting.active_category = None  # Clear normal category tracking
+                                        db.commit()
+                                    filler_applied = True
+                                    return  # Sequence applied, exit early
+                                    
+                            elif filler_type == "coming_soon":
+                                filler_layout = getattr(setting, "filler_coming_soon_layout", "grid")
+                                state_key = f"filler_coming_soon:{filler_layout}"
+                                if self._last_logged_state != state_key:
+                                    _scheduler_log(f"No active schedules; using FILLER Coming Soon List ({filler_layout})")
+                                    self._last_logged_state = state_key
+                                    self._last_logged_time = now
+                                # Apply the coming soon list video
+                                applied_ok = self._apply_coming_soon_list_to_plex(filler_layout, db)
+                                if applied_ok:
+                                    # Use filler_active to track filler state
+                                    setting.filler_active = f"coming_soon:{filler_layout}"
+                                    setting.active_category = None  # Clear normal category tracking
+                                    db.commit()
+                                filler_applied = True
+                                return  # Coming soon applied, exit early
+                            
+                            if not filler_applied:
+                                state_key = "filler_not_configured"
+                                if self._last_logged_state != state_key:
+                                    _scheduler_log(f"Filler enabled but not configured properly; Plex preroll will remain unchanged")
+                                    self._last_logged_state = state_key
+                                    self._last_logged_time = now
+                        else:
+                            state_key = "no_schedules"
+                            if self._last_logged_state != state_key:
+                                _scheduler_log(f"No active schedules and no fallback/filler defined; Plex preroll will remain unchanged")
+                                self._last_logged_state = state_key
+                                self._last_logged_time = now
 
             # Apply category change to Plex only if it differs from current
             if desired_category_id and setting.active_category != desired_category_id:
@@ -1060,6 +1350,7 @@ class Scheduler:
                     applied_ok = self._apply_category_to_plex(desired_category_id, db, schedule=chosen_schedule)
                 if applied_ok:
                     setting.active_category = desired_category_id
+                    setting.filler_active = None  # Clear filler state when a schedule is active
                     if chosen_schedule:
                         chosen_schedule.last_run = now
                         chosen_schedule.next_run = self._calculate_next_run(chosen_schedule)
@@ -1912,6 +2203,232 @@ class Scheduler:
             _scheduler_log(f"BLEND: Failed to apply blended preroll list to Plex", level="ERROR")
         
         return ok
+
+    def _apply_saved_sequence_to_plex(self, sequence_id: int, db: Session) -> bool:
+        """
+        Apply a saved sequence by ID to Plex (used for filler sequences).
+        This is similar to _apply_schedule_sequence_to_plex but uses SavedSequence instead of Schedule.
+        """
+        try:
+            saved_seq = db.query(models.SavedSequence).filter(models.SavedSequence.id == sequence_id).first()
+            if not saved_seq:
+                _scheduler_log(f"Filler sequence ID {sequence_id} not found", level="ERROR")
+                return False
+            
+            blocks = saved_seq.get_blocks()
+            if not blocks:
+                _scheduler_log(f"Filler sequence '{saved_seq.name}' has no blocks", level="WARNING")
+                return False
+            
+            _scheduler_log(f"FILLER: Applying saved sequence '{saved_seq.name}' with {len(blocks)} blocks")
+            
+            # Helper to gather prerolls for a category (primary and many-to-many)
+            def _prerolls_for_category(cid: int):
+                return db.query(models.Preroll) \
+                    .outerjoin(models.preroll_categories, models.Preroll.id == models.preroll_categories.c.preroll_id) \
+                    .filter(or_(models.Preroll.category_id == cid, models.preroll_categories.c.category_id == cid)) \
+                    .distinct().all()
+            
+            # Build ordered list of file paths per sequence steps
+            paths = []
+            for block in blocks:
+                try:
+                    block_type = str(block.get("type", "")).lower()
+                except Exception:
+                    block_type = ""
+                
+                if block_type == "random":
+                    cid = int(block.get("category_id") or 0)
+                    count = int(block.get("count") or 1)
+                    if not cid:
+                        continue
+                    pool = _prerolls_for_category(cid)
+                    if not pool:
+                        continue
+                    k = min(max(count, 1), len(pool))
+                    picks = random.sample(pool, k) if len(pool) > k else pool
+                    for p in picks:
+                        paths.append(os.path.abspath(p.path))
+                        
+                elif block_type == "fixed":
+                    pids = []
+                    ids_array = block.get("preroll_ids")
+                    if ids_array and isinstance(ids_array, list):
+                        pids = [int(x) for x in ids_array if x]
+                    else:
+                        pid = block.get("preroll_id")
+                        if pid:
+                            pids = [int(pid)]
+                    
+                    for pid in pids:
+                        p = db.query(models.Preroll).filter(models.Preroll.id == pid).first()
+                        if p:
+                            paths.append(os.path.abspath(p.path))
+            
+            if not paths:
+                _scheduler_log(f"Filler sequence '{saved_seq.name}' produced no preroll paths", level="WARNING")
+                return False
+            
+            _scheduler_log(f"FILLER: Sequence built {len(paths)} paths")
+            
+            # Apply path mappings and send to Plex
+            setting = db.query(models.Setting).first()
+            if not setting or not getattr(setting, "plex_url", None):
+                _scheduler_log("Plex not configured (missing URL); cannot apply filler sequence.", level="WARNING")
+                return False
+            
+            # Get path mappings
+            mappings = []
+            try:
+                raw = getattr(setting, "path_mappings", None)
+                if raw:
+                    data = json.loads(raw)
+                    if isinstance(data, list):
+                        mappings = [m for m in data if isinstance(m, dict) and m.get("local") and m.get("plex")]
+            except Exception:
+                mappings = []
+            
+            def _translate_for_plex(local_path: str) -> str:
+                try:
+                    lp = os.path.normpath(local_path)
+                    best = None
+                    best_src = None
+                    best_len = -1
+                    for m in mappings:
+                        src = os.path.normpath(str(m.get("local")))
+                        if sys.platform.startswith("win"):
+                            if lp.lower().startswith(src.lower()) and len(src) > best_len:
+                                best = m
+                                best_src = src
+                                best_len = len(src)
+                        else:
+                            if lp.startswith(src) and len(src) > best_len:
+                                best = m
+                                best_src = src
+                                best_len = len(src)
+                    if best:
+                        dst_prefix = str(best.get("plex"))
+                        rest = lp[len(best_src):].lstrip("\\/")
+                        if ("/" in dst_prefix) and ("\\" not in dst_prefix):
+                            out = dst_prefix.rstrip("/") + "/" + rest.replace("\\", "/")
+                        elif "\\" in dst_prefix:
+                            out = dst_prefix.rstrip("\\") + "\\" + rest.replace("/", "\\")
+                        else:
+                            out = dst_prefix.rstrip("/") + "/" + rest.replace("\\", "/")
+                        return out
+                except Exception:
+                    pass
+                return local_path
+            
+            paths_plex = [_translate_for_plex(p) for p in paths]
+            
+            # Use comma (playlist mode) for sequences to preserve order
+            delimiter = ","
+            combined = delimiter.join(paths_plex)
+            
+            connector = PlexConnector(setting.plex_url, setting.plex_token)
+            _scheduler_log(f"FILLER: Sending sequence to Plex ({len(paths_plex)} prerolls)...")
+            ok = connector.set_preroll(combined)
+            if ok:
+                _scheduler_log(f"FILLER: Sequence '{saved_seq.name}' applied successfully")
+            else:
+                _scheduler_log(f"FILLER: Failed to apply sequence to Plex", level="ERROR")
+            
+            return ok
+        except Exception as e:
+            _scheduler_log(f"Error applying filler sequence: {e}", level="ERROR")
+            return False
+
+    def _apply_coming_soon_list_to_plex(self, layout: str, db: Session) -> bool:
+        """
+        Apply a Coming Soon List video to Plex (used for filler mode).
+        Layout can be 'grid' or 'list'.
+        """
+        try:
+            setting = db.query(models.Setting).first()
+            if not setting:
+                _scheduler_log("Settings not found; cannot apply Coming Soon List", level="ERROR")
+                return False
+            
+            # Find the Coming Soon List video file
+            storage_path = getattr(setting, "nexup_storage_path", None)
+            if not storage_path:
+                _scheduler_log("NeX-Up storage path not configured; cannot find Coming Soon List", level="WARNING")
+                return False
+            
+            # The coming soon list files are named: coming_soon_grid.mp4 or coming_soon_list.mp4
+            # They are generated in the dynamic_prerolls subfolder
+            filename = f"coming_soon_{layout}.mp4"
+            video_path = os.path.join(storage_path, "dynamic_prerolls", filename)
+            
+            if not os.path.exists(video_path):
+                _scheduler_log(f"Coming Soon List video not found: {video_path}", level="WARNING")
+                return False
+            
+            video_path = os.path.abspath(video_path)
+            _scheduler_log(f"FILLER: Applying Coming Soon List ({layout}) from {video_path}")
+            
+            # Get path mappings
+            mappings = []
+            try:
+                raw = getattr(setting, "path_mappings", None)
+                if raw:
+                    data = json.loads(raw)
+                    if isinstance(data, list):
+                        mappings = [m for m in data if isinstance(m, dict) and m.get("local") and m.get("plex")]
+            except Exception:
+                mappings = []
+            
+            def _translate_for_plex(local_path: str) -> str:
+                try:
+                    lp = os.path.normpath(local_path)
+                    best = None
+                    best_src = None
+                    best_len = -1
+                    for m in mappings:
+                        src = os.path.normpath(str(m.get("local")))
+                        if sys.platform.startswith("win"):
+                            if lp.lower().startswith(src.lower()) and len(src) > best_len:
+                                best = m
+                                best_src = src
+                                best_len = len(src)
+                        else:
+                            if lp.startswith(src) and len(src) > best_len:
+                                best = m
+                                best_src = src
+                                best_len = len(src)
+                    if best:
+                        dst_prefix = str(best.get("plex"))
+                        rest = lp[len(best_src):].lstrip("\\/")
+                        if ("/" in dst_prefix) and ("\\" not in dst_prefix):
+                            out = dst_prefix.rstrip("/") + "/" + rest.replace("\\", "/")
+                        elif "\\" in dst_prefix:
+                            out = dst_prefix.rstrip("\\") + "\\" + rest.replace("/", "\\")
+                        else:
+                            out = dst_prefix.rstrip("/") + "/" + rest.replace("\\", "/")
+                        return out
+                except Exception:
+                    pass
+                return local_path
+            
+            plex_path = _translate_for_plex(video_path)
+            
+            if not setting.plex_url:
+                _scheduler_log("Plex not configured; cannot apply Coming Soon List", level="WARNING")
+                return False
+            
+            connector = PlexConnector(setting.plex_url, setting.plex_token)
+            _scheduler_log(f"FILLER: Sending Coming Soon List to Plex...")
+            ok = connector.set_preroll(plex_path)
+            if ok:
+                _scheduler_log(f"FILLER: Coming Soon List ({layout}) applied successfully")
+            else:
+                _scheduler_log(f"FILLER: Failed to apply Coming Soon List to Plex", level="ERROR")
+            
+            return ok
+        except Exception as e:
+            _scheduler_log(f"Error applying Coming Soon List: {e}", level="ERROR")
+            return False
 
     def _get_active_schedules(self) -> List[models.Schedule]:
         """Return a list of schedules currently active (for diagnostics/status)."""

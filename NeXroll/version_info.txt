@@ -1,7 +1,7 @@
 VSVersionInfo(
   ffi=FixedFileInfo(
-    filevers=(1, 9, 7, 0),
-    prodvers=(1, 9, 7, 0),
+    filevers=(1, 11, 0, 0),
+    prodvers=(1, 11, 0, 0),
     mask=0x3f,
     flags=0x0,
     OS=0x4,
@@ -15,9 +15,9 @@ VSVersionInfo(
         '040904B0',
         [StringStruct('CompanyName', 'JFLXCLOUD'),
          StringStruct('FileDescription', 'NeXroll'),
-         StringStruct('FileVersion', '1.9.8'),
+         StringStruct('FileVersion', '1.11.0'),
          StringStruct('ProductName', 'NeXroll'),
-         StringStruct('ProductVersion', '1.9.8'),
+         StringStruct('ProductVersion', '1.11.0'),
          StringStruct('LegalCopyright', '© 2025 JFLXCLOUD')]
       )
     ]),
