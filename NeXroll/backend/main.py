@@ -14952,6 +14952,16 @@ async def sync_sonarr_trailers(db: Session = Depends(get_db)):
             
             trailer_url = trailers[0]['url']
             
+            # Double-check for duplicates right before insert (prevents race condition)
+            existing_check = db.query(models.ComingSoonTVTrailer).filter(
+                models.ComingSoonTVTrailer.sonarr_series_id == show['sonarr_id'],
+                models.ComingSoonTVTrailer.season_number == show['season_number']
+            ).first()
+            if existing_check:
+                _file_log(f"Sonarr Sync: Skipping duplicate for '{show['title']}' S{show['season_number']} (already exists in DB)")
+                skipped_already_exists += 1
+                continue
+            
             # Create record
             tv_trailer = models.ComingSoonTVTrailer(
                 sonarr_series_id=show['sonarr_id'],
@@ -16375,6 +16385,15 @@ async def sync_nexup(db: Session = Depends(get_db)):
                 
                 # Check if result is a successful download (has 'path') vs an error dict (has 'error')
                 if result and isinstance(result, dict) and 'path' in result:
+                    # Double-check for duplicates right before insert (prevents race condition)
+                    existing_check = db.query(models.ComingSoonTrailer).filter(
+                        models.ComingSoonTrailer.radarr_movie_id == movie['radarr_id']
+                    ).first()
+                    if existing_check:
+                        _file_log(f"NeX-Up sync: Skipping duplicate for '{movie['title']}' (already exists in DB)")
+                        results["skipped_already_exists"] += 1
+                        continue
+                    
                     _nexup_sync_progress["status"] = f"Downloaded '{movie['title']}' successfully!"
                     _nexup_sync_progress["downloaded"] = results["downloaded"] + 1
                     _file_log(f"NeX-Up sync: Downloaded '{movie['title']}' to {result['path']} ({result['size_mb']}MB)")
@@ -16802,6 +16821,20 @@ async def generate_coming_soon_list(
     if not items:
         raise HTTPException(status_code=400, detail="No downloaded trailers found. Download some trailers in Your Trailers first.")
     
+    # Deduplicate items by title (in case of duplicate database records)
+    seen_titles = set()
+    unique_items = []
+    for item in items:
+        if item['title'] not in seen_titles:
+            seen_titles.add(item['title'])
+            unique_items.append(item)
+        else:
+            _file_log(f"[COMING-SOON-LIST] Skipping duplicate: {item['title']}")
+    
+    if len(unique_items) < len(items):
+        _file_log(f"[COMING-SOON-LIST] Removed {len(items) - len(unique_items)} duplicate(s)")
+    items = unique_items
+    
     # Sort by release date
     items.sort(key=lambda x: x.get('release_date') or '9999-12-31')
     
@@ -16926,6 +16959,15 @@ async def preview_coming_soon_list(
                 'type': 'show',
                 'days_until_release': calc_days_until(t.release_date)
             })
+    
+    # Deduplicate items by title (in case of duplicate database records)
+    seen_titles = set()
+    unique_items = []
+    for item in items:
+        if item['title'] not in seen_titles:
+            seen_titles.add(item['title'])
+            unique_items.append(item)
+    items = unique_items
     
     # Sort by release date
     items.sort(key=lambda x: x.get('release_date') or '9999-12-31')
