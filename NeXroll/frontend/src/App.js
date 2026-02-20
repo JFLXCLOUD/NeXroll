@@ -15,7 +15,7 @@ import {
     Calendar, CalendarDays, Clock, Play, Edit, Save, Trash, Trash2, Upload, 
     Search, Folder, Film, BookOpen, Star, Plus, Settings, Target, CheckCircle, Link,
     Sun, Moon, RefreshCw, Download, AlertTriangle, Ban, Crown, Shuffle, Lock, Bell,
-    ListOrdered, Palette, Lightbulb, Inbox, FolderOpen, Wrench, FileText, 
+    ListOrdered, Palette, Lightbulb, Inbox, FolderOpen, Wrench, FileText, Sliders, FolderSync,
     Bug, Zap, Loader2, Package, FlaskConical, TreePine, Check, XCircle, Video, ChevronRight, ChevronDown,
     Library, Clapperboard, Sparkles, PartyPopper, Users2, Theater, Eye, X, User, RefreshCcw, Menu,
     Youtube, Globe, Key, Rocket, FileUp, ArrowRight, HardDrive, ListChecks, Unlink, LinkIcon,
@@ -4591,8 +4591,8 @@ const DashboardTiles = {
           </div>
         ) : (
           <>
-            <div style={{ height: 130 }}>
-              <ResponsiveContainer width="100%" height="100%">
+            <div style={{ height: 130, minHeight: 130 }}>
+              <ResponsiveContainer width="100%" height="100%" minWidth={100} minHeight={100}>
                 <BarChart data={chartData} layout="vertical" margin={{ top: 0, right: 10, bottom: 0, left: 0 }}>
                   <XAxis type="number" hide />
                   <YAxis type="category" dataKey="name" width={45} tick={{ fontSize: 11, fill: 'var(--text-secondary)' }} axisLine={false} tickLine={false} />
@@ -19104,13 +19104,28 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
 
   // Settings - General Tab
   const renderSettingsGeneral = () => (
+    <>
     <div className="card">
-      <h2>NeXroll Settings</h2>
+      <h2 style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+        <Settings size={20} style={{ color: '#00d4ff' }} /> NeXroll Settings
+      </h2>
+      <p style={{ color: 'var(--text-secondary)', marginBottom: '1rem' }}>
+        Configure general application preferences and behavior.
+      </p>
       
       {/* Theme Settings */}
-      <div style={{ marginTop: '1rem', paddingBottom: '1rem', borderBottom: '1px solid var(--border-color)' }}>
-        <h3 style={{ marginBottom: '0.75rem' }}>Theme</h3>
-        <p style={{ marginBottom: '1rem', color: '#888', fontSize: '0.9rem' }}>
+      <div style={{ 
+        padding: '1rem', 
+        backgroundColor: 'var(--bg-color)', 
+        borderRadius: '8px',
+        border: '1px solid var(--border-color)',
+        marginBottom: '1rem'
+      }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.5rem' }}>
+          {darkMode ? <Moon size={16} style={{ color: '#a78bfa' }} /> : <Sun size={16} style={{ color: '#fbbf24' }} />}
+          <h3 style={{ margin: 0, fontSize: '1rem' }}>Theme</h3>
+        </div>
+        <p style={{ marginBottom: '0.75rem', color: 'var(--text-secondary)', fontSize: '0.85rem' }}>
           Choose between light and dark themes for the interface.
         </p>
         <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
@@ -19122,62 +19137,69 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
             />
             <span className="nx-rockerswitch-slider"></span>
           </label>
-          <span style={{ fontWeight: 'bold', color: 'var(--text-color)' }}>
+          <span style={{ fontWeight: 600, color: 'var(--text-color)' }}>
             {darkMode ? 'Dark Mode' : 'Light Mode'}
           </span>
         </div>
       </div>
 
       {/* Timezone Settings */}
-      <div style={{ marginTop: '1rem', paddingBottom: '1rem', borderBottom: '1px solid var(--border-color)' }}>
-        <h3 style={{ marginBottom: '0.75rem' }}>Timezone</h3>
-        <p style={{ marginBottom: '1rem', color: '#888', fontSize: '0.9rem' }}>
+      <div style={{ 
+        padding: '1rem', 
+        backgroundColor: 'var(--bg-color)', 
+        borderRadius: '8px',
+        border: '1px solid var(--border-color)',
+        marginBottom: '1rem'
+      }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.5rem' }}>
+          <Globe size={16} style={{ color: '#00d4ff' }} />
+          <h3 style={{ margin: 0, fontSize: '1rem' }}>Timezone</h3>
+        </div>
+        <p style={{ marginBottom: '0.75rem', color: 'var(--text-secondary)', fontSize: '0.85rem' }}>
           Set your timezone to ensure schedules run at the correct local time.
         </p>
-        <div style={{ display: 'flex', gap: '1rem', alignItems: 'flex-end', flexWrap: 'wrap' }}>
-          <div style={{ flex: 1, minWidth: '250px' }}>
-            <label style={{ display: 'block', marginBottom: '0.5rem', fontWeight: 'bold', color: 'var(--text-color)' }}>
-              Current Timezone:
-            </label>
-            <select
-              value={currentTimezone}
-              onChange={(e) => saveTimezone(e.target.value)}
-              disabled={timezoneLoading || timezoneSaving}
-              style={{
-                width: '100%',
-                padding: '0.5rem',
-                borderRadius: '0.25rem',
-                border: '2px solid var(--border-color)',
-                backgroundColor: darkMode ? '#2a2a2a' : '#ffffff',
-                color: darkMode ? '#ffffff' : '#000000',
-                cursor: timezoneSaving ? 'not-allowed' : 'pointer',
-                fontSize: '1rem',
-                opacity: timezoneLoading || timezoneSaving ? 0.6 : 1
-              }}
-            >
-              {availableTimezones.length === 0 ? (
-                <option value="UTC">Loading timezones...</option>
-              ) : (
-                availableTimezones.map((tz) => (
-                  <option key={tz.value} value={tz.value} style={{ backgroundColor: darkMode ? '#2a2a2a' : '#ffffff', color: darkMode ? '#ffffff' : '#000000' }}>
-                    {tz.label}
-                  </option>
-                ))
-              )}
-            </select>
-            <p style={{ fontSize: '0.85rem', color: darkMode ? '#999' : '#666', marginTop: '0.25rem' }}>
-              {timezoneLoading && 'Loading timezones...'}
-              {timezoneSaving && 'Saving...'}
-              {!timezoneLoading && !timezoneSaving && `Selected: ${currentTimezone}`}
-            </p>
-          </div>
+        <div style={{ maxWidth: '400px' }}>
+          <select
+            className="input"
+            value={currentTimezone}
+            onChange={(e) => saveTimezone(e.target.value)}
+            disabled={timezoneLoading || timezoneSaving}
+            style={{
+              width: '100%',
+              opacity: timezoneLoading || timezoneSaving ? 0.6 : 1
+            }}
+          >
+            {availableTimezones.length === 0 ? (
+              <option value="UTC">Loading timezones...</option>
+            ) : (
+              availableTimezones.map((tz) => (
+                <option key={tz.value} value={tz.value}>
+                  {tz.label}
+                </option>
+              ))
+            )}
+          </select>
+          <p style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginTop: '0.25rem' }}>
+            {timezoneLoading && 'Loading timezones...'}
+            {timezoneSaving && 'Saving...'}
+            {!timezoneLoading && !timezoneSaving && `Selected: ${currentTimezone}`}
+          </p>
         </div>
       </div>
 
       {/* Confirmation Dialogs */}
-      <div style={{ marginTop: '1rem', paddingBottom: '1rem', borderBottom: '1px solid var(--border-color)' }}>
-        <h3 style={{ marginBottom: '0.75rem' }}>Confirmation Dialogs</h3>
-        <p style={{ marginBottom: '1rem', color: '#888', fontSize: '0.9rem' }}>
+      <div style={{ 
+        padding: '1rem', 
+        backgroundColor: 'var(--bg-color)', 
+        borderRadius: '8px',
+        border: '1px solid var(--border-color)',
+        marginBottom: '1rem'
+      }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.5rem' }}>
+          <AlertCircle size={16} style={{ color: '#f59e0b' }} />
+          <h3 style={{ margin: 0, fontSize: '1rem' }}>Confirmation Dialogs</h3>
+        </div>
+        <p style={{ marginBottom: '0.75rem', color: 'var(--text-secondary)', fontSize: '0.85rem' }}>
           Control whether you see confirmation prompts before deleting items.
         </p>
         <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
@@ -19189,19 +19211,25 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
             />
             <span className="nx-rockerswitch-slider"></span>
           </label>
-          <span style={{ fontWeight: 'bold', color: 'var(--text-color)' }}>
+          <span style={{ fontWeight: 600, color: 'var(--text-color)' }}>
             {confirmDeletions ? 'Show Confirmation Prompts' : 'Skip Confirmation Prompts'}
           </span>
         </div>
-        <p style={{ fontSize: '0.85rem', color: '#666', marginTop: '0.5rem' }}>
-          When enabled, you'll be asked to confirm before deleting schedules, categories, or prerolls.
-        </p>
       </div>
 
       {/* Notification Preferences */}
-      <div style={{ marginTop: '1rem', paddingBottom: '1rem', borderBottom: '1px solid var(--border-color)' }}>
-        <h3 style={{ marginBottom: '0.75rem' }}>Notifications</h3>
-        <p style={{ marginBottom: '1rem', color: '#888', fontSize: '0.9rem' }}>
+      <div style={{ 
+        padding: '1rem', 
+        backgroundColor: 'var(--bg-color)', 
+        borderRadius: '8px',
+        border: '1px solid var(--border-color)',
+        marginBottom: '1rem'
+      }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.5rem' }}>
+          <Bell size={16} style={{ color: '#22c55e' }} />
+          <h3 style={{ margin: 0, fontSize: '1rem' }}>Notifications</h3>
+        </div>
+        <p style={{ marginBottom: '0.75rem', color: 'var(--text-secondary)', fontSize: '0.85rem' }}>
           Control success and informational alert notifications.
         </p>
         <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
@@ -19213,20 +19241,48 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
             />
             <span className="nx-rockerswitch-slider"></span>
           </label>
-          <span style={{ fontWeight: 'bold', color: 'var(--text-color)' }}>
+          <span style={{ fontWeight: 600, color: 'var(--text-color)' }}>
             {showNotifications ? 'Show Notifications' : 'Hide Notifications'}
           </span>
         </div>
-        <p style={{ fontSize: '0.85rem', color: '#666', marginTop: '0.5rem' }}>
-          When disabled, only critical error messages will be shown. Success and info messages will be suppressed.
-        </p>
+        {!showNotifications && (
+          <p style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginTop: '0.5rem' }}>
+            Only critical error messages will be shown.
+          </p>
+        )}
       </div>
+    </div>
+
+    {/* Advanced Settings Card */}
+    <div className="card" style={{ marginTop: '1rem' }}>
+      <h2 style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+        <Sliders size={20} style={{ color: '#00d4ff' }} /> Advanced Settings
+      </h2>
 
       {/* Verbose Logging */}
-      <div style={{ marginTop: '1rem', paddingBottom: '1rem', borderBottom: '1px solid var(--border-color)' }}>
-        <h3 style={{ marginBottom: '0.75rem' }}>Verbose Logging (Beta Testing)</h3>
-        <p style={{ marginBottom: '1rem', color: '#888', fontSize: '0.9rem' }}>
-          Enable verbose logging to see detailed debug information in the console. This helps troubleshoot issues during beta testing.
+      <div style={{ 
+        padding: '1rem', 
+        backgroundColor: 'var(--bg-color)', 
+        borderRadius: '8px',
+        border: '1px solid var(--border-color)',
+        marginBottom: '1rem'
+      }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.5rem' }}>
+          <Terminal size={16} style={{ color: '#a78bfa' }} />
+          <h3 style={{ margin: 0, fontSize: '1rem' }}>Verbose Logging</h3>
+          <span style={{ 
+            fontSize: '0.65rem', 
+            padding: '0.15rem 0.4rem', 
+            backgroundColor: 'rgba(139, 92, 246, 0.2)', 
+            color: '#a78bfa', 
+            borderRadius: '4px',
+            fontWeight: 600
+          }}>
+            BETA
+          </span>
+        </div>
+        <p style={{ marginBottom: '0.75rem', color: 'var(--text-secondary)', fontSize: '0.85rem' }}>
+          Enable verbose logging to see detailed debug information in the console and logs.
         </p>
         <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
           <label className="nx-rockerswitch">
@@ -19238,24 +19294,33 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
             />
             <span className="nx-rockerswitch-slider"></span>
           </label>
-          <span style={{ fontWeight: 'bold', color: 'var(--text-color)' }}>
+          <span style={{ fontWeight: 600, color: 'var(--text-color)' }}>
             {verboseLogging ? 'Verbose Logging Enabled' : 'Verbose Logging Disabled'}
           </span>
         </div>
         {verboseLogging && (
-          <div style={{ marginTop: '0.75rem', padding: '0.75rem', backgroundColor: 'var(--card-bg)', border: '1px solid var(--border-color)', borderRadius: '4px' }}>
-            <p style={{ margin: 0, fontSize: '0.9rem', color: '#4CAF50', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-              <Check size={14} /> Verbose logging is active. Check the console (F12) and application logs for detailed information.
+          <div style={{ marginTop: '0.75rem', padding: '0.5rem 0.75rem', backgroundColor: 'rgba(34, 197, 94, 0.1)', border: '1px solid rgba(34, 197, 94, 0.3)', borderRadius: '6px' }}>
+            <p style={{ margin: 0, fontSize: '0.8rem', color: '#22c55e', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+              <Check size={14} /> Check the console (F12) and application logs for detailed information.
             </p>
           </div>
         )}
       </div>
 
       {/* Coexistence Mode (Passive Mode) */}
-      <div style={{ marginTop: '1rem', paddingBottom: '1rem', borderBottom: '1px solid var(--border-color)' }}>
-        <h3 style={{ marginBottom: '0.75rem' }}>Coexistence Mode</h3>
-        <p style={{ marginBottom: '1rem', color: '#888', fontSize: '0.9rem' }}>
-          Enable this if you use another preroll manager (like Preroll Plus) alongside NeXroll. When enabled, NeXroll will <strong>only</strong> manage prerolls during active schedules and stay hands-off at all other times, allowing your other preroll manager to control prerolls outside scheduled times.
+      <div style={{ 
+        padding: '1rem', 
+        backgroundColor: 'var(--bg-color)', 
+        borderRadius: '8px',
+        border: '1px solid var(--border-color)',
+        marginBottom: '1rem'
+      }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.5rem' }}>
+          <Users size={16} style={{ color: '#3b82f6' }} />
+          <h3 style={{ margin: 0, fontSize: '1rem' }}>Coexistence Mode</h3>
+        </div>
+        <p style={{ marginBottom: '0.75rem', color: 'var(--text-secondary)', fontSize: '0.85rem' }}>
+          Enable if you use another preroll manager alongside NeXroll. NeXroll will only manage prerolls during active schedules.
         </p>
         <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
           <label className="nx-rockerswitch">
@@ -19267,31 +19332,40 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
             />
             <span className="nx-rockerswitch-slider"></span>
           </label>
-          <span style={{ fontWeight: 'bold', color: 'var(--text-color)' }}>
+          <span style={{ fontWeight: 600, color: 'var(--text-color)' }}>
             {passiveMode ? 'Coexistence Mode Enabled' : 'Coexistence Mode Disabled'}
           </span>
         </div>
         {passiveMode && (
-          <div style={{ marginTop: '0.75rem', padding: '0.75rem', backgroundColor: 'var(--card-bg)', border: '1px solid #2196F3', borderRadius: '4px' }}>
-            <p style={{ margin: 0, fontSize: '0.9rem', color: '#2196F3', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-              <Check size={14} /> Coexistence mode is active. NeXroll will only apply prerolls during active schedules. Outside of scheduled times, your other preroll manager can control Plex's preroll settings.
+          <div style={{ marginTop: '0.75rem', padding: '0.5rem 0.75rem', backgroundColor: 'rgba(59, 130, 246, 0.1)', border: '1px solid rgba(59, 130, 246, 0.3)', borderRadius: '6px' }}>
+            <p style={{ margin: 0, fontSize: '0.8rem', color: '#3b82f6', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+              <Check size={14} /> NeXroll will only apply prerolls during active schedules.
             </p>
           </div>
         )}
         {!passiveMode && (
-          <div style={{ marginTop: '0.75rem', padding: '0.75rem', backgroundColor: 'var(--card-bg)', border: '1px solid var(--border-color)', borderRadius: '4px' }}>
-            <p style={{ margin: 0, fontSize: '0.9rem', color: '#888', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-              <Info size={14} /> Standard mode: NeXroll manages prerolls at all times, including applying fallback categories when no schedules are active.
+          <div style={{ marginTop: '0.75rem', padding: '0.5rem 0.75rem', backgroundColor: 'var(--bg-color)', border: '1px solid var(--border-color)', borderRadius: '6px' }}>
+            <p style={{ margin: 0, fontSize: '0.8rem', color: 'var(--text-secondary)', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+              <Info size={14} /> Standard mode: NeXroll manages prerolls at all times.
             </p>
           </div>
         )}
       </div>
 
       {/* Clear When Inactive */}
-      <div style={{ marginTop: '1rem' }}>
-        <h3 style={{ marginBottom: '0.75rem' }}>Clear Prerolls When Inactive</h3>
-        <p style={{ marginBottom: '1rem', color: '#888', fontSize: '0.9rem' }}>
-          When enabled, NeXroll will <strong>clear</strong> the Plex preroll field when no schedules are active. This means no prerolls will play outside of your scheduled times.
+      <div style={{ 
+        padding: '1rem', 
+        backgroundColor: 'var(--bg-color)', 
+        borderRadius: '8px',
+        border: '1px solid var(--border-color)',
+        marginBottom: '1rem'
+      }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.5rem' }}>
+          <XCircle size={16} style={{ color: '#ef4444' }} />
+          <h3 style={{ margin: 0, fontSize: '1rem' }}>Clear Prerolls When Inactive</h3>
+        </div>
+        <p style={{ marginBottom: '0.75rem', color: 'var(--text-secondary)', fontSize: '0.85rem' }}>
+          Clear the Plex preroll field when no schedules are active. No prerolls will play outside scheduled times.
         </p>
         <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
           <label className="nx-rockerswitch">
@@ -19303,40 +19377,47 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
             />
             <span className="nx-rockerswitch-slider"></span>
           </label>
-          <span style={{ fontWeight: 'bold', color: 'var(--text-color)' }}>
-            {clearWhenInactive ? 'Clear When Inactive Enabled' : 'Clear When Inactive Disabled'}
-          </span>
-        </div>
+      </div>
         {passiveMode && (
-          <div style={{ marginTop: '0.75rem', padding: '0.75rem', backgroundColor: 'var(--card-bg)', border: '1px solid #ff9800', borderRadius: '4px' }}>
-            <p style={{ margin: 0, fontSize: '0.9rem', color: '#ff9800', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-              <AlertTriangle size={14} /> This setting is disabled while Coexistence Mode is active. Coexistence Mode already keeps NeXroll hands-off outside of schedules.
+          <div style={{ marginTop: '0.75rem', padding: '0.5rem 0.75rem', backgroundColor: 'rgba(245, 158, 11, 0.1)', border: '1px solid rgba(245, 158, 11, 0.3)', borderRadius: '6px' }}>
+            <p style={{ margin: 0, fontSize: '0.8rem', color: '#f59e0b', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+              <AlertTriangle size={14} /> Disabled while Coexistence Mode is active.
             </p>
           </div>
         )}
         {!passiveMode && clearWhenInactive && (
-          <div style={{ marginTop: '0.75rem', padding: '0.75rem', backgroundColor: 'var(--card-bg)', border: '1px solid #2196F3', borderRadius: '4px' }}>
-            <p style={{ margin: 0, fontSize: '0.9rem', color: '#2196F3', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-              <Check size={14} /> Prerolls will be cleared from Plex when no schedules are active. Movies will play without any preroll outside of scheduled times.
+          <div style={{ marginTop: '0.75rem', padding: '0.5rem 0.75rem', backgroundColor: 'rgba(59, 130, 246, 0.1)', border: '1px solid rgba(59, 130, 246, 0.3)', borderRadius: '6px' }}>
+            <p style={{ margin: 0, fontSize: '0.8rem', color: '#3b82f6', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+              <Check size={14} /> Movies will play without prerolls outside scheduled times.
             </p>
           </div>
         )}
         {!passiveMode && !clearWhenInactive && (
-          <div style={{ marginTop: '0.75rem', padding: '0.75rem', backgroundColor: 'var(--card-bg)', border: '1px solid var(--border-color)', borderRadius: '4px' }}>
-            <p style={{ margin: 0, fontSize: '0.9rem', color: '#888', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-              <Info size={14} /> Prerolls will remain in Plex when no schedules are active (either using a fallback category or leaving the current preroll unchanged).
+          <div style={{ marginTop: '0.75rem', padding: '0.5rem 0.75rem', backgroundColor: 'var(--bg-color)', border: '1px solid var(--border-color)', borderRadius: '6px' }}>
+            <p style={{ margin: 0, fontSize: '0.8rem', color: 'var(--text-secondary)', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+              <Info size={14} /> Prerolls remain in Plex when no schedules are active.
             </p>
           </div>
         )}
       </div>
+    </div>
 
-      {/* Filler Category */}
-      <div style={{ marginTop: '1rem', paddingBottom: '1rem', borderBottom: '1px solid var(--border-color)' }}>
-        <h3 style={{ marginBottom: '0.75rem' }}>Filler Category</h3>
-        <p style={{ marginBottom: '1rem', color: '#888', fontSize: '0.9rem' }}>
-          When no schedules are active, NeXroll can apply a <strong>Filler</strong> category, sequence, or Coming Soon content to fill gaps in your calendar. This is different from per-schedule fallbacks.
-        </p>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '1rem' }}>
+    {/* Filler Category Card */}
+    <div className="card" style={{ marginTop: '1rem' }}>
+      <h2 style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+        <Layers size={20} style={{ color: '#00d4ff' }} /> Filler Category
+      </h2>
+      <p style={{ color: 'var(--text-secondary)', marginBottom: '1rem', fontSize: '0.9rem' }}>
+        When no schedules are active, NeXroll can apply a filler category, sequence, or Coming Soon content to fill gaps in your calendar.
+      </p>
+
+      <div style={{ 
+        padding: '1rem', 
+        backgroundColor: 'var(--bg-color)', 
+        borderRadius: '8px',
+        border: '1px solid var(--border-color)'
+      }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.75rem' }}>
           <label className="nx-rockerswitch">
             <input
               type="checkbox"
@@ -19346,14 +19427,14 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
             />
             <span className="nx-rockerswitch-slider"></span>
           </label>
-          <span style={{ fontWeight: 'bold', color: 'var(--text-color)' }}>
+          <span style={{ fontWeight: 600, color: 'var(--text-color)' }}>
             {fillerSettings.enabled ? 'Filler Enabled' : 'Filler Disabled'}
           </span>
         </div>
         
         {(passiveMode || clearWhenInactive) && (
-          <div style={{ marginBottom: '1rem', padding: '0.75rem', backgroundColor: 'var(--card-bg)', border: '1px solid #ff9800', borderRadius: '4px' }}>
-            <p style={{ margin: 0, fontSize: '0.9rem', color: '#ff9800', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+          <div style={{ padding: '0.5rem 0.75rem', backgroundColor: 'rgba(245, 158, 11, 0.1)', border: '1px solid rgba(245, 158, 11, 0.3)', borderRadius: '6px' }}>
+            <p style={{ margin: 0, fontSize: '0.8rem', color: '#f59e0b', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
               <AlertTriangle size={14} /> Filler is disabled because {passiveMode ? 'Coexistence Mode' : 'Clear When Inactive'} is active.
             </p>
           </div>
@@ -19363,7 +19444,7 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
           <>
             {/* Filler Type Selection */}
             <div style={{ marginBottom: '1rem' }}>
-              <label style={{ display: 'block', marginBottom: '0.5rem', fontWeight: 'bold', color: 'var(--text-color)' }}>
+              <label style={{ display: 'block', marginBottom: '0.5rem', fontWeight: 600, color: 'var(--text-color)', fontSize: '0.9rem' }}>
                 Filler Type:
               </label>
               <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
@@ -19398,22 +19479,15 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
             {/* Category selector */}
             {fillerSettings.type === 'category' && (
               <div style={{ marginBottom: '1rem' }}>
-                <label style={{ display: 'block', marginBottom: '0.5rem', fontWeight: 'bold', color: 'var(--text-color)' }}>
+                <label style={{ display: 'block', marginBottom: '0.5rem', fontWeight: 600, color: 'var(--text-color)', fontSize: '0.9rem' }}>
                   Select Category:
                 </label>
                 <select
+                  className="input"
                   value={fillerSettings.category_id || ''}
                   onChange={(e) => updateFillerSettings({ category_id: e.target.value ? parseInt(e.target.value) : null })}
                   disabled={fillerLoading}
-                  style={{
-                    width: '100%',
-                    maxWidth: '400px',
-                    padding: '0.5rem',
-                    borderRadius: '4px',
-                    border: '2px solid var(--border-color)',
-                    backgroundColor: darkMode ? '#2a2a2a' : '#fff',
-                    color: 'var(--text-color)'
-                  }}
+                  style={{ maxWidth: '400px' }}
                 >
                   <option value="">-- Select a category --</option>
                   {categories.map(cat => (
@@ -19426,22 +19500,15 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
             {/* Sequence selector */}
             {fillerSettings.type === 'sequence' && (
               <div style={{ marginBottom: '1rem' }}>
-                <label style={{ display: 'block', marginBottom: '0.5rem', fontWeight: 'bold', color: 'var(--text-color)' }}>
+                <label style={{ display: 'block', marginBottom: '0.5rem', fontWeight: 600, color: 'var(--text-color)', fontSize: '0.9rem' }}>
                   Select NeX-Up Sequence:
                 </label>
                 <select
+                  className="input"
                   value={fillerSettings.sequence_id || ''}
                   onChange={(e) => updateFillerSettings({ sequence_id: e.target.value ? parseInt(e.target.value) : null })}
                   disabled={fillerLoading}
-                  style={{
-                    width: '100%',
-                    maxWidth: '400px',
-                    padding: '0.5rem',
-                    borderRadius: '4px',
-                    border: '2px solid var(--border-color)',
-                    backgroundColor: darkMode ? '#2a2a2a' : '#fff',
-                    color: 'var(--text-color)'
-                  }}
+                  style={{ maxWidth: '400px' }}
                 >
                   <option value="">-- Select a sequence --</option>
                   {savedSequences.map(seq => (
@@ -19454,7 +19521,7 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
             {/* Coming Soon layout selector */}
             {fillerSettings.type === 'coming_soon' && (
               <div style={{ marginBottom: '1rem' }}>
-                <label style={{ display: 'block', marginBottom: '0.5rem', fontWeight: 'bold', color: 'var(--text-color)' }}>
+                <label style={{ display: 'block', marginBottom: '0.5rem', fontWeight: 600, color: 'var(--text-color)', fontSize: '0.9rem' }}>
                   Coming Soon Layout:
                 </label>
                 <div style={{ display: 'flex', gap: '0.5rem' }}>
@@ -19481,14 +19548,14 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
                     </button>
                   ))}
                 </div>
-                <p style={{ fontSize: '0.85rem', color: '#666', marginTop: '0.5rem' }}>
+                <p style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', marginTop: '0.5rem' }}>
                   Displays upcoming movies/shows from NeX-Up as the filler preroll.
                 </p>
               </div>
             )}
 
-            <div style={{ padding: '0.75rem', backgroundColor: 'var(--card-bg)', border: '1px solid #22c55e', borderRadius: '4px' }}>
-              <p style={{ margin: 0, fontSize: '0.9rem', color: '#22c55e', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+            <div style={{ marginTop: '1rem', padding: '0.5rem 0.75rem', backgroundColor: 'rgba(34, 197, 94, 0.1)', border: '1px solid rgba(34, 197, 94, 0.3)', borderRadius: '6px' }}>
+              <p style={{ margin: 0, fontSize: '0.8rem', color: '#22c55e', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
                 <Check size={14} /> Filler will be applied when no schedules are active.
               </p>
             </div>
@@ -19496,79 +19563,199 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
         )}
       </div>
     </div>
+    </>
   );
 
   // Settings - Path Mappings Tab
   const renderSettingsPaths = () => (
-    <div className="card">
-      <h2>Path Mappings (Plex)</h2>
-      <p style={{ marginBottom: '1rem', color: 'var(--text-color)' }}>
+    <>
+    {/* Path Mappings Card */}
+    <div className="card" style={{ marginBottom: '1.5rem' }}>
+      <h2 style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.5rem' }}>
+        <FolderSync size={20} style={{ color: '#00d4ff' }} /> Path Mappings (Plex)
+      </h2>
+      <p style={{ marginBottom: '1.5rem', color: 'var(--text-secondary)', fontSize: '0.9rem' }}>
         Define how local or UNC paths should be translated to Plex-readable paths when applying prerolls.
         Longest-prefix rule applies; Windows local prefixes are matched case-insensitively.
       </p>
 
-      <div style={{ display: 'grid', gap: '0.5rem' }}>
-        {(pathMappings || []).map((m, idx) => (
-          <div key={idx} style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
-            <input
-              type="text"
-              placeholder="Local/UNC Prefix (e.g., \\\\NAS\\share\\prerolls or C:\\Media\\Prerolls)"
-              value={m.local}
-              onChange={(e) => updateMappingRow(idx, 'local', e.target.value)}
-              style={{ flex: 1, padding: '0.5rem' }}
-            />
-            <ArrowRight size={16} style={{ fontWeight: 'bold' }} />
-            <input
-              type="text"
-              placeholder="Plex Prefix (e.g., /mnt/NAS/prerolls or /Volumes/Media/Prerolls)"
-              value={m.plex}
-              onChange={(e) => updateMappingRow(idx, 'plex', e.target.value)}
-              style={{ flex: 1, padding: '0.5rem' }}
-            />
-            <button
-              type="button"
-              className="button"
-              onClick={() => removeMappingRow(idx)}
-              style={{ backgroundColor: '#dc3545' }}
-              title="Remove this mapping"
-            >
-              Remove
-            </button>
-          </div>
-        ))}
+      {/* Mappings List */}
+      <div style={{
+        padding: '1rem',
+        backgroundColor: 'var(--bg-color)',
+        borderRadius: '8px',
+        border: '1px solid var(--border-color)',
+        marginBottom: '1rem'
+      }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '1rem' }}>
+          <Layers size={16} style={{ color: '#00d4ff' }} />
+          <span style={{ fontWeight: 600, color: 'var(--text-color)' }}>Path Translation Rules</span>
+        </div>
+        
+        <div style={{ display: 'grid', gap: '0.75rem' }}>
+          {(pathMappings || []).map((m, idx) => (
+            <div key={idx} style={{ 
+              display: 'flex', 
+              gap: '0.5rem', 
+              alignItems: 'center',
+              padding: '0.75rem',
+              backgroundColor: 'var(--card-bg)',
+              borderRadius: '6px',
+              border: '1px solid var(--border-color)'
+            }}>
+              <div style={{ flex: 1 }}>
+                <label style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', display: 'block', marginBottom: '0.25rem' }}>Local/UNC Path</label>
+                <input
+                  type="text"
+                  className="input"
+                  placeholder="\\\\NAS\\share\\prerolls or C:\\Media\\Prerolls"
+                  value={m.local}
+                  onChange={(e) => updateMappingRow(idx, 'local', e.target.value)}
+                  style={{ width: '100%', padding: '0.5rem', backgroundColor: 'var(--bg-color)' }}
+                />
+              </div>
+              <ArrowRight size={18} style={{ color: '#00d4ff', flexShrink: 0 }} />
+              <div style={{ flex: 1 }}>
+                <label style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', display: 'block', marginBottom: '0.25rem' }}>Plex Path</label>
+                <input
+                  type="text"
+                  className="input"
+                  placeholder="/mnt/NAS/prerolls or /Volumes/Media/Prerolls"
+                  value={m.plex}
+                  onChange={(e) => updateMappingRow(idx, 'plex', e.target.value)}
+                  style={{ width: '100%', padding: '0.5rem', backgroundColor: 'var(--bg-color)' }}
+                />
+              </div>
+              <button
+                type="button"
+                className="button"
+                onClick={() => removeMappingRow(idx)}
+                style={{ 
+                  backgroundColor: 'rgba(220, 53, 69, 0.1)',
+                  border: '1px solid rgba(220, 53, 69, 0.3)',
+                  color: '#dc3545',
+                  padding: '0.5rem',
+                  flexShrink: 0,
+                  marginTop: '1.1rem'
+                }}
+                title="Remove this mapping"
+              >
+                <Trash2 size={16} />
+              </button>
+            </div>
+          ))}
+        </div>
 
-        <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
-          <button type="button" className="button" onClick={addMappingRow}><Plus size={14} style={{marginRight: '0.35rem'}} /> Add Row</button>
-          <button type="button" className="button" onClick={loadPathMappings} disabled={pathMappingsLoading}><RotateCw size={14} style={{marginRight: '0.35rem'}} /> Reload</button>
-          <button type="button" className="button" onClick={savePathMappings} disabled={pathMappingsLoading} style={{ backgroundColor: '#28a745' }}>
-            <Save size={14} style={{marginRight: '0.35rem'}} /> Save
+        <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap', marginTop: '1rem' }}>
+          <button 
+            type="button" 
+            className="button" 
+            onClick={addMappingRow}
+            style={{ 
+              backgroundColor: 'rgba(0, 212, 255, 0.1)',
+              border: '1px solid rgba(0, 212, 255, 0.3)',
+              color: '#00d4ff'
+            }}
+          >
+            <Plus size={14} style={{marginRight: '0.35rem'}} /> Add Mapping
+          </button>
+          <button 
+            type="button" 
+            className="button" 
+            onClick={loadPathMappings} 
+            disabled={pathMappingsLoading}
+            style={{ 
+              backgroundColor: 'transparent',
+              border: '1px solid var(--border-color)',
+              color: 'var(--text-color)'
+            }}
+          >
+            <RotateCw size={14} style={{marginRight: '0.35rem'}} /> Reload
+          </button>
+          <button 
+            type="button" 
+            className="button" 
+            onClick={savePathMappings} 
+            disabled={pathMappingsLoading} 
+            style={{ 
+              backgroundColor: 'rgba(34, 197, 94, 0.15)',
+              border: '1px solid rgba(34, 197, 94, 0.4)',
+              color: '#22c55e'
+            }}
+          >
+            <Save size={14} style={{marginRight: '0.35rem'}} /> Save Mappings
           </button>
         </div>
       </div>
+    </div>
 
-      <div style={{ marginTop: '1.5rem', paddingTop: '1rem', borderTop: '1px solid var(--border-color)' }}>
-        <h3 style={{ margin: 0, marginBottom: '0.5rem' }}>Test Translation</h3>
-        <p style={{ fontSize: '0.9rem', color: '#666', marginBottom: '0.5rem' }}>
-          Paste one or more local/UNC paths below to preview their translated Plex paths.
-        </p>
+    {/* Test Translation Card */}
+    <div className="card">
+      <h2 style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.5rem' }}>
+        <FlaskConical size={20} style={{ color: '#a855f7' }} /> Test Translation
+      </h2>
+      <p style={{ fontSize: '0.9rem', color: 'var(--text-secondary)', marginBottom: '1rem' }}>
+        Paste one or more local/UNC paths below to preview their translated Plex paths.
+      </p>
+
+      <div style={{
+        padding: '1rem',
+        backgroundColor: 'var(--bg-color)',
+        borderRadius: '8px',
+        border: '1px solid var(--border-color)'
+      }}>
         <textarea
           rows="4"
+          className="input"
           value={mappingTestInput}
           onChange={(e) => setMappingTestInput(e.target.value)}
-          placeholder={`Example:
-\\\\NAS\\share\\prerolls\\winter\\snow.mp4
-C:\\\\Media\\\\Prerolls\\\\summer\\\\beach.mp4`}
-          style={{ width: '100%', padding: '0.5rem', resize: 'vertical' }}
+          placeholder={`Example:\n\\\\NAS\\share\\prerolls\\winter\\snow.mp4\nC:\\Media\\Prerolls\\summer\\beach.mp4`}
+          style={{ 
+            width: '100%', 
+            padding: '0.75rem', 
+            resize: 'vertical',
+            backgroundColor: 'var(--card-bg)',
+            fontFamily: 'monospace',
+            fontSize: '0.85rem'
+          }}
         />
-        <div style={{ marginTop: '0.5rem' }}>
-          <button type="button" className="button" onClick={runMappingsTest}><FlaskConical size={14} style={{marginRight: '0.35rem'}} /> Run Test</button>
+        <div style={{ marginTop: '0.75rem' }}>
+          <button 
+            type="button" 
+            className="button" 
+            onClick={runMappingsTest}
+            style={{ 
+              backgroundColor: 'rgba(168, 85, 247, 0.15)',
+              border: '1px solid rgba(168, 85, 247, 0.4)',
+              color: '#a855f7'
+            }}
+          >
+            <FlaskConical size={14} style={{marginRight: '0.35rem'}} /> Run Test
+          </button>
         </div>
         {Array.isArray(mappingTestResults) && mappingTestResults.length > 0 && (
-          <div style={{ marginTop: '0.5rem' }}>
-            <ul style={{ margin: 0, paddingLeft: '1rem' }}>
+          <div style={{ 
+            marginTop: '1rem',
+            padding: '1rem',
+            backgroundColor: 'var(--card-bg)',
+            borderRadius: '6px',
+            border: '1px solid var(--border-color)'
+          }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.75rem' }}>
+              <CheckCircle size={16} style={{ color: '#22c55e' }} />
+              <span style={{ fontWeight: 600, fontSize: '0.9rem' }}>Translation Results</span>
+            </div>
+            <ul style={{ margin: 0, paddingLeft: '1.25rem' }}>
               {mappingTestResults.map((r, i) => (
-                <li key={i} style={{ fontSize: '0.9rem', color: r.matched ? 'green' : '#555' }}>
-                  <code>{r.input}</code> → <code>{r.output || '(no change)'}</code>
+                <li key={i} style={{ 
+                  fontSize: '0.85rem', 
+                  color: r.matched ? '#22c55e' : 'var(--text-secondary)',
+                  marginBottom: '0.35rem',
+                  fontFamily: 'monospace'
+                }}>
+                  <code style={{ color: 'var(--text-color)' }}>{r.input}</code>
+                  <ArrowRight size={12} style={{ margin: '0 0.5rem', verticalAlign: 'middle' }} />
+                  <code style={{ color: r.matched ? '#22c55e' : 'var(--text-secondary)' }}>{r.output || '(no change)'}</code>
                 </li>
               ))}
             </ul>
@@ -19576,6 +19763,7 @@ C:\\\\Media\\\\Prerolls\\\\summer\\\\beach.mp4`}
         )}
       </div>
     </div>
+    </>
   );
 
   // Settings - Backup & Restore Tab
@@ -20266,21 +20454,24 @@ C:\\\\Media\\\\Prerolls\\\\summer\\\\beach.mp4`}
         {/* Filters Bar */}
         <div style={{ 
           display: 'flex', 
-          gap: '0.5rem', 
+          gap: '2.5rem', 
           marginBottom: '1rem',
           flexWrap: 'wrap',
+          alignItems: 'center',
           padding: '0.75rem',
           backgroundColor: 'var(--bg-color)',
           borderRadius: '8px',
           border: '1px solid var(--border-color)'
         }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '0.25rem', color: 'var(--text-secondary)', fontSize: '0.85rem' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', color: 'var(--text-secondary)', fontSize: '0.85rem', marginRight: '0.25rem' }}>
             <Filter size={14} />
+            <span>Filter:</span>
           </div>
           <select
             className="input"
             style={{ 
-              maxWidth: '140px', 
+              width: '130px',
+              flexShrink: 0,
               fontSize: '0.85rem',
               padding: '0.4rem 0.5rem',
               backgroundColor: 'var(--card-bg)'
@@ -20298,7 +20489,8 @@ C:\\\\Media\\\\Prerolls\\\\summer\\\\beach.mp4`}
           <select
             className="input"
             style={{ 
-              maxWidth: '140px', 
+              width: '130px',
+              flexShrink: 0,
               fontSize: '0.85rem',
               padding: '0.4rem 0.5rem',
               backgroundColor: 'var(--card-bg)'
@@ -20315,7 +20507,7 @@ C:\\\\Media\\\\Prerolls\\\\summer\\\\beach.mp4`}
             <option value="jellyfin">Jellyfin</option>
             <option value="nexup">NeX-Up</option>
           </select>
-          <div style={{ flex: 1, minWidth: '200px', position: 'relative' }}>
+          <div style={{ flex: '1 1 180px', minWidth: '150px', maxWidth: '280px', position: 'relative', marginTop: '4px' }}>
             <Search size={14} style={{ 
               position: 'absolute', 
               left: '0.75rem', 
@@ -20340,10 +20532,12 @@ C:\\\\Media\\\\Prerolls\\\\summer\\\\beach.mp4`}
           <select
             className="input"
             style={{ 
-              maxWidth: '110px', 
+              width: '150px',
+              flexShrink: 0,
               fontSize: '0.85rem',
               padding: '0.4rem 0.5rem',
-              backgroundColor: 'var(--card-bg)'
+              backgroundColor: 'var(--card-bg)',
+              marginLeft: '200px'
             }}
             value={logFilters.limit}
             onChange={(e) => setLogFilters(prev => ({ ...prev, limit: parseInt(e.target.value) }))}
@@ -20383,7 +20577,7 @@ C:\\\\Media\\\\Prerolls\\\\summer\\\\beach.mp4`}
           <div style={{ 
             maxHeight: '500px', 
             overflowY: 'auto',
-            backgroundColor: '#0d1117',
+            backgroundColor: 'var(--card-bg)',
             borderRadius: '8px',
             border: '1px solid var(--border-color)',
             fontFamily: "'JetBrains Mono', 'Fira Code', 'Consolas', monospace"
@@ -20393,7 +20587,7 @@ C:\\\\Media\\\\Prerolls\\\\summer\\\\beach.mp4`}
                 key={log.id || idx}
                 style={{
                   padding: '0.65rem 1rem',
-                  borderBottom: idx < logs.length - 1 ? '1px solid rgba(255,255,255,0.06)' : 'none',
+                  borderBottom: idx < logs.length - 1 ? '1px solid var(--border-color)' : 'none',
                   fontSize: '0.8rem',
                   transition: 'background-color 0.15s',
                   backgroundColor: (log.level === 'ERROR' || log.level === 'CRITICAL') 
@@ -20402,11 +20596,11 @@ C:\\\\Media\\\\Prerolls\\\\summer\\\\beach.mp4`}
                       ? 'rgba(245, 158, 11, 0.03)' 
                       : 'transparent'
                 }}
-                onMouseEnter={(e) => e.currentTarget.style.backgroundColor = 'rgba(255,255,255,0.03)'}
+                onMouseEnter={(e) => e.currentTarget.style.backgroundColor = 'var(--bg-hover)'}
                 onMouseLeave={(e) => e.currentTarget.style.backgroundColor = (log.level === 'ERROR' || log.level === 'CRITICAL') ? 'rgba(239, 68, 68, 0.05)' : log.level === 'WARNING' ? 'rgba(245, 158, 11, 0.03)' : 'transparent'}
               >
                 <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
-                  <span style={{ color: 'rgba(255,255,255,0.35)', fontSize: '0.7rem', fontFamily: 'inherit', minWidth: '140px' }}>
+                  <span style={{ color: 'var(--text-secondary)', fontSize: '0.7rem', fontFamily: 'inherit', minWidth: '140px', opacity: 0.7 }}>
                     {new Date(log.created_at || log.timestamp).toLocaleString()}
                   </span>
                   <span style={{
@@ -20445,9 +20639,9 @@ C:\\\\Media\\\\Prerolls\\\\summer\\\\beach.mp4`}
                       borderRadius: '3px',
                       fontSize: '0.65rem',
                       fontFamily: 'inherit',
-                      backgroundColor: 'rgba(255,255,255,0.05)',
-                      color: '#8b949e',
-                      border: '1px solid rgba(255,255,255,0.08)'
+                      backgroundColor: 'var(--bg-color)',
+                      color: 'var(--text-secondary)',
+                      border: '1px solid var(--border-color)'
                     }}>
                       {log.category}
                     </span>
@@ -20455,8 +20649,9 @@ C:\\\\Media\\\\Prerolls\\\\summer\\\\beach.mp4`}
                   {log.source && (
                     <span style={{ 
                       fontSize: '0.7rem', 
-                      color: 'rgba(255,255,255,0.3)',
-                      fontFamily: 'inherit'
+                      color: 'var(--text-secondary)',
+                      fontFamily: 'inherit',
+                      opacity: 0.6
                     }}>
                       {log.source}
                     </span>
@@ -20464,7 +20659,7 @@ C:\\\\Media\\\\Prerolls\\\\summer\\\\beach.mp4`}
                 </div>
                 <div style={{ 
                   marginTop: '0.35rem', 
-                  color: '#e6edf3',
+                  color: 'var(--text-color)',
                   lineHeight: 1.5,
                   fontFamily: 'inherit'
                 }}>
@@ -20496,12 +20691,12 @@ C:\\\\Media\\\\Prerolls\\\\summer\\\\beach.mp4`}
                           <span key={key} style={{
                             fontSize: '0.7rem',
                             padding: '0.15rem 0.5rem',
-                            backgroundColor: 'rgba(255,255,255,0.05)',
+                            backgroundColor: 'var(--bg-color)',
                             borderRadius: '3px',
-                            color: '#8b949e',
-                            border: '1px solid rgba(255,255,255,0.08)'
+                            color: 'var(--text-secondary)',
+                            border: '1px solid var(--border-color)'
                           }}>
-                            <span style={{ color: 'rgba(255,255,255,0.4)' }}>{key}:</span> {String(value)}
+                            <span style={{ color: 'var(--text-secondary)', opacity: 0.7 }}>{key}:</span> {String(value)}
                           </span>
                         ))}
                       </div>
@@ -20514,7 +20709,7 @@ C:\\\\Media\\\\Prerolls\\\\summer\\\\beach.mp4`}
                       <div style={{ 
                         marginTop: '0.35rem', 
                         fontSize: '0.7rem', 
-                        color: '#7d8590',
+                        color: 'var(--text-secondary)',
                         fontFamily: 'inherit'
                       }}>
                         {detailStr}
