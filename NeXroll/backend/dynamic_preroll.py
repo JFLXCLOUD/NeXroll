@@ -1230,11 +1230,28 @@ class DynamicPrerollGenerator:
         _, font_param = self._get_font_path('arial')
         _, bold_font_param = self._get_font_path('arial_bold')
         
-        # Calculate layout
+        # Calculate layout - dynamically adjust for item count
         header_y = 80
         subtitle_y = 175
         list_start_y = 270
-        line_height = 90
+        
+        # Available height for items: 1080 - 270 (header area) - 50 (bottom margin) = 760
+        available_height = height - list_start_y - 50
+        num_items = len(items)
+        
+        # Calculate line height based on item count
+        if num_items <= 6:
+            line_height = 90
+            fontsize = 42
+        elif num_items <= 8:
+            line_height = 75
+            fontsize = 38
+        elif num_items <= 10:
+            line_height = 65
+            fontsize = 34
+        else:
+            line_height = 55
+            fontsize = 30
         
         # Build filter string
         filter_parts = []
@@ -1274,17 +1291,18 @@ class DynamicPrerollGenerator:
             
             item_y = list_start_y + (i * line_height)
             fade_delay = 0.8 + (i * 0.15)  # Staggered fade-in
+            date_fontsize = int(fontsize * 0.85)  # Slightly smaller for date
             
             # Title (left-aligned with padding)
             filter_parts.append(
-                f"drawtext=text='{title}':fontsize=42:fontcolor={text_color}{font_param}:"
+                f"drawtext=text='{title}':fontsize={fontsize}:fontcolor={text_color}{font_param}:"
                 f"x=200:y={item_y}:alpha='if(lt(t,{fade_delay}),0,if(lt(t,{fade_delay+0.4}),"
                 f"(t-{fade_delay})/0.4,1))'"
             )
             
             # Date (right-aligned)
             filter_parts.append(
-                f"drawtext=text='{date_str}':fontsize=36:fontcolor={accent_color}@0.9{font_param}:"
+                f"drawtext=text='{date_str}':fontsize={date_fontsize}:fontcolor={accent_color}@0.9{font_param}:"
                 f"x=w-text_w-200:y={item_y+5}:alpha='if(lt(t,{fade_delay}),0,if(lt(t,{fade_delay+0.4}),"
                 f"(t-{fade_delay})/0.4,1))'"
             )
@@ -1341,9 +1359,9 @@ class DynamicPrerollGenerator:
         try:
             # Download poster images synchronously
             _verbose_log(f"Downloading posters to {temp_dir}")
-            _verbose_log(f"Items to process: {len(items[:8])}")
+            _verbose_log(f"Items to process: {len(items)}")
             
-            for i, item in enumerate(items[:8]):  # Max 8 for grid
+            for i, item in enumerate(items):  # Use all items (already limited by max_items)
                 poster_url = item.get('poster_url')
                 _verbose_log(f"Item {i}: {item.get('title', 'Unknown')} - poster_url: {poster_url[:50] if poster_url else 'None'}...")
                 
@@ -1380,26 +1398,37 @@ class DynamicPrerollGenerator:
                 )
             
             # Build grid layout with FFmpeg
-            # Calculate grid: 2x4, 3x3, or 4x2 based on count
+            # Calculate grid layout based on count (supports up to 12 items)
             num_items = len(valid_items)
             if num_items <= 4:
                 cols, rows = 2, 2
             elif num_items <= 6:
                 cols, rows = 3, 2
-            else:
+            elif num_items <= 8:
                 cols, rows = 4, 2
+            elif num_items <= 9:
+                cols, rows = 3, 3
+            else:
+                cols, rows = 4, 3  # Max 12 items
             
-            # Larger poster sizes for better visibility
-            poster_width = 220
-            poster_height = 330
-            spacing_x = 40
-            spacing_y = 20
+            # Adjust poster sizes based on layout - smaller for 3 rows
+            if rows == 3:
+                poster_width = 180
+                poster_height = 270
+                spacing_x = 30
+                spacing_y = 15
+                start_y = 160  # Less header space
+            else:
+                poster_width = 220
+                poster_height = 330
+                spacing_x = 40
+                spacing_y = 20
+                start_y = 180  # Leave room for header
             
             grid_width = cols * poster_width + (cols - 1) * spacing_x
             grid_height = rows * poster_height + (rows - 1) * spacing_y
             
             start_x = (width - grid_width) // 2
-            start_y = 180  # Leave room for header
             
             # Build complex filterchain
             inputs = [f'-i "{p}"' for p in poster_paths]
