@@ -14728,19 +14728,32 @@ async def _auto_regenerate_coming_soon_list(db: Session):
         items.sort(key=lambda x: x.get('release_date') or '9999-12-31')
         items = items[:max_items]
         
+        # Convert colors from CSS hex (#141428) to FFmpeg format (0x141428)
+        bg_ffmpeg = bg_color.replace('#', '0x')
+        text_ffmpeg = text_color.replace('#', '0x')
+        accent_ffmpeg = accent_color.replace('#', '0x')
+        
         # Generate the video in dynamic_prerolls subdirectory
         output_dir = Path(storage_path) / "dynamic_prerolls"
         output_dir.mkdir(parents=True, exist_ok=True)
         
+        output_filename = f"coming_soon_{layout}.mp4"
+        
         generator = DynamicPrerollGenerator(str(output_dir))
+        
+        if not generator.check_ffmpeg_available():
+            _file_log("Coming Soon List auto-regen: FFmpeg not available", level="WARNING")
+            return
+        
         output_path = generator.generate_coming_soon_list(
             items=items,
             server_name=server_name,
             layout=layout,
             duration=duration,
-            bg_color=bg_color,
-            text_color=text_color,
-            accent_color=accent_color
+            output_filename=output_filename,
+            bg_color=bg_ffmpeg,
+            text_color=text_ffmpeg,
+            accent_color=accent_ffmpeg
         )
         
         if output_path:
