@@ -16062,7 +16062,10 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
       
       if (res.ok) {
         const data = await res.json();
-        showAlert(`Coming Soon List generated with ${data.items_count} items!`, 'success');
+        const msg = data.total_eligible && data.total_eligible < data.max_items_setting
+          ? `Coming Soon List generated with ${data.items_count} items (only ${data.total_eligible} trailers have future release dates)`
+          : `Coming Soon List generated with ${data.items_count} items!`;
+        showAlert(msg, 'success');
         loadGeneratedComingSoonLists();
         loadGeneratedPrerolls();
       } else {

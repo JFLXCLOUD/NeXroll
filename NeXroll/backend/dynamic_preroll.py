@@ -1413,17 +1413,19 @@ class DynamicPrerollGenerator:
             
             # Adjust poster sizes based on layout - smaller for 3 rows
             if rows == 3:
-                poster_width = 180
-                poster_height = 270
-                spacing_x = 30
-                spacing_y = 15
-                start_y = 160  # Less header space
+                poster_width = 160
+                poster_height = 240
+                spacing_x = 25
+                spacing_y = 8
+                start_y = 145  # Less header space
+                date_spacing = 28  # Reduced date spacing between rows
             else:
                 poster_width = 220
                 poster_height = 330
                 spacing_x = 40
                 spacing_y = 20
                 start_y = 180  # Leave room for header
+                date_spacing = 35  # Standard date spacing
             
             grid_width = cols * poster_width + (cols - 1) * spacing_x
             grid_height = rows * poster_height + (rows - 1) * spacing_y
@@ -1442,7 +1444,7 @@ class DynamicPrerollGenerator:
                 col = i % cols
                 row = i // cols
                 x = start_x + col * (poster_width + spacing_x)
-                y = start_y + row * (poster_height + spacing_y + 50)  # Extra for title
+                y = start_y + row * (poster_height + spacing_y + date_spacing)  # Extra for title
                 
                 # Scale poster
                 filter_complex.append(f"[{i+1}:v]scale={poster_width}:{poster_height}[p{i}]")
@@ -1480,7 +1482,7 @@ class DynamicPrerollGenerator:
                 col = i % cols
                 row = i // cols
                 x = start_x + col * (poster_width + spacing_x)
-                y = start_y + row * (poster_height + spacing_y + 35)  # Space for date below
+                y = start_y + row * (poster_height + spacing_y + date_spacing)  # Space for date below
                 
                 # Scale poster
                 filter_parts.append(f"[{i+1}:v]scale={poster_width}:{poster_height},format=rgba[p{i}]")
@@ -1498,7 +1500,7 @@ class DynamicPrerollGenerator:
                 col = i % cols
                 row = i // cols
                 x = start_x + col * (poster_width + spacing_x)
-                y = start_y + row * (poster_height + spacing_y + 35)
+                y = start_y + row * (poster_height + spacing_y + date_spacing)
                 
                 # Format release date
                 release_date = item.get('release_date', '')
@@ -1523,13 +1525,21 @@ class DynamicPrerollGenerator:
                     f"x={text_center_x}-(text_w/2):y={date_y}:shadowcolor=black@0.4:shadowx=1:shadowy=1"
                 )
             
-            # Add header text and footer
-            header_filter = (
-                f"drawtext=text='COMING SOON':fontsize=55:fontcolor={accent_color}{bold_font_param}:"
-                f"x=(w-text_w)/2:y=60:shadowcolor=black@0.5:shadowx=2:shadowy=2,"
-                f"drawtext=text='to {escaped_server}':fontsize=32:fontcolor={text_color}@0.9{font_param}:"
-                f"x=(w-text_w)/2:y=130"
-            )
+            # Add header text and footer - adjust sizes for 3-row layout
+            if rows == 3:
+                header_filter = (
+                    f"drawtext=text='COMING SOON':fontsize=45:fontcolor={accent_color}{bold_font_param}:"
+                    f"x=(w-text_w)/2:y=40:shadowcolor=black@0.5:shadowx=2:shadowy=2,"
+                    f"drawtext=text='to {escaped_server}':fontsize=26:fontcolor={text_color}@0.9{font_param}:"
+                    f"x=(w-text_w)/2:y=95"
+                )
+            else:
+                header_filter = (
+                    f"drawtext=text='COMING SOON':fontsize=55:fontcolor={accent_color}{bold_font_param}:"
+                    f"x=(w-text_w)/2:y=60:shadowcolor=black@0.5:shadowx=2:shadowy=2,"
+                    f"drawtext=text='to {escaped_server}':fontsize=32:fontcolor={text_color}@0.9{font_param}:"
+                    f"x=(w-text_w)/2:y=130"
+                )
             
             # Combine: poster overlays + text overlays + header + fades
             all_text = ",".join(text_filters)

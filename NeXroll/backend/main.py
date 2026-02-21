@@ -14695,47 +14695,50 @@ async def _auto_regenerate_coming_soon_list(db: Session):
             server_name = setting.plex_server_name or getattr(setting, 'jellyfin_server_name', None) or "Your Server"
         
         from backend.dynamic_preroll import DynamicPrerollGenerator
+        from backend.radarr_connector import RadarrConnector
+        from backend.sonarr_connector import SonarrConnector
         
-        # Fetch items from downloaded trailers
+        # Fetch items from Radarr/Sonarr APIs (all upcoming content)
         items = []
-        now = datetime.datetime.now()
+        days_ahead = getattr(setting, 'nexup_days_ahead', 90) or 90
         
-        # Get movies from ComingSoonTrailer table (downloaded movie trailers)
+        # Get movies from Radarr API
         if source in ["movies", "both"]:
-            movie_trailers = db.query(models.ComingSoonTrailer).filter(
-                models.ComingSoonTrailer.status == 'downloaded',
-                models.ComingSoonTrailer.is_enabled == True,
-                models.ComingSoonTrailer.monitored == True,  # Only monitored in Radarr
-                models.ComingSoonTrailer.release_date >= now
-            ).order_by(models.ComingSoonTrailer.release_date.asc()).all()
-            
-            for t in movie_trailers:
-                items.append({
-                    'title': t.title,
-                    'release_date': t.release_date.isoformat() if t.release_date else '',
-                    'poster_url': t.poster_url,
-                    'type': 'movie'
-                })
+            if setting.nexup_radarr_url and setting.nexup_radarr_api_key:
+                try:
+                    radarr_connector = RadarrConnector(setting.nexup_radarr_url, setting.nexup_radarr_api_key)
+                    movies = await radarr_connector.get_upcoming_movies(days_ahead)
+                    for movie in movies:
+                        items.append({
+                            'title': movie.get('title', ''),
+                            'release_date': movie.get('release_date', ''),
+                            'poster_url': movie.get('poster_url', ''),
+                            'type': 'movie'
+                        })
+                    _file_log(f"Coming Soon List auto-regen: Found {len(movies)} upcoming movies from Radarr")
+                except Exception as e:
+                    _file_log(f"Coming Soon List auto-regen: Error fetching from Radarr: {e}")
         
-        # Get shows from ComingSoonTVTrailer table (downloaded TV trailers)
+        # Get shows from Sonarr API
         if source in ["shows", "both"]:
-            tv_trailers = db.query(models.ComingSoonTVTrailer).filter(
-                models.ComingSoonTVTrailer.status == 'downloaded',
-                models.ComingSoonTVTrailer.is_enabled == True,
-                models.ComingSoonTVTrailer.monitored == True,  # Only monitored in Sonarr
-                models.ComingSoonTVTrailer.release_date >= now
-            ).order_by(models.ComingSoonTVTrailer.release_date.asc()).all()
-            
-            for t in tv_trailers:
-                title = t.title
-                if t.season_number and t.season_number > 1:
-                    title = f"{title} (S{t.season_number})"
-                items.append({
-                    'title': title,
-                    'release_date': t.release_date.isoformat() if t.release_date else '',
-                    'poster_url': t.poster_url,
-                    'type': 'show'
-                })
+            if getattr(setting, 'nexup_sonarr_url', None) and getattr(setting, 'nexup_sonarr_api_key', None):
+                try:
+                    sonarr_connector = SonarrConnector(setting.nexup_sonarr_url, setting.nexup_sonarr_api_key)
+                    shows = await sonarr_connector.get_upcoming_premieres(days_ahead)
+                    for show in shows:
+                        title = show.get('title', '')
+                        season_number = show.get('season_number', 1)
+                        if season_number and season_number > 1:
+                            title = f"{title} (S{season_number})"
+                        items.append({
+                            'title': title,
+                            'release_date': show.get('release_date', ''),
+                            'poster_url': show.get('poster_url', ''),
+                            'type': 'show'
+                        })
+                    _file_log(f"Coming Soon List auto-regen: Found {len(shows)} upcoming shows from Sonarr")
+                except Exception as e:
+                    _file_log(f"Coming Soon List auto-regen: Error fetching from Sonarr: {e}")
         
         if not items:
             _file_log("Coming Soon List auto-regen: No items to display")
@@ -16836,6 +16839,10 @@ async def generate_coming_soon_list(
         server_name: Optional custom server name to display
     """
     from backend.dynamic_preroll import DynamicPrerollGenerator, set_verbose_logger
+    from backend.radarr_connector import RadarrConnector
+    from backend.sonarr_connector import SonarrConnector
+    
+    _file_log(f"[COMING-SOON-LIST] Request params: layout={layout}, source={source}, duration={duration}, max_items={max_items}")
     
     # Wire up verbose logging if enabled
     if _is_verbose_logging_enabled():
@@ -16857,51 +16864,56 @@ async def generate_coming_soon_list(
     if not server_name or not server_name.strip():
         server_name = setting.plex_server_name or getattr(setting, 'jellyfin_server_name', None) or "Your Server"
     
-    # Fetch from downloaded trailers (Your Trailers page) instead of Radarr/Sonarr API
+    # Fetch from Radarr/Sonarr APIs (ALL upcoming content, not just downloaded trailers)
     items = []
-    now = datetime.datetime.now()
+    days_ahead = getattr(setting, 'nexup_days_ahead', 90) or 90
     
-    # Get movies from ComingSoonTrailer table (downloaded movie trailers)
+    # Get movies from Radarr API
     if source in ["movies", "both"]:
-        movie_trailers = db.query(models.ComingSoonTrailer).filter(
-            models.ComingSoonTrailer.status == 'downloaded',
-            models.ComingSoonTrailer.is_enabled == True,
-            models.ComingSoonTrailer.monitored == True,  # Only monitored in Radarr
-            models.ComingSoonTrailer.release_date >= now  # Only future releases
-        ).order_by(models.ComingSoonTrailer.release_date.asc()).all()
-        
-        for t in movie_trailers:
-            items.append({
-                'title': t.title,
-                'release_date': t.release_date.isoformat() if t.release_date else '',
-                'poster_url': t.poster_url,
-                'type': 'movie'
-            })
-        _file_log(f"[COMING-SOON-LIST] Found {len(movie_trailers)} downloaded movie trailers (monitored only)")
+        if setting.nexup_radarr_url and setting.nexup_radarr_api_key:
+            try:
+                radarr_connector = RadarrConnector(setting.nexup_radarr_url, setting.nexup_radarr_api_key)
+                movies = await radarr_connector.get_upcoming_movies(days_ahead)
+                for movie in movies:
+                    items.append({
+                        'title': movie.get('title', ''),
+                        'release_date': movie.get('release_date', ''),
+                        'poster_url': movie.get('poster_url', ''),
+                        'type': 'movie'
+                    })
+                _file_log(f"[COMING-SOON-LIST] Found {len(movies)} upcoming movies from Radarr API")
+            except Exception as e:
+                _file_log(f"[COMING-SOON-LIST] Error fetching from Radarr: {e}")
+        else:
+            _file_log(f"[COMING-SOON-LIST] Radarr not configured, skipping movies")
     
-    # Get shows from ComingSoonTVTrailer table (downloaded TV trailers)
+    # Get shows from Sonarr API
     if source in ["shows", "both"]:
-        tv_trailers = db.query(models.ComingSoonTVTrailer).filter(
-            models.ComingSoonTVTrailer.status == 'downloaded',
-            models.ComingSoonTVTrailer.is_enabled == True,
-            models.ComingSoonTVTrailer.monitored == True,  # Only monitored in Sonarr
-            models.ComingSoonTVTrailer.release_date >= now  # Only future releases
-        ).order_by(models.ComingSoonTVTrailer.release_date.asc()).all()
-        
-        for t in tv_trailers:
-            title = t.title
-            if t.season_number and t.season_number > 1:
-                title = f"{title} (S{t.season_number})"
-            items.append({
-                'title': title,
-                'release_date': t.release_date.isoformat() if t.release_date else '',
-                'poster_url': t.poster_url,
-                'type': 'show'
-            })
-        _file_log(f"[COMING-SOON-LIST] Found {len(tv_trailers)} downloaded TV trailers")
+        if getattr(setting, 'nexup_sonarr_url', None) and getattr(setting, 'nexup_sonarr_api_key', None):
+            try:
+                sonarr_connector = SonarrConnector(setting.nexup_sonarr_url, setting.nexup_sonarr_api_key)
+                shows = await sonarr_connector.get_upcoming_premieres(days_ahead)
+                for show in shows:
+                    title = show.get('title', '')
+                    season_number = show.get('season_number', 1)
+                    if season_number and season_number > 1:
+                        title = f"{title} (S{season_number})"
+                    items.append({
+                        'title': title,
+                        'release_date': show.get('release_date', ''),
+                        'poster_url': show.get('poster_url', ''),
+                        'type': 'show'
+                    })
+                _file_log(f"[COMING-SOON-LIST] Found {len(shows)} upcoming shows from Sonarr API")
+            except Exception as e:
+                _file_log(f"[COMING-SOON-LIST] Error fetching from Sonarr: {e}")
+        else:
+            _file_log(f"[COMING-SOON-LIST] Sonarr not configured, skipping shows")
+    
+    _file_log(f"[COMING-SOON-LIST] Total items from APIs: {len(items)}, max_items requested: {max_items}")
     
     if not items:
-        raise HTTPException(status_code=400, detail="No downloaded trailers found. Download some trailers in Your Trailers first.")
+        raise HTTPException(status_code=400, detail="No upcoming content found. Make sure Radarr/Sonarr is connected and has upcoming releases.")
     
     # Deduplicate items by title (in case of duplicate database records)
     seen_titles = set()
@@ -16965,9 +16977,11 @@ async def generate_coming_soon_list(
                 "path": str(output_path),
                 "layout": layout,
                 "items_count": min(len(items), max_items),
+                "total_eligible": len(items),
+                "max_items_setting": max_items,
                 "source": source,
                 "duration": duration,
-                "message": f"Generated Coming Soon list with {min(len(items), max_items)} items"
+                "message": f"Generated Coming Soon list with {min(len(items), max_items)} items (of {len(items)} eligible)"
             }
         else:
             raise HTTPException(status_code=500, detail="Failed to generate Coming Soon list video")
@@ -16984,65 +16998,67 @@ async def preview_coming_soon_list(
 ):
     """
     Preview what items would appear in a Coming Soon List video.
-    Sources items from Your Trailers (downloaded trailers only).
+    Sources items from Radarr/Sonarr APIs (all upcoming content).
     """
+    from backend.radarr_connector import RadarrConnector
+    from backend.sonarr_connector import SonarrConnector
+    
     setting = db.query(models.Setting).first()
     if not setting:
         return {"items": [], "error": "Settings not configured"}
     
     items = []
-    now = datetime.datetime.now()
+    days_ahead = getattr(setting, 'nexup_days_ahead', 90) or 90
     
-    def calc_days_until(release_dt):
-        if not release_dt:
+    def calc_days_until(release_str):
+        if not release_str:
             return None
         try:
-            if hasattr(release_dt, 'date'):
-                release_date = release_dt.date()
-            else:
-                release_date = release_dt
-            return (release_date - datetime.datetime.now().date()).days
+            from datetime import datetime
+            release_date = datetime.fromisoformat(release_str.replace('Z', '+00:00')).date() if isinstance(release_str, str) else release_str
+            return (release_date - datetime.now().date()).days
         except:
             return None
     
-    # Get movies from downloaded trailers
+    # Get movies from Radarr API
     if source in ["movies", "both"]:
-        movie_trailers = db.query(models.ComingSoonTrailer).filter(
-            models.ComingSoonTrailer.status == 'downloaded',
-            models.ComingSoonTrailer.is_enabled == True,
-            models.ComingSoonTrailer.release_date >= now
-        ).order_by(models.ComingSoonTrailer.release_date.asc()).all()
-        
-        for t in movie_trailers:
-            items.append({
-                'title': t.title,
-                'release_date': t.release_date.isoformat() if t.release_date else '',
-                'poster_url': t.poster_url,
-                'type': 'movie',
-                'days_until_release': calc_days_until(t.release_date)
-            })
+        if setting.nexup_radarr_url and setting.nexup_radarr_api_key:
+            try:
+                radarr_connector = RadarrConnector(setting.nexup_radarr_url, setting.nexup_radarr_api_key)
+                movies = await radarr_connector.get_upcoming_movies(days_ahead)
+                for movie in movies:
+                    items.append({
+                        'title': movie.get('title', ''),
+                        'release_date': movie.get('release_date', ''),
+                        'poster_url': movie.get('poster_url', ''),
+                        'type': 'movie',
+                        'days_until_release': calc_days_until(movie.get('release_date'))
+                    })
+            except Exception as e:
+                _file_log(f"[COMING-SOON-PREVIEW] Error fetching from Radarr: {e}")
     
-    # Get shows from downloaded trailers
+    # Get shows from Sonarr API
     if source in ["shows", "both"]:
-        tv_trailers = db.query(models.ComingSoonTVTrailer).filter(
-            models.ComingSoonTVTrailer.status == 'downloaded',
-            models.ComingSoonTVTrailer.is_enabled == True,
-            models.ComingSoonTVTrailer.release_date >= now
-        ).order_by(models.ComingSoonTVTrailer.release_date.asc()).all()
-        
-        for t in tv_trailers:
-            title = t.title
-            if t.season_number and t.season_number > 1:
-                title = f"{title} (S{t.season_number})"
-            items.append({
-                'title': title,
-                'release_date': t.release_date.isoformat() if t.release_date else '',
-                'poster_url': t.poster_url,
-                'type': 'show',
-                'days_until_release': calc_days_until(t.release_date)
-            })
+        if getattr(setting, 'nexup_sonarr_url', None) and getattr(setting, 'nexup_sonarr_api_key', None):
+            try:
+                sonarr_connector = SonarrConnector(setting.nexup_sonarr_url, setting.nexup_sonarr_api_key)
+                shows = await sonarr_connector.get_upcoming_premieres(days_ahead)
+                for show in shows:
+                    title = show.get('title', '')
+                    season_number = show.get('season_number', 1)
+                    if season_number and season_number > 1:
+                        title = f"{title} (S{season_number})"
+                    items.append({
+                        'title': title,
+                        'release_date': show.get('release_date', ''),
+                        'poster_url': show.get('poster_url', ''),
+                        'type': 'show',
+                        'days_until_release': calc_days_until(show.get('release_date'))
+                    })
+            except Exception as e:
+                _file_log(f"[COMING-SOON-PREVIEW] Error fetching from Sonarr: {e}")
     
-    # Deduplicate items by title (in case of duplicate database records)
+    # Deduplicate items by title
     seen_titles = set()
     unique_items = []
     for item in items:
