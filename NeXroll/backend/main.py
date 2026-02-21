@@ -216,6 +216,7 @@ def ensure_schema() -> None:
                 ("nexup_max_trailer_duration", "nexup_max_trailer_duration INTEGER DEFAULT 180"),
                 # Coming Soon List auto-regeneration settings
                 ("nexup_coming_soon_list_auto_regen", "nexup_coming_soon_list_auto_regen BOOLEAN DEFAULT 0"),
+                ("nexup_coming_soon_list_auto_regen_layout", "nexup_coming_soon_list_auto_regen_layout TEXT DEFAULT 'both'"),
                 ("nexup_coming_soon_list_layout", "nexup_coming_soon_list_layout TEXT DEFAULT 'grid'"),
                 ("nexup_coming_soon_list_source", "nexup_coming_soon_list_source TEXT DEFAULT 'both'"),
                 ("nexup_coming_soon_list_duration", "nexup_coming_soon_list_duration INTEGER DEFAULT 10"),
@@ -13954,6 +13955,7 @@ def get_nexup_settings(db: Session = Depends(get_db)):
         "last_sonarr_sync": getattr(setting, 'nexup_last_sonarr_sync', None).isoformat() if getattr(setting, 'nexup_last_sonarr_sync', None) else None,
         # Coming Soon List auto-regeneration settings
         "coming_soon_list_auto_regen": getattr(setting, 'nexup_coming_soon_list_auto_regen', False),
+        "coming_soon_list_auto_regen_layout": getattr(setting, 'nexup_coming_soon_list_auto_regen_layout', 'both'),
         "coming_soon_list_layout": getattr(setting, 'nexup_coming_soon_list_layout', 'grid'),
         "coming_soon_list_source": getattr(setting, 'nexup_coming_soon_list_source', 'both'),
         "coming_soon_list_duration": getattr(setting, 'nexup_coming_soon_list_duration', 10),
@@ -13982,6 +13984,7 @@ def update_nexup_settings(
     bulk_warning_threshold: Optional[int] = None,
     tmdb_api_key: Optional[str] = None,
     coming_soon_list_auto_regen: Optional[bool] = None,
+    coming_soon_list_auto_regen_layout: Optional[str] = None,
     coming_soon_list_layout: Optional[str] = None,
     coming_soon_list_source: Optional[str] = None,
     coming_soon_list_duration: Optional[int] = None,
@@ -14085,6 +14088,9 @@ def update_nexup_settings(
     # Coming Soon List auto-regeneration settings
     if coming_soon_list_auto_regen is not None:
         setting.nexup_coming_soon_list_auto_regen = coming_soon_list_auto_regen
+    if coming_soon_list_auto_regen_layout is not None:
+        if coming_soon_list_auto_regen_layout in ['grid', 'list', 'both']:
+            setting.nexup_coming_soon_list_auto_regen_layout = coming_soon_list_auto_regen_layout
     if coming_soon_list_layout is not None:
         setting.nexup_coming_soon_list_layout = coming_soon_list_layout
     if coming_soon_list_source is not None:
@@ -14670,7 +14676,7 @@ async def _auto_regenerate_coming_soon_list(db: Session):
         _file_log("Coming Soon List auto-regen: Starting automatic regeneration")
         
         # Get saved settings
-        layout = getattr(setting, 'nexup_coming_soon_list_layout', 'grid')
+        auto_regen_layout = getattr(setting, 'nexup_coming_soon_list_auto_regen_layout', 'both')
         source = getattr(setting, 'nexup_coming_soon_list_source', 'both')
         duration = getattr(setting, 'nexup_coming_soon_list_duration', 10)
         max_items = getattr(setting, 'nexup_coming_soon_list_max_items', 8)
@@ -14748,29 +14754,46 @@ async def _auto_regenerate_coming_soon_list(db: Session):
         output_dir = Path(storage_path) / "dynamic_prerolls"
         output_dir.mkdir(parents=True, exist_ok=True)
         
-        output_filename = f"coming_soon_{layout}.mp4"
-        
         generator = DynamicPrerollGenerator(str(output_dir))
         
         if not generator.check_ffmpeg_available():
             _file_log("Coming Soon List auto-regen: FFmpeg not available", level="WARNING")
             return
         
-        output_path = generator.generate_coming_soon_list(
-            items=items,
-            server_name=server_name,
-            layout=layout,
-            duration=duration,
-            output_filename=output_filename,
-            bg_color=bg_ffmpeg,
-            text_color=text_ffmpeg,
-            accent_color=accent_ffmpeg
-        )
-        
-        if output_path:
-            _file_log(f"Coming Soon List auto-regen: Success - {output_path}")
+        # Determine which layouts to generate based on auto_regen_layout setting
+        layouts_to_generate = []
+        if auto_regen_layout == 'both':
+            layouts_to_generate = ['grid', 'list']
         else:
-            _file_log("Coming Soon List auto-regen: Failed to generate")
+            layouts_to_generate = [auto_regen_layout]
+        
+        _file_log(f"Coming Soon List auto-regen: Generating layouts: {layouts_to_generate}")
+        
+        success_count = 0
+        for layout in layouts_to_generate:
+            output_filename = f"coming_soon_{layout}.mp4"
+            
+            output_path = generator.generate_coming_soon_list(
+                items=items,
+                server_name=server_name,
+                layout=layout,
+                duration=duration,
+                output_filename=output_filename,
+                bg_color=bg_ffmpeg,
+                text_color=text_ffmpeg,
+                accent_color=accent_ffmpeg
+            )
+            
+            if output_path:
+                _file_log(f"Coming Soon List auto-regen: Success - {output_path}")
+                success_count += 1
+            else:
+                _file_log(f"Coming Soon List auto-regen: Failed to generate {layout} layout")
+        
+        if success_count == len(layouts_to_generate):
+            _file_log(f"Coming Soon List auto-regen: All {success_count} layout(s) generated successfully")
+        elif success_count > 0:
+            _file_log(f"Coming Soon List auto-regen: {success_count}/{len(layouts_to_generate)} layouts generated")
             
     except Exception as e:
         _file_log(f"Coming Soon List auto-regen: Error - {str(e)}", level="ERROR")
@@ -15833,6 +15856,50 @@ def get_nexup_trailers(db: Session = Depends(get_db)):
         ],
         "total": len(trailers)
     }
+
+
+@app.get("/nexup/trailer/video/{trailer_type}/{trailer_id}")
+def serve_trailer_video(trailer_type: str, trailer_id: int, db: Session = Depends(get_db)):
+    """Serve a downloaded trailer video for preview
+    
+    Args:
+        trailer_type: 'movie' or 'tv'
+        trailer_id: The database ID of the trailer
+    """
+    if trailer_type == 'movie':
+        trailer = db.query(models.ComingSoonTrailer).filter(
+            models.ComingSoonTrailer.id == trailer_id
+        ).first()
+    elif trailer_type == 'tv':
+        trailer = db.query(models.ComingSoonTVTrailer).filter(
+            models.ComingSoonTVTrailer.id == trailer_id
+        ).first()
+    else:
+        raise HTTPException(status_code=400, detail="Invalid trailer type. Use 'movie' or 'tv'")
+    
+    if not trailer:
+        raise HTTPException(status_code=404, detail="Trailer not found")
+    
+    local_path = getattr(trailer, 'local_path', None)
+    if not local_path:
+        raise HTTPException(status_code=404, detail="Trailer video not available")
+    
+    video_path = Path(local_path)
+    if not video_path.exists():
+        raise HTTPException(status_code=404, detail="Trailer video file not found")
+    
+    import mimetypes
+    mime_type, _ = mimetypes.guess_type(str(video_path))
+    if not mime_type or not mime_type.startswith("video/"):
+        mime_type = "video/mp4"
+    
+    from starlette.responses import FileResponse as StarletteFileResponse
+    response = StarletteFileResponse(str(video_path), media_type=mime_type)
+    response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+    response.headers["Pragma"] = "no-cache"
+    response.headers["Expires"] = "0"
+    return response
+
 
 @app.post("/nexup/trailers/download")
 async def download_trailer(radarr_movie_id: int, db: Session = Depends(get_db)):

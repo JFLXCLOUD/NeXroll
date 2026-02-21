@@ -723,6 +723,8 @@ const [applyingToServer, setApplyingToServer] = useState(false);
   const [showNexupUpcomingTV, setShowNexupUpcomingTV] = useState(false);
   const [showNexupTVTrailers, setShowNexupTVTrailers] = useState(false);
   const [tvSyncProgress, setTVSyncProgress] = useState(null);
+  const [trailerViewMode, setTrailerViewMode] = useState('list'); // 'list' or 'detailed'
+  const [playingTrailer, setPlayingTrailer] = useState(null); // { type: 'movie'|'tv', trailer: {...} }
   const [thumbnailProgress, setThumbnailProgress] = useState(null); // { status: 'Rebuilding...', phase: 'processing' }
   const [librarySyncProgress, setLibrarySyncProgress] = useState(null); // { status: 'Syncing...', phase: 'init'|'done'|'error' }
   const [communityIndexProgress, setCommunityIndexProgress] = useState(null); // { status: 'Building...', phase: 'init'|'done'|'error' }
@@ -754,7 +756,8 @@ const [applyingToServer, setApplyingToServer] = useState(false);
     textColor: '#ffffff',
     accentColor: '#00d4ff',
     serverName: '',
-    autoRegen: false  // Auto-regenerate when Radarr/Sonarr syncs
+    autoRegen: false,  // Auto-regenerate when Radarr/Sonarr syncs
+    autoRegenLayout: 'both'  // Which layout(s) to auto-regenerate: 'grid', 'list', or 'both'
   });
   const [comingSoonListGenerating, setComingSoonListGenerating] = useState(false);
   const [generatedComingSoonLists, setGeneratedComingSoonLists] = useState([]);
@@ -15000,7 +15003,8 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
           textColor: data.coming_soon_list_text_color || '#ffffff',
           accentColor: data.coming_soon_list_accent_color || '#00d4ff',
           serverName: data.coming_soon_list_server_name || '',
-          autoRegen: data.coming_soon_list_auto_regen || false
+          autoRegen: data.coming_soon_list_auto_regen || false,
+          autoRegenLayout: data.coming_soon_list_auto_regen_layout || 'both'
         }));
         // Mark settings as loaded to enable auto-save
         setTimeout(() => { comingSoonListSettingsLoadedRef.current = true; }, 100);
@@ -15023,6 +15027,7 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
       if (settings.accentColor !== undefined) params.append('coming_soon_list_accent_color', settings.accentColor);
       if (settings.serverName !== undefined) params.append('coming_soon_list_server_name', settings.serverName);
       if (settings.autoRegen !== undefined) params.append('coming_soon_list_auto_regen', settings.autoRegen.toString());
+      if (settings.autoRegenLayout !== undefined) params.append('coming_soon_list_auto_regen_layout', settings.autoRegenLayout);
       
       await fetch(apiUrl('/nexup/settings?' + params.toString()), { method: 'PUT' });
     } catch (err) {
@@ -15449,7 +15454,18 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
       
       const data = await res.json();
       eventSource.close();
-      setTVSyncProgress({ status: 'Sync complete!', phase: 'done' });
+      
+      // Check if auto-regenerate is enabled
+      if (comingSoonListSettings.autoRegen) {
+        setTVSyncProgress({ status: 'Generating Coming Soon List...', phase: 'generating' });
+        // Wait a moment for backend to finish generating
+        await new Promise(resolve => setTimeout(resolve, 2000));
+        // Refresh the generated lists
+        await loadGeneratedComingSoonLists();
+        setTVSyncProgress({ status: 'Sync complete! + List generated', phase: 'done' });
+      } else {
+        setTVSyncProgress({ status: 'Sync complete!', phase: 'done' });
+      }
       
       let message = `TV Sync complete!\n`;
       message += `• Checked: ${data.checked} upcoming shows\n`;
@@ -15612,7 +15628,18 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
       
       const data = await res.json();
       eventSource.close();
-      setSyncProgress({ status: 'Sync complete!', phase: 'done' });
+      
+      // Check if auto-regenerate is enabled
+      if (comingSoonListSettings.autoRegen) {
+        setSyncProgress({ status: 'Generating Coming Soon List...', phase: 'generating' });
+        // Wait a moment for backend to finish generating
+        await new Promise(resolve => setTimeout(resolve, 2000));
+        // Refresh the generated lists
+        await loadGeneratedComingSoonLists();
+        setSyncProgress({ status: 'Sync complete! + List generated', phase: 'done' });
+      } else {
+        setSyncProgress({ status: 'Sync complete!', phase: 'done' });
+      }
       
       let message = `Sync complete!\n`;
       message += `• Checked: ${data.checked} upcoming movies\n`;
@@ -16533,6 +16560,8 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
       loadNexupTrailers();
       loadNexupTVTrailers();
       loadNexupStorage();
+      handleLoadNexupUpcoming();
+      loadNexupUpcomingTV();
     }
   }, [activeTab]);
 
@@ -16565,6 +16594,147 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
           Connect to Radarr and Sonarr to automatically fetch trailers for upcoming movies and TV shows.
         </p>
       </div>
+
+      {/* Sync All Card - Only show when at least one service is connected */}
+      {(nexupSettings.radarr_connected || nexupSettings.sonarr_connected) && (
+        <div className="card" style={{ padding: '0.75rem 1rem' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '1rem', flexWrap: 'wrap' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flex: 1, minWidth: '150px' }}>
+              <RefreshCw size={20} style={{ color: 'var(--accent-color)' }} />
+              <span style={{ fontWeight: 'bold', fontSize: '1rem' }}>Sync All</span>
+            </div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                <label className="nx-rockerswitch" style={{ transform: 'scale(0.85)' }}>
+                  <input
+                    type="checkbox"
+                    checked={nexupSettings.enabled && nexupSettings.sonarr_enabled}
+                    onChange={(e) => handleUpdateNexupSettings({ enabled: e.target.checked, sonarr_enabled: e.target.checked })}
+                  />
+                  <span className="nx-rockerswitch-slider"></span>
+                </label>
+                <span style={{ fontSize: '0.85rem', fontWeight: 'bold', color: (nexupSettings.enabled && nexupSettings.sonarr_enabled) ? 'var(--accent-color)' : '#666' }}>
+                  {(nexupSettings.enabled && nexupSettings.sonarr_enabled) ? 'On' : 'Off'}
+                </span>
+              </div>
+              <button
+                onClick={async () => {
+                  if (nexupSyncProgress?.phase === 'init') return;
+                  setNexupSyncProgress({ status: 'Syncing Radarr...', phase: 'init' });
+                  let radarrResult = null;
+                  let sonarrResult = null;
+                  let radarrError = null;
+                  let sonarrError = null;
+                  
+                  if (nexupSettings.radarr_connected) {
+                    try {
+                      const res = await fetch(apiUrl('/nexup/sync'), { method: 'POST' });
+                      if (res.ok) {
+                        radarrResult = await res.json();
+                      } else {
+                        const err = await res.json().catch(() => ({}));
+                        radarrError = err.detail || 'Radarr sync failed';
+                      }
+                    } catch (e) {
+                      radarrError = e.message || 'Radarr sync failed';
+                    }
+                  }
+                  
+                  if (nexupSettings.sonarr_connected) {
+                    setNexupSyncProgress({ status: 'Syncing Sonarr...', phase: 'init' });
+                    try {
+                      const res = await fetch(apiUrl('/nexup/sonarr/sync'), { method: 'POST' });
+                      if (res.ok) {
+                        sonarrResult = await res.json();
+                      } else {
+                        const err = await res.json().catch(() => ({}));
+                        sonarrError = err.detail || 'Sonarr sync failed';
+                      }
+                    } catch (e) {
+                      sonarrError = e.message || 'Sonarr sync failed';
+                    }
+                  }
+                  
+                  loadNexupSettings();
+                  loadNexupTrailers();
+                  loadNexupTVTrailers();
+                  
+                  const radarrDownloaded = radarrResult?.downloaded || 0;
+                  const sonarrDownloaded = sonarrResult?.downloaded || 0;
+                  const totalDownloaded = radarrDownloaded + sonarrDownloaded;
+                  
+                  // Check if auto-regenerate is enabled and show status
+                  if (comingSoonListSettings.autoRegen && !(radarrError && sonarrError)) {
+                    setNexupSyncProgress({ status: 'Generating Coming Soon List...', phase: 'init' });
+                    // Wait a moment for backend to finish generating
+                    await new Promise(resolve => setTimeout(resolve, 2000));
+                    // Refresh the generated lists
+                    await loadGeneratedComingSoonLists();
+                  }
+                  
+                  if (radarrError && sonarrError) {
+                    setNexupSyncProgress({ status: 'Both syncs failed', phase: 'error' });
+                    setTimeout(() => setNexupSyncProgress(null), 5000);
+                  } else if (radarrError || sonarrError) {
+                    const autoRegenMsg = comingSoonListSettings.autoRegen ? ' + List generated' : '';
+                    setNexupSyncProgress({ 
+                      status: `Done! ${totalDownloaded} trailers (${radarrError ? 'Radarr failed' : 'Sonarr failed'})${autoRegenMsg}`, 
+                      phase: 'done' 
+                    });
+                    setTimeout(() => setNexupSyncProgress(null), 5000);
+                  } else {
+                    const autoRegenMsg = comingSoonListSettings.autoRegen ? ' + List generated' : '';
+                    setNexupSyncProgress({ 
+                      status: `Done! ${totalDownloaded} trailers downloaded${autoRegenMsg}`, 
+                      phase: 'done' 
+                    });
+                    setTimeout(() => setNexupSyncProgress(null), 5000);
+                  }
+                }}
+                disabled={nexupSyncProgress?.phase === 'init'}
+                className="button"
+                style={{ 
+                  backgroundColor: 'var(--accent-color)', 
+                  display: 'flex', 
+                  alignItems: 'center', 
+                  gap: '0.5rem',
+                  padding: '0.4rem 0.75rem'
+                }}
+              >
+                {nexupSyncProgress?.phase === 'init' ? (
+                  <><Loader2 size={14} className="spin" /> Syncing...</>
+                ) : (
+                  <><RefreshCw size={14} /> Sync All</>
+                )}
+              </button>
+            </div>
+          </div>
+          {nexupSyncProgress && (
+            <div style={{ 
+              marginTop: '0.75rem', 
+              padding: '0.5rem 0.75rem', 
+              backgroundColor: 'var(--bg-color)', 
+              borderRadius: '6px',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '0.5rem',
+              fontSize: '0.9rem',
+              color: 'var(--text-secondary)'
+            }}>
+              {nexupSyncProgress.phase === 'init' ? (
+                <Loader2 size={16} className="spin" style={{ color: 'var(--accent-color)' }} />
+              ) : nexupSyncProgress.phase === 'error' ? (
+                <XCircle size={16} style={{ color: '#dc3545' }} />
+              ) : (
+                <CheckCircle size={16} style={{ color: '#28a745' }} />
+              )}
+              <span style={{ color: nexupSyncProgress.phase === 'error' ? '#dc3545' : nexupSyncProgress.phase === 'done' ? '#28a745' : 'var(--text-secondary)' }}>
+                {nexupSyncProgress.status}
+              </span>
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Radarr Connection Card */}
       <div className="card">
@@ -16705,8 +16875,16 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
                 fontSize: '0.9rem',
                 color: 'var(--text-secondary)'
               }}>
-                <Loader2 size={16} className="spin" style={{ color: '#ffc230' }} /> 
-                {syncProgress.status}
+                {syncProgress.phase === 'done' ? (
+                  <CheckCircle size={16} style={{ color: '#28a745' }} />
+                ) : syncProgress.phase === 'generating' ? (
+                  <Loader2 size={16} className="spin" style={{ color: '#17a2b8' }} />
+                ) : (
+                  <Loader2 size={16} className="spin" style={{ color: '#ffc230' }} />
+                )}
+                <span style={{ color: syncProgress.phase === 'done' ? '#28a745' : 'var(--text-secondary)' }}>
+                  {syncProgress.status}
+                </span>
                 {syncProgress.total > 0 && syncProgress.phase === 'downloading' && (
                   <span style={{ marginLeft: 'auto', fontWeight: 'bold', color: '#ffc230' }}>
                     {syncProgress.downloaded || 0}/{syncProgress.total}
@@ -16878,8 +17056,16 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
                 fontSize: '0.9rem',
                 color: 'var(--text-secondary)'
               }}>
-                <Loader2 size={16} className="spin" style={{ color: '#17a2b8' }} /> 
-                {tvSyncProgress.status}
+                {tvSyncProgress.phase === 'done' ? (
+                  <CheckCircle size={16} style={{ color: '#28a745' }} />
+                ) : tvSyncProgress.phase === 'generating' ? (
+                  <Loader2 size={16} className="spin" style={{ color: '#ffc230' }} />
+                ) : (
+                  <Loader2 size={16} className="spin" style={{ color: '#17a2b8' }} />
+                )}
+                <span style={{ color: tvSyncProgress.phase === 'done' ? '#28a745' : 'var(--text-secondary)' }}>
+                  {tvSyncProgress.status}
+                </span>
                 {tvSyncProgress.total > 0 && tvSyncProgress.phase === 'downloading' && (
                   <span style={{ marginLeft: 'auto', fontWeight: 'bold', color: '#17a2b8' }}>
                     {tvSyncProgress.downloaded || 0}/{tvSyncProgress.total}
@@ -16895,6 +17081,7 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
           </>
         )}
       </div>
+
     </div>
   );
 
@@ -16908,6 +17095,42 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
         <p style={{ marginBottom: '0', color: 'var(--text-color)', fontSize: '1rem' }}>
           Manage downloaded trailers from Radarr and Sonarr. Trailers are automatically removed when movies/shows are added to your library.
         </p>
+      </div>
+
+      {/* View Mode Toggle */}
+      <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: '-0.5rem' }}>
+        <div style={{ display: 'flex', gap: '0.25rem', backgroundColor: 'var(--bg-color)', borderRadius: '6px', padding: '0.25rem' }}>
+          <button
+            onClick={() => setTrailerViewMode('list')}
+            className="button"
+            style={{ 
+              padding: '0.4rem 0.75rem', 
+              backgroundColor: trailerViewMode === 'list' ? 'var(--accent-color)' : 'transparent',
+              color: trailerViewMode === 'list' ? 'white' : 'var(--text-secondary)',
+              border: 'none',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '0.35rem'
+            }}
+          >
+            <List size={16} /> List
+          </button>
+          <button
+            onClick={() => setTrailerViewMode('detailed')}
+            className="button"
+            style={{ 
+              padding: '0.4rem 0.75rem', 
+              backgroundColor: trailerViewMode === 'detailed' ? 'var(--accent-color)' : 'transparent',
+              color: trailerViewMode === 'detailed' ? 'white' : 'var(--text-secondary)',
+              border: 'none',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '0.35rem'
+            }}
+          >
+            <LayoutGrid size={16} /> Detailed
+          </button>
+        </div>
       </div>
 
       {/* Movie Trailers Section */}
@@ -16968,8 +17191,16 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
                 gap: '0.5rem',
                 fontSize: '0.9rem'
               }}>
-                <Loader2 size={16} className="spin" style={{ color: '#ffc230' }} /> 
-                {syncProgress.status}
+                {syncProgress.phase === 'done' ? (
+                  <CheckCircle size={16} style={{ color: '#28a745' }} />
+                ) : syncProgress.phase === 'generating' ? (
+                  <Loader2 size={16} className="spin" style={{ color: '#17a2b8' }} />
+                ) : (
+                  <Loader2 size={16} className="spin" style={{ color: '#ffc230' }} />
+                )}
+                <span style={{ color: syncProgress.phase === 'done' ? '#28a745' : 'var(--text-secondary)' }}>
+                  {syncProgress.status}
+                </span>
                 {syncProgress.total > 0 && syncProgress.phase === 'downloading' && (
                   <span style={{ marginLeft: '0.5rem', fontWeight: 'bold', color: '#ffc230' }}>
                     {syncProgress.downloaded || 0}/{syncProgress.total}
@@ -17016,8 +17247,16 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
                 gap: '0.5rem',
                 fontSize: '0.9rem'
               }}>
-                <Loader2 size={16} className="spin" style={{ color: '#ffc230' }} /> 
-                {syncProgress.status}
+                {syncProgress.phase === 'done' ? (
+                  <CheckCircle size={16} style={{ color: '#28a745' }} />
+                ) : syncProgress.phase === 'generating' ? (
+                  <Loader2 size={16} className="spin" style={{ color: '#17a2b8' }} />
+                ) : (
+                  <Loader2 size={16} className="spin" style={{ color: '#ffc230' }} />
+                )}
+                <span style={{ color: syncProgress.phase === 'done' ? '#28a745' : 'var(--text-secondary)' }}>
+                  {syncProgress.status}
+                </span>
                 {syncProgress.total > 0 && syncProgress.phase === 'downloading' && (
                   <span style={{ marginLeft: 'auto', fontWeight: 'bold', color: '#ffc230' }}>
                     {syncProgress.downloaded || 0}/{syncProgress.total}
@@ -17025,48 +17264,145 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
                 )}
               </div>
             )}
-            <div style={{ display: 'grid', gap: '0.75rem' }}>
+            <div style={{ display: 'grid', gap: '0.75rem', gridTemplateColumns: trailerViewMode === 'detailed' ? 'repeat(auto-fill, minmax(280px, 1fr))' : '1fr' }}>
               {nexupTrailers.map(trailer => (
-                <div 
-                  key={trailer.id}
-                  style={{ 
-                    display: 'flex', 
-                    alignItems: 'center', 
-                    justifyContent: 'space-between',
-                    padding: '0.75rem 1rem',
-                    backgroundColor: 'var(--bg-color)',
-                    borderRadius: '8px',
-                    border: `1px solid ${trailer.is_enabled ? 'var(--border-color)' : 'rgba(255,0,0,0.3)'}`,
-                    opacity: trailer.is_enabled ? 1 : 0.7
-                  }}
-                >
-                  <div style={{ flex: 1 }}>
-                    <div style={{ fontWeight: 'bold', color: 'var(--text-color)' }}>{trailer.title}</div>
-                    <div style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
-                      {trailer.release_date ? `Releases: ${new Date(trailer.release_date).toLocaleDateString()}` : 'Release date unknown'}
+                trailerViewMode === 'detailed' ? (
+                  // Detailed view with poster
+                  <div 
+                    key={trailer.id}
+                    style={{ 
+                      backgroundColor: 'var(--bg-color)',
+                      borderRadius: '8px',
+                      border: `1px solid ${trailer.is_enabled ? 'var(--border-color)' : 'rgba(255,0,0,0.3)'}`,
+                      opacity: trailer.is_enabled ? 1 : 0.7,
+                      overflow: 'hidden'
+                    }}
+                  >
+                    {/* Poster */}
+                    <div style={{ position: 'relative', aspectRatio: '2/3', backgroundColor: '#1a1a2e' }}>
+                      {trailer.poster_url ? (
+                        <img 
+                          src={trailer.poster_url} 
+                          alt={trailer.title}
+                          style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+                          onError={(e) => { e.target.style.display = 'none'; }}
+                        />
+                      ) : (
+                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%' }}>
+                          <Film size={48} style={{ color: '#444' }} />
+                        </div>
+                      )}
+                      {/* Play button overlay */}
+                      {trailer.local_path && (
+                        <button
+                          onClick={() => setPlayingTrailer({ type: 'movie', trailer })}
+                          style={{
+                            position: 'absolute',
+                            top: '50%',
+                            left: '50%',
+                            transform: 'translate(-50%, -50%)',
+                            width: '60px',
+                            height: '60px',
+                            borderRadius: '50%',
+                            backgroundColor: 'rgba(0,0,0,0.7)',
+                            border: '2px solid white',
+                            cursor: 'pointer',
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            transition: 'all 0.2s'
+                          }}
+                          onMouseEnter={(e) => { e.target.style.backgroundColor = 'rgba(255,194,48,0.9)'; }}
+                          onMouseLeave={(e) => { e.target.style.backgroundColor = 'rgba(0,0,0,0.7)'; }}
+                        >
+                          <Play size={28} style={{ color: 'white', marginLeft: '4px' }} />
+                        </button>
+                      )}
+                    </div>
+                    {/* Info */}
+                    <div style={{ padding: '0.75rem' }}>
+                      <div style={{ fontWeight: 'bold', color: 'var(--text-color)', marginBottom: '0.25rem', fontSize: '0.95rem' }}>
+                        {trailer.title}
+                      </div>
+                      <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', marginBottom: '0.5rem' }}>
+                        {trailer.release_date ? `Releases: ${new Date(trailer.release_date).toLocaleDateString()}` : 'Release date unknown'}
+                      </div>
+                      <div style={{ display: 'flex', gap: '0.5rem' }}>
+                        <button
+                          onClick={() => handleToggleTrailer(trailer.id)}
+                          className="button"
+                          style={{ 
+                            flex: 1,
+                            backgroundColor: trailer.is_enabled ? '#28a745' : '#6c757d',
+                            padding: '0.35rem 0.5rem',
+                            fontSize: '0.8rem'
+                          }}
+                        >
+                          {trailer.is_enabled ? 'Enabled' : 'Disabled'}
+                        </button>
+                        <button
+                          onClick={() => handleDeleteTrailer(trailer.id, trailer.title)}
+                          className="button"
+                          style={{ backgroundColor: '#dc3545', padding: '0.35rem 0.5rem' }}
+                        >
+                          <Trash2 size={14} />
+                        </button>
+                      </div>
                     </div>
                   </div>
-                  <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
-                    <button
-                      onClick={() => handleToggleTrailer(trailer.id)}
-                      className="button"
-                      style={{ 
-                        backgroundColor: trailer.is_enabled ? '#28a745' : '#6c757d',
-                        padding: '0.4rem 0.75rem',
-                        fontSize: '0.85rem'
-                      }}
-                    >
-                      {trailer.is_enabled ? 'Enabled' : 'Disabled'}
-                    </button>
-                    <button
-                      onClick={() => handleDeleteTrailer(trailer.id, trailer.title)}
-                      className="button"
-                      style={{ backgroundColor: '#dc3545', padding: '0.4rem 0.75rem' }}
-                    >
-                      <Trash2 size={14} />
-                    </button>
+                ) : (
+                  // List view (current style with play button)
+                  <div 
+                    key={trailer.id}
+                    style={{ 
+                      display: 'flex', 
+                      alignItems: 'center', 
+                      justifyContent: 'space-between',
+                      padding: '0.75rem 1rem',
+                      backgroundColor: 'var(--bg-color)',
+                      borderRadius: '8px',
+                      border: `1px solid ${trailer.is_enabled ? 'var(--border-color)' : 'rgba(255,0,0,0.3)'}`,
+                      opacity: trailer.is_enabled ? 1 : 0.7
+                    }}
+                  >
+                    <div style={{ flex: 1 }}>
+                      <div style={{ fontWeight: 'bold', color: 'var(--text-color)' }}>{trailer.title}</div>
+                      <div style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
+                        {trailer.release_date ? `Releases: ${new Date(trailer.release_date).toLocaleDateString()}` : 'Release date unknown'}
+                      </div>
+                    </div>
+                    <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+                      {trailer.local_path && (
+                        <button
+                          onClick={() => setPlayingTrailer({ type: 'movie', trailer })}
+                          className="button"
+                          style={{ backgroundColor: '#ffc230', padding: '0.4rem 0.75rem' }}
+                          title="Play trailer"
+                        >
+                          <Play size={14} />
+                        </button>
+                      )}
+                      <button
+                        onClick={() => handleToggleTrailer(trailer.id)}
+                        className="button"
+                        style={{ 
+                          backgroundColor: trailer.is_enabled ? '#28a745' : '#6c757d',
+                          padding: '0.4rem 0.75rem',
+                          fontSize: '0.85rem'
+                        }}
+                      >
+                        {trailer.is_enabled ? 'Enabled' : 'Disabled'}
+                      </button>
+                      <button
+                        onClick={() => handleDeleteTrailer(trailer.id, trailer.title)}
+                        className="button"
+                        style={{ backgroundColor: '#dc3545', padding: '0.4rem 0.75rem' }}
+                      >
+                        <Trash2 size={14} />
+                      </button>
+                    </div>
                   </div>
-                </div>
+                )
               ))}
             </div>
           </>
@@ -17131,8 +17467,16 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
                 gap: '0.5rem',
                 fontSize: '0.9rem'
               }}>
-                <Loader2 size={16} className="spin" style={{ color: '#17a2b8' }} /> 
-                {tvSyncProgress.status}
+                {tvSyncProgress.phase === 'done' ? (
+                  <CheckCircle size={16} style={{ color: '#28a745' }} />
+                ) : tvSyncProgress.phase === 'generating' ? (
+                  <Loader2 size={16} className="spin" style={{ color: '#ffc230' }} />
+                ) : (
+                  <Loader2 size={16} className="spin" style={{ color: '#17a2b8' }} />
+                )}
+                <span style={{ color: tvSyncProgress.phase === 'done' ? '#28a745' : 'var(--text-secondary)' }}>
+                  {tvSyncProgress.status}
+                </span>
                 {tvSyncProgress.total > 0 && tvSyncProgress.phase === 'downloading' && (
                   <span style={{ marginLeft: '0.5rem', fontWeight: 'bold', color: '#17a2b8' }}>
                     {tvSyncProgress.downloaded || 0}/{tvSyncProgress.total}
@@ -17172,8 +17516,16 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
                 gap: '0.5rem',
                 fontSize: '0.9rem'
               }}>
-                <Loader2 size={16} className="spin" style={{ color: '#17a2b8' }} /> 
-                {tvSyncProgress.status}
+                {tvSyncProgress.phase === 'done' ? (
+                  <CheckCircle size={16} style={{ color: '#28a745' }} />
+                ) : tvSyncProgress.phase === 'generating' ? (
+                  <Loader2 size={16} className="spin" style={{ color: '#ffc230' }} />
+                ) : (
+                  <Loader2 size={16} className="spin" style={{ color: '#17a2b8' }} />
+                )}
+                <span style={{ color: tvSyncProgress.phase === 'done' ? '#28a745' : 'var(--text-secondary)' }}>
+                  {tvSyncProgress.status}
+                </span>
                 {tvSyncProgress.total > 0 && tvSyncProgress.phase === 'downloading' && (
                   <span style={{ marginLeft: 'auto', fontWeight: 'bold', color: '#17a2b8' }}>
                     {tvSyncProgress.downloaded || 0}/{tvSyncProgress.total}
@@ -17181,48 +17533,145 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
                 )}
               </div>
             )}
-            <div style={{ display: 'grid', gap: '0.75rem' }}>
+            <div style={{ display: 'grid', gap: '0.75rem', gridTemplateColumns: trailerViewMode === 'detailed' ? 'repeat(auto-fill, minmax(280px, 1fr))' : '1fr' }}>
               {nexupTVTrailers.map(trailer => (
-                <div 
-                  key={trailer.id}
-                  style={{ 
-                    display: 'flex', 
-                    alignItems: 'center', 
-                    justifyContent: 'space-between',
-                    padding: '0.75rem 1rem',
-                    backgroundColor: 'var(--bg-color)',
-                    borderRadius: '8px',
-                    border: `1px solid ${trailer.is_enabled ? 'var(--border-color)' : 'rgba(255,0,0,0.3)'}`,
-                    opacity: trailer.is_enabled ? 1 : 0.7
-                  }}
-                >
-                  <div style={{ flex: 1 }}>
-                    <div style={{ fontWeight: 'bold', color: 'var(--text-color)' }}>{trailer.title}</div>
-                    <div style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
-                      {trailer.release_date ? `Airs: ${new Date(trailer.release_date).toLocaleDateString()}` : 'Air date unknown'}
+                trailerViewMode === 'detailed' ? (
+                  // Detailed view with poster
+                  <div 
+                    key={trailer.id}
+                    style={{ 
+                      backgroundColor: 'var(--bg-color)',
+                      borderRadius: '8px',
+                      border: `1px solid ${trailer.is_enabled ? 'var(--border-color)' : 'rgba(255,0,0,0.3)'}`,
+                      opacity: trailer.is_enabled ? 1 : 0.7,
+                      overflow: 'hidden'
+                    }}
+                  >
+                    {/* Poster */}
+                    <div style={{ position: 'relative', aspectRatio: '2/3', backgroundColor: '#1a1a2e' }}>
+                      {trailer.poster_url ? (
+                        <img 
+                          src={trailer.poster_url} 
+                          alt={trailer.title}
+                          style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+                          onError={(e) => { e.target.style.display = 'none'; }}
+                        />
+                      ) : (
+                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%' }}>
+                          <Tv size={48} style={{ color: '#444' }} />
+                        </div>
+                      )}
+                      {/* Play button overlay */}
+                      {trailer.local_path && (
+                        <button
+                          onClick={() => setPlayingTrailer({ type: 'tv', trailer })}
+                          style={{
+                            position: 'absolute',
+                            top: '50%',
+                            left: '50%',
+                            transform: 'translate(-50%, -50%)',
+                            width: '60px',
+                            height: '60px',
+                            borderRadius: '50%',
+                            backgroundColor: 'rgba(0,0,0,0.7)',
+                            border: '2px solid white',
+                            cursor: 'pointer',
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            transition: 'all 0.2s'
+                          }}
+                          onMouseEnter={(e) => { e.target.style.backgroundColor = 'rgba(23,162,184,0.9)'; }}
+                          onMouseLeave={(e) => { e.target.style.backgroundColor = 'rgba(0,0,0,0.7)'; }}
+                        >
+                          <Play size={28} style={{ color: 'white', marginLeft: '4px' }} />
+                        </button>
+                      )}
+                    </div>
+                    {/* Info */}
+                    <div style={{ padding: '0.75rem' }}>
+                      <div style={{ fontWeight: 'bold', color: 'var(--text-color)', marginBottom: '0.25rem', fontSize: '0.95rem' }}>
+                        {trailer.title}
+                      </div>
+                      <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', marginBottom: '0.5rem' }}>
+                        {trailer.release_date ? `Airs: ${new Date(trailer.release_date).toLocaleDateString()}` : 'Air date unknown'}
+                      </div>
+                      <div style={{ display: 'flex', gap: '0.5rem' }}>
+                        <button
+                          onClick={() => handleToggleTVTrailer(trailer.id)}
+                          className="button"
+                          style={{ 
+                            flex: 1,
+                            backgroundColor: trailer.is_enabled ? '#28a745' : '#6c757d',
+                            padding: '0.35rem 0.5rem',
+                            fontSize: '0.8rem'
+                          }}
+                        >
+                          {trailer.is_enabled ? 'Enabled' : 'Disabled'}
+                        </button>
+                        <button
+                          onClick={() => handleDeleteTVTrailer(trailer.id)}
+                          className="button"
+                          style={{ backgroundColor: '#dc3545', padding: '0.35rem 0.5rem' }}
+                        >
+                          <Trash2 size={14} />
+                        </button>
+                      </div>
                     </div>
                   </div>
-                  <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
-                    <button
-                      onClick={() => handleToggleTVTrailer(trailer.id)}
-                      className="button"
-                      style={{ 
-                        backgroundColor: trailer.is_enabled ? '#28a745' : '#6c757d',
-                        padding: '0.4rem 0.75rem',
-                        fontSize: '0.85rem'
-                      }}
-                    >
-                      {trailer.is_enabled ? 'Enabled' : 'Disabled'}
-                    </button>
-                    <button
-                      onClick={() => handleDeleteTVTrailer(trailer.id)}
-                      className="button"
-                      style={{ backgroundColor: '#dc3545', padding: '0.4rem 0.75rem' }}
-                    >
-                      <Trash2 size={14} />
-                    </button>
+                ) : (
+                  // List view with play button
+                  <div 
+                    key={trailer.id}
+                    style={{ 
+                      display: 'flex', 
+                      alignItems: 'center', 
+                      justifyContent: 'space-between',
+                      padding: '0.75rem 1rem',
+                      backgroundColor: 'var(--bg-color)',
+                      borderRadius: '8px',
+                      border: `1px solid ${trailer.is_enabled ? 'var(--border-color)' : 'rgba(255,0,0,0.3)'}`,
+                      opacity: trailer.is_enabled ? 1 : 0.7
+                    }}
+                  >
+                    <div style={{ flex: 1 }}>
+                      <div style={{ fontWeight: 'bold', color: 'var(--text-color)' }}>{trailer.title}</div>
+                      <div style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
+                        {trailer.release_date ? `Airs: ${new Date(trailer.release_date).toLocaleDateString()}` : 'Air date unknown'}
+                      </div>
+                    </div>
+                    <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+                      {trailer.local_path && (
+                        <button
+                          onClick={() => setPlayingTrailer({ type: 'tv', trailer })}
+                          className="button"
+                          style={{ backgroundColor: '#17a2b8', padding: '0.4rem 0.75rem' }}
+                          title="Play trailer"
+                        >
+                          <Play size={14} />
+                        </button>
+                      )}
+                      <button
+                        onClick={() => handleToggleTVTrailer(trailer.id)}
+                        className="button"
+                        style={{ 
+                          backgroundColor: trailer.is_enabled ? '#28a745' : '#6c757d',
+                          padding: '0.4rem 0.75rem',
+                          fontSize: '0.85rem'
+                        }}
+                      >
+                        {trailer.is_enabled ? 'Enabled' : 'Disabled'}
+                      </button>
+                      <button
+                        onClick={() => handleDeleteTVTrailer(trailer.id)}
+                        className="button"
+                        style={{ backgroundColor: '#dc3545', padding: '0.4rem 0.75rem' }}
+                      >
+                        <Trash2 size={14} />
+                      </button>
+                    </div>
                   </div>
-                </div>
+                )
               ))}
             </div>
           </>
@@ -18838,6 +19287,25 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
                       </span>
                     </div>
                   </label>
+                  
+                  {/* Auto-regen Layout Selection - only show when auto-regen is enabled */}
+                  {comingSoonListSettings.autoRegen && (
+                    <div style={{ marginLeft: '30px', marginTop: '0.5rem' }}>
+                      <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '0.9rem' }}>
+                        <span>Auto-regenerate Layout:</span>
+                        <select
+                          value={comingSoonListSettings.autoRegenLayout}
+                          onChange={(e) => setComingSoonListSettings(prev => ({ ...prev, autoRegenLayout: e.target.value }))}
+                          className="input input-dark"
+                          style={{ padding: '0.35rem 0.5rem', fontSize: '0.9rem', minWidth: '100px' }}
+                        >
+                          <option value="grid">Grid</option>
+                          <option value="list">List</option>
+                          <option value="both">Both</option>
+                        </select>
+                      </label>
+                    </div>
+                  )}
                 </div>
 
                 {/* Generate Button */}
@@ -18906,7 +19374,10 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
                             {item.filename.includes('grid') ? 'Grid Layout' : 'List Layout'}
                           </div>
                           <div style={{ fontSize: '0.85rem', color: '#888' }}>
-                            {item.filename} • {item.size ? `${(item.size / 1024 / 1024).toFixed(1)} MB` : ''}
+                            {item.filename} • {item.size_bytes ? `${(item.size_bytes / 1024 / 1024).toFixed(1)} MB` : ''}
+                            {item.created_at && (
+                              <span> • Updated {new Date(item.created_at * 1000).toLocaleString()}</span>
+                            )}
                           </div>
                         </div>
                         <div style={{ display: 'flex', gap: '0.5rem' }}>
@@ -27008,6 +27479,111 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
            }}>
              {previewingComingSoonList?.size && (
                <span>📁 Size: {(previewingComingSoonList.size / (1024 * 1024)).toFixed(1)} MB</span>
+             )}
+           </div>
+         </div>
+       </div>
+     )}
+
+     {/* Trailer Video Player Modal */}
+     {playingTrailer && (
+       <div 
+         style={{
+           position: 'fixed',
+           top: 0,
+           left: 0,
+           right: 0,
+           bottom: 0,
+           backgroundColor: 'rgba(0,0,0,0.9)',
+           display: 'flex',
+           alignItems: 'center',
+           justifyContent: 'center',
+           zIndex: 9999
+         }}
+         onClick={() => setPlayingTrailer(null)}
+       >
+         <div 
+           style={{
+             backgroundColor: 'var(--card-bg)',
+             padding: '20px',
+             borderRadius: '12px',
+             maxWidth: '90%',
+             maxHeight: '90%',
+             width: '900px',
+             position: 'relative',
+             border: '1px solid rgba(255,255,255,0.1)'
+           }}
+           onClick={(e) => e.stopPropagation()}
+         >
+           <div style={{ 
+             display: 'flex', 
+             justifyContent: 'space-between', 
+             alignItems: 'center',
+             marginBottom: '1rem'
+           }}>
+             <h3 style={{ margin: 0, color: 'var(--text-color)', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+               {playingTrailer.type === 'movie' ? (
+                 <Video size={22} style={{ color: '#ffc230' }} />
+               ) : (
+                 <Tv size={22} style={{ color: '#17a2b8' }} />
+               )}
+               {playingTrailer.trailer?.title}
+             </h3>
+             <button 
+               onClick={() => setPlayingTrailer(null)}
+               style={{
+                 background: 'transparent',
+                 border: 'none',
+                 fontSize: '1.5rem',
+                 cursor: 'pointer',
+                 color: 'var(--text-color)',
+                 padding: '0.25rem 0.5rem'
+               }}
+               title="Close"
+             >
+               ✕
+             </button>
+           </div>
+           <div>
+             <video
+               key={`trailer-${playingTrailer.type}-${playingTrailer.trailer?.id}`}
+               controls
+               autoPlay
+               style={{ 
+                 width: '100%', 
+                 maxHeight: '70vh',
+                 borderRadius: '8px',
+                 backgroundColor: '#000'
+               }}
+               onError={(e) => {
+                 console.error('Trailer video error:', e);
+                 alert('Failed to load trailer. The file may not be accessible.');
+               }}
+             >
+               <source 
+                 src={apiUrl(`nexup/trailer/video/${playingTrailer.type}/${playingTrailer.trailer?.id}?t=${Date.now()}`)} 
+                 type="video/mp4" 
+               />
+               Your browser does not support the video tag.
+             </video>
+           </div>
+           <div style={{ 
+             marginTop: '1rem', 
+             fontSize: '0.85rem', 
+             color: 'var(--text-secondary)',
+             display: 'flex',
+             gap: '1rem',
+             flexWrap: 'wrap',
+             alignItems: 'center'
+           }}>
+             {playingTrailer.trailer?.release_date && (
+               <span>📅 Release: {new Date(playingTrailer.trailer.release_date).toLocaleDateString()}</span>
+             )}
+             {playingTrailer.trailer?.duration_seconds && (
+               <span>⏱️ Duration: {Math.floor(playingTrailer.trailer.duration_seconds / 60)}:{String(playingTrailer.trailer.duration_seconds % 60).padStart(2, '0')}</span>
+             )}
+             {playingTrailer.trailer?.file_size_mb && (
+               <span>📁 Size: {playingTrailer.trailer.file_size_mb.toFixed(1)} MB</span>
              )}
            </div>
          </div>
