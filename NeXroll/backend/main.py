@@ -278,6 +278,14 @@ def ensure_schema() -> None:
                 if not _sqlite_has_column("settings", col):
                     _sqlite_add_column("settings", ddl)
             
+            # Coming Soon Trailers: ensure monitored column
+            if not _sqlite_has_column("coming_soon_trailers", "monitored"):
+                _sqlite_add_column("coming_soon_trailers", "monitored BOOLEAN DEFAULT 1")
+            
+            # Coming Soon TV Trailers: ensure monitored column
+            if not _sqlite_has_column("coming_soon_tv_trailers", "monitored"):
+                _sqlite_add_column("coming_soon_tv_trailers", "monitored BOOLEAN DEFAULT 1")
+            
             # Schedules: ensure color column for custom calendar colors
             if not _sqlite_has_column("schedules", "color"):
                 _sqlite_add_column("schedules", "color TEXT")
@@ -14456,7 +14464,8 @@ async def download_tv_trailer(
         network=show_info.get('network'),
         release_type='new_show' if season_number == 1 else 'new_season',
         trailer_url=trailer_url,
-        status='downloading'
+        status='downloading',
+        monitored=show_info.get('monitored', True)
     )
     
     # Get poster URL
@@ -14690,6 +14699,7 @@ async def _auto_regenerate_coming_soon_list(db: Session):
             movie_trailers = db.query(models.ComingSoonTrailer).filter(
                 models.ComingSoonTrailer.status == 'downloaded',
                 models.ComingSoonTrailer.is_enabled == True,
+                models.ComingSoonTrailer.monitored == True,  # Only monitored in Radarr
                 models.ComingSoonTrailer.release_date >= now
             ).order_by(models.ComingSoonTrailer.release_date.asc()).all()
             
@@ -14706,6 +14716,7 @@ async def _auto_regenerate_coming_soon_list(db: Session):
             tv_trailers = db.query(models.ComingSoonTVTrailer).filter(
                 models.ComingSoonTVTrailer.status == 'downloaded',
                 models.ComingSoonTVTrailer.is_enabled == True,
+                models.ComingSoonTVTrailer.monitored == True,  # Only monitored in Sonarr
                 models.ComingSoonTVTrailer.release_date >= now
             ).order_by(models.ComingSoonTVTrailer.release_date.asc()).all()
             
@@ -14977,7 +14988,8 @@ async def sync_sonarr_trailers(db: Session = Depends(get_db)):
                 trailer_url=trailer_url,
                 poster_url=show.get('poster_url'),
                 fanart_url=show.get('fanart_url'),
-                status='downloading'
+                status='downloading',
+                monitored=show.get('monitored', True)
             )
             db.add(tv_trailer)
             db.commit()
@@ -15931,6 +15943,7 @@ async def download_trailer(radarr_movie_id: int, db: Session = Depends(get_db)):
         downloaded_at=datetime.datetime.utcnow(),
         status='downloaded',
         is_enabled=True,
+        monitored=movie.get('monitored', True),
         play_count=0
     )
     
@@ -16786,6 +16799,7 @@ async def generate_coming_soon_list(
         movie_trailers = db.query(models.ComingSoonTrailer).filter(
             models.ComingSoonTrailer.status == 'downloaded',
             models.ComingSoonTrailer.is_enabled == True,
+            models.ComingSoonTrailer.monitored == True,  # Only monitored in Radarr
             models.ComingSoonTrailer.release_date >= now  # Only future releases
         ).order_by(models.ComingSoonTrailer.release_date.asc()).all()
         
@@ -16796,13 +16810,14 @@ async def generate_coming_soon_list(
                 'poster_url': t.poster_url,
                 'type': 'movie'
             })
-        _file_log(f"[COMING-SOON-LIST] Found {len(movie_trailers)} downloaded movie trailers")
+        _file_log(f"[COMING-SOON-LIST] Found {len(movie_trailers)} downloaded movie trailers (monitored only)")
     
     # Get shows from ComingSoonTVTrailer table (downloaded TV trailers)
     if source in ["shows", "both"]:
         tv_trailers = db.query(models.ComingSoonTVTrailer).filter(
             models.ComingSoonTVTrailer.status == 'downloaded',
             models.ComingSoonTVTrailer.is_enabled == True,
+            models.ComingSoonTVTrailer.monitored == True,  # Only monitored in Sonarr
             models.ComingSoonTVTrailer.release_date >= now  # Only future releases
         ).order_by(models.ComingSoonTVTrailer.release_date.asc()).all()
         

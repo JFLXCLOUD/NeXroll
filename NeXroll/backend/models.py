@@ -168,6 +168,7 @@ class ComingSoonTrailer(Base):
     status = Column(String, default='pending')  # 'pending', 'downloading', 'downloaded', 'error', 'expired'
     error_message = Column(Text, nullable=True)  # Error details if download failed
     is_enabled = Column(Boolean, default=True)  # User can enable/disable individual trailers
+    monitored = Column(Boolean, default=True)  # Whether the movie is monitored in Radarr
     play_count = Column(Integer, default=0)  # How many times this trailer has been played
     last_played = Column(DateTime, nullable=True)  # Last time trailer was played
     created_at = Column(DateTime, default=datetime.datetime.utcnow)
@@ -201,6 +202,7 @@ class ComingSoonTVTrailer(Base):
     status = Column(String, default='pending')  # 'pending', 'downloading', 'downloaded', 'error', 'expired'
     error_message = Column(Text, nullable=True)  # Error details if download failed
     is_enabled = Column(Boolean, default=True)  # User can enable/disable individual trailers
+    monitored = Column(Boolean, default=True)  # Whether the show is monitored in Sonarr
     play_count = Column(Integer, default=0)  # How many times this trailer has been played
     last_played = Column(DateTime, nullable=True)  # Last time trailer was played
     created_at = Column(DateTime, default=datetime.datetime.utcnow)
