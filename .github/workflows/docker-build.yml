@@ -1,14 +1,21 @@
 ﻿name: Build and Push Docker Image
 
 on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'NeXroll/**'
+      - 'Dockerfile'
+      - 'requirements.txt'
   release:
     types: [published]
   workflow_dispatch:
     inputs:
       version:
-        description: 'Version tag (e.g., v1.10.14)'
-        required: true
-        default: 'v1.10.14'
+        description: 'Version tag (e.g., v1.10.14) - leave empty for dev build'
+        required: false
+        default: ''
 
 env:
   REGISTRY: docker.io
@@ -28,26 +35,48 @@ jobs:
           if [ "${{ github.event_name }}" = "release" ]; then
             VERSION="${{ github.event.release.tag_name }}"
             IS_PRERELEASE="${{ github.event.release.prerelease }}"
+            IS_DEV="false"
           elif [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            VERSION="${{ github.event.inputs.version }}"
-            # Check if version contains beta/rc/alpha
-            if [[ "$VERSION" =~ (beta|rc|alpha) ]]; then
-              IS_PRERELEASE="true"
-            else
+            INPUT_VERSION="${{ github.event.inputs.version }}"
+            if [ -z "$INPUT_VERSION" ]; then
+              # No version provided - treat as dev build
+              VERSION="dev"
               IS_PRERELEASE="false"
+              IS_DEV="true"
+            else
+              VERSION="$INPUT_VERSION"
+              IS_DEV="false"
+              # Check if version contains beta/rc/alpha
+              if [[ "$VERSION" =~ (beta|rc|alpha) ]]; then
+                IS_PRERELEASE="true"
+              else
+                IS_PRERELEASE="false"
+              fi
             fi
+          elif [ "${{ github.event_name }}" = "push" ]; then
+            # Push to main - dev build
+            VERSION="dev"
+            IS_PRERELEASE="false"
+            IS_DEV="true"
           else
             VERSION="${{ github.ref_name }}"
             IS_PRERELEASE="false"
+            IS_DEV="false"
           fi
           # Remove 'v' prefix for Docker tag
           VERSION_NUM="${VERSION#v}"
+          SHORT_SHA="${{ github.sha }}"
+          SHORT_SHA="${SHORT_SHA:0:7}"
           echo "version=${VERSION_NUM}" >> $GITHUB_OUTPUT
           echo "tag=${VERSION}" >> $GITHUB_OUTPUT
           echo "is_prerelease=${IS_PRERELEASE}" >> $GITHUB_OUTPUT
+          echo "is_dev=${IS_DEV}" >> $GITHUB_OUTPUT
+          echo "short_sha=${SHORT_SHA}" >> $GITHUB_OUTPUT
           echo "Version: ${VERSION_NUM}"
           echo "Tag: ${VERSION}"
           echo "Is Pre-release: ${IS_PRERELEASE}"
+          echo "Is Dev: ${IS_DEV}"
+          echo "Short SHA: ${SHORT_SHA}"
 
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -84,8 +113,14 @@ jobs:
         run: |
           VERSION="${{ steps.version.outputs.version }}"
           IS_PRERELEASE="${{ steps.version.outputs.is_prerelease }}"
+          IS_DEV="${{ steps.version.outputs.is_dev }}"
+          SHORT_SHA="${{ steps.version.outputs.short_sha }}"
           
-          if [ "$IS_PRERELEASE" = "true" ]; then
+          if [ "$IS_DEV" = "true" ]; then
+            # Dev build: tag with 'dev' and commit sha
+            echo "tags=${{ env.IMAGE_NAME }}:dev,${{ env.IMAGE_NAME }}:sha-${SHORT_SHA}" >> $GITHUB_OUTPUT
+            echo "Using dev tags: dev, sha-${SHORT_SHA}"
+          elif [ "$IS_PRERELEASE" = "true" ]; then
             # Pre-release: tag with version and 'beta'
             echo "tags=${{ env.IMAGE_NAME }}:${VERSION},${{ env.IMAGE_NAME }}:beta" >> $GITHUB_OUTPUT
             echo "Using beta tags: ${VERSION}, beta"
