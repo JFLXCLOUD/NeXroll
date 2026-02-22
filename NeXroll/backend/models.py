@@ -169,6 +169,7 @@ class ComingSoonTrailer(Base):
     error_message = Column(Text, nullable=True)  # Error details if download failed
     is_enabled = Column(Boolean, default=True)  # User can enable/disable individual trailers
     monitored = Column(Boolean, default=True)  # Whether the movie is monitored in Radarr
+    excluded_from_list = Column(Boolean, default=False)  # User can exclude from Coming Soon list generation
     play_count = Column(Integer, default=0)  # How many times this trailer has been played
     last_played = Column(DateTime, nullable=True)  # Last time trailer was played
     created_at = Column(DateTime, default=datetime.datetime.utcnow)
@@ -203,6 +204,7 @@ class ComingSoonTVTrailer(Base):
     error_message = Column(Text, nullable=True)  # Error details if download failed
     is_enabled = Column(Boolean, default=True)  # User can enable/disable individual trailers
     monitored = Column(Boolean, default=True)  # Whether the show is monitored in Sonarr
+    excluded_from_list = Column(Boolean, default=False)  # User can exclude from Coming Soon list generation
     play_count = Column(Integer, default=0)  # How many times this trailer has been played
     last_played = Column(DateTime, nullable=True)  # Last time trailer was played
     created_at = Column(DateTime, default=datetime.datetime.utcnow)
@@ -275,6 +277,12 @@ class Setting(Base):
     nexup_tv_category_id = Column(Integer, ForeignKey("categories.id"), nullable=True)  # Auto-created category for TV trailers
     nexup_last_sonarr_sync = Column(DateTime, nullable=True)  # Last time NeX-Up synced with Sonarr
     nexup_max_trailer_duration = Column(Integer, default=180)  # Maximum trailer duration in seconds (0 = no limit)
+    nexup_include_unmonitored_movies = Column(Boolean, default=False)  # Include unmonitored movies from Radarr
+    nexup_include_unmonitored_shows = Column(Boolean, default=False)  # Include unmonitored TV shows from Sonarr
+    
+    # Release Date Preference - determines which date is shown/used for "Coming Soon"
+    # Options: 'digital_first' (default), 'digital_only', 'physical_first', 'theatrical'
+    nexup_release_date_preference = Column(String, default='digital_first')
     
     # Dynamic Preroll Generation Settings
     nexup_dynamic_preroll_template = Column(String, nullable=True)  # Template name: 'coming_soon', 'now_playing', etc.

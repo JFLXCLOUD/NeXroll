@@ -13,14 +13,14 @@ import SequencePreviewModal from './components/SequencePreviewModal';
 import { validateSequence, stringifySequence, parseSequence, cloneSequenceWithIds } from './utils/sequenceValidator';
 import { 
     Calendar, CalendarDays, Clock, Play, Edit, Save, Trash, Trash2, Upload, 
-    Search, Folder, Film, BookOpen, Star, Plus, Settings, Target, CheckCircle, Link,
+    Search, Folder, Film, BookOpen, Star, Plus, PlusCircle, Settings, Target, CheckCircle, Link, Link2,
     Sun, Moon, RefreshCw, Download, AlertTriangle, Ban, Crown, Shuffle, Lock, Bell,
     ListOrdered, Palette, Lightbulb, Inbox, FolderOpen, Wrench, FileText, Sliders, FolderSync,
     Bug, Zap, Loader2, Package, FlaskConical, TreePine, Check, XCircle, Video, ChevronRight, ChevronDown,
-    Library, Clapperboard, Sparkles, PartyPopper, Users2, Theater, Eye, X, User, RefreshCcw, Menu,
+    Library, Clapperboard, Sparkles, PartyPopper, Users2, Theater, Eye, EyeOff, X, User, RefreshCcw, Menu,
     Youtube, Globe, Key, Rocket, FileUp, ArrowRight, HardDrive, ListChecks, Unlink, LinkIcon,
     Tv, ClipboardList, Info, RotateCw, LayoutDashboard, BarChart3, PieChart as PieChartIcon, Activity, TrendingUp, Server, Timer,
-    Database, Archive, Shield, UserPlus, Users, LayoutGrid, List, Layers, Terminal, AlertCircle, Filter, BarChart2
+    Database, Archive, Shield, UserPlus, Users, LayoutGrid, List, Layers, Terminal, AlertCircle, Filter, BarChart2, HelpCircle
   } from 'lucide-react';
 import { BarChart, Bar, XAxis, YAxis, ResponsiveContainer, Cell, Tooltip } from 'recharts';
 
@@ -701,7 +701,9 @@ const [applyingToServer, setApplyingToServer] = useState(false);
     sonarr_connected: false,
     tv_category_id: null,
     // TMDB API Key (optional - for better trailer fetching)
-    tmdb_api_key: null
+    tmdb_api_key: null,
+    // Release date preference (which date to use for "Coming Soon")
+    release_date_preference: 'digital_first'
   });
   const [nexupLoading, setNexupLoading] = useState(false);
   const [downloadingTrailerId, setDownloadingTrailerId] = useState(null); // Track which trailer is downloading
@@ -723,6 +725,7 @@ const [applyingToServer, setApplyingToServer] = useState(false);
   const [showNexupUpcomingTV, setShowNexupUpcomingTV] = useState(false);
   const [showNexupTVTrailers, setShowNexupTVTrailers] = useState(false);
   const [tvSyncProgress, setTVSyncProgress] = useState(null);
+  const [nexupUpcomingTab, setNexupUpcomingTab] = useState('movies'); // 'movies' or 'shows'
   const [trailerViewMode, setTrailerViewMode] = useState('list'); // 'list' or 'detailed'
   const [playingTrailer, setPlayingTrailer] = useState(null); // { type: 'movie'|'tv', trailer: {...} }
   const [thumbnailProgress, setThumbnailProgress] = useState(null); // { status: 'Rebuilding...', phase: 'processing' }
@@ -4878,9 +4881,15 @@ const DashboardTiles = {
     });
     
     return (
-      <div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '1rem', marginBottom: '1rem' }}>
-          <h1 className="header" style={{ margin: 0 }}>Video Scaling</h1>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
+        {/* Header */}
+        <div>
+          <h1 className="header" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.5rem' }}>
+            <Video size={32} style={{ color: 'var(--accent-color)' }} /> Video Scaling
+          </h1>
+          <p style={{ color: 'var(--text-secondary)', fontSize: '0.95rem', margin: 0 }}>
+            Scale prerolls to optimize for remote streaming. Lower resolutions reduce buffering.
+          </p>
         </div>
         
         {/* Info Banner */}
@@ -5267,9 +5276,15 @@ const DashboardTiles = {
 
   // Dashboard Quick Actions Sub-Page
   const renderDashboardQuickActions = () => (
-    <div>
-      <div style={{ display: 'flex', alignItems: 'center', gap: '1rem', marginBottom: '1rem' }}>
-        <h1 className="header" style={{ margin: 0 }}>Quick Actions</h1>
+    <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
+      {/* Header */}
+      <div>
+        <h1 className="header" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.5rem' }}>
+          <Zap size={32} style={{ color: 'var(--accent-color)' }} /> Quick Actions
+        </h1>
+        <p style={{ color: 'var(--text-secondary)', fontSize: '0.95rem', margin: 0 }}>
+          Common operations and maintenance tasks for your preroll library.
+        </p>
       </div>
 
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: '1rem' }}>
@@ -5805,7 +5820,17 @@ const DashboardTiles = {
 
   // Dashboard Overview Sub-Page (Tiles)
   const renderDashboardOverview = () => (
-    <div>
+    <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
+      {/* Header */}
+      <div>
+        <h1 className="header" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.5rem' }}>
+          <LayoutDashboard size={32} style={{ color: 'var(--accent-color)' }} /> Dashboard
+        </h1>
+        <p style={{ color: 'var(--text-secondary)', fontSize: '0.95rem', margin: 0 }}>
+          Overview of your NeXroll preroll library and system status.
+        </p>
+      </div>
+
       {/* Update Available Notification Card */}
       {updateInfo && showUpdateBanner && (
         <div className="card" style={{
@@ -6221,184 +6246,342 @@ const DashboardTiles = {
 
   // Dashboard Add Prerolls Sub-Page
   const renderDashboardAddPrerolls = () => (
-    <div>
-      <div style={{ display: 'flex', alignItems: 'center', gap: '1rem', marginBottom: '1rem' }}>
-        <h1 className="header" style={{ margin: 0 }}>Add Prerolls</h1>
+    <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
+      {/* Header */}
+      <div>
+        <h1 className="header" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.5rem' }}>
+          <Upload size={32} style={{ color: 'var(--accent-color)' }} /> Add Prerolls
+        </h1>
+        <p style={{ color: 'var(--text-secondary)', fontSize: '0.95rem', margin: 0 }}>
+          Upload new video files or import from an existing folder on your system.
+        </p>
       </div>
 
-      <div className="upload-section">
-        {/* Tab buttons for Upload vs Import */}
-        <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '1rem' }}>
+      {/* Method Toggle */}
+      <div className="card" style={{ padding: '0' }}>
+        <div style={{ display: 'flex', borderBottom: '1px solid var(--border-color)' }}>
           <button
             type="button"
-            className={`button ${uploadMode === 'upload' ? '' : 'button-secondary'}`}
             onClick={() => setUploadMode('upload')}
-            style={{ flex: 1 }}
+            style={{
+              flex: 1,
+              padding: '1rem 1.5rem',
+              border: 'none',
+              background: uploadMode === 'upload' ? 'var(--card-bg)' : 'var(--bg-color)',
+              color: uploadMode === 'upload' ? 'var(--accent-color)' : 'var(--text-secondary)',
+              cursor: 'pointer',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              gap: '0.5rem',
+              fontWeight: uploadMode === 'upload' ? 600 : 400,
+              fontSize: '0.95rem',
+              borderBottom: uploadMode === 'upload' ? '2px solid var(--accent-color)' : '2px solid transparent',
+              transition: 'all 0.2s'
+            }}
           >
-            <Upload size={16} style={{marginRight: '6px'}} /> Upload Files
+            <Upload size={18} /> Upload Files
           </button>
           <button
             type="button"
-            className={`button ${uploadMode === 'import' ? '' : 'button-secondary'}`}
             onClick={() => setUploadMode('import')}
-            style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.5rem' }}
+            style={{
+              flex: 1,
+              padding: '1rem 1.5rem',
+              border: 'none',
+              background: uploadMode === 'import' ? 'var(--card-bg)' : 'var(--bg-color)',
+              color: uploadMode === 'import' ? 'var(--accent-color)' : 'var(--text-secondary)',
+              cursor: 'pointer',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              gap: '0.5rem',
+              fontWeight: uploadMode === 'import' ? 600 : 400,
+              fontSize: '0.95rem',
+              borderBottom: uploadMode === 'import' ? '2px solid var(--accent-color)' : '2px solid transparent',
+              transition: 'all 0.2s'
+            }}
           >
-            <Folder size={16} /> Import Folder
+            <Folder size={18} /> Import Folder
           </button>
         </div>
 
+        {/* Upload Files Content */}
         {uploadMode === 'upload' && (
-          <form onSubmit={handleUpload}>
-            <div style={{ display: 'grid', gap: '1rem', marginBottom: '1rem' }}>
-              <input
-                ref={fileInputRef}
-                type="file"
-                multiple
-                onChange={(e) => setFiles(Array.from(e.target.files))}
-                accept="video/*"
-                required
-                className="nx-input"
-                style={{ width: '100%' }}
-              />
-              {files.length > 0 && (
-                <div style={{ marginTop: '0.5rem', fontSize: '0.9rem', color: 'var(--text-color)' }}>
-                  {files.length} file{files.length !== 1 ? 's' : ''} selected
-                  <ul style={{ marginTop: '0.25rem', paddingLeft: '1rem' }}>
-                    {files.map((file, index) => (
-                      <li key={index} style={{ fontSize: '0.8rem' }}>
-                        {file.name} ({(file.size / (1024 * 1024)).toFixed(1)} MB)
-                        {uploadProgress[file.name] && (
-                          <span style={{
-                            marginLeft: '0.5rem',
-                            color: uploadProgress[file.name].status === 'completed' ? 'green' :
-                                  uploadProgress[file.name].status === 'error' ? 'red' : '#666'
-                          }}>
-                            {uploadProgress[file.name].status === 'completed' ? '✓' :
-                             uploadProgress[file.name].status === 'error' ? '✗' : '...'}
-                          </span>
-                        )}
-                      </li>
-                    ))}
-                  </ul>
+          <div style={{ padding: '1.5rem' }}>
+            <form onSubmit={handleUpload}>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+                {/* File Drop Zone */}
+                <div 
+                  onClick={() => fileInputRef.current?.click()}
+                  style={{
+                    border: '2px dashed var(--border-color)',
+                    borderRadius: '12px',
+                    padding: '2rem',
+                    textAlign: 'center',
+                    cursor: 'pointer',
+                    backgroundColor: 'var(--bg-color)',
+                    transition: 'all 0.2s'
+                  }}
+                  onMouseEnter={(e) => {
+                    e.currentTarget.style.borderColor = 'var(--accent-color)';
+                    e.currentTarget.style.backgroundColor = 'rgba(0, 212, 255, 0.05)';
+                  }}
+                  onMouseLeave={(e) => {
+                    e.currentTarget.style.borderColor = 'var(--border-color)';
+                    e.currentTarget.style.backgroundColor = 'var(--bg-color)';
+                  }}
+                >
+                  <input
+                    ref={fileInputRef}
+                    type="file"
+                    multiple
+                    onChange={(e) => setFiles(Array.from(e.target.files))}
+                    accept="video/*"
+                    style={{ display: 'none' }}
+                  />
+                  <Upload size={40} style={{ color: 'var(--text-secondary)', marginBottom: '0.75rem' }} />
+                  <div style={{ color: 'var(--text-color)', fontWeight: 500, marginBottom: '0.25rem' }}>
+                    Click to select files
+                  </div>
+                  <div style={{ color: 'var(--text-secondary)', fontSize: '0.85rem' }}>
+                    MP4, MKV, AVI, MOV supported
+                  </div>
                 </div>
-              )}
-              <input
-                type="text"
-                placeholder="Tags (comma separated)"
-                value={uploadForm.tags}
-                onChange={(e) => setUploadForm({...uploadForm, tags: e.target.value})}
-                className="nx-input"
-                style={{ width: '100%' }}
-              />
-              <CategoryPicker
-                categories={categories}
-                primaryId={uploadForm.category_id}
-                secondaryIds={uploadForm.category_ids}
-                onChange={(primary, secondary) => setUploadForm({ ...uploadForm, category_id: primary, category_ids: secondary })}
-                onCreateCategory={createCategoryInline}
-                label="Categories"
-                placeholder="Search categories…"
-              />
-              <textarea
-                placeholder="Description (Optional)"
-                value={uploadForm.description}
-                onChange={(e) => setUploadForm({...uploadForm, description: e.target.value})}
-                rows="3"
-                style={{ padding: '0.5rem', resize: 'vertical' }}
-              />
-            </div>
-            <button type="submit" className="button" disabled={files.length === 0}>
-              Upload {files.length > 0 ? `${files.length} Preroll${files.length !== 1 ? 's' : ''}` : 'Prerolls'}
-            </button>
-          </form>
-        )}
 
-        {uploadMode === 'import' && (
-          <div>
-            <p style={{ marginBottom: '0.75rem', color: 'var(--text-color)', fontSize: '0.9rem' }}>
-              Index files from an existing folder into NeXroll without moving them on disk. These files are marked as external (managed=false).
-            </p>
-            <div style={{ display: 'grid', gap: '0.75rem' }}>
-              {/* Path input with Browse button */}
-              <div style={{ display: 'flex', gap: '2rem', alignItems: 'center' }}>
-                <div style={{ width: '50%' }}>
+                {/* Selected Files List */}
+                {files.length > 0 && (
+                  <div style={{ 
+                    backgroundColor: 'var(--bg-color)', 
+                    borderRadius: '8px', 
+                    padding: '1rem',
+                    border: '1px solid var(--border-color)'
+                  }}>
+                    <div style={{ 
+                      display: 'flex', 
+                      alignItems: 'center', 
+                      justifyContent: 'space-between',
+                      marginBottom: '0.75rem'
+                    }}>
+                      <span style={{ fontWeight: 600, color: 'var(--text-color)' }}>
+                        {files.length} file{files.length !== 1 ? 's' : ''} selected
+                      </span>
+                      <button 
+                        type="button"
+                        onClick={() => setFiles([])}
+                        style={{ 
+                          background: 'none', 
+                          border: 'none', 
+                          color: 'var(--text-secondary)', 
+                          cursor: 'pointer',
+                          fontSize: '0.85rem'
+                        }}
+                      >
+                        Clear
+                      </button>
+                    </div>
+                    <div style={{ maxHeight: '150px', overflowY: 'auto' }}>
+                      {files.map((file, index) => (
+                        <div 
+                          key={index} 
+                          style={{ 
+                            display: 'flex', 
+                            alignItems: 'center', 
+                            gap: '0.5rem',
+                            padding: '0.35rem 0',
+                            borderBottom: index < files.length - 1 ? '1px solid var(--border-color)' : 'none',
+                            fontSize: '0.85rem'
+                          }}
+                        >
+                          <Film size={14} style={{ color: 'var(--accent-color)', flexShrink: 0 }} />
+                          <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: 'var(--text-color)' }}>
+                            {file.name}
+                          </span>
+                          <span style={{ color: 'var(--text-secondary)', fontSize: '0.8rem', flexShrink: 0 }}>
+                            {(file.size / (1024 * 1024)).toFixed(1)} MB
+                          </span>
+                          {uploadProgress[file.name] && (
+                            <span style={{ marginLeft: '0.25rem' }}>
+                              {uploadProgress[file.name].status === 'completed' ? (
+                                <CheckCircle size={14} style={{ color: '#28a745' }} />
+                              ) : uploadProgress[file.name].status === 'error' ? (
+                                <XCircle size={14} style={{ color: '#dc3545' }} />
+                              ) : (
+                                <Loader2 size={14} className="spin" style={{ color: 'var(--accent-color)' }} />
+                              )}
+                            </span>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* Category Picker */}
+                <div>
+                  <label style={{ display: 'block', marginBottom: '0.5rem', fontWeight: 500, color: 'var(--text-color)', fontSize: '0.9rem' }}>
+                    Categories
+                  </label>
+                  <CategoryPicker
+                    categories={categories}
+                    primaryId={uploadForm.category_id}
+                    secondaryIds={uploadForm.category_ids}
+                    onChange={(primary, secondary) => setUploadForm({ ...uploadForm, category_id: primary, category_ids: secondary })}
+                    onCreateCategory={createCategoryInline}
+                    placeholder="Select categories..."
+                  />
+                </div>
+
+                {/* Tags */}
+                <div>
+                  <label style={{ display: 'block', marginBottom: '0.5rem', fontWeight: 500, color: 'var(--text-color)', fontSize: '0.9rem' }}>
+                    Tags (optional)
+                  </label>
                   <input
                     type="text"
-                    placeholder="Root path (e.g., C:\\Prerolls or \\\\NAS\\share\\prerolls)"
+                    placeholder="e.g., holiday, christmas, winter"
+                    value={uploadForm.tags}
+                    onChange={(e) => setUploadForm({...uploadForm, tags: e.target.value})}
+                    className="input"
+                    style={{ width: '100%' }}
+                  />
+                </div>
+
+                {/* Description */}
+                <div>
+                  <label style={{ display: 'block', marginBottom: '0.5rem', fontWeight: 500, color: 'var(--text-color)', fontSize: '0.9rem' }}>
+                    Description (optional)
+                  </label>
+                  <textarea
+                    placeholder="Add a description for these prerolls..."
+                    value={uploadForm.description}
+                    onChange={(e) => setUploadForm({...uploadForm, description: e.target.value})}
+                    rows="2"
+                    className="input"
+                    style={{ width: '100%', resize: 'vertical' }}
+                  />
+                </div>
+
+                {/* Upload Button */}
+                <button 
+                  type="submit" 
+                  className="button" 
+                  disabled={files.length === 0}
+                  style={{ 
+                    width: '100%', 
+                    padding: '0.75rem',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    gap: '0.5rem',
+                    fontSize: '1rem'
+                  }}
+                >
+                  <Upload size={18} />
+                  Upload {files.length > 0 ? `${files.length} Preroll${files.length !== 1 ? 's' : ''}` : 'Prerolls'}
+                </button>
+              </div>
+            </form>
+          </div>
+        )}
+
+        {/* Import Folder Content */}
+        {uploadMode === 'import' && (
+          <div style={{ padding: '1.5rem' }}>
+            <p style={{ marginBottom: '1rem', color: 'var(--text-secondary)', fontSize: '0.9rem' }}>
+              Index video files from an existing folder into NeXroll without moving them. Files are marked as external (managed=false).
+            </p>
+            
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+              {/* Path Input */}
+              <div>
+                <label style={{ display: 'block', marginBottom: '0.5rem', fontWeight: 500, color: 'var(--text-color)', fontSize: '0.9rem' }}>
+                  Folder Path
+                </label>
+                <div style={{ display: 'flex', gap: '0.5rem' }}>
+                  <input
+                    type="text"
+                    placeholder="C:\\Prerolls or \\\\NAS\\share\\prerolls"
                     value={mapRootForm.root_path}
                     onChange={(e) => setMapRootForm({ ...mapRootForm, root_path: e.target.value })}
                     disabled={mapRootLoading}
-                    className="nx-input"
-                    style={{ padding: '0.5rem', width: '97%' }}
+                    className="input"
+                    style={{ flex: 1 }}
                   />
-                </div>
-                {/* Recent paths dropdown - separate element */}
-                {recentImportPaths.length > 0 && !mapRootLoading && (
-                  <select
-                    value=""
-                    onChange={(e) => {
-                      if (e.target.value) {
-                        setMapRootForm({ ...mapRootForm, root_path: e.target.value });
-                      }
-                    }}
-                    className="nx-select"
-                    style={{ 
-                      padding: '0.5rem',
-                      width: '360px',
-                      cursor: 'pointer',
-                      flexShrink: 0
-                    }}
-                    title="Recent paths"
+                  {recentImportPaths.length > 0 && !mapRootLoading && (
+                    <select
+                      value=""
+                      onChange={(e) => {
+                        if (e.target.value) {
+                          setMapRootForm({ ...mapRootForm, root_path: e.target.value });
+                        }
+                      }}
+                      className="input"
+                      style={{ width: '120px', cursor: 'pointer' }}
+                      title="Recent paths"
+                    >
+                      <option value="">Recent</option>
+                      {recentImportPaths.map((p, i) => (
+                        <option key={i} value={p}>{p.length > 25 ? '...' + p.slice(-25) : p}</option>
+                      ))}
+                    </select>
+                  )}
+                  <button 
+                    type="button" 
+                    className="button button-secondary"
+                    onClick={openFolderBrowser}
+                    disabled={mapRootLoading}
+                    title="Browse folders"
+                    style={{ display: 'flex', alignItems: 'center', gap: '0.35rem' }}
                   >
-                    <option value="">Recent</option>
-                    {recentImportPaths.map((p, i) => (
-                      <option key={i} value={p}>{p.length > 20 ? '...' + p.slice(-20) : p}</option>
-                    ))}
-                  </select>
-                )}
-                <button 
-                  type="button" 
-                  className="button button-secondary"
-                  onClick={openFolderBrowser}
-                  disabled={mapRootLoading}
-                  title="Browse folders"
-                  style={{ padding: '0.5rem 0.75rem', display: 'flex', alignItems: 'center', gap: '0.25rem' }}
-                >
-                  <FolderOpen size={16} /> Browse
-                </button>
+                    <FolderOpen size={16} /> Browse
+                  </button>
+                </div>
               </div>
 
-              {/* Category selector */}
-              <select
-                value={mapRootForm.category_id}
-                onChange={(e) => {
-                  setMapRootForm({ ...mapRootForm, category_id: e.target.value });
-                  setMapRootCategoryError(false); // Clear error when user selects
-                  if (mapRootResult?.type === 'error') setMapRootResult(null); // Clear error message
-                }}
-                className="nx-select"
-                disabled={mapRootLoading}
-                style={{ 
-                  padding: '0.5rem', 
-                  width: '50%',
-                  borderColor: mapRootCategoryError ? '#dc3545' : undefined,
-                  boxShadow: mapRootCategoryError ? '0 0 0 2px rgba(220, 53, 69, 0.25)' : undefined
-                }}
-              >
-                <option value="">Select Category</option>
-                {[...categories].sort((a, b) => a.name.localeCompare(b.name)).map(cat => (
-                  <option key={cat.id} value={cat.id}>{cat.name}</option>
-                ))}
-              </select>
-              {mapRootCategoryError && (
-                <div style={{ color: '#dc3545', fontSize: '0.85rem', marginTop: '-0.5rem' }}>
-                  ↑ Please select a category first
-                </div>
-              )}
+              {/* Category */}
+              <div>
+                <label style={{ display: 'block', marginBottom: '0.5rem', fontWeight: 500, color: 'var(--text-color)', fontSize: '0.9rem' }}>
+                  Category
+                </label>
+                <select
+                  value={mapRootForm.category_id}
+                  onChange={(e) => {
+                    setMapRootForm({ ...mapRootForm, category_id: e.target.value });
+                    setMapRootCategoryError(false);
+                    if (mapRootResult?.type === 'error') setMapRootResult(null);
+                  }}
+                  className="input"
+                  disabled={mapRootLoading}
+                  style={{ 
+                    width: '100%',
+                    borderColor: mapRootCategoryError ? '#dc3545' : undefined,
+                    boxShadow: mapRootCategoryError ? '0 0 0 2px rgba(220, 53, 69, 0.25)' : undefined
+                  }}
+                >
+                  <option value="">Select Category</option>
+                  {[...categories].sort((a, b) => a.name.localeCompare(b.name)).map(cat => (
+                    <option key={cat.id} value={cat.id}>{cat.name}</option>
+                  ))}
+                </select>
+                {mapRootCategoryError && (
+                  <div style={{ color: '#dc3545', fontSize: '0.85rem', marginTop: '0.35rem' }}>
+                    Please select a category
+                  </div>
+                )}
+              </div>
 
-              {/* Options row */}
-              <div style={{ display: 'flex', gap: '1rem', flexWrap: 'wrap' }}>
-                <label style={{ display: 'inline-flex', alignItems: 'center', gap: '0.5rem', cursor: 'pointer' }}>
+              {/* Options */}
+              <div style={{ 
+                display: 'flex', 
+                gap: '1.5rem', 
+                flexWrap: 'wrap',
+                padding: '0.75rem 1rem',
+                backgroundColor: 'var(--bg-color)',
+                borderRadius: '8px',
+                border: '1px solid var(--border-color)'
+              }}>
+                <label style={{ display: 'inline-flex', alignItems: 'center', gap: '0.5rem', cursor: 'pointer', fontSize: '0.9rem' }}>
                   <input
                     type="checkbox"
                     checked={!!mapRootForm.recursive}
@@ -6407,7 +6590,7 @@ const DashboardTiles = {
                   />
                   <span>Recurse subfolders</span>
                 </label>
-                <label style={{ display: 'inline-flex', alignItems: 'center', gap: '0.5rem', cursor: 'pointer' }}>
+                <label style={{ display: 'inline-flex', alignItems: 'center', gap: '0.5rem', cursor: 'pointer', fontSize: '0.9rem' }}>
                   <input
                     type="checkbox"
                     checked={!!mapRootForm.generate_thumbnails}
@@ -6418,88 +6601,106 @@ const DashboardTiles = {
                 </label>
               </div>
 
-              {/* Extensions and Tags in a row */}
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '2rem' }}>
-                <input
-                  type="text"
-                  placeholder="Extensions: mp4,mkv,avi,mov"
-                  value={mapRootForm.extensions}
-                  onChange={(e) => setMapRootForm({ ...mapRootForm, extensions: e.target.value })}
-                  disabled={mapRootLoading}
-                  className="nx-input"
-                  style={{ padding: '0.5rem' }}
-                />
-                <input
-                  type="text"
-                  placeholder="Tags (optional, comma-separated)"
-                  value={mapRootForm.tags}
-                  onChange={(e) => setMapRootForm({ ...mapRootForm, tags: e.target.value })}
-                  disabled={mapRootLoading}
-                  className="nx-input"
-                  style={{ padding: '0.5rem', width : '60%' }}
-                />
+              {/* Extensions and Tags */}
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
+                <div>
+                  <label style={{ display: 'block', marginBottom: '0.5rem', fontWeight: 500, color: 'var(--text-color)', fontSize: '0.9rem' }}>
+                    Extensions
+                  </label>
+                  <input
+                    type="text"
+                    placeholder="mp4,mkv,avi,mov"
+                    value={mapRootForm.extensions}
+                    onChange={(e) => setMapRootForm({ ...mapRootForm, extensions: e.target.value })}
+                    disabled={mapRootLoading}
+                    className="input"
+                    style={{ width: '100%' }}
+                  />
+                </div>
+                <div>
+                  <label style={{ display: 'block', marginBottom: '0.5rem', fontWeight: 500, color: 'var(--text-color)', fontSize: '0.9rem' }}>
+                    Tags (optional)
+                  </label>
+                  <input
+                    type="text"
+                    placeholder="comma-separated"
+                    value={mapRootForm.tags}
+                    onChange={(e) => setMapRootForm({ ...mapRootForm, tags: e.target.value })}
+                    disabled={mapRootLoading}
+                    className="input"
+                    style={{ width: '100%' }}
+                  />
+                </div>
               </div>
 
-              {/* Action buttons */}
-              <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
+              {/* Action Buttons */}
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem' }}>
                 <button 
                   type="button" 
                   className="button button-secondary" 
                   onClick={() => submitMapRoot(false)} 
                   disabled={mapRootLoading || !mapRootForm.root_path}
-                  style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.35rem' }}
+                  style={{ 
+                    display: 'flex', 
+                    alignItems: 'center', 
+                    justifyContent: 'center', 
+                    gap: '0.5rem',
+                    padding: '0.75rem'
+                  }}
                 >
-                  <FlaskConical size={14} /> Dry Run (Preview)
+                  <FlaskConical size={16} /> Dry Run (Preview)
                 </button>
                 <button 
                   type="button" 
                   className="button" 
                   onClick={() => submitMapRoot(true)} 
                   disabled={mapRootLoading || !mapRootForm.root_path} 
-                  style={{ flex: 1, backgroundColor: '#28a745', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.35rem' }}
+                  style={{ 
+                    backgroundColor: '#28a745', 
+                    display: 'flex', 
+                    alignItems: 'center', 
+                    justifyContent: 'center', 
+                    gap: '0.5rem',
+                    padding: '0.75rem'
+                  }}
                 >
-                  <Download size={14} /> Import Now
+                  <Download size={16} /> Import Now
                 </button>
               </div>
 
-              {/* Enhanced Progress indicator */}
+              {/* Progress Indicator */}
               {mapRootLoading && (
-                <div className="nx-import-progress" style={{ 
-                  marginTop: '0.5rem', 
+                <div style={{ 
                   padding: '1rem', 
-                  background: 'var(--card-bg)', 
+                  background: 'var(--bg-color)', 
                   borderRadius: '8px',
                   border: '1px solid var(--border-color)'
                 }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', marginBottom: '0.75rem' }}>
-                    <Loader2 size={20} className="spin" style={{ color: 'var(--button-bg)' }} />
+                    <Loader2 size={20} className="spin" style={{ color: 'var(--accent-color)' }} />
                     <div>
                       <div style={{ fontWeight: 600, color: 'var(--text-color)' }}>
                         {mapRootLoadingMsg || 'Working…'}
                       </div>
                       {mapRootProgress.phase && (
-                        <div style={{ fontSize: '0.85rem', color: '#888', marginTop: '0.25rem' }}>
+                        <div style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginTop: '0.25rem' }}>
                           {mapRootProgress.phase}
                         </div>
                       )}
                     </div>
                   </div>
-                  <div className="nx-progress" style={{ height: '8px' }}>
+                  <div className="nx-progress" style={{ height: '6px' }}>
                     <div className="bar"></div>
-                  </div>
-                  <div style={{ fontSize: '0.8rem', color: '#888', marginTop: '0.5rem', textAlign: 'center' }}>
-                    Please wait while files are being scanned and indexed...
                   </div>
                 </div>
               )}
 
-              {/* Inline Results Display */}
+              {/* Results */}
               {mapRootResult && !mapRootLoading && (
                 <div style={{ 
-                  marginTop: '0.5rem', 
                   padding: '1rem', 
                   background: mapRootResult.type === 'error' ? 'rgba(220, 53, 69, 0.1)' : 
-                              mapRootResult.type === 'dryrun' ? 'var(--card-bg)' : 'rgba(40, 167, 69, 0.1)', 
+                              mapRootResult.type === 'dryrun' ? 'var(--bg-color)' : 'rgba(40, 167, 69, 0.1)', 
                   borderRadius: '8px',
                   border: `1px solid ${mapRootResult.type === 'error' ? '#dc3545' : 
                                        mapRootResult.type === 'dryrun' ? 'var(--border-color)' : '#28a745'}`
@@ -6509,7 +6710,7 @@ const DashboardTiles = {
                       {mapRootResult.type === 'error' ? (
                         <AlertTriangle size={18} style={{ color: '#dc3545' }} />
                       ) : mapRootResult.type === 'dryrun' ? (
-                        <FlaskConical size={18} style={{ color: 'var(--button-bg)' }} />
+                        <FlaskConical size={18} style={{ color: 'var(--accent-color)' }} />
                       ) : (
                         <CheckCircle size={18} style={{ color: '#28a745' }} />
                       )}
@@ -6520,42 +6721,41 @@ const DashboardTiles = {
                     </div>
                     <button 
                       onClick={() => setMapRootResult(null)}
-                      style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#888', padding: '0.25rem' }}
-                      title="Dismiss"
+                      style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-secondary)', padding: '0.25rem' }}
                     >
                       <X size={16} />
                     </button>
                   </div>
                   {mapRootResult.type !== 'error' && (
-                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '0.75rem', textAlign: 'center' }}>
-                    <div style={{ padding: '0.5rem', background: 'var(--bg-color)', borderRadius: '6px' }}>
-                      <div style={{ fontSize: '1.5rem', fontWeight: 700, color: 'var(--button-bg)' }}>
-                        {mapRootResult.found}
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '0.75rem', textAlign: 'center' }}>
+                      <div style={{ padding: '0.75rem', background: 'var(--card-bg)', borderRadius: '8px', border: '1px solid var(--border-color)' }}>
+                        <div style={{ fontSize: '1.75rem', fontWeight: 700, color: 'var(--accent-color)' }}>
+                          {mapRootResult.found}
+                        </div>
+                        <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>Files Found</div>
                       </div>
-                      <div style={{ fontSize: '0.8rem', color: '#888' }}>Files Found</div>
+                      <div style={{ padding: '0.75rem', background: 'var(--card-bg)', borderRadius: '8px', border: '1px solid var(--border-color)' }}>
+                        <div style={{ fontSize: '1.75rem', fontWeight: 700, color: 'var(--text-secondary)' }}>
+                          {mapRootResult.present}
+                        </div>
+                        <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>Already Present</div>
+                      </div>
+                      <div style={{ padding: '0.75rem', background: 'var(--card-bg)', borderRadius: '8px', border: '1px solid var(--border-color)' }}>
+                        <div style={{ fontSize: '1.75rem', fontWeight: 700, color: '#28a745' }}>
+                          {mapRootResult.type === 'dryrun' ? mapRootResult.toAdd : mapRootResult.added}
+                        </div>
+                        <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>
+                          {mapRootResult.type === 'dryrun' ? 'Would Add' : 'Added'}
+                        </div>
+                      </div>
                     </div>
-                    <div style={{ padding: '0.5rem', background: 'var(--bg-color)', borderRadius: '6px' }}>
-                      <div style={{ fontSize: '1.5rem', fontWeight: 700, color: '#888' }}>
-                        {mapRootResult.present}
-                      </div>
-                      <div style={{ fontSize: '0.8rem', color: '#888' }}>Already Present</div>
-                    </div>
-                    <div style={{ padding: '0.5rem', background: 'var(--bg-color)', borderRadius: '6px' }}>
-                      <div style={{ fontSize: '1.5rem', fontWeight: 700, color: '#28a745' }}>
-                        {mapRootResult.type === 'dryrun' ? mapRootResult.toAdd : mapRootResult.added}
-                      </div>
-                      <div style={{ fontSize: '0.8rem', color: '#888' }}>
-                        {mapRootResult.type === 'dryrun' ? 'Would Add' : 'Added'}
-                      </div>
-                    </div>
-                  </div>
                   )}
                   {mapRootResult.type === 'dryrun' && mapRootResult.toAdd > 0 && (
-                    <div style={{ marginTop: '0.75rem', textAlign: 'center' }}>
+                    <div style={{ marginTop: '1rem', textAlign: 'center' }}>
                       <button 
                         className="button"
                         onClick={() => { setMapRootResult(null); submitMapRoot(true); }}
-                        style={{ backgroundColor: '#28a745' }}
+                        style={{ backgroundColor: '#28a745', padding: '0.6rem 1.5rem' }}
                       >
                         <Download size={14} style={{ marginRight: '0.35rem' }} />
                         Import {mapRootResult.toAdd} File{mapRootResult.toAdd !== 1 ? 's' : ''} Now
@@ -6565,349 +6765,442 @@ const DashboardTiles = {
                 </div>
               )}
             </div>
-
-            {/* Folder Browser Modal */}
-            {showFolderBrowser && (
-              <div className="nx-modal-overlay" onClick={() => setShowFolderBrowser(false)}>
-                <div 
-                  className="nx-modal" 
-                  onClick={(e) => e.stopPropagation()}
-                  style={{ maxWidth: '600px', maxHeight: '80vh', display: 'flex', flexDirection: 'column' }}
-                >
-                  <div className="nx-modal-header" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '1rem', borderBottom: '1px solid var(--border-color)' }}>
-                    <h3 style={{ margin: 0, display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                      <FolderOpen size={20} /> Browse Folders
-                    </h3>
-                    <button 
-                      onClick={() => setShowFolderBrowser(false)} 
-                      style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-color)' }}
-                    >
-                      <X size={20} />
-                    </button>
-                  </div>
-                  
-                  {/* Current path breadcrumb */}
-                  <div style={{ padding: '0.75rem 1rem', background: 'var(--header-bg)', borderBottom: '1px solid var(--border-color)', fontSize: '0.9rem' }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                      <span style={{ fontWeight: 500 }}>Path:</span>
-                      <code style={{ 
-                        background: 'var(--bg-color)', 
-                        padding: '0.25rem 0.5rem', 
-                        borderRadius: '4px',
-                        flex: 1,
-                        overflow: 'hidden',
-                        textOverflow: 'ellipsis',
-                        whiteSpace: 'nowrap'
-                      }}>
-                        {folderBrowserPath || '(Select a drive or root)'}
-                      </code>
-                    </div>
-                    {folderBrowserVideoCount > 0 && (
-                      <div style={{ marginTop: '0.5rem', color: '#28a745', fontSize: '0.85rem' }}>
-                        <Film size={14} style={{ verticalAlign: 'middle', marginRight: '0.25rem' }} />
-                        {folderBrowserVideoCount} video file{folderBrowserVideoCount !== 1 ? 's' : ''} in this folder
-                      </div>
-                    )}
-                  </div>
-
-                  {/* Folder list */}
-                  <div style={{ flex: 1, overflow: 'auto', padding: '0.5rem' }}>
-                    {folderBrowserLoading ? (
-                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '2rem', gap: '0.5rem' }}>
-                        <Loader2 size={20} className="spin" />
-                        <span>Loading folders...</span>
-                      </div>
-                    ) : (
-                      <div style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
-                        {/* Go up button */}
-                        {folderBrowserParent !== null && (
-                          <button
-                            onClick={() => browseFolders(folderBrowserParent)}
-                            style={{
-                              display: 'flex',
-                              alignItems: 'center',
-                              gap: '0.5rem',
-                              padding: '0.5rem 0.75rem',
-                              background: 'var(--header-bg)',
-                              border: '1px solid var(--border-color)',
-                              borderRadius: '4px',
-                              cursor: 'pointer',
-                              color: 'var(--text-color)',
-                              textAlign: 'left'
-                            }}
-                          >
-                            <ChevronRight size={16} style={{ transform: 'rotate(180deg)' }} />
-                            <span>..</span>
-                            <span style={{ color: '#888', fontSize: '0.85rem' }}>(Go up)</span>
-                          </button>
-                        )}
-                        
-                        {/* Folder items */}
-                        {folderBrowserItems.map((item, i) => (
-                          <button
-                            key={i}
-                            onClick={() => browseFolders(item.path)}
-                            style={{
-                              display: 'flex',
-                              alignItems: 'center',
-                              gap: '0.5rem',
-                              padding: '0.5rem 0.75rem',
-                              background: 'var(--card-bg)',
-                              border: '1px solid var(--border-color)',
-                              borderRadius: '4px',
-                              cursor: 'pointer',
-                              color: 'var(--text-color)',
-                              textAlign: 'left',
-                              transition: 'background 0.15s'
-                            }}
-                            onMouseEnter={(e) => e.target.style.background = 'var(--header-bg)'}
-                            onMouseLeave={(e) => e.target.style.background = 'var(--card-bg)'}
-                          >
-                            {item.type === 'drive' ? (
-                              <span style={{ fontSize: '1.1rem' }}>💾</span>
-                            ) : (
-                              <Folder size={16} style={{ color: '#f0c000' }} />
-                            )}
-                            <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                              {item.name}
-                            </span>
-                            <ChevronRight size={14} style={{ color: '#888' }} />
-                          </button>
-                        ))}
-                        
-                        {folderBrowserItems.length === 0 && !folderBrowserLoading && (
-                          <div style={{ padding: '1rem', textAlign: 'center', color: '#888' }}>
-                            No subfolders found
-                          </div>
-                        )}
-                      </div>
-                    )}
-                  </div>
-
-                  {/* Footer with Select button */}
-                  <div style={{ 
-                    padding: '1rem', 
-                    borderTop: '1px solid var(--border-color)', 
-                    display: 'flex', 
-                    gap: '0.5rem',
-                    justifyContent: 'flex-end'
-                  }}>
-                    <button 
-                      className="button button-secondary"
-                      onClick={() => setShowFolderBrowser(false)}
-                    >
-                      Cancel
-                    </button>
-                    <button 
-                      className="button"
-                      onClick={() => selectFolderFromBrowser(folderBrowserPath)}
-                      disabled={!folderBrowserPath}
-                      style={{ backgroundColor: '#28a745' }}
-                    >
-                      <Check size={14} style={{ marginRight: '0.35rem' }} />
-                      Select This Folder
-                    </button>
-                  </div>
-                </div>
-              </div>
-            )}
-
-            {/* Help section - collapsible */}
-            <details style={{ marginTop: '0.75rem' }}>
-              <summary style={{ 
-                cursor: 'pointer', 
-                padding: '0.5rem 0.75rem', 
-                background: 'var(--header-bg)', 
-                borderRadius: '6px',
-                color: 'var(--text-color)',
-                fontSize: '0.9rem',
-                fontWeight: 500
-              }}>
-                💡 Docker/NAS Help & Tips
-              </summary>
-              <div style={{ padding: '0.75rem', border: '1px dashed var(--border-color)', borderTop: 'none', borderRadius: '0 0 6px 6px', background: 'var(--card-bg)' }}>
-                <ul style={{ margin: 0, paddingLeft: '1.25rem', fontSize: '0.9rem' }}>
-                  <li>If NeXroll runs in Docker, the container cannot see Windows mapped drives or UNC paths by default. Mount your NAS/host folder into the container and use the container path in "Root path".</li>
-                  <li style={{ marginTop: '0.5rem' }}>UNC paths like \\NAS\share aren't usable inside Linux containers. Mount the SMB share on the host (e.g., /mnt/nas) and map it into the container.</li>
-                  <li style={{ marginTop: '0.5rem' }}>Example docker run: <code>docker run -d -p 9393:9393 -v /mnt/nas/prerolls:/nas/prerolls jbrns/nexroll:latest</code></li>
-                </ul>
-              </div>
-            </details>
           </div>
         )}
       </div>
+
+      {/* Folder Browser Modal */}
+      {showFolderBrowser && (
+        <div className="nx-modal-overlay" onClick={() => setShowFolderBrowser(false)}>
+          <div 
+            className="nx-modal" 
+            onClick={(e) => e.stopPropagation()}
+            style={{ maxWidth: '600px', maxHeight: '80vh', display: 'flex', flexDirection: 'column' }}
+          >
+            <div className="nx-modal-header" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '1rem', borderBottom: '1px solid var(--border-color)' }}>
+              <h3 style={{ margin: 0, display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                <FolderOpen size={20} /> Browse Folders
+              </h3>
+              <button 
+                onClick={() => setShowFolderBrowser(false)} 
+                style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-color)' }}
+              >
+                <X size={20} />
+              </button>
+            </div>
+            
+            {/* Current path breadcrumb */}
+            <div style={{ padding: '0.75rem 1rem', background: 'var(--header-bg)', borderBottom: '1px solid var(--border-color)', fontSize: '0.9rem' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                <span style={{ fontWeight: 500 }}>Path:</span>
+                <code style={{ 
+                  background: 'var(--bg-color)', 
+                  padding: '0.25rem 0.5rem', 
+                  borderRadius: '4px',
+                  flex: 1,
+                  overflow: 'hidden',
+                  textOverflow: 'ellipsis',
+                  whiteSpace: 'nowrap'
+                }}>
+                  {folderBrowserPath || '(Select a drive or root)'}
+                </code>
+              </div>
+              {folderBrowserVideoCount > 0 && (
+                <div style={{ marginTop: '0.5rem', color: '#28a745', fontSize: '0.85rem' }}>
+                  <Film size={14} style={{ verticalAlign: 'middle', marginRight: '0.25rem' }} />
+                  {folderBrowserVideoCount} video file{folderBrowserVideoCount !== 1 ? 's' : ''} in this folder
+                </div>
+              )}
+            </div>
+
+            {/* Folder list */}
+            <div style={{ flex: 1, overflow: 'auto', padding: '0.5rem' }}>
+              {folderBrowserLoading ? (
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '2rem', gap: '0.5rem' }}>
+                  <Loader2 size={20} className="spin" />
+                  <span>Loading folders...</span>
+                </div>
+              ) : (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
+                  {/* Go up button */}
+                  {folderBrowserParent !== null && (
+                    <button
+                      onClick={() => browseFolders(folderBrowserParent)}
+                      style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '0.5rem',
+                        padding: '0.5rem 0.75rem',
+                        background: 'var(--header-bg)',
+                        border: '1px solid var(--border-color)',
+                        borderRadius: '4px',
+                        cursor: 'pointer',
+                        color: 'var(--text-color)',
+                        textAlign: 'left'
+                      }}
+                    >
+                      <ChevronRight size={16} style={{ transform: 'rotate(180deg)' }} />
+                      <span>..</span>
+                      <span style={{ color: '#888', fontSize: '0.85rem' }}>(Go up)</span>
+                    </button>
+                  )}
+                  
+                  {/* Folder items */}
+                  {folderBrowserItems.map((item, i) => (
+                    <button
+                      key={i}
+                      onClick={() => browseFolders(item.path)}
+                      style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '0.5rem',
+                        padding: '0.5rem 0.75rem',
+                        background: 'var(--card-bg)',
+                        border: '1px solid var(--border-color)',
+                        borderRadius: '4px',
+                        cursor: 'pointer',
+                        color: 'var(--text-color)',
+                        textAlign: 'left',
+                        transition: 'background 0.15s'
+                      }}
+                      onMouseEnter={(e) => e.target.style.background = 'var(--header-bg)'}
+                      onMouseLeave={(e) => e.target.style.background = 'var(--card-bg)'}
+                    >
+                      {item.type === 'drive' ? (
+                        <span style={{ fontSize: '1.1rem' }}>💾</span>
+                      ) : (
+                        <Folder size={16} style={{ color: '#f0c000' }} />
+                      )}
+                      <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                        {item.name}
+                      </span>
+                      <ChevronRight size={14} style={{ color: '#888' }} />
+                    </button>
+                  ))}
+                  
+                  {folderBrowserItems.length === 0 && !folderBrowserLoading && (
+                    <div style={{ padding: '1rem', textAlign: 'center', color: '#888' }}>
+                      No subfolders found
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+
+            {/* Footer with Select button */}
+            <div style={{ 
+              padding: '1rem', 
+              borderTop: '1px solid var(--border-color)', 
+              display: 'flex', 
+              gap: '0.5rem',
+              justifyContent: 'flex-end'
+            }}>
+              <button 
+                className="button button-secondary"
+                onClick={() => setShowFolderBrowser(false)}
+              >
+                Cancel
+              </button>
+              <button 
+                className="button"
+                onClick={() => selectFolderFromBrowser(folderBrowserPath)}
+                disabled={!folderBrowserPath}
+                style={{ backgroundColor: '#28a745' }}
+              >
+                <Check size={14} style={{ marginRight: '0.35rem' }} />
+                Select This Folder
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Help section - collapsible */}
+      <details className="card" style={{ padding: 0 }}>
+        <summary style={{ 
+          cursor: 'pointer', 
+          padding: '1rem 1.25rem', 
+          color: 'var(--text-color)',
+          fontSize: '0.95rem',
+          fontWeight: 500,
+          display: 'flex',
+          alignItems: 'center',
+          gap: '0.5rem'
+        }}>
+          <HelpCircle size={18} style={{ color: 'var(--accent-color)' }} />
+          Docker/NAS Help & Tips
+        </summary>
+        <div style={{ padding: '0 1.25rem 1.25rem 1.25rem', borderTop: '1px solid var(--border-color)' }}>
+          <ul style={{ margin: '1rem 0 0 0', paddingLeft: '1.25rem', fontSize: '0.9rem', color: 'var(--text-secondary)', lineHeight: 1.6 }}>
+            <li>If NeXroll runs in Docker, the container cannot see Windows mapped drives or UNC paths by default. Mount your NAS/host folder into the container and use the container path in "Root path".</li>
+            <li style={{ marginTop: '0.5rem' }}>UNC paths like \\NAS\share aren't usable inside Linux containers. Mount the SMB share on the host (e.g., /mnt/nas) and map it into the container.</li>
+            <li style={{ marginTop: '0.5rem' }}>Example docker run: <code style={{ background: 'var(--bg-color)', padding: '0.15rem 0.4rem', borderRadius: '4px', fontSize: '0.85rem' }}>docker run -d -p 9393:9393 -v /mnt/nas/prerolls:/nas/prerolls jbrns/nexroll:latest</code></li>
+          </ul>
+        </div>
+      </details>
     </div>
   );
 
   // Dashboard Library Sub-Page (Prerolls list/grid)
   const renderDashboardLibrary = () => (
-    <div>
-      <div style={{ display: 'flex', alignItems: 'center', gap: '1rem', marginBottom: '1rem' }}>
-        <h1 className="header" style={{ margin: 0 }}>Preroll Library</h1>
+    <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
+      {/* Header */}
+      <div>
+        <h1 className="header" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.5rem' }}>
+          <Library size={32} style={{ color: 'var(--accent-color)' }} /> Preroll Library
+        </h1>
+        <p style={{ color: 'var(--text-secondary)', fontSize: '0.95rem', margin: 0 }}>
+          Browse, search, and manage your preroll collection.
+        </p>
       </div>
 
-      <div className="card">
-        <div className="prerolls-header">
-          <h2>Prerolls</h2>
-          <div className="prerolls-stats">
-            <span className="stat-item">{prerolls.length} total</span>
-            <span className="stat-item">{selectedPrerollIds.length} selected</span>
-            <button onClick={handleReinitThumbnails} className="button" style={{ marginLeft: '1rem' }} title="Reinitialize all preroll thumbnails">
-              <RefreshCw size={14} style={{marginRight: '0.35rem'}} /> Reinitialize Thumbnails
-            </button>
-          </div>
+      {/* Stats Bar */}
+      <div style={{ display: 'flex', gap: '1rem', flexWrap: 'wrap' }}>
+        <div style={{ 
+          display: 'flex', 
+          alignItems: 'center', 
+          gap: '0.5rem',
+          padding: '0.6rem 1rem',
+          background: 'var(--card-bg)',
+          borderRadius: '8px',
+          border: '1px solid var(--border-color)'
+        }}>
+          <Film size={18} style={{ color: 'var(--accent-color)' }} />
+          <span style={{ fontWeight: 600 }}>{prerolls.length}</span>
+          <span style={{ color: 'var(--text-secondary)', fontSize: '0.9rem' }}>total prerolls</span>
         </div>
+        {selectedPrerollIds.length > 0 && (
+          <div style={{ 
+            display: 'flex', 
+            alignItems: 'center', 
+            gap: '0.5rem',
+            padding: '0.6rem 1rem',
+            background: 'rgba(0, 212, 255, 0.1)',
+            borderRadius: '8px',
+            border: '1px solid var(--accent-color)'
+          }}>
+            <CheckCircle size={18} style={{ color: 'var(--accent-color)' }} />
+            <span style={{ fontWeight: 600, color: 'var(--accent-color)' }}>{selectedPrerollIds.length}</span>
+            <span style={{ color: 'var(--text-secondary)', fontSize: '0.9rem' }}>selected</span>
+          </div>
+        )}
+        <button 
+          onClick={handleReinitThumbnails} 
+          className="button button-secondary" 
+          style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: '0.35rem' }}
+          title="Reinitialize all preroll thumbnails"
+        >
+          <RefreshCw size={14} /> Reinitialize Thumbnails
+        </button>
+      </div>
 
-        {/* Enhanced Control Bar */}
-        <div className="prerolls-control-bar">
+      {/* Control Bar Card */}
+      <div className="card" style={{ padding: '1rem 1.25rem' }}>
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '1.25rem', alignItems: 'flex-end' }}>
           {/* View Toggle */}
-          <div className="control-group">
-            <label className="control-label">View</label>
-            <div className="view-toggle">
+          <div>
+            <label style={{ display: 'block', marginBottom: '0.4rem', fontSize: '0.8rem', fontWeight: 500, color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>View</label>
+            <div style={{ display: 'flex', borderRadius: '6px', overflow: 'hidden', border: '1px solid var(--border-color)' }}>
               <button
                 type="button"
-                className={`view-btn ${prerollView === 'grid' ? 'active' : ''}`}
                 onClick={() => setPrerollView('grid')}
+                style={{
+                  padding: '0.5rem 0.85rem',
+                  border: 'none',
+                  background: prerollView === 'grid' ? 'var(--accent-color)' : 'var(--bg-color)',
+                  color: prerollView === 'grid' ? '#fff' : 'var(--text-secondary)',
+                  cursor: 'pointer',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '0.35rem',
+                  fontSize: '0.85rem',
+                  fontWeight: prerollView === 'grid' ? 600 : 400
+                }}
                 title="Grid view"
               >
-                <span className="view-icon">⊞</span>
-                Grid
+                <LayoutGrid size={14} /> Grid
               </button>
               <button
                 type="button"
-                className={`view-btn ${prerollView === 'list' ? 'active' : ''}`}
                 onClick={() => setPrerollView('list')}
+                style={{
+                  padding: '0.5rem 0.85rem',
+                  border: 'none',
+                  borderLeft: '1px solid var(--border-color)',
+                  background: prerollView === 'list' ? 'var(--accent-color)' : 'var(--bg-color)',
+                  color: prerollView === 'list' ? '#fff' : 'var(--text-secondary)',
+                  cursor: 'pointer',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '0.35rem',
+                  fontSize: '0.85rem',
+                  fontWeight: prerollView === 'list' ? 600 : 400
+                }}
                 title="List view"
               >
-                <span className="view-icon">☰</span>
-                List
+                <List size={14} /> List
               </button>
             </div>
           </div>
 
-          {/* Filters */}
-          <div className="control-group">
-            <label className="control-label">Filters</label>
-            <div className="filter-controls">
-              <select
-                value={filterCategory}
-                onChange={(e) => setFilterCategory(e.target.value)}
-                className="filter-select"
-              >
-                <option value="">All Categories</option>
-                {[...categories].sort((a, b) => a.name.localeCompare(b.name)).map(cat => (
-                  <option key={cat.id} value={cat.id}>{cat.name}</option>
-                ))}
-              </select>
-              <select
-                value={filterMatchStatus}
-                onChange={(e) => setFilterMatchStatus(e.target.value)}
-                className="filter-select"
-                title="Filter by community match status"
-              >
-                <option value="">All Prerolls</option>
-                <option value="matched">✅ Matched Only</option>
-                <option value="unmatched">⚠️ Unmatched Only</option>
-              </select>
-              <div className="search-input-wrapper">
-                <input
-                  type="text"
-                  placeholder="Search prerolls (tags, filenames, titles)..."
-                  value={inputTagsValue}
-                  onChange={(e) => handleTagsChange(e.target.value)}
-                  className="search-input"
-                />
-                <span className="search-icon"><Search size={18} /></span>
-              </div>
-              <button
-                onClick={() => { setCurrentPage(1); fetchData(); }}
-                className="filter-btn"
-                title="Apply filters"
-              >
-                Apply
-              </button>
+          {/* Category Filter */}
+          <div>
+            <label style={{ display: 'block', marginBottom: '0.4rem', fontSize: '0.8rem', fontWeight: 500, color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Category</label>
+            <select
+              value={filterCategory}
+              onChange={(e) => setFilterCategory(e.target.value)}
+              className="input"
+              style={{ minWidth: '140px' }}
+            >
+              <option value="">All Categories</option>
+              {[...categories].sort((a, b) => a.name.localeCompare(b.name)).map(cat => (
+                <option key={cat.id} value={cat.id}>{cat.name}</option>
+              ))}
+            </select>
+          </div>
+
+          {/* Match Status Filter */}
+          <div>
+            <label style={{ display: 'block', marginBottom: '0.4rem', fontSize: '0.8rem', fontWeight: 500, color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Status</label>
+            <select
+              value={filterMatchStatus}
+              onChange={(e) => setFilterMatchStatus(e.target.value)}
+              className="input"
+              style={{ minWidth: '140px' }}
+              title="Filter by community match status"
+            >
+              <option value="">All Prerolls</option>
+              <option value="matched">✅ Matched Only</option>
+              <option value="unmatched">⚠️ Unmatched Only</option>
+            </select>
+          </div>
+
+          {/* Search */}
+          <div style={{ flex: 1, minWidth: '200px' }}>
+            <label style={{ display: 'block', marginBottom: '0.4rem', fontSize: '0.8rem', fontWeight: 500, color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Search</label>
+            <div style={{ position: 'relative' }}>
+              <input
+                type="text"
+                placeholder="Search prerolls (tags, filenames, titles)..."
+                value={inputTagsValue}
+                onChange={(e) => handleTagsChange(e.target.value)}
+                className="input"
+                style={{ width: '100%', paddingLeft: '2.25rem' }}
+              />
+              <Search size={16} style={{ position: 'absolute', left: '0.75rem', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-secondary)' }} />
             </div>
           </div>
 
-          {/* Pagination */}
-          <div className="control-group">
-            <label className="control-label">Items per page</label>
+          {/* Items per page */}
+          <div>
+            <label style={{ display: 'block', marginBottom: '0.4rem', fontSize: '0.8rem', fontWeight: 500, color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Per Page</label>
             <select
               value={pageSize}
               onChange={(e) => { const v = parseInt(e.target.value, 10); setPageSize(v); setCurrentPage(1); }}
-              className="page-size-select"
+              className="input"
+              style={{ width: '70px' }}
             >
               {[20, 30, 40, 50].map(n => <option key={n} value={n}>{n}</option>)}
             </select>
           </div>
-        </div>
 
-        {/* Bulk Actions Bar */}
-        <div className="bulk-actions-bar">
-          <div className="bulk-actions-left">
-            <label className="select-all-wrapper">
+          {/* Apply Button */}
+          <button
+            onClick={() => { setCurrentPage(1); fetchData(); }}
+            className="button"
+            style={{ display: 'flex', alignItems: 'center', gap: '0.35rem' }}
+            title="Apply filters"
+          >
+            <Filter size={14} /> Apply
+          </button>
+        </div>
+      </div>
+
+      {/* Bulk Actions Card */}
+      <div className="card" style={{ padding: '0.85rem 1.25rem' }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '1rem' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
+            <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', cursor: 'pointer', fontSize: '0.9rem' }}>
               <input
                 type="checkbox"
                 checked={allSelectedOnPage}
                 onChange={(e) => selectAllVisible(visibleIds, e.target.checked)}
-                className="select-all-checkbox"
+                style={{ width: '16px', height: '16px' }}
               />
-              <span className="select-all-label">Select all ({visibleIds.length})</span>
+              <span>Select all ({visibleIds.length})</span>
             </label>
             <button
               type="button"
-              className="action-btn secondary"
+              className="button button-secondary"
               onClick={clearSelection}
               disabled={selectedPrerollIds.length === 0}
               title="Clear selected prerolls"
+              style={{ fontSize: '0.85rem', padding: '0.4rem 0.75rem' }}
             >
               Clear Selection
             </button>
           </div>
 
-          <div className="bulk-actions-right">
-            <div className="bulk-category-wrapper">
-              <select
-                value={bulkCategoryId}
-                onChange={(e) => setBulkCategoryId(e.target.value)}
-                className="bulk-category-select"
-                disabled={selectedPrerollIds.length === 0}
-              >
-                <option value="">Set Category...</option>
-                {[...categories].sort((a, b) => a.name.localeCompare(b.name)).map(cat => (
-                  <option key={cat.id} value={cat.id}>{cat.name}</option>
-                ))}
-              </select>
-              <button
-                type="button"
-                className="action-btn primary"
-                onClick={() => handleBulkSetPrimary(bulkCategoryId)}
-                disabled={!bulkCategoryId || selectedPrerollIds.length === 0}
-                title="Change primary category for selected prerolls"
-              >
-                Apply to {selectedPrerollIds.length} Selected
-              </button>
-            </div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+            <select
+              value={bulkCategoryId}
+              onChange={(e) => setBulkCategoryId(e.target.value)}
+              className="input"
+              disabled={selectedPrerollIds.length === 0}
+              style={{ minWidth: '140px' }}
+            >
+              <option value="">Set Category...</option>
+              {[...categories].sort((a, b) => a.name.localeCompare(b.name)).map(cat => (
+                <option key={cat.id} value={cat.id}>{cat.name}</option>
+              ))}
+            </select>
             <button
               type="button"
-              className="action-btn danger"
+              className="button"
+              onClick={() => handleBulkSetPrimary(bulkCategoryId)}
+              disabled={!bulkCategoryId || selectedPrerollIds.length === 0}
+              title="Change primary category for selected prerolls"
+              style={{ fontSize: '0.85rem', padding: '0.4rem 0.75rem' }}
+            >
+              Apply to {selectedPrerollIds.length} Selected
+            </button>
+            <button
+              type="button"
+              className="button"
               onClick={handleBulkDeleteSelected}
               disabled={selectedPrerollIds.length === 0}
               title="Delete all selected prerolls"
+              style={{ 
+                background: selectedPrerollIds.length > 0 ? '#dc3545' : undefined,
+                fontSize: '0.85rem', 
+                padding: '0.4rem 0.75rem',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '0.35rem'
+              }}
             >
-              <Trash size={16} style={{ marginRight: '6px' }} /> Delete {selectedPrerollIds.length > 0 && `(${selectedPrerollIds.length})`}
+              <Trash size={14} /> Delete {selectedPrerollIds.length > 0 && `(${selectedPrerollIds.length})`}
             </button>
           </div>
         </div>
+      </div>
 
-        {/* Available Tags */}
-        {availableTags.length > 0 && (
-          <div style={{ marginBottom: '1rem' }}>
-            <p style={{ fontSize: '0.9rem', color: '#666' }}>Available tags: {availableTags.join(', ')}</p>
-          </div>
-        )}
+      {/* Available Tags */}
+      {availableTags.length > 0 && (
+        <div style={{ 
+          padding: '0.75rem 1rem', 
+          background: 'var(--bg-color)', 
+          borderRadius: '8px',
+          border: '1px solid var(--border-color)',
+          fontSize: '0.85rem'
+        }}>
+          <span style={{ fontWeight: 500, color: 'var(--text-color)', marginRight: '0.5rem' }}>Available tags:</span>
+          <span style={{ color: 'var(--text-secondary)' }}>{availableTags.join(', ')}</span>
+        </div>
+      )}
 
-        <div className="preroll-grid" style={{ display: prerollView === 'grid' ? 'grid' : 'none' }}>
+      {/* Preroll Grid */}
+      <div className="preroll-grid" style={{ display: prerollView === 'grid' ? 'grid' : 'none' }}>
           {visiblePrerolls.map(preroll => (
             <div key={preroll.id} className="preroll-item">
               <div className="preroll-header" style={{ marginBottom: '0.5rem' }}>
@@ -7056,32 +7349,59 @@ const DashboardTiles = {
         </div>
         {/* Pagination (Grid) */}
         {prerollView === 'grid' && (
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '0.5rem' }}>
-            <div style={{ fontSize: '0.9rem', color: '#666' }}>
-              Showing {totalPrerolls === 0 ? 0 : (pageStartIndex + 1)}-{pageEndIndex} of {totalPrerolls}
+          <div style={{ 
+            display: 'flex', 
+            justifyContent: 'space-between', 
+            alignItems: 'center', 
+            marginTop: '1rem',
+            padding: '0.75rem 1rem',
+            background: 'var(--card-bg)',
+            borderRadius: '8px',
+            border: '1px solid var(--border-color)'
+          }}>
+            <div style={{ fontSize: '0.9rem', color: 'var(--text-secondary)' }}>
+              Showing <span style={{ fontWeight: 600, color: 'var(--text-color)' }}>{totalPrerolls === 0 ? 0 : (pageStartIndex + 1)}-{pageEndIndex}</span> of <span style={{ fontWeight: 600, color: 'var(--text-color)' }}>{totalPrerolls}</span>
             </div>
             <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-              <button className="button-secondary" disabled={currentPageClamped === 1} onClick={() => setCurrentPage(p => Math.max(1, p - 1))}>◀ Prev</button>
-              <span style={{ fontSize: '0.9rem' }}>Page {currentPageClamped} of {totalPages}</span>
-              <button className="button-secondary" disabled={currentPageClamped === totalPages} onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}>Next ▶</button>
+              <button 
+                className="button button-secondary" 
+                disabled={currentPageClamped === 1} 
+                onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
+                style={{ padding: '0.4rem 0.75rem', fontSize: '0.85rem' }}
+              >
+                ◀ Prev
+              </button>
+              <span style={{ fontSize: '0.9rem', padding: '0 0.5rem', color: 'var(--text-color)' }}>
+                Page <span style={{ fontWeight: 600 }}>{currentPageClamped}</span> of <span style={{ fontWeight: 600 }}>{totalPages}</span>
+              </span>
+              <button 
+                className="button button-secondary" 
+                disabled={currentPageClamped === totalPages} 
+                onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
+                style={{ padding: '0.4rem 0.75rem', fontSize: '0.85rem' }}
+              >
+                Next ▶
+              </button>
             </div>
           </div>
         )}
-      </div>
-      <div className="preroll-list" style={{ display: prerollView === 'list' ? 'block' : 'none' }}>
+
+      {/* List View */}
+      <div className="card" style={{ display: prerollView === 'list' ? 'block' : 'none', padding: '1rem' }}>
        {visiblePrerolls.map(preroll => (
-         <div key={preroll.id} style={{ display: 'flex', gap: '0.75rem', alignItems: 'center', padding: '0.5rem 0', borderBottom: '1px solid var(--border-color)' }}>
+         <div key={preroll.id} style={{ display: 'flex', gap: '1rem', alignItems: 'center', padding: '0.75rem 0', borderBottom: '1px solid var(--border-color)' }}>
            <input
              type="checkbox"
              checked={selectedPrerollIds.includes(preroll.id)}
              onChange={() => toggleSelectPreroll(preroll.id)}
              title="Select preroll"
+             style={{ width: '16px', height: '16px' }}
            />
            {preroll.thumbnail && (
              <img
                src={apiUrl(`static/${preroll.thumbnail}`)}
                alt="thumbnail"
-               style={{ width: 120, height: 'auto', borderRadius: 4 }}
+               style={{ width: 120, height: 'auto', borderRadius: 6, flexShrink: 0 }}
                onError={(e) => {
                  try {
                    const rel = preroll.thumbnail || '';
@@ -7095,7 +7415,7 @@ const DashboardTiles = {
              />
            )}
            <div style={{ flex: 1, minWidth: 0 }}>
-             <div className="preroll-row-title" style={{ fontWeight: 'bold', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+             <div style={{ fontWeight: 600, display: 'flex', alignItems: 'center', gap: '0.5rem', color: 'var(--text-color)', fontSize: '0.95rem' }}>
                <span>{preroll.display_name || preroll.filename}</span>
              </div>
              {preroll.community_preroll_id && (
@@ -7212,14 +7532,39 @@ const DashboardTiles = {
          </div>
        ))}
        {/* Pagination (List) */}
-       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '0.5rem' }}>
-         <div style={{ fontSize: '0.9rem', color: '#666' }}>
-           Showing {totalPrerolls === 0 ? 0 : (pageStartIndex + 1)}-{pageEndIndex} of {totalPrerolls}
+       <div style={{ 
+         display: 'flex', 
+         justifyContent: 'space-between', 
+         alignItems: 'center', 
+         marginTop: '1rem',
+         padding: '0.75rem 1rem',
+         background: 'var(--card-bg)',
+         borderRadius: '8px',
+         border: '1px solid var(--border-color)'
+       }}>
+         <div style={{ fontSize: '0.9rem', color: 'var(--text-secondary)' }}>
+           Showing <span style={{ fontWeight: 600, color: 'var(--text-color)' }}>{totalPrerolls === 0 ? 0 : (pageStartIndex + 1)}-{pageEndIndex}</span> of <span style={{ fontWeight: 600, color: 'var(--text-color)' }}>{totalPrerolls}</span>
          </div>
          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-           <button className="button-secondary" disabled={currentPageClamped === 1} onClick={() => setCurrentPage(p => Math.max(1, p - 1))}>◀ Prev</button>
-           <span style={{ fontSize: '0.9rem' }}>Page {currentPageClamped} of {totalPages}</span>
-           <button className="button-secondary" disabled={currentPageClamped === totalPages} onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}>Next ▶</button>
+           <button 
+             className="button button-secondary" 
+             disabled={currentPageClamped === 1} 
+             onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
+             style={{ padding: '0.4rem 0.75rem', fontSize: '0.85rem' }}
+           >
+             ◀ Prev
+           </button>
+           <span style={{ fontSize: '0.9rem', padding: '0 0.5rem', color: 'var(--text-color)' }}>
+             Page <span style={{ fontWeight: 600 }}>{currentPageClamped}</span> of <span style={{ fontWeight: 600 }}>{totalPages}</span>
+           </span>
+           <button 
+             className="button button-secondary" 
+             disabled={currentPageClamped === totalPages} 
+             onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
+             style={{ padding: '0.4rem 0.75rem', fontSize: '0.85rem' }}
+           >
+             Next ▶
+           </button>
          </div>
        </div>
       </div>
@@ -7392,7 +7737,17 @@ const DashboardTiles = {
 
   // Calendar page - separate view
   const renderCalendarPage = () => (
-    <div>
+    <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
+      {/* Header */}
+      <div>
+        <h1 className="header" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.5rem' }}>
+          <CalendarDays size={32} style={{ color: 'var(--accent-color)' }} /> Calendar View
+        </h1>
+        <p style={{ color: 'var(--text-secondary)', fontSize: '0.95rem', margin: 0 }}>
+          Visual overview of your scheduled prerolls across days, weeks, months, or years.
+        </p>
+      </div>
+
       <div className="card nx-toolbar">
   <div className="toolbar-group">
     <label className="control-label">View</label>
@@ -10276,7 +10631,14 @@ const DashboardTiles = {
         {/* Header with Progress Steps */}
         <div style={{ marginBottom: '2rem' }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
-            <h2 style={{ margin: 0, fontSize: '1.8rem', fontWeight: 700 }}>Create New Schedule</h2>
+            <div>
+              <h1 className="header" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.5rem', margin: 0, fontSize: '1.8rem', fontWeight: 700 }}>
+                <PlusCircle size={32} style={{ color: 'var(--accent-color)' }} /> Create New Schedule
+              </h1>
+              <p style={{ color: 'var(--text-secondary)', fontSize: '0.95rem', margin: 0 }}>
+                Set up a new preroll schedule with step-by-step guidance.
+              </p>
+            </div>
           </div>
           
           {/* Visual Step Progress Indicator */}
@@ -11423,7 +11785,17 @@ const DashboardTiles = {
 
   // Schedule List page (default view)
   const renderScheduleListPage = () => (
-    <div>
+    <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
+      {/* Header */}
+      <div>
+        <h1 className="header" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.5rem' }}>
+          <Calendar size={32} style={{ color: 'var(--accent-color)' }} /> My Schedules
+        </h1>
+        <p style={{ color: 'var(--text-secondary)', fontSize: '0.95rem', margin: 0 }}>
+          Manage your preroll schedules and automation rules.
+        </p>
+      </div>
+
       {/* Quick Start Guide - Show only when no schedules exist */}
       {schedules.length === 0 && (
         <div style={{
@@ -12399,8 +12771,16 @@ const DashboardTiles = {
   };
 
   const renderCategories = () => (
-    <div>
-      <h1 className="header">Category Management</h1>
+    <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
+      {/* Header */}
+      <div>
+        <h1 className="header" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.5rem' }}>
+          <Folder size={32} style={{ color: 'var(--accent-color)' }} /> Category Management
+        </h1>
+        <p style={{ color: 'var(--text-secondary)', fontSize: '0.95rem', margin: 0 }}>
+          Create and manage categories to organize your prerolls.
+        </p>
+      </div>
 
       {editingCategory && (
         <Modal
@@ -16582,18 +16962,441 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
     if (activeTab === 'nexup/generator') {
       return renderNexUpGenerator();
     }
+    if (activeTab === 'nexup/upcoming') {
+      return renderNexUpUpcoming();
+    }
     // Default: Connections page
     return renderNexUpConnections();
+  };
+
+  // NeX-Up Upcoming Items Sub-Page - Full control over upcoming movies and TV shows
+  const renderNexUpUpcoming = () => {
+    // Handle toggling exclude from list
+    const handleToggleExclude = async (item, type) => {
+      const endpoint = type === 'movie' 
+        ? `/nexup/trailers/${item.trailer_db_id}/exclude`
+        : `/nexup/trailers/tv/${item.trailer_db_id}/exclude`;
+      
+      try {
+        const res = await fetch(apiUrl(endpoint), { method: 'PUT' });
+        if (res.ok) {
+          // Refresh the lists
+          if (type === 'movie') {
+            handleLoadNexupUpcoming();
+          } else {
+            loadNexupUpcomingTV();
+          }
+        }
+      } catch (err) {
+        console.error('Failed to toggle exclude:', err);
+      }
+    };
+
+    return (
+      <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
+        {/* Header */}
+        <div>
+          <h1 className="header" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.5rem' }}>
+            <ClipboardList size={32} style={{ color: 'var(--accent-color)' }} /> Upcoming Items
+          </h1>
+          <p style={{ color: 'var(--text-secondary)', fontSize: '0.95rem', margin: 0 }}>
+            Manage upcoming movies and TV shows from Radarr and Sonarr. Control what appears in your Coming Soon lists.
+          </p>
+        </div>
+
+        {/* Settings Card */}
+        <div className="card">
+          <h3 style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '1rem' }}>
+            <Settings size={20} /> Content Settings
+          </h3>
+          <div style={{ display: 'grid', gap: '1rem', maxWidth: '500px' }}>
+            {/* Include Unmonitored Movies */}
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0.75rem', backgroundColor: 'var(--bg-color)', borderRadius: '8px' }}>
+              <div>
+                <div style={{ fontWeight: 600, marginBottom: '0.25rem' }}>Include Unmonitored Movies</div>
+                <div style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
+                  Show movies that are not monitored in Radarr
+                </div>
+              </div>
+              <label className="nx-rockerswitch">
+                <input
+                  type="checkbox"
+                  checked={nexupSettings.include_unmonitored_movies || false}
+                  onChange={(e) => handleUpdateNexupSettings({ include_unmonitored_movies: e.target.checked })}
+                />
+                <span className="nx-rockerswitch-slider"></span>
+              </label>
+            </div>
+            
+            {/* Include Unmonitored TV Shows */}
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0.75rem', backgroundColor: 'var(--bg-color)', borderRadius: '8px' }}>
+              <div>
+                <div style={{ fontWeight: 600, marginBottom: '0.25rem' }}>Include Unmonitored TV Shows</div>
+                <div style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
+                  Show TV shows that are not monitored in Sonarr
+                </div>
+              </div>
+              <label className="nx-rockerswitch">
+                <input
+                  type="checkbox"
+                  checked={nexupSettings.include_unmonitored_shows || false}
+                  onChange={(e) => handleUpdateNexupSettings({ include_unmonitored_shows: e.target.checked })}
+                />
+                <span className="nx-rockerswitch-slider"></span>
+              </label>
+            </div>
+          </div>
+        </div>
+
+        {/* Movies/Shows Tab Switcher */}
+        <div style={{ display: 'flex', gap: '0.5rem', borderBottom: '2px solid var(--border-color)', paddingBottom: '0' }}>
+          <button
+            onClick={() => { setNexupUpcomingTab('movies'); handleLoadNexupUpcoming(); }}
+            style={{
+              padding: '0.75rem 1.5rem',
+              border: 'none',
+              borderBottom: nexupUpcomingTab === 'movies' ? '3px solid var(--accent-color)' : '3px solid transparent',
+              backgroundColor: 'transparent',
+              color: nexupUpcomingTab === 'movies' ? 'var(--accent-color)' : 'var(--text-color)',
+              cursor: 'pointer',
+              fontSize: '0.95rem',
+              fontWeight: nexupUpcomingTab === 'movies' ? 600 : 400,
+              display: 'flex',
+              alignItems: 'center',
+              gap: '0.5rem',
+              marginBottom: '-2px'
+            }}
+          >
+            <Video size={18} /> Movies ({nexupUpcoming.length})
+          </button>
+          <button
+            onClick={() => { setNexupUpcomingTab('shows'); loadNexupUpcomingTV(); }}
+            style={{
+              padding: '0.75rem 1.5rem',
+              border: 'none',
+              borderBottom: nexupUpcomingTab === 'shows' ? '3px solid #17a2b8' : '3px solid transparent',
+              backgroundColor: 'transparent',
+              color: nexupUpcomingTab === 'shows' ? '#17a2b8' : 'var(--text-color)',
+              cursor: 'pointer',
+              fontSize: '0.95rem',
+              fontWeight: nexupUpcomingTab === 'shows' ? 600 : 400,
+              display: 'flex',
+              alignItems: 'center',
+              gap: '0.5rem',
+              marginBottom: '-2px'
+            }}
+          >
+            <Tv size={18} /> TV Shows ({nexupUpcomingTV.length})
+          </button>
+        </div>
+
+        {/* Refresh Button */}
+        <div style={{ display: 'flex', gap: '0.5rem' }}>
+          <button
+            onClick={() => nexupUpcomingTab === 'movies' ? handleLoadNexupUpcoming() : loadNexupUpcomingTV()}
+            disabled={nexupLoading}
+            className="button"
+            style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}
+          >
+            {nexupLoading ? <Loader2 size={16} className="spin" /> : <RefreshCw size={16} />}
+            Refresh List
+          </button>
+        </div>
+
+        {/* Movies Tab Content */}
+        {nexupUpcomingTab === 'movies' && (
+          <div className="card">
+            {!nexupSettings.radarr_connected ? (
+              <div style={{ textAlign: 'center', padding: '2rem', color: 'var(--text-secondary)' }}>
+                <Video size={48} style={{ marginBottom: '1rem', opacity: 0.5 }} />
+                <p>Radarr not connected. Go to <strong>Connections</strong> to connect.</p>
+              </div>
+            ) : nexupUpcoming.length === 0 ? (
+              <div style={{ textAlign: 'center', padding: '2rem', color: 'var(--text-secondary)' }}>
+                {nexupLoading ? (
+                  <><Loader2 size={32} className="spin" /><p>Loading upcoming movies...</p></>
+                ) : (
+                  <><Calendar size={48} style={{ marginBottom: '1rem', opacity: 0.5 }} /><p>No upcoming movies found. Click Refresh to load from Radarr.</p></>
+                )}
+              </div>
+            ) : (
+              <div style={{ display: 'grid', gap: '1rem' }}>
+                {nexupUpcoming.map((movie) => (
+                  <div 
+                    key={movie.radarr_id}
+                    style={{
+                      display: 'flex',
+                      gap: '1rem',
+                      padding: '1rem',
+                      backgroundColor: movie.excluded_from_list ? 'rgba(220, 53, 69, 0.1)' : 'var(--bg-color)',
+                      borderRadius: '8px',
+                      border: `1px solid ${movie.excluded_from_list ? '#dc3545' : movie.downloaded ? '#28a745' : 'var(--border-color)'}`,
+                      opacity: movie.excluded_from_list ? 0.7 : 1
+                    }}
+                  >
+                    {movie.poster_url && (
+                      <img 
+                        src={movie.poster_url} 
+                        alt={movie.title}
+                        style={{ width: '80px', height: '120px', objectFit: 'cover', borderRadius: '4px' }}
+                        onError={(e) => e.target.style.display = 'none'}
+                      />
+                    )}
+                    <div style={{ flex: 1 }}>
+                      <h3 style={{ margin: '0 0 0.5rem 0', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                        {movie.title} {movie.year && `(${movie.year})`}
+                        {!movie.monitored && (
+                          <span style={{ fontSize: '0.75rem', padding: '0.2rem 0.5rem', backgroundColor: '#6c757d', color: 'white', borderRadius: '4px' }}>
+                            Unmonitored
+                          </span>
+                        )}
+                      </h3>
+                      {movie.release_date && (
+                        <p style={{ margin: '0 0 0.5rem 0', fontSize: '0.9rem' }}>
+                          <strong>Release:</strong> {new Date(movie.release_date).toLocaleDateString()} 
+                          {movie.days_until_release !== null && (
+                            <span style={{ 
+                              marginLeft: '0.5rem',
+                              padding: '0.2rem 0.5rem',
+                              borderRadius: '4px',
+                              fontSize: '0.8rem',
+                              backgroundColor: movie.days_until_release <= 7 ? '#28a745' : movie.days_until_release <= 30 ? '#ffc107' : '#6c757d',
+                              color: movie.days_until_release <= 30 ? '#000' : '#fff'
+                            }}>
+                              {movie.days_until_release <= 0 ? 'Available Now!' : `In ${movie.days_until_release} days`}
+                            </span>
+                          )}
+                        </p>
+                      )}
+                      <p style={{ margin: '0', fontSize: '0.85rem', color: 'var(--text-secondary)', maxHeight: '40px', overflow: 'hidden' }}>
+                        {movie.overview?.substring(0, 150)}{movie.overview?.length > 150 ? '...' : ''}
+                      </p>
+                    </div>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', alignItems: 'flex-end' }}>
+                      {/* Download/Downloaded Status */}
+                      {movie.downloaded ? (
+                        <span style={{ 
+                          padding: '0.5rem 1rem',
+                          borderRadius: '4px',
+                          backgroundColor: '#28a745',
+                          color: 'white',
+                          fontSize: '0.85rem',
+                          fontWeight: 500
+                        }}>
+                          ✓ Downloaded
+                        </span>
+                      ) : movie.trailer_url ? (
+                        <button
+                          onClick={() => handleDownloadTrailer(movie.radarr_id, movie.title)}
+                          disabled={downloadingTrailerId === movie.radarr_id || nexupLoading}
+                          className="button"
+                          style={{ 
+                            backgroundColor: downloadingTrailerId === movie.radarr_id ? '#6c757d' : '#007bff',
+                            minWidth: '140px',
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            gap: '0.5rem',
+                            fontSize: '0.85rem'
+                          }}
+                        >
+                          {downloadingTrailerId === movie.radarr_id ? (
+                            <><Loader2 size={14} className="spin" /> Downloading...</>
+                          ) : (
+                            <><Download size={14} /> Download</>
+                          )}
+                        </button>
+                      ) : (
+                        <span style={{ 
+                          padding: '0.5rem 1rem',
+                          borderRadius: '4px',
+                          backgroundColor: '#6c757d',
+                          color: 'white',
+                          fontSize: '0.85rem'
+                        }}>
+                          No Trailer
+                        </span>
+                      )}
+                      
+                      {/* Exclude from List Toggle - only show if trailer is downloaded */}
+                      {movie.trailer_db_id && (
+                        <button
+                          onClick={() => handleToggleExclude(movie, 'movie')}
+                          className="button"
+                          style={{ 
+                            backgroundColor: movie.excluded_from_list ? '#dc3545' : 'transparent',
+                            border: '1px solid ' + (movie.excluded_from_list ? '#dc3545' : 'var(--border-color)'),
+                            color: movie.excluded_from_list ? 'white' : 'var(--text-color)',
+                            fontSize: '0.8rem',
+                            padding: '0.35rem 0.75rem',
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: '0.35rem'
+                          }}
+                          title={movie.excluded_from_list ? 'Include in Coming Soon list' : 'Exclude from Coming Soon list'}
+                        >
+                          {movie.excluded_from_list ? <><EyeOff size={14} /> Excluded</> : <><Eye size={14} /> In List</>}
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* TV Shows Tab Content */}
+        {nexupUpcomingTab === 'shows' && (
+          <div className="card">
+            {!nexupSettings.sonarr_connected ? (
+              <div style={{ textAlign: 'center', padding: '2rem', color: 'var(--text-secondary)' }}>
+                <Tv size={48} style={{ marginBottom: '1rem', opacity: 0.5 }} />
+                <p>Sonarr not connected. Go to <strong>Connections</strong> to connect.</p>
+              </div>
+            ) : nexupUpcomingTV.length === 0 ? (
+              <div style={{ textAlign: 'center', padding: '2rem', color: 'var(--text-secondary)' }}>
+                {nexupLoading ? (
+                  <><Loader2 size={32} className="spin" /><p>Loading upcoming TV shows...</p></>
+                ) : (
+                  <><Calendar size={48} style={{ marginBottom: '1rem', opacity: 0.5 }} /><p>No upcoming TV shows found. Click Refresh to load from Sonarr.</p></>
+                )}
+              </div>
+            ) : (
+              <div style={{ display: 'grid', gap: '1rem' }}>
+                {nexupUpcomingTV.map((show, idx) => (
+                  <div 
+                    key={`${show.sonarr_id || idx}_${show.season_number || 0}`}
+                    style={{
+                      display: 'flex',
+                      gap: '1rem',
+                      padding: '1rem',
+                      backgroundColor: show.excluded_from_list ? 'rgba(220, 53, 69, 0.1)' : 'var(--bg-color)',
+                      borderRadius: '8px',
+                      border: `1px solid ${show.excluded_from_list ? '#dc3545' : show.downloaded ? '#28a745' : 'var(--border-color)'}`,
+                      opacity: show.excluded_from_list ? 0.7 : 1
+                    }}
+                  >
+                    {show.poster_url && (
+                      <img 
+                        src={show.poster_url} 
+                        alt={show.title}
+                        style={{ width: '60px', height: '90px', objectFit: 'cover', borderRadius: '4px' }}
+                        onError={(e) => e.target.style.display = 'none'}
+                      />
+                    )}
+                    <div style={{ flex: 1 }}>
+                      <h3 style={{ margin: '0 0 0.25rem 0', fontSize: '1.1rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                        {show.title} {show.year && `(${show.year})`}
+                        {!show.monitored && (
+                          <span style={{ fontSize: '0.75rem', padding: '0.2rem 0.5rem', backgroundColor: '#6c757d', color: 'white', borderRadius: '4px' }}>
+                            Unmonitored
+                          </span>
+                        )}
+                      </h3>
+                      {show.season_number && (
+                        <p style={{ margin: '0 0 0.25rem 0', fontSize: '0.9rem', color: '#17a2b8', fontWeight: 500 }}>
+                          Season {show.season_number} {show.release_type === 'season_premiere' ? '(Season Premiere)' : show.release_type === 'series_premiere' ? '(Series Premiere)' : ''}
+                        </p>
+                      )}
+                      {(show.release_date || show.air_date) && (
+                        <p style={{ margin: '0 0 0.5rem 0', fontSize: '0.9rem' }}>
+                          <strong>Release:</strong> {new Date(show.release_date || show.air_date).toLocaleDateString()}
+                          {show.days_until_release !== null && show.days_until_release !== undefined && (
+                            <span style={{ 
+                              marginLeft: '0.5rem',
+                              padding: '0.2rem 0.5rem',
+                              borderRadius: '4px',
+                              fontSize: '0.8rem',
+                              backgroundColor: show.days_until_release <= 7 ? '#28a745' : show.days_until_release <= 30 ? '#ffc107' : '#6c757d',
+                              color: show.days_until_release <= 30 ? '#000' : '#fff'
+                            }}>
+                              {show.days_until_release <= 0 ? 'Available Now!' : `In ${show.days_until_release} days`}
+                            </span>
+                          )}
+                        </p>
+                      )}
+                      {show.network && (
+                        <p style={{ margin: '0 0 0.25rem 0', fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
+                          📺 {show.network}
+                        </p>
+                      )}
+                    </div>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', alignItems: 'flex-end' }}>
+                      {show.downloaded ? (
+                        <span style={{ 
+                          padding: '0.5rem 1rem',
+                          borderRadius: '4px',
+                          backgroundColor: '#28a745',
+                          color: 'white',
+                          fontSize: '0.85rem',
+                          fontWeight: 500
+                        }}>
+                          ✓ Downloaded
+                        </span>
+                      ) : (
+                        <button
+                          onClick={() => handleDownloadTVTrailer(show.sonarr_id, show.season_number, show.title)}
+                          disabled={downloadingTrailerId === `tv_${show.sonarr_id}_${show.season_number}` || nexupLoading}
+                          className="button"
+                          style={{ 
+                            backgroundColor: downloadingTrailerId === `tv_${show.sonarr_id}_${show.season_number}` ? '#6c757d' : '#17a2b8',
+                            minWidth: '140px',
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            gap: '0.5rem',
+                            fontSize: '0.85rem'
+                          }}
+                        >
+                          {downloadingTrailerId === `tv_${show.sonarr_id}_${show.season_number}` ? (
+                            <><Loader2 size={14} className="spin" /> Downloading...</>
+                          ) : (
+                            <><Download size={14} /> Download</>
+                          )}
+                        </button>
+                      )}
+                      
+                      {/* Exclude from List Toggle - only show if trailer is downloaded */}
+                      {show.trailer_db_id && (
+                        <button
+                          onClick={() => handleToggleExclude(show, 'show')}
+                          className="button"
+                          style={{ 
+                            backgroundColor: show.excluded_from_list ? '#dc3545' : 'transparent',
+                            border: '1px solid ' + (show.excluded_from_list ? '#dc3545' : 'var(--border-color)'),
+                            color: show.excluded_from_list ? 'white' : 'var(--text-color)',
+                            fontSize: '0.8rem',
+                            padding: '0.35rem 0.75rem',
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: '0.35rem'
+                          }}
+                          title={show.excluded_from_list ? 'Include in Coming Soon list' : 'Exclude from Coming Soon list'}
+                        >
+                          {show.excluded_from_list ? <><EyeOff size={14} /> Excluded</> : <><Eye size={14} /> In List</>}
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+    );
   };
 
   // NeX-Up Connections Sub-Page
   const renderNexUpConnections = () => (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
+      {/* Header */}
       <div>
-        <h1 className="header" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-          <Clapperboard size={32} /> NeX-Up
+        <h1 className="header" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.5rem' }}>
+          <Clapperboard size={32} style={{ color: 'var(--accent-color)' }} /> NeX-Up
         </h1>
-        <p style={{ marginBottom: '0', color: 'var(--text-color)', fontSize: '1rem' }}>
+        <p style={{ color: 'var(--text-secondary)', fontSize: '0.95rem', margin: 0 }}>
           Connect to Radarr and Sonarr to automatically fetch trailers for upcoming movies and TV shows.
         </p>
       </div>
@@ -16852,7 +17655,7 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
                 {syncProgress ? <><Loader2 size={16} className="spin" /> Syncing...</> : <><Download size={16} /> Auto-Download</>}
               </button>
               <button
-                onClick={() => { handleLoadNexupUpcoming(); setShowNexupUpcoming(true); }}
+                onClick={() => { handleLoadNexupUpcoming(); setActiveTab('nexup/upcoming'); }}
                 className="button"
                 style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}
               >
@@ -17033,7 +17836,7 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
                 {tvSyncProgress ? <><Loader2 size={16} className="spin" /> Syncing...</> : <><Download size={16} /> Auto-Download</>}
               </button>
               <button
-                onClick={() => { loadNexupUpcomingTV(); setShowNexupUpcomingTV(true); }}
+                onClick={() => { loadNexupUpcomingTV(); setActiveTab('nexup/upcoming'); }}
                 className="button"
                 style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}
               >
@@ -17092,10 +17895,10 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
   const renderNexUpTrailers = () => (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
       <div>
-        <h1 className="header" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-          <Film size={32} /> Your Trailers
+        <h1 className="header" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.5rem' }}>
+          <Film size={32} style={{ color: 'var(--accent-color)' }} /> Your Trailers
         </h1>
-        <p style={{ marginBottom: '0', color: 'var(--text-color)', fontSize: '1rem' }}>
+        <p style={{ color: 'var(--text-secondary)', fontSize: '0.95rem', margin: 0 }}>
           Manage downloaded trailers from Radarr and Sonarr. Trailers are automatically removed when movies/shows are added to your library.
         </p>
       </div>
@@ -17731,10 +18534,10 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
   const renderNexUpSettings = () => (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
       <div>
-        <h1 className="header" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-          <Settings size={32} /> NeX-Up Settings
+        <h1 className="header" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.5rem' }}>
+          <Settings size={32} style={{ color: 'var(--accent-color)' }} /> NeX-Up Settings
         </h1>
-        <p style={{ marginBottom: '0', color: 'var(--text-color)', fontSize: '1rem' }}>
+        <p style={{ color: 'var(--text-secondary)', fontSize: '0.95rem', margin: 0 }}>
           Configure storage, download preferences, and authentication settings.
         </p>
       </div>
@@ -18404,6 +19207,25 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
                 
                 <div>
                   <label style={{ display: 'block', marginBottom: '0.5rem', fontWeight: 'bold' }}>
+                    Release Date to Use
+                  </label>
+                  <select
+                    value={nexupSettings.release_date_preference || 'digital_first'}
+                    onChange={(e) => handleUpdateNexupSettings({ release_date_preference: e.target.value })}
+                    style={{ width: '100%', padding: '0.5rem', borderRadius: '4px', border: '1px solid var(--border-color)' }}
+                  >
+                    <option value="digital_first">Digital Release (default)</option>
+                    <option value="digital_only">Digital Only (skip if no digital date)</option>
+                    <option value="physical_first">Physical Release First</option>
+                    <option value="theatrical">Theatrical Release</option>
+                  </select>
+                  <p style={{ fontSize: '0.8rem', color: '#888', marginTop: '0.25rem' }}>
+                    Which release date to show and use for "Coming Soon". Digital = when it's available for streaming/download.
+                  </p>
+                </div>
+                
+                <div>
+                  <label style={{ display: 'block', marginBottom: '0.5rem', fontWeight: 'bold' }}>
                     Max Trailers to Keep
                   </label>
                   <select
@@ -18599,10 +19421,10 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
   const renderNexUpGenerator = () => (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
       <div>
-        <h1 className="header" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-          <Sparkles size={32} /> Preroll Generator
+        <h1 className="header" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.5rem' }}>
+          <Sparkles size={32} style={{ color: 'var(--accent-color)' }} /> Preroll Generator
         </h1>
-        <p style={{ marginBottom: '0', color: 'var(--text-color)', fontSize: '1rem' }}>
+        <p style={{ color: 'var(--text-secondary)', fontSize: '0.95rem', margin: 0 }}>
           Create custom cinematic intro videos and build sequences for your preroll rotation.
         </p>
       </div>
@@ -19579,14 +20401,15 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
   // Settings - General Tab
   const renderSettingsGeneral = () => (
     <>
-    <div className="card">
-      <h2 style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-        <Settings size={20} style={{ color: '#00d4ff' }} /> NeXroll Settings
-      </h2>
-      <p style={{ color: 'var(--text-secondary)', marginBottom: '1rem' }}>
+    <div style={{ marginBottom: '1rem' }}>
+      <h1 className="header" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.5rem' }}>
+        <Settings size={32} style={{ color: 'var(--accent-color)' }} /> General Settings
+      </h1>
+      <p style={{ color: 'var(--text-secondary)', fontSize: '0.95rem', margin: 0 }}>
         Configure general application preferences and behavior.
       </p>
-      
+    </div>
+    <div className="card">
       {/* Theme Settings */}
       <div style={{ 
         padding: '1rem', 
@@ -20043,6 +20866,14 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
   // Settings - Path Mappings Tab
   const renderSettingsPaths = () => (
     <>
+    <div style={{ marginBottom: '1rem' }}>
+      <h1 className="header" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.5rem' }}>
+        <FolderSync size={32} style={{ color: 'var(--accent-color)' }} /> Path Mappings
+      </h1>
+      <p style={{ color: 'var(--text-secondary)', fontSize: '0.95rem', margin: 0 }}>
+        Define how local paths should be translated to media server paths.
+      </p>
+    </div>
     {/* Path Mappings Card */}
     <div className="card" style={{ marginBottom: '1.5rem' }}>
       <h2 style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.5rem' }}>
@@ -20242,14 +21073,16 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
 
   // Settings - Backup & Restore Tab
   const renderSettingsBackup = () => (
-    <div className="card">
-      <h2 style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-        <Archive size={20} /> Backup & Restore
-      </h2>
-      <p style={{ marginBottom: '1.5rem', color: 'var(--text-secondary)' }}>
+    <>
+    <div style={{ marginBottom: '1rem' }}>
+      <h1 className="header" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.5rem' }}>
+        <Archive size={32} style={{ color: 'var(--accent-color)' }} /> Backup & Restore
+      </h1>
+      <p style={{ color: 'var(--text-secondary)', fontSize: '0.95rem', margin: 0 }}>
         Create backups of your NeXroll data and restore from previous backups.
       </p>
-
+    </div>
+    <div className="card">
       {/* Progress Indicator */}
       {backupProgress.active && (
         <div style={{
@@ -20431,10 +21264,20 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
         </div>
       </div>
     </div>
+    </>
   );
 
   // Settings - API Keys Tab
   const renderSettingsApiKeys = () => (
+    <>
+    <div style={{ marginBottom: '1rem' }}>
+      <h1 className="header" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.5rem' }}>
+        <Key size={32} style={{ color: 'var(--accent-color)' }} /> API Keys
+      </h1>
+      <p style={{ color: 'var(--text-secondary)', fontSize: '0.95rem', margin: 0 }}>
+        Manage API keys for external integrations and automation.
+      </p>
+    </div>
     <div>
       {/* Created Key Display (only shown once after creation) */}
       {createdApiKey && (
@@ -20483,17 +21326,11 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
 
       {/* API Keys Management */}
       <div className="card">
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
-          <h2 style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', margin: 0 }}>
-            <Key size={20} /> API Keys
-          </h2>
+        <div style={{ display: 'flex', justifyContent: 'flex-end', alignItems: 'center', marginBottom: '1rem' }}>
           <button className="button" onClick={() => setShowNewKeyModal(true)}>
             <Plus size={14} /> Create API Key
           </button>
         </div>
-        <p style={{ marginBottom: '1rem', color: 'var(--text-secondary)' }}>
-          API keys allow external applications to access NeXroll's data securely. Use these for integrations, scripts, or third-party tools.
-        </p>
 
         {apiKeysLoading ? (
           <div style={{ textAlign: 'center', padding: '2rem' }}>
@@ -20748,10 +21585,20 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
         </div>
       )}
     </div>
+    </>
   );
 
   // Settings - Logs Tab
   const renderSettingsLogs = () => (
+    <>
+    <div style={{ marginBottom: '1rem' }}>
+      <h1 className="header" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.5rem' }}>
+        <FileText size={32} style={{ color: 'var(--accent-color)' }} /> Event Log
+      </h1>
+      <p style={{ color: 'var(--text-secondary)', fontSize: '0.95rem', margin: 0 }}>
+        View application logs and system events.
+      </p>
+    </div>
     <div>
       {/* Log Stats Overview */}
       {logStats && (
@@ -21051,148 +21898,58 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
           <div style={{ 
             maxHeight: '500px', 
             overflowY: 'auto',
-            backgroundColor: 'var(--card-bg)',
+            backgroundColor: '#0d0d0d',
             borderRadius: '8px',
-            border: '1px solid var(--border-color)',
-            fontFamily: "'JetBrains Mono', 'Fira Code', 'Consolas', monospace"
+            border: '1px solid #333',
+            fontFamily: "'Consolas', 'Monaco', 'Lucida Console', monospace",
+            padding: '0.5rem 0'
           }}>
-            {logs.map((log, idx) => (
-              <div
-                key={log.id || idx}
-                style={{
-                  padding: '0.65rem 1rem',
-                  borderBottom: idx < logs.length - 1 ? '1px solid var(--border-color)' : 'none',
-                  fontSize: '0.8rem',
-                  transition: 'background-color 0.15s',
-                  backgroundColor: (log.level === 'ERROR' || log.level === 'CRITICAL') 
-                    ? 'rgba(239, 68, 68, 0.05)' 
-                    : log.level === 'WARNING' 
-                      ? 'rgba(245, 158, 11, 0.03)' 
-                      : 'transparent'
-                }}
-                onMouseEnter={(e) => e.currentTarget.style.backgroundColor = 'var(--bg-hover)'}
-                onMouseLeave={(e) => e.currentTarget.style.backgroundColor = (log.level === 'ERROR' || log.level === 'CRITICAL') ? 'rgba(239, 68, 68, 0.05)' : log.level === 'WARNING' ? 'rgba(245, 158, 11, 0.03)' : 'transparent'}
-              >
-                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
-                  <span style={{ color: 'var(--text-secondary)', fontSize: '0.7rem', fontFamily: 'inherit', minWidth: '140px', opacity: 0.7 }}>
-                    {new Date(log.created_at || log.timestamp).toLocaleString()}
-                  </span>
-                  <span style={{
-                    padding: '0.15rem 0.5rem',
-                    borderRadius: '3px',
-                    fontSize: '0.65rem',
-                    fontWeight: 700,
-                    fontFamily: 'inherit',
-                    textTransform: 'uppercase',
-                    letterSpacing: '0.5px',
-                    backgroundColor: 
-                      log.level === 'ERROR' || log.level === 'CRITICAL' ? 'rgba(239, 68, 68, 0.2)' :
-                      log.level === 'WARNING' ? 'rgba(245, 158, 11, 0.2)' :
-                      log.level === 'INFO' ? 'rgba(0, 212, 255, 0.2)' :
-                      log.level === 'DEBUG' ? 'rgba(139, 92, 246, 0.2)' :
-                      'rgba(107, 114, 128, 0.2)',
-                    color:
-                      log.level === 'ERROR' || log.level === 'CRITICAL' ? '#f87171' :
-                      log.level === 'WARNING' ? '#fbbf24' :
-                      log.level === 'INFO' ? '#00d4ff' :
-                      log.level === 'DEBUG' ? '#a78bfa' :
-                      '#9ca3af',
-                    border: `1px solid ${
-                      log.level === 'ERROR' || log.level === 'CRITICAL' ? 'rgba(239, 68, 68, 0.3)' :
-                      log.level === 'WARNING' ? 'rgba(245, 158, 11, 0.3)' :
-                      log.level === 'INFO' ? 'rgba(0, 212, 255, 0.3)' :
-                      log.level === 'DEBUG' ? 'rgba(139, 92, 246, 0.3)' :
-                      'rgba(107, 114, 128, 0.3)'
-                    }`
+            {logs.map((log, idx) => {
+              // Format timestamp like app.log: 2026-02-21 14:32:45
+              const logDate = new Date(log.created_at || log.timestamp);
+              const timestamp = logDate.toISOString().replace('T', ' ').slice(0, 19);
+              
+              // Level color matching terminal style
+              const levelColor = 
+                log.level === 'ERROR' || log.level === 'CRITICAL' ? '#ff5555' :
+                log.level === 'WARNING' ? '#ffb86c' :
+                log.level === 'INFO' ? '#50fa7b' :
+                log.level === 'DEBUG' ? '#bd93f9' :
+                '#f8f8f2';
+              
+              // Format single line: [timestamp] LEVEL - message
+              return (
+                <div
+                  key={log.id || idx}
+                  style={{
+                    padding: '0.15rem 0.75rem',
+                    fontSize: '0.75rem',
+                    lineHeight: '1.6',
+                    whiteSpace: 'nowrap',
+                    overflowX: 'auto',
+                    color: '#f8f8f2'
+                  }}
+                >
+                  <span style={{ color: '#6272a4' }}>[{timestamp}]</span>
+                  {' '}
+                  <span style={{ 
+                    color: levelColor, 
+                    fontWeight: 600,
+                    minWidth: '50px',
+                    display: 'inline-block'
                   }}>
-                    {log.level}
+                    {log.level.padEnd(8)}
                   </span>
                   {log.category && (
-                    <span style={{
-                      padding: '0.15rem 0.5rem',
-                      borderRadius: '3px',
-                      fontSize: '0.65rem',
-                      fontFamily: 'inherit',
-                      backgroundColor: 'var(--bg-color)',
-                      color: 'var(--text-secondary)',
-                      border: '1px solid var(--border-color)'
-                    }}>
-                      {log.category}
-                    </span>
+                    <>
+                      <span style={{ color: '#8be9fd' }}>[{log.category}]</span>
+                      {' '}
+                    </>
                   )}
-                  {log.source && (
-                    <span style={{ 
-                      fontSize: '0.7rem', 
-                      color: 'var(--text-secondary)',
-                      fontFamily: 'inherit',
-                      opacity: 0.6
-                    }}>
-                      {log.source}
-                    </span>
-                  )}
+                  <span style={{ color: '#f8f8f2' }}>{log.message}</span>
                 </div>
-                <div style={{ 
-                  marginTop: '0.35rem', 
-                  color: 'var(--text-color)',
-                  lineHeight: 1.5,
-                  fontFamily: 'inherit'
-                }}>
-                  {log.message}
-                </div>
-                {/* Only show details if they contain useful info not already in message */}
-                {log.details && (() => {
-                  try {
-                    const details = typeof log.details === 'string' ? JSON.parse(log.details) : log.details;
-                    // Filter out redundant keys that just repeat the message content
-                    const redundantKeys = ['action', 'schedule_name', 'category_name', 'sequence_name', 'preroll_name', 'message'];
-                    const filteredDetails = Object.entries(details).filter(([key, value]) => {
-                      // Skip redundant keys
-                      if (redundantKeys.includes(key)) return false;
-                      // Skip if the value is mentioned in the message
-                      if (typeof value === 'string' && log.message.toLowerCase().includes(value.toLowerCase())) return false;
-                      return true;
-                    });
-                    // Only show if there are meaningful details left
-                    if (filteredDetails.length === 0) return null;
-                    return (
-                      <div style={{ 
-                        marginTop: '0.35rem',
-                        display: 'flex',
-                        flexWrap: 'wrap',
-                        gap: '0.5rem'
-                      }}>
-                        {filteredDetails.map(([key, value]) => (
-                          <span key={key} style={{
-                            fontSize: '0.7rem',
-                            padding: '0.15rem 0.5rem',
-                            backgroundColor: 'var(--bg-color)',
-                            borderRadius: '3px',
-                            color: 'var(--text-secondary)',
-                            border: '1px solid var(--border-color)'
-                          }}>
-                            <span style={{ color: 'var(--text-secondary)', opacity: 0.7 }}>{key}:</span> {String(value)}
-                          </span>
-                        ))}
-                      </div>
-                    );
-                  } catch {
-                    // If details isn't valid JSON, show as-is only if it adds info
-                    const detailStr = String(log.details).trim();
-                    if (!detailStr || log.message.includes(detailStr)) return null;
-                    return (
-                      <div style={{ 
-                        marginTop: '0.35rem', 
-                        fontSize: '0.7rem', 
-                        color: 'var(--text-secondary)',
-                        fontFamily: 'inherit'
-                      }}>
-                        {detailStr}
-                      </div>
-                    );
-                  }
-                })()}
-              </div>
-            ))}
+              );
+            })}
           </div>
         )}
       </div>
@@ -21338,10 +22095,20 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
         </div>
       )}
     </div>
+    </>
   );
 
   // Settings - Users Tab
   const renderSettingsUsers = () => (
+    <>
+    <div style={{ marginBottom: '1rem' }}>
+      <h1 className="header" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.5rem' }}>
+        <Users size={32} style={{ color: 'var(--accent-color)' }} /> User Management
+      </h1>
+      <p style={{ color: 'var(--text-secondary)', fontSize: '0.95rem', margin: 0 }}>
+        Manage user accounts and authentication settings.
+      </p>
+    </div>
     <div>
       {/* User Management */}
       <div className="card">
@@ -21703,10 +22470,20 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
         </div>
       )}
     </div>
+    </>
   );
 
   // Settings - System Tab
   const renderSettingsSystem = () => (
+    <>
+    <div style={{ marginBottom: '1rem' }}>
+      <h1 className="header" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.5rem' }}>
+        <Info size={32} style={{ color: 'var(--accent-color)' }} /> System Information
+      </h1>
+      <p style={{ color: 'var(--text-secondary)', fontSize: '0.95rem', margin: 0 }}>
+        View version info, scheduler status, and system diagnostics.
+      </p>
+    </div>
     <div>
       {/* Version & Application Info */}
       <div className="card">
@@ -22418,6 +23195,7 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
         </div>
       </div>
     </div>
+    </>
   );
 
   // Main Settings Router
@@ -22446,7 +23224,12 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
 
   const renderJellyfin = () => (
     <div>
-      <h1 className="header">Jellyfin Integration</h1>
+      <h1 className="header" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.5rem' }}>
+        <Tv size={32} style={{ color: 'var(--accent-color)' }} /> Jellyfin Integration
+      </h1>
+      <p style={{ color: 'var(--text-secondary)', fontSize: '0.95rem', margin: 0, marginBottom: '1rem' }}>
+        Connect your Jellyfin server to enable preroll management.
+      </p>
 
       <div className="card">
         <h2>Connect to Jellyfin Server</h2>
@@ -22520,7 +23303,12 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
 
   const renderConnect = () => (
     <div className="nx-connect">
-      <h1 className="header">Connections</h1>
+      <h1 className="header" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.5rem' }}>
+        <Link2 size={32} style={{ color: 'var(--accent-color)' }} /> Connections
+      </h1>
+      <p style={{ color: 'var(--text-secondary)', fontSize: '0.95rem', margin: 0, marginBottom: '1rem' }}>
+        Connect to your Plex or Jellyfin media server.
+      </p>
 
       {/* Secondary tabs for media servers */}
       <div
@@ -22715,9 +23503,9 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
         }}>
           <div>
             <h1 className="header" style={{ margin: '0 0 0.5rem 0', fontSize: '2rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-              <Clapperboard size={28} /> {editingSequenceId ? `Editing: ${editingSequenceName}` : 'Sequence Builder'}
+              <Clapperboard size={28} style={{ color: 'var(--accent-color)' }} /> {editingSequenceId ? `Editing: ${editingSequenceName}` : 'Sequence Builder'}
             </h1>
-            <p style={{ opacity: 0.7, margin: 0, fontSize: '1rem' }}>
+            <p style={{ color: 'var(--text-secondary)', fontSize: '0.95rem', margin: 0 }}>
               {editingSequenceId 
                 ? 'Update your sequence and save changes to the library' 
                 : 'Build custom preroll sequences with full creative control. Combine categories, fixed prerolls, and randomized blocks.'}
@@ -23123,8 +23911,8 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
           borderBottom: '2px solid var(--border-color)'
         }}>
           <div>
-            <h1 className="header" style={{ margin: '0 0 0.5rem 0', fontSize: '2rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}><Library size={28} /> Saved Sequences</h1>
-            <p style={{ opacity: 0.7, margin: 0, fontSize: '1rem' }}>
+            <h1 className="header" style={{ margin: '0 0 0.5rem 0', fontSize: '2rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}><Library size={28} style={{ color: 'var(--accent-color)' }} /> Saved Sequences</h1>
+            <p style={{ color: 'var(--text-secondary)', fontSize: '0.95rem', margin: 0 }}>
               Reusable custom sequences you can schedule anytime
             </p>
           </div>
@@ -24241,9 +25029,16 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
     // Main Community Prerolls interface
     return (
       <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+        <div>
+          <h1 className="header" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.5rem' }}>
+            <Users2 size={32} style={{ color: 'var(--accent-color)' }} /> Community Prerolls
+          </h1>
+          <p style={{ color: 'var(--text-secondary)', fontSize: '0.95rem', margin: 0 }}>
+            Browse and download prerolls from the community library.
+          </p>
+        </div>
         <div className="card">
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
-            <h2 style={{ marginTop: 0, marginBottom: 0 }}>Search Community Prerolls Library</h2>
+          <div style={{ display: 'flex', justifyContent: 'flex-end', alignItems: 'center', marginBottom: '1rem' }}>
             <button
               onClick={async () => {
                 // Re-show Fair Use Policy - fetch policy text if not already loaded
@@ -25531,8 +26326,9 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
                   display: 'flex',
                   alignItems: 'center',
                   gap: '0.25rem',
-                  backgroundColor: 'transparent',
-                  border: '1px solid var(--border-color)'
+                  backgroundColor: 'var(--bg-color)',
+                  border: '1px solid var(--text-secondary)',
+                  color: 'var(--text-color)'
                 }}
               >
                 <Lock size={14} /> Logout
@@ -25777,6 +26573,7 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
          }}>
            {[
              { id: 'nexup', icon: <Link size={16} />, label: 'Connections' },
+             { id: 'nexup/upcoming', icon: <ClipboardList size={16} />, label: 'Upcoming' },
              { id: 'nexup/trailers', icon: <Film size={16} />, label: 'Your Trailers' },
              { id: 'nexup/settings', icon: <Settings size={16} />, label: 'Settings' },
              { id: 'nexup/generator', icon: <Sparkles size={16} />, label: 'Generator' }

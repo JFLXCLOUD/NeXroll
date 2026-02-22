@@ -211,6 +211,65 @@ class RadarrConnector:
             'Content-Type': 'application/json'
         }
     
+    def _select_release_date(self, digital_release: str, physical_release: str, in_cinemas: str, preference: str = 'digital_first') -> tuple:
+        """
+        Select the appropriate release date based on user preference.
+        Returns (release_date, release_type) tuple.
+        
+        Preferences:
+        - 'digital_first': Digital > Physical > Theatrical (default)
+        - 'digital_only': Only use digital date
+        - 'physical_first': Physical > Digital > Theatrical  
+        - 'theatrical': Theatrical > Digital > Physical
+        """
+        def parse_date(date_str):
+            if not date_str:
+                return None
+            try:
+                return datetime.fromisoformat(date_str.replace('Z', '+00:00')).date()
+            except:
+                return None
+        
+        digital_date = parse_date(digital_release)
+        physical_date = parse_date(physical_release)
+        theatrical_date = parse_date(in_cinemas)
+        
+        if preference == 'digital_only':
+            # Only return digital date, skip movie if not available
+            if digital_date:
+                return digital_date, 'digital'
+            return None, None
+        
+        elif preference == 'physical_first':
+            # Physical > Digital > Theatrical
+            if physical_date:
+                return physical_date, 'physical'
+            if digital_date:
+                return digital_date, 'digital'
+            if theatrical_date:
+                return theatrical_date, 'theatrical'
+            return None, None
+        
+        elif preference == 'theatrical':
+            # Theatrical > Digital > Physical
+            if theatrical_date:
+                return theatrical_date, 'theatrical'
+            if digital_date:
+                return digital_date, 'digital'
+            if physical_date:
+                return physical_date, 'physical'
+            return None, None
+        
+        else:  # 'digital_first' (default)
+            # Digital > Physical > Theatrical
+            if digital_date:
+                return digital_date, 'digital'
+            if physical_date:
+                return physical_date, 'physical'
+            if theatrical_date:
+                return theatrical_date, 'theatrical'
+            return None, None
+    
     async def test_connection(self) -> Dict[str, Any]:
         """Test the Radarr connection and return system status"""
         try:
@@ -237,12 +296,19 @@ class RadarrConnector:
         except Exception as e:
             return {'success': False, 'message': str(e)}
     
-    async def get_upcoming_movies(self, days_ahead: int = 90) -> List[Dict[str, Any]]:
+    async def get_upcoming_movies(self, days_ahead: int = 90, include_unmonitored: bool = False, release_date_preference: str = 'digital_first') -> List[Dict[str, Any]]:
         """
         Fetch movies from Radarr that are:
         - Announced/In Cinemas (not yet released digitally)
         - Have a release date within the look-ahead window
         - Not yet downloaded/available
+        - Optionally include unmonitored movies
+        
+        release_date_preference options:
+        - 'digital_first': Digital > Physical > Theatrical (default, shows when you can actually watch it)
+        - 'digital_only': Only include movies with a digital release date
+        - 'physical_first': Physical > Digital > Theatrical
+        - 'theatrical': Theatrical > Digital > Physical (for theater fans)
         """
         try:
             async with httpx.AsyncClient(timeout=self.timeout) as client:
@@ -264,38 +330,27 @@ class RadarrConnector:
                 if movie.get('hasFile', False):
                     continue
                 
+                # Skip unmonitored movies (unless include_unmonitored is True)
+                if not include_unmonitored and not movie.get('monitored', False):
+                    continue
+                
                 # Check status - we want movies that are monitored but not available
                 status = movie.get('status', '').lower()
                 if status not in ['announced', 'incinemas', 'released']:
                     continue
                 
-                # Get digital/physical release date
+                # Get all release dates
                 digital_release = movie.get('digitalRelease')
                 physical_release = movie.get('physicalRelease')
                 in_cinemas = movie.get('inCinemas')
                 
-                # Determine the most relevant release date
+                # Determine the release date based on preference
                 release_date = None
                 release_type = None
                 
-                if digital_release:
-                    try:
-                        release_date = datetime.fromisoformat(digital_release.replace('Z', '+00:00')).date()
-                        release_type = 'digital'
-                    except:
-                        pass
-                elif physical_release:
-                    try:
-                        release_date = datetime.fromisoformat(physical_release.replace('Z', '+00:00')).date()
-                        release_type = 'physical'
-                    except:
-                        pass
-                elif in_cinemas:
-                    try:
-                        release_date = datetime.fromisoformat(in_cinemas.replace('Z', '+00:00')).date()
-                        release_type = 'theatrical'
-                    except:
-                        pass
+                release_date, release_type = self._select_release_date(
+                    digital_release, physical_release, in_cinemas, release_date_preference
+                )
                 
                 # Skip if no release date
                 if not release_date:
@@ -362,10 +417,17 @@ class RadarrConnector:
             logger.error(f"Error fetching all movies from Radarr: {e}")
             return []
     
-    def parse_upcoming_from_raw(self, all_movies: List[Dict[str, Any]], days_ahead: int = 90) -> List[Dict[str, Any]]:
+    def parse_upcoming_from_raw(self, all_movies: List[Dict[str, Any]], days_ahead: int = 90, include_unmonitored: bool = False, release_date_preference: str = 'digital_first') -> List[Dict[str, Any]]:
         """
         Parse upcoming movies from raw Radarr movie data.
         This avoids a second API call when we already have all movie data.
+        Optionally includes unmonitored movies.
+        
+        release_date_preference options:
+        - 'digital_first': Digital > Physical > Theatrical (default)
+        - 'digital_only': Only include movies with a digital release date
+        - 'physical_first': Physical > Digital > Theatrical
+        - 'theatrical': Theatrical > Digital > Physical
         """
         upcoming = []
         today = datetime.now().date()
@@ -377,37 +439,24 @@ class RadarrConnector:
             if movie.get('hasFile', False):
                 continue
             
+            # Skip unmonitored movies (unless include_unmonitored is True)
+            if not include_unmonitored and not movie.get('monitored', False):
+                continue
+            
             # Check status
             status = movie.get('status', '').lower()
             if status not in ['announced', 'incinemas', 'released']:
                 continue
             
-            # Get release date
+            # Get all release dates
             digital_release = movie.get('digitalRelease')
             physical_release = movie.get('physicalRelease')
             in_cinemas = movie.get('inCinemas')
             
-            release_date = None
-            release_type = None
-            
-            if digital_release:
-                try:
-                    release_date = datetime.fromisoformat(digital_release.replace('Z', '+00:00')).date()
-                    release_type = 'digital'
-                except:
-                    pass
-            elif physical_release:
-                try:
-                    release_date = datetime.fromisoformat(physical_release.replace('Z', '+00:00')).date()
-                    release_type = 'physical'
-                except:
-                    pass
-            elif in_cinemas:
-                try:
-                    release_date = datetime.fromisoformat(in_cinemas.replace('Z', '+00:00')).date()
-                    release_type = 'theatrical'
-                except:
-                    pass
+            # Determine the release date based on preference
+            release_date, release_type = self._select_release_date(
+                digital_release, physical_release, in_cinemas, release_date_preference
+            )
             
             if not release_date:
                 continue

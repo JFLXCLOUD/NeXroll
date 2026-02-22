@@ -283,9 +283,27 @@ def ensure_schema() -> None:
             if not _sqlite_has_column("coming_soon_trailers", "monitored"):
                 _sqlite_add_column("coming_soon_trailers", "monitored BOOLEAN DEFAULT 1")
             
+            # Coming Soon Trailers: ensure excluded_from_list column
+            if not _sqlite_has_column("coming_soon_trailers", "excluded_from_list"):
+                _sqlite_add_column("coming_soon_trailers", "excluded_from_list BOOLEAN DEFAULT 0")
+            
             # Coming Soon TV Trailers: ensure monitored column
             if not _sqlite_has_column("coming_soon_tv_trailers", "monitored"):
                 _sqlite_add_column("coming_soon_tv_trailers", "monitored BOOLEAN DEFAULT 1")
+            
+            # Coming Soon TV Trailers: ensure excluded_from_list column
+            if not _sqlite_has_column("coming_soon_tv_trailers", "excluded_from_list"):
+                _sqlite_add_column("coming_soon_tv_trailers", "excluded_from_list BOOLEAN DEFAULT 0")
+            
+            # Settings: NeX-Up unmonitored settings
+            if not _sqlite_has_column("settings", "nexup_include_unmonitored_movies"):
+                _sqlite_add_column("settings", "nexup_include_unmonitored_movies BOOLEAN DEFAULT 0")
+            if not _sqlite_has_column("settings", "nexup_include_unmonitored_shows"):
+                _sqlite_add_column("settings", "nexup_include_unmonitored_shows BOOLEAN DEFAULT 0")
+            
+            # Settings: NeX-Up release date preference
+            if not _sqlite_has_column("settings", "nexup_release_date_preference"):
+                _sqlite_add_column("settings", "nexup_release_date_preference TEXT DEFAULT 'digital_first'")
             
             # Schedules: ensure color column for custom calendar colors
             if not _sqlite_has_column("schedules", "color"):
@@ -13953,6 +13971,9 @@ def get_nexup_settings(db: Session = Depends(get_db)):
         "sonarr_connected": bool(getattr(setting, 'nexup_sonarr_url', None) and getattr(setting, 'nexup_sonarr_api_key', None)),
         "tv_category_id": getattr(setting, 'nexup_tv_category_id', None),
         "last_sonarr_sync": getattr(setting, 'nexup_last_sonarr_sync', None).isoformat() if getattr(setting, 'nexup_last_sonarr_sync', None) else None,
+        # Unmonitored content settings
+        "include_unmonitored_movies": getattr(setting, 'nexup_include_unmonitored_movies', False),
+        "include_unmonitored_shows": getattr(setting, 'nexup_include_unmonitored_shows', False),
         # Coming Soon List auto-regeneration settings
         "coming_soon_list_auto_regen": getattr(setting, 'nexup_coming_soon_list_auto_regen', False),
         "coming_soon_list_auto_regen_layout": getattr(setting, 'nexup_coming_soon_list_auto_regen_layout', 'both'),
@@ -13963,7 +13984,9 @@ def get_nexup_settings(db: Session = Depends(get_db)):
         "coming_soon_list_bg_color": getattr(setting, 'nexup_coming_soon_list_bg_color', '#141428'),
         "coming_soon_list_text_color": getattr(setting, 'nexup_coming_soon_list_text_color', '#ffffff'),
         "coming_soon_list_accent_color": getattr(setting, 'nexup_coming_soon_list_accent_color', '#00d4ff'),
-        "coming_soon_list_server_name": getattr(setting, 'nexup_coming_soon_list_server_name', '')
+        "coming_soon_list_server_name": getattr(setting, 'nexup_coming_soon_list_server_name', ''),
+        # Release date preference (which date to use for "Coming Soon")
+        "release_date_preference": getattr(setting, 'nexup_release_date_preference', 'digital_first')
     }
 
 @app.put("/nexup/settings")
@@ -13983,6 +14006,8 @@ def update_nexup_settings(
     max_concurrent: Optional[int] = None,
     bulk_warning_threshold: Optional[int] = None,
     tmdb_api_key: Optional[str] = None,
+    include_unmonitored_movies: Optional[bool] = None,
+    include_unmonitored_shows: Optional[bool] = None,
     coming_soon_list_auto_regen: Optional[bool] = None,
     coming_soon_list_auto_regen_layout: Optional[str] = None,
     coming_soon_list_layout: Optional[str] = None,
@@ -13993,6 +14018,7 @@ def update_nexup_settings(
     coming_soon_list_text_color: Optional[str] = None,
     coming_soon_list_accent_color: Optional[str] = None,
     coming_soon_list_server_name: Optional[str] = None,
+    release_date_preference: Optional[str] = None,
     db: Session = Depends(get_db)
 ):
     """Update NeX-Up settings"""
@@ -14085,6 +14111,11 @@ def update_nexup_settings(
         setting.nexup_bulk_warning_threshold = max(1, min(50, bulk_warning_threshold))  # 1-50 trailers
     if tmdb_api_key is not None:
         setting.nexup_tmdb_api_key = tmdb_api_key if tmdb_api_key.strip() else None
+    # Unmonitored content settings
+    if include_unmonitored_movies is not None:
+        setting.nexup_include_unmonitored_movies = include_unmonitored_movies
+    if include_unmonitored_shows is not None:
+        setting.nexup_include_unmonitored_shows = include_unmonitored_shows
     # Coming Soon List auto-regeneration settings
     if coming_soon_list_auto_regen is not None:
         setting.nexup_coming_soon_list_auto_regen = coming_soon_list_auto_regen
@@ -14107,6 +14138,10 @@ def update_nexup_settings(
         setting.nexup_coming_soon_list_accent_color = coming_soon_list_accent_color
     if coming_soon_list_server_name is not None:
         setting.nexup_coming_soon_list_server_name = coming_soon_list_server_name
+    # Release date preference
+    if release_date_preference is not None:
+        if release_date_preference in ['digital_first', 'digital_only', 'physical_first', 'theatrical']:
+            setting.nexup_release_date_preference = release_date_preference
     
     setting.updated_at = datetime.datetime.utcnow()
     db.commit()
@@ -14191,20 +14226,26 @@ async def get_upcoming_movies(db: Session = Depends(get_db)):
     
     connector = RadarrConnector(setting.nexup_radarr_url, setting.nexup_radarr_api_key)
     days_ahead = getattr(setting, 'nexup_days_ahead', 90) or 90
+    include_unmonitored = getattr(setting, 'nexup_include_unmonitored_movies', False)
+    release_date_preference = getattr(setting, 'nexup_release_date_preference', 'digital_first')
     
-    movies = await connector.get_upcoming_movies(days_ahead)
+    movies = await connector.get_upcoming_movies(days_ahead, include_unmonitored=include_unmonitored, release_date_preference=release_date_preference)
     
-    # Get existing trailers to mark which are already downloaded
+    # Get existing trailers to mark which are already downloaded and excluded
     existing_trailers = db.query(models.ComingSoonTrailer).all()
-    existing_radarr_ids = {t.radarr_movie_id for t in existing_trailers}
+    existing_map = {t.radarr_movie_id: t for t in existing_trailers}
     
     for movie in movies:
-        movie['downloaded'] = movie['radarr_id'] in existing_radarr_ids
+        trailer = existing_map.get(movie['radarr_id'])
+        movie['downloaded'] = trailer is not None
+        movie['excluded_from_list'] = trailer.excluded_from_list if trailer else False
+        movie['trailer_db_id'] = trailer.id if trailer else None
     
     return {
         "movies": movies,
         "total": len(movies),
-        "days_ahead": days_ahead
+        "days_ahead": days_ahead,
+        "include_unmonitored": include_unmonitored
     }
 
 @app.get("/nexup/radarr/debug/{radarr_id}")
@@ -14326,27 +14367,29 @@ async def get_upcoming_shows(db: Session = Depends(get_db)):
     _file_log(f"Sonarr: Fetching upcoming shows from {setting.nexup_sonarr_url}")
     connector = SonarrConnector(setting.nexup_sonarr_url, setting.nexup_sonarr_api_key)
     days_ahead = getattr(setting, 'nexup_days_ahead', 90) or 90
+    include_unmonitored = getattr(setting, 'nexup_include_unmonitored_shows', False)
     
     # Use the calendar-based premiere detection for accurate dates
-    shows = await connector.get_upcoming_premieres(days_ahead)
+    shows = await connector.get_upcoming_premieres(days_ahead, include_unmonitored=include_unmonitored)
     _file_log(f"Sonarr: Found {len(shows)} upcoming shows within {days_ahead} days")
     
-    # Get existing TV trailers to mark which are already downloaded (only successful downloads)
-    existing_trailers = db.query(models.ComingSoonTVTrailer).filter(
-        models.ComingSoonTVTrailer.status == 'downloaded'
-    ).all()
-    existing_keys = {f"{t.sonarr_series_id}_S{t.season_number}" for t in existing_trailers}
+    # Get existing TV trailers to mark which are already downloaded and excluded
+    existing_trailers = db.query(models.ComingSoonTVTrailer).all()
+    existing_map = {f"{t.sonarr_series_id}_S{t.season_number}": t for t in existing_trailers}
     
     for show in shows:
         key = f"{show['sonarr_id']}_S{show['season_number']}"
-        show['downloaded'] = key in existing_keys
-        # Also check if trailer exists in DB
+        trailer = existing_map.get(key)
+        show['downloaded'] = trailer is not None and trailer.status == 'downloaded'
+        show['excluded_from_list'] = trailer.excluded_from_list if trailer else False
+        show['trailer_db_id'] = trailer.id if trailer else None
         show['has_trailer'] = True  # We'll try to find one via TMDB
     
     return {
         "shows": shows,
         "total": len(shows),
-        "days_ahead": days_ahead
+        "days_ahead": days_ahead,
+        "include_unmonitored": include_unmonitored
     }
 
 @app.get("/nexup/sonarr/trailers")
@@ -14707,7 +14750,8 @@ async def _auto_regenerate_coming_soon_list(db: Session):
             if setting.nexup_radarr_url and setting.nexup_radarr_api_key:
                 try:
                     radarr_connector = RadarrConnector(setting.nexup_radarr_url, setting.nexup_radarr_api_key)
-                    movies = await radarr_connector.get_upcoming_movies(days_ahead)
+                    release_date_pref = getattr(setting, 'nexup_release_date_preference', 'digital_first')
+                    movies = await radarr_connector.get_upcoming_movies(days_ahead, release_date_preference=release_date_pref)
                     for movie in movies:
                         items.append({
                             'title': movie.get('title', ''),
@@ -14724,7 +14768,8 @@ async def _auto_regenerate_coming_soon_list(db: Session):
             if getattr(setting, 'nexup_sonarr_url', None) and getattr(setting, 'nexup_sonarr_api_key', None):
                 try:
                     sonarr_connector = SonarrConnector(setting.nexup_sonarr_url, setting.nexup_sonarr_api_key)
-                    shows = await sonarr_connector.get_upcoming_premieres(days_ahead)
+                    include_unmonitored_shows = getattr(setting, 'nexup_include_unmonitored_shows', False)
+                    shows = await sonarr_connector.get_upcoming_premieres(days_ahead, include_unmonitored=include_unmonitored_shows)
                     for show in shows:
                         title = show.get('title', '')
                         season_number = show.get('season_number', 1)
@@ -14742,6 +14787,38 @@ async def _auto_regenerate_coming_soon_list(db: Session):
         
         if not items:
             _file_log("Coming Soon List auto-regen: No items to display")
+            return
+        
+        # Filter out excluded items from database
+        excluded_movie_titles = set()
+        excluded_movies = db.query(models.ComingSoonTrailer).filter(
+            models.ComingSoonTrailer.excluded_from_list == True
+        ).all()
+        for em in excluded_movies:
+            if em.title:
+                excluded_movie_titles.add(em.title.lower())
+        
+        excluded_tv_titles = set()
+        excluded_tv = db.query(models.ComingSoonTVTrailer).filter(
+            models.ComingSoonTVTrailer.excluded_from_list == True
+        ).all()
+        for et in excluded_tv:
+            if et.title:
+                excluded_tv_titles.add(et.title.lower())
+        
+        original_count = len(items)
+        items = [
+            item for item in items
+            if item['title'].lower() not in excluded_movie_titles 
+            and item['title'].lower() not in excluded_tv_titles
+            and item['title'].split(' (S')[0].lower() not in excluded_tv_titles
+        ]
+        
+        if len(items) < original_count:
+            _file_log(f"Coming Soon List auto-regen: Filtered out {original_count - len(items)} excluded item(s)")
+        
+        if not items:
+            _file_log("Coming Soon List auto-regen: No items after exclusions")
             return
         
         # Sort by release date and limit
@@ -14927,7 +15004,8 @@ async def sync_sonarr_trailers(db: Session = Depends(get_db)):
     # DOWNLOAD: Get new trailers
     # ========================================
     _nexup_sync_progress["status"] = "Fetching upcoming shows from Sonarr..."
-    upcoming = await connector.get_upcoming_premieres(days_ahead)
+    include_unmonitored = getattr(setting, 'nexup_include_unmonitored_shows', False)
+    upcoming = await connector.get_upcoming_premieres(days_ahead, include_unmonitored=include_unmonitored)
     _file_log(f"Sonarr Sync: Found {len(upcoming)} upcoming shows")
     results["checked"] = len(upcoming)
     _nexup_sync_progress["total"] = len(upcoming)
@@ -16300,6 +16378,40 @@ def toggle_nexup_trailer(trailer_id: int, db: Session = Depends(get_db)):
     status = "enabled" if trailer.is_enabled else "disabled"
     return {"success": True, "message": f"Trailer {status}", "is_enabled": trailer.is_enabled}
 
+@app.put("/nexup/trailers/{trailer_id}/exclude")
+def toggle_trailer_exclusion(trailer_id: int, db: Session = Depends(get_db)):
+    """Toggle whether a movie trailer is excluded from Coming Soon list generation"""
+    trailer = db.query(models.ComingSoonTrailer).filter(
+        models.ComingSoonTrailer.id == trailer_id
+    ).first()
+    
+    if not trailer:
+        raise HTTPException(status_code=404, detail="Trailer not found")
+    
+    trailer.excluded_from_list = not trailer.excluded_from_list
+    trailer.updated_at = datetime.datetime.utcnow()
+    db.commit()
+    
+    status = "excluded from" if trailer.excluded_from_list else "included in"
+    return {"success": True, "message": f"Trailer {status} Coming Soon list", "excluded_from_list": trailer.excluded_from_list}
+
+@app.put("/nexup/trailers/tv/{trailer_id}/exclude")
+def toggle_tv_trailer_exclusion(trailer_id: int, db: Session = Depends(get_db)):
+    """Toggle whether a TV trailer is excluded from Coming Soon list generation"""
+    trailer = db.query(models.ComingSoonTVTrailer).filter(
+        models.ComingSoonTVTrailer.id == trailer_id
+    ).first()
+    
+    if not trailer:
+        raise HTTPException(status_code=404, detail="TV Trailer not found")
+    
+    trailer.excluded_from_list = not trailer.excluded_from_list
+    trailer.updated_at = datetime.datetime.utcnow()
+    db.commit()
+    
+    status = "excluded from" if trailer.excluded_from_list else "included in"
+    return {"success": True, "message": f"TV Trailer {status} Coming Soon list", "excluded_from_list": trailer.excluded_from_list}
+
 @app.post("/nexup/sync")
 async def sync_nexup(db: Session = Depends(get_db)):
     """
@@ -16400,7 +16512,9 @@ async def sync_nexup(db: Session = Depends(get_db)):
                 _file_log(f"NeX-Up: Expired trailer for downloaded movie '{trailer.title}'")
         
         # Parse upcoming movies from the already-fetched data
-        upcoming = connector.parse_upcoming_from_raw(all_radarr_movies, days_ahead)
+        include_unmonitored = getattr(setting, 'nexup_include_unmonitored_movies', False)
+        release_date_preference = getattr(setting, 'nexup_release_date_preference', 'digital_first')
+        upcoming = connector.parse_upcoming_from_raw(all_radarr_movies, days_ahead, include_unmonitored=include_unmonitored, release_date_preference=release_date_preference)
         results["checked"] = len(upcoming)
         _file_log(f"NeX-Up sync: Found {len(upcoming)} upcoming movies")
         
@@ -16873,7 +16987,8 @@ async def generate_coming_soon_list(
         if setting.nexup_radarr_url and setting.nexup_radarr_api_key:
             try:
                 radarr_connector = RadarrConnector(setting.nexup_radarr_url, setting.nexup_radarr_api_key)
-                movies = await radarr_connector.get_upcoming_movies(days_ahead)
+                release_date_pref = getattr(setting, 'nexup_release_date_preference', 'digital_first')
+                movies = await radarr_connector.get_upcoming_movies(days_ahead, release_date_preference=release_date_pref)
                 for movie in movies:
                     items.append({
                         'title': movie.get('title', ''),
@@ -16892,7 +17007,8 @@ async def generate_coming_soon_list(
         if getattr(setting, 'nexup_sonarr_url', None) and getattr(setting, 'nexup_sonarr_api_key', None):
             try:
                 sonarr_connector = SonarrConnector(setting.nexup_sonarr_url, setting.nexup_sonarr_api_key)
-                shows = await sonarr_connector.get_upcoming_premieres(days_ahead)
+                include_unmonitored_shows = getattr(setting, 'nexup_include_unmonitored_shows', False)
+                shows = await sonarr_connector.get_upcoming_premieres(days_ahead, include_unmonitored=include_unmonitored_shows)
                 for show in shows:
                     title = show.get('title', '')
                     season_number = show.get('season_number', 1)
@@ -16911,6 +17027,39 @@ async def generate_coming_soon_list(
             _file_log(f"[COMING-SOON-LIST] Sonarr not configured, skipping shows")
     
     _file_log(f"[COMING-SOON-LIST] Total items from APIs: {len(items)}, max_items requested: {max_items}")
+    
+    # Filter out excluded items from database
+    # Get excluded movie titles
+    excluded_movie_titles = set()
+    excluded_movies = db.query(models.ComingSoonTrailer).filter(
+        models.ComingSoonTrailer.excluded_from_list == True
+    ).all()
+    for em in excluded_movies:
+        if em.title:
+            excluded_movie_titles.add(em.title.lower())
+    
+    # Get excluded TV show titles
+    excluded_tv_titles = set()
+    excluded_tv = db.query(models.ComingSoonTVTrailer).filter(
+        models.ComingSoonTVTrailer.excluded_from_list == True
+    ).all()
+    for et in excluded_tv:
+        if et.title:
+            # Match both base title and "(S#)" variants
+            excluded_tv_titles.add(et.title.lower())
+    
+    # Filter out excluded items
+    original_count = len(items)
+    items = [
+        item for item in items
+        if item['title'].lower() not in excluded_movie_titles 
+        and item['title'].lower() not in excluded_tv_titles
+        # Also check without season suffix for TV shows
+        and item['title'].split(' (S')[0].lower() not in excluded_tv_titles
+    ]
+    
+    if len(items) < original_count:
+        _file_log(f"[COMING-SOON-LIST] Filtered out {original_count - len(items)} excluded item(s)")
     
     if not items:
         raise HTTPException(status_code=400, detail="No upcoming content found. Make sure Radarr/Sonarr is connected and has upcoming releases.")
@@ -17025,7 +17174,8 @@ async def preview_coming_soon_list(
         if setting.nexup_radarr_url and setting.nexup_radarr_api_key:
             try:
                 radarr_connector = RadarrConnector(setting.nexup_radarr_url, setting.nexup_radarr_api_key)
-                movies = await radarr_connector.get_upcoming_movies(days_ahead)
+                release_date_pref = getattr(setting, 'nexup_release_date_preference', 'digital_first')
+                movies = await radarr_connector.get_upcoming_movies(days_ahead, release_date_preference=release_date_pref)
                 for movie in movies:
                     items.append({
                         'title': movie.get('title', ''),
@@ -17042,7 +17192,8 @@ async def preview_coming_soon_list(
         if getattr(setting, 'nexup_sonarr_url', None) and getattr(setting, 'nexup_sonarr_api_key', None):
             try:
                 sonarr_connector = SonarrConnector(setting.nexup_sonarr_url, setting.nexup_sonarr_api_key)
-                shows = await sonarr_connector.get_upcoming_premieres(days_ahead)
+                include_unmonitored_shows = getattr(setting, 'nexup_include_unmonitored_shows', False)
+                shows = await sonarr_connector.get_upcoming_premieres(days_ahead, include_unmonitored=include_unmonitored_shows)
                 for show in shows:
                     title = show.get('title', '')
                     season_number = show.get('season_number', 1)
@@ -17057,6 +17208,30 @@ async def preview_coming_soon_list(
                     })
             except Exception as e:
                 _file_log(f"[COMING-SOON-PREVIEW] Error fetching from Sonarr: {e}")
+    
+    # Filter out excluded items from database
+    excluded_movie_titles = set()
+    excluded_movies = db.query(models.ComingSoonTrailer).filter(
+        models.ComingSoonTrailer.excluded_from_list == True
+    ).all()
+    for em in excluded_movies:
+        if em.title:
+            excluded_movie_titles.add(em.title.lower())
+    
+    excluded_tv_titles = set()
+    excluded_tv = db.query(models.ComingSoonTVTrailer).filter(
+        models.ComingSoonTVTrailer.excluded_from_list == True
+    ).all()
+    for et in excluded_tv:
+        if et.title:
+            excluded_tv_titles.add(et.title.lower())
+    
+    items = [
+        item for item in items
+        if item['title'].lower() not in excluded_movie_titles 
+        and item['title'].lower() not in excluded_tv_titles
+        and item['title'].split(' (S')[0].lower() not in excluded_tv_titles
+    ]
     
     # Deduplicate items by title
     seen_titles = set()

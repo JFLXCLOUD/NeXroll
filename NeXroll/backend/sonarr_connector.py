@@ -242,10 +242,11 @@ class SonarrConnector:
             logger.error(f"Error fetching Sonarr calendar: {e}")
             return []
     
-    async def get_upcoming_premieres(self, days_ahead: int = 90) -> List[Dict[str, Any]]:
+    async def get_upcoming_premieres(self, days_ahead: int = 90, include_unmonitored: bool = False) -> List[Dict[str, Any]]:
         """
         Get upcoming season premieres and new show premieres using the calendar API.
         Only returns future shows (today or later).
+        Optionally includes unmonitored shows.
         """
         try:
             calendar = await self.get_calendar(
@@ -262,6 +263,11 @@ class SonarrConnector:
                     continue
                 
                 series = episode.get('series', {})
+                
+                # Skip unmonitored series (unless include_unmonitored is True)
+                if not include_unmonitored and not series.get('monitored', False):
+                    continue
+                
                 season_number = episode.get('seasonNumber', 0)
                 if season_number == 0:  # Skip specials
                     continue
