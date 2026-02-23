@@ -236,3 +236,14 @@ Join the subreddit:
 ## Credits
 
 Community Prerolls powered by [Typical Nerds](https://typicalnerds.uk/) - Thank you for making thousands of prerolls available to the community!
+
+---
+
+## A Note of Transparency
+
+I have immense respect for software developers and the craft of programming. I want to be upfront: I'm not a professional developer — I'm an IT manager with a passion for media server environments and home automation.
+
+NeXroll was made possible through collaboration with [Claude](https://www.anthropic.com/claude) (Anthropic's AI assistant). From architecture decisions to debugging edge cases, Claude was an invaluable partner in bringing this project to life. This transparency feels important in an era where AI-assisted development is becoming more common.
+
+If you're a developer reviewing this code, I welcome feedback, pull requests, and patience with any rough edges. The goal was always to create something useful for the Plex/Jellyfin community, and I hope NeXroll delivers on that.
+
