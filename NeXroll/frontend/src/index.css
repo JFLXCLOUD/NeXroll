@@ -135,6 +135,11 @@ body.light {
   --accent-color: #00d4ff;
   --button-secondary-bg: #6c757d;
   --button-text: white;
+  --header-icon-color: #000000;
+}
+
+body.light .header-icon {
+  color: #000000 !important;
 }
 
 /* Dark theme */
@@ -156,6 +161,11 @@ body.dark {
   --accent-color: #00d4ff;
   --button-secondary-bg: #555;
   --button-text: white;
+  --header-icon-color: #ffffff;
+}
+
+body.dark .header-icon {
+  color: #ffffff !important;
 }
 
 /* Dark mode input styling - easier on the eyes */

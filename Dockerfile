@@ -55,6 +55,9 @@ COPY NeXroll/version.py /app/NeXroll/version.py
 # Copy CHANGELOG
 COPY NeXroll/CHANGELOG.md /app/NeXroll/CHANGELOG.md
 
+# Copy audio assets for Coming Soon generator
+COPY docs/lefty-blue-wednesday-main-version-36162-02-38.mp3 /app/docs/lefty-blue-wednesday-main-version-36162-02-38.mp3
+
 # Copy pre-built frontend assets (built locally before Docker build)
 COPY NeXroll/frontend/build /app/NeXroll/frontend/build
 

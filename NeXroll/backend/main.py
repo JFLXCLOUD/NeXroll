@@ -225,6 +225,7 @@ def ensure_schema() -> None:
                 ("nexup_coming_soon_list_text_color", "nexup_coming_soon_list_text_color TEXT DEFAULT '#ffffff'"),
                 ("nexup_coming_soon_list_accent_color", "nexup_coming_soon_list_accent_color TEXT DEFAULT '#00d4ff'"),
                 ("nexup_coming_soon_list_server_name", "nexup_coming_soon_list_server_name TEXT DEFAULT ''"),
+                ("nexup_coming_soon_list_include_audio", "nexup_coming_soon_list_include_audio BOOLEAN DEFAULT 0"),
             ]
             for col, ddl in nexup_columns:
                 if not _sqlite_has_column("settings", col):
@@ -13985,6 +13986,7 @@ def get_nexup_settings(db: Session = Depends(get_db)):
         "coming_soon_list_text_color": getattr(setting, 'nexup_coming_soon_list_text_color', '#ffffff'),
         "coming_soon_list_accent_color": getattr(setting, 'nexup_coming_soon_list_accent_color', '#00d4ff'),
         "coming_soon_list_server_name": getattr(setting, 'nexup_coming_soon_list_server_name', ''),
+        "coming_soon_list_include_audio": getattr(setting, 'nexup_coming_soon_list_include_audio', False),
         # Release date preference (which date to use for "Coming Soon")
         "release_date_preference": getattr(setting, 'nexup_release_date_preference', 'digital_first')
     }
@@ -14018,6 +14020,7 @@ def update_nexup_settings(
     coming_soon_list_text_color: Optional[str] = None,
     coming_soon_list_accent_color: Optional[str] = None,
     coming_soon_list_server_name: Optional[str] = None,
+    coming_soon_list_include_audio: Optional[bool] = None,
     release_date_preference: Optional[str] = None,
     db: Session = Depends(get_db)
 ):
@@ -14138,6 +14141,8 @@ def update_nexup_settings(
         setting.nexup_coming_soon_list_accent_color = coming_soon_list_accent_color
     if coming_soon_list_server_name is not None:
         setting.nexup_coming_soon_list_server_name = coming_soon_list_server_name
+    if coming_soon_list_include_audio is not None:
+        setting.nexup_coming_soon_list_include_audio = coming_soon_list_include_audio
     # Release date preference
     if release_date_preference is not None:
         if release_date_preference in ['digital_first', 'digital_only', 'physical_first', 'theatrical']:
@@ -14727,6 +14732,7 @@ async def _auto_regenerate_coming_soon_list(db: Session):
         text_color = getattr(setting, 'nexup_coming_soon_list_text_color', '#ffffff')
         accent_color = getattr(setting, 'nexup_coming_soon_list_accent_color', '#00d4ff')
         server_name = getattr(setting, 'nexup_coming_soon_list_server_name', '')
+        include_audio = getattr(setting, 'nexup_coming_soon_list_include_audio', False)
         storage_path = getattr(setting, 'nexup_storage_path', None)
         
         if not storage_path:
@@ -14861,7 +14867,8 @@ async def _auto_regenerate_coming_soon_list(db: Session):
                 output_filename=output_filename,
                 bg_color=bg_ffmpeg,
                 text_color=text_ffmpeg,
-                accent_color=accent_ffmpeg
+                accent_color=accent_ffmpeg,
+                include_audio=include_audio
             )
             
             if output_path:
@@ -16936,6 +16943,7 @@ async def generate_coming_soon_list(
     text_color: str = "#ffffff",
     accent_color: str = "#00d4ff",
     server_name: str = None,  # Optional custom server name override
+    include_audio: bool = False,
     db: Session = Depends(get_db)
 ):
     """
@@ -17107,7 +17115,8 @@ async def generate_coming_soon_list(
             bg_color=bg_ffmpeg,
             text_color=text_ffmpeg,
             accent_color=accent_ffmpeg,
-            max_items=max_items
+            max_items=max_items,
+            include_audio=include_audio
         )
         
         if output_path:

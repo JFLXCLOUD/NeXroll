@@ -593,10 +593,11 @@ class DynamicPrerollGenerator:
             return self._run_ffmpeg_vignette_fallback(filter_str, output_path, duration, width, height, bg_color)
     
     def _run_ffmpeg_vignette_fallback(self, filter_str: str, output_path: Path, duration: float,
-                           width: int, height: int, bg_color: str) -> Optional[str]:
+                           width: int, height: int, bg_color: str,
+                           include_audio: bool = False) -> Optional[str]:
         """Fallback: Run FFmpeg with simple vignette (no colored orbs)"""
         _verbose_log(f"=== VIGNETTE FALLBACK ===")
-        _verbose_log(f"BG color: {bg_color}")
+        _verbose_log(f"BG color: {bg_color}, Include audio: {include_audio}")
         
         bg_hex = bg_color.replace('0x', '').replace('#', '')
         try:
@@ -615,14 +616,39 @@ class DynamicPrerollGenerator:
         vignette_filter = f"vignette=PI/3.5:0.6,{filter_str}"
         _verbose_log(f"Vignette filter: {vignette_filter[:100]}...")
         
+        # Determine audio source
+        audio_file = None
+        if include_audio:
+            audio_file = self._get_coming_soon_audio_path()
+        
         cmd = [
             self.ffmpeg_path,
             '-y',
             '-f', 'lavfi',
             '-i', f'color=c={bright_bg}:s={width}x{height}:d={duration}:r=30',
-            '-f', 'lavfi',
-            '-i', f'anullsrc=r=48000:cl=stereo:d={duration}',
-            '-vf', vignette_filter,
+        ]
+        
+        if audio_file:
+            # Use real audio file with fade in/out
+            fade_duration = 1.5
+            fade_out_start = max(0, duration - fade_duration)
+            cmd.extend(['-i', audio_file])
+            audio_filter = f'[1:a]atrim=0:{duration},afade=t=in:d={fade_duration},afade=t=out:st={fade_out_start}:d={fade_duration},asetpts=PTS-STARTPTS[aout]'
+            cmd.extend([
+                '-vf', vignette_filter,
+                '-filter_complex', audio_filter,
+                '-map', '0:v',
+                '-map', '[aout]',
+            ])
+        else:
+            # Silent audio fallback
+            cmd.extend([
+                '-f', 'lavfi',
+                '-i', f'anullsrc=r=48000:cl=stereo:d={duration}',
+                '-vf', vignette_filter,
+            ])
+        
+        cmd.extend([
             '-t', str(duration),
             '-c:v', 'libx264',
             '-preset', 'fast',
@@ -632,7 +658,7 @@ class DynamicPrerollGenerator:
             '-shortest',
             '-pix_fmt', 'yuv420p',
             str(output_path)
-        ]
+        ])
         
         try:
             logger.info(f"Running FFmpeg vignette fallback...")
@@ -1146,6 +1172,23 @@ class DynamicPrerollGenerator:
     # COMING SOON LIST GENERATOR
     # =========================================================================
     
+    def _get_coming_soon_audio_path(self) -> Optional[str]:
+        """Get the path to the bundled Coming Soon audio file."""
+        # When running from PyInstaller bundle
+        if getattr(sys, 'frozen', False):
+            base_dir = sys._MEIPASS
+        else:
+            # When running from source - go up from backend/ to project root
+            base_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+        
+        audio_path = os.path.join(base_dir, 'docs', 'lefty-blue-wednesday-main-version-36162-02-38.mp3')
+        if os.path.isfile(audio_path):
+            _verbose_log(f"Found Coming Soon audio file: {audio_path}")
+            return audio_path
+        
+        _verbose_log(f"Coming Soon audio file not found at: {audio_path}")
+        return None
+
     def generate_coming_soon_list(
         self,
         items: List[Dict[str, Any]],
@@ -1158,7 +1201,8 @@ class DynamicPrerollGenerator:
         accent_color: str = "0x00d4ff",
         width: int = 1920,
         height: int = 1080,
-        max_items: int = 8
+        max_items: int = 8,
+        include_audio: bool = False
     ) -> Optional[str]:
         """
         Generate a Coming Soon List video showing upcoming movies/shows.
@@ -1175,6 +1219,7 @@ class DynamicPrerollGenerator:
             width: Video width
             height: Video height
             max_items: Maximum number of items to show
+            include_audio: Whether to include background music
             
         Returns:
             Path to generated video or None on failure
@@ -1188,7 +1233,7 @@ class DynamicPrerollGenerator:
             return None
         
         _verbose_log(f"=== generate_coming_soon_list ===")
-        _verbose_log(f"Items: {len(items)}, Layout: {layout}, Duration: {duration}s")
+        _verbose_log(f"Items: {len(items)}, Layout: {layout}, Duration: {duration}s, Audio: {include_audio}")
         _verbose_log(f"Server name: '{server_name}'")
         _verbose_log(f"Colors - BG: {bg_color}, Text: {text_color}, Accent: {accent_color}")
         
@@ -1202,12 +1247,14 @@ class DynamicPrerollGenerator:
         if layout == "grid":
             return self._generate_list_grid_layout(
                 items, server_name, duration, output_filename,
-                bg_color, text_color, accent_color, width, height
+                bg_color, text_color, accent_color, width, height,
+                include_audio=include_audio
             )
         else:
             return self._generate_list_text_layout(
                 items, server_name, duration, output_filename,
-                bg_color, text_color, accent_color, width, height
+                bg_color, text_color, accent_color, width, height,
+                include_audio=include_audio
             )
     
     def _generate_list_text_layout(
@@ -1220,7 +1267,8 @@ class DynamicPrerollGenerator:
         text_color: str,
         accent_color: str,
         width: int,
-        height: int
+        height: int,
+        include_audio: bool = False
     ) -> Optional[str]:
         """Generate text-only list layout (no posters)"""
         output_path = self.output_dir / output_filename
@@ -1321,7 +1369,8 @@ class DynamicPrerollGenerator:
         
         # Use vignette fallback for list (gradient + many drawtext elements causes FFmpeg issues)
         return self._run_ffmpeg_vignette_fallback(
-            filter_str, output_path, duration, width, height, bg_color
+            filter_str, output_path, duration, width, height, bg_color,
+            include_audio=include_audio
         )
     
     def _generate_list_grid_layout(
@@ -1334,7 +1383,8 @@ class DynamicPrerollGenerator:
         text_color: str,
         accent_color: str,
         width: int,
-        height: int
+        height: int,
+        include_audio: bool = False
     ) -> Optional[str]:
         """
         Generate grid layout with poster images.
@@ -1394,11 +1444,12 @@ class DynamicPrerollGenerator:
                 _verbose_log("No valid posters downloaded, falling back to text layout")
                 return self._generate_list_text_layout(
                     items, server_name, duration, output_filename,
-                    bg_color, text_color, accent_color, width, height
+                    bg_color, text_color, accent_color, width, height,
+                    include_audio=include_audio
                 )
             
             # Build grid layout with FFmpeg
-            # Calculate grid layout based on count (supports up to 12 items)
+            # Calculate grid layout based on count - using 2 rows for larger posters
             num_items = len(valid_items)
             if num_items <= 4:
                 cols, rows = 2, 2
@@ -1406,26 +1457,49 @@ class DynamicPrerollGenerator:
                 cols, rows = 3, 2
             elif num_items <= 8:
                 cols, rows = 4, 2
-            elif num_items <= 9:
-                cols, rows = 3, 3
+            elif num_items <= 10:
+                cols, rows = 5, 2
             else:
-                cols, rows = 4, 3  # Max 12 items
+                cols, rows = 6, 2  # Max 12 items
             
-            # Adjust poster sizes based on layout - smaller for 3 rows
-            if rows == 3:
-                poster_width = 160
-                poster_height = 240
-                spacing_x = 25
-                spacing_y = 8
-                start_y = 145  # Less header space
-                date_spacing = 28  # Reduced date spacing between rows
-            else:
-                poster_width = 220
-                poster_height = 330
-                spacing_x = 40
+            # Adjust poster sizes based on number of columns - optimized for 1920x1080 with 2 rows
+            # Maximum vertical space: 1080 - header(160) - bottom margin(40) = 880px for 2 rows
+            # Each row gets ~440px (poster + date spacing)
+            if cols <= 2:
+                poster_width = 300
+                poster_height = 450
+                spacing_x = 100
+                spacing_y = 30
+                start_y = 200  # After header, vertically centered
+                date_spacing = 50  # Space between rows for date text
+            elif cols == 3:
+                poster_width = 280
+                poster_height = 420
+                spacing_x = 80
+                spacing_y = 25
+                start_y = 200
+                date_spacing = 45
+            elif cols == 4:
+                poster_width = 250
+                poster_height = 375
+                spacing_x = 60
                 spacing_y = 20
-                start_y = 180  # Leave room for header
-                date_spacing = 35  # Standard date spacing
+                start_y = 200
+                date_spacing = 40
+            elif cols == 5:
+                poster_width = 210
+                poster_height = 315
+                spacing_x = 50
+                spacing_y = 15
+                start_y = 210
+                date_spacing = 35
+            else:  # 6 cols - larger posters to fill the space
+                poster_width = 200
+                poster_height = 300
+                spacing_x = 45
+                spacing_y = 12
+                start_y = 210
+                date_spacing = 32
             
             grid_width = cols * poster_width + (cols - 1) * spacing_x
             grid_height = rows * poster_height + (rows - 1) * spacing_y
@@ -1517,29 +1591,22 @@ class DynamicPrerollGenerator:
                 
                 # Center text under poster - only release date
                 text_center_x = x + poster_width // 2
-                date_y = y + poster_height + 12
+                date_y = y + poster_height + 8
                 
-                # Release date only (centered, accent color) - larger font
+                # Release date only (centered, accent color) - scale font based on poster size
+                date_fontsize = max(18, min(28, poster_width // 10))
                 text_filters.append(
-                    f"drawtext=text='{date_str}':fontsize=20:fontcolor={accent_color}@0.9{font_param}:"
+                    f"drawtext=text='{date_str}':fontsize={date_fontsize}:fontcolor={accent_color}@0.9{font_param}:"
                     f"x={text_center_x}-(text_w/2):y={date_y}:shadowcolor=black@0.4:shadowx=1:shadowy=1"
                 )
             
-            # Add header text and footer - adjust sizes for 3-row layout
-            if rows == 3:
-                header_filter = (
-                    f"drawtext=text='COMING SOON':fontsize=45:fontcolor={accent_color}{bold_font_param}:"
-                    f"x=(w-text_w)/2:y=40:shadowcolor=black@0.5:shadowx=2:shadowy=2,"
-                    f"drawtext=text='to {escaped_server}':fontsize=26:fontcolor={text_color}@0.9{font_param}:"
-                    f"x=(w-text_w)/2:y=95"
-                )
-            else:
-                header_filter = (
-                    f"drawtext=text='COMING SOON':fontsize=55:fontcolor={accent_color}{bold_font_param}:"
-                    f"x=(w-text_w)/2:y=60:shadowcolor=black@0.5:shadowx=2:shadowy=2,"
-                    f"drawtext=text='to {escaped_server}':fontsize=32:fontcolor={text_color}@0.9{font_param}:"
-                    f"x=(w-text_w)/2:y=130"
-                )
+            # Add header text - optimized for 2-row layout with start_y=170
+            header_filter = (
+                f"drawtext=text='COMING SOON':fontsize=55:fontcolor={accent_color}{bold_font_param}:"
+                f"x=(w-text_w)/2:y=50:shadowcolor=black@0.5:shadowx=2:shadowy=2,"
+                f"drawtext=text='to {escaped_server}':fontsize=30:fontcolor={text_color}@0.9{font_param}:"
+                f"x=(w-text_w)/2:y=115"
+            )
             
             # Combine: poster overlays + text overlays + header + fades
             all_text = ",".join(text_filters)
@@ -1549,17 +1616,34 @@ class DynamicPrerollGenerator:
             
             filter_complex_str = ";".join(filter_parts)
             
-            # Add audio null source - this becomes the last input
-            # Input indices: 0=color, 1 to len(poster_paths)=posters, len(poster_paths)+1=anullsrc
+            # Add audio source - this becomes the last input
+            # Input indices: 0=color, 1 to len(poster_paths)=posters, len(poster_paths)+1=audio
             audio_index = len(poster_paths) + 1
-            cmd.extend(['-f', 'lavfi', '-i', f'anullsrc=r=48000:cl=stereo:d={duration}'])
             
-            _verbose_log(f"Audio input index: {audio_index}")
+            # Determine audio source
+            audio_file = None
+            if include_audio:
+                audio_file = self._get_coming_soon_audio_path()
+            
+            if audio_file:
+                # Use real audio file with fade in/out
+                fade_duration = 1.5
+                fade_out_start = max(0, duration - fade_duration)
+                cmd.extend(['-i', audio_file])
+                audio_filter = f'[{audio_index}:a]atrim=0:{duration},afade=t=in:d={fade_duration},afade=t=out:st={fade_out_start}:d={fade_duration},asetpts=PTS-STARTPTS[aout]'
+                filter_complex_str = filter_complex_str + ';' + audio_filter
+                audio_map = '[aout]'
+            else:
+                # Silent audio fallback
+                cmd.extend(['-f', 'lavfi', '-i', f'anullsrc=r=48000:cl=stereo:d={duration}'])
+                audio_map = f'{audio_index}:a'
+            
+            _verbose_log(f"Audio input index: {audio_index}, using file: {audio_file is not None}")
             
             cmd.extend([
                 '-filter_complex', filter_complex_str,
                 '-map', '[out]',
-                '-map', f'{audio_index}:a',  # Map audio from anullsrc input
+                '-map', audio_map,
                 '-c:v', 'libx264', '-preset', 'fast', '-crf', '20',
                 '-c:a', 'aac', '-b:a', '128k',
                 '-shortest',
@@ -1591,7 +1675,8 @@ class DynamicPrerollGenerator:
                 _verbose_log(f"Grid generation failed, falling back to text layout")
                 return self._generate_list_text_layout(
                     items, server_name, duration, output_filename,
-                    bg_color, text_color, accent_color, width, height
+                    bg_color, text_color, accent_color, width, height,
+                    include_audio=include_audio
                 )
                 
         except Exception as e:
@@ -1600,7 +1685,8 @@ class DynamicPrerollGenerator:
             # Fallback to text layout
             return self._generate_list_text_layout(
                 items, server_name, duration, output_filename,
-                bg_color, text_color, accent_color, width, height
+                bg_color, text_color, accent_color, width, height,
+                include_audio=include_audio
             )
         finally:
             # Clean up temp directory

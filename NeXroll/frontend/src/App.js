@@ -20,7 +20,8 @@ import {
     Library, Clapperboard, Sparkles, PartyPopper, Users2, Theater, Eye, EyeOff, X, User, RefreshCcw, Menu,
     Youtube, Globe, Key, Rocket, FileUp, ArrowRight, HardDrive, ListChecks, Unlink, LinkIcon,
     Tv, ClipboardList, Info, RotateCw, LayoutDashboard, BarChart3, PieChart as PieChartIcon, Activity, TrendingUp, Server, Timer,
-    Database, Archive, Shield, UserPlus, Users, LayoutGrid, List, Layers, Terminal, AlertCircle, Filter, BarChart2, HelpCircle
+    Database, Archive, Shield, UserPlus, Users, LayoutGrid, List, Layers, Terminal, AlertCircle, Filter, BarChart2, HelpCircle,
+    Music
   } from 'lucide-react';
 import { BarChart, Bar, XAxis, YAxis, ResponsiveContainer, Cell, Tooltip } from 'recharts';
 
@@ -760,7 +761,8 @@ const [applyingToServer, setApplyingToServer] = useState(false);
     accentColor: '#00d4ff',
     serverName: '',
     autoRegen: false,  // Auto-regenerate when Radarr/Sonarr syncs
-    autoRegenLayout: 'both'  // Which layout(s) to auto-regenerate: 'grid', 'list', or 'both'
+    autoRegenLayout: 'both',  // Which layout(s) to auto-regenerate: 'grid', 'list', or 'both'
+    includeAudio: false  // Include background music in generated video
   });
   const [comingSoonListGenerating, setComingSoonListGenerating] = useState(false);
   const [generatedComingSoonLists, setGeneratedComingSoonLists] = useState([]);
@@ -4885,7 +4887,7 @@ const DashboardTiles = {
         {/* Header */}
         <div>
           <h1 className="header" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.5rem' }}>
-            <Video size={32} style={{ color: 'var(--accent-color)' }} /> Video Scaling
+            <Video size={32} className="header-icon" /> Video Scaling
           </h1>
           <p style={{ color: 'var(--text-secondary)', fontSize: '0.95rem', margin: 0 }}>
             Scale prerolls to optimize for remote streaming. Lower resolutions reduce buffering.
@@ -5280,7 +5282,7 @@ const DashboardTiles = {
       {/* Header */}
       <div>
         <h1 className="header" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.5rem' }}>
-          <Zap size={32} style={{ color: 'var(--accent-color)' }} /> Quick Actions
+          <Zap size={32} className="header-icon" /> Quick Actions
         </h1>
         <p style={{ color: 'var(--text-secondary)', fontSize: '0.95rem', margin: 0 }}>
           Common operations and maintenance tasks for your preroll library.
@@ -5577,22 +5579,30 @@ const DashboardTiles = {
                 localStorage.removeItem('nx_update_checked_at');
                 localStorage.removeItem('nx_latest_release_info');
                 
-                const res = await fetch('https://api.github.com/repos/JFLXCLOUD/NeXroll/releases/latest', {
-                  headers: { 'Accept': 'application/vnd.github+json' }
+                // Use backend endpoint which respects include_prerelease setting
+                const res = await fetch(apiUrl('update/check'), {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' }
                 });
                 
-                if (!res.ok) throw new Error('Failed to check GitHub');
+                if (!res.ok) throw new Error('Failed to check for updates');
                 
                 const data = await res.json();
-                const latestVersion = (data.tag_name || '').replace(/^v/, '');
+                
+                if (!data.success) {
+                  throw new Error(data.error || 'Update check failed');
+                }
+                
+                const latestVersion = (data.version || '').replace(/^v/, '');
                 const currentVersion = systemVersion?.version || '0.0.0';
                 
                 // Simple version comparison
                 const isNewer = latestVersion.localeCompare(currentVersion, undefined, { numeric: true }) > 0;
                 
                 if (isNewer) {
-                  setUpdateCheckProgress({ status: `Update available: v${latestVersion}`, phase: 'done' });
-                  setUpdateInfo({ version: latestVersion, url: data.html_url, name: data.name });
+                  const prereleaseLabel = data.prerelease ? ' (Pre-release)' : '';
+                  setUpdateCheckProgress({ status: `Update available: v${latestVersion}${prereleaseLabel}`, phase: 'done' });
+                  setUpdateInfo({ version: latestVersion, url: data.html_url, name: data.name, prerelease: data.prerelease });
                   setShowUpdateBanner(true);
                 } else {
                   setUpdateCheckProgress({ status: `You're up to date! (v${currentVersion})`, phase: 'done' });
@@ -5824,7 +5834,7 @@ const DashboardTiles = {
       {/* Header */}
       <div>
         <h1 className="header" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.5rem' }}>
-          <LayoutDashboard size={32} style={{ color: 'var(--accent-color)' }} /> Dashboard
+          <LayoutDashboard size={32} className="header-icon" /> Dashboard
         </h1>
         <p style={{ color: 'var(--text-secondary)', fontSize: '0.95rem', margin: 0 }}>
           Overview of your NeXroll preroll library and system status.
@@ -6250,7 +6260,7 @@ const DashboardTiles = {
       {/* Header */}
       <div>
         <h1 className="header" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.5rem' }}>
-          <Upload size={32} style={{ color: 'var(--accent-color)' }} /> Add Prerolls
+          <Upload size={32} className="header-icon" /> Add Prerolls
         </h1>
         <p style={{ color: 'var(--text-secondary)', fontSize: '0.95rem', margin: 0 }}>
           Upload new video files or import from an existing folder on your system.
@@ -6947,7 +6957,7 @@ const DashboardTiles = {
       {/* Header */}
       <div>
         <h1 className="header" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.5rem' }}>
-          <Library size={32} style={{ color: 'var(--accent-color)' }} /> Preroll Library
+          <Library size={32} className="header-icon" /> Preroll Library
         </h1>
         <p style={{ color: 'var(--text-secondary)', fontSize: '0.95rem', margin: 0 }}>
           Browse, search, and manage your preroll collection.
@@ -7741,7 +7751,7 @@ const DashboardTiles = {
       {/* Header */}
       <div>
         <h1 className="header" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.5rem' }}>
-          <CalendarDays size={32} style={{ color: 'var(--accent-color)' }} /> Calendar View
+          <CalendarDays size={32} className="header-icon" /> Calendar View
         </h1>
         <p style={{ color: 'var(--text-secondary)', fontSize: '0.95rem', margin: 0 }}>
           Visual overview of your scheduled prerolls across days, weeks, months, or years.
@@ -10633,7 +10643,7 @@ const DashboardTiles = {
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
             <div>
               <h1 className="header" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.5rem', margin: 0, fontSize: '1.8rem', fontWeight: 700 }}>
-                <PlusCircle size={32} style={{ color: 'var(--accent-color)' }} /> Create New Schedule
+                <PlusCircle size={32} className="header-icon" /> Create New Schedule
               </h1>
               <p style={{ color: 'var(--text-secondary)', fontSize: '0.95rem', margin: 0 }}>
                 Set up a new preroll schedule with step-by-step guidance.
@@ -11789,7 +11799,7 @@ const DashboardTiles = {
       {/* Header */}
       <div>
         <h1 className="header" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.5rem' }}>
-          <Calendar size={32} style={{ color: 'var(--accent-color)' }} /> My Schedules
+          <Calendar size={32} className="header-icon" /> My Schedules
         </h1>
         <p style={{ color: 'var(--text-secondary)', fontSize: '0.95rem', margin: 0 }}>
           Manage your preroll schedules and automation rules.
@@ -12775,7 +12785,7 @@ const DashboardTiles = {
       {/* Header */}
       <div>
         <h1 className="header" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.5rem' }}>
-          <Folder size={32} style={{ color: 'var(--accent-color)' }} /> Category Management
+          <Folder size={32} className="header-icon" /> Category Management
         </h1>
         <p style={{ color: 'var(--text-secondary)', fontSize: '0.95rem', margin: 0 }}>
           Create and manage categories to organize your prerolls.
@@ -15384,7 +15394,8 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
           accentColor: data.coming_soon_list_accent_color || '#00d4ff',
           serverName: data.coming_soon_list_server_name || '',
           autoRegen: data.coming_soon_list_auto_regen || false,
-          autoRegenLayout: data.coming_soon_list_auto_regen_layout || 'both'
+          autoRegenLayout: data.coming_soon_list_auto_regen_layout || 'both',
+          includeAudio: data.coming_soon_list_include_audio || false
         }));
         // Mark settings as loaded to enable auto-save
         setTimeout(() => { comingSoonListSettingsLoadedRef.current = true; }, 100);
@@ -15408,6 +15419,7 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
       if (settings.serverName !== undefined) params.append('coming_soon_list_server_name', settings.serverName);
       if (settings.autoRegen !== undefined) params.append('coming_soon_list_auto_regen', settings.autoRegen.toString());
       if (settings.autoRegenLayout !== undefined) params.append('coming_soon_list_auto_regen_layout', settings.autoRegenLayout);
+      if (settings.includeAudio !== undefined) params.append('coming_soon_list_include_audio', settings.includeAudio.toString());
       
       await fetch(apiUrl('/nexup/settings?' + params.toString()), { method: 'PUT' });
     } catch (err) {
@@ -16435,6 +16447,9 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
       if (comingSoonListSettings.serverName.trim()) {
         params.append('server_name', comingSoonListSettings.serverName.trim());
       }
+      if (comingSoonListSettings.includeAudio) {
+        params.append('include_audio', 'true');
+      }
       
       const res = await fetch(apiUrl(`/nexup/preroll/generate-coming-soon-list?${params}`), {
         method: 'POST'
@@ -16997,7 +17012,7 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
         {/* Header */}
         <div>
           <h1 className="header" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.5rem' }}>
-            <ClipboardList size={32} style={{ color: 'var(--accent-color)' }} /> Upcoming Items
+            <ClipboardList size={32} className="header-icon" /> Upcoming Items
           </h1>
           <p style={{ color: 'var(--text-secondary)', fontSize: '0.95rem', margin: 0 }}>
             Manage upcoming movies and TV shows from Radarr and Sonarr. Control what appears in your Coming Soon lists.
@@ -17394,7 +17409,7 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
       {/* Header */}
       <div>
         <h1 className="header" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.5rem' }}>
-          <Clapperboard size={32} style={{ color: 'var(--accent-color)' }} /> NeX-Up
+          <Clapperboard size={32} className="header-icon" /> NeX-Up
         </h1>
         <p style={{ color: 'var(--text-secondary)', fontSize: '0.95rem', margin: 0 }}>
           Connect to Radarr and Sonarr to automatically fetch trailers for upcoming movies and TV shows.
@@ -17896,7 +17911,7 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
     <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
       <div>
         <h1 className="header" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.5rem' }}>
-          <Film size={32} style={{ color: 'var(--accent-color)' }} /> Your Trailers
+          <Film size={32} className="header-icon" /> Your Trailers
         </h1>
         <p style={{ color: 'var(--text-secondary)', fontSize: '0.95rem', margin: 0 }}>
           Manage downloaded trailers from Radarr and Sonarr. Trailers are automatically removed when movies/shows are added to your library.
@@ -18535,7 +18550,7 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
     <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
       <div>
         <h1 className="header" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.5rem' }}>
-          <Settings size={32} style={{ color: 'var(--accent-color)' }} /> NeX-Up Settings
+          <Settings size={32} className="header-icon" /> NeX-Up Settings
         </h1>
         <p style={{ color: 'var(--text-secondary)', fontSize: '0.95rem', margin: 0 }}>
           Configure storage, download preferences, and authentication settings.
@@ -19422,7 +19437,7 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
     <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
       <div>
         <h1 className="header" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.5rem' }}>
-          <Sparkles size={32} style={{ color: 'var(--accent-color)' }} /> Preroll Generator
+          <Sparkles size={32} className="header-icon" /> Preroll Generator
         </h1>
         <p style={{ color: 'var(--text-secondary)', fontSize: '0.95rem', margin: 0 }}>
           Create custom cinematic intro videos and build sequences for your preroll rotation.
@@ -19965,7 +19980,7 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
                         border: '1px solid var(--border-color)'
                       }}
                     >
-                      🎬 Grid (Posters)
+                      <LayoutGrid size={16} style={{ marginRight: '0.25rem' }} /> Grid (Posters)
                     </button>
                     <button
                       onClick={() => setComingSoonListSettings(prev => ({ ...prev, layout: 'list' }))}
@@ -19976,7 +19991,7 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
                         border: '1px solid var(--border-color)'
                       }}
                     >
-                      📝 List (Text)
+                      <List size={16} style={{ marginRight: '0.25rem' }} /> List (Text)
                     </button>
                   </div>
                 </div>
@@ -19999,7 +20014,7 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
                           textTransform: 'capitalize'
                         }}
                       >
-                        {source === 'both' ? '📺 Both' : source === 'movies' ? '🎬 Movies' : '📺 TV Shows'}
+                        {source === 'both' ? <><Tv size={16} style={{ marginRight: '0.25rem' }} /> Both</> : source === 'movies' ? <><Film size={16} style={{ marginRight: '0.25rem' }} /> Movies</> : <><Tv size={16} style={{ marginRight: '0.25rem' }} /> TV Shows</>}
                       </button>
                     ))}
                   </div>
@@ -20084,6 +20099,35 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
                     </div>
                   </div>
                 </details>
+
+                {/* Background Music Toggle */}
+                <div style={{ 
+                  marginBottom: '1rem', 
+                  padding: '1rem', 
+                  backgroundColor: 'rgba(0, 212, 255, 0.1)', 
+                  borderRadius: '8px',
+                  border: '1px solid rgba(0, 212, 255, 0.3)'
+                }}>
+                  <label style={{ 
+                    display: 'flex', 
+                    alignItems: 'center', 
+                    gap: '0.75rem', 
+                    cursor: 'pointer'
+                  }}>
+                    <input
+                      type="checkbox"
+                      checked={comingSoonListSettings.includeAudio}
+                      onChange={(e) => setComingSoonListSettings(prev => ({ ...prev, includeAudio: e.target.checked }))}
+                      style={{ width: '18px', height: '18px', cursor: 'pointer' }}
+                    />
+                    <div>
+                      <strong style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}><Music size={16} /> Include Background Music</strong>
+                      <span style={{ fontSize: '0.85rem', color: '#888' }}>
+                        Adds ambient background music with fade in/out to the generated video
+                      </span>
+                    </div>
+                  </label>
+                </div>
 
                 {/* Auto-Regeneration Toggle */}
                 <div style={{ 
@@ -20403,7 +20447,7 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
     <>
     <div style={{ marginBottom: '1rem' }}>
       <h1 className="header" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.5rem' }}>
-        <Settings size={32} style={{ color: 'var(--accent-color)' }} /> General Settings
+        <Settings size={32} className="header-icon" /> General Settings
       </h1>
       <p style={{ color: 'var(--text-secondary)', fontSize: '0.95rem', margin: 0 }}>
         Configure general application preferences and behavior.
@@ -20868,7 +20912,7 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
     <>
     <div style={{ marginBottom: '1rem' }}>
       <h1 className="header" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.5rem' }}>
-        <FolderSync size={32} style={{ color: 'var(--accent-color)' }} /> Path Mappings
+        <FolderSync size={32} className="header-icon" /> Path Mappings
       </h1>
       <p style={{ color: 'var(--text-secondary)', fontSize: '0.95rem', margin: 0 }}>
         Define how local paths should be translated to media server paths.
@@ -21076,7 +21120,7 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
     <>
     <div style={{ marginBottom: '1rem' }}>
       <h1 className="header" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.5rem' }}>
-        <Archive size={32} style={{ color: 'var(--accent-color)' }} /> Backup & Restore
+        <Archive size={32} className="header-icon" /> Backup & Restore
       </h1>
       <p style={{ color: 'var(--text-secondary)', fontSize: '0.95rem', margin: 0 }}>
         Create backups of your NeXroll data and restore from previous backups.
@@ -21272,7 +21316,7 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
     <>
     <div style={{ marginBottom: '1rem' }}>
       <h1 className="header" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.5rem' }}>
-        <Key size={32} style={{ color: 'var(--accent-color)' }} /> API Keys
+        <Key size={32} className="header-icon" /> API Keys
       </h1>
       <p style={{ color: 'var(--text-secondary)', fontSize: '0.95rem', margin: 0 }}>
         Manage API keys for external integrations and automation.
@@ -21593,7 +21637,7 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
     <>
     <div style={{ marginBottom: '1rem' }}>
       <h1 className="header" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.5rem' }}>
-        <FileText size={32} style={{ color: 'var(--accent-color)' }} /> Event Log
+        <FileText size={32} className="header-icon" /> Event Log
       </h1>
       <p style={{ color: 'var(--text-secondary)', fontSize: '0.95rem', margin: 0 }}>
         View application logs and system events.
@@ -22103,7 +22147,7 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
     <>
     <div style={{ marginBottom: '1rem' }}>
       <h1 className="header" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.5rem' }}>
-        <Users size={32} style={{ color: 'var(--accent-color)' }} /> User Management
+        <Users size={32} className="header-icon" /> User Management
       </h1>
       <p style={{ color: 'var(--text-secondary)', fontSize: '0.95rem', margin: 0 }}>
         Manage user accounts and authentication settings.
@@ -22478,7 +22522,7 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
     <>
     <div style={{ marginBottom: '1rem' }}>
       <h1 className="header" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.5rem' }}>
-        <Info size={32} style={{ color: 'var(--accent-color)' }} /> System Information
+        <Info size={32} className="header-icon" /> System Information
       </h1>
       <p style={{ color: 'var(--text-secondary)', fontSize: '0.95rem', margin: 0 }}>
         View version info, scheduler status, and system diagnostics.
@@ -23225,7 +23269,7 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
   const renderJellyfin = () => (
     <div>
       <h1 className="header" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.5rem' }}>
-        <Tv size={32} style={{ color: 'var(--accent-color)' }} /> Jellyfin Integration
+        <Tv size={32} className="header-icon" /> Jellyfin Integration
       </h1>
       <p style={{ color: 'var(--text-secondary)', fontSize: '0.95rem', margin: 0, marginBottom: '1rem' }}>
         Connect your Jellyfin server to enable preroll management.
@@ -23304,7 +23348,7 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
   const renderConnect = () => (
     <div className="nx-connect">
       <h1 className="header" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.5rem' }}>
-        <Link2 size={32} style={{ color: 'var(--accent-color)' }} /> Connections
+        <Link2 size={32} className="header-icon" /> Connections
       </h1>
       <p style={{ color: 'var(--text-secondary)', fontSize: '0.95rem', margin: 0, marginBottom: '1rem' }}>
         Connect to your Plex or Jellyfin media server.
@@ -23503,7 +23547,7 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
         }}>
           <div>
             <h1 className="header" style={{ margin: '0 0 0.5rem 0', fontSize: '2rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-              <Clapperboard size={28} style={{ color: 'var(--accent-color)' }} /> {editingSequenceId ? `Editing: ${editingSequenceName}` : 'Sequence Builder'}
+              <Clapperboard size={28} className="header-icon" /> {editingSequenceId ? `Editing: ${editingSequenceName}` : 'Sequence Builder'}
             </h1>
             <p style={{ color: 'var(--text-secondary)', fontSize: '0.95rem', margin: 0 }}>
               {editingSequenceId 
@@ -23911,7 +23955,7 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
           borderBottom: '2px solid var(--border-color)'
         }}>
           <div>
-            <h1 className="header" style={{ margin: '0 0 0.5rem 0', fontSize: '2rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}><Library size={28} style={{ color: 'var(--accent-color)' }} /> Saved Sequences</h1>
+            <h1 className="header" style={{ margin: '0 0 0.5rem 0', fontSize: '2rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}><Library size={28} className="header-icon" /> Saved Sequences</h1>
             <p style={{ color: 'var(--text-secondary)', fontSize: '0.95rem', margin: 0 }}>
               Reusable custom sequences you can schedule anytime
             </p>
@@ -25031,7 +25075,7 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
       <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
         <div>
           <h1 className="header" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.5rem' }}>
-            <Users2 size={32} style={{ color: 'var(--accent-color)' }} /> Community Prerolls
+            <Users2 size={32} className="header-icon" /> Community Prerolls
           </h1>
           <p style={{ color: 'var(--text-secondary)', fontSize: '0.95rem', margin: 0 }}>
             Browse and download prerolls from the community library.
