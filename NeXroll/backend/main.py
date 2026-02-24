@@ -2490,6 +2490,59 @@ def system_paths():
 
     return info
 
+
+def _check_auth_enabled(db: Session) -> bool:
+    """Check if authentication is enabled"""
+    setting = db.query(models.Setting).first()
+    return getattr(setting, 'auth_enabled', False) if setting else False
+
+
+def _validate_session(session_token: str, db: Session) -> Optional[models.User]:
+    """Validate a session token and return the user if valid"""
+    if not session_token:
+        return None
+    
+    session = db.query(models.Session).filter(
+        models.Session.session_token == session_token,
+        models.Session.is_valid == True,
+        models.Session.expires_at > datetime.datetime.utcnow()
+    ).first()
+    
+    if not session:
+        return None
+    
+    user = db.query(models.User).filter(
+        models.User.id == session.user_id,
+        models.User.is_active == True
+    ).first()
+    
+    return user
+
+
+def get_current_user_optional(request: Request, db: Session = Depends(get_db)) -> Optional[models.User]:
+    """Get current user from session cookie if auth is enabled, otherwise return None"""
+    if not _check_auth_enabled(db):
+        return None  # Auth disabled, no user check needed
+    
+    session_token = request.cookies.get("nexroll_session")
+    return _validate_session(session_token, db) if session_token else None
+
+
+def require_auth(request: Request, db: Session = Depends(get_db)) -> models.User:
+    """Require authentication if enabled - returns user or raises 401"""
+    if not _check_auth_enabled(db):
+        # Auth disabled, return a virtual admin user
+        return None
+    
+    session_token = request.cookies.get("nexroll_session")
+    user = _validate_session(session_token, db) if session_token else None
+    
+    if not user:
+        raise HTTPException(status_code=401, detail="Authentication required")
+    
+    return user
+
+
 @app.post("/system/apply-env-vars")
 def apply_env_vars(request: Request, user: models.User = Depends(require_auth)):
     """
@@ -4040,58 +4093,6 @@ def _is_local_request(request: Request) -> bool:
     client_ip = request.client.host if request.client else ""
     local_ips = ("127.0.0.1", "::1", "localhost")
     return client_ip in local_ips
-
-
-def _check_auth_enabled(db: Session) -> bool:
-    """Check if authentication is enabled"""
-    setting = db.query(models.Setting).first()
-    return getattr(setting, 'auth_enabled', False) if setting else False
-
-
-def _validate_session(session_token: str, db: Session) -> Optional[models.User]:
-    """Validate a session token and return the user if valid"""
-    if not session_token:
-        return None
-    
-    session = db.query(models.Session).filter(
-        models.Session.session_token == session_token,
-        models.Session.is_valid == True,
-        models.Session.expires_at > datetime.datetime.utcnow()
-    ).first()
-    
-    if not session:
-        return None
-    
-    user = db.query(models.User).filter(
-        models.User.id == session.user_id,
-        models.User.is_active == True
-    ).first()
-    
-    return user
-
-
-def get_current_user_optional(request: Request, db: Session = Depends(get_db)) -> Optional[models.User]:
-    """Get current user from session cookie if auth is enabled, otherwise return None"""
-    if not _check_auth_enabled(db):
-        return None  # Auth disabled, no user check needed
-    
-    session_token = request.cookies.get("nexroll_session")
-    return _validate_session(session_token, db) if session_token else None
-
-
-def require_auth(request: Request, db: Session = Depends(get_db)) -> models.User:
-    """Require authentication if enabled - returns user or raises 401"""
-    if not _check_auth_enabled(db):
-        # Auth disabled, return a virtual admin user
-        return None
-    
-    session_token = request.cookies.get("nexroll_session")
-    user = _validate_session(session_token, db) if session_token else None
-    
-    if not user:
-        raise HTTPException(status_code=401, detail="Authentication required")
-    
-    return user
 
 
 @app.get("/auth/status")

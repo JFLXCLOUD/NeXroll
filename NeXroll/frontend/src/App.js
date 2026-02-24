@@ -618,13 +618,14 @@ function App() {
   const [mapRootResult, setMapRootResult] = useState(null); // Stores dry run or import result for inline display
   const [mapRootCategoryError, setMapRootCategoryError] = useState(false); // Highlight category selector when missing
   
-  // Folder browser state for Import feature
+  // Folder browser state for Import feature and NeX-Up storage path
   const [showFolderBrowser, setShowFolderBrowser] = useState(false);
   const [folderBrowserPath, setFolderBrowserPath] = useState('');
   const [folderBrowserItems, setFolderBrowserItems] = useState([]);
   const [folderBrowserParent, setFolderBrowserParent] = useState(null);
   const [folderBrowserLoading, setFolderBrowserLoading] = useState(false);
   const [folderBrowserVideoCount, setFolderBrowserVideoCount] = useState(0);
+  const [folderBrowserContext, setFolderBrowserContext] = useState('import'); // 'import' or 'nexup-storage'
   const [recentImportPaths, setRecentImportPaths] = useState(() => {
     try {
       const saved = localStorage.getItem('nexroll_recent_import_paths');
@@ -6539,7 +6540,7 @@ const DashboardTiles = {
                   <button 
                     type="button" 
                     className="button button-secondary"
-                    onClick={openFolderBrowser}
+                    onClick={() => openFolderBrowser('import')}
                     disabled={mapRootLoading}
                     title="Browse folders"
                     style={{ display: 'flex', alignItems: 'center', gap: '0.35rem' }}
@@ -6778,152 +6779,6 @@ const DashboardTiles = {
           </div>
         )}
       </div>
-
-      {/* Folder Browser Modal */}
-      {showFolderBrowser && (
-        <div className="nx-modal-overlay" onClick={() => setShowFolderBrowser(false)}>
-          <div 
-            className="nx-modal" 
-            onClick={(e) => e.stopPropagation()}
-            style={{ maxWidth: '600px', maxHeight: '80vh', display: 'flex', flexDirection: 'column' }}
-          >
-            <div className="nx-modal-header" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '1rem', borderBottom: '1px solid var(--border-color)' }}>
-              <h3 style={{ margin: 0, display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                <FolderOpen size={20} /> Browse Folders
-              </h3>
-              <button 
-                onClick={() => setShowFolderBrowser(false)} 
-                style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-color)' }}
-              >
-                <X size={20} />
-              </button>
-            </div>
-            
-            {/* Current path breadcrumb */}
-            <div style={{ padding: '0.75rem 1rem', background: 'var(--header-bg)', borderBottom: '1px solid var(--border-color)', fontSize: '0.9rem' }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                <span style={{ fontWeight: 500 }}>Path:</span>
-                <code style={{ 
-                  background: 'var(--bg-color)', 
-                  padding: '0.25rem 0.5rem', 
-                  borderRadius: '4px',
-                  flex: 1,
-                  overflow: 'hidden',
-                  textOverflow: 'ellipsis',
-                  whiteSpace: 'nowrap'
-                }}>
-                  {folderBrowserPath || '(Select a drive or root)'}
-                </code>
-              </div>
-              {folderBrowserVideoCount > 0 && (
-                <div style={{ marginTop: '0.5rem', color: '#28a745', fontSize: '0.85rem' }}>
-                  <Film size={14} style={{ verticalAlign: 'middle', marginRight: '0.25rem' }} />
-                  {folderBrowserVideoCount} video file{folderBrowserVideoCount !== 1 ? 's' : ''} in this folder
-                </div>
-              )}
-            </div>
-
-            {/* Folder list */}
-            <div style={{ flex: 1, overflow: 'auto', padding: '0.5rem' }}>
-              {folderBrowserLoading ? (
-                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '2rem', gap: '0.5rem' }}>
-                  <Loader2 size={20} className="spin" />
-                  <span>Loading folders...</span>
-                </div>
-              ) : (
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
-                  {/* Go up button */}
-                  {folderBrowserParent !== null && (
-                    <button
-                      onClick={() => browseFolders(folderBrowserParent)}
-                      style={{
-                        display: 'flex',
-                        alignItems: 'center',
-                        gap: '0.5rem',
-                        padding: '0.5rem 0.75rem',
-                        background: 'var(--header-bg)',
-                        border: '1px solid var(--border-color)',
-                        borderRadius: '4px',
-                        cursor: 'pointer',
-                        color: 'var(--text-color)',
-                        textAlign: 'left'
-                      }}
-                    >
-                      <ChevronRight size={16} style={{ transform: 'rotate(180deg)' }} />
-                      <span>..</span>
-                      <span style={{ color: '#888', fontSize: '0.85rem' }}>(Go up)</span>
-                    </button>
-                  )}
-                  
-                  {/* Folder items */}
-                  {folderBrowserItems.map((item, i) => (
-                    <button
-                      key={i}
-                      onClick={() => browseFolders(item.path)}
-                      style={{
-                        display: 'flex',
-                        alignItems: 'center',
-                        gap: '0.5rem',
-                        padding: '0.5rem 0.75rem',
-                        background: 'var(--card-bg)',
-                        border: '1px solid var(--border-color)',
-                        borderRadius: '4px',
-                        cursor: 'pointer',
-                        color: 'var(--text-color)',
-                        textAlign: 'left',
-                        transition: 'background 0.15s'
-                      }}
-                      onMouseEnter={(e) => e.target.style.background = 'var(--header-bg)'}
-                      onMouseLeave={(e) => e.target.style.background = 'var(--card-bg)'}
-                    >
-                      {item.type === 'drive' ? (
-                        <span style={{ fontSize: '1.1rem' }}>💾</span>
-                      ) : (
-                        <Folder size={16} style={{ color: '#f0c000' }} />
-                      )}
-                      <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                        {item.name}
-                      </span>
-                      <ChevronRight size={14} style={{ color: '#888' }} />
-                    </button>
-                  ))}
-                  
-                  {folderBrowserItems.length === 0 && !folderBrowserLoading && (
-                    <div style={{ padding: '1rem', textAlign: 'center', color: '#888' }}>
-                      No subfolders found
-                    </div>
-                  )}
-                </div>
-              )}
-            </div>
-
-            {/* Footer with Select button */}
-            <div style={{ 
-              padding: '1rem', 
-              borderTop: '1px solid var(--border-color)', 
-              display: 'flex', 
-              gap: '0.5rem',
-              justifyContent: 'flex-end'
-            }}>
-              <button 
-                className="button button-secondary"
-                onClick={() => setShowFolderBrowser(false)}
-              >
-                Cancel
-              </button>
-              <button 
-                className="button"
-                onClick={() => selectFolderFromBrowser(folderBrowserPath)}
-                disabled={!folderBrowserPath}
-                style={{ backgroundColor: '#28a745' }}
-              >
-                <Check size={14} style={{ marginRight: '0.35rem' }} />
-                Select This Folder
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
 
       {/* Help section - collapsible */}
       <details className="card" style={{ padding: 0 }}>
@@ -16792,18 +16647,29 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
     }
   };
 
-  const openFolderBrowser = () => {
+  const openFolderBrowser = (context = 'import', initialPath = '') => {
+    setFolderBrowserContext(context);
     setShowFolderBrowser(true);
-    browseFolders(mapRootForm.root_path || '');
+    if (context === 'nexup-storage') {
+      browseFolders(initialPath || nexupSettings.storage_path || '');
+    } else {
+      browseFolders(initialPath || mapRootForm.root_path || '');
+    }
   };
 
   const selectFolderFromBrowser = (folderPath) => {
-    setMapRootForm(prev => ({ ...prev, root_path: folderPath }));
+    if (folderBrowserContext === 'nexup-storage') {
+      // Update local state immediately so input reflects the change
+      setNexupSettings(prev => ({ ...prev, storage_path: folderPath }));
+      handleUpdateNexupSettings({ storage_path: folderPath });
+    } else {
+      setMapRootForm(prev => ({ ...prev, root_path: folderPath }));
+      // Save to recent paths
+      const newRecent = [folderPath, ...recentImportPaths.filter(p => p !== folderPath)].slice(0, 5);
+      setRecentImportPaths(newRecent);
+      try { localStorage.setItem('nexroll_recent_import_paths', JSON.stringify(newRecent)); } catch {}
+    }
     setShowFolderBrowser(false);
-    // Save to recent paths
-    const newRecent = [folderPath, ...recentImportPaths.filter(p => p !== folderPath)].slice(0, 5);
-    setRecentImportPaths(newRecent);
-    try { localStorage.setItem('nexroll_recent_import_paths', JSON.stringify(newRecent)); } catch {}
   };
 
   const saveRecentImportPath = (path) => {
@@ -19076,13 +18942,24 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
                 <label style={{ display: 'block', marginBottom: '0.5rem', fontWeight: 'bold' }}>
                   Trailer Storage Path
                 </label>
-                <input
-                  type="text"
-                  placeholder="C:\NeXroll\Trailers or /opt/nexroll/trailers"
-                  value={nexupSettings.storage_path || ''}
-                  onChange={(e) => handleUpdateNexupSettings({ storage_path: e.target.value })}
-                  style={{ width: '100%', padding: '0.5rem', borderRadius: '4px', border: '1px solid var(--border-color)' }}
-                />
+                <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+                  <input
+                    type="text"
+                    placeholder="C:\NeXroll\Trailers or /opt/nexroll/trailers"
+                    value={nexupSettings.storage_path || ''}
+                    onChange={(e) => handleUpdateNexupSettings({ storage_path: e.target.value })}
+                    style={{ flex: 1, padding: '0.5rem', borderRadius: '4px', border: '1px solid var(--border-color)' }}
+                  />
+                  <button
+                    type="button"
+                    className="button button-secondary"
+                    onClick={() => openFolderBrowser('nexup-storage')}
+                    title="Browse folders"
+                    style={{ display: 'flex', alignItems: 'center', gap: '0.35rem', whiteSpace: 'nowrap' }}
+                  >
+                    <FolderOpen size={16} /> Browse
+                  </button>
+                </div>
                 <p style={{ fontSize: '0.8rem', color: '#888', marginTop: '0.25rem' }}>
                   Where downloaded trailers will be stored temporarily
                 </p>
@@ -29990,6 +29867,152 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
                 autoFocus
               >
                 {confirmDialog.confirmText}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Folder Browser Modal (shared by Add Prerolls and NeX-Up Settings) */}
+      {showFolderBrowser && (
+        <div className="nx-modal-overlay" onClick={() => setShowFolderBrowser(false)}>
+          <div 
+            className="nx-modal" 
+            onClick={(e) => e.stopPropagation()}
+            style={{ maxWidth: '600px', maxHeight: '80vh', display: 'flex', flexDirection: 'column' }}
+          >
+            <div className="nx-modal-header" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '1rem', borderBottom: '1px solid var(--border-color)' }}>
+              <h3 style={{ margin: 0, display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                <FolderOpen size={20} /> Browse Folders
+              </h3>
+              <button 
+                onClick={() => setShowFolderBrowser(false)} 
+                style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-color)' }}
+              >
+                <X size={20} />
+              </button>
+            </div>
+            
+            {/* Current path breadcrumb */}
+            <div style={{ padding: '0.75rem 1rem', background: 'var(--header-bg)', borderBottom: '1px solid var(--border-color)', fontSize: '0.9rem' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                <span style={{ fontWeight: 500 }}>Path:</span>
+                <code style={{ 
+                  background: 'var(--bg-color)', 
+                  padding: '0.25rem 0.5rem', 
+                  borderRadius: '4px',
+                  flex: 1,
+                  overflow: 'hidden',
+                  textOverflow: 'ellipsis',
+                  whiteSpace: 'nowrap'
+                }}>
+                  {folderBrowserPath || '(Select a drive or root)'}
+                </code>
+              </div>
+              {folderBrowserVideoCount > 0 && (
+                <div style={{ marginTop: '0.5rem', color: '#28a745', fontSize: '0.85rem' }}>
+                  <Film size={14} style={{ verticalAlign: 'middle', marginRight: '0.25rem' }} />
+                  {folderBrowserVideoCount} video file{folderBrowserVideoCount !== 1 ? 's' : ''} in this folder
+                </div>
+              )}
+            </div>
+
+            {/* Folder list */}
+            <div style={{ flex: 1, overflow: 'auto', padding: '0.5rem' }}>
+              {folderBrowserLoading ? (
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '2rem', gap: '0.5rem' }}>
+                  <Loader2 size={20} className="spin" />
+                  <span>Loading folders...</span>
+                </div>
+              ) : (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
+                  {/* Go up button */}
+                  {folderBrowserParent !== null && (
+                    <button
+                      onClick={() => browseFolders(folderBrowserParent)}
+                      style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '0.5rem',
+                        padding: '0.5rem 0.75rem',
+                        background: 'var(--header-bg)',
+                        border: '1px solid var(--border-color)',
+                        borderRadius: '4px',
+                        cursor: 'pointer',
+                        color: 'var(--text-color)',
+                        textAlign: 'left'
+                      }}
+                    >
+                      <ChevronRight size={16} style={{ transform: 'rotate(180deg)' }} />
+                      <span>..</span>
+                      <span style={{ color: '#888', fontSize: '0.85rem' }}>(Go up)</span>
+                    </button>
+                  )}
+                  
+                  {/* Folder items */}
+                  {folderBrowserItems.map((item, i) => (
+                    <button
+                      key={i}
+                      onClick={() => browseFolders(item.path)}
+                      style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '0.5rem',
+                        padding: '0.5rem 0.75rem',
+                        background: 'var(--card-bg)',
+                        border: '1px solid var(--border-color)',
+                        borderRadius: '4px',
+                        cursor: 'pointer',
+                        color: 'var(--text-color)',
+                        textAlign: 'left',
+                        transition: 'background 0.15s'
+                      }}
+                      onMouseEnter={(e) => e.target.style.background = 'var(--header-bg)'}
+                      onMouseLeave={(e) => e.target.style.background = 'var(--card-bg)'}
+                    >
+                      {item.type === 'drive' ? (
+                        <span style={{ fontSize: '1.1rem' }}>💾</span>
+                      ) : (
+                        <Folder size={16} style={{ color: '#f0c000' }} />
+                      )}
+                      <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                        {item.name}
+                      </span>
+                      <ChevronRight size={14} style={{ color: '#888' }} />
+                    </button>
+                  ))}
+                  
+                  {folderBrowserItems.length === 0 && !folderBrowserLoading && (
+                    <div style={{ padding: '1rem', textAlign: 'center', color: '#888' }}>
+                      No subfolders found
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+
+            {/* Footer with Select button */}
+            <div style={{ 
+              padding: '1rem', 
+              borderTop: '1px solid var(--border-color)', 
+              display: 'flex', 
+              gap: '0.5rem',
+              justifyContent: 'flex-end'
+            }}>
+              <button 
+                className="button button-secondary"
+                onClick={() => setShowFolderBrowser(false)}
+              >
+                Cancel
+              </button>
+              <button 
+                className="button"
+                onClick={() => selectFolderFromBrowser(folderBrowserPath)}
+                disabled={!folderBrowserPath}
+                style={{ backgroundColor: '#28a745' }}
+              >
+                <Check size={14} style={{ marginRight: '0.35rem' }} />
+                Select This Folder
               </button>
             </div>
           </div>
