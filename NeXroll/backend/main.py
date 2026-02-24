@@ -1581,14 +1581,7 @@ SEARCH_SYNONYMS = {
     "pumpkin": ["halloween", "october", "autumn", "fall"],
 }
 
-# Add CORS middleware
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+# NOTE: Wildcard CORS removed for security. Specific-origin CORS middleware is defined below.
 
 # Add exception handler for Pydantic validation errors
 from fastapi.exceptions import RequestValidationError
@@ -2492,7 +2485,7 @@ def system_paths():
     return info
 
 @app.post("/system/apply-env-vars")
-def apply_env_vars():
+def apply_env_vars(request: Request, user: models.User = Depends(require_auth)):
     """
     Apply Windows environment variables required for genre-based preroll intercept functionality.
     Requires administrator privileges to set machine-level environment variables.
@@ -2873,7 +2866,7 @@ def _get_key_prefix(key: str) -> str:
 
 
 @app.get("/api/keys")
-def list_api_keys(db: Session = Depends(get_db)):
+def list_api_keys(user: models.User = Depends(require_auth), db: Session = Depends(get_db)):
     """List all API keys (without showing full key values)"""
     keys = db.query(models.APIKey).order_by(models.APIKey.created_at.desc()).all()
     return {
@@ -2900,6 +2893,7 @@ def create_api_key(
     permissions: str = Query("full", description="Permissions: 'read' or 'full'"),
     expires_days: Optional[int] = Query(None, description="Days until expiration (None = never)"),
     description: Optional[str] = Query(None, description="Optional description"),
+    user: models.User = Depends(require_auth),
     db: Session = Depends(get_db)
 ):
     """Create a new API key. The full key is only shown once!"""
@@ -2951,6 +2945,7 @@ def update_api_key(
     permissions: Optional[str] = Query(None),
     is_active: Optional[bool] = Query(None),
     description: Optional[str] = Query(None),
+    user: models.User = Depends(require_auth),
     db: Session = Depends(get_db)
 ):
     """Update an existing API key's settings"""
@@ -2975,7 +2970,7 @@ def update_api_key(
 
 
 @app.delete("/api/keys/{key_id}")
-def delete_api_key(key_id: int, db: Session = Depends(get_db)):
+def delete_api_key(key_id: int, user: models.User = Depends(require_auth), db: Session = Depends(get_db)):
     """Permanently delete an API key"""
     api_key = db.query(models.APIKey).filter(models.APIKey.id == key_id).first()
     if not api_key:
@@ -4031,13 +4026,13 @@ def cleanup_old_logs(retention_days: int = None, db: Session = None):
 
 
 def _is_local_request(request: Request) -> bool:
-    """Check if request is from localhost (trusted local access)"""
+    """Check if request is from localhost (trusted local access).
+    Only trusts the direct client IP - does NOT trust X-Forwarded-For
+    or X-Real-IP headers as they can be spoofed by remote attackers.
+    """
     client_ip = request.client.host if request.client else ""
-    # Check for localhost addresses
     local_ips = ("127.0.0.1", "::1", "localhost")
-    # Also check X-Forwarded-For in case of proxy
-    forwarded = request.headers.get("X-Real-IP") or request.headers.get("X-Forwarded-For", "").split(",")[0].strip()
-    return client_ip in local_ips or forwarded in local_ips
+    return client_ip in local_ips
 
 
 def _check_auth_enabled(db: Session) -> bool:
@@ -6177,7 +6172,12 @@ def upload_preroll(
             file.filename = new_filename
     
     # Save file to disk (single physical copy regardless of multi-category assignment)
-    file_path = os.path.join(category_path, file.filename)
+    # Sanitize filename to prevent path traversal attacks
+    safe_filename = os.path.basename(file.filename)
+    if not safe_filename:
+        raise HTTPException(status_code=400, detail="Invalid filename")
+    file_path = os.path.join(category_path, safe_filename)
+    file.filename = safe_filename  # Update for downstream usage
     with open(file_path, "wb") as f:
         f.write(content)
 
@@ -6904,7 +6904,9 @@ def update_preroll(preroll_id: int, payload: PrerollUpdate, db: Session = Depend
 
     # Physical rename on disk (optional)
     if payload.new_filename and str(payload.new_filename).strip() and getattr(p, "managed", True):
-        new_name = str(payload.new_filename).strip()
+        new_name = os.path.basename(str(payload.new_filename).strip())  # Sanitize to prevent path traversal
+        if not new_name:
+            raise HTTPException(status_code=400, detail="Invalid filename")
         # resolve current absolute path
         old_abs = p.path if os.path.isabs(p.path) else os.path.join(data_dir, p.path)
         base_dir = os.path.dirname(old_abs)
@@ -6913,6 +6915,9 @@ def update_preroll(preroll_id: int, payload: PrerollUpdate, db: Session = Depend
         if not os.path.splitext(new_name)[1]:
             new_name = f"{new_name}{old_ext}"
         new_abs = os.path.join(base_dir, new_name)
+        # Verify resolved path stays within base directory
+        if not os.path.abspath(new_abs).startswith(os.path.abspath(base_dir)):
+            raise HTTPException(status_code=400, detail="Invalid filename")
         try:
             if os.path.abspath(old_abs) != os.path.abspath(new_abs):
                 os.makedirs(os.path.dirname(new_abs), exist_ok=True)
@@ -8826,7 +8831,7 @@ async def get_preview_video(preview_id: str, video_path: str):
         raise HTTPException(status_code=400, detail="Invalid preview ID")
     
     # Sanitize video_path to prevent directory traversal
-    video_path = video_path.replace('..', '').replace('//', '/')
+    video_path = os.path.basename(video_path)
     
     # Build the full path
     preview_dir = os.path.join(tempfile.gettempdir(), f"nexroll_preview_{preview_id}")
@@ -15377,8 +15382,8 @@ def open_youtube_browser(browser: str = Query('chrome', description="Browser to 
         if browser in browser_commands:
             cmd = browser_commands[browser].get(platform)
             if cmd and sys.platform == 'win32':
-                # Windows needs shell=True for 'start' command
-                subprocess.run(' '.join(cmd), shell=True)
+                # Use os.startfile or webbrowser instead of shell=True for security
+                webbrowser.open(youtube_url)
                 return {"success": True, "message": f"Opened YouTube in {browser}. Please sign in if not already."}
             elif cmd:
                 subprocess.run(cmd)
@@ -20634,7 +20639,9 @@ def download_community_preroll(
         os.makedirs(thumbnail_category_dir, exist_ok=True)
         
         # Download the file
-        filename = request.title or "community_preroll"
+        filename = os.path.basename(request.title or "community_preroll")  # Sanitize to prevent path traversal
+        if not filename:
+            filename = "community_preroll"
         if not filename.lower().endswith(('.mp4', '.mkv', '.mov', '.avi', '.m4v', '.webm')):
             filename += ".mp4"
         
