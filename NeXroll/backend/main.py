@@ -1716,6 +1716,12 @@ async def _log_errors_mw(request, call_next):
             _file_log(f"HTTP {status} {request.method} {request.url.path}")
     except Exception:
         pass
+
+    # Add security headers to all responses
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["X-Frame-Options"] = "SAMEORIGIN"
+    response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+    response.headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=()"
     return response
 
 
@@ -2506,7 +2512,8 @@ def apply_env_vars(request: Request, user: models.User = Depends(require_auth)):
         return {"success": True, "message": "Environment variables applied successfully"}
 
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to apply environment variables: {str(e)}")
+        _file_log(f"Failed to apply environment variables: {str(e)}", level="ERROR")
+        raise HTTPException(status_code=500, detail="Failed to apply environment variables")
 
 # Minimal built-in Dashboard with a Reinitialize Thumbnails button
 @app.get("/dashboard")
@@ -6126,6 +6133,17 @@ def upload_preroll(
     # Read file content once
     content = file.file.read()
     file_size = len(content)
+
+    # Security: enforce upload size limit (500 MB)
+    MAX_UPLOAD_SIZE = 500 * 1024 * 1024  # 500 MB
+    if file_size > MAX_UPLOAD_SIZE:
+        raise HTTPException(status_code=413, detail="File too large. Maximum upload size is 500 MB.")
+
+    # Security: validate file extension
+    ALLOWED_EXTENSIONS = {'.mp4', '.mkv', '.mov', '.avi', '.m4v', '.webm', '.wmv', '.flv', '.ts'}
+    file_ext = os.path.splitext(file.filename)[1].lower() if file.filename else ''
+    if file_ext not in ALLOWED_EXTENSIONS:
+        raise HTTPException(status_code=400, detail=f"File type '{file_ext}' not allowed. Accepted: {', '.join(sorted(ALLOWED_EXTENSIONS))}")
     
     # Calculate hash if not provided
     if not file_hash or not file_hash.strip():
@@ -13924,7 +13942,7 @@ async def get_sync_progress():
     return StreamingResponse(event_stream(), media_type="text/event-stream")
 
 @app.get("/nexup/settings")
-def get_nexup_settings(db: Session = Depends(get_db)):
+def get_nexup_settings(user: models.User = Depends(require_auth), db: Session = Depends(get_db)):
     """Get all NeX-Up settings"""
     setting = db.query(models.Setting).first()
     if not setting:
@@ -15396,7 +15414,7 @@ def open_youtube_browser(browser: str = Query('chrome', description="Browser to 
     return {"success": True, "message": "Opened YouTube in default browser. Please sign in if not already."}
 
 @app.post("/nexup/youtube/upload-cookies")
-async def upload_youtube_cookies(file: UploadFile = File(...), db: Session = Depends(get_db)):
+async def upload_youtube_cookies(file: UploadFile = File(...), user: models.User = Depends(require_auth), db: Session = Depends(get_db)):
     """Upload a cookies.txt file manually"""
     setting = db.query(models.Setting).first()
     storage_path = getattr(setting, 'nexup_storage_path', None)
@@ -20663,7 +20681,8 @@ def download_community_preroll(
                     if chunk:
                         f.write(chunk)
         except Exception as dl_err:
-            raise HTTPException(status_code=500, detail=f"Download failed: {str(dl_err)}")
+            _file_log(f"Community preroll download failed: {str(dl_err)}", level="ERROR")
+            raise HTTPException(status_code=500, detail="Download failed. Check logs for details.")
         
         # Get file info
         file_size = os.path.getsize(file_path)
