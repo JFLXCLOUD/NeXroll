@@ -300,6 +300,8 @@ class Setting(Base):
     nexup_coming_soon_list_text_color = Column(String, default='#ffffff')  # Text color
     nexup_coming_soon_list_accent_color = Column(String, default='#00d4ff')  # Accent color
     nexup_coming_soon_list_server_name = Column(String, default='')  # Server name to display
+    nexup_coming_soon_list_auto_regen_layout = Column(String, default='both')  # Auto-regen layout: 'grid', 'list', or 'both'
+    nexup_coming_soon_list_include_audio = Column(Boolean, default=False)  # Include background music in generated video
     
     # Authentication Settings (Optional - for PWA/remote access)
     auth_enabled = Column(Boolean, default=False)  # Master toggle - auth is OPTIONAL
