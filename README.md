@@ -3,8 +3,16 @@
   <img src="NeXroll/frontend/NeXroll_Logo_WHT.png#gh-dark-mode-only" alt="NeXroll Logo" width="500"/>
   <img src="NeXroll/frontend/NeXroll_Logo_BLK.png#gh-light-mode-only" alt="NeXroll Logo" width="500"/>
   <br>
- <a href="https://hub.docker.com/r/jbrns/nexroll"><img src="https://img.shields.io/docker/pulls/jbrns/nexroll" alt="Docker Pulls"/></a> - <a href="https://github.com/JFLXCLOUD/NeXroll/releases/latest"><img src="https://img.shields.io/github/v/release/jflxcloud/nexroll?style=flat&color=DEDB16" alt="Latest Release"/></a>
-    -  <a href="https://github.com/JFLXCLOUD/NeXroll/releases/latest"><img src="https://img.shields.io/github/downloads/jflxcloud/nexroll/total?color=DE7716" alt="Downloads"/></a>
+ <a href="https://github.com/JFLXCLOUD/NeXroll/releases/latest"><img src="https://img.shields.io/github/v/release/jflxcloud/nexroll?style=flat&color=DEDB16" alt="Latest Release"/></a>
+  <a href="https://github.com/JFLXCLOUD/NeXroll/releases/latest"><img src="https://img.shields.io/github/downloads/jflxcloud/nexroll/total?color=DE7716" alt="Downloads"/></a>
+  <a href="https://github.com/JFLXCLOUD/NeXroll/stargazers"><img src="https://img.shields.io/github/stars/jflxcloud/nexroll?style=flat&color=FFD700" alt="GitHub Stars"/></a>
+  <a href="https://github.com/JFLXCLOUD/NeXroll/blob/main/LICENSE"><img src="https://img.shields.io/github/license/jflxcloud/nexroll?style=flat" alt="License"/></a>
+  <br>
+  <a href="https://hub.docker.com/r/jbrns/nexroll"><img src="https://img.shields.io/docker/pulls/jbrns/nexroll" alt="Docker Pulls"/></a>
+  <a href="https://hub.docker.com/r/jbrns/nexroll"><img src="https://img.shields.io/docker/image-size/jbrns/nexroll?sort=date&label=image%20size" alt="Docker Image Size"/></a>
+  <img src="https://img.shields.io/badge/Plex-supported-E5A00D?logo=plex&logoColor=white" alt="Plex Supported"/>
+  <img src="https://img.shields.io/badge/Jellyfin-supported-00A4DC?logo=jellyfin&logoColor=white" alt="Jellyfin Supported"/>
+  <a href="https://discord.gg/R9eH7TbxEk"><img src="https://img.shields.io/discord/1439077075117150313?logo=discord&logoColor=white&label=Discord&color=5865F2" alt="Discord"/></a>
 
 </div>
 
