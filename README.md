@@ -3,11 +3,11 @@
   <img src="NeXroll/frontend/NeXroll_Logo_WHT.png#gh-dark-mode-only" alt="NeXroll Logo" width="500"/>
   <img src="NeXroll/frontend/NeXroll_Logo_BLK.png#gh-light-mode-only" alt="NeXroll Logo" width="500"/>
   <br>
- <a href="https://github.com/JFLXCLOUD/NeXroll/releases/latest"><img src="https://img.shields.io/github/v/release/JFLXCLOUD/NeXroll?filter=!*beta*&style=flat&label=stable&color=DEDB16" alt="Stable Release"/></a>
-  <a href="https://github.com/JFLXCLOUD/NeXroll/releases"><img src="https://img.shields.io/github/v/release/JFLXCLOUD/NeXroll?include_prereleases&style=flat&label=beta&color=8B5CF6" alt="Beta Release"/></a>
+ <a href="https://github.com/JFLXCLOUD/NeXroll/releases/latest"><img src="https://badgen.net/github/release/JFLXCLOUD/NeXroll/stable?label=stable&color=yellow" alt="Stable Release"/></a>
+  <a href="https://github.com/JFLXCLOUD/NeXroll/releases"><img src="https://badgen.net/github/release/JFLXCLOUD/NeXroll?label=beta&color=purple" alt="Beta Release"/></a>
   <a href="https://github.com/JFLXCLOUD/NeXroll/releases/latest"><img src="https://img.shields.io/github/downloads/JFLXCLOUD/NeXroll/total?include_prereleases&color=DE7716" alt="Downloads"/></a>
-  <a href="https://github.com/JFLXCLOUD/NeXroll/stargazers"><img src="https://img.shields.io/github/stars/jflxcloud/nexroll?style=flat&color=FFD700" alt="GitHub Stars"/></a>
-  <a href="https://github.com/JFLXCLOUD/NeXroll/blob/main/LICENSE"><img src="https://img.shields.io/github/license/JFLXCLOUD/NeXroll?style=flat" alt="License"/></a>
+  <a href="https://github.com/JFLXCLOUD/NeXroll/stargazers"><img src="https://badgen.net/github/stars/JFLXCLOUD/NeXroll?color=yellow" alt="GitHub Stars"/></a>
+  <a href="https://github.com/JFLXCLOUD/NeXroll/blob/main/LICENSE"><img src="https://badgen.net/github/license/JFLXCLOUD/NeXroll" alt="License"/></a>
   <br>
   <a href="https://hub.docker.com/r/jbrns/nexroll"><img src="https://img.shields.io/docker/pulls/jbrns/nexroll" alt="Docker Pulls"/></a>
   <img src="https://img.shields.io/badge/Plex-supported-E5A00D?logo=plex&logoColor=white" alt="Plex Supported"/>
