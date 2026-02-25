@@ -24,6 +24,7 @@
 
 ### Links
 
-* [GitHub Repository](https://github.com/jbrfrn/NeXroll)
-* [Report an Issue](https://github.com/jbrfrn/NeXroll/issues)
+* [GitHub Repository](https://github.com/JFLXCLOUD/NeXroll)
+* [Report an Issue](https://github.com/JFLXCLOUD/NeXroll/issues)
+* [Discord](https://discord.gg/nexroll)
 * [Support on Ko-fi](https://ko-fi.com/j_b__)

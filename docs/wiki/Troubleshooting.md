@@ -17,7 +17,7 @@ Common issues and solutions for NeXroll.
    - Wrong: `http://192.168.1.100:32400/` (trailing slash)
    - Wrong: `192.168.1.100:32400` (missing http://)
 
-2. **Docker users - Check network:**
+2. **Docker users — Check network:**
    - Try `http://host.docker.internal:32400` (Docker Desktop)
    - Try `http://172.17.0.1:32400` (Linux bridge)
    - Use host's LAN IP: `http://192.168.1.X:32400`
@@ -49,6 +49,30 @@ Common issues and solutions for NeXroll.
 3. **Install Local Intros plugin:**
    - Jellyfin requires this plugin for preroll support
    - Dashboard → Plugins → Catalog → Local Intros
+
+## Authentication Issues
+
+### Can't Log In
+
+1. **Check credentials** — Verify username and password
+2. **Account locked** — After 5 failed attempts, wait 15 minutes
+3. **Session expired** — Try logging in again
+4. **Browser cookies** — Clear cookies and try again
+
+### Locked Out of NeXroll
+
+If you can't access the web interface due to authentication:
+
+1. **Wait for lockout to expire** — 15-minute lockout after failed attempts
+2. **Use another admin account** — If available, use a different admin to reset
+3. **Check Settings → Logs** — Look for auth-related error messages
+
+### API Key Not Working
+
+1. **Check key format** — Keys start with `nx_`
+2. **Check permissions** — Read-only keys can't make changes
+3. **Check expiration** — Keys may have expired
+4. **Use correct header** — `Authorization: Bearer nx_your_key`
 
 ## Scheduling Issues
 
@@ -82,6 +106,7 @@ Full list: https://en.wikipedia.org/wiki/List_of_tz_database_time_zones
 2. **Verify date range**: Current date must be within range
 3. **Check time range**: If set, current time must be within range
 4. **Verify timezone**: See above
+5. **Check priority/conflicts**: Higher-priority exclusive schedules may override
 
 ### Prerolls Not Updating in Plex
 
@@ -89,6 +114,39 @@ Full list: https://en.wikipedia.org/wiki/List_of_tz_database_time_zones
 2. **Verify path mappings** are correct
 3. **Manually test** with "Apply to Plex" button
 4. **Check Plex connection** is still valid
+5. **Check Settings → Logs** for scheduler activity
+
+## NeX-Up Issues
+
+### Trailers Not Downloading
+
+1. **Upload YouTube cookies** — Export from an incognito browser session using the cookies.txt extension
+2. **Check VPN** — Try a different server/IP if YouTube is blocking
+3. **Rate limiting** — Wait between downloads, don't bulk-download too many
+4. **Region-locked content** — Some trailers are region-restricted
+5. **Check logs** — Settings → Logs for detailed error messages
+
+### No Upcoming Content Found
+
+1. **Verify Radarr/Sonarr connection** — Re-enter URL and API key
+2. **Increase "Days Ahead"** — You may need to look further into the future
+3. **Check "Include Unmonitored"** — Enable if your content is unmonitored in Radarr/Sonarr
+4. **Verify upcoming content exists** — Check Radarr/Sonarr directly
+
+### Coming Soon List Won't Generate
+
+1. **Verify FFmpeg** — Run `ffmpeg -version` to confirm it's installed
+2. **Sync first** — The generator needs upcoming content from Radarr/Sonarr
+3. **Check disk space** — Video generation needs temporary space
+4. **Poster download failures** — Grid mode falls back to list mode if posters can't be downloaded
+5. **Check logs** — Settings → Logs for generation errors
+
+### Dynamic Preroll Generation Fails
+
+1. **FFmpeg required** — Must be installed and in PATH
+2. **Docker**: FFmpeg is included in the container
+3. **Windows**: Install via `winget install ffmpeg` or download from ffmpeg.org
+4. **Check disk space** — Generation needs temporary space
 
 ## Docker Issues
 
@@ -96,7 +154,7 @@ Full list: https://en.wikipedia.org/wiki/List_of_tz_database_time_zones
 
 **Cause:** Using an old image that doesn't support ARM64
 
-**Solution:** Update to v1.9.6 or later:
+**Solution:** Update to the latest image:
 ```bash
 docker pull jbrns/nexroll:latest
 ```
@@ -143,6 +201,7 @@ docker compose up -d
 1. **Test translation**: Settings → Test Translation
 2. **Verify Plex can access** the translated path
 3. **Check permissions**: Can Plex read the files?
+4. **NeX-Up trailers**: Don't forget to add mappings for trailer storage paths too
 
 ### UNC Paths Not Working
 
@@ -157,9 +216,10 @@ Windows services may not access network shares.
 
 ### Upload Fails
 
-1. **Check file size**: Very large files may timeout
-2. **Check disk space**: Ensure adequate storage
-3. **Check permissions**: NeXroll needs write access to preroll folder
+1. **Check file size**: Maximum upload size is 500MB
+2. **Check file extension**: Must be a supported video format (MP4, MKV, AVI, MOV, etc.)
+3. **Check disk space**: Ensure adequate storage
+4. **Check permissions**: NeXroll needs write access to preroll folder
 
 ### Thumbnails Not Generating
 
@@ -167,8 +227,8 @@ Windows services may not access network shares.
 
 **Solutions:**
 - **Docker**: FFmpeg is included, check container logs
-- **Windows**: Installer should install FFmpeg via winget
-- **Manual**: Install FFmpeg and ensure it's in PATH
+- **Windows**: Install FFmpeg and ensure it's in PATH
+- **Manual**: Run `ffmpeg -version` to verify installation
 
 ## UI Issues
 
@@ -188,7 +248,7 @@ Windows services may not access network shares.
 
 1. **Check permissions**: Can NeXroll write to data directory?
 2. **Check disk space**: Database needs room to grow
-3. **Check logs**: Look for write errors
+3. **Check logs**: Settings → Logs for write errors
 
 ## Windows-Specific Issues
 
@@ -214,14 +274,16 @@ New-NetFirewallRule -DisplayName "NeXroll" -Direction Inbound -Port 9393 -Protoc
 
 ## Getting Help
 
-### Collect Logs
+### Check the Logs
 
-**Docker:**
+The built-in log viewer (**Settings → Logs**) shows detailed error messages, API request timings, and scheduler activity. This is the best first step for any troubleshooting.
+
+**Docker logs:**
 ```bash
 docker logs nexroll > nexroll-logs.txt 2>&1
 ```
 
-**Windows:**
+**Windows logs:**
 Logs are in: `%ProgramData%\NeXroll\logs`
 
 ### Report Issues
@@ -230,10 +292,11 @@ Logs are in: `%ProgramData%\NeXroll\logs`
 2. Include:
    - NeXroll version
    - Deployment type (Docker/Windows)
-   - Relevant logs
+   - Relevant logs (from Settings → Logs or container logs)
    - Steps to reproduce
 
 ### Community Support
 
 - [GitHub Issues](https://github.com/JFLXCLOUD/NeXroll/issues)
 - [GitHub Discussions](https://github.com/JFLXCLOUD/NeXroll/discussions)
+- [Discord](https://discord.gg/nexroll)

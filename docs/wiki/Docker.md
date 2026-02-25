@@ -5,19 +5,19 @@ NeXroll can be run in Docker containers for easy deployment and management. Offi
 ## Official Images
 
 ```bash
-# Latest version
+# Latest stable version
 docker pull jbrns/nexroll:latest
 
 # Specific version
-docker pull jbrns/nexroll:1.10.14
+docker pull jbrns/nexroll:1.11.0
 
 # Beta channel (pre-release features)
 docker pull jbrns/nexroll:beta
 ```
 
 ### Supported Architectures
-- `linux/amd64` - Intel/AMD servers, most VPS
-- `linux/arm64` - Raspberry Pi 4/5, Apple Silicon, ARM servers
+- `linux/amd64` — Intel/AMD servers, most VPS
+- `linux/arm64` — Raspberry Pi 4/5, Apple Silicon, ARM servers
 
 ## Quick Start
 
@@ -42,6 +42,33 @@ services:
       - /path/to/your/prerolls:/data/prerolls
     restart: unless-stopped
 ```
+
+### With NeX-Up Trailer Storage
+
+If using NeX-Up trailers, you may want a separate volume for trailer storage so Plex can access them:
+
+```yaml
+version: "3.8"
+services:
+  nexroll:
+    image: jbrns/nexroll:latest
+    container_name: nexroll
+    ports:
+      - "9393:9393"
+    environment:
+      - NEXROLL_PORT=9393
+      - NEXROLL_DB_DIR=/data
+      - NEXROLL_PREROLL_PATH=/data/prerolls
+      - NEXROLL_SECRETS_DIR=/data
+      - TZ=America/New_York
+    volumes:
+      - ./nexroll-data:/data
+      - /path/to/your/prerolls:/data/prerolls
+      - /path/to/trailers:/data/nexup_trailers    # NeX-Up trailer storage
+    restart: unless-stopped
+```
+
+Then configure the **Trailer Storage Path** in NeX-Up Settings to `/data/nexup_trailers`.
 
 ### Setup
 
@@ -70,6 +97,7 @@ NeXroll is available in Unraid Community Applications.
 | WebUI Port | 9393 | 9393 |
 | Application Data | /data | /mnt/user/appdata/nexroll |
 | Preroll Storage | /data/prerolls | /mnt/user/media/prerolls |
+| Trailer Storage | /data/nexup_trailers | /mnt/user/media/trailers |
 | Time Zone | TZ | America/New_York |
 
 ## Environment Variables
@@ -80,6 +108,7 @@ NeXroll is available in Unraid Community Applications.
 | `NEXROLL_DB_DIR` | Database and config directory | /data |
 | `NEXROLL_PREROLL_PATH` | Preroll storage directory | /data/prerolls |
 | `NEXROLL_SECRETS_DIR` | Secrets storage directory | /data |
+| `SCHEDULER_INTERVAL` | How often to check schedules (seconds) | 60 |
 | `TZ` | Timezone (important for scheduling!) | UTC |
 | `PUID` | User ID for file permissions | 99 |
 | `PGID` | Group ID for file permissions | 100 |
@@ -96,6 +125,8 @@ For Plex/Jellyfin to find your preroll files, you must configure path mappings i
 | Docker → Windows Plex (UNC) | /data/prerolls | \\\\NAS\Prerolls |
 | Docker → Linux Plex | /data/prerolls | /media/prerolls |
 | Unraid → Unraid Plex | /data/prerolls | /mnt/user/media/prerolls |
+
+**Don't forget NeX-Up trailers!** If using a separate trailer volume, add a path mapping for that too.
 
 ### Testing Mappings
 
@@ -159,7 +190,7 @@ docker run -d --name nexroll `
 In the web UI Connect page:
 
 - **Method 1**: Direct URL + Token (e.g., `http://192.168.1.100:32400`)
-- **Method 2**: Plex.tv Authentication (Recommended - auto-discovers servers)
+- **Method 2**: Plex.tv Authentication (Recommended — auto-discovers servers)
 
 For Docker environments, Plex is typically at:
 - `http://host.docker.internal:32400` (Docker Desktop)
@@ -189,6 +220,8 @@ docker rm nexroll
 # Run the docker run command again
 ```
 
+Your data is preserved in the mounted volumes.
+
 ## Troubleshooting
 
 ### Cannot Connect to Plex
@@ -212,7 +245,7 @@ docker run --user $(id -u):$(id -g) ...
 - List of timezones: https://en.wikipedia.org/wiki/List_of_tz_database_time_zones
 
 ### ARM64 Issues
-- NeXroll supports ARM64 as of v1.9.6
+- NeXroll supports ARM64 natively
 - If you see "no matching manifest for linux/arm64", update to the latest image
 
 ### Port Already in Use
@@ -228,6 +261,8 @@ The `/data` volume stores:
 - Preroll files (if using default path)
 - Thumbnails
 - Encrypted credentials
+- NeX-Up trailers (if using default storage path)
+- Log files
 
 ### Backup
 
@@ -241,6 +276,8 @@ tar -czvf nexroll-backup.tar.gz ./nexroll-data
 # Restart
 docker start nexroll
 ```
+
+Or use the built-in **System & Files Backup** feature in Settings.
 
 ## Full Stack Example with Plex
 

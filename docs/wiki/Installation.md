@@ -7,6 +7,7 @@ This guide covers installing NeXroll on different platforms.
 - **Plex Media Server** or **Jellyfin** (with Local Intros plugin)
 - Network access between NeXroll and your media server
 - Storage space for preroll videos
+- **FFmpeg** (required for thumbnail generation, video scaling, and Coming Soon List Generator)
 
 ## Installation Options
 
@@ -28,8 +29,9 @@ Docker is the easiest and recommended installation method.
 docker run -d \
   --name nexroll \
   -p 9393:9393 \
-  -v ./nexroll-data:/app/data \
-  -v /path/to/prerolls:/prerolls \
+  -e TZ=America/New_York \
+  -v ./nexroll-data:/data \
+  -v /path/to/prerolls:/data/prerolls \
   jbrns/nexroll:latest
 ```
 
@@ -43,9 +45,11 @@ services:
     container_name: nexroll
     ports:
       - "9393:9393"
+    environment:
+      - TZ=America/New_York
     volumes:
-      - ./nexroll-data:/app/data
-      - /path/to/prerolls:/prerolls
+      - ./nexroll-data:/data
+      - /path/to/prerolls:/data/prerolls
     restart: unless-stopped
 ```
 
@@ -57,8 +61,8 @@ See the [Docker Setup](Docker) guide for detailed configuration options.
 
 ### Windows Installer
 
-1. Download the latest installer from [GitHub Releases](https://github.com/jbrfrn/NeXroll/releases)
-2. Run `NeXroll-Setup.exe`
+1. Download the latest installer from [GitHub Releases](https://github.com/JFLXCLOUD/NeXroll/releases)
+2. Run the `NeXroll_Installer_v*.exe` file
 3. Follow the installation wizard
 4. Launch NeXroll from the Start Menu
 
@@ -87,13 +91,14 @@ For developers or advanced users who want to run from source.
 
 - Python 3.10 or higher
 - pip (Python package manager)
+- FFmpeg (for thumbnails, video scaling, and Coming Soon List generation)
 - Git (optional, for cloning)
 
 ### Installation Steps
 
 ```bash
 # Clone the repository
-git clone https://github.com/jbrfrn/NeXroll.git
+git clone https://github.com/JFLXCLOUD/NeXroll.git
 cd NeXroll
 
 # Create virtual environment (recommended)
@@ -156,10 +161,11 @@ See [Docker Setup](Docker#unraid) for Unraid-specific configuration.
 After installing:
 
 1. Open NeXroll at `http://localhost:9393` (or your server's IP)
-2. Go to **Connect** tab
-3. Connect to your Plex or Jellyfin server
-4. Configure [Path Mappings](Path-Mappings) if needed
-5. Start adding prerolls!
+2. **(Optional)** Set up [Authentication](Configuration#authentication) if you want to secure access
+3. Go to the **Connect** tab
+4. Connect to your Plex or Jellyfin server
+5. Configure [Path Mappings](Path-Mappings) if needed
+6. Start adding prerolls!
 
 ## Updating
 
@@ -171,8 +177,14 @@ docker rm nexroll
 # Re-run your docker run command
 ```
 
+Or with Docker Compose:
+```bash
+docker compose pull
+docker compose up -d --force-recreate
+```
+
 ### Windows
-Download and run the latest installer - it will update your existing installation.
+Download and run the latest installer — it will update your existing installation.
 
 ### Python
 ```bash

@@ -6,6 +6,8 @@ Path mappings are **critical** for NeXroll to work with Plex and Jellyfin when t
 
 NeXroll stores preroll files at a certain path (e.g., `/data/prerolls` in Docker). But Plex might see that same folder at a different path (e.g., `Z:\Prerolls` on Windows or `/mnt/media/prerolls` on Linux).
 
+**Note**: Path mappings also apply to NeX-Up trailers stored in the trailer storage path.
+
 Without proper mappings, Plex receives a path it can't access, and prerolls won't play.
 
 ## How It Works

@@ -1,25 +1,26 @@
 # NeX-Up - Trailer Integration Guide
 
-NeX-Up brings the authentic movie theater "Coming Soon" experience to your Plex server. Automatically download trailers for upcoming movies and TV shows from Radarr and Sonarr, generate custom intro videos, and build professional sequences that play before your content.
+NeX-Up brings the authentic movie theater "Coming Soon" experience to your Plex server. Automatically download trailers for upcoming movies and TV shows from Radarr and Sonarr, generate custom intro videos and Coming Soon lists, and build professional sequences that play before your content.
 
 ## Overview
 
-NeX-Up combines four powerful features:
+NeX-Up combines five powerful features:
 
-1. **Radarr & Sonarr Integration** - Automatically discovers and downloads trailers for upcoming releases
-2. **Dynamic Preroll Generator** - Creates custom "Coming Soon to [Your Server]" intro videos
-3. **Sequence Builder Presets** - Quick templates for assembling trailers and intros
-4. **Smart Cleanup** - Automatically removes trailers when content is released
+1. **Radarr & Sonarr Integration** — Automatically discovers and downloads trailers for upcoming releases
+2. **Coming Soon List Generator** — Creates dynamic video prerolls showcasing upcoming content with poster grids or text lists
+3. **Dynamic Preroll Generator** — Creates custom "Coming Soon to [Your Server]" intro videos
+4. **Sequence Builder Presets** — Quick templates for assembling trailers and intros
+5. **Smart Cleanup** — Automatically removes trailers when content is released
 
 ## Getting Started
 
 ### Step 1: Navigate to NeX-Up
 
 Click **NeX-Up** in the main navigation menu. You'll see four tabs:
-- **Connections** - Configure Radarr and Sonarr
-- **Your Trailers** - Manage downloaded trailers
-- **Settings** - YouTube cookies, storage, and TMDB
-- **Generator** - Create dynamic intros and sequences
+- **Connections** — Configure Radarr and Sonarr
+- **Your Trailers** — Manage downloaded trailers
+- **Settings** — YouTube cookies, storage, TMDB, and Coming Soon List settings
+- **Generator** — Create dynamic intros, Coming Soon lists, and sequences
 
 ### Step 2: Connect Radarr
 
@@ -43,11 +44,13 @@ Go to the **Settings** tab to configure:
 
 | Setting | Description | Recommended |
 |---------|-------------|-------------|
-| **Storage Path** | Where trailers are saved | Default is fine |
+| **Storage Path** | Where trailers are saved (use the Browse button to select) | Default is fine |
 | **Days Ahead** | How far in the future to look for releases | 30-90 days |
 | **Max Trailers** | Maximum number of trailers to keep | 10-20 |
 | **Quality** | Download quality (720p, 1080p, 4K) | 1080p |
 | **Auto-Cleanup** | Remove trailers when content releases | Enabled |
+| **Release Date Preference** | Which release date to use (physical, digital, or earliest) | Earliest |
+| **Include Unmonitored** | Include unmonitored content from Radarr/Sonarr | Disabled |
 
 ## Downloading Trailers
 
@@ -60,8 +63,8 @@ Go to the **Settings** tab to configure:
 ### View Upcoming Content
 
 After syncing:
-- **Upcoming Movies** - Shows movies scheduled for release with trailer availability
-- **Upcoming TV** - Shows TV seasons with premiere dates
+- **Upcoming Movies** — Shows movies scheduled for release with trailer availability
+- **Upcoming TV** — Shows TV seasons with premiere dates
 
 Each item shows:
 - Title and release date
@@ -81,7 +84,7 @@ Each item shows:
 
 ## YouTube Cookie Setup (Recommended)
 
-YouTube has aggressive bot detection. For reliable downloads, export cookies from your browser:
+YouTube has aggressive bot detection. For reliable downloads, export cookies from your browser.
 
 ### Why Cookies?
 
@@ -110,13 +113,63 @@ YouTube has aggressive bot detection. For reliable downloads, export cookies fro
 ### Tips for Avoiding Blocks
 
 - **Refresh your VPN IP** if downloads fail repeatedly
-- **Wait between downloads** - don't download 20 trailers at once
+- **Wait between downloads** — don't download 20 trailers at once
 - **Use Incognito** when exporting cookies
 - **Re-export cookies** if they expire (typically every few weeks)
 
+## Coming Soon List Generator
+
+Generate dynamic video prerolls that showcase your upcoming movies and TV shows from Radarr and Sonarr. These videos automatically display titles, release dates, and poster art.
+
+### Layout Styles
+
+| Layout | Description |
+|--------|-------------|
+| **Grid Mode** | Visual poster grid with movie/show artwork (220x330px posters) and titles |
+| **List Mode** | Clean text-only layout with titles and release dates |
+
+### Configuration
+
+In the **Generator** tab, configure your Coming Soon List:
+
+| Setting | Description | Default |
+|---------|-------------|---------|
+| **Layout** | Grid or List mode | Grid |
+| **Content Source** | Movies only, Shows only, or Both | Both |
+| **Duration** | Video length (5-20 seconds) | 10 |
+| **Max Items** | How many titles to display (4-12) | 8 |
+| **Server Name** | Your server name displayed in the header | — |
+| **Background Color** | Background color | #141428 |
+| **Text Color** | Title and text color | #ffffff |
+| **Accent Color** | Accent/highlight color | #00d4ff |
+| **Audio** | Enable/disable background music | Off |
+
+### Generating a Coming Soon List
+
+1. Go to **NeX-Up → Generator**
+2. Configure your layout settings
+3. Click **Generate**
+4. Preview the result in the built-in video player
+5. The video is saved and registered to the "Coming Soon Lists" category
+
+### Auto-Regeneration
+
+Enable auto-regeneration to keep your Coming Soon List fresh:
+
+1. In the Generator settings, toggle **Auto-regenerate on sync**
+2. Choose which layouts to regenerate: Grid, List, or Both
+3. When NeX-Up syncs with Radarr/Sonarr, the Coming Soon List automatically updates with new content
+
+### Using Coming Soon Lists
+
+Generated Coming Soon Lists can be used:
+- In **Sequences** — Add as a fixed block
+- As **Filler Category** — Set Coming Soon List as the filler type in Settings
+- In **Schedules** — Add to a category and schedule it
+
 ## Dynamic Preroll Generator
 
-Create custom "Coming Soon" intro videos that play before your trailers.
+Create custom "Coming Soon to [Your Server]" intro videos.
 
 ### Navigate to Generator
 
@@ -126,9 +179,9 @@ Go to **NeX-Up → Generator**
 
 | Template | Description |
 |----------|-------------|
-| **🎬 Coming Soon** | Cinematic intro with glow effects and dramatic animations |
-| **🎭 Feature Presentation** | Classic theater-style with elegant text |
-| **📽️ Now Showing** | Retro film-style with warm sepia tones |
+| **Coming Soon** | Cinematic intro with glow effects and dramatic animations |
+| **Feature Presentation** | Classic theater-style with elegant text |
+| **Now Showing** | Retro film-style with warm sepia tones |
 
 ### Color Themes
 
@@ -250,10 +303,12 @@ NeX-Up automatically creates categories for your trailers:
 |----------|----------|
 | **Movie Trailers** | All downloaded movie trailers from Radarr |
 | **TV Trailers** | All downloaded TV trailers from Sonarr |
+| **Coming Soon Lists** | Generated Coming Soon List videos |
 
 These categories are used by:
 - Sequence Builder random blocks
 - Dashboard statistics
+- Filler Category configuration
 - Storage management
 
 ## Managing Your Trailers
@@ -279,7 +334,7 @@ The trailer is removed from disk and the category.
 ### Automatic Cleanup
 
 When enabled (Settings → Auto-Cleanup):
-- NeX-Up checks your Radarr/Sonarr daily
+- NeX-Up checks your Radarr/Sonarr during syncs
 - When a movie/show is added to your library, its trailer is automatically deleted
 - Keeps your trailer collection fresh and relevant
 
@@ -288,8 +343,8 @@ When enabled (Settings → Auto-Cleanup):
 ### Quick Actions
 
 On the Dashboard, the **Quick Actions** panel includes:
-- **NeX-Up Sync** - One-click sync for both Radarr and Sonarr
-- Shows real-time download progress
+- **NeX-Up Sync** — One-click sync for both Radarr and Sonarr
+- Shows real-time download progress with trailer count
 - No need to navigate to the NeX-Up page
 
 ### NeX-Up Tile
@@ -304,29 +359,38 @@ The Dashboard shows a NeX-Up summary:
 
 ### Trailers Not Downloading
 
-1. **Check YouTube cookies** - Re-export if expired
-2. **Verify VPN** - Try a different server/IP
-3. **Wait between downloads** - YouTube rate limits
-4. **Check the trailer URL** - Some trailers are region-locked
+1. **Check YouTube cookies** — Re-export if expired
+2. **Verify VPN** — Try a different server/IP
+3. **Wait between downloads** — YouTube rate limits
+4. **Check the trailer URL** — Some trailers are region-locked
+5. **Check Settings → Logs** for detailed error messages
 
 ### No Upcoming Content Found
 
-1. **Verify Radarr/Sonarr connection** - Re-enter URL and API key
-2. **Check "Days Ahead" setting** - Increase if needed
-3. **Ensure upcoming content exists** - Check Radarr/Sonarr directly
+1. **Verify Radarr/Sonarr connection** — Re-enter URL and API key
+2. **Check "Days Ahead" setting** — Increase if needed
+3. **Ensure upcoming content exists** — Check Radarr/Sonarr directly
+4. **Check "Include Unmonitored"** — Enable if your content is unmonitored
+
+### Coming Soon List Generation Fails
+
+1. **Verify FFmpeg is installed** — Run `ffmpeg -version` in terminal
+2. **Check FFmpeg in PATH** — NeXroll must be able to find it
+3. **Sync first** — Coming Soon Lists need upcoming content from Radarr/Sonarr
+4. **Check logs** — Settings → Logs for detailed error messages
 
 ### Dynamic Preroll Generation Fails
 
-1. **Verify FFmpeg is installed** - Run `ffmpeg -version` in terminal
-2. **Check FFmpeg in PATH** - NeXroll must be able to find it
-3. **Sufficient disk space** - Generation needs temporary space
+1. **Verify FFmpeg is installed** — Run `ffmpeg -version` in terminal
+2. **Check FFmpeg in PATH** — NeXroll must be able to find it
+3. **Sufficient disk space** — Generation needs temporary space
 
 ### Sequence Not Playing in Plex
 
-1. **Check the schedule** - Is it enabled and within date range?
-2. **Verify path mappings** - Settings → Path Mappings
-3. **Ensure files exist** - Trailers might have been cleaned up
-4. **Restart Plex** - Plex caches preroll settings
+1. **Check the schedule** — Is it enabled and within date range?
+2. **Verify path mappings** — Settings → Path Mappings
+3. **Ensure files exist** — Trailers might have been cleaned up
+4. **Restart Plex** — Plex caches preroll settings
 
 ## Best Practices
 
@@ -344,6 +408,12 @@ The Dashboard shows a NeX-Up summary:
 - Enable **Auto-Cleanup** to remove released content
 - Monitor storage in the NeX-Up dashboard
 
+### Coming Soon Lists
+- Use **Grid** layout for visual impact with poster art
+- Use **List** layout for a cleaner, text-based look
+- Enable **Auto-regeneration** to keep lists current
+- Customize colors to match your server's theme
+
 ### Regular Maintenance
 - **Sync weekly** to catch new upcoming releases
 - **Check for failed downloads** and retry
@@ -351,7 +421,7 @@ The Dashboard shows a NeX-Up summary:
 
 ### Sequence Design
 - Keep total preroll time under 2 minutes
-- Lead with your custom intro
+- Lead with your custom intro or Coming Soon List
 - Mix movie and TV trailers for variety
 - Create seasonal sequences (holiday, summer blockbusters, etc.)
 
@@ -363,10 +433,11 @@ Here's a step-by-step guide to get the full theater experience:
 2. **Upload YouTube cookies** (Settings tab)
 3. **Sync upcoming releases** (Connections tab → Sync)
 4. **Download trailers** (Your Trailers tab → Download All)
-5. **Generate a Coming Soon intro** (Generator tab)
-6. **Create a sequence** using a preset (Generator tab → Sequence Builder)
-7. **Create a schedule** that uses your sequence (Schedules → Add Schedule)
-8. **Enjoy!** Your Plex now has a real theater experience
+5. **Generate a Coming Soon List** (Generator tab → Coming Soon List section)
+6. **Generate a Coming Soon intro** (Generator tab → Dynamic Preroll section)
+7. **Create a sequence** using a preset (Generator tab → Sequence Builder)
+8. **Create a schedule** that uses your sequence (Schedules → Add Schedule)
+9. **Enjoy!** Your Plex now has a real theater experience
 
 ---
 

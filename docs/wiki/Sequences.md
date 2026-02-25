@@ -6,8 +6,8 @@ Sequences let you build custom preroll playlists by combining different preroll 
 
 A sequence is a reusable preroll playlist that you build from blocks. Each block defines what prerolls to play:
 
-- **Random blocks** - Pick random prerolls from a category
-- **Fixed blocks** - Specific prerolls in a specific order
+- **Random blocks** — Pick random prerolls from a category
+- **Fixed blocks** — Specific prerolls in a specific order
 
 When a sequence is applied to Plex (or used by a schedule), NeXroll resolves the blocks into actual preroll paths.
 
@@ -75,8 +75,22 @@ Click **Preview** to see what your sequence would look like:
 
 Your sequence is now in your library and can be:
 - Used in schedules
+- Used as a Filler Category source
 - Exported and shared
 - Edited later
+
+## NeX-Up Preset Sequences
+
+If you're using NeX-Up, preset sequence templates are available in the **NeX-Up → Generator** tab:
+
+| Preset | Content |
+|--------|---------|
+| **Coming Soon + Movie Trailers** | Your intro → 2-3 random movie trailers |
+| **Coming Soon + TV Trailers** | Your intro → 2-3 random TV trailers |
+| **Mixed: Movies + TV** | Your intro → 1 movie trailer → 1 TV trailer |
+| **Theater Experience** | Your intro → 4 random trailers |
+
+These presets auto-create sequences with the right blocks pre-configured. See [NeX-Up Guide](NeX-Up#building-sequences-with-trailers) for details.
 
 ## Using Saved Sequences
 
@@ -90,6 +104,14 @@ When creating or editing a schedule:
 
 The schedule will use that sequence during its active dates.
 
+### As Filler Category
+
+Sequences can be used as the global filler when no schedules are active:
+
+1. Go to **Settings → General → Filler Category**
+2. Set filler type to **Sequence**
+3. Select a saved sequence
+
 ### Saved Sequences Library
 
 Go to **Schedules → Saved Sequences** to:
@@ -97,6 +119,7 @@ Go to **Schedules → Saved Sequences** to:
 - Edit existing sequences
 - Delete sequences
 - Export sequences
+- Click **Schedule** to create a schedule from a sequence
 
 ## Exporting & Importing
 
@@ -122,6 +145,8 @@ The file contains:
 
 From the Saved Sequences library, click **Export All** to bundle all sequences into one file for backup or sharing.
 
+See [Sharing Sequences](Sharing-Patterns) for detailed export/import options.
+
 ## How Sequences Work with Plex
 
 When a sequence is applied:
@@ -139,9 +164,9 @@ Example:
 /prerolls/logo.mp4;/prerolls/christmas/snow.mp4;/prerolls/christmas/tree.mp4
 ```
 
-## Example Sequence
+## Example Sequences
 
-**"Holiday Mix"** sequence:
+### Holiday Mix
 
 | Block | Type | Configuration |
 |-------|------|---------------|
@@ -150,6 +175,16 @@ Example:
 | 3 | Fixed | Outro clip |
 
 **Result**: Logo plays first, then 2 random Christmas prerolls, then the outro.
+
+### Theater Experience
+
+| Block | Type | Configuration |
+|-------|------|---------------|
+| 1 | Fixed | "Coming Soon" dynamic intro |
+| 2 | Random | 2 from Movie Trailers category |
+| 3 | Random | 1 from TV Trailers category |
+
+**Result**: Your custom intro, followed by 2 random movie trailers and 1 TV trailer.
 
 ## Tips & Best Practices
 
@@ -163,7 +198,7 @@ Example:
 - Well-organized categories = better sequences
 
 ### Name Clearly
-- Use descriptive names: "Holiday 2024 - 2 Random"
+- Use descriptive names: "Holiday 2025 - 2 Random"
 - Add descriptions for complex sequences
 
 ### Preview Before Saving
@@ -186,7 +221,7 @@ Example:
 
 ### Random Blocks Always Same
 
-- Plex caches prerolls - wait or restart Plex
+- Plex caches prerolls — wait or restart Plex
 - Re-apply the schedule to refresh
 
 ### Empty Sequence Error

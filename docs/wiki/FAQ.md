@@ -22,7 +22,12 @@ Yes, but Jellyfin requires the [Local Intros plugin](https://github.com/dkanada/
 
 Docker is recommended for most users:
 ```bash
-docker run -d --name nexroll -p 9393:9393 -v ./nexroll-data:/app/data jbrns/nexroll:latest
+docker run -d --name nexroll \
+  -p 9393:9393 \
+  -e TZ=America/New_York \
+  -v ./nexroll-data:/data \
+  -v /path/to/prerolls:/data/prerolls \
+  jbrns/nexroll:latest
 ```
 
 See the [Installation Guide](Installation) for all options.
@@ -49,11 +54,32 @@ Or use the [Plex Token Finder](https://support.plex.tv/articles/204059436-findin
 
 ---
 
+## Authentication
+
+### Do I need to set up authentication?
+
+No, authentication is optional. If you're running NeXroll on a private network, you can skip it. Enable it if NeXroll is accessible from the internet or you want user accounts.
+
+### What's the difference between API keys and user accounts?
+
+- **API Keys** are for programmatic/external access to the `/external/*` API endpoints
+- **User Accounts** add a login page to the web interface with username/password
+
+### I forgot my password. How do I reset it?
+
+If you can't log in, you can reset authentication by deleting the auth-related tables from the database or using the admin account to reset passwords.
+
+### What happens if my account gets locked?
+
+After 5 failed login attempts, accounts are locked for 15 minutes. Wait and try again, or use another admin account to unlock.
+
+---
+
 ## Prerolls
 
 ### What video formats are supported?
 
-Any format Plex/Jellyfin can play: MP4, MKV, AVI, MOV, etc. MP4 with H.264 is recommended for best compatibility.
+Supported formats: MP4, MKV, AVI, MOV, WMV, FLV, WebM, M4V, TS, MPG, MPEG. MP4 with H.264 is recommended for best compatibility.
 
 ### How long should prerolls be?
 
@@ -71,6 +97,10 @@ Store them where both NeXroll and Plex/Jellyfin can access them:
 
 Yes! Prerolls can be assigned to multiple categories.
 
+### Can I import existing preroll folders?
+
+Yes! Go to **Dashboard → Add Prerolls** and use the **Import Folder** feature to register existing files without moving them.
+
 ---
 
 ## Schedules
@@ -80,7 +110,7 @@ Yes! Prerolls can be assigned to multiple categories.
 Schedules automatically change your prerolls based on dates. For example:
 - Christmas category active Dec 1-25
 - Halloween category active Oct 1-31
-- Default category active rest of the year
+- Default category via Filler for the rest of the year
 
 ### What's the difference between Exclusive and Blend?
 
@@ -88,6 +118,11 @@ Schedules automatically change your prerolls based on dates. For example:
 |------|----------|
 | **Exclusive** | Only this schedule's prerolls play (overrides everything) |
 | **Blend** | Combines prerolls with other active schedules |
+
+### What's the difference between Fallback and Filler?
+
+- **Fallback Category**: Per-schedule — activates when that specific schedule ends
+- **Filler Category**: Global — activates when NO schedules are active at all
 
 ### Why isn't my schedule activating?
 
@@ -126,6 +161,34 @@ Yes! Export sequences as `.nexseq` files and share them. Others can import and u
 
 ---
 
+## NeX-Up
+
+### What is NeX-Up?
+
+NeX-Up is NeXroll's trailer integration feature. It connects to Radarr and Sonarr to discover upcoming movies/shows and automatically downloads their trailers from YouTube.
+
+### Do I need Radarr/Sonarr to use NeX-Up?
+
+Yes, at least one of them. NeX-Up fetches upcoming release information from these services.
+
+### Why are my trailer downloads failing?
+
+YouTube has aggressive bot detection. Try:
+1. **Upload YouTube cookies** — Export from an incognito browser session
+2. **Try a different VPN IP** — YouTube may have blocked your current IP
+3. **Wait between downloads** — Don't bulk-download too many at once
+4. See [NeX-Up Troubleshooting](NeX-Up#troubleshooting) for more details
+
+### What is the Coming Soon List Generator?
+
+It generates video prerolls that showcase your upcoming movies and TV shows with a visual poster grid or text list. It uses data from Radarr/Sonarr and generates the video using FFmpeg.
+
+### How do I keep my Coming Soon List updated?
+
+Enable **Auto-regeneration** in the Generator settings. When NeX-Up syncs with Radarr/Sonarr, the Coming Soon List automatically regenerates with updated content.
+
+---
+
 ## Path Mappings
 
 ### What are path mappings?
@@ -133,9 +196,9 @@ Yes! Export sequences as `.nexseq` files and share them. Others can import and u
 Path mappings translate file paths between NeXroll and Plex when they see files at different locations.
 
 **Example**: 
-- NeXroll sees: `/prerolls/christmas.mp4`
+- NeXroll sees: `/data/prerolls/christmas.mp4`
 - Plex sees: `/mnt/media/prerolls/christmas.mp4`
-- Mapping: `/prerolls` → `/mnt/media/prerolls`
+- Mapping: `/data/prerolls` → `/mnt/media/prerolls`
 
 ### When do I need path mappings?
 
@@ -159,7 +222,7 @@ See [Path Mappings](Path-Mappings) for detailed examples.
 
 ### Prerolls aren't playing in Plex
 
-1. **Check path mappings**: Most common issue - verify paths translate correctly
+1. **Check path mappings**: Most common issue — verify paths translate correctly
 2. **Apply to Plex**: Did you click "Apply to Plex" after making changes?
 3. **File access**: Can Plex access the preroll files?
 4. **Plex settings**: Check Settings → Server → Extras in Plex
@@ -172,7 +235,7 @@ See [Path Mappings](Path-Mappings) for detailed examples.
 
 ### Changes aren't taking effect
 
-- Plex caches preroll settings - restart Plex or wait a few minutes
+- Plex caches preroll settings — restart Plex or wait a few minutes
 - Click "Apply to Plex" to push changes immediately
 
 ### NeXroll can't connect to Plex
@@ -208,7 +271,11 @@ No dedicated app, but the web interface works on mobile browsers.
 
 ### Does NeXroll modify my media files?
 
-No. NeXroll only tells Plex/Jellyfin which preroll files to play. It never modifies your movies or preroll videos.
+No. NeXroll only tells Plex/Jellyfin which preroll files to play. It never modifies your movies or preroll videos (except when using the Video Scaling feature to transcode prerolls you specifically select).
+
+### Can I access NeXroll programmatically?
+
+Yes! NeXroll has a full REST API with optional API key authentication. Generate keys in Settings → API Keys and use the `/external/*` endpoints. See [API Documentation](API).
 
 ---
 
@@ -219,20 +286,22 @@ No. NeXroll only tells Plex/Jellyfin which preroll files to play. It never modif
 **Docker**:
 ```bash
 docker pull jbrns/nexroll:latest
-docker stop nexroll && docker rm nexroll
-# Re-run your docker run command
+docker compose up -d --force-recreate
 ```
 
 **Windows**: Download and run the latest installer.
 
+NeXroll can also check for updates automatically — configure in Settings.
+
 ### Where can I get help?
 
-- [GitHub Issues](https://github.com/jbrfrn/NeXroll/issues) - Bug reports and feature requests
-- [GitHub Discussions](https://github.com/jbrfrn/NeXroll/discussions) - Questions and community help
+- [GitHub Issues](https://github.com/JFLXCLOUD/NeXroll/issues) — Bug reports and feature requests
+- [GitHub Discussions](https://github.com/JFLXCLOUD/NeXroll/discussions) — Questions and community help
+- [Discord](https://discord.gg/nexroll) — Community chat
 
 ### How can I support NeXroll?
 
-- ⭐ Star the project on GitHub
-- ☕ [Support on Ko-fi](https://ko-fi.com/j_b__)
-- 🐛 Report bugs and suggest features
-- 📖 Help improve documentation
+- Star the project on GitHub
+- [Support on Ko-fi](https://ko-fi.com/j_b__)
+- Report bugs and suggest features
+- Help improve documentation
