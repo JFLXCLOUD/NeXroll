@@ -29,6 +29,21 @@
 - All option icons now use a consistent `#00d4ff` accent color and uniform sizing
 - Auto-Regenerate card now displays a `RefreshCw` icon for better visual clarity
 
+**Available Now! Duration**
+- Added a configurable "Available Now!" duration setting for the Coming Soon List
+- When a movie or show is downloaded, it displays an "Available Now!" badge on the Coming Soon List
+- Set how many days (1–30) the item stays visible before being automatically removed
+- Defaults to 1 day; setting persists across sessions and is respected by auto-regeneration
+
+### Community Preroll Server
+
+**Community Server Selector**
+- Added the ability to choose which Community Preroll Server to connect to
+- Fetches available servers from a central `servers.json` endpoint
+- Select from the server list or enter a custom server URL
+- Custom server URL is saved per-instance and persists across sessions
+- Default server: `prerolls.uk`
+
 ### Bug Fixes
 
 **FFmpeg Detection Error — Fixed**
@@ -51,11 +66,6 @@
 - Setting persists across sessions and is respected by auto-regeneration
 - Audio asset bundled in both Windows installer and Docker image
 
-**Emoji-to-Icon Cleanup**
-- Replaced all emoji characters in the Coming Soon List Generator UI with proper Lucide React icons
-- Layout buttons now use `LayoutGrid` and `List` icons
-- Source selector uses `Film` (movies) and `Tv` (TV shows) icons
-- Audio toggle uses the `Music` icon
 
 ### UI / Theming
 
