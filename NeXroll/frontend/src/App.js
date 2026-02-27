@@ -556,6 +556,13 @@ function App() {
   const [communityMigrationResult, setCommunityMigrationResult] = useState(null);
   const [communityMigrationProgress, setCommunityMigrationProgress] = useState(null);
   const [communityMatchedCount, setCommunityMatchedCount] = useState(0);
+  // Community server selector state
+  const [communityServers, setCommunityServers] = useState([]);
+  const [communityServerUrl, setCommunityServerUrl] = useState('');
+  const [communityServerIsCustom, setCommunityServerIsCustom] = useState(false);
+  const [communityServerLoading, setCommunityServerLoading] = useState(false);
+  const [communityCustomUrlInput, setCommunityCustomUrlInput] = useState('');
+  const [communityShowCustomUrl, setCommunityShowCustomUrl] = useState(false);
   
   // Docker Quick Connect UI state
   const [prerollView, setPrerollView] = useState(() => {
@@ -763,7 +770,10 @@ const [applyingToServer, setApplyingToServer] = useState(false);
     serverName: '',
     autoRegen: false,  // Auto-regenerate when Radarr/Sonarr syncs
     autoRegenLayout: 'both',  // Which layout(s) to auto-regenerate: 'grid', 'list', or 'both'
-    includeAudio: false  // Include background music in generated video
+    includeAudio: false,  // Include background music in generated video
+    customAudioFilename: null,  // User-uploaded custom audio filename
+    customLogoFilename: null,  // User-uploaded custom logo filename
+    availableDays: 1  // Days to show "Available Now!" before auto-removal
   });
   const [comingSoonListGenerating, setComingSoonListGenerating] = useState(false);
   const [generatedComingSoonLists, setGeneratedComingSoonLists] = useState([]);
@@ -804,6 +814,9 @@ const [applyingToServer, setApplyingToServer] = useState(false);
   const [usersLoading, setUsersLoading] = useState(false);
   const [showCreateUserModal, setShowCreateUserModal] = useState(false);
   const [newUserForm, setNewUserForm] = useState({ username: '', password: '', display_name: '', role: 'user' });
+  const [showChangePasswordModal, setShowChangePasswordModal] = useState(false);
+  const [changePasswordTarget, setChangePasswordTarget] = useState(null);
+  const [changePasswordForm, setChangePasswordForm] = useState({ current_password: '', new_password: '', confirm_password: '' });
   
   const [manualTrailerForm, setManualTrailerForm] = useState({
     title: '',
@@ -1939,6 +1952,23 @@ const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
                 console.log('Index status state set!');
               } catch (indexError) {
                 console.error('Failed to load index status:', indexError);
+              }
+              // Fetch community server info
+              try {
+                const [serverUrlRes, serversRes] = await Promise.all([
+                  fetch(apiUrl('community-prerolls/server-url')),
+                  fetch(apiUrl('community-prerolls/servers'))
+                ]);
+                const serverUrlData = await serverUrlRes.json();
+                setCommunityServerUrl(serverUrlData.server_url || '');
+                setCommunityServerIsCustom(!!serverUrlData.is_custom);
+                if (serverUrlData.is_custom) {
+                  setCommunityCustomUrlInput(serverUrlData.server_url || '');
+                }
+                const serversData = await serversRes.json();
+                setCommunityServers(serversData.servers || []);
+              } catch (serverError) {
+                console.error('Failed to load community server info:', serverError);
               }
             })();
             console.log('After defining async IIFE');
@@ -14888,6 +14918,14 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
       showAlert('Password must be at least 8 characters', 'error');
       return;
     }
+    if (registerForm.password === registerForm.password.toLowerCase() || registerForm.password === registerForm.password.toUpperCase()) {
+      showAlert('Password must contain both uppercase and lowercase letters', 'error');
+      return;
+    }
+    if (!/\d/.test(registerForm.password)) {
+      showAlert('Password must contain at least one number', 'error');
+      return;
+    }
     setLoginLoading(true);
     try {
       const res = await fetch(apiUrl('/auth/register'), {
@@ -14939,8 +14977,16 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
       showAlert('Please enter a username', 'error');
       return;
     }
-    if (!newUserForm.password || newUserForm.password.length < 6) {
-      showAlert('Password must be at least 6 characters', 'error');
+    if (!newUserForm.password || newUserForm.password.length < 8) {
+      showAlert('Password must be at least 8 characters', 'error');
+      return;
+    }
+    if (newUserForm.password === newUserForm.password.toLowerCase() || newUserForm.password === newUserForm.password.toUpperCase()) {
+      showAlert('Password must contain both uppercase and lowercase letters', 'error');
+      return;
+    }
+    if (!/\d/.test(newUserForm.password)) {
+      showAlert('Password must contain at least one number', 'error');
       return;
     }
     try {
@@ -14966,6 +15012,53 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
       }
     } catch (e) {
       showAlert('Failed to create user: ' + (e?.message || e), 'error');
+    }
+  };
+
+  const handleChangePassword = async () => {
+    if (!changePasswordForm.new_password || changePasswordForm.new_password.length < 8) {
+      showAlert('New password must be at least 8 characters', 'error');
+      return;
+    }
+    if (changePasswordForm.new_password === changePasswordForm.new_password.toLowerCase() || changePasswordForm.new_password === changePasswordForm.new_password.toUpperCase()) {
+      showAlert('Password must contain both uppercase and lowercase letters', 'error');
+      return;
+    }
+    if (!/\d/.test(changePasswordForm.new_password)) {
+      showAlert('Password must contain at least one number', 'error');
+      return;
+    }
+    if (changePasswordForm.new_password !== changePasswordForm.confirm_password) {
+      showAlert('Passwords do not match', 'error');
+      return;
+    }
+    // If changing own password, require current password
+    const isSelf = changePasswordTarget && authStatus.user && changePasswordTarget.id === authStatus.user.id;
+    if (isSelf && !changePasswordForm.current_password) {
+      showAlert('Please enter your current password', 'error');
+      return;
+    }
+    try {
+      const res = await fetch(apiUrl('/auth/change-password'), {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          current_password: changePasswordForm.current_password,
+          new_password: changePasswordForm.new_password
+        })
+      });
+      const data = await safeJson(res);
+      if (res.ok && data?.success) {
+        setShowChangePasswordModal(false);
+        setChangePasswordForm({ current_password: '', new_password: '', confirm_password: '' });
+        setChangePasswordTarget(null);
+        showAlert(data.message || 'Password changed successfully!', 'success');
+      } else {
+        showAlert(data?.detail || 'Failed to change password', 'error');
+      }
+    } catch (e) {
+      showAlert('Failed to change password: ' + (e?.message || e), 'error');
     }
   };
 
@@ -15250,7 +15343,10 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
           serverName: data.coming_soon_list_server_name || '',
           autoRegen: data.coming_soon_list_auto_regen || false,
           autoRegenLayout: data.coming_soon_list_auto_regen_layout || 'both',
-          includeAudio: data.coming_soon_list_include_audio || false
+          includeAudio: data.coming_soon_list_include_audio || false,
+          customAudioFilename: data.coming_soon_list_custom_audio_filename || null,
+          customLogoFilename: data.coming_soon_list_custom_logo_filename || null,
+          availableDays: data.coming_soon_available_days || 1
         }));
         // Mark settings as loaded to enable auto-save
         setTimeout(() => { comingSoonListSettingsLoadedRef.current = true; }, 100);
@@ -15275,6 +15371,7 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
       if (settings.autoRegen !== undefined) params.append('coming_soon_list_auto_regen', settings.autoRegen.toString());
       if (settings.autoRegenLayout !== undefined) params.append('coming_soon_list_auto_regen_layout', settings.autoRegenLayout);
       if (settings.includeAudio !== undefined) params.append('coming_soon_list_include_audio', settings.includeAudio.toString());
+      if (settings.availableDays !== undefined) params.append('coming_soon_available_days', settings.availableDays.toString());
       
       await fetch(apiUrl('/nexup/settings?' + params.toString()), { method: 'PUT' });
     } catch (err) {
@@ -16083,8 +16180,24 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
       if (templatesRes.ok) {
         const data = await templatesRes.json();
         setDynamicPrerollTemplates(data.templates || []);
-        setFfmpegAvailable(data.ffmpeg_available);
+        setFfmpegAvailable(data.ffmpeg_available === true);
         setColorThemes(data.color_themes || {});
+        if (data.error) {
+          console.warn('Templates endpoint returned error:', data.error);
+        }
+      } else {
+        console.error('Templates endpoint returned status:', templatesRes.status);
+        // Try dedicated ffmpeg-status endpoint as fallback
+        try {
+          const ffmpegRes = await fetch(apiUrl('/nexup/preroll/ffmpeg-status'));
+          if (ffmpegRes.ok) {
+            const ffmpegData = await ffmpegRes.json();
+            setFfmpegAvailable(ffmpegData.available === true);
+            console.log('FFmpeg status fallback:', ffmpegData);
+          }
+        } catch (fbErr) {
+          console.error('FFmpeg status fallback also failed:', fbErr);
+        }
       }
       
       // Load saved settings
@@ -16885,50 +16998,6 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
           </p>
         </div>
 
-        {/* Settings Card */}
-        <div className="card">
-          <h3 style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '1rem' }}>
-            <Settings size={20} /> Content Settings
-          </h3>
-          <div style={{ display: 'grid', gap: '1rem', maxWidth: '500px' }}>
-            {/* Include Unmonitored Movies */}
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0.75rem', backgroundColor: 'var(--bg-color)', borderRadius: '8px' }}>
-              <div>
-                <div style={{ fontWeight: 600, marginBottom: '0.25rem' }}>Include Unmonitored Movies</div>
-                <div style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
-                  Show movies that are not monitored in Radarr
-                </div>
-              </div>
-              <label className="nx-rockerswitch">
-                <input
-                  type="checkbox"
-                  checked={nexupSettings.include_unmonitored_movies || false}
-                  onChange={(e) => handleUpdateNexupSettings({ include_unmonitored_movies: e.target.checked })}
-                />
-                <span className="nx-rockerswitch-slider"></span>
-              </label>
-            </div>
-            
-            {/* Include Unmonitored TV Shows */}
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0.75rem', backgroundColor: 'var(--bg-color)', borderRadius: '8px' }}>
-              <div>
-                <div style={{ fontWeight: 600, marginBottom: '0.25rem' }}>Include Unmonitored TV Shows</div>
-                <div style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
-                  Show TV shows that are not monitored in Sonarr
-                </div>
-              </div>
-              <label className="nx-rockerswitch">
-                <input
-                  type="checkbox"
-                  checked={nexupSettings.include_unmonitored_shows || false}
-                  onChange={(e) => handleUpdateNexupSettings({ include_unmonitored_shows: e.target.checked })}
-                />
-                <span className="nx-rockerswitch-slider"></span>
-              </label>
-            </div>
-          </div>
-        </div>
-
         {/* Movies/Shows Tab Switcher */}
         <div style={{ display: 'flex', gap: '0.5rem', borderBottom: '2px solid var(--border-color)', paddingBottom: '0' }}>
           <button
@@ -17035,7 +17104,22 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
                       {movie.release_date && (
                         <p style={{ margin: '0 0 0.5rem 0', fontSize: '0.9rem' }}>
                           <strong>Release:</strong> {new Date(movie.release_date).toLocaleDateString()} 
-                          {movie.days_until_release !== null && (
+                          {movie.available_now ? (
+                            <span style={{ 
+                              marginLeft: '0.5rem',
+                              padding: '0.2rem 0.5rem',
+                              borderRadius: '4px',
+                              fontSize: '0.8rem',
+                              fontWeight: 600,
+                              backgroundColor: '#28a745',
+                              color: '#fff',
+                              display: 'inline-flex',
+                              alignItems: 'center',
+                              gap: '0.25rem'
+                            }}>
+                              🎬 Available Now!
+                            </span>
+                          ) : movie.days_until_release !== null && (
                             <span style={{ 
                               marginLeft: '0.5rem',
                               padding: '0.2rem 0.5rem',
@@ -17044,7 +17128,7 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
                               backgroundColor: movie.days_until_release <= 7 ? '#28a745' : movie.days_until_release <= 30 ? '#ffc107' : '#6c757d',
                               color: movie.days_until_release <= 30 ? '#000' : '#fff'
                             }}>
-                              {movie.days_until_release <= 0 ? 'Available Now!' : `In ${movie.days_until_release} days`}
+                              {movie.days_until_release <= 0 ? 'Released!' : `In ${movie.days_until_release} days`}
                             </span>
                           )}
                         </p>
@@ -17183,7 +17267,22 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
                       {(show.release_date || show.air_date) && (
                         <p style={{ margin: '0 0 0.5rem 0', fontSize: '0.9rem' }}>
                           <strong>Release:</strong> {new Date(show.release_date || show.air_date).toLocaleDateString()}
-                          {show.days_until_release !== null && show.days_until_release !== undefined && (
+                          {show.available_now ? (
+                            <span style={{ 
+                              marginLeft: '0.5rem',
+                              padding: '0.2rem 0.5rem',
+                              borderRadius: '4px',
+                              fontSize: '0.8rem',
+                              fontWeight: 600,
+                              backgroundColor: '#28a745',
+                              color: '#fff',
+                              display: 'inline-flex',
+                              alignItems: 'center',
+                              gap: '0.25rem'
+                            }}>
+                              🎬 Available Now!
+                            </span>
+                          ) : show.days_until_release !== null && show.days_until_release !== undefined && (
                             <span style={{ 
                               marginLeft: '0.5rem',
                               padding: '0.2rem 0.5rem',
@@ -17192,7 +17291,7 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
                               backgroundColor: show.days_until_release <= 7 ? '#28a745' : show.days_until_release <= 30 ? '#ffc107' : '#6c757d',
                               color: show.days_until_release <= 30 ? '#000' : '#fff'
                             }}>
-                              {show.days_until_release <= 0 ? 'Available Now!' : `In ${show.days_until_release} days`}
+                              {show.days_until_release <= 0 ? 'Released!' : `In ${show.days_until_release} days`}
                             </span>
                           )}
                         </p>
@@ -19283,6 +19382,124 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
                 </div>
               </div>
             </div>
+
+            {/* Content Filtering Card */}
+            <div className="card">
+              <h2 style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                <Filter size={24} /> Content Filtering
+              </h2>
+              <p style={{ marginBottom: '1rem', color: '#888' }}>
+                Control which content appears in your upcoming lists from Radarr and Sonarr.
+              </p>
+              <div style={{ display: 'grid', gap: '1rem' }}>
+                {/* Include Unmonitored Movies */}
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0.75rem', backgroundColor: 'var(--bg-color)', borderRadius: '8px' }}>
+                  <div>
+                    <div style={{ fontWeight: 600, marginBottom: '0.25rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                      <Film size={16} style={{ color: '#ffc230' }} /> Include Unmonitored Movies
+                    </div>
+                    <div style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
+                      Show movies that are not monitored in Radarr
+                    </div>
+                  </div>
+                  <label className="nx-rockerswitch">
+                    <input
+                      type="checkbox"
+                      checked={nexupSettings.include_unmonitored_movies || false}
+                      onChange={(e) => handleUpdateNexupSettings({ include_unmonitored_movies: e.target.checked })}
+                    />
+                    <span className="nx-rockerswitch-slider"></span>
+                  </label>
+                </div>
+                
+                {/* Include Unmonitored TV Shows */}
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0.75rem', backgroundColor: 'var(--bg-color)', borderRadius: '8px' }}>
+                  <div>
+                    <div style={{ fontWeight: 600, marginBottom: '0.25rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                      <Tv size={16} style={{ color: '#17a2b8' }} /> Include Unmonitored TV Shows
+                    </div>
+                    <div style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
+                      Show TV shows that are not monitored in Sonarr
+                    </div>
+                  </div>
+                  <label className="nx-rockerswitch">
+                    <input
+                      type="checkbox"
+                      checked={nexupSettings.include_unmonitored_shows || false}
+                      onChange={(e) => handleUpdateNexupSettings({ include_unmonitored_shows: e.target.checked })}
+                    />
+                    <span className="nx-rockerswitch-slider"></span>
+                  </label>
+                </div>
+              </div>
+            </div>
+
+            {/* Auto Cleanup Card */}
+            <div className="card">
+              <h2 style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                <Trash2 size={24} /> Auto Cleanup
+              </h2>
+              <p style={{ marginBottom: '1rem', color: '#888' }}>
+                Control how long trailers and list items are kept before being automatically cleaned up.
+              </p>
+              <div style={{ display: 'grid', gap: '1rem' }}>
+                <div>
+                  <label style={{ display: 'block', marginBottom: '0.5rem', fontWeight: 'bold' }}>
+                    Trailer Retention
+                  </label>
+                  <select
+                    value={nexupSettings.trailer_retention_days ?? 7}
+                    onChange={(e) => handleUpdateNexupSettings({ trailer_retention_days: parseInt(e.target.value) })}
+                    style={{ width: '100%', padding: '0.5rem', borderRadius: '4px', border: '1px solid var(--border-color)' }}
+                  >
+                    <option value="0">Keep Forever</option>
+                    <option value="3">3 days</option>
+                    <option value="7">7 days</option>
+                    <option value="14">14 days</option>
+                    <option value="30">30 days</option>
+                    <option value="60">60 days</option>
+                    <option value="90">90 days</option>
+                    <option value="180">180 days</option>
+                    <option value="365">365 days</option>
+                  </select>
+                  <p style={{ fontSize: '0.8rem', color: '#888', marginTop: '0.25rem' }}>
+                    Number of days to keep downloaded trailers before they are automatically deleted
+                  </p>
+                </div>
+                
+                <div>
+                  <label style={{ display: 'block', marginBottom: '0.5rem', fontWeight: 'bold' }}>
+                    Available Now! Duration
+                  </label>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                    <input
+                      type="number"
+                      min="1"
+                      max="30"
+                      value={comingSoonListSettings.availableDays}
+                      onChange={(e) => {
+                        const val = Math.max(1, Math.min(30, parseInt(e.target.value) || 1));
+                        setComingSoonListSettings(prev => ({ ...prev, availableDays: val }));
+                        saveComingSoonListSettings({ availableDays: val });
+                      }}
+                      style={{ 
+                        width: '60px', 
+                        padding: '0.5rem', 
+                        borderRadius: '4px', 
+                        border: '1px solid var(--border-color)',
+                        textAlign: 'center',
+                        fontSize: '1rem',
+                        fontWeight: 600
+                      }}
+                    />
+                    <span style={{ fontSize: '0.9rem', color: '#888' }}>day{comingSoonListSettings.availableDays !== 1 ? 's' : ''}</span>
+                  </div>
+                  <p style={{ fontSize: '0.8rem', color: '#888', marginTop: '0.25rem' }}>
+                    Days to display "Available Now!" after a movie/show is downloaded before auto-removing from the Coming Soon list
+                  </p>
+                </div>
+              </div>
+            </div>
           </div>
         </>
       )}
@@ -19977,17 +20194,19 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
                   </div>
                 </details>
 
-                {/* Background Music Toggle */}
+                {/* 2x2 Options Grid */}
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem', marginBottom: '0.75rem' }}>
+
+                {/* Background Music Toggle + Custom Audio Upload */}
                 <div style={{ 
-                  marginBottom: '1rem', 
-                  padding: '1rem', 
-                  backgroundColor: 'rgba(0, 212, 255, 0.1)', 
+                  padding: '0.85rem 1rem', 
+                  backgroundColor: 'rgba(255,255,255,0.03)', 
                   borderRadius: '8px',
-                  border: '1px solid rgba(0, 212, 255, 0.3)'
+                  border: '1px solid rgba(255,255,255,0.08)'
                 }}>
                   <label style={{ 
                     display: 'flex', 
-                    alignItems: 'center', 
+                    alignItems: 'flex-start', 
                     gap: '0.75rem', 
                     cursor: 'pointer'
                   }}>
@@ -19995,28 +20214,189 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
                       type="checkbox"
                       checked={comingSoonListSettings.includeAudio}
                       onChange={(e) => setComingSoonListSettings(prev => ({ ...prev, includeAudio: e.target.checked }))}
-                      style={{ width: '18px', height: '18px', cursor: 'pointer' }}
+                      style={{ width: '18px', height: '18px', cursor: 'pointer', marginTop: '2px', accentColor: '#00d4ff' }}
                     />
-                    <div>
-                      <strong style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}><Music size={16} /> Include Background Music</strong>
-                      <span style={{ fontSize: '0.85rem', color: '#888' }}>
-                        Adds ambient background music with fade in/out to the generated video
+                    <div style={{ flex: 1 }}>
+                      <strong style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', fontSize: '0.95rem' }}><Music size={15} style={{ color: '#00d4ff' }} /> Background Music</strong>
+                      <span style={{ fontSize: '0.8rem', color: '#777' }}>
+                        Adds ambient background music with auto fade in/out
                       </span>
                     </div>
                   </label>
+
+                  {/* Custom audio upload (only visible when audio is enabled) */}
+                  {comingSoonListSettings.includeAudio && (
+                    <div style={{ marginTop: '0.6rem', marginLeft: '30px' }}>
+                      {comingSoonListSettings.customAudioFilename ? (
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '0.85rem' }}>
+                          <Music size={13} style={{ color: '#00d4ff' }} />
+                          <span style={{ color: 'var(--text-color)' }}>Custom: <strong>{comingSoonListSettings.customAudioFilename}</strong></span>
+                          <button
+                            onClick={async () => {
+                              try {
+                                const res = await fetch(apiUrl('/nexup/coming-soon-list/upload-audio'), { method: 'DELETE' });
+                                if (res.ok) {
+                                  setComingSoonListSettings(prev => ({ ...prev, customAudioFilename: null }));
+                                  showAlert('Custom audio removed, will use default', 'success');
+                                }
+                              } catch (err) { showAlert('Failed to remove custom audio', 'error'); }
+                            }}
+                            className="button"
+                            style={{ padding: '0.2rem 0.5rem', fontSize: '0.8rem', backgroundColor: 'transparent', color: '#ff6b6b', border: '1px solid #ff6b6b' }}
+                          >
+                            <X size={12} /> Remove
+                          </button>
+                        </div>
+                      ) : (
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                          <span style={{ fontSize: '0.85rem', color: '#888' }}>Using default audio.</span>
+                          <label className="button" style={{ padding: '0.3rem 0.75rem', fontSize: '0.8rem', cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: '0.3rem' }}>
+                            <Upload size={12} /> Upload Custom Audio
+                            <input
+                              type="file"
+                              accept=".mp3,.wav,.aac,.m4a,.ogg,.flac"
+                              style={{ display: 'none' }}
+                              onChange={async (e) => {
+                                const file = e.target.files?.[0];
+                                if (!file) return;
+                                const formData = new FormData();
+                                formData.append('file', file);
+                                try {
+                                  const res = await fetch(apiUrl('/nexup/coming-soon-list/upload-audio'), {
+                                    method: 'POST', body: formData
+                                  });
+                                  if (res.ok) {
+                                    const data = await res.json();
+                                    setComingSoonListSettings(prev => ({ ...prev, customAudioFilename: data.filename }));
+                                    showAlert(`Custom audio uploaded: ${data.filename}`, 'success');
+                                  } else {
+                                    const err = await res.json();
+                                    showAlert(err.detail || 'Upload failed', 'error');
+                                  }
+                                } catch (err) { showAlert('Error uploading audio', 'error'); }
+                                e.target.value = '';
+                              }}
+                            />
+                          </label>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+
+                {/* Custom Logo Overlay */}
+                <div style={{ 
+                  padding: '0.85rem 1rem', 
+                  backgroundColor: 'rgba(255,255,255,0.03)', 
+                  borderRadius: '8px',
+                  border: '1px solid rgba(255,255,255,0.08)'
+                }}>
+                  <div style={{ marginBottom: '0.5rem' }}>
+                    <strong style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', fontSize: '0.95rem' }}><Layers size={15} style={{ color: '#00d4ff' }} /> Custom Logo Overlay</strong>
+                    <span style={{ fontSize: '0.8rem', color: '#777' }}>
+                      Adds a faded, centered watermark logo behind the text
+                    </span>
+                  </div>
+                  {comingSoonListSettings.customLogoFilename ? (
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '0.85rem', marginBottom: '0.5rem' }}>
+                      <Layers size={13} style={{ color: '#00d4ff' }} />
+                      <span style={{ color: 'var(--text-color)' }}>Logo: <strong>{comingSoonListSettings.customLogoFilename}</strong></span>
+                      <button
+                        onClick={async () => {
+                          try {
+                            const res = await fetch(apiUrl('/nexup/coming-soon-list/upload-logo'), { method: 'DELETE' });
+                            if (res.ok) {
+                              setComingSoonListSettings(prev => ({ ...prev, customLogoFilename: null }));
+                              showAlert('Custom logo removed', 'success');
+                            }
+                          } catch (err) { showAlert('Failed to remove custom logo', 'error'); }
+                        }}
+                        className="button"
+                        style={{ padding: '0.2rem 0.5rem', fontSize: '0.8rem', backgroundColor: 'transparent', color: '#ff6b6b', border: '1px solid #ff6b6b' }}
+                      >
+                        <X size={12} /> Remove
+                      </button>
+                    </div>
+                  ) : (
+                    <label className="button" style={{ padding: '0.3rem 0.75rem', fontSize: '0.8rem', cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: '0.3rem' }}>
+                      <Upload size={12} /> Upload Logo Image
+                      <input
+                        type="file"
+                        accept=".png,.jpg,.jpeg,.webp"
+                        style={{ display: 'none' }}
+                        onChange={async (e) => {
+                          const file = e.target.files?.[0];
+                          if (!file) return;
+                          const formData = new FormData();
+                          formData.append('file', file);
+                          try {
+                            const res = await fetch(apiUrl('/nexup/coming-soon-list/upload-logo'), {
+                              method: 'POST', body: formData
+                            });
+                            if (res.ok) {
+                              const data = await res.json();
+                              setComingSoonListSettings(prev => ({ ...prev, customLogoFilename: data.filename }));
+                              showAlert(`Logo uploaded: ${data.filename}`, 'success');
+                            } else {
+                              const err = await res.json();
+                              showAlert(err.detail || 'Upload failed', 'error');
+                            }
+                          } catch (err) { showAlert('Error uploading logo', 'error'); }
+                          e.target.value = '';
+                        }}
+                      />
+                    </label>
+                  )}
+                </div>
+
+                {/* Available Now! Duration Setting */}
+                <div style={{ 
+                  padding: '0.85rem 1rem', 
+                  backgroundColor: 'rgba(255,255,255,0.03)', 
+                  borderRadius: '8px',
+                  border: '1px solid rgba(255,255,255,0.08)'
+                }}>
+                  <div>
+                    <div style={{ marginBottom: '0.5rem' }}>
+                      <strong style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', fontSize: '0.95rem' }}><CheckCircle size={15} style={{ color: '#00d4ff' }} /> Available Now! Duration</strong>
+                      <span style={{ fontSize: '0.8rem', color: '#777' }}>
+                        Days to show "Available Now!" before auto-removing from the list
+                      </span>
+                    </div>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                      <input
+                        type="number"
+                        min="1"
+                        max="30"
+                        value={comingSoonListSettings.availableDays}
+                        onChange={(e) => setComingSoonListSettings(prev => ({ ...prev, availableDays: Math.max(1, Math.min(30, parseInt(e.target.value) || 1)) }))}
+                        style={{ 
+                          width: '60px', 
+                          padding: '0.4rem', 
+                          borderRadius: '4px', 
+                          border: '1px solid var(--border-color)',
+                          backgroundColor: 'var(--input-bg)',
+                          color: 'var(--text-color)',
+                          textAlign: 'center',
+                          fontSize: '1rem',
+                          fontWeight: 600
+                        }}
+                      />
+                      <span style={{ fontSize: '0.9rem', color: '#888' }}>day{comingSoonListSettings.availableDays !== 1 ? 's' : ''}</span>
+                    </div>
+                  </div>
                 </div>
 
                 {/* Auto-Regeneration Toggle */}
                 <div style={{ 
-                  marginBottom: '1rem', 
-                  padding: '1rem', 
-                  backgroundColor: 'rgba(0, 212, 255, 0.1)', 
+                  padding: '0.85rem 1rem', 
+                  backgroundColor: 'rgba(255,255,255,0.03)', 
                   borderRadius: '8px',
-                  border: '1px solid rgba(0, 212, 255, 0.3)'
+                  border: '1px solid rgba(255,255,255,0.08)'
                 }}>
                   <label style={{ 
                     display: 'flex', 
-                    alignItems: 'center', 
+                    alignItems: 'flex-start', 
                     gap: '0.75rem', 
                     cursor: 'pointer'
                   }}>
@@ -20024,12 +20404,12 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
                       type="checkbox"
                       checked={comingSoonListSettings.autoRegen}
                       onChange={(e) => setComingSoonListSettings(prev => ({ ...prev, autoRegen: e.target.checked }))}
-                      style={{ width: '18px', height: '18px', cursor: 'pointer' }}
+                      style={{ width: '18px', height: '18px', cursor: 'pointer', marginTop: '2px', accentColor: '#00d4ff' }}
                     />
-                    <div>
-                      <strong style={{ display: 'block' }}>Auto-regenerate on Sync</strong>
-                      <span style={{ fontSize: '0.85rem', color: '#888' }}>
-                        Automatically regenerate this Coming Soon List when Radarr/Sonarr trailers sync
+                    <div style={{ flex: 1 }}>
+                      <strong style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', fontSize: '0.95rem' }}><RefreshCw size={15} style={{ color: '#00d4ff' }} /> Auto-regenerate on Sync</strong>
+                      <span style={{ fontSize: '0.8rem', color: '#777' }}>
+                        Automatically regenerate when Radarr/Sonarr trailers sync
                       </span>
                     </div>
                   </label>
@@ -20053,6 +20433,8 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
                     </div>
                   )}
                 </div>
+
+                </div>{/* End 2x2 Options Grid */}
 
                 {/* Generate Button */}
                 <button
@@ -20241,7 +20623,7 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
         {/* Main Tab Bar */}
         <div style={{ 
           position: 'sticky',
-          top: '70px',
+          top: '50px',
           zIndex: 800,
           backgroundColor: 'var(--bg-color)',
           borderBottom: '2px solid var(--border-color)',
@@ -20319,6 +20701,7 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
     );
   };
 
+  // Settings - NeX-Up Content Settings Tab
   // Settings - General Tab
   const renderSettingsGeneral = () => (
     <>
@@ -22185,6 +22568,25 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
                   </div>
                 </div>
                 <div style={{ display: 'flex', gap: '0.5rem' }}>
+                  {authStatus.user && authStatus.user.id === user.id && (
+                    <button
+                      className="button"
+                      style={{ 
+                        backgroundColor: 'rgba(139, 92, 246, 0.1)', 
+                        border: '1px solid rgba(139, 92, 246, 0.3)',
+                        color: '#8b5cf6',
+                        padding: '0.4rem 0.75rem'
+                      }}
+                      onClick={() => {
+                        setChangePasswordTarget(user);
+                        setChangePasswordForm({ current_password: '', new_password: '', confirm_password: '' });
+                        setShowChangePasswordModal(true);
+                      }}
+                      title="Change password"
+                    >
+                      <Lock size={14} />
+                    </button>
+                  )}
                   <button
                     className="button"
                     style={{ 
@@ -22328,7 +22730,7 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
                 <input
                   type="password"
                   className="input"
-                  placeholder="At least 6 characters"
+                  placeholder="Min 8 chars, upper+lower+number"
                   value={newUserForm.password}
                   onChange={(e) => setNewUserForm(prev => ({ ...prev, password: e.target.value }))}
                 />
@@ -22384,6 +22786,91 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
                 </button>
                 <button className="button" onClick={createUser}>
                   <UserPlus size={14} /> Create User
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Change Password Modal */}
+      {showChangePasswordModal && changePasswordTarget && (
+        <div 
+          style={{
+            position: 'fixed',
+            top: 0,
+            left: 0,
+            right: 0,
+            bottom: 0,
+            backgroundColor: 'rgba(0,0,0,0.6)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            zIndex: 1000
+          }}
+          onClick={() => setShowChangePasswordModal(false)}
+        >
+          <div 
+            className="card"
+            style={{ 
+              maxWidth: '450px', 
+              width: '90%',
+              maxHeight: '90vh',
+              overflow: 'auto'
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h2 style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+              <Lock size={20} /> Change Password
+            </h2>
+            <p style={{ color: 'var(--text-secondary)', fontSize: '0.9rem', margin: '0 0 1rem 0' }}>
+              Changing password for <strong>{changePasswordTarget.display_name || changePasswordTarget.username}</strong>
+            </p>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+              <div>
+                <label style={{ display: 'block', marginBottom: '0.5rem', fontWeight: 600 }}>Current Password *</label>
+                <input
+                  type="password"
+                  className="input"
+                  placeholder="Enter your current password"
+                  value={changePasswordForm.current_password}
+                  onChange={(e) => setChangePasswordForm(prev => ({ ...prev, current_password: e.target.value }))}
+                />
+              </div>
+              <div>
+                <label style={{ display: 'block', marginBottom: '0.5rem', fontWeight: 600 }}>New Password *</label>
+                <input
+                  type="password"
+                  className="input"
+                  placeholder="Min 8 chars, upper+lower+number"
+                  value={changePasswordForm.new_password}
+                  onChange={(e) => setChangePasswordForm(prev => ({ ...prev, new_password: e.target.value }))}
+                />
+              </div>
+              <div>
+                <label style={{ display: 'block', marginBottom: '0.5rem', fontWeight: 600 }}>Confirm New Password *</label>
+                <input
+                  type="password"
+                  className="input"
+                  placeholder="Re-enter new password"
+                  value={changePasswordForm.confirm_password}
+                  onChange={(e) => setChangePasswordForm(prev => ({ ...prev, confirm_password: e.target.value }))}
+                />
+              </div>
+              <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', padding: '0.75rem', backgroundColor: 'rgba(139, 92, 246, 0.1)', borderRadius: '8px', border: '1px solid rgba(139, 92, 246, 0.2)' }}>
+                Password must be at least 8 characters and contain uppercase, lowercase, and a number. All other sessions will be logged out.
+              </div>
+              <div style={{ display: 'flex', gap: '0.5rem', justifyContent: 'flex-end', marginTop: '0.5rem' }}>
+                <button
+                  type="button"
+                  className="button"
+                  style={{ backgroundColor: 'transparent', border: '1px solid var(--border-color)' }}
+                  onClick={() => setShowChangePasswordModal(false)}
+                >
+                  Cancel
+                </button>
+                <button className="button" onClick={handleChangePassword}>
+                  <Lock size={14} /> Change Password
                 </button>
               </div>
             </div>
@@ -24958,6 +25445,127 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
             Browse and download prerolls from the community library.
           </p>
         </div>
+
+        {/* Server Selector */}
+        <div className="card" style={{ padding: '0.75rem 1rem' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', fontSize: '0.9rem', fontWeight: 600 }}>
+              <Server size={15} /> Server
+            </div>
+            {/* Server quick-select buttons */}
+            {communityServers.filter(s => s.status === 'active').map(s => (
+              <button
+                key={s.id}
+                onClick={async () => {
+                  setCommunityServerLoading(true);
+                  setCommunityShowCustomUrl(false);
+                  try {
+                    const url = s.baseUrl.replace(/\/+$/, '');
+                    await fetch(apiUrl('community-prerolls/server-url'), {
+                      method: 'PUT',
+                      headers: { 'Content-Type': 'application/json' },
+                      body: JSON.stringify({ url })
+                    });
+                    setCommunityServerUrl(url);
+                    setCommunityServerIsCustom(true);
+                    setCommunityCustomUrlInput('');
+                  } catch (e) { console.error('Failed to set server:', e); }
+                  setCommunityServerLoading(false);
+                }}
+                disabled={communityServerLoading}
+                className={communityServerUrl === s.baseUrl.replace(/\/+$/, '') ? 'button-primary' : 'button-secondary'}
+                style={{ padding: '0.3rem 0.65rem', fontSize: '0.82rem', display: 'flex', alignItems: 'center', gap: '0.35rem' }}
+                title={`${s.name} — ${s.location?.city || ''}, ${s.location?.country || ''}`}
+              >
+                {s.location?.countryCode && (
+                  <img
+                    src={`https://flagcdn.com/16x12/${s.location.countryCode.toLowerCase()}.png`}
+                    alt={s.location.countryCode}
+                    style={{ width: 16, height: 12, borderRadius: 1 }}
+                  />
+                )}
+                {s.name}
+                {communityServerUrl === s.baseUrl.replace(/\/+$/, '') && <Check size={12} />}
+              </button>
+            ))}
+            {/* Custom URL toggle */}
+            <button
+              onClick={() => setCommunityShowCustomUrl(!communityShowCustomUrl)}
+              className={communityShowCustomUrl ? 'button-primary' : 'button-secondary'}
+              style={{ padding: '0.3rem 0.65rem', fontSize: '0.82rem' }}
+              title="Enter a custom server URL"
+            >
+              <Globe size={13} style={{ marginRight: '0.25rem' }} /> Custom
+            </button>
+            {/* Active URL indicator */}
+            <span style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', marginLeft: 'auto' }}>
+              {communityServerUrl || '—'}
+            </span>
+          </div>
+          {/* Custom URL input row */}
+          {communityShowCustomUrl && (
+            <div style={{ display: 'flex', gap: '0.5rem', marginTop: '0.6rem' }}>
+              <input
+                type="text"
+                value={communityCustomUrlInput}
+                onChange={e => setCommunityCustomUrlInput(e.target.value)}
+                placeholder="https://your-mirror.example.com"
+                style={{ flex: 1, padding: '0.35rem 0.6rem', fontSize: '0.85rem', borderRadius: 4, border: '1px solid var(--border-color)', background: 'var(--bg-secondary)', color: 'var(--text-primary)' }}
+              />
+              <button
+                onClick={async () => {
+                  setCommunityServerLoading(true);
+                  try {
+                    const url = communityCustomUrlInput.trim().replace(/\/+$/, '') || null;
+                    await fetch(apiUrl('community-prerolls/server-url'), {
+                      method: 'PUT',
+                      headers: { 'Content-Type': 'application/json' },
+                      body: JSON.stringify({ url })
+                    });
+                    const res = await fetch(apiUrl('community-prerolls/server-url'));
+                    const data = await res.json();
+                    setCommunityServerUrl(data.server_url || '');
+                    setCommunityServerIsCustom(!!data.is_custom);
+                    if (!url) setCommunityCustomUrlInput('');
+                  } catch (e) { console.error('Failed to save custom URL:', e); }
+                  setCommunityServerLoading(false);
+                }}
+                disabled={communityServerLoading}
+                className="button-primary"
+                style={{ padding: '0.35rem 0.8rem', fontSize: '0.85rem' }}
+              >
+                {communityServerLoading ? <Loader2 size={14} className="spin" /> : 'Save'}
+              </button>
+              {communityServerIsCustom && (
+                <button
+                  onClick={async () => {
+                    setCommunityServerLoading(true);
+                    try {
+                      await fetch(apiUrl('community-prerolls/server-url'), {
+                        method: 'PUT',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ url: null })
+                      });
+                      const res = await fetch(apiUrl('community-prerolls/server-url'));
+                      const data = await res.json();
+                      setCommunityServerUrl(data.server_url || '');
+                      setCommunityServerIsCustom(false);
+                      setCommunityCustomUrlInput('');
+                    } catch (e) { console.error('Failed to reset server URL:', e); }
+                    setCommunityServerLoading(false);
+                  }}
+                  disabled={communityServerLoading}
+                  className="button-secondary"
+                  style={{ padding: '0.35rem 0.8rem', fontSize: '0.85rem' }}
+                  title="Reset to default server"
+                >
+                  Reset
+                </button>
+              )}
+            </div>
+          )}
+        </div>
+
         <div className="card">
           <div style={{ display: 'flex', justifyContent: 'flex-end', alignItems: 'center', marginBottom: '1rem' }}>
             <button
@@ -26368,7 +26976,7 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
        {activeTab.startsWith('dashboard') && (
          <div style={{ 
            position: 'sticky',
-           top: '70px',
+           top: '50px',
            zIndex: 800,
            backgroundColor: 'var(--bg-color)',
            paddingTop: '1rem',
@@ -26426,7 +27034,7 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
        {activeTab.startsWith('schedules') && (
          <div style={{ 
            position: 'sticky',
-           top: '70px',
+           top: '50px',
            zIndex: 800,
            backgroundColor: 'var(--bg-color)',
            paddingTop: '1rem',
@@ -26484,7 +27092,7 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
        {activeTab.startsWith('nexup') && (
          <div style={{ 
            position: 'sticky',
-           top: '70px',
+           top: '50px',
            zIndex: 800,
            backgroundColor: 'var(--bg-color)',
            paddingTop: '1rem',
@@ -26590,7 +27198,7 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
        {activeTab.startsWith('settings') && (
          <div style={{ 
            position: 'sticky',
-           top: '70px',
+           top: '50px',
            zIndex: 800,
            backgroundColor: 'var(--bg-color)',
            paddingTop: '1rem',
@@ -29288,7 +29896,22 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
                       {movie.release_date && (
                         <p style={{ margin: '0 0 0.5rem 0', fontSize: '0.9rem' }}>
                           <strong>Release:</strong> {new Date(movie.release_date).toLocaleDateString()} 
-                          {movie.days_until_release !== null && (
+                          {movie.available_now ? (
+                            <span style={{ 
+                              marginLeft: '0.5rem',
+                              padding: '0.2rem 0.5rem',
+                              borderRadius: '4px',
+                              fontSize: '0.8rem',
+                              fontWeight: 600,
+                              backgroundColor: '#28a745',
+                              color: '#fff',
+                              display: 'inline-flex',
+                              alignItems: 'center',
+                              gap: '0.25rem'
+                            }}>
+                              🎬 Available Now!
+                            </span>
+                          ) : movie.days_until_release !== null && (
                             <span style={{ 
                               marginLeft: '0.5rem',
                               padding: '0.2rem 0.5rem',
@@ -29297,7 +29920,7 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
                               backgroundColor: movie.days_until_release <= 7 ? '#28a745' : movie.days_until_release <= 30 ? '#ffc107' : '#6c757d',
                               color: movie.days_until_release <= 30 ? '#000' : '#fff'
                             }}>
-                              {movie.days_until_release <= 0 ? 'Available Now!' : `In ${movie.days_until_release} days`}
+                              {movie.days_until_release <= 0 ? 'Released!' : `In ${movie.days_until_release} days`}
                             </span>
                           )}
                         </p>
@@ -29531,7 +30154,22 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
                       {(show.release_date || show.air_date) && (
                         <p style={{ margin: '0 0 0.5rem 0', fontSize: '0.9rem' }}>
                           <strong>Release:</strong> {new Date(show.release_date || show.air_date).toLocaleDateString()}
-                          {show.days_until_release !== null && show.days_until_release !== undefined && (
+                          {show.available_now ? (
+                            <span style={{ 
+                              marginLeft: '0.5rem',
+                              padding: '0.2rem 0.5rem',
+                              borderRadius: '4px',
+                              fontSize: '0.8rem',
+                              fontWeight: 600,
+                              backgroundColor: '#28a745',
+                              color: '#fff',
+                              display: 'inline-flex',
+                              alignItems: 'center',
+                              gap: '0.25rem'
+                            }}>
+                              🎬 Available Now!
+                            </span>
+                          ) : show.days_until_release !== null && show.days_until_release !== undefined && (
                             <span style={{ 
                               marginLeft: '0.5rem',
                               padding: '0.2rem 0.5rem',
@@ -29540,7 +30178,7 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
                               backgroundColor: show.days_until_release <= 7 ? '#28a745' : show.days_until_release <= 30 ? '#ffc107' : '#6c757d',
                               color: show.days_until_release <= 30 ? '#000' : '#fff'
                             }}>
-                              {show.days_until_release <= 0 ? 'Available Now!' : `In ${show.days_until_release} days`}
+                              {show.days_until_release <= 0 ? 'Released!' : `In ${show.days_until_release} days`}
                             </span>
                           )}
                         </p>

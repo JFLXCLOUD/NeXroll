@@ -97,23 +97,61 @@ class DynamicPrerollGenerator:
     
     def _find_ffmpeg(self) -> Optional[str]:
         """Find FFmpeg executable"""
+        logger.info("[FFmpeg] Starting FFmpeg detection...")
+        
         # Check if ffmpeg is in PATH
         ffmpeg = shutil.which('ffmpeg')
         if ffmpeg:
+            logger.info(f"[FFmpeg] Found via shutil.which: {ffmpeg}")
             return ffmpeg
+        
+        logger.info("[FFmpeg] Not found in PATH via shutil.which, checking common locations...")
         
         # Common locations on Windows
         common_paths = [
             r'C:\ffmpeg\bin\ffmpeg.exe',
+            r'C:\ffmpeg\ffmpeg.exe',
             r'C:\Program Files\ffmpeg\bin\ffmpeg.exe',
             r'C:\Program Files (x86)\ffmpeg\bin\ffmpeg.exe',
             os.path.expanduser(r'~\ffmpeg\bin\ffmpeg.exe'),
+            os.path.expanduser(r'~\AppData\Local\Microsoft\WinGet\Links\ffmpeg.exe'),
+            r'C:\Windows\System32\ffmpeg.exe',
         ]
         
+        # Also check next to the running executable (bundled/portable installs)
+        try:
+            import sys
+            if getattr(sys, 'frozen', False):
+                exe_dir = os.path.dirname(sys.executable)
+                logger.info(f"[FFmpeg] PyInstaller frozen exe dir: {exe_dir}")
+                common_paths.insert(0, os.path.join(exe_dir, 'ffmpeg.exe'))
+                common_paths.insert(1, os.path.join(exe_dir, 'bin', 'ffmpeg.exe'))
+        except Exception:
+            pass
+        
         for path in common_paths:
-            if os.path.isfile(path):
+            exists = os.path.isfile(path)
+            if exists:
+                logger.info(f"[FFmpeg] Found at: {path}")
                 return path
         
+        logger.info(f"[FFmpeg] Not found in common paths. Checked: {common_paths}")
+        
+        # Last resort: try running ffmpeg directly
+        try:
+            import subprocess
+            result = subprocess.run(
+                ['ffmpeg', '-version'],
+                capture_output=True, timeout=5,
+                creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0)
+            )
+            if result.returncode == 0:
+                logger.info("[FFmpeg] Found via subprocess fallback")
+                return 'ffmpeg'
+        except Exception as e:
+            logger.info(f"[FFmpeg] Subprocess fallback failed: {e}")
+        
+        logger.warning("[FFmpeg] NOT FOUND anywhere")
         return None
     
     def _get_font_path(self, font_name: str = 'arial') -> tuple:
@@ -594,10 +632,14 @@ class DynamicPrerollGenerator:
     
     def _run_ffmpeg_vignette_fallback(self, filter_str: str, output_path: Path, duration: float,
                            width: int, height: int, bg_color: str,
-                           include_audio: bool = False) -> Optional[str]:
-        """Fallback: Run FFmpeg with simple vignette (no colored orbs)"""
+                           include_audio: bool = False,
+                           custom_audio_path: str = None,
+                           custom_logo_path: str = None) -> Optional[str]:
+        """Fallback: Run FFmpeg with simple vignette (no colored orbs).
+        Supports optional custom logo (faded, centered, behind text) and
+        custom audio with auto fade in/out."""
         _verbose_log(f"=== VIGNETTE FALLBACK ===")
-        _verbose_log(f"BG color: {bg_color}, Include audio: {include_audio}")
+        _verbose_log(f"BG color: {bg_color}, Include audio: {include_audio}, Logo: {custom_logo_path}")
         
         bg_hex = bg_color.replace('0x', '').replace('#', '')
         try:
@@ -614,12 +656,14 @@ class DynamicPrerollGenerator:
             bright_bg = bg_color
         
         vignette_filter = f"vignette=PI/3.5:0.6,{filter_str}"
-        _verbose_log(f"Vignette filter: {vignette_filter[:100]}...")
         
         # Determine audio source
         audio_file = None
         if include_audio:
-            audio_file = self._get_coming_soon_audio_path()
+            audio_file = self._get_coming_soon_audio_path(custom_audio_path=custom_audio_path)
+        
+        # Determine if we have a logo
+        has_logo = custom_logo_path and os.path.isfile(custom_logo_path)
         
         cmd = [
             self.ffmpeg_path,
@@ -628,27 +672,64 @@ class DynamicPrerollGenerator:
             '-i', f'color=c={bright_bg}:s={width}x{height}:d={duration}:r=30',
         ]
         
+        # Track input indices: 0 = color background
+        next_input = 1
+        logo_index = None
+        audio_index = None
+        
+        if has_logo:
+            logo_index = next_input
+            cmd.extend(['-i', custom_logo_path])
+            next_input += 1
+        
         if audio_file:
-            # Use real audio file with fade in/out
-            fade_duration = 1.5
-            fade_out_start = max(0, duration - fade_duration)
+            audio_index = next_input
             cmd.extend(['-i', audio_file])
-            audio_filter = f'[1:a]atrim=0:{duration},afade=t=in:d={fade_duration},afade=t=out:st={fade_out_start}:d={fade_duration},asetpts=PTS-STARTPTS[aout]'
-            cmd.extend([
-                '-vf', vignette_filter,
-                '-filter_complex', audio_filter,
-                '-map', '0:v',
-                '-map', '[aout]',
-            ])
+            next_input += 1
         else:
             # Silent audio fallback
-            cmd.extend([
-                '-f', 'lavfi',
-                '-i', f'anullsrc=r=48000:cl=stereo:d={duration}',
-                '-vf', vignette_filter,
-            ])
+            audio_index = next_input
+            cmd.extend(['-f', 'lavfi', '-i', f'anullsrc=r=48000:cl=stereo:d={duration}'])
+            next_input += 1
+        
+        # Build filter_complex
+        filter_parts = []
+        
+        # Apply vignette + text to background
+        filter_parts.append(f"[0:v]{vignette_filter}[vout]")
+        
+        if has_logo:
+            # Scale logo to 30% of frame width, semi-transparent (15% opacity), overlay centered behind text
+            logo_w = int(width * 0.30)
+            filter_parts.append(
+                f"[{logo_index}:v]scale={logo_w}:-1,format=rgba,"
+                f"colorchannelmixer=aa=0.15[logo]"
+            )
+            filter_parts.append(f"[vout][logo]overlay=(W-w)/2:(H-h)/2[vfinal]")
+            video_label = "[vfinal]"
+        else:
+            video_label = "[vout]"
+        
+        if audio_file:
+            # Real audio with fade in/out
+            fade_duration = 1.5
+            fade_out_start = max(0, duration - fade_duration)
+            filter_parts.append(
+                f"[{audio_index}:a]atrim=0:{duration},"
+                f"afade=t=in:d={fade_duration},"
+                f"afade=t=out:st={fade_out_start}:d={fade_duration},"
+                f"asetpts=PTS-STARTPTS[aout]"
+            )
+            audio_map = "[aout]"
+        else:
+            audio_map = f"{audio_index}:a"
+        
+        filter_complex_str = ";".join(filter_parts)
         
         cmd.extend([
+            '-filter_complex', filter_complex_str,
+            '-map', video_label,
+            '-map', audio_map,
             '-t', str(duration),
             '-c:v', 'libx264',
             '-preset', 'fast',
@@ -1172,8 +1253,14 @@ class DynamicPrerollGenerator:
     # COMING SOON LIST GENERATOR
     # =========================================================================
     
-    def _get_coming_soon_audio_path(self) -> Optional[str]:
-        """Get the path to the bundled Coming Soon audio file."""
+    def _get_coming_soon_audio_path(self, custom_audio_path: str = None) -> Optional[str]:
+        """Get the path to the Coming Soon audio file. Prefers custom_audio_path if provided."""
+        # 1) User-uploaded custom audio takes priority
+        if custom_audio_path and os.path.isfile(custom_audio_path):
+            _verbose_log(f"Using custom Coming Soon audio file: {custom_audio_path}")
+            return custom_audio_path
+
+        # 2) Bundled default
         # When running from PyInstaller bundle
         if getattr(sys, 'frozen', False):
             base_dir = sys._MEIPASS
@@ -1202,10 +1289,11 @@ class DynamicPrerollGenerator:
         width: int = 1920,
         height: int = 1080,
         max_items: int = 8,
-        include_audio: bool = False
+        include_audio: bool = False,
+        custom_audio_path: str = None,
+        custom_logo_path: str = None
     ) -> Optional[str]:
-        """
-        Generate a Coming Soon List video showing upcoming movies/shows.
+        """Generate a Coming Soon List video.
         
         Args:
             items: List of dicts with 'title', 'release_date', 'poster_url' (optional)
@@ -1236,6 +1324,7 @@ class DynamicPrerollGenerator:
         _verbose_log(f"Items: {len(items)}, Layout: {layout}, Duration: {duration}s, Audio: {include_audio}")
         _verbose_log(f"Server name: '{server_name}'")
         _verbose_log(f"Colors - BG: {bg_color}, Text: {text_color}, Accent: {accent_color}")
+        _verbose_log(f"Custom audio: {custom_audio_path}, Custom logo: {custom_logo_path}")
         
         # Limit items
         items = items[:max_items]
@@ -1248,13 +1337,17 @@ class DynamicPrerollGenerator:
             return self._generate_list_grid_layout(
                 items, server_name, duration, output_filename,
                 bg_color, text_color, accent_color, width, height,
-                include_audio=include_audio
+                include_audio=include_audio,
+                custom_audio_path=custom_audio_path,
+                custom_logo_path=custom_logo_path
             )
         else:
             return self._generate_list_text_layout(
                 items, server_name, duration, output_filename,
                 bg_color, text_color, accent_color, width, height,
-                include_audio=include_audio
+                include_audio=include_audio,
+                custom_audio_path=custom_audio_path,
+                custom_logo_path=custom_logo_path
             )
     
     def _generate_list_text_layout(
@@ -1268,7 +1361,9 @@ class DynamicPrerollGenerator:
         accent_color: str,
         width: int,
         height: int,
-        include_audio: bool = False
+        include_audio: bool = False,
+        custom_audio_path: str = None,
+        custom_logo_path: str = None
     ) -> Optional[str]:
         """Generate text-only list layout (no posters)"""
         output_path = self.output_dir / output_filename
@@ -1325,9 +1420,11 @@ class DynamicPrerollGenerator:
         for i, item in enumerate(items):
             title = self._escape_text(item.get('title', 'Unknown'))[:40]  # Truncate long titles
             
-            # Format release date
+            # Format release date or "Available Now!" status
             release_date = item.get('release_date', '')
-            if release_date:
+            if item.get('available_now', False):
+                date_str = 'Available Now!'
+            elif release_date:
                 try:
                     from datetime import datetime
                     dt = datetime.fromisoformat(release_date.replace('Z', '+00:00'))
@@ -1341,6 +1438,9 @@ class DynamicPrerollGenerator:
             fade_delay = 0.8 + (i * 0.15)  # Staggered fade-in
             date_fontsize = int(fontsize * 0.85)  # Slightly smaller for date
             
+            # Use green color for "Available Now!" items
+            date_color = '0x28a745' if item.get('available_now', False) else f'{accent_color}@0.9'
+            
             # Title (left-aligned with padding)
             filter_parts.append(
                 f"drawtext=text='{title}':fontsize={fontsize}:fontcolor={text_color}{font_param}:"
@@ -1350,7 +1450,7 @@ class DynamicPrerollGenerator:
             
             # Date (right-aligned)
             filter_parts.append(
-                f"drawtext=text='{date_str}':fontsize={date_fontsize}:fontcolor={accent_color}@0.9{font_param}:"
+                f"drawtext=text='{date_str}':fontsize={date_fontsize}:fontcolor={date_color}{font_param}:"
                 f"x=w-text_w-200:y={item_y+5}:alpha='if(lt(t,{fade_delay}),0,if(lt(t,{fade_delay+0.4}),"
                 f"(t-{fade_delay})/0.4,1))'"
             )
@@ -1370,7 +1470,9 @@ class DynamicPrerollGenerator:
         # Use vignette fallback for list (gradient + many drawtext elements causes FFmpeg issues)
         return self._run_ffmpeg_vignette_fallback(
             filter_str, output_path, duration, width, height, bg_color,
-            include_audio=include_audio
+            include_audio=include_audio,
+            custom_audio_path=custom_audio_path,
+            custom_logo_path=custom_logo_path
         )
     
     def _generate_list_grid_layout(
@@ -1384,7 +1486,9 @@ class DynamicPrerollGenerator:
         accent_color: str,
         width: int,
         height: int,
-        include_audio: bool = False
+        include_audio: bool = False,
+        custom_audio_path: str = None,
+        custom_logo_path: str = None
     ) -> Optional[str]:
         """
         Generate grid layout with poster images.
@@ -1445,7 +1549,9 @@ class DynamicPrerollGenerator:
                 return self._generate_list_text_layout(
                     items, server_name, duration, output_filename,
                     bg_color, text_color, accent_color, width, height,
-                    include_audio=include_audio
+                    include_audio=include_audio,
+                    custom_audio_path=custom_audio_path,
+                    custom_logo_path=custom_logo_path
                 )
             
             # Build grid layout with FFmpeg
@@ -1576,9 +1682,11 @@ class DynamicPrerollGenerator:
                 x = start_x + col * (poster_width + spacing_x)
                 y = start_y + row * (poster_height + spacing_y + date_spacing)
                 
-                # Format release date
+                # Format release date or "Available Now!" status
                 release_date = item.get('release_date', '')
-                if release_date:
+                if item.get('available_now', False):
+                    date_str = 'Available Now!'
+                elif release_date:
                     try:
                         from datetime import datetime
                         dt = datetime.fromisoformat(release_date.replace('Z', '+00:00'))
@@ -1589,6 +1697,9 @@ class DynamicPrerollGenerator:
                     date_str = "TBA"
                 date_str = self._escape_text(date_str)
                 
+                # Use green color for "Available Now!" items
+                grid_date_color = '0x28a745' if item.get('available_now', False) else f'{accent_color}@0.9'
+                
                 # Center text under poster - only release date
                 text_center_x = x + poster_width // 2
                 date_y = y + poster_height + 8
@@ -1596,7 +1707,7 @@ class DynamicPrerollGenerator:
                 # Release date only (centered, accent color) - scale font based on poster size
                 date_fontsize = max(18, min(28, poster_width // 10))
                 text_filters.append(
-                    f"drawtext=text='{date_str}':fontsize={date_fontsize}:fontcolor={accent_color}@0.9{font_param}:"
+                    f"drawtext=text='{date_str}':fontsize={date_fontsize}:fontcolor={grid_date_color}{font_param}:"
                     f"x={text_center_x}-(text_w/2):y={date_y}:shadowcolor=black@0.4:shadowx=1:shadowy=1"
                 )
             
@@ -1616,14 +1727,31 @@ class DynamicPrerollGenerator:
             
             filter_complex_str = ";".join(filter_parts)
             
-            # Add audio source - this becomes the last input
-            # Input indices: 0=color, 1 to len(poster_paths)=posters, len(poster_paths)+1=audio
-            audio_index = len(poster_paths) + 1
+            # --- Logo overlay (faded, centered, behind text — inserted as extra input) ---
+            logo_input_index = None
+            if custom_logo_path and os.path.isfile(custom_logo_path):
+                logo_input_index = len(poster_paths) + 1  # Next input after posters
+                cmd.extend(['-i', custom_logo_path])
+                # Scale logo to 30% of frame width, center it, and make it semi-transparent
+                logo_w = int(width * 0.30)
+                logo_filter = (
+                    f"[{logo_input_index}:v]scale={logo_w}:-1,format=rgba,"
+                    f"colorchannelmixer=aa=0.15[logo];"
+                    f"[out][logo]overlay=(W-w)/2:(H-h)/2[outl]"
+                )
+                filter_complex_str = filter_complex_str + ';' + logo_filter
+                _verbose_log(f"Added logo overlay from {custom_logo_path} (input {logo_input_index})")
+            
+            # Determine final video output label
+            video_out_label = '[outl]' if logo_input_index else '[out]'
+            
+            # Add audio source — this becomes the next input after posters (and optional logo)
+            audio_index = len(poster_paths) + 1 + (1 if logo_input_index else 0)
             
             # Determine audio source
             audio_file = None
             if include_audio:
-                audio_file = self._get_coming_soon_audio_path()
+                audio_file = self._get_coming_soon_audio_path(custom_audio_path=custom_audio_path)
             
             if audio_file:
                 # Use real audio file with fade in/out
@@ -1642,7 +1770,7 @@ class DynamicPrerollGenerator:
             
             cmd.extend([
                 '-filter_complex', filter_complex_str,
-                '-map', '[out]',
+                '-map', video_out_label,
                 '-map', audio_map,
                 '-c:v', 'libx264', '-preset', 'fast', '-crf', '20',
                 '-c:a', 'aac', '-b:a', '128k',
@@ -1676,7 +1804,9 @@ class DynamicPrerollGenerator:
                 return self._generate_list_text_layout(
                     items, server_name, duration, output_filename,
                     bg_color, text_color, accent_color, width, height,
-                    include_audio=include_audio
+                    include_audio=include_audio,
+                    custom_audio_path=custom_audio_path,
+                    custom_logo_path=custom_logo_path
                 )
                 
         except Exception as e:
@@ -1686,7 +1816,9 @@ class DynamicPrerollGenerator:
             return self._generate_list_text_layout(
                 items, server_name, duration, output_filename,
                 bg_color, text_color, accent_color, width, height,
-                include_audio=include_audio
+                include_audio=include_audio,
+                custom_audio_path=custom_audio_path,
+                custom_logo_path=custom_logo_path
             )
         finally:
             # Clean up temp directory

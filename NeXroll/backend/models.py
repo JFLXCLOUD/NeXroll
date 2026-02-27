@@ -222,6 +222,7 @@ class Setting(Base):
     # Community Prerolls settings
     community_fair_use_accepted = Column(Boolean, default=False)  # Whether user accepted Fair Use Policy
     community_fair_use_accepted_at = Column(DateTime, nullable=True)  # Timestamp of acceptance
+    community_server_url = Column(String, nullable=True)  # Custom community server URL (None = use default)
     plex_client_id = Column(String, nullable=True)  # X-Plex-Client-Identifier
     plex_server_base_url = Column(String, nullable=True)  # Best-resolved server URL (local preferred)
     plex_server_machine_id = Column(String, nullable=True)  # Server machineIdentifier
@@ -302,6 +303,10 @@ class Setting(Base):
     nexup_coming_soon_list_server_name = Column(String, default='')  # Server name to display
     nexup_coming_soon_list_auto_regen_layout = Column(String, default='both')  # Auto-regen layout: 'grid', 'list', or 'both'
     nexup_coming_soon_list_include_audio = Column(Boolean, default=False)  # Include background music in generated video
+    nexup_coming_soon_list_custom_audio_path = Column(String, nullable=True)  # User-uploaded custom audio file path
+    nexup_coming_soon_list_custom_logo_path = Column(String, nullable=True)  # User-uploaded custom logo image path
+    nexup_coming_soon_available_days = Column(Integer, default=1)  # Days to show "Available Now!" after download before auto-removing
+    nexup_trailer_retention_days = Column(Integer, default=7)  # Days to retain downloaded trailers before auto-deleting (0 = keep forever)
     
     # Authentication Settings (Optional - for PWA/remote access)
     auth_enabled = Column(Boolean, default=False)  # Master toggle - auth is OPTIONAL

@@ -299,6 +299,12 @@ class Scheduler:
         max_items = getattr(setting, 'nexup_coming_soon_list_max_items', 8) or 8
         server_name = getattr(setting, 'nexup_dynamic_preroll_server_name', None) or \
                       getattr(setting, 'plex_server_name', None) or "Your Server"
+        include_audio = getattr(setting, 'nexup_coming_soon_list_include_audio', False)
+        custom_audio_path = getattr(setting, 'nexup_coming_soon_list_custom_audio_path', None)
+        custom_logo_path = getattr(setting, 'nexup_coming_soon_list_custom_logo_path', None)
+        bg_color = getattr(setting, 'nexup_coming_soon_list_bg_color', '#141428') or '#141428'
+        text_color = getattr(setting, 'nexup_coming_soon_list_text_color', '#ffffff') or '#ffffff'
+        accent_color = getattr(setting, 'nexup_coming_soon_list_accent_color', '#00d4ff') or '#00d4ff'
         
         # Get items from downloaded trailers
         items = []
@@ -362,10 +368,13 @@ class Scheduler:
                     duration=float(duration),
                     output_filename=output_filename,
                     layout=l,
-                    bg_color="0x141428",
-                    text_color="0xffffff",
-                    accent_color="0x00d4ff",
-                    max_items=max_items
+                    bg_color=bg_color.replace('#', '0x'),
+                    text_color=text_color.replace('#', '0x'),
+                    accent_color=accent_color.replace('#', '0x'),
+                    max_items=max_items,
+                    include_audio=include_audio,
+                    custom_audio_path=custom_audio_path,
+                    custom_logo_path=custom_logo_path
                 )
                 if output_path:
                     _scheduler_log(f"NeX-Up auto-regen: Generated {output_filename}")

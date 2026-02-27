@@ -52,6 +52,7 @@ import backend.models as models
 from backend.plex_connector import PlexConnector
 from backend.scheduler import scheduler
 from backend import secure_store
+from backend.dynamic_preroll import DynamicPrerollGenerator, set_verbose_logger as set_dp_verbose_logger
 
 models.Base.metadata.create_all(bind=engine)
 
@@ -226,6 +227,10 @@ def ensure_schema() -> None:
                 ("nexup_coming_soon_list_accent_color", "nexup_coming_soon_list_accent_color TEXT DEFAULT '#00d4ff'"),
                 ("nexup_coming_soon_list_server_name", "nexup_coming_soon_list_server_name TEXT DEFAULT ''"),
                 ("nexup_coming_soon_list_include_audio", "nexup_coming_soon_list_include_audio BOOLEAN DEFAULT 0"),
+                ("nexup_coming_soon_list_custom_audio_path", "nexup_coming_soon_list_custom_audio_path TEXT"),
+                ("nexup_coming_soon_list_custom_logo_path", "nexup_coming_soon_list_custom_logo_path TEXT"),
+                ("nexup_coming_soon_available_days", "nexup_coming_soon_available_days INTEGER DEFAULT 1"),
+                ("nexup_trailer_retention_days", "nexup_trailer_retention_days INTEGER DEFAULT 7"),
             ]
             for col, ddl in nexup_columns:
                 if not _sqlite_has_column("settings", col):
@@ -458,6 +463,10 @@ def ensure_schema() -> None:
                 if not _sqlite_has_column("settings", col_name):
                     _sqlite_add_column("settings", col_def)
             
+            # Community Prerolls: ensure community_server_url column
+            if not _sqlite_has_column("settings", "community_server_url"):
+                _sqlite_add_column("settings", "community_server_url TEXT")
+            
             # Add filler category settings columns
             filler_columns = [
                 ("filler_enabled", "filler_enabled BOOLEAN DEFAULT 0"),
@@ -504,7 +513,7 @@ def migrate_legacy_community_prerolls() -> None:
                 
                 # Search community API
                 response = requests.get(
-                    'https://prerolls.uk/api/search',
+                    f'{DEFAULT_COMMUNITY_BASE_URL}/api/search',
                     params={'query': search_title, 'limit': 5},
                     timeout=5
                 )
@@ -1556,6 +1565,10 @@ app = FastAPI(title="NeXroll Backend", version=app_version)
 community_search_rate_limit = {}  # {ip: last_search_time}
 COMMUNITY_SEARCH_COOLDOWN = 5  # seconds between searches per IP
 
+# Community preroll server defaults
+DEFAULT_COMMUNITY_BASE_URL = "https://prerolls.uk"
+COMMUNITY_SERVERS_JSON_URL = "https://test.prerolls.uk/servers.json"
+
 # Local index for Typical Nerds prerolls (faster than remote scraping)
 PREROLLS_INDEX_PATH = Path(os.environ.get("PROGRAMDATA", os.path.expanduser("~"))) / "NeXroll" / "prerolls_index.json"
 PREROLLS_INDEX_MAX_AGE = 7 * 24 * 3600  # 7 days in seconds (refresh weekly recommended)
@@ -1580,6 +1593,22 @@ SEARCH_SYNONYMS = {
     "spooky": ["halloween", "scary", "ghost", "haunted"],
     "pumpkin": ["halloween", "october", "autumn", "fall"],
 }
+
+def _get_community_base_url(db=None) -> str:
+    """Get the configured community server base URL.
+    
+    Returns the user's custom community server URL if set in settings,
+    otherwise returns the DEFAULT_COMMUNITY_BASE_URL constant.
+    The returned URL never has a trailing slash.
+    """
+    if db is not None:
+        try:
+            setting = db.query(models.Setting).first()
+            if setting and getattr(setting, "community_server_url", None):
+                return setting.community_server_url.rstrip("/")
+        except Exception:
+            pass
+    return DEFAULT_COMMUNITY_BASE_URL
 
 # NOTE: Wildcard CORS removed for security. Specific-origin CORS middleware is defined below.
 
@@ -1884,6 +1913,26 @@ def startup_event():
 
     # Rotate log if it's getting too large (before scheduler starts logging)
     _rotate_log_if_needed(max_size_mb=10)
+    
+    # Migrate plaintext session tokens to hashed (one-time migration)
+    try:
+        db = SessionLocal()
+        sessions = db.query(models.Session).all()
+        migrated = 0
+        for s in sessions:
+            # Plaintext tokens are ~43 chars (base64url), SHA256 hashes are exactly 64 hex chars
+            if s.session_token and len(s.session_token) != 64:
+                s.session_token = _hash_session_token(s.session_token)
+                migrated += 1
+        if migrated:
+            db.commit()
+            _file_log(f"Migrated {migrated} session tokens to hashed storage")
+        db.close()
+    except Exception as e:
+        try:
+            _file_log(f"Session token migration error: {e}", level="WARNING")
+        except Exception:
+            pass
     
     # Log startup banner
     _log_startup_banner()
@@ -2491,6 +2540,39 @@ def system_paths():
     return info
 
 
+# ============== Login Rate Limiting ==============
+# Track failed login attempts by IP to prevent credential spraying
+_login_rate_limit = {}  # {ip: [timestamp1, timestamp2, ...]}
+_LOGIN_RATE_LIMIT_WINDOW = 300  # 5 minutes
+_LOGIN_RATE_LIMIT_MAX = 15  # Max 15 attempts per IP per window
+
+def _check_login_rate_limit(ip: str) -> bool:
+    """Check if an IP has exceeded login rate limit. Returns True if blocked."""
+    if not ip:
+        return False
+    now = time.time()
+    # Clean old entries
+    if ip in _login_rate_limit:
+        _login_rate_limit[ip] = [t for t in _login_rate_limit[ip] if now - t < _LOGIN_RATE_LIMIT_WINDOW]
+        if not _login_rate_limit[ip]:
+            del _login_rate_limit[ip]
+    return len(_login_rate_limit.get(ip, [])) >= _LOGIN_RATE_LIMIT_MAX
+
+def _record_login_attempt(ip: str):
+    """Record a login attempt for rate limiting."""
+    if not ip:
+        return
+    now = time.time()
+    if ip not in _login_rate_limit:
+        _login_rate_limit[ip] = []
+    _login_rate_limit[ip].append(now)
+
+
+def _hash_session_token(token: str) -> str:
+    """Hash a session token for secure storage using SHA256."""
+    return hashlib.sha256(token.encode('utf-8')).hexdigest()
+
+
 def _check_auth_enabled(db: Session) -> bool:
     """Check if authentication is enabled"""
     setting = db.query(models.Setting).first()
@@ -2502,8 +2584,11 @@ def _validate_session(session_token: str, db: Session) -> Optional[models.User]:
     if not session_token:
         return None
     
+    # Hash the token for lookup (tokens stored hashed in DB)
+    token_hash = _hash_session_token(session_token)
+    
     session = db.query(models.Session).filter(
-        models.Session.session_token == session_token,
+        models.Session.session_token == token_hash,
         models.Session.is_valid == True,
         models.Session.expires_at > datetime.datetime.utcnow()
     ).first()
@@ -2515,6 +2600,16 @@ def _validate_session(session_token: str, db: Session) -> Optional[models.User]:
         models.User.id == session.user_id,
         models.User.is_active == True
     ).first()
+    
+    # Periodic cleanup: delete expired sessions (1 in 50 chance per validation)
+    if secrets.randbelow(50) == 0:
+        try:
+            db.query(models.Session).filter(
+                models.Session.expires_at < datetime.datetime.utcnow()
+            ).delete()
+            db.commit()
+        except Exception:
+            db.rollback()
     
     return user
 
@@ -3932,7 +4027,7 @@ def _verify_password(password: str, hashed: str) -> bool:
 
 
 def _generate_session_token() -> str:
-    """Generate a cryptographically secure session token"""
+    """Generate a cryptographically secure session token (returned to client, stored hashed)"""
     return secrets.token_urlsafe(32)
 
 
@@ -4143,6 +4238,13 @@ async def auth_login(
     
     ip, user_agent = _get_client_info(request)
     
+    # IP-based rate limiting (prevents credential spraying across accounts)
+    if _check_login_rate_limit(ip):
+        _log_auth_event(db, 'login_rate_limited', username=login.username.strip().lower(),
+                       ip_address=ip, user_agent=user_agent, details='IP rate limited')
+        raise HTTPException(status_code=429, detail="Too many login attempts. Please try again later.")
+    _record_login_attempt(ip)
+    
     # Find user
     user = db.query(models.User).filter(
         models.User.username == login.username.strip().lower()
@@ -4194,8 +4296,12 @@ async def auth_login(
     if login.remember_me:
         session_hours = 24 * 30  # 30 days for "remember me"
     
+    # Generate token - store hash in DB, send plaintext to client
+    raw_token = _generate_session_token()
+    token_hash = _hash_session_token(raw_token)
+    
     session = models.Session(
-        session_token=_generate_session_token(),
+        session_token=token_hash,
         user_id=user.id,
         expires_at=datetime.datetime.utcnow() + datetime.timedelta(hours=session_hours),
         ip_address=ip,
@@ -4223,11 +4329,11 @@ async def auth_login(
         media_type="application/json"
     )
     
-    # Set secure cookie
+    # Set secure cookie (client gets raw token, DB has hash)
     max_age = session_hours * 3600
     response.set_cookie(
         key="nexroll_session",
-        value=session.session_token,
+        value=raw_token,
         max_age=max_age,
         httponly=True,
         samesite="lax",
@@ -4246,9 +4352,10 @@ async def auth_logout(request: Request, db: Session = Depends(get_db)):
     ip, user_agent = _get_client_info(request)
     
     if session_token:
-        # Invalidate session in database
+        # Invalidate session in database (look up by hash)
+        token_hash = _hash_session_token(session_token)
         session = db.query(models.Session).filter(
-            models.Session.session_token == session_token
+            models.Session.session_token == token_hash
         ).first()
         if session:
             # Get user info for logging
@@ -4297,9 +4404,13 @@ async def auth_register(
     if not username.isalnum():
         raise HTTPException(status_code=422, detail="Username must be alphanumeric")
     
-    # Validate password
-    if len(register.password) < 6:
-        raise HTTPException(status_code=422, detail="Password must be at least 6 characters")
+    # Validate password strength
+    if len(register.password) < 8:
+        raise HTTPException(status_code=422, detail="Password must be at least 8 characters")
+    if register.password.lower() == register.password or register.password.upper() == register.password:
+        raise HTTPException(status_code=422, detail="Password must contain both uppercase and lowercase letters")
+    if not any(c.isdigit() for c in register.password):
+        raise HTTPException(status_code=422, detail="Password must contain at least one number")
     
     # Check if username exists
     existing = db.query(models.User).filter(models.User.username == username).first()
@@ -4402,9 +4513,13 @@ async def auth_create_user(
     if not username.isalnum():
         raise HTTPException(status_code=422, detail="Username must be alphanumeric")
     
-    # Validate password
-    if len(register.password) < 6:
-        raise HTTPException(status_code=422, detail="Password must be at least 6 characters")
+    # Validate password strength
+    if len(register.password) < 8:
+        raise HTTPException(status_code=422, detail="Password must be at least 8 characters")
+    if register.password.lower() == register.password or register.password.upper() == register.password:
+        raise HTTPException(status_code=422, detail="Password must contain both uppercase and lowercase letters")
+    if not any(c.isdigit() for c in register.password):
+        raise HTTPException(status_code=422, detail="Password must contain at least one number")
     
     # Check if username exists
     existing = db.query(models.User).filter(models.User.username == username).first()
@@ -4462,8 +4577,10 @@ async def auth_delete_user(
     if _check_auth_enabled(db) and not _is_local_request(request):
         if not current_user or current_user.role != 'admin':
             raise HTTPException(status_code=403, detail="Admin access required")
-        if current_user.id == user_id:
-            raise HTTPException(status_code=400, detail="Cannot delete your own account")
+    
+    # Self-delete protection (applies to all requests, including local)
+    if current_user and current_user.id == user_id:
+        raise HTTPException(status_code=400, detail="Cannot delete your own account")
     
     user = db.query(models.User).filter(models.User.id == user_id).first()
     if not user:
@@ -4502,8 +4619,10 @@ async def auth_toggle_user(
     if _check_auth_enabled(db) and not _is_local_request(request):
         if not current_user or current_user.role != 'admin':
             raise HTTPException(status_code=403, detail="Admin access required")
-        if current_user.id == user_id:
-            raise HTTPException(status_code=400, detail="Cannot disable your own account")
+    
+    # Self-disable protection (applies to all requests, including local)
+    if current_user and current_user.id == user_id:
+        raise HTTPException(status_code=400, detail="Cannot disable your own account")
     
     user = db.query(models.User).filter(models.User.id == user_id).first()
     if not user:
@@ -4541,20 +4660,39 @@ async def auth_change_password(
     if not _verify_password(change.current_password, user.password_hash):
         raise HTTPException(status_code=401, detail="Current password is incorrect")
     
-    # Validate new password
-    if len(change.new_password) < 6:
-        raise HTTPException(status_code=422, detail="New password must be at least 6 characters")
+    # Validate new password strength
+    if len(change.new_password) < 8:
+        raise HTTPException(status_code=422, detail="New password must be at least 8 characters")
+    if change.new_password.lower() == change.new_password or change.new_password.upper() == change.new_password:
+        raise HTTPException(status_code=422, detail="Password must contain both uppercase and lowercase letters")
+    if not any(c.isdigit() for c in change.new_password):
+        raise HTTPException(status_code=422, detail="Password must contain at least one number")
     
     # Update password
     user.password_hash = _hash_password(change.new_password)
+    
+    # Invalidate all other sessions for this user (force re-login everywhere)
+    current_session_token = request.cookies.get("nexroll_session")
+    current_token_hash = _hash_session_token(current_session_token) if current_session_token else None
+    if current_token_hash:
+        db.query(models.Session).filter(
+            models.Session.user_id == user.id,
+            models.Session.session_token != current_token_hash
+        ).update({"is_valid": False})
+    else:
+        db.query(models.Session).filter(
+            models.Session.user_id == user.id
+        ).update({"is_valid": False})
+    
     db.commit()
     
     # Log password change
     ip, user_agent = _get_client_info(request)
     _log_auth_event(db, 'password_changed', username=user.username, user_id=user.id,
-                   ip_address=ip, user_agent=user_agent)
+                   ip_address=ip, user_agent=user_agent,
+                   details='All other sessions invalidated')
     
-    return {"success": True, "message": "Password changed successfully"}
+    return {"success": True, "message": "Password changed successfully. All other sessions have been logged out."}
 
 
 @app.get("/auth/settings")
@@ -14011,8 +14149,14 @@ def get_nexup_settings(user: models.User = Depends(require_auth), db: Session = 
         "coming_soon_list_accent_color": getattr(setting, 'nexup_coming_soon_list_accent_color', '#00d4ff'),
         "coming_soon_list_server_name": getattr(setting, 'nexup_coming_soon_list_server_name', ''),
         "coming_soon_list_include_audio": getattr(setting, 'nexup_coming_soon_list_include_audio', False),
+        "coming_soon_list_custom_audio_filename": os.path.basename(getattr(setting, 'nexup_coming_soon_list_custom_audio_path', '') or '') or None,
+        "coming_soon_list_custom_logo_filename": os.path.basename(getattr(setting, 'nexup_coming_soon_list_custom_logo_path', '') or '') or None,
         # Release date preference (which date to use for "Coming Soon")
-        "release_date_preference": getattr(setting, 'nexup_release_date_preference', 'digital_first')
+        "release_date_preference": getattr(setting, 'nexup_release_date_preference', 'digital_first'),
+        # Available Now! duration (days after download before removal)
+        "coming_soon_available_days": getattr(setting, 'nexup_coming_soon_available_days', 1),
+        # Trailer retention (days before auto-deleting downloaded trailers)
+        "trailer_retention_days": getattr(setting, 'nexup_trailer_retention_days', 7)
     }
 
 @app.put("/nexup/settings")
@@ -14046,6 +14190,8 @@ def update_nexup_settings(
     coming_soon_list_server_name: Optional[str] = None,
     coming_soon_list_include_audio: Optional[bool] = None,
     release_date_preference: Optional[str] = None,
+    coming_soon_available_days: Optional[int] = None,
+    trailer_retention_days: Optional[int] = None,
     db: Session = Depends(get_db)
 ):
     """Update NeX-Up settings"""
@@ -14171,6 +14317,12 @@ def update_nexup_settings(
     if release_date_preference is not None:
         if release_date_preference in ['digital_first', 'digital_only', 'physical_first', 'theatrical']:
             setting.nexup_release_date_preference = release_date_preference
+    # Available Now! duration
+    if coming_soon_available_days is not None:
+        setting.nexup_coming_soon_available_days = max(1, min(30, coming_soon_available_days))
+    # Trailer retention days (0 = keep forever, max 365)
+    if trailer_retention_days is not None:
+        setting.nexup_trailer_retention_days = max(0, min(365, trailer_retention_days))
     
     setting.updated_at = datetime.datetime.utcnow()
     db.commit()
@@ -14264,15 +14416,43 @@ async def get_upcoming_movies(db: Session = Depends(get_db)):
     existing_trailers = db.query(models.ComingSoonTrailer).all()
     existing_map = {t.radarr_movie_id: t for t in existing_trailers}
     
+    # Get the "Available Now!" grace period setting
+    available_days = getattr(setting, 'nexup_coming_soon_available_days', 1) or 1
+    
+    # Filter out movies that have been available too long
+    filtered_movies = []
     for movie in movies:
         trailer = existing_map.get(movie['radarr_id'])
         movie['downloaded'] = trailer is not None
         movie['excluded_from_list'] = trailer.excluded_from_list if trailer else False
         movie['trailer_db_id'] = trailer.id if trailer else None
+        
+        # Mark as "available now" if Radarr says the file is downloaded
+        movie['available_now'] = movie.get('has_file', False)
+        
+        # If the movie has been downloaded by Radarr (hasFile=True), check grace period
+        if movie.get('has_file', False):
+            # Check if trailer was downloaded - use downloaded_at if available, else release_date
+            if trailer and trailer.downloaded_at:
+                days_since = (datetime.datetime.utcnow() - trailer.downloaded_at).days
+            elif movie.get('release_date'):
+                try:
+                    rd = datetime.datetime.fromisoformat(movie['release_date']).date()
+                    days_since = (datetime.date.today() - rd).days
+                except:
+                    days_since = 0
+            else:
+                days_since = 0
+            
+            # Skip if past the "Available Now!" grace period
+            if days_since > available_days:
+                continue
+        
+        filtered_movies.append(movie)
     
     return {
-        "movies": movies,
-        "total": len(movies),
+        "movies": filtered_movies,
+        "total": len(filtered_movies),
         "days_ahead": days_ahead,
         "include_unmonitored": include_unmonitored
     }
@@ -14406,6 +14586,10 @@ async def get_upcoming_shows(db: Session = Depends(get_db)):
     existing_trailers = db.query(models.ComingSoonTVTrailer).all()
     existing_map = {f"{t.sonarr_series_id}_S{t.season_number}": t for t in existing_trailers}
     
+    # Get the "Available Now!" grace period setting
+    available_days = getattr(setting, 'nexup_coming_soon_available_days', 1) or 1
+    
+    filtered_shows = []
     for show in shows:
         key = f"{show['sonarr_id']}_S{show['season_number']}"
         trailer = existing_map.get(key)
@@ -14413,10 +14597,30 @@ async def get_upcoming_shows(db: Session = Depends(get_db)):
         show['excluded_from_list'] = trailer.excluded_from_list if trailer else False
         show['trailer_db_id'] = trailer.id if trailer else None
         show['has_trailer'] = True  # We'll try to find one via TMDB
+        
+        # Mark as "available now" if has_file from Sonarr or trailer was marked as downloaded
+        show['available_now'] = show.get('has_file', False) or (trailer is not None and trailer.downloaded_at is not None)
+        
+        # If available, check grace period
+        if show['available_now']:
+            if trailer and trailer.downloaded_at:
+                days_since = (datetime.datetime.utcnow() - trailer.downloaded_at).days
+            elif show.get('release_date'):
+                try:
+                    rd = datetime.datetime.fromisoformat(show['release_date']).date()
+                    days_since = (datetime.date.today() - rd).days
+                except:
+                    days_since = 0
+            else:
+                days_since = 0
+            if days_since > available_days:
+                continue
+        
+        filtered_shows.append(show)
     
     return {
-        "shows": shows,
-        "total": len(shows),
+        "shows": filtered_shows,
+        "total": len(filtered_shows),
         "days_ahead": days_ahead,
         "include_unmonitored": include_unmonitored
     }
@@ -14757,6 +14961,8 @@ async def _auto_regenerate_coming_soon_list(db: Session):
         accent_color = getattr(setting, 'nexup_coming_soon_list_accent_color', '#00d4ff')
         server_name = getattr(setting, 'nexup_coming_soon_list_server_name', '')
         include_audio = getattr(setting, 'nexup_coming_soon_list_include_audio', False)
+        custom_audio_path = getattr(setting, 'nexup_coming_soon_list_custom_audio_path', None)
+        custom_logo_path = getattr(setting, 'nexup_coming_soon_list_custom_logo_path', None)
         storage_path = getattr(setting, 'nexup_storage_path', None)
         
         if not storage_path:
@@ -14767,7 +14973,6 @@ async def _auto_regenerate_coming_soon_list(db: Session):
         if not server_name or not server_name.strip():
             server_name = setting.plex_server_name or getattr(setting, 'jellyfin_server_name', None) or "Your Server"
         
-        from backend.dynamic_preroll import DynamicPrerollGenerator
         from backend.radarr_connector import RadarrConnector
         from backend.sonarr_connector import SonarrConnector
         
@@ -14787,7 +14992,8 @@ async def _auto_regenerate_coming_soon_list(db: Session):
                             'title': movie.get('title', ''),
                             'release_date': movie.get('release_date', ''),
                             'poster_url': movie.get('poster_url', ''),
-                            'type': 'movie'
+                            'type': 'movie',
+                            'available_now': movie.get('has_file', False)
                         })
                     _file_log(f"Coming Soon List auto-regen: Found {len(movies)} upcoming movies from Radarr")
                 except Exception as e:
@@ -14809,7 +15015,8 @@ async def _auto_regenerate_coming_soon_list(db: Session):
                             'title': title,
                             'release_date': show.get('release_date', ''),
                             'poster_url': show.get('poster_url', ''),
-                            'type': 'show'
+                            'type': 'show',
+                            'available_now': show.get('has_file', False)
                         })
                     _file_log(f"Coming Soon List auto-regen: Found {len(shows)} upcoming shows from Sonarr")
                 except Exception as e:
@@ -14892,7 +15099,9 @@ async def _auto_regenerate_coming_soon_list(db: Session):
                 bg_color=bg_ffmpeg,
                 text_color=text_ffmpeg,
                 accent_color=accent_ffmpeg,
-                include_audio=include_audio
+                include_audio=include_audio,
+                custom_audio_path=custom_audio_path,
+                custom_logo_path=custom_logo_path
             )
             
             if output_path:
@@ -14983,7 +15192,7 @@ async def sync_sonarr_trailers(db: Session = Depends(get_db)):
     ).all()
     
     today = datetime.datetime.now().date()
-    grace_period_days = 5  # Keep trailer for 5 days after air date
+    available_days = getattr(setting, 'nexup_coming_soon_available_days', 1) or 1
     
     for trailer in existing_trailers:
         should_expire = False
@@ -14994,16 +15203,25 @@ async def sync_sonarr_trailers(db: Session = Depends(get_db)):
         if series_info:
             season_file_count = series_info['seasons'].get(trailer.season_number, 0)
             if season_file_count > 0:
-                should_expire = True
-                expire_reason = f"Season has {season_file_count} episode(s) downloaded"
+                # Mark downloaded_at if not already set
+                if not trailer.downloaded_at:
+                    trailer.downloaded_at = datetime.datetime.utcnow()
+                    db.commit()
+                    _file_log(f"Sonarr Sync: Marked '{trailer.title}' S{trailer.season_number} as downloaded (Available Now!)")
+                
+                # Only expire if past the grace period
+                days_since = (datetime.datetime.utcnow() - trailer.downloaded_at).days
+                if days_since > available_days:
+                    should_expire = True
+                    expire_reason = f"Season has {season_file_count} episode(s) downloaded, past {available_days}-day grace period"
         
         # Check 2: Has the release date passed by more than grace period?
         if not should_expire and trailer.release_date:
             release_date = trailer.release_date.date() if hasattr(trailer.release_date, 'date') else trailer.release_date
             days_since_release = (today - release_date).days
-            if days_since_release > grace_period_days:
+            if days_since_release > available_days:
                 should_expire = True
-                expire_reason = f"Aired {days_since_release} days ago (grace period: {grace_period_days} days)"
+                expire_reason = f"Aired {days_since_release} days ago (grace period: {available_days} days)"
         
         if should_expire:
             _file_log(f"Sonarr Sync: Expiring trailer for '{trailer.title}' S{trailer.season_number} - {expire_reason}")
@@ -16529,18 +16747,28 @@ async def sync_nexup(db: Session = Depends(get_db)):
         
         _nexup_sync_progress["status"] = "Checking for expired trailers..."
         
-        # Check for movies that have been downloaded (expire their trailers) - NO extra API calls!
+        # Check for movies that have been downloaded - respect "Available Now!" grace period
+        available_days = getattr(setting, 'nexup_coming_soon_available_days', 1) or 1
         for trailer in existing:
             if trailer.radarr_movie_id in downloaded_movies:
-                # Delete trailer file
-                if trailer.local_path and os.path.exists(trailer.local_path):
-                    try:
-                        os.remove(trailer.local_path)
-                    except:
-                        pass
-                db.delete(trailer)
-                results["expired"] += 1
-                _file_log(f"NeX-Up: Expired trailer for downloaded movie '{trailer.title}'")
+                # Mark downloaded_at if not already set
+                if not trailer.downloaded_at:
+                    trailer.downloaded_at = datetime.datetime.utcnow()
+                    db.commit()
+                    _file_log(f"NeX-Up: Marked '{trailer.title}' as downloaded (Available Now!)")
+                
+                # Check if past the grace period
+                days_since = (datetime.datetime.utcnow() - trailer.downloaded_at).days
+                if days_since > available_days:
+                    # Delete trailer file
+                    if trailer.local_path and os.path.exists(trailer.local_path):
+                        try:
+                            os.remove(trailer.local_path)
+                        except:
+                            pass
+                    db.delete(trailer)
+                    results["expired"] += 1
+                    _file_log(f"NeX-Up: Expired trailer for downloaded movie '{trailer.title}' (past {available_days}-day grace period)")
         
         # Parse upcoming movies from the already-fetched data
         include_unmonitored = getattr(setting, 'nexup_include_unmonitored_movies', False)
@@ -16800,30 +17028,55 @@ def get_nexup_playback_trailers(db: Session = Depends(get_db)):
 @app.get("/nexup/preroll/templates")
 def get_preroll_templates():
     """Get available dynamic preroll templates and color themes"""
-    from backend.dynamic_preroll import DynamicPrerollGenerator
-    
-    generator = DynamicPrerollGenerator()
-    templates = generator.get_available_templates()
-    color_themes = generator.get_color_themes()
-    
-    return {
-        "templates": templates,
-        "ffmpeg_available": generator.check_ffmpeg_available(),
-        "color_themes": color_themes
-    }
+    try:
+        generator = DynamicPrerollGenerator()
+        templates = generator.get_available_templates()
+        color_themes = generator.get_color_themes()
+        ffmpeg_available = generator.check_ffmpeg_available()
+        
+        _file_log(f"[TEMPLATES] FFmpeg available: {ffmpeg_available}, path: {generator.ffmpeg_path}")
+        
+        return {
+            "templates": templates,
+            "ffmpeg_available": ffmpeg_available,
+            "color_themes": color_themes
+        }
+    except Exception as e:
+        _file_log(f"[TEMPLATES] ERROR loading templates/ffmpeg: {e}", level="ERROR")
+        import traceback
+        _file_log(f"[TEMPLATES] Traceback: {traceback.format_exc()}", level="ERROR")
+        # Return a safe fallback so frontend doesn't break entirely
+        return {
+            "templates": [],
+            "ffmpeg_available": False,
+            "color_themes": {},
+            "error": str(e)
+        }
 
 @app.get("/nexup/preroll/ffmpeg-status")
 def get_ffmpeg_status():
     """Check if FFmpeg is available for video generation"""
-    from backend.dynamic_preroll import DynamicPrerollGenerator
-    
-    generator = DynamicPrerollGenerator()
-    available = generator.check_ffmpeg_available()
-    
-    return {
-        "available": available,
-        "message": "FFmpeg is ready for video generation" if available else "FFmpeg not found. Please install FFmpeg to generate dynamic prerolls."
-    }
+    try:
+        generator = DynamicPrerollGenerator()
+        available = generator.check_ffmpeg_available()
+        
+        _file_log(f"[FFMPEG-STATUS] Available: {available}, Path: {generator.ffmpeg_path}")
+        
+        return {
+            "available": available,
+            "ffmpeg_path": generator.ffmpeg_path,
+            "message": "FFmpeg is ready for video generation" if available else "FFmpeg not found. Please install FFmpeg to generate dynamic prerolls."
+        }
+    except Exception as e:
+        _file_log(f"[FFMPEG-STATUS] ERROR: {e}", level="ERROR")
+        import traceback
+        _file_log(f"[FFMPEG-STATUS] Traceback: {traceback.format_exc()}", level="ERROR")
+        return {
+            "available": False,
+            "ffmpeg_path": None,
+            "message": f"Error checking FFmpeg: {str(e)}",
+            "error": str(e)
+        }
 
 @app.post("/nexup/preroll/generate")
 async def generate_dynamic_preroll(
@@ -16843,14 +17096,13 @@ async def generate_dynamic_preroll(
         duration: Video duration in seconds (default 5)
         theme: Color theme ('midnight', 'sunset', 'forest', 'royal', 'monochrome')
     """
-    from backend.dynamic_preroll import DynamicPrerollGenerator, set_verbose_logger
     
     # Wire up verbose logging if enabled
     if _is_verbose_logging_enabled():
         def preroll_verbose_log(msg: str):
             _file_log(f"[PREROLL] {msg}", level="DEBUG")
             print(f"[PREROLL] {msg}")
-        set_verbose_logger(preroll_verbose_log)
+        set_dp_verbose_logger(preroll_verbose_log)
         _file_log(f"[PREROLL] === Starting preroll generation ===", level="DEBUG")
         _file_log(f"[PREROLL] Template: {template}, Server: {server_name}, Duration: {duration}s, Theme: {theme}", level="DEBUG")
     
@@ -16906,6 +17158,58 @@ async def generate_dynamic_preroll(
         raise HTTPException(status_code=500, detail=str(e))
 
 
+def _register_generated_preroll_to_category(db: Session, output_path: Path, template: str = "", theme: str = ""):
+    """Register a generated dynamic preroll video to the NeX-Up Prerolls system category.
+    
+    This mirrors what _register_coming_soon_list_to_category does for Coming Soon Lists,
+    ensuring generated prerolls appear in the Sequence Builder block editor.
+    """
+    try:
+        # Get or create the NeX-Up Prerolls category
+        category = db.query(models.Category).filter(
+            models.Category.name == "NeX-Up Prerolls"
+        ).first()
+
+        if not category:
+            category = models.Category(
+                name="NeX-Up Prerolls",
+                description="Dynamic preroll intros generated by NeX-Up (Coming Soon, Feature Presentation, etc.)",
+                plex_mode="shuffle",
+                apply_to_plex=False,
+                is_system=True
+            )
+            db.add(category)
+            db.commit()
+            db.refresh(category)
+            _file_log("Created NeX-Up Prerolls system category")
+
+        # Check if already registered
+        existing = db.query(models.Preroll).filter(
+            models.Preroll.path == str(output_path)
+        ).first()
+
+        if existing:
+            existing.category_id = category.id
+            db.commit()
+            _file_log(f"Updated existing Generated Preroll registration: {output_path.name}")
+        else:
+            display_name = output_path.stem.replace('_preroll', '').replace('_', ' ').title()
+            new_preroll = models.Preroll(
+                filename=output_path.name,
+                path=str(output_path),
+                display_name=f"NeX-Up: {display_name}",
+                category_id=category.id,
+                thumbnail="",
+                tags="[]",
+                managed=False
+            )
+            db.add(new_preroll)
+            db.commit()
+            _file_log(f"Registered Generated Preroll to category: {output_path.name}")
+    except Exception as e:
+        _file_log(f"Error registering Generated Preroll to category: {e}")
+
+
 def _register_coming_soon_list_to_category(db: Session, output_path: Path, layout: str):
     """Register a Coming Soon List video to the Coming Soon Lists system category"""
     try:
@@ -16957,6 +17261,140 @@ def _register_coming_soon_list_to_category(db: Session, output_path: Path, layou
         _file_log(f"Error registering Coming Soon List to category: {e}")
 
 
+@app.post("/nexup/coming-soon-list/upload-audio")
+async def upload_coming_soon_audio(
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db)
+):
+    """Upload a custom audio file for Coming Soon List videos."""
+    setting = db.query(models.Setting).first()
+    if not setting:
+        raise HTTPException(status_code=400, detail="Settings not configured")
+    
+    storage_path = getattr(setting, 'nexup_storage_path', None)
+    if not storage_path:
+        raise HTTPException(status_code=400, detail="NeX-Up storage path not configured")
+    
+    # Validate file type
+    allowed_audio = ('.mp3', '.wav', '.aac', '.m4a', '.ogg', '.flac')
+    ext = os.path.splitext(file.filename or '')[1].lower()
+    if ext not in allowed_audio:
+        raise HTTPException(status_code=400, detail=f"Unsupported audio format. Allowed: {', '.join(allowed_audio)}")
+    
+    # Save to persistent location
+    assets_dir = Path(storage_path) / "dynamic_prerolls" / "assets"
+    assets_dir.mkdir(parents=True, exist_ok=True)
+    
+    # Remove old custom audio if it exists
+    old_path = getattr(setting, 'nexup_coming_soon_list_custom_audio_path', None)
+    if old_path and os.path.exists(old_path):
+        try:
+            os.remove(old_path)
+        except Exception:
+            pass
+    
+    dest = assets_dir / f"custom_audio{ext}"
+    with open(dest, "wb") as f:
+        content = await file.read()
+        f.write(content)
+    
+    setting.nexup_coming_soon_list_custom_audio_path = str(dest)
+    setting.updated_at = datetime.datetime.utcnow()
+    db.commit()
+    
+    _file_log(f"Custom Coming Soon audio uploaded: {dest} ({len(content)} bytes)")
+    return {"success": True, "path": str(dest), "filename": file.filename, "size_bytes": len(content)}
+
+
+@app.delete("/nexup/coming-soon-list/upload-audio")
+def delete_coming_soon_audio(db: Session = Depends(get_db)):
+    """Remove the custom audio file for Coming Soon List videos (reverts to bundled audio)."""
+    setting = db.query(models.Setting).first()
+    if not setting:
+        raise HTTPException(status_code=400, detail="Settings not configured")
+    
+    old_path = getattr(setting, 'nexup_coming_soon_list_custom_audio_path', None)
+    if old_path and os.path.exists(old_path):
+        try:
+            os.remove(old_path)
+        except Exception:
+            pass
+    
+    setting.nexup_coming_soon_list_custom_audio_path = None
+    setting.updated_at = datetime.datetime.utcnow()
+    db.commit()
+    
+    _file_log("Custom Coming Soon audio removed")
+    return {"success": True, "message": "Custom audio removed, will use default"}
+
+
+@app.post("/nexup/coming-soon-list/upload-logo")
+async def upload_coming_soon_logo(
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db)
+):
+    """Upload a custom logo image for Coming Soon List videos."""
+    setting = db.query(models.Setting).first()
+    if not setting:
+        raise HTTPException(status_code=400, detail="Settings not configured")
+    
+    storage_path = getattr(setting, 'nexup_storage_path', None)
+    if not storage_path:
+        raise HTTPException(status_code=400, detail="NeX-Up storage path not configured")
+    
+    # Validate file type
+    allowed_images = ('.png', '.jpg', '.jpeg', '.webp', '.svg')
+    ext = os.path.splitext(file.filename or '')[1].lower()
+    if ext not in allowed_images:
+        raise HTTPException(status_code=400, detail=f"Unsupported image format. Allowed: {', '.join(allowed_images)}")
+    
+    # Save to persistent location
+    assets_dir = Path(storage_path) / "dynamic_prerolls" / "assets"
+    assets_dir.mkdir(parents=True, exist_ok=True)
+    
+    # Remove old custom logo if it exists
+    old_path = getattr(setting, 'nexup_coming_soon_list_custom_logo_path', None)
+    if old_path and os.path.exists(old_path):
+        try:
+            os.remove(old_path)
+        except Exception:
+            pass
+    
+    dest = assets_dir / f"custom_logo{ext}"
+    with open(dest, "wb") as f:
+        content = await file.read()
+        f.write(content)
+    
+    setting.nexup_coming_soon_list_custom_logo_path = str(dest)
+    setting.updated_at = datetime.datetime.utcnow()
+    db.commit()
+    
+    _file_log(f"Custom Coming Soon logo uploaded: {dest} ({len(content)} bytes)")
+    return {"success": True, "path": str(dest), "filename": file.filename, "size_bytes": len(content)}
+
+
+@app.delete("/nexup/coming-soon-list/upload-logo")
+def delete_coming_soon_logo(db: Session = Depends(get_db)):
+    """Remove the custom logo image for Coming Soon List videos."""
+    setting = db.query(models.Setting).first()
+    if not setting:
+        raise HTTPException(status_code=400, detail="Settings not configured")
+    
+    old_path = getattr(setting, 'nexup_coming_soon_list_custom_logo_path', None)
+    if old_path and os.path.exists(old_path):
+        try:
+            os.remove(old_path)
+        except Exception:
+            pass
+    
+    setting.nexup_coming_soon_list_custom_logo_path = None
+    setting.updated_at = datetime.datetime.utcnow()
+    db.commit()
+    
+    _file_log("Custom Coming Soon logo removed")
+    return {"success": True, "message": "Custom logo removed"}
+
+
 @app.post("/nexup/preroll/generate-coming-soon-list")
 async def generate_coming_soon_list(
     layout: str = "list",  # "list" or "grid"
@@ -16984,7 +17422,6 @@ async def generate_coming_soon_list(
         accent_color: Accent color (hex)
         server_name: Optional custom server name to display
     """
-    from backend.dynamic_preroll import DynamicPrerollGenerator, set_verbose_logger
     from backend.radarr_connector import RadarrConnector
     from backend.sonarr_connector import SonarrConnector
     
@@ -16995,7 +17432,7 @@ async def generate_coming_soon_list(
         def preroll_verbose_log(msg: str):
             _file_log(f"[COMING-SOON-LIST] {msg}", level="DEBUG")
             print(f"[COMING-SOON-LIST] {msg}")
-        set_verbose_logger(preroll_verbose_log)
+        set_dp_verbose_logger(preroll_verbose_log)
         _file_log(f"[COMING-SOON-LIST] === Starting generation ===", level="DEBUG")
     
     setting = db.query(models.Setting).first()
@@ -17026,7 +17463,8 @@ async def generate_coming_soon_list(
                         'title': movie.get('title', ''),
                         'release_date': movie.get('release_date', ''),
                         'poster_url': movie.get('poster_url', ''),
-                        'type': 'movie'
+                        'type': 'movie',
+                        'available_now': movie.get('has_file', False)
                     })
                 _file_log(f"[COMING-SOON-LIST] Found {len(movies)} upcoming movies from Radarr API")
             except Exception as e:
@@ -17050,7 +17488,8 @@ async def generate_coming_soon_list(
                         'title': title,
                         'release_date': show.get('release_date', ''),
                         'poster_url': show.get('poster_url', ''),
-                        'type': 'show'
+                        'type': 'show',
+                        'available_now': show.get('has_file', False)
                     })
                 _file_log(f"[COMING-SOON-LIST] Found {len(shows)} upcoming shows from Sonarr API")
             except Exception as e:
@@ -17140,7 +17579,9 @@ async def generate_coming_soon_list(
             text_color=text_ffmpeg,
             accent_color=accent_ffmpeg,
             max_items=max_items,
-            include_audio=include_audio
+            include_audio=include_audio,
+            custom_audio_path=getattr(setting, 'nexup_coming_soon_list_custom_audio_path', None),
+            custom_logo_path=getattr(setting, 'nexup_coming_soon_list_custom_logo_path', None)
         )
         
         if output_path:
@@ -17215,7 +17656,8 @@ async def preview_coming_soon_list(
                         'release_date': movie.get('release_date', ''),
                         'poster_url': movie.get('poster_url', ''),
                         'type': 'movie',
-                        'days_until_release': calc_days_until(movie.get('release_date'))
+                        'days_until_release': calc_days_until(movie.get('release_date')),
+                        'available_now': movie.get('has_file', False)
                     })
             except Exception as e:
                 _file_log(f"[COMING-SOON-PREVIEW] Error fetching from Radarr: {e}")
@@ -17237,7 +17679,8 @@ async def preview_coming_soon_list(
                         'release_date': show.get('release_date', ''),
                         'poster_url': show.get('poster_url', ''),
                         'type': 'show',
-                        'days_until_release': calc_days_until(show.get('release_date'))
+                        'days_until_release': calc_days_until(show.get('release_date')),
+                        'available_now': show.get('has_file', False)
                     })
             except Exception as e:
                 _file_log(f"[COMING-SOON-PREVIEW] Error fetching from Sonarr: {e}")
@@ -17322,14 +17765,13 @@ async def generate_preroll_from_preview(
         theme: Theme name (stored for reference)
     """
     import base64
-    from backend.dynamic_preroll import DynamicPrerollGenerator, set_verbose_logger
     
     # Wire up verbose logging if enabled
     if _is_verbose_logging_enabled():
         def preroll_verbose_log(msg: str):
             _file_log(f"[PREROLL-IMG] {msg}", level="DEBUG")
             print(f"[PREROLL-IMG] {msg}")
-        set_verbose_logger(preroll_verbose_log)
+        set_dp_verbose_logger(preroll_verbose_log)
         _file_log(f"[PREROLL-IMG] === Starting image-to-video generation ===", level="DEBUG")
     
     # Get storage path
@@ -17386,6 +17828,10 @@ async def generate_preroll_from_preview(
                 )
             )
             db.commit()
+            
+            # Auto-register generated preroll to the NeX-Up Prerolls category
+            # (so it shows up in sequences/block editor like Coming Soon Lists do)
+            _register_generated_preroll_to_category(db, Path(output_path), template, theme)
             
             _file_log(f"[PREROLL-IMG] === Generation complete: {output_path} ===")
             
@@ -18985,26 +19431,95 @@ app.mount("/data", StaticFiles(directory=data_dir), name="data")
 # Mount frontend static files LAST so API routes are checked first
 # Diagnostics bundle (ZIP)
 @app.get("/diagnostics/bundle")
-def diagnostics_bundle():
+def diagnostics_bundle(db: Session = Depends(get_db)):
     """
     Create a diagnostics ZIP with:
     - info.json (version, scheduler status, secure provider, resolved paths)
     - db/schema.sql (SQLite schema dump)
     - logs (app.log, service.log if present)
     - config/plex_config.sanitized.json (token removed if file exists)
+
+    ALL sensitive values (API keys, tokens, passwords, internal IPs) are
+    redacted before the bundle is written so users can safely share it.
     """
+    import re as _re
     try:
         import tempfile
 
         ts = datetime.datetime.utcnow().strftime("%Y%m%d_%H%M%S")
         tmp_path = os.path.join(tempfile.gettempdir(), f"NeXroll_Diagnostics_{ts}.zip")
 
-        # Collect info
+        # ---- sensitive-value inventory from DB settings ----
+        _sensitive_values = set()
+        try:
+            setting = db.query(models.Setting).first()
+            if setting:
+                for attr in (
+                    "plex_token", "plex_url", "plex_server_base_url",
+                    "jellyfin_url", "jellyfin_api_key",
+                    "nexup_radarr_url", "nexup_radarr_api_key",
+                    "nexup_sonarr_url", "nexup_sonarr_api_key",
+                    "nexup_tmdb_api_key",
+                ):
+                    val = getattr(setting, attr, None)
+                    if val and str(val).strip():
+                        _sensitive_values.add(str(val).strip())
+                        # Also catch the value without trailing slash
+                        _sensitive_values.add(str(val).strip().rstrip("/"))
+        except Exception:
+            pass
+
+        # Also pull from secure store (tokens may only live there)
+        try:
+            ss_token = secure_store.get("plex_token")
+            if ss_token:
+                _sensitive_values.add(ss_token)
+        except Exception:
+            pass
+
+        # Build compiled regex patterns for scrubbing
+        # 1) Known URL-parameter keys that carry secrets
+        _param_re = _re.compile(
+            r'([?&](?:api_key|apikey|token|X-Plex-Token|api-key|access_token|secret|password)'
+            r'=)([^&\s"\']+)',
+            _re.IGNORECASE,
+        )
+        # 2) Authorization / X-Plex-Token headers
+        _header_re = _re.compile(
+            r'((?:Authorization|X-Plex-Token|X-Api-Key|ApiKey)\s*[:=]\s*)(\S+)',
+            _re.IGNORECASE,
+        )
+        # 3) Literal known values
+        _literal_res = []
+        for sv in _sensitive_values:
+            if len(sv) >= 6:  # Don't match very short strings
+                _literal_res.append(_re.compile(_re.escape(sv), _re.IGNORECASE))
+
+        def _scrub(text: str) -> str:
+            """Redact sensitive data from a block of text."""
+            # URL query-parameter secrets
+            text = _param_re.sub(r'\1[REDACTED]', text)
+            # Header values
+            text = _header_re.sub(r'\1[REDACTED]', text)
+            # Known literal sensitive values (longest first to avoid partial matches)
+            for pat in sorted(_literal_res, key=lambda p: -len(p.pattern)):
+                text = pat.sub('[REDACTED]', text)
+            return text
+
+        # ---- info.json (redact db_url which may embed credentials) ----
+        raw_paths = system_paths()
+        if "db_url" in raw_paths:
+            db_url_str = str(raw_paths["db_url"])
+            # Redact user:password@ portion if present
+            raw_paths["db_url"] = _re.sub(
+                r'://[^@/]+@', '://[REDACTED]@', db_url_str
+            )
+
         info = {
             "api_version": getattr(app, "version", None),
             "scheduler": {"running": scheduler.running},
             "secure_provider": secure_store.provider_info()[1],
-            "paths": system_paths(),
+            "paths": raw_paths,
             "timestamp_utc": datetime.datetime.utcnow().isoformat() + "Z",
         }
 
@@ -19012,7 +19527,7 @@ def diagnostics_bundle():
             # info.json
             z.writestr("info.json", json.dumps(info, indent=2))
 
-            # DB schema
+            # DB schema (DDL only — no data, already safe)
             try:
                 schema_lines = []
                 with engine.connect() as conn:
@@ -19028,11 +19543,13 @@ def diagnostics_bundle():
             except Exception as e:
                 z.writestr("db/schema_error.txt", str(e))
 
-            # Logs
+            # Logs — read, scrub, then write (never copy raw)
             try:
                 log_file = _log_file_path()
                 if log_file and os.path.exists(log_file):
-                    z.write(log_file, arcname=os.path.join("logs", os.path.basename(log_file)))
+                    with open(log_file, "r", encoding="utf-8", errors="replace") as lf:
+                        scrubbed_log = _scrub(lf.read())
+                    z.writestr(os.path.join("logs", os.path.basename(log_file)), scrubbed_log)
             except Exception:
                 pass
             # Common service log location
@@ -19041,7 +19558,9 @@ def diagnostics_bundle():
                 if pd:
                     svc_log = os.path.join(pd, "NeXroll", "logs", "service.log")
                     if os.path.exists(svc_log):
-                        z.write(svc_log, arcname=os.path.join("logs", "service.log"))
+                        with open(svc_log, "r", encoding="utf-8", errors="replace") as lf:
+                            scrubbed_svc = _scrub(lf.read())
+                        z.writestr(os.path.join("logs", "service.log"), scrubbed_svc)
             except Exception:
                 pass
 
@@ -19050,7 +19569,11 @@ def diagnostics_bundle():
                 if os.path.exists("plex_config.json"):
                     with open("plex_config.json", "r", encoding="utf-8") as f:
                         cfg = json.load(f) or {}
-                    cfg.pop("plex_token", None)
+                    # Remove any key that looks sensitive
+                    for k in list(cfg.keys()):
+                        kl = k.lower()
+                        if any(s in kl for s in ("token", "key", "secret", "password", "api_key")):
+                            cfg[k] = "[REDACTED]"
                     z.writestr("config/plex_config.sanitized.json", json.dumps(cfg, indent=2))
             except Exception:
                 pass
@@ -19538,7 +20061,7 @@ _community_health_cache = {"status": None, "checked_at": None, "error": None}
 COMMUNITY_HEALTH_CACHE_TTL = 300  # 5 minutes in seconds
 
 @app.get("/community-prerolls/health")
-def check_community_prerolls_health():
+def check_community_prerolls_health(db: Session = Depends(get_db)):
     """
     Check if prerolls.uk is accessible.
     Results are cached for 5 minutes to avoid excessive requests.
@@ -19566,7 +20089,7 @@ def check_community_prerolls_health():
     try:
         start_time = time.time()
         response = requests.get(
-            "https://prerolls.uk/",
+            _get_community_base_url(db) + "/",
             timeout=10,
             headers={"User-Agent": f"NeXroll/{app_version}"}
         )
@@ -19622,6 +20145,64 @@ def check_community_prerolls_health():
             "cached": False
         }
 
+@app.get("/community-prerolls/servers")
+def get_community_servers():
+    """
+    Fetch the list of available community preroll mirror servers from the
+    central servers.json endpoint.  Returns the server list so the frontend
+    can present a server selector.
+    """
+    import requests as _requests
+    try:
+        resp = _requests.get(COMMUNITY_SERVERS_JSON_URL, timeout=10,
+                             headers={"User-Agent": f"NeXroll/{app_version}"})
+        if resp.ok:
+            data = resp.json()
+            servers = data.get("servers", [])
+            return {"servers": servers, "source": COMMUNITY_SERVERS_JSON_URL}
+        return {"servers": [], "error": f"HTTP {resp.status_code}"}
+    except Exception as e:
+        _file_log(f"Failed to fetch community servers list: {e}")
+        return {"servers": [], "error": str(e)}
+
+@app.get("/community-prerolls/server-url")
+def get_community_server_url(db: Session = Depends(get_db)):
+    """Return the currently configured community server URL."""
+    setting = db.query(models.Setting).first()
+    custom_url = getattr(setting, "community_server_url", None) if setting else None
+    return {
+        "server_url": custom_url or DEFAULT_COMMUNITY_BASE_URL,
+        "is_custom": bool(custom_url),
+        "default_url": DEFAULT_COMMUNITY_BASE_URL
+    }
+
+@app.put("/community-prerolls/server-url")
+def set_community_server_url(
+    url: str = Body(None, embed=True),
+    db: Session = Depends(get_db)
+):
+    """
+    Set the community server URL.  Pass url=null or url="" to reset to default.
+    """
+    setting = db.query(models.Setting).first()
+    if not setting:
+        setting = models.Setting(plex_url=None, plex_token=None)
+        db.add(setting)
+        db.commit()
+        db.refresh(setting)
+
+    clean_url = url.rstrip("/") if url else None
+    setting.community_server_url = clean_url if clean_url else None
+    db.commit()
+
+    effective = clean_url or DEFAULT_COMMUNITY_BASE_URL
+    _file_log(f"Community server URL updated to: {effective}")
+    return {
+        "server_url": effective,
+        "is_custom": bool(clean_url),
+        "default_url": DEFAULT_COMMUNITY_BASE_URL
+    }
+
 @app.get("/community-prerolls/fair-use-policy")
 def get_community_fair_use_policy():
     """
@@ -19645,7 +20226,7 @@ By accessing and using these assets, you acknowledge that you have read, underst
 """
     return {
         "policy": policy_text,
-        "source": "https://prerolls.uk/",
+        "source": DEFAULT_COMMUNITY_BASE_URL + "/",
         "credit": "https://typicalnerds.uk/"
     }
 
@@ -19703,7 +20284,7 @@ def test_community_scrape():
         import requests
         from bs4 import BeautifulSoup
         
-        url = "https://prerolls.uk/Holidays/Halloween/Carving%20Pumpkin%20-%20AwesomeAustn/"
+        url = f"{DEFAULT_COMMUNITY_BASE_URL}/Holidays/Halloween/Carving%20Pumpkin%20-%20AwesomeAustn/"
         response = requests.get(url, timeout=10)
         soup = BeautifulSoup(response.text, 'html.parser')
         
@@ -19739,7 +20320,7 @@ _index_build_progress = {
     "message": ""
 }
 
-def _build_prerolls_index(progress_callback=None) -> dict:
+def _build_prerolls_index(progress_callback=None, base_url=None) -> dict:
     """
     Build a complete index of Typical Nerds prerolls by scraping the directory.
     This is a one-time operation that caches everything locally for fast searches.
@@ -19761,7 +20342,7 @@ def _build_prerolls_index(progress_callback=None) -> dict:
     
     _file_log("Building Typical Nerds prerolls index (this may take a few minutes)...")
     
-    base_url = "https://prerolls.uk"
+    base_url = (base_url or DEFAULT_COMMUNITY_BASE_URL).rstrip("/")
     headers = {
         "Accept": "text/html,application/json",
         "User-Agent": f"NeXroll/{app_version} (Index Builder; +https://github.com/JFLXCLOUD/NeXroll)"
@@ -20118,7 +20699,7 @@ def _search_local_index(index_data: dict, query: str = "", category: str = "", p
 
 
 @app.get("/community-prerolls/build-index")
-def build_community_prerolls_index(request: Request):
+def build_community_prerolls_index(request: Request, db: Session = Depends(get_db)):
     """
     Build the local prerolls index by scraping Typical Nerds directory.
     This is a manual operation triggered by the user (e.g., "Refresh Index" button).
@@ -20147,7 +20728,7 @@ def build_community_prerolls_index(request: Request):
     community_search_rate_limit[rate_limit_key] = current_time
     
     try:
-        index_data = _build_prerolls_index()
+        index_data = _build_prerolls_index(base_url=_get_community_base_url(db))
         success = _save_prerolls_index(index_data)
         
         if success:
@@ -20321,7 +20902,7 @@ def search_community_prerolls(request: Request, query: str = "", category: str =
     
     try:
         # Try to connect to the community library
-        base_url = "https://prerolls.uk"
+        base_url = _get_community_base_url(db)
         
         headers = {
             "Accept": "text/html,application/json",
@@ -20588,7 +21169,7 @@ def search_community_prerolls(request: Request, query: str = "", category: str =
             "total": len(filtered_results),
             "query": query,
             "category": category,
-            "note": "API currently unavailable - showing demo results. Visit https://prerolls.uk/ to browse the live library."
+            "note": f"API currently unavailable - showing demo results. Visit {_get_community_base_url(db)}/ to browse the live library."
         }
         
     except Exception as e:
@@ -20628,7 +21209,7 @@ def download_community_preroll(
         
         # Build download URL - community library serves files directly by path
         # The preroll_id is already the URL path (e.g., "/Holidays/Christmas/file.mp4")
-        base_url = "https://prerolls.uk"
+        base_url = _get_community_base_url(db)
         download_url = f"{base_url}{preroll_id_str}"
         _file_log(f"[DOWNLOAD] Resolved download URL: {download_url}")
     
@@ -21147,7 +21728,7 @@ def get_random_community_preroll(
         from bs4 import BeautifulSoup
         from urllib.parse import urljoin, unquote
         
-        base_url = "https://prerolls.uk/"
+        base_url = _get_community_base_url(db) + "/"
         start_paths = ["Community/", "Holidays/", "Seasons/", "Clips/"]
         
         # If category specified, focus on that category
@@ -21266,7 +21847,7 @@ def get_top5_community_prerolls(
     try:
         _file_log(f"Top 5 community prerolls request: platform='{platform}'")
         
-        base_url = "https://prerolls.uk/"
+        base_url = _get_community_base_url(db) + "/"
         
         # Featured directories with popular content
         featured_paths = [
