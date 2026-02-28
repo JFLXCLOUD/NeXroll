@@ -290,6 +290,7 @@ class Setting(Base):
     nexup_dynamic_preroll_server_name = Column(String, nullable=True)  # Server name to display in generated preroll
     nexup_dynamic_preroll_duration = Column(Integer, nullable=True)  # Duration of generated preroll in seconds
     nexup_dynamic_preroll_theme = Column(String, nullable=True)  # Color theme: 'midnight', 'sunset', 'forest', 'royal', 'monochrome'
+    nexup_dynamic_preroll_custom_logo_path = Column(String, nullable=True)  # User-uploaded custom logo image path for dynamic prerolls
     
     # Coming Soon List Auto-Regeneration Settings
     nexup_coming_soon_list_auto_regen = Column(Boolean, default=False)  # Auto-regenerate Coming Soon List after sync
@@ -305,6 +306,7 @@ class Setting(Base):
     nexup_coming_soon_list_include_audio = Column(Boolean, default=False)  # Include background music in generated video
     nexup_coming_soon_list_custom_audio_path = Column(String, nullable=True)  # User-uploaded custom audio file path
     nexup_coming_soon_list_custom_logo_path = Column(String, nullable=True)  # User-uploaded custom logo image path
+    nexup_coming_soon_list_logo_mode = Column(String, default='watermark')  # 'watermark' (faded bg) or 'replace' (replaces server name)
     nexup_coming_soon_available_days = Column(Integer, default=1)  # Days to show "Available Now!" after download before auto-removing
     nexup_trailer_retention_days = Column(Integer, default=7)  # Days to retain downloaded trailers before auto-deleting (0 = keep forever)
     

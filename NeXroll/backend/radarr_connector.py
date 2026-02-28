@@ -326,10 +326,6 @@ class RadarrConnector:
             past_cutoff = today - timedelta(days=7)
             
             for movie in all_movies:
-                # Skip if already downloaded/has file
-                if movie.get('hasFile', False):
-                    continue
-                
                 # Skip unmonitored movies (unless include_unmonitored is True)
                 if not include_unmonitored and not movie.get('monitored', False):
                     continue
@@ -337,6 +333,16 @@ class RadarrConnector:
                 # Check status - we want movies that are monitored but not available
                 status = movie.get('status', '').lower()
                 if status not in ['announced', 'incinemas', 'released']:
+                    continue
+                
+                has_file = movie.get('hasFile', False)
+                
+                # Filter out quality upgrades / re-releases of old movies
+                # If the movie year is more than 2 years before current year, it's likely
+                # a re-release (e.g., 4K upgrade) not genuinely new content
+                movie_year = movie.get('year', 0) or 0
+                current_year = today.year
+                if movie_year and movie_year < current_year - 1:
                     continue
                 
                 # Get all release dates
@@ -361,7 +367,12 @@ class RadarrConnector:
                     continue
                     
                 # Skip if too far in the past (more than 7 days ago)
-                if release_date < past_cutoff:
+                # For downloaded movies (hasFile), still include them so they can show "Available Now!"
+                if release_date < past_cutoff and not has_file:
+                    continue
+                
+                # For downloaded movies, only include if released within 30 days (generous window for "Available Now!" display)
+                if has_file and release_date < today - timedelta(days=30):
                     continue
                 
                 # Get trailer info from YouTube

@@ -20,6 +20,14 @@
 - Upload and remove controls with filename preview
 - Logo persists across sessions and is applied during auto-regeneration
 
+**Logo Mode Toggle**
+- Added a mode selector for the custom logo: **Watermark** or **Replace Server Name**
+- **Watermark** (default): logo appears as a faded, centered watermark behind the text (existing behavior)
+- **Replace Server Name**: logo replaces the "to {Server Name}" subtitle text in the generated video — displayed at higher opacity in the header area
+- Toggle appears on the Custom Logo Overlay card when a logo is uploaded
+- Mode persists across sessions and is respected by auto-regeneration
+- Works with both grid and text/list layout styles
+
 **Options Panel — 2×2 Grid Layout**
 - Reorganized the four Coming Soon List option cards into a clean 2×2 grid
   - Top row: Background Music | Custom Logo Overlay

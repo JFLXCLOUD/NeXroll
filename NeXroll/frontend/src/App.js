@@ -742,13 +742,15 @@ const [applyingToServer, setApplyingToServer] = useState(false);
   const [communityIndexProgress, setCommunityIndexProgress] = useState(null); // { status: 'Building...', phase: 'init'|'done'|'error' }
   const [nexupSyncProgress, setNexupSyncProgress] = useState(null); // { status: 'Syncing...', phase: 'init'|'done'|'error' }
   const [updateCheckProgress, setUpdateCheckProgress] = useState(null); // { status: 'Checking...', phase: 'init'|'done'|'error' }
+  const [generatorTab, setGeneratorTab] = useState('dynamic'); // 'dynamic' or 'coming-soon'
   // Dynamic Preroll Generator State
   const [dynamicPrerollSettings, setDynamicPrerollSettings] = useState({
     template: 'coming_soon',
     server_name: '',
     duration: 5,
     theme: 'midnight',
-    preroll_path: null
+    preroll_path: null,
+    customLogoFilename: null
   });
   const [dynamicPrerollTemplates, setDynamicPrerollTemplates] = useState([]);
   const [dynamicPrerollGenerating, setDynamicPrerollGenerating] = useState(false);
@@ -773,6 +775,7 @@ const [applyingToServer, setApplyingToServer] = useState(false);
     includeAudio: false,  // Include background music in generated video
     customAudioFilename: null,  // User-uploaded custom audio filename
     customLogoFilename: null,  // User-uploaded custom logo filename
+    logoMode: 'watermark',  // 'watermark' = faded bg, 'replace' = replaces server name
     availableDays: 1  // Days to show "Available Now!" before auto-removal
   });
   const [comingSoonListGenerating, setComingSoonListGenerating] = useState(false);
@@ -15346,6 +15349,7 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
           includeAudio: data.coming_soon_list_include_audio || false,
           customAudioFilename: data.coming_soon_list_custom_audio_filename || null,
           customLogoFilename: data.coming_soon_list_custom_logo_filename || null,
+          logoMode: data.coming_soon_list_logo_mode || 'watermark',
           availableDays: data.coming_soon_available_days || 1
         }));
         // Mark settings as loaded to enable auto-save
@@ -15371,6 +15375,7 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
       if (settings.autoRegen !== undefined) params.append('coming_soon_list_auto_regen', settings.autoRegen.toString());
       if (settings.autoRegenLayout !== undefined) params.append('coming_soon_list_auto_regen_layout', settings.autoRegenLayout);
       if (settings.includeAudio !== undefined) params.append('coming_soon_list_include_audio', settings.includeAudio.toString());
+      if (settings.logoMode !== undefined) params.append('coming_soon_list_logo_mode', settings.logoMode);
       if (settings.availableDays !== undefined) params.append('coming_soon_available_days', settings.availableDays.toString());
       
       await fetch(apiUrl('/nexup/settings?' + params.toString()), { method: 'PUT' });
@@ -16209,7 +16214,8 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
           server_name: data.server_name || '',
           duration: data.duration || 5,
           theme: data.theme || 'midnight',
-          preroll_path: data.preroll_path
+          preroll_path: data.preroll_path,
+          customLogoFilename: data.custom_logo_filename || null
         });
       }
     } catch (err) {
@@ -19540,7 +19546,57 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
 
       {nexupSettings.radarr_connected ? (
         <>
-          {/* Dynamic Preroll Generator Card */}
+          {/* Generator Tab Bar */}
+          <div style={{
+            display: 'flex',
+            gap: '0.25rem',
+            borderBottom: '2px solid var(--border-color)',
+            marginBottom: '-0.5rem'
+          }}>
+            {[
+              { id: 'dynamic', icon: <Sparkles size={16} />, label: 'Dynamic Preroll' },
+              { id: 'coming-soon', icon: <Film size={16} />, label: 'Coming Soon List' }
+            ].map(tab => (
+              <button
+                key={tab.id}
+                onClick={() => setGeneratorTab(tab.id)}
+                style={{
+                  padding: '0.75rem 1.25rem',
+                  border: 'none',
+                  borderBottom: generatorTab === tab.id ? '3px solid #00d4ff' : '3px solid transparent',
+                  backgroundColor: generatorTab === tab.id ? 'var(--bg-color)' : 'transparent',
+                  color: generatorTab === tab.id ? '#00d4ff' : 'var(--text-color)',
+                  cursor: 'pointer',
+                  fontSize: '0.9rem',
+                  fontWeight: generatorTab === tab.id ? 600 : 400,
+                  transition: 'all 0.2s',
+                  marginBottom: '-2px',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '0.5rem',
+                  borderRadius: '8px 8px 0 0'
+                }}
+                onMouseEnter={(e) => {
+                  if (generatorTab !== tab.id) {
+                    e.currentTarget.style.backgroundColor = 'var(--bg-color)';
+                    e.currentTarget.style.color = '#00d4ff';
+                  }
+                }}
+                onMouseLeave={(e) => {
+                  if (generatorTab !== tab.id) {
+                    e.currentTarget.style.backgroundColor = 'transparent';
+                    e.currentTarget.style.color = 'var(--text-color)';
+                  }
+                }}
+              >
+                <span style={{ display: 'flex', alignItems: 'center' }}>{tab.icon}</span>
+                <span>{tab.label}</span>
+              </button>
+            ))}
+          </div>
+
+          {/* Dynamic Preroll Generator */}
+          {generatorTab === 'dynamic' && (
           <div className="card">
             <h2 style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
               <Sparkles size={24} /> Dynamic Preroll Generator
@@ -19725,9 +19781,79 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
                   </div>
                 </div>
 
+                {/* Custom Logo Overlay */}
+                <div style={{ 
+                  marginBottom: '1.5rem',
+                  padding: '0.85rem 1rem', 
+                  backgroundColor: 'rgba(255,255,255,0.03)', 
+                  borderRadius: '8px',
+                  border: '1px solid rgba(255,255,255,0.08)'
+                }}>
+                  <div style={{ marginBottom: '0.5rem' }}>
+                    <strong style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', fontSize: '0.95rem' }}><Layers size={15} style={{ color: '#00d4ff' }} /> Custom Logo Overlay</strong>
+                    <span style={{ fontSize: '0.8rem', color: '#888' }}>
+                      Upload a logo to replace the server name text in the generated video
+                    </span>
+                    <div style={{ fontSize: '0.75rem', color: '#666', marginTop: '0.3rem', display: 'flex', alignItems: 'center', gap: '0.3rem' }}>
+                      <Info size={12} style={{ flexShrink: 0, color: '#00d4ff' }} />
+                      <span>For best results, use a landscape-oriented logo (e.g. 800×200 px). PNG with transparent background recommended.</span>
+                    </div>
+                  </div>
+                  {dynamicPrerollSettings.customLogoFilename ? (
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '0.85rem', flexWrap: 'wrap' }}>
+                      <Layers size={13} style={{ color: '#00d4ff' }} />
+                      <span style={{ color: 'var(--text-color)' }}>Logo: <strong>{dynamicPrerollSettings.customLogoFilename}</strong></span>
+                      <button
+                        onClick={async () => {
+                          try {
+                            const res = await fetch(apiUrl('/nexup/preroll/upload-logo'), { method: 'DELETE' });
+                            if (res.ok) {
+                              setDynamicPrerollSettings(prev => ({ ...prev, customLogoFilename: null }));
+                              showAlert('Custom logo removed', 'success');
+                            }
+                          } catch (err) { showAlert('Failed to remove custom logo', 'error'); }
+                        }}
+                        className="button"
+                        style={{ padding: '0.2rem 0.5rem', fontSize: '0.8rem', backgroundColor: 'transparent', color: '#ff6b6b', border: '1px solid #ff6b6b' }}
+                      >
+                        <X size={12} /> Remove
+                      </button>
+                    </div>
+                  ) : (
+                    <label className="button" style={{ padding: '0.3rem 0.75rem', fontSize: '0.8rem', cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: '0.3rem' }}>
+                      <Upload size={12} /> Upload Logo Image
+                      <input
+                        type="file"
+                        accept=".png,.jpg,.jpeg,.webp"
+                        style={{ display: 'none' }}
+                        onChange={async (e) => {
+                          const file = e.target.files?.[0];
+                          if (!file) return;
+                          const formData = new FormData();
+                          formData.append('file', file);
+                          try {
+                            const res = await fetch(apiUrl('/nexup/preroll/upload-logo'), {
+                              method: 'POST', body: formData
+                            });
+                            if (res.ok) {
+                              const data = await res.json();
+                              setDynamicPrerollSettings(prev => ({ ...prev, customLogoFilename: data.filename }));
+                              showAlert('Custom logo uploaded!', 'success');
+                            } else {
+                              const err = await res.json().catch(() => ({}));
+                              showAlert(err.detail || 'Failed to upload logo', 'error');
+                            }
+                          } catch (err) { showAlert('Upload error: ' + err.message, 'error'); }
+                          e.target.value = '';
+                        }}
+                      />
+                    </label>
+                  )}
+                </div>
+
                 {/* Live Preview Section */}
-                <div style={{ marginBottom: '1.5rem' }}>
-                  <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.75rem', fontWeight: 'bold', fontSize: '0.95rem' }}>
+                <div style={{ marginBottom: '1.5rem', display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
+                  <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.75rem', fontWeight: 'bold', fontSize: '0.95rem', alignSelf: 'center' }}>
                     <Eye size={18} /> Live Preview
                   </label>
                   <div 
@@ -19788,27 +19914,57 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
                           }}>
                             COMING SOON
                           </div>
-                          {/* "to" - smaller middle text */}
-                          <div style={{
-                            fontSize: 'clamp(0.8rem, 2.5vw, 1.1rem)',
-                            fontWeight: 'normal',
-                            color: (colorThemes[dynamicPrerollSettings.theme]?.primary || '#fff').replace('0x', '#'),
-                            opacity: 0.85,
-                            margin: '0.3rem 0',
-                            animation: 'previewFadeIn 1.2s ease-out 0.3s both'
-                          }}>
-                            to
-                          </div>
-                          {/* Server name - accent colored */}
-                          <div style={{
-                            fontSize: 'clamp(1.1rem, 4vw, 1.7rem)',
-                            fontWeight: 'bold',
-                            color: (colorThemes[dynamicPrerollSettings.theme]?.secondary || '#00d4ff').replace('0x', '#'),
-                            textShadow: `0 0 15px ${(colorThemes[dynamicPrerollSettings.theme]?.secondary || '#00d4ff').replace('0x', '#')}60`,
-                            animation: 'previewFadeIn 1.5s ease-out 0.5s both'
-                          }}>
-                            {dynamicPrerollSettings.server_name || 'Your Server'}
-                          </div>
+                          {dynamicPrerollSettings.customLogoFilename ? (
+                            <>
+                              {/* "to" text above logo */}
+                              <div style={{
+                                fontSize: 'clamp(0.8rem, 2.5vw, 1.1rem)',
+                                fontWeight: 'normal',
+                                color: (colorThemes[dynamicPrerollSettings.theme]?.primary || '#fff').replace('0x', '#'),
+                                opacity: 0.85,
+                                margin: '0.3rem 0',
+                                animation: 'previewFadeIn 1.2s ease-out 0.3s both'
+                              }}>
+                                to
+                              </div>
+                              {/* Logo replacing server name */}
+                              <img 
+                                src={apiUrl('/nexup/preroll/logo-image') + '?t=' + Date.now()} 
+                                alt="Server Logo"
+                                style={{
+                                  maxWidth: 'clamp(100px, 30%, 200px)',
+                                  maxHeight: 'clamp(40px, 8vh, 70px)',
+                                  objectFit: 'contain',
+                                  animation: 'previewFadeIn 1.5s ease-out 0.5s both',
+                                  filter: `drop-shadow(0 0 15px ${(colorThemes[dynamicPrerollSettings.theme]?.secondary || '#00d4ff').replace('0x', '#')}60)`
+                                }}
+                              />
+                            </>
+                          ) : (
+                            <>
+                              {/* "to" - smaller middle text */}
+                              <div style={{
+                                fontSize: 'clamp(0.8rem, 2.5vw, 1.1rem)',
+                                fontWeight: 'normal',
+                                color: (colorThemes[dynamicPrerollSettings.theme]?.primary || '#fff').replace('0x', '#'),
+                                opacity: 0.85,
+                                margin: '0.3rem 0',
+                                animation: 'previewFadeIn 1.2s ease-out 0.3s both'
+                              }}>
+                                to
+                              </div>
+                              {/* Server name - accent colored */}
+                              <div style={{
+                                fontSize: 'clamp(1.1rem, 4vw, 1.7rem)',
+                                fontWeight: 'bold',
+                                color: (colorThemes[dynamicPrerollSettings.theme]?.secondary || '#00d4ff').replace('0x', '#'),
+                                textShadow: `0 0 15px ${(colorThemes[dynamicPrerollSettings.theme]?.secondary || '#00d4ff').replace('0x', '#')}60`,
+                                animation: 'previewFadeIn 1.5s ease-out 0.5s both'
+                              }}>
+                                {dynamicPrerollSettings.server_name || 'Your Server'}
+                              </div>
+                            </>
+                          )}
                         </>
                       )}
                       
@@ -19834,8 +19990,21 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
                           }}>
                             FEATURE PRESENTATION
                           </div>
-                          {/* "at [Server Name]" text below */}
-                          {dynamicPrerollSettings.server_name && (
+                          {/* "at [Server Name]" or logo below */}
+                          {dynamicPrerollSettings.customLogoFilename ? (
+                            <img 
+                              src={apiUrl('/nexup/preroll/logo-image') + '?t=' + Date.now()} 
+                              alt="Server Logo"
+                              style={{
+                                maxWidth: 'clamp(80px, 25%, 160px)',
+                                maxHeight: 'clamp(30px, 6vh, 50px)',
+                                objectFit: 'contain',
+                                marginTop: '0.75rem',
+                                animation: 'previewFadeIn 1.5s ease-out 0.5s both',
+                                filter: `drop-shadow(0 0 10px ${(colorThemes[dynamicPrerollSettings.theme]?.primary || '#ffd700').replace('0x', '#')}40)`
+                              }}
+                            />
+                          ) : dynamicPrerollSettings.server_name && (
                             <div style={{
                               fontSize: 'clamp(0.6rem, 2vw, 0.9rem)',
                               fontWeight: 'normal',
@@ -19879,8 +20048,21 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
                             marginTop: '0.5rem',
                             animation: 'previewLineExpand 1s ease-out'
                           }} />
-                          {/* Server name - only show if provided */}
-                          {dynamicPrerollSettings.server_name && (
+                          {/* Server name or logo */}
+                          {dynamicPrerollSettings.customLogoFilename ? (
+                            <img 
+                              src={apiUrl('/nexup/preroll/logo-image') + '?t=' + Date.now()} 
+                              alt="Server Logo"
+                              style={{
+                                maxWidth: 'clamp(80px, 25%, 160px)',
+                                maxHeight: 'clamp(30px, 6vh, 50px)',
+                                objectFit: 'contain',
+                                marginTop: '0.75rem',
+                                animation: 'previewFadeIn 1s ease-out 0.5s both',
+                                filter: `drop-shadow(0 0 10px ${(colorThemes[dynamicPrerollSettings.theme]?.primary || '#ff006e').replace('0x', '#')}40)`
+                              }}
+                            />
+                          ) : dynamicPrerollSettings.server_name && (
                             <div style={{
                               fontSize: 'clamp(0.6rem, 2vw, 0.9rem)',
                               fontWeight: 'normal',
@@ -20035,9 +20217,11 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
               </div>
             )}
           </div>
+          )}
 
-          {/* Coming Soon List Generator Card */}
-          <div className="card" style={{ marginTop: '1.5rem' }}>
+          {/* Coming Soon List Generator */}
+          {generatorTab === 'coming-soon' && (
+          <div className="card">
             <h2 style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
               <Film size={24} /> Coming Soon List Generator
             </h2>
@@ -20050,19 +20234,23 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
                 padding: '1rem', 
                 backgroundColor: '#fff3cd', 
                 border: '1px solid #ffc107', 
-                borderRadius: '8px'
+                borderRadius: '8px',
+                marginBottom: '1rem'
               }}>
                 <strong style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}><AlertTriangle size={18} /> FFmpeg Required</strong>
                 <p style={{ margin: '0.5rem 0 0 0', fontSize: '0.9rem' }}>
                   FFmpeg must be installed to generate Coming Soon List videos.
+                  <a href="https://ffmpeg.org/download.html" target="_blank" rel="noopener noreferrer" style={{ marginLeft: '0.5rem' }}>
+                    Download FFmpeg →
+                  </a>
                 </p>
               </div>
             ) : (
               <>
                 {/* Layout Selection */}
                 <div style={{ marginBottom: '1rem' }}>
-                  <label style={{ marginBottom: '0.5rem', fontWeight: 'bold', display: 'block' }}>
-                    Layout Style
+                  <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.5rem', fontWeight: 'bold', fontSize: '0.95rem' }}>
+                    <LayoutGrid size={16} /> Layout Style
                   </label>
                   <div style={{ display: 'flex', gap: '0.5rem' }}>
                     <button
@@ -20092,8 +20280,8 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
 
                 {/* Content Source */}
                 <div style={{ marginBottom: '1rem' }}>
-                  <label style={{ marginBottom: '0.5rem', fontWeight: 'bold', display: 'block' }}>
-                    Content Source
+                  <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.5rem', fontWeight: 'bold', fontSize: '0.95rem' }}>
+                    <Tv size={16} /> Content Source
                   </label>
                   <div style={{ display: 'flex', gap: '0.5rem' }}>
                     {['movies', 'shows', 'both'].map(source => (
@@ -20115,15 +20303,15 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
                 </div>
 
                 {/* Settings Row */}
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: '1rem', marginBottom: '1rem' }}>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '1rem', marginBottom: '1rem' }}>
                   <div>
-                    <label style={{ marginBottom: '0.5rem', fontWeight: 'bold', display: 'block' }}>
-                      Duration (seconds)
+                    <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.5rem', fontWeight: 'bold', fontSize: '0.95rem' }}>
+                      <Clock size={16} /> Duration
                     </label>
                     <select
                       value={comingSoonListSettings.duration}
                       onChange={(e) => setComingSoonListSettings(prev => ({ ...prev, duration: parseInt(e.target.value) }))}
-                      style={{ width: '100%', padding: '0.5rem' }}
+                      style={{ width: '100%', padding: '0.75rem', borderRadius: '8px', border: '1px solid var(--border-color)', fontSize: '1rem' }}
                     >
                       {[5, 8, 10, 12, 15, 20, 25, 30].map(n => (
                         <option key={n} value={n}>{n} seconds</option>
@@ -20131,13 +20319,13 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
                     </select>
                   </div>
                   <div>
-                    <label style={{ marginBottom: '0.5rem', fontWeight: 'bold', display: 'block' }}>
-                      Max Items
+                    <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.5rem', fontWeight: 'bold', fontSize: '0.95rem' }}>
+                      <Layers size={16} /> Max Items
                     </label>
                     <select
                       value={comingSoonListSettings.maxItems}
                       onChange={(e) => setComingSoonListSettings(prev => ({ ...prev, maxItems: parseInt(e.target.value) }))}
-                      style={{ width: '100%', padding: '0.5rem' }}
+                      style={{ width: '100%', padding: '0.75rem', borderRadius: '8px', border: '1px solid var(--border-color)', fontSize: '1rem' }}
                     >
                       {[4, 5, 6, 7, 8, 10, 12].map(n => (
                         <option key={n} value={n}>{n} items</option>
@@ -20145,23 +20333,26 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
                     </select>
                   </div>
                   <div>
-                    <label style={{ marginBottom: '0.5rem', fontWeight: 'bold', display: 'block' }}>
-                      Server Name (optional)
+                    <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.5rem', fontWeight: 'bold', fontSize: '0.95rem' }}>
+                      <Tv size={16} /> Server Name
                     </label>
                     <input
                       type="text"
                       placeholder="Your Server"
                       value={comingSoonListSettings.serverName}
                       onChange={(e) => setComingSoonListSettings(prev => ({ ...prev, serverName: e.target.value }))}
-                      style={{ width: '100%', padding: '0.5rem' }}
+                      style={{ width: '100%', padding: '0.75rem', borderRadius: '8px', border: '1px solid var(--border-color)', fontSize: '1rem' }}
                     />
+                    <p style={{ fontSize: '0.8rem', color: '#888', marginTop: '0.25rem' }}>
+                      Displayed as "Coming Soon to [Your Server Name]"
+                    </p>
                   </div>
                 </div>
 
                 {/* Color Settings */}
-                <details style={{ marginBottom: '1rem' }}>
-                  <summary style={{ cursor: 'pointer', fontWeight: 'bold', marginBottom: '0.5rem', color: 'var(--text-color)' }}>
-                    Color Settings
+                <details open style={{ marginBottom: '1rem' }}>
+                  <summary style={{ cursor: 'pointer', fontWeight: 'bold', marginBottom: '0.5rem', color: 'var(--text-color)', display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '0.95rem' }}>
+                    <Palette size={16} /> Color Settings
                   </summary>
                   <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '1rem', marginTop: '0.5rem' }}>
                     <div>
@@ -20218,68 +20409,71 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
                     />
                     <div style={{ flex: 1 }}>
                       <strong style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', fontSize: '0.95rem' }}><Music size={15} style={{ color: '#00d4ff' }} /> Background Music</strong>
-                      <span style={{ fontSize: '0.8rem', color: '#777' }}>
+                      <span style={{ fontSize: '0.8rem', color: '#888' }}>
                         Adds ambient background music with auto fade in/out
                       </span>
                     </div>
                   </label>
 
                   {/* Custom audio upload (only visible when audio is enabled) */}
-                  {comingSoonListSettings.includeAudio && (
+                  {comingSoonListSettings.includeAudio && !comingSoonListSettings.customAudioFilename && (
                     <div style={{ marginTop: '0.6rem', marginLeft: '30px' }}>
-                      {comingSoonListSettings.customAudioFilename ? (
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '0.85rem' }}>
-                          <Music size={13} style={{ color: '#00d4ff' }} />
-                          <span style={{ color: 'var(--text-color)' }}>Custom: <strong>{comingSoonListSettings.customAudioFilename}</strong></span>
-                          <button
-                            onClick={async () => {
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                        <span style={{ fontSize: '0.85rem', color: '#888' }}>Using default audio.</span>
+                        <label className="button" style={{ padding: '0.3rem 0.75rem', fontSize: '0.8rem', cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: '0.3rem' }}>
+                          <Upload size={12} /> Upload Custom Audio
+                          <input
+                            type="file"
+                            accept=".mp3,.wav,.aac,.m4a,.ogg,.flac"
+                            style={{ display: 'none' }}
+                            onChange={async (e) => {
+                              const file = e.target.files?.[0];
+                              if (!file) return;
+                              const formData = new FormData();
+                              formData.append('file', file);
                               try {
-                                const res = await fetch(apiUrl('/nexup/coming-soon-list/upload-audio'), { method: 'DELETE' });
+                                const res = await fetch(apiUrl('/nexup/coming-soon-list/upload-audio'), {
+                                  method: 'POST', body: formData
+                                });
                                 if (res.ok) {
-                                  setComingSoonListSettings(prev => ({ ...prev, customAudioFilename: null }));
-                                  showAlert('Custom audio removed, will use default', 'success');
+                                  const data = await res.json();
+                                  setComingSoonListSettings(prev => ({ ...prev, customAudioFilename: data.filename }));
+                                  showAlert(`Custom audio uploaded: ${data.filename}`, 'success');
+                                } else {
+                                  const err = await res.json();
+                                  showAlert(err.detail || 'Upload failed', 'error');
                                 }
-                              } catch (err) { showAlert('Failed to remove custom audio', 'error'); }
+                              } catch (err) { showAlert('Error uploading audio', 'error'); }
+                              e.target.value = '';
                             }}
-                            className="button"
-                            style={{ padding: '0.2rem 0.5rem', fontSize: '0.8rem', backgroundColor: 'transparent', color: '#ff6b6b', border: '1px solid #ff6b6b' }}
-                          >
-                            <X size={12} /> Remove
-                          </button>
-                        </div>
-                      ) : (
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                          <span style={{ fontSize: '0.85rem', color: '#888' }}>Using default audio.</span>
-                          <label className="button" style={{ padding: '0.3rem 0.75rem', fontSize: '0.8rem', cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: '0.3rem' }}>
-                            <Upload size={12} /> Upload Custom Audio
-                            <input
-                              type="file"
-                              accept=".mp3,.wav,.aac,.m4a,.ogg,.flac"
-                              style={{ display: 'none' }}
-                              onChange={async (e) => {
-                                const file = e.target.files?.[0];
-                                if (!file) return;
-                                const formData = new FormData();
-                                formData.append('file', file);
-                                try {
-                                  const res = await fetch(apiUrl('/nexup/coming-soon-list/upload-audio'), {
-                                    method: 'POST', body: formData
-                                  });
-                                  if (res.ok) {
-                                    const data = await res.json();
-                                    setComingSoonListSettings(prev => ({ ...prev, customAudioFilename: data.filename }));
-                                    showAlert(`Custom audio uploaded: ${data.filename}`, 'success');
-                                  } else {
-                                    const err = await res.json();
-                                    showAlert(err.detail || 'Upload failed', 'error');
-                                  }
-                                } catch (err) { showAlert('Error uploading audio', 'error'); }
-                                e.target.value = '';
-                              }}
-                            />
-                          </label>
-                        </div>
-                      )}
+                          />
+                        </label>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Always show uploaded audio filename + remove, even when audio toggle is off */}
+                  {comingSoonListSettings.customAudioFilename && (
+                    <div style={{ marginTop: '0.6rem', marginLeft: '30px' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '0.85rem', flexWrap: 'wrap' }}>
+                        <Music size={13} style={{ color: '#00d4ff' }} />
+                        <span style={{ color: 'var(--text-color)' }}>Custom: <strong>{comingSoonListSettings.customAudioFilename}</strong></span>
+                        <button
+                          onClick={async () => {
+                            try {
+                              const res = await fetch(apiUrl('/nexup/coming-soon-list/upload-audio'), { method: 'DELETE' });
+                              if (res.ok) {
+                                setComingSoonListSettings(prev => ({ ...prev, customAudioFilename: null }));
+                                showAlert('Custom audio removed, will use default', 'success');
+                              }
+                            } catch (err) { showAlert('Failed to remove custom audio', 'error'); }
+                          }}
+                          className="button"
+                          style={{ padding: '0.2rem 0.5rem', fontSize: '0.8rem', backgroundColor: 'transparent', color: '#ff6b6b', border: '1px solid #ff6b6b' }}
+                        >
+                          <X size={12} /> Remove
+                        </button>
+                      </div>
                     </div>
                   )}
                 </div>
@@ -20293,12 +20487,19 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
                 }}>
                   <div style={{ marginBottom: '0.5rem' }}>
                     <strong style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', fontSize: '0.95rem' }}><Layers size={15} style={{ color: '#00d4ff' }} /> Custom Logo Overlay</strong>
-                    <span style={{ fontSize: '0.8rem', color: '#777' }}>
-                      Adds a faded, centered watermark logo behind the text
+                    <span style={{ fontSize: '0.8rem', color: '#888' }}>
+                      {comingSoonListSettings.logoMode === 'replace' 
+                        ? 'Logo replaces the server name below "Coming Soon To"'
+                        : 'Adds a faded, centered watermark logo behind the text'}
                     </span>
+                    <div style={{ fontSize: '0.75rem', color: '#666', marginTop: '0.3rem', display: 'flex', alignItems: 'center', gap: '0.3rem' }}>
+                      <Info size={12} style={{ flexShrink: 0, color: '#00d4ff' }} />
+                      <span>For best results, use a landscape-oriented logo (e.g. 800×200 px). PNG with transparent background recommended.</span>
+                    </div>
                   </div>
                   {comingSoonListSettings.customLogoFilename ? (
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '0.85rem', marginBottom: '0.5rem' }}>
+                    <>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '0.85rem', marginBottom: '0.5rem', flexWrap: 'wrap' }}>
                       <Layers size={13} style={{ color: '#00d4ff' }} />
                       <span style={{ color: 'var(--text-color)' }}>Logo: <strong>{comingSoonListSettings.customLogoFilename}</strong></span>
                       <button
@@ -20317,6 +20518,41 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
                         <X size={12} /> Remove
                       </button>
                     </div>
+                    {/* Logo Mode Toggle */}
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginTop: '0.4rem' }}>
+                      <span style={{ fontSize: '0.8rem', color: '#888' }}>Mode:</span>
+                      <button
+                        onClick={() => setComingSoonListSettings(prev => ({ ...prev, logoMode: 'watermark' }))}
+                        style={{
+                          padding: '0.2rem 0.6rem',
+                          fontSize: '0.75rem',
+                          borderRadius: '4px',
+                          border: `1px solid ${comingSoonListSettings.logoMode === 'watermark' ? '#00d4ff' : 'rgba(255,255,255,0.15)'}`,
+                          backgroundColor: comingSoonListSettings.logoMode === 'watermark' ? 'rgba(0,212,255,0.15)' : 'transparent',
+                          color: comingSoonListSettings.logoMode === 'watermark' ? '#00d4ff' : '#888',
+                          cursor: 'pointer',
+                          transition: 'all 0.2s ease'
+                        }}
+                      >
+                        Watermark
+                      </button>
+                      <button
+                        onClick={() => setComingSoonListSettings(prev => ({ ...prev, logoMode: 'replace' }))}
+                        style={{
+                          padding: '0.2rem 0.6rem',
+                          fontSize: '0.75rem',
+                          borderRadius: '4px',
+                          border: `1px solid ${comingSoonListSettings.logoMode === 'replace' ? '#00d4ff' : 'rgba(255,255,255,0.15)'}`,
+                          backgroundColor: comingSoonListSettings.logoMode === 'replace' ? 'rgba(0,212,255,0.15)' : 'transparent',
+                          color: comingSoonListSettings.logoMode === 'replace' ? '#00d4ff' : '#888',
+                          cursor: 'pointer',
+                          transition: 'all 0.2s ease'
+                        }}
+                      >
+                        Replace Server Name
+                      </button>
+                    </div>
+                    </>
                   ) : (
                     <label className="button" style={{ padding: '0.3rem 0.75rem', fontSize: '0.8rem', cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: '0.3rem' }}>
                       <Upload size={12} /> Upload Logo Image
@@ -20359,7 +20595,7 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
                   <div>
                     <div style={{ marginBottom: '0.5rem' }}>
                       <strong style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', fontSize: '0.95rem' }}><CheckCircle size={15} style={{ color: '#00d4ff' }} /> Available Now! Duration</strong>
-                      <span style={{ fontSize: '0.8rem', color: '#777' }}>
+                      <span style={{ fontSize: '0.8rem', color: '#888' }}>
                         Days to show "Available Now!" before auto-removing from the list
                       </span>
                     </div>
@@ -20408,7 +20644,7 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
                     />
                     <div style={{ flex: 1 }}>
                       <strong style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', fontSize: '0.95rem' }}><RefreshCw size={15} style={{ color: '#00d4ff' }} /> Auto-regenerate on Sync</strong>
-                      <span style={{ fontSize: '0.8rem', color: '#777' }}>
+                      <span style={{ fontSize: '0.8rem', color: '#888' }}>
                         Automatically regenerate when Radarr/Sonarr trailers sync
                       </span>
                     </div>
@@ -20436,53 +20672,241 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
 
                 </div>{/* End 2x2 Options Grid */}
 
+                {/* Live Preview */}
+                <div style={{ marginBottom: '1.5rem', display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
+                  <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.75rem', fontWeight: 'bold', fontSize: '0.95rem', alignSelf: 'center' }}>
+                    <Eye size={18} /> Live Preview
+                  </label>
+                  <div style={{
+                    position: 'relative',
+                    width: '100%',
+                    maxWidth: '640px',
+                    aspectRatio: '16/9',
+                    borderRadius: '12px',
+                    overflow: 'hidden',
+                    border: '2px solid var(--border-color)',
+                    boxShadow: '0 8px 32px rgba(0,0,0,0.4)',
+                    backgroundColor: comingSoonListSettings.bgColor || '#141428'
+                  }}>
+                    {/* Vignette overlay */}
+                    <div style={{
+                      position: 'absolute',
+                      inset: 0,
+                      background: `radial-gradient(ellipse at center, transparent 40%, ${comingSoonListSettings.bgColor || '#141428'}dd 100%)`,
+                      pointerEvents: 'none',
+                      zIndex: 1
+                    }} />
+                    {/* Watermark logo (behind text) */}
+                    {comingSoonListSettings.customLogoFilename && comingSoonListSettings.logoMode !== 'replace' && (
+                      <div style={{
+                        position: 'absolute',
+                        inset: 0,
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        zIndex: 0,
+                        opacity: 0.15
+                      }}>
+                        <img 
+                          src={apiUrl('/nexup/coming-soon-list/logo-image') + '?t=' + Date.now()}
+                          alt="Logo"
+                          style={{ maxWidth: '30%', maxHeight: '40%', objectFit: 'contain' }}
+                          onError={(e) => { e.target.style.display = 'none'; }}
+                        />
+                      </div>
+                    )}
+                    {/* Content */}
+                    <div style={{
+                      position: 'absolute',
+                      inset: 0,
+                      display: 'flex',
+                      flexDirection: 'column',
+                      alignItems: 'center',
+                      padding: '8% 5% 5%',
+                      zIndex: 2
+                    }}>
+                      {/* Header — grid+replace shows logo inline to the right of text */}
+                      {comingSoonListSettings.customLogoFilename && comingSoonListSettings.logoMode === 'replace'
+                        && (comingSoonListSettings.layout === 'grid' || comingSoonListSettings.layout === 'both') ? (
+                        <div style={{
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: '0.4em',
+                          marginBottom: '0.15em'
+                        }}>
+                          <div style={{
+                            fontSize: 'clamp(1.2rem, 4.5vw, 2rem)',
+                            fontWeight: 'bold',
+                            letterSpacing: '0.08em',
+                            textTransform: 'uppercase',
+                            color: comingSoonListSettings.accentColor || '#00d4ff',
+                            textShadow: '0 2px 8px rgba(0,0,0,0.6)',
+                            whiteSpace: 'nowrap'
+                          }}>
+                            COMING SOON TO
+                          </div>
+                          <img
+                            src={apiUrl('/nexup/coming-soon-list/logo-image') + '?t=' + Date.now()}
+                            alt="Logo"
+                            style={{ maxHeight: 'clamp(24px, 4vw, 48px)', objectFit: 'contain', opacity: 0.85 }}
+                            onError={(e) => { e.target.style.display = 'none'; }}
+                          />
+                        </div>
+                      ) : (
+                        <>
+                          <div style={{
+                            fontSize: 'clamp(1.2rem, 4.5vw, 2rem)',
+                            fontWeight: 'bold',
+                            letterSpacing: '0.08em',
+                            textTransform: 'uppercase',
+                            color: comingSoonListSettings.accentColor || '#00d4ff',
+                            textShadow: '0 2px 8px rgba(0,0,0,0.6)',
+                            marginBottom: '0.15em'
+                          }}>
+                            {comingSoonListSettings.customLogoFilename && comingSoonListSettings.logoMode === 'replace'
+                              ? 'COMING SOON TO'
+                              : 'COMING SOON'}
+                          </div>
+                          {/* Subtitle / Logo below in text layout replace mode */}
+                          {comingSoonListSettings.customLogoFilename && comingSoonListSettings.logoMode === 'replace' ? (
+                            <div style={{ marginBottom: '0.5em' }}>
+                              <img
+                                src={apiUrl('/nexup/coming-soon-list/logo-image') + '?t=' + Date.now()}
+                                alt="Logo"
+                                style={{ maxWidth: 'clamp(80px, 20vw, 160px)', maxHeight: '48px', objectFit: 'contain', opacity: 0.85 }}
+                                onError={(e) => { e.target.style.display = 'none'; }}
+                              />
+                            </div>
+                          ) : (
+                            <div style={{
+                              fontSize: 'clamp(0.75rem, 2.5vw, 1.1rem)',
+                              color: (comingSoonListSettings.textColor || '#ffffff') + 'e6',
+                              marginBottom: '0.5em',
+                              opacity: 0.9
+                            }}>
+                              to {comingSoonListSettings.serverName || 'Your Server'}
+                            </div>
+                          )}
+                        </>
+                      )}
+                      {/* Divider */}
+                      <div style={{
+                        width: '50%',
+                        height: '2px',
+                        background: (comingSoonListSettings.accentColor || '#00d4ff') + '99',
+                        marginBottom: '0.6em'
+                      }} />
+                      {/* Sample items */}
+                      {comingSoonListSettings.layout === 'grid' || comingSoonListSettings.layout === 'both' ? (
+                        <div style={{ display: 'grid', gridTemplateColumns: `repeat(${Math.min(comingSoonListSettings.maxItems, 5)}, 1fr)`, gap: 'clamp(4px, 1vw, 10px)', width: '90%', flex: 1, alignContent: 'start' }}>
+                          {Array.from({ length: Math.min(comingSoonListSettings.maxItems, 5) }).map((_, i) => (
+                            <div key={i} style={{
+                              background: 'rgba(255,255,255,0.08)',
+                              borderRadius: '4px',
+                              aspectRatio: '2/3',
+                              display: 'flex',
+                              alignItems: 'center',
+                              justifyContent: 'center',
+                              fontSize: 'clamp(0.5rem, 1.5vw, 0.7rem)',
+                              color: 'rgba(255,255,255,0.3)',
+                              border: '1px solid rgba(255,255,255,0.06)'
+                            }}>
+                              <Film size={16} style={{ opacity: 0.3 }} />
+                            </div>
+                          ))}
+                        </div>
+                      ) : (
+                        <div style={{ width: '80%', flex: 1 }}>
+                          {Array.from({ length: Math.min(comingSoonListSettings.maxItems, 6) }).map((_, i) => (
+                            <div key={i} style={{
+                              display: 'flex',
+                              justifyContent: 'space-between',
+                              alignItems: 'center',
+                              padding: 'clamp(2px, 0.4vw, 5px) 0',
+                              borderBottom: '1px solid rgba(255,255,255,0.05)',
+                              fontSize: 'clamp(0.5rem, 1.5vw, 0.7rem)',
+                              color: comingSoonListSettings.textColor || '#ffffff'
+                            }}>
+                              <span style={{ display: 'flex', alignItems: 'center', gap: '0.3em' }}>
+                                <span style={{ color: (comingSoonListSettings.accentColor || '#00d4ff') + '80', fontSize: '0.6em' }}>●</span>
+                                Movie Title {i + 1}
+                              </span>
+                              <span style={{ color: (comingSoonListSettings.accentColor || '#00d4ff') + 'e6', fontSize: '0.85em' }}>
+                                {i === 0 ? 'Available Now!' : `Mar ${10 + i * 3}, 2026`}
+                              </span>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                </div>
+
                 {/* Generate Button */}
+                <div style={{
+                  marginTop: '1rem',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '1rem',
+                  flexWrap: 'wrap',
+                  padding: '1rem',
+                  backgroundColor: 'var(--bg-color)',
+                  borderRadius: '10px',
+                  border: '1px solid var(--border-color)'
+                }}>
                 <button
                   onClick={handleGenerateComingSoonList}
                   disabled={comingSoonListGenerating}
-                  className="button button-success"
+                  className="button"
                   style={{ 
-                    display: 'flex', 
-                    alignItems: 'center', 
-                    gap: '0.5rem',
+                    backgroundColor: comingSoonListGenerating ? '#666' : '#28a745',
                     padding: '0.75rem 1.5rem',
-                    fontSize: '1rem'
+                    fontSize: '1rem',
+                    fontWeight: 'bold'
                   }}
                 >
                   {comingSoonListGenerating ? (
                     <>
-                      <RotateCw size={18} className="spin" /> Generating...
+                      <Loader2 size={16} className="spin" /> Generating Video...
                     </>
                   ) : (
                     <>
-                      <Sparkles size={18} /> Generate Coming Soon List
+                      <Sparkles size={16} /> Generate Coming Soon List
                     </>
                   )}
                 </button>
+                </div>
               </>
             )}
 
             {/* Generated Coming Soon Lists Section */}
             {generatedComingSoonLists.length > 0 && (
-              <div style={{ marginTop: '1.5rem', borderTop: '1px solid var(--border-color)', paddingTop: '1rem' }}>
-                <div 
+              <div style={{ 
+                marginTop: '1.5rem', 
+                padding: '1rem', 
+                backgroundColor: 'var(--bg-color)', 
+                borderRadius: '10px',
+                border: '1px solid var(--border-color)'
+              }}>
+                <h3 
                   onClick={() => setComingSoonListsCollapsed(!comingSoonListsCollapsed)}
                   style={{ 
+                    margin: 0, 
                     display: 'flex', 
                     alignItems: 'center', 
-                    justifyContent: 'space-between',
+                    gap: '0.5rem', 
+                    fontSize: '1.1rem',
                     cursor: 'pointer',
-                    marginBottom: comingSoonListsCollapsed ? 0 : '0.75rem'
+                    userSelect: 'none'
                   }}
                 >
-                  <h3 style={{ margin: 0, display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                    <Film size={18} /> Your Generated Coming Soon Lists ({generatedComingSoonLists.length})
-                  </h3>
                   {comingSoonListsCollapsed ? <ChevronRight size={20} /> : <ChevronDown size={20} />}
-                </div>
+                  <Film size={20} style={{ color: '#ffd700' }} />
+                  Your Generated Coming Soon Lists ({generatedComingSoonLists.length})
+                </h3>
                 
                 {!comingSoonListsCollapsed && (
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem', marginTop: '1rem' }}>
                     {generatedComingSoonLists.map((item, idx) => (
                       <div 
                         key={idx}
@@ -20490,22 +20914,26 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
                           display: 'flex', 
                           alignItems: 'center', 
                           justifyContent: 'space-between',
-                          padding: '0.75rem',
-                          backgroundColor: 'var(--bg-color)',
+                          padding: '0.75rem 1rem',
+                          backgroundColor: 'var(--card-bg)',
                           borderRadius: '8px',
-                          border: '1px solid var(--border-color)'
+                          border: '1px solid var(--border-color)',
+                          gap: '1rem',
+                          flexWrap: 'wrap'
                         }}
                       >
-                        <div>
-                          <div style={{ fontWeight: 'bold', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                            <Film size={16} />
-                            {item.filename.includes('grid') ? 'Grid Layout' : 'List Layout'}
-                          </div>
-                          <div style={{ fontSize: '0.85rem', color: '#888' }}>
-                            {item.filename} • {item.size_bytes ? `${(item.size_bytes / 1024 / 1024).toFixed(1)} MB` : ''}
-                            {item.created_at && (
-                              <span> • Updated {new Date(item.created_at * 1000).toLocaleString()}</span>
-                            )}
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', flex: 1, minWidth: '200px' }}>
+                          <Film size={20} style={{ color: '#ffd700', flexShrink: 0 }} />
+                          <div>
+                            <div style={{ fontWeight: 'bold', color: 'var(--text-color)' }}>
+                              {item.filename.includes('grid') ? 'Grid Layout' : 'List Layout'}
+                            </div>
+                            <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>
+                              {item.filename} • {item.size_bytes ? `${(item.size_bytes / 1024 / 1024).toFixed(1)} MB` : ''}
+                              {item.created_at && (
+                                <span> • Updated {new Date(item.created_at * 1000).toLocaleString()}</span>
+                              )}
+                            </div>
                           </div>
                         </div>
                         <div style={{ display: 'flex', gap: '0.5rem' }}>
@@ -20547,6 +20975,7 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
               </div>
             )}
           </div>
+          )}
 
         </>
       ) : (

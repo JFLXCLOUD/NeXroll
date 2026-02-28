@@ -634,10 +634,14 @@ class DynamicPrerollGenerator:
                            width: int, height: int, bg_color: str,
                            include_audio: bool = False,
                            custom_audio_path: str = None,
-                           custom_logo_path: str = None) -> Optional[str]:
+                           custom_logo_path: str = None,
+                           logo_mode: str = "watermark",
+                           fade_duration: float = 0) -> Optional[str]:
         """Fallback: Run FFmpeg with simple vignette (no colored orbs).
         Supports optional custom logo (faded, centered, behind text) and
-        custom audio with auto fade in/out."""
+        custom audio with auto fade in/out.
+        logo_mode: 'watermark' = faded centered behind text, 'replace' = replaces server name text.
+        fade_duration: if > 0, applies video fade in/out after all overlays (logo + text fade together)."""
         _verbose_log(f"=== VIGNETTE FALLBACK ===")
         _verbose_log(f"BG color: {bg_color}, Include audio: {include_audio}, Logo: {custom_logo_path}")
         
@@ -699,16 +703,38 @@ class DynamicPrerollGenerator:
         filter_parts.append(f"[0:v]{vignette_filter}[vout]")
         
         if has_logo:
-            # Scale logo to 30% of frame width, semi-transparent (15% opacity), overlay centered behind text
-            logo_w = int(width * 0.30)
+            if logo_mode == 'replace':
+                # Replace mode: logo below "COMING SOON TO" header, higher opacity
+                logo_w = int(width * 0.25)
+                logo_opacity = 0.85
+                logo_y_pos = 175  # Below the header text
+                _verbose_log(f"Logo REPLACE mode: width={logo_w}, opacity={logo_opacity}, y={logo_y_pos}")
+            else:
+                # Watermark mode: faded centered behind text
+                logo_w = int(width * 0.30)
+                logo_opacity = 0.15
+                logo_y_pos = None  # Will use centered overlay
             filter_parts.append(
                 f"[{logo_index}:v]scale={logo_w}:-1,format=rgba,"
-                f"colorchannelmixer=aa=0.15[logo]"
+                f"colorchannelmixer=aa={logo_opacity}[logo]"
             )
-            filter_parts.append(f"[vout][logo]overlay=(W-w)/2:(H-h)/2[vfinal]")
-            video_label = "[vfinal]"
+            if logo_y_pos is not None:
+                filter_parts.append(f"[vout][logo]overlay=(W-w)/2:{logo_y_pos}[vcomp]")
+            else:
+                filter_parts.append(f"[vout][logo]overlay=(W-w)/2:(H-h)/2[vcomp]")
+            # Apply fade after overlay so logo + video fade together
+            if fade_duration > 0:
+                filter_parts.append(f"[vcomp]fade=t=in:st=0:d={fade_duration},fade=t=out:st={duration-fade_duration}:d={fade_duration}[vfinal]")
+                video_label = "[vfinal]"
+            else:
+                video_label = "[vcomp]"
         else:
-            video_label = "[vout]"
+            # No logo — apply fade directly to vout if needed
+            if fade_duration > 0:
+                filter_parts.append(f"[vout]fade=t=in:st=0:d={fade_duration},fade=t=out:st={duration-fade_duration}:d={fade_duration}[vfinal]")
+                video_label = "[vfinal]"
+            else:
+                video_label = "[vout]"
         
         if audio_file:
             # Real audio with fade in/out
@@ -1291,7 +1317,8 @@ class DynamicPrerollGenerator:
         max_items: int = 8,
         include_audio: bool = False,
         custom_audio_path: str = None,
-        custom_logo_path: str = None
+        custom_logo_path: str = None,
+        logo_mode: str = "watermark"
     ) -> Optional[str]:
         """Generate a Coming Soon List video.
         
@@ -1324,7 +1351,7 @@ class DynamicPrerollGenerator:
         _verbose_log(f"Items: {len(items)}, Layout: {layout}, Duration: {duration}s, Audio: {include_audio}")
         _verbose_log(f"Server name: '{server_name}'")
         _verbose_log(f"Colors - BG: {bg_color}, Text: {text_color}, Accent: {accent_color}")
-        _verbose_log(f"Custom audio: {custom_audio_path}, Custom logo: {custom_logo_path}")
+        _verbose_log(f"Custom audio: {custom_audio_path}, Custom logo: {custom_logo_path}, Logo mode: {logo_mode}")
         
         # Limit items
         items = items[:max_items]
@@ -1339,7 +1366,8 @@ class DynamicPrerollGenerator:
                 bg_color, text_color, accent_color, width, height,
                 include_audio=include_audio,
                 custom_audio_path=custom_audio_path,
-                custom_logo_path=custom_logo_path
+                custom_logo_path=custom_logo_path,
+                logo_mode=logo_mode
             )
         else:
             return self._generate_list_text_layout(
@@ -1347,7 +1375,8 @@ class DynamicPrerollGenerator:
                 bg_color, text_color, accent_color, width, height,
                 include_audio=include_audio,
                 custom_audio_path=custom_audio_path,
-                custom_logo_path=custom_logo_path
+                custom_logo_path=custom_logo_path,
+                logo_mode=logo_mode
             )
     
     def _generate_list_text_layout(
@@ -1363,12 +1392,13 @@ class DynamicPrerollGenerator:
         height: int,
         include_audio: bool = False,
         custom_audio_path: str = None,
-        custom_logo_path: str = None
+        custom_logo_path: str = None,
+        logo_mode: str = "watermark"
     ) -> Optional[str]:
         """Generate text-only list layout (no posters)"""
         output_path = self.output_dir / output_filename
         escaped_server = self._escape_text(server_name)
-        _verbose_log(f"Text layout - Server name: '{server_name}' -> escaped: '{escaped_server}'")
+        _verbose_log(f"Text layout - Server name: '{server_name}' -> escaped: '{escaped_server}', logo_mode: {logo_mode}")
         
         _, font_param = self._get_font_path('arial')
         _, bold_font_param = self._get_font_path('arial_bold')
@@ -1399,22 +1429,28 @@ class DynamicPrerollGenerator:
         # Build filter string
         filter_parts = []
         
-        # Header: "Coming Soon to [Server Name]"
-        filter_parts.append(
-            f"drawtext=text='COMING SOON':fontsize=80:fontcolor={accent_color}{bold_font_param}:"
-            f"x=(w-text_w)/2:y={header_y}:shadowcolor=black@0.6:shadowx=2:shadowy=2"
-        )
-        
-        filter_parts.append(
-            f"drawtext=text='to {escaped_server}':fontsize=50:fontcolor={text_color}@0.9{font_param}:"
-            f"x=(w-text_w)/2:y={subtitle_y}:alpha='if(lt(t,0.5),0,if(lt(t,1),(t-0.5)/0.5,1))'"
-        )
-        
-        # Divider line
-        line_y = subtitle_y + 60
-        filter_parts.append(
-            f"drawbox=x={width//4}:y={line_y}:w={width//2}:h=3:c={accent_color}@0.6:t=fill"
-        )
+        # Header: "Coming Soon to [Server Name]" or "COMING SOON TO" + logo
+        has_replace_logo = logo_mode == 'replace' and custom_logo_path and os.path.isfile(custom_logo_path)
+        if has_replace_logo:
+            # Replace mode: single-line "COMING SOON TO" header, logo below
+            filter_parts.append(
+                f"drawtext=text='COMING SOON TO':fontsize=80:fontcolor={accent_color}{bold_font_param}:"
+                f"x=(w-text_w)/2:y={header_y}:shadowcolor=black@0.6:shadowx=2:shadowy=2"
+            )
+        else:
+            filter_parts.append(
+                f"drawtext=text='COMING SOON':fontsize=80:fontcolor={accent_color}{bold_font_param}:"
+                f"x=(w-text_w)/2:y={header_y}:shadowcolor=black@0.6:shadowx=2:shadowy=2"
+            )
+            filter_parts.append(
+                f"drawtext=text='to {escaped_server}':fontsize=50:fontcolor={text_color}@0.9{font_param}:"
+                f"x=(w-text_w)/2:y={subtitle_y}:alpha='if(lt(t,0.5),0,if(lt(t,1),(t-0.5)/0.5,1))'"
+            )
+            # Divider line (only in watermark/normal mode)
+            line_y = subtitle_y + 60
+            filter_parts.append(
+                f"drawbox=x={width//4}:y={line_y}:w={width//2}:h=3:c={accent_color}@0.6:t=fill"
+            )
         
         # Item list with staggered fade-in
         for i, item in enumerate(items):
@@ -1462,8 +1498,7 @@ class DynamicPrerollGenerator:
                 f"(t-{fade_delay})/0.4,1))'"
             )
         
-        # Fades
-        filter_parts.append(f"fade=t=in:st=0:d=0.8,fade=t=out:st={duration-0.8}:d=0.8")
+        # Note: fade is NOT included here — it's applied after logo overlay in vignette_fallback
         
         filter_str = ",".join(filter_parts)
         
@@ -1472,7 +1507,9 @@ class DynamicPrerollGenerator:
             filter_str, output_path, duration, width, height, bg_color,
             include_audio=include_audio,
             custom_audio_path=custom_audio_path,
-            custom_logo_path=custom_logo_path
+            custom_logo_path=custom_logo_path,
+            logo_mode=logo_mode,
+            fade_duration=0.8
         )
     
     def _generate_list_grid_layout(
@@ -1488,7 +1525,8 @@ class DynamicPrerollGenerator:
         height: int,
         include_audio: bool = False,
         custom_audio_path: str = None,
-        custom_logo_path: str = None
+        custom_logo_path: str = None,
+        logo_mode: str = "watermark"
     ) -> Optional[str]:
         """
         Generate grid layout with poster images.
@@ -1712,38 +1750,68 @@ class DynamicPrerollGenerator:
                 )
             
             # Add header text - optimized for 2-row layout with start_y=170
-            header_filter = (
-                f"drawtext=text='COMING SOON':fontsize=55:fontcolor={accent_color}{bold_font_param}:"
-                f"x=(w-text_w)/2:y=50:shadowcolor=black@0.5:shadowx=2:shadowy=2,"
-                f"drawtext=text='to {escaped_server}':fontsize=30:fontcolor={text_color}@0.9{font_param}:"
-                f"x=(w-text_w)/2:y=115"
-            )
+            # Only show "to {server_name}" when logo_mode is NOT 'replace' (or no logo available)
+            has_replace_logo = logo_mode == 'replace' and custom_logo_path and os.path.isfile(custom_logo_path)
+            if has_replace_logo:
+                # Replace mode: "COMING SOON TO" shifted left, logo placed to its right
+                # Offset text left by ~80px to leave room for logo on the right
+                header_filter = (
+                    f"drawtext=text='COMING SOON TO':fontsize=55:fontcolor={accent_color}{bold_font_param}:"
+                    f"x=(w-text_w)/2-80:y=50:shadowcolor=black@0.5:shadowx=2:shadowy=2"
+                )
+            else:
+                header_filter = (
+                    f"drawtext=text='COMING SOON':fontsize=55:fontcolor={accent_color}{bold_font_param}:"
+                    f"x=(w-text_w)/2:y=50:shadowcolor=black@0.5:shadowx=2:shadowy=2,"
+                    f"drawtext=text='to {escaped_server}':fontsize=30:fontcolor={text_color}@0.9{font_param}:"
+                    f"x=(w-text_w)/2:y=115"
+                )
             
-            # Combine: poster overlays + text overlays + header + fades
+            # Combine: poster overlays + text overlays + header (NO fade yet — applied after logo overlay)
             all_text = ",".join(text_filters)
-            final_filter = f"{header_filter},{all_text},fade=t=in:st=0:d=0.6,fade=t=out:st={duration-0.6}:d=0.6"
+            final_filter = f"{header_filter},{all_text}"
             
             filter_parts.append(f"{current_label}{final_filter}[out]")
             
             filter_complex_str = ";".join(filter_parts)
             
-            # --- Logo overlay (faded, centered, behind text — inserted as extra input) ---
+            # --- Logo overlay (inserted as extra input) ---
             logo_input_index = None
             if custom_logo_path and os.path.isfile(custom_logo_path):
                 logo_input_index = len(poster_paths) + 1  # Next input after posters
                 cmd.extend(['-i', custom_logo_path])
-                # Scale logo to 30% of frame width, center it, and make it semi-transparent
-                logo_w = int(width * 0.30)
-                logo_filter = (
-                    f"[{logo_input_index}:v]scale={logo_w}:-1,format=rgba,"
-                    f"colorchannelmixer=aa=0.15[logo];"
-                    f"[out][logo]overlay=(W-w)/2:(H-h)/2[outl]"
-                )
+                if logo_mode == 'replace':
+                    # Replace mode: logo to the right of "COMING SOON TO" header
+                    logo_h = 120  # Prominent size next to header
+                    logo_opacity = 0.85
+                    # Position: right of the shifted header text, vertically centered with header
+                    logo_x = f"(W/2)+200"
+                    logo_y = 15  # Vertically center logo with header area
+                    _verbose_log(f"Grid logo REPLACE mode: height={logo_h}, opacity={logo_opacity}, x={logo_x}, y={logo_y}")
+                    logo_filter = (
+                        f"[{logo_input_index}:v]scale=-2:{logo_h},format=rgba,"
+                        f"colorchannelmixer=aa={logo_opacity}[logo];"
+                    )
+                    logo_filter += f"[out][logo]overlay={logo_x}:{logo_y}[outcomp]"
+                else:
+                    # Watermark mode: faded centered behind text
+                    logo_w = int(width * 0.30)
+                    logo_opacity = 0.15
+                    logo_filter = (
+                        f"[{logo_input_index}:v]scale={logo_w}:-1,format=rgba,"
+                        f"colorchannelmixer=aa={logo_opacity}[logo];"
+                    )
+                    logo_filter += f"[out][logo]overlay=(W-w)/2:(H-h)/2[outcomp]"
                 filter_complex_str = filter_complex_str + ';' + logo_filter
+                # Apply fade AFTER overlay so logo + video fade together
+                filter_complex_str += f";[outcomp]fade=t=in:st=0:d=0.6,fade=t=out:st={duration-0.6}:d=0.6[outl]"
                 _verbose_log(f"Added logo overlay from {custom_logo_path} (input {logo_input_index})")
+            else:
+                # No logo — apply fade directly
+                filter_complex_str += f";[out]fade=t=in:st=0:d=0.6,fade=t=out:st={duration-0.6}:d=0.6[outl]"
             
             # Determine final video output label
-            video_out_label = '[outl]' if logo_input_index else '[out]'
+            video_out_label = '[outl]'
             
             # Add audio source — this becomes the next input after posters (and optional logo)
             audio_index = len(poster_paths) + 1 + (1 if logo_input_index else 0)

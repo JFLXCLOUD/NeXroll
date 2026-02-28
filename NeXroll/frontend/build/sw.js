@@ -1,7 +1,7 @@
  // NeXroll Service Worker for PWA functionality
-const CACHE_NAME = 'nexroll-v1.2.1';
-const STATIC_CACHE = 'nexroll-static-v1.2.1';
-const API_CACHE = 'nexroll-api-v1.2.1';
+const CACHE_NAME = 'nexroll-v1.3.0';
+const STATIC_CACHE = 'nexroll-static-v1.3.0';
+const API_CACHE = 'nexroll-api-v1.3.0';
 
 // Resources to cache immediately on install
 const STATIC_ASSETS = [
@@ -111,9 +111,29 @@ self.addEventListener('fetch', event => {
       return;
     }
 
-    // Handle static assets and HTML
+    // Handle document requests (index.html) - NETWORK-FIRST
+    // Always fetch fresh HTML so new JS/CSS hashes are picked up after updates
+    if (request.method === 'GET' && request.destination === 'document') {
+      event.respondWith(
+        fetch(request).then(response => {
+          if (response.status === 200) {
+            const responseClone = response.clone();
+            caches.open(STATIC_CACHE).then(cache => {
+              cache.put(request, responseClone);
+            });
+          }
+          return response;
+        }).catch(() => {
+          // Offline fallback to cached index.html
+          return caches.match('/index.html');
+        })
+      );
+      return;
+    }
+
+    // Handle static assets (JS/CSS with content hashes) - CACHE-FIRST
+    // CRA generates unique filenames per build, so cached versions are safe
     if (request.method === 'GET' && (
-      request.destination === 'document' ||
       request.destination === 'script' ||
       request.destination === 'style' ||
       url.pathname.startsWith('/static/')
@@ -123,25 +143,14 @@ self.addEventListener('fetch', event => {
           if (cachedResponse) {
             return cachedResponse;
           }
-
           return fetch(request).then(response => {
-            // Cache static assets
-            if (response.status === 200 && (
-              request.destination === 'script' ||
-              request.destination === 'style' ||
-              url.pathname.startsWith('/static/')
-            )) {
+            if (response.status === 200) {
               const responseClone = response.clone();
               caches.open(STATIC_CACHE).then(cache => {
                 cache.put(request, responseClone);
               });
             }
             return response;
-          }).catch(() => {
-            // Return cached index.html for navigation requests
-            if (request.destination === 'document') {
-              return caches.match('/index.html');
-            }
           });
         })
       );

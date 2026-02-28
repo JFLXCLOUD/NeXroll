@@ -216,6 +216,7 @@ def ensure_schema() -> None:
                 # Max trailer duration filter
                 ("nexup_max_trailer_duration", "nexup_max_trailer_duration INTEGER DEFAULT 180"),
                 # Coming Soon List auto-regeneration settings
+                ("nexup_dynamic_preroll_custom_logo_path", "nexup_dynamic_preroll_custom_logo_path TEXT"),
                 ("nexup_coming_soon_list_auto_regen", "nexup_coming_soon_list_auto_regen BOOLEAN DEFAULT 0"),
                 ("nexup_coming_soon_list_auto_regen_layout", "nexup_coming_soon_list_auto_regen_layout TEXT DEFAULT 'both'"),
                 ("nexup_coming_soon_list_layout", "nexup_coming_soon_list_layout TEXT DEFAULT 'grid'"),
@@ -229,6 +230,7 @@ def ensure_schema() -> None:
                 ("nexup_coming_soon_list_include_audio", "nexup_coming_soon_list_include_audio BOOLEAN DEFAULT 0"),
                 ("nexup_coming_soon_list_custom_audio_path", "nexup_coming_soon_list_custom_audio_path TEXT"),
                 ("nexup_coming_soon_list_custom_logo_path", "nexup_coming_soon_list_custom_logo_path TEXT"),
+                ("nexup_coming_soon_list_logo_mode", "nexup_coming_soon_list_logo_mode TEXT DEFAULT 'watermark'"),
                 ("nexup_coming_soon_available_days", "nexup_coming_soon_available_days INTEGER DEFAULT 1"),
                 ("nexup_trailer_retention_days", "nexup_trailer_retention_days INTEGER DEFAULT 7"),
             ]
@@ -14151,6 +14153,7 @@ def get_nexup_settings(user: models.User = Depends(require_auth), db: Session = 
         "coming_soon_list_include_audio": getattr(setting, 'nexup_coming_soon_list_include_audio', False),
         "coming_soon_list_custom_audio_filename": os.path.basename(getattr(setting, 'nexup_coming_soon_list_custom_audio_path', '') or '') or None,
         "coming_soon_list_custom_logo_filename": os.path.basename(getattr(setting, 'nexup_coming_soon_list_custom_logo_path', '') or '') or None,
+        "coming_soon_list_logo_mode": getattr(setting, 'nexup_coming_soon_list_logo_mode', 'watermark'),
         # Release date preference (which date to use for "Coming Soon")
         "release_date_preference": getattr(setting, 'nexup_release_date_preference', 'digital_first'),
         # Available Now! duration (days after download before removal)
@@ -14189,6 +14192,7 @@ def update_nexup_settings(
     coming_soon_list_accent_color: Optional[str] = None,
     coming_soon_list_server_name: Optional[str] = None,
     coming_soon_list_include_audio: Optional[bool] = None,
+    coming_soon_list_logo_mode: Optional[str] = None,
     release_date_preference: Optional[str] = None,
     coming_soon_available_days: Optional[int] = None,
     trailer_retention_days: Optional[int] = None,
@@ -14313,6 +14317,10 @@ def update_nexup_settings(
         setting.nexup_coming_soon_list_server_name = coming_soon_list_server_name
     if coming_soon_list_include_audio is not None:
         setting.nexup_coming_soon_list_include_audio = coming_soon_list_include_audio
+    # Logo mode: 'watermark' or 'replace'
+    if coming_soon_list_logo_mode is not None:
+        if coming_soon_list_logo_mode in ['watermark', 'replace']:
+            setting.nexup_coming_soon_list_logo_mode = coming_soon_list_logo_mode
     # Release date preference
     if release_date_preference is not None:
         if release_date_preference in ['digital_first', 'digital_only', 'physical_first', 'theatrical']:
@@ -14963,6 +14971,7 @@ async def _auto_regenerate_coming_soon_list(db: Session):
         include_audio = getattr(setting, 'nexup_coming_soon_list_include_audio', False)
         custom_audio_path = getattr(setting, 'nexup_coming_soon_list_custom_audio_path', None)
         custom_logo_path = getattr(setting, 'nexup_coming_soon_list_custom_logo_path', None)
+        logo_mode = getattr(setting, 'nexup_coming_soon_list_logo_mode', 'watermark')
         storage_path = getattr(setting, 'nexup_storage_path', None)
         
         if not storage_path:
@@ -15101,7 +15110,8 @@ async def _auto_regenerate_coming_soon_list(db: Session):
                 accent_color=accent_ffmpeg,
                 include_audio=include_audio,
                 custom_audio_path=custom_audio_path,
-                custom_logo_path=custom_logo_path
+                custom_logo_path=custom_logo_path,
+                logo_mode=logo_mode
             )
             
             if output_path:
@@ -17328,6 +17338,88 @@ def delete_coming_soon_audio(db: Session = Depends(get_db)):
     return {"success": True, "message": "Custom audio removed, will use default"}
 
 
+@app.post("/nexup/preroll/upload-logo")
+async def upload_dynamic_preroll_logo(
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db)
+):
+    """Upload a custom logo image for Dynamic Preroll videos (replaces server name in preview)."""
+    setting = db.query(models.Setting).first()
+    if not setting:
+        raise HTTPException(status_code=400, detail="Settings not configured")
+    
+    storage_path = getattr(setting, 'nexup_storage_path', None)
+    if not storage_path:
+        raise HTTPException(status_code=400, detail="NeX-Up storage path not configured")
+    
+    # Validate file type
+    allowed_images = ('.png', '.jpg', '.jpeg', '.webp', '.svg')
+    ext = os.path.splitext(file.filename or '')[1].lower()
+    if ext not in allowed_images:
+        raise HTTPException(status_code=400, detail=f"Unsupported image format. Allowed: {', '.join(allowed_images)}")
+    
+    # Save to persistent location
+    assets_dir = Path(storage_path) / "dynamic_prerolls" / "assets"
+    assets_dir.mkdir(parents=True, exist_ok=True)
+    
+    # Remove old custom logo if it exists
+    old_path = getattr(setting, 'nexup_dynamic_preroll_custom_logo_path', None)
+    if old_path and os.path.exists(old_path):
+        try:
+            os.remove(old_path)
+        except Exception:
+            pass
+    
+    dest = assets_dir / f"preroll_logo{ext}"
+    with open(dest, "wb") as f:
+        content = await file.read()
+        f.write(content)
+    
+    setting.nexup_dynamic_preroll_custom_logo_path = str(dest)
+    setting.updated_at = datetime.datetime.utcnow()
+    db.commit()
+    
+    _file_log(f"Custom Dynamic Preroll logo uploaded: {dest} ({len(content)} bytes)")
+    return {"success": True, "path": str(dest), "filename": file.filename, "size_bytes": len(content)}
+
+
+@app.delete("/nexup/preroll/upload-logo")
+def delete_dynamic_preroll_logo(db: Session = Depends(get_db)):
+    """Remove the custom logo image for Dynamic Preroll videos."""
+    setting = db.query(models.Setting).first()
+    if not setting:
+        raise HTTPException(status_code=400, detail="Settings not configured")
+    
+    old_path = getattr(setting, 'nexup_dynamic_preroll_custom_logo_path', None)
+    if old_path and os.path.exists(old_path):
+        try:
+            os.remove(old_path)
+        except Exception:
+            pass
+    
+    setting.nexup_dynamic_preroll_custom_logo_path = None
+    setting.updated_at = datetime.datetime.utcnow()
+    db.commit()
+    
+    _file_log("Custom Dynamic Preroll logo removed")
+    return {"success": True, "message": "Custom logo removed"}
+
+
+@app.get("/nexup/preroll/logo-image")
+def get_dynamic_preroll_logo(db: Session = Depends(get_db)):
+    """Serve the custom logo image for Dynamic Preroll live preview."""
+    setting = db.query(models.Setting).first()
+    if not setting:
+        raise HTTPException(status_code=404, detail="No settings")
+    
+    logo_path = getattr(setting, 'nexup_dynamic_preroll_custom_logo_path', None)
+    if not logo_path or not os.path.isfile(logo_path):
+        raise HTTPException(status_code=404, detail="No logo uploaded")
+    
+    from fastapi.responses import FileResponse
+    return FileResponse(logo_path)
+
+
 @app.post("/nexup/coming-soon-list/upload-logo")
 async def upload_coming_soon_logo(
     file: UploadFile = File(...),
@@ -17393,6 +17485,21 @@ def delete_coming_soon_logo(db: Session = Depends(get_db)):
     
     _file_log("Custom Coming Soon logo removed")
     return {"success": True, "message": "Custom logo removed"}
+
+
+@app.get("/nexup/coming-soon-list/logo-image")
+def get_coming_soon_logo(db: Session = Depends(get_db)):
+    """Serve the custom logo image for live preview."""
+    setting = db.query(models.Setting).first()
+    if not setting:
+        raise HTTPException(status_code=404, detail="No settings")
+    
+    logo_path = getattr(setting, 'nexup_coming_soon_list_custom_logo_path', None)
+    if not logo_path or not os.path.isfile(logo_path):
+        raise HTTPException(status_code=404, detail="No logo uploaded")
+    
+    from fastapi.responses import FileResponse
+    return FileResponse(logo_path)
 
 
 @app.post("/nexup/preroll/generate-coming-soon-list")
@@ -17581,7 +17688,8 @@ async def generate_coming_soon_list(
             max_items=max_items,
             include_audio=include_audio,
             custom_audio_path=getattr(setting, 'nexup_coming_soon_list_custom_audio_path', None),
-            custom_logo_path=getattr(setting, 'nexup_coming_soon_list_custom_logo_path', None)
+            custom_logo_path=getattr(setting, 'nexup_coming_soon_list_custom_logo_path', None),
+            logo_mode=getattr(setting, 'nexup_coming_soon_list_logo_mode', 'watermark')
         )
         
         if output_path:
@@ -17887,7 +17995,8 @@ def get_preroll_settings(db: Session = Depends(get_db)):
         "server_name": getattr(setting, 'nexup_dynamic_preroll_server_name', ''),
         "duration": getattr(setting, 'nexup_dynamic_preroll_duration', 5),
         "theme": getattr(setting, 'nexup_dynamic_preroll_theme', 'midnight'),
-        "preroll_path": preroll_path
+        "preroll_path": preroll_path,
+        "custom_logo_filename": os.path.basename(getattr(setting, 'nexup_dynamic_preroll_custom_logo_path', '') or '') or None
     }
 
 @app.get("/nexup/preroll/list")

@@ -302,6 +302,7 @@ class Scheduler:
         include_audio = getattr(setting, 'nexup_coming_soon_list_include_audio', False)
         custom_audio_path = getattr(setting, 'nexup_coming_soon_list_custom_audio_path', None)
         custom_logo_path = getattr(setting, 'nexup_coming_soon_list_custom_logo_path', None)
+        logo_mode = getattr(setting, 'nexup_coming_soon_list_logo_mode', 'watermark')
         bg_color = getattr(setting, 'nexup_coming_soon_list_bg_color', '#141428') or '#141428'
         text_color = getattr(setting, 'nexup_coming_soon_list_text_color', '#ffffff') or '#ffffff'
         accent_color = getattr(setting, 'nexup_coming_soon_list_accent_color', '#00d4ff') or '#00d4ff'
@@ -374,7 +375,8 @@ class Scheduler:
                     max_items=max_items,
                     include_audio=include_audio,
                     custom_audio_path=custom_audio_path,
-                    custom_logo_path=custom_logo_path
+                    custom_logo_path=custom_logo_path,
+                    logo_mode=logo_mode
                 )
                 if output_path:
                     _scheduler_log(f"NeX-Up auto-regen: Generated {output_filename}")
