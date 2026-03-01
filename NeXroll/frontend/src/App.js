@@ -776,7 +776,8 @@ const [applyingToServer, setApplyingToServer] = useState(false);
     customAudioFilename: null,  // User-uploaded custom audio filename
     customLogoFilename: null,  // User-uploaded custom logo filename
     logoMode: 'watermark',  // 'watermark' = faded bg, 'replace' = replaces server name
-    availableDays: 1  // Days to show "Available Now!" before auto-removal
+    availableDays: 1,  // Days to show "Available Now!" before auto-removal
+    maxAvailableNow: 0  // Max "Available Now!" items to show (0 = no limit)
   });
   const [comingSoonListGenerating, setComingSoonListGenerating] = useState(false);
   const [generatedComingSoonLists, setGeneratedComingSoonLists] = useState([]);
@@ -15350,7 +15351,8 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
           customAudioFilename: data.coming_soon_list_custom_audio_filename || null,
           customLogoFilename: data.coming_soon_list_custom_logo_filename || null,
           logoMode: data.coming_soon_list_logo_mode || 'watermark',
-          availableDays: data.coming_soon_available_days || 1
+          availableDays: data.coming_soon_available_days || 1,
+          maxAvailableNow: data.coming_soon_max_available_now ?? 0
         }));
         // Mark settings as loaded to enable auto-save
         setTimeout(() => { comingSoonListSettingsLoadedRef.current = true; }, 100);
@@ -15377,6 +15379,7 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
       if (settings.includeAudio !== undefined) params.append('coming_soon_list_include_audio', settings.includeAudio.toString());
       if (settings.logoMode !== undefined) params.append('coming_soon_list_logo_mode', settings.logoMode);
       if (settings.availableDays !== undefined) params.append('coming_soon_available_days', settings.availableDays.toString());
+      if (settings.maxAvailableNow !== undefined) params.append('coming_soon_max_available_now', settings.maxAvailableNow.toString());
       
       await fetch(apiUrl('/nexup/settings?' + params.toString()), { method: 'PUT' });
     } catch (err) {
@@ -19350,10 +19353,12 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
                     TMDB API Key
                   </label>
                   <input
-                    type="text"
+                    type={nexupSettings.tmdb_api_key ? 'password' : 'text'}
                     placeholder="Enter your TMDB API key (optional)"
                     value={nexupSettings.tmdb_api_key || ''}
                     onChange={(e) => handleUpdateNexupSettings({ tmdb_api_key: e.target.value || null })}
+                    onFocus={(e) => { e.target.type = 'text'; }}
+                    onBlur={(e) => { if (nexupSettings.tmdb_api_key) e.target.type = 'password'; }}
                     style={{ width: '75%', padding: '0.5rem', borderRadius: '4px', border: '1px solid var(--border-color)' }}
                     autoComplete="off"
                   />
@@ -19475,7 +19480,7 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
                 
                 <div>
                   <label style={{ display: 'block', marginBottom: '0.5rem', fontWeight: 'bold' }}>
-                    Available Now! Duration
+                    Available Now! Settings
                   </label>
                   <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
                     <input
@@ -19502,6 +19507,32 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
                   </div>
                   <p style={{ fontSize: '0.8rem', color: '#888', marginTop: '0.25rem' }}>
                     Days to display "Available Now!" after a movie/show is downloaded before auto-removing from the Coming Soon list
+                  </p>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginTop: '0.75rem' }}>
+                    <input
+                      type="number"
+                      min="0"
+                      max="50"
+                      value={comingSoonListSettings.maxAvailableNow}
+                      onChange={(e) => {
+                        const val = Math.max(0, Math.min(50, parseInt(e.target.value) || 0));
+                        setComingSoonListSettings(prev => ({ ...prev, maxAvailableNow: val }));
+                        saveComingSoonListSettings({ maxAvailableNow: val });
+                      }}
+                      style={{ 
+                        width: '60px', 
+                        padding: '0.5rem', 
+                        borderRadius: '4px', 
+                        border: '1px solid var(--border-color)',
+                        textAlign: 'center',
+                        fontSize: '1rem',
+                        fontWeight: 600
+                      }}
+                    />
+                    <span style={{ fontSize: '0.9rem', color: '#888' }}>{comingSoonListSettings.maxAvailableNow === 0 ? 'no limit' : `max item${comingSoonListSettings.maxAvailableNow !== 1 ? 's' : ''}`}</span>
+                  </div>
+                  <p style={{ fontSize: '0.8rem', color: '#888', marginTop: '0.25rem' }}>
+                    Max "Available Now!" items to show on the list. 0 = no limit. Only the most recently added items are kept.
                   </p>
                 </div>
               </div>
@@ -20585,7 +20616,7 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
                   )}
                 </div>
 
-                {/* Available Now! Duration Setting */}
+                {/* Available Now! Settings */}
                 <div style={{ 
                   padding: '0.85rem 1rem', 
                   backgroundColor: 'rgba(255,255,255,0.03)', 
@@ -20594,12 +20625,13 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
                 }}>
                   <div>
                     <div style={{ marginBottom: '0.5rem' }}>
-                      <strong style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', fontSize: '0.95rem' }}><CheckCircle size={15} style={{ color: '#00d4ff' }} /> Available Now! Duration</strong>
+                      <strong style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', fontSize: '0.95rem' }}><CheckCircle size={15} style={{ color: '#00d4ff' }} /> Available Now! Settings</strong>
                       <span style={{ fontSize: '0.8rem', color: '#888' }}>
-                        Days to show "Available Now!" before auto-removing from the list
+                        Control how "Available Now!" items appear on the Coming Soon list
                       </span>
                     </div>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.5rem' }}>
+                      <span style={{ fontSize: '0.85rem', color: '#aaa', minWidth: '90px' }}>Duration:</span>
                       <input
                         type="number"
                         min="1"
@@ -20618,8 +20650,33 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
                           fontWeight: 600
                         }}
                       />
-                      <span style={{ fontSize: '0.9rem', color: '#888' }}>day{comingSoonListSettings.availableDays !== 1 ? 's' : ''}</span>
+                      <span style={{ fontSize: '0.85rem', color: '#888' }}>day{comingSoonListSettings.availableDays !== 1 ? 's' : ''}</span>
                     </div>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                      <span style={{ fontSize: '0.85rem', color: '#aaa', minWidth: '90px' }}>Max items:</span>
+                      <input
+                        type="number"
+                        min="0"
+                        max="50"
+                        value={comingSoonListSettings.maxAvailableNow}
+                        onChange={(e) => setComingSoonListSettings(prev => ({ ...prev, maxAvailableNow: Math.max(0, Math.min(50, parseInt(e.target.value) || 0)) }))}
+                        style={{ 
+                          width: '60px', 
+                          padding: '0.4rem', 
+                          borderRadius: '4px', 
+                          border: '1px solid var(--border-color)',
+                          backgroundColor: 'var(--input-bg)',
+                          color: 'var(--text-color)',
+                          textAlign: 'center',
+                          fontSize: '1rem',
+                          fontWeight: 600
+                        }}
+                      />
+                      <span style={{ fontSize: '0.85rem', color: '#888' }}>{comingSoonListSettings.maxAvailableNow === 0 ? '(no limit)' : `item${comingSoonListSettings.maxAvailableNow !== 1 ? 's' : ''}`}</span>
+                    </div>
+                    <p style={{ fontSize: '0.75rem', color: '#666', marginTop: '0.4rem', marginBottom: 0 }}>
+                      Limits how many "Available Now!" items appear. 0 = no limit. Only the most recently added items are shown.
+                    </p>
                   </div>
                 </div>
 

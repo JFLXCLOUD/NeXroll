@@ -16,8 +16,22 @@
 
 ### Coming Soon List Generator
 
+**Available Now! Settings (renamed from "Available Now! Duration")**
+- Renamed the card to "Available Now! Settings" to better reflect its expanded functionality
+- Added a **Max Items** setting to limit how many "Available Now!" items appear on the list
+- When set (e.g., 3), only the most recently added items with "Available Now!" status are shown
+- Set to 0 for no limit (default behavior)
+- Setting persists across sessions and is respected by auto-regeneration
+
 **Color Settings Expanded by Default**
 - The Color Settings section (Background, Text, Accent) is now visible by default instead of collapsed
+
+### NeX-Up Settings
+
+**TMDB API Key Security**
+- The TMDB API Key input field is now masked (password-style) once a key is configured
+- Click into the field to reveal the key for editing
+- Prevents accidental exposure of the API key on screen
 
 ### UI / Styling
 

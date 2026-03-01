@@ -232,6 +232,7 @@ def ensure_schema() -> None:
                 ("nexup_coming_soon_list_custom_logo_path", "nexup_coming_soon_list_custom_logo_path TEXT"),
                 ("nexup_coming_soon_list_logo_mode", "nexup_coming_soon_list_logo_mode TEXT DEFAULT 'watermark'"),
                 ("nexup_coming_soon_available_days", "nexup_coming_soon_available_days INTEGER DEFAULT 1"),
+                ("nexup_coming_soon_max_available_now", "nexup_coming_soon_max_available_now INTEGER DEFAULT 0"),
                 ("nexup_trailer_retention_days", "nexup_trailer_retention_days INTEGER DEFAULT 7"),
             ]
             for col, ddl in nexup_columns:
@@ -14156,8 +14157,9 @@ def get_nexup_settings(user: models.User = Depends(require_auth), db: Session = 
         "coming_soon_list_logo_mode": getattr(setting, 'nexup_coming_soon_list_logo_mode', 'watermark'),
         # Release date preference (which date to use for "Coming Soon")
         "release_date_preference": getattr(setting, 'nexup_release_date_preference', 'digital_first'),
-        # Available Now! duration (days after download before removal)
+        # Available Now! settings
         "coming_soon_available_days": getattr(setting, 'nexup_coming_soon_available_days', 1),
+        "coming_soon_max_available_now": getattr(setting, 'nexup_coming_soon_max_available_now', 0),
         # Trailer retention (days before auto-deleting downloaded trailers)
         "trailer_retention_days": getattr(setting, 'nexup_trailer_retention_days', 7)
     }
@@ -14195,6 +14197,7 @@ def update_nexup_settings(
     coming_soon_list_logo_mode: Optional[str] = None,
     release_date_preference: Optional[str] = None,
     coming_soon_available_days: Optional[int] = None,
+    coming_soon_max_available_now: Optional[int] = None,
     trailer_retention_days: Optional[int] = None,
     db: Session = Depends(get_db)
 ):
@@ -14325,9 +14328,11 @@ def update_nexup_settings(
     if release_date_preference is not None:
         if release_date_preference in ['digital_first', 'digital_only', 'physical_first', 'theatrical']:
             setting.nexup_release_date_preference = release_date_preference
-    # Available Now! duration
+    # Available Now! settings
     if coming_soon_available_days is not None:
         setting.nexup_coming_soon_available_days = max(1, min(30, coming_soon_available_days))
+    if coming_soon_max_available_now is not None:
+        setting.nexup_coming_soon_max_available_now = max(0, min(50, coming_soon_max_available_now))
     # Trailer retention days (0 = keep forever, max 365)
     if trailer_retention_days is not None:
         setting.nexup_trailer_retention_days = max(0, min(365, trailer_retention_days))
@@ -15069,6 +15074,20 @@ async def _auto_regenerate_coming_soon_list(db: Session):
         
         # Sort by release date and limit
         items.sort(key=lambda x: x.get('release_date') or '9999-12-31')
+        
+        # Apply max "Available Now!" items limit
+        max_available_now = getattr(setting, 'nexup_coming_soon_max_available_now', 0) or 0
+        if max_available_now > 0:
+            available_items = [i for i in items if i.get('available_now', False)]
+            non_available_items = [i for i in items if not i.get('available_now', False)]
+            if len(available_items) > max_available_now:
+                available_items.sort(key=lambda x: x.get('release_date') or '0000-01-01', reverse=True)
+                kept = available_items[:max_available_now]
+                removed_count = len(available_items) - max_available_now
+                _file_log(f"Coming Soon List auto-regen: Limited 'Available Now!' items from {len(available_items)} to {max_available_now}")
+                items = non_available_items + kept
+                items.sort(key=lambda x: x.get('release_date') or '9999-12-31')
+        
         items = items[:max_items]
         
         # Convert colors from CSS hex (#141428) to FFmpeg format (0x141428)
@@ -17658,6 +17677,20 @@ async def generate_coming_soon_list(
     
     # Sort by release date
     items.sort(key=lambda x: x.get('release_date') or '9999-12-31')
+    
+    # Apply max "Available Now!" items limit
+    max_available_now = getattr(setting, 'nexup_coming_soon_max_available_now', 0) or 0
+    if max_available_now > 0:
+        available_items = [i for i in items if i.get('available_now', False)]
+        non_available_items = [i for i in items if not i.get('available_now', False)]
+        if len(available_items) > max_available_now:
+            # Keep only the most recently added (last N by release date, reversed)
+            available_items.sort(key=lambda x: x.get('release_date') or '0000-01-01', reverse=True)
+            kept = available_items[:max_available_now]
+            removed_count = len(available_items) - max_available_now
+            _file_log(f"[COMING-SOON-LIST] Limited 'Available Now!' items from {len(available_items)} to {max_available_now} (removed {removed_count})")
+            items = non_available_items + kept
+            items.sort(key=lambda x: x.get('release_date') or '9999-12-31')
     
     # Convert colors from CSS hex to FFmpeg format
     bg_ffmpeg = bg_color.replace('#', '0x')

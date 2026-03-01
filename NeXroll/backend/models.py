@@ -308,6 +308,7 @@ class Setting(Base):
     nexup_coming_soon_list_custom_logo_path = Column(String, nullable=True)  # User-uploaded custom logo image path
     nexup_coming_soon_list_logo_mode = Column(String, default='watermark')  # 'watermark' (faded bg) or 'replace' (replaces server name)
     nexup_coming_soon_available_days = Column(Integer, default=1)  # Days to show "Available Now!" after download before auto-removing
+    nexup_coming_soon_max_available_now = Column(Integer, default=0)  # Max "Available Now!" items to show (0 = no limit)
     nexup_trailer_retention_days = Column(Integer, default=7)  # Days to retain downloaded trailers before auto-deleting (0 = keep forever)
     
     # Authentication Settings (Optional - for PWA/remote access)
