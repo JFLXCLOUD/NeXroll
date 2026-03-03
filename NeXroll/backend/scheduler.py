@@ -223,7 +223,7 @@ class Scheduler:
             if not storage_path:
                 return  # Storage not configured
             
-            now = datetime.datetime.utcnow()
+            now = datetime.datetime.now()
             
             # Check if enough time has passed since last auto-sync
             if self._last_nexup_sync_time:
@@ -270,9 +270,25 @@ class Scheduler:
             if auto_regen:
                 try:
                     _scheduler_log("NeX-Up auto-sync: Regenerating Coming Soon List videos...")
-                    self._regenerate_coming_soon_lists(db, setting)
+                    from backend.main import _auto_regenerate_coming_soon_list
+                    from backend.database import SessionLocal
+                    # Use a fresh DB session — the original may be stale after
+                    # the Radarr/Sonarr syncs consumed it across event-loop boundaries.
+                    regen_db = SessionLocal()
+                    try:
+                        loop = asyncio.new_event_loop()
+                        asyncio.set_event_loop(loop)
+                        try:
+                            loop.run_until_complete(_auto_regenerate_coming_soon_list(regen_db))
+                        finally:
+                            loop.close()
+                        _scheduler_log("NeX-Up auto-sync: Coming Soon List regeneration completed")
+                    finally:
+                        regen_db.close()
                 except Exception as e:
                     _scheduler_log(f"NeX-Up auto-sync: Coming Soon List regeneration error: {e}", level="ERROR")
+                    import traceback
+                    _scheduler_log(f"NeX-Up auto-sync: Traceback: {traceback.format_exc()}", level="ERROR")
             
             # Update last sync time
             self._last_nexup_sync_time = now
@@ -519,8 +535,8 @@ class Scheduler:
                 current_count += 1
                 _scheduler_log(f"NeX-Up auto-sync: Downloaded trailer for '{movie['title']}'")
         
-        # Update last sync time
-        setting.nexup_last_sync = datetime.datetime.utcnow()
+        # Update last sync time (use local time for display)
+        setting.nexup_last_sync = datetime.datetime.now()
         db.commit()
         
         _scheduler_log(f"NeX-Up Radarr auto-sync: Downloaded {downloaded} new movie trailers")
@@ -679,8 +695,8 @@ class Scheduler:
                 current_count += 1
                 _scheduler_log(f"NeX-Up auto-sync: Downloaded trailer for TV show '{show['title']}'")
         
-        # Update last sync time
-        setting.nexup_last_sonarr_sync = datetime.datetime.utcnow()
+        # Update last sync time (use local time for display)
+        setting.nexup_last_sonarr_sync = datetime.datetime.now()
         db.commit()
         
         _scheduler_log(f"NeX-Up Sonarr auto-sync: Downloaded {downloaded} new TV trailers")

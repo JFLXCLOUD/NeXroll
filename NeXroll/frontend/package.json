@@ -1,6 +1,6 @@
 {
   "name": "frontend",
-  "version": "1.11.0-beta.7",
+  "version": "1.11.0-beta.8",
   "private": true,
   "dependencies": {
     "@dnd-kit/core": "^6.3.1",

@@ -518,6 +518,7 @@ def migrate_legacy_community_prerolls() -> None:
                 response = requests.get(
                     f'{DEFAULT_COMMUNITY_BASE_URL}/api/search',
                     params={'query': search_title, 'limit': 5},
+                    headers=_community_headers(),
                     timeout=5
                 )
                 
@@ -1570,7 +1571,17 @@ COMMUNITY_SEARCH_COOLDOWN = 5  # seconds between searches per IP
 
 # Community preroll server defaults
 DEFAULT_COMMUNITY_BASE_URL = "https://prerolls.uk"
-COMMUNITY_SERVERS_JSON_URL = "https://test.prerolls.uk/servers.json"
+COMMUNITY_SERVERS_JSON_URL = "https://prerolls.uk/servers.json"
+
+# Shared User-Agent for ALL outbound requests to community servers.
+COMMUNITY_USER_AGENT = f"NeXRoll/{app_version} (+https://github.com/JFLXCLOUD/NeXroll)"
+
+def _community_headers(extra=None) -> dict:
+    """Return common HTTP headers for community server requests."""
+    h = {"User-Agent": COMMUNITY_USER_AGENT}
+    if extra:
+        h.update(extra)
+    return h
 
 # Local index for Typical Nerds prerolls (faster than remote scraping)
 PREROLLS_INDEX_PATH = Path(os.environ.get("PROGRAMDATA", os.path.expanduser("~"))) / "NeXroll" / "prerolls_index.json"
@@ -14102,6 +14113,7 @@ def get_nexup_settings(user: models.User = Depends(require_auth), db: Session = 
             "auto_refresh_hours": 24,
             "max_trailer_duration": 180,
             "last_sync": None,
+            "next_sync": None,
             "category_id": None,
             "download_delay": 5,
             "max_concurrent": 1,
@@ -14109,8 +14121,18 @@ def get_nexup_settings(user: models.User = Depends(require_auth), db: Session = 
             "sonarr_enabled": False,
             "sonarr_url": None,
             "sonarr_connected": False,
-            "tv_category_id": None
+            "tv_category_id": None,
+            "last_sonarr_sync": None,
+            "next_sonarr_sync": None
         }
+    
+    # Compute next sync times from last sync + auto_refresh_hours
+    auto_refresh_hours = getattr(setting, 'nexup_auto_refresh_hours', 24) or 24
+    last_radarr = getattr(setting, 'nexup_last_sync', None)
+    last_sonarr = getattr(setting, 'nexup_last_sonarr_sync', None)
+    refresh_delta = datetime.timedelta(hours=auto_refresh_hours)
+    next_radarr = (last_radarr + refresh_delta).isoformat() if last_radarr and auto_refresh_hours > 0 else None
+    next_sonarr = (last_sonarr + refresh_delta).isoformat() if last_sonarr and auto_refresh_hours > 0 else None
     
     return {
         "enabled": getattr(setting, 'nexup_enabled', False),
@@ -14125,7 +14147,8 @@ def get_nexup_settings(user: models.User = Depends(require_auth), db: Session = 
         "playback_order": getattr(setting, 'nexup_playback_order', 'release_date'),
         "auto_refresh_hours": getattr(setting, 'nexup_auto_refresh_hours', 24),
         "max_trailer_duration": getattr(setting, 'nexup_max_trailer_duration', 180),
-        "last_sync": getattr(setting, 'nexup_last_sync', None).isoformat() if getattr(setting, 'nexup_last_sync', None) else None,
+        "last_sync": last_radarr.isoformat() if last_radarr else None,
+        "next_sync": next_radarr,
         "category_id": getattr(setting, 'nexup_category_id', None),
         "download_delay": getattr(setting, 'nexup_download_delay', 5),
         "max_concurrent": getattr(setting, 'nexup_max_concurrent', 1),
@@ -14136,7 +14159,8 @@ def get_nexup_settings(user: models.User = Depends(require_auth), db: Session = 
         "sonarr_url": getattr(setting, 'nexup_sonarr_url', None),
         "sonarr_connected": bool(getattr(setting, 'nexup_sonarr_url', None) and getattr(setting, 'nexup_sonarr_api_key', None)),
         "tv_category_id": getattr(setting, 'nexup_tv_category_id', None),
-        "last_sonarr_sync": getattr(setting, 'nexup_last_sonarr_sync', None).isoformat() if getattr(setting, 'nexup_last_sonarr_sync', None) else None,
+        "last_sonarr_sync": last_sonarr.isoformat() if last_sonarr else None,
+        "next_sonarr_sync": next_sonarr,
         # Unmonitored content settings
         "include_unmonitored_movies": getattr(setting, 'nexup_include_unmonitored_movies', False),
         "include_unmonitored_shows": getattr(setting, 'nexup_include_unmonitored_shows', False),
@@ -14611,8 +14635,8 @@ async def get_upcoming_shows(db: Session = Depends(get_db)):
         show['trailer_db_id'] = trailer.id if trailer else None
         show['has_trailer'] = True  # We'll try to find one via TMDB
         
-        # Mark as "available now" if has_file from Sonarr or trailer was marked as downloaded
-        show['available_now'] = show.get('has_file', False) or (trailer is not None and trailer.downloaded_at is not None)
+        # Mark as "available now" only if Sonarr says the episode file exists
+        show['available_now'] = show.get('has_file', False)
         
         # If available, check grace period
         if show['available_now']:
@@ -14993,6 +15017,8 @@ async def _auto_regenerate_coming_soon_list(db: Session):
         # Fetch items from Radarr/Sonarr APIs (all upcoming content)
         items = []
         days_ahead = getattr(setting, 'nexup_days_ahead', 90) or 90
+        available_days = getattr(setting, 'nexup_coming_soon_available_days', 1) or 1
+        today = datetime.date.today()
         
         # Get movies from Radarr API
         if source in ["movies", "both"]:
@@ -15002,12 +15028,21 @@ async def _auto_regenerate_coming_soon_list(db: Session):
                     release_date_pref = getattr(setting, 'nexup_release_date_preference', 'digital_first')
                     movies = await radarr_connector.get_upcoming_movies(days_ahead, release_date_preference=release_date_pref)
                     for movie in movies:
+                        is_available = movie.get('has_file', False)
+                        # Apply "Available Now!" grace period — skip items past the cutoff
+                        if is_available:
+                            try:
+                                rd = datetime.datetime.fromisoformat(movie.get('release_date', '')).date()
+                                if (today - rd).days > available_days:
+                                    continue
+                            except Exception:
+                                pass
                         items.append({
                             'title': movie.get('title', ''),
                             'release_date': movie.get('release_date', ''),
                             'poster_url': movie.get('poster_url', ''),
                             'type': 'movie',
-                            'available_now': movie.get('has_file', False)
+                            'available_now': is_available
                         })
                     _file_log(f"Coming Soon List auto-regen: Found {len(movies)} upcoming movies from Radarr")
                 except Exception as e:
@@ -15021,6 +15056,15 @@ async def _auto_regenerate_coming_soon_list(db: Session):
                     include_unmonitored_shows = getattr(setting, 'nexup_include_unmonitored_shows', False)
                     shows = await sonarr_connector.get_upcoming_premieres(days_ahead, include_unmonitored=include_unmonitored_shows)
                     for show in shows:
+                        is_available = show.get('has_file', False)
+                        # Apply "Available Now!" grace period — skip items past the cutoff
+                        if is_available:
+                            try:
+                                rd = datetime.datetime.fromisoformat(show.get('release_date', '')).date()
+                                if (today - rd).days > available_days:
+                                    continue
+                            except Exception:
+                                pass
                         title = show.get('title', '')
                         season_number = show.get('season_number', 1)
                         if season_number and season_number > 1:
@@ -15030,7 +15074,7 @@ async def _auto_regenerate_coming_soon_list(db: Session):
                             'release_date': show.get('release_date', ''),
                             'poster_url': show.get('poster_url', ''),
                             'type': 'show',
-                            'available_now': show.get('has_file', False)
+                            'available_now': is_available
                         })
                     _file_log(f"Coming Soon List auto-regen: Found {len(shows)} upcoming shows from Sonarr")
                 except Exception as e:
@@ -17576,6 +17620,8 @@ async def generate_coming_soon_list(
     # Fetch from Radarr/Sonarr APIs (ALL upcoming content, not just downloaded trailers)
     items = []
     days_ahead = getattr(setting, 'nexup_days_ahead', 90) or 90
+    available_days = getattr(setting, 'nexup_coming_soon_available_days', 1) or 1
+    today = datetime.date.today()
     
     # Get movies from Radarr API
     if source in ["movies", "both"]:
@@ -17585,12 +17631,21 @@ async def generate_coming_soon_list(
                 release_date_pref = getattr(setting, 'nexup_release_date_preference', 'digital_first')
                 movies = await radarr_connector.get_upcoming_movies(days_ahead, release_date_preference=release_date_pref)
                 for movie in movies:
+                    is_available = movie.get('has_file', False)
+                    # Apply "Available Now!" grace period — skip items past the cutoff
+                    if is_available:
+                        try:
+                            rd = datetime.datetime.fromisoformat(movie.get('release_date', '')).date()
+                            if (today - rd).days > available_days:
+                                continue
+                        except Exception:
+                            pass
                     items.append({
                         'title': movie.get('title', ''),
                         'release_date': movie.get('release_date', ''),
                         'poster_url': movie.get('poster_url', ''),
                         'type': 'movie',
-                        'available_now': movie.get('has_file', False)
+                        'available_now': is_available
                     })
                 _file_log(f"[COMING-SOON-LIST] Found {len(movies)} upcoming movies from Radarr API")
             except Exception as e:
@@ -17606,6 +17661,15 @@ async def generate_coming_soon_list(
                 include_unmonitored_shows = getattr(setting, 'nexup_include_unmonitored_shows', False)
                 shows = await sonarr_connector.get_upcoming_premieres(days_ahead, include_unmonitored=include_unmonitored_shows)
                 for show in shows:
+                    is_available = show.get('has_file', False)
+                    # Apply "Available Now!" grace period — skip items past the cutoff
+                    if is_available:
+                        try:
+                            rd = datetime.datetime.fromisoformat(show.get('release_date', '')).date()
+                            if (today - rd).days > available_days:
+                                continue
+                        except Exception:
+                            pass
                     title = show.get('title', '')
                     season_number = show.get('season_number', 1)
                     if season_number and season_number > 1:
@@ -17615,7 +17679,7 @@ async def generate_coming_soon_list(
                         'release_date': show.get('release_date', ''),
                         'poster_url': show.get('poster_url', ''),
                         'type': 'show',
-                        'available_now': show.get('has_file', False)
+                        'available_now': is_available
                     })
                 _file_log(f"[COMING-SOON-LIST] Found {len(shows)} upcoming shows from Sonarr API")
             except Exception as e:
@@ -20202,6 +20266,17 @@ def remove_category_from_jellyfin(category_id: int, db: Session = Depends(get_db
 _community_health_cache = {"status": None, "checked_at": None, "error": None}
 COMMUNITY_HEALTH_CACHE_TTL = 300  # 5 minutes in seconds
 
+# Cache for community servers list (10 minute TTL)
+_community_servers_cache = {"data": None, "fetched_at": None}
+COMMUNITY_SERVERS_CACHE_TTL = 600  # 10 minutes
+
+# Cache for top5 community prerolls (30 minute TTL)
+_community_top5_cache = {"data": None, "fetched_at": None, "platform": None}
+COMMUNITY_TOP5_CACHE_TTL = 1800  # 30 minutes
+
+# Global lock for index building — only one build at a time across all users
+_index_build_lock = False
+
 @app.get("/community-prerolls/health")
 def check_community_prerolls_health(db: Session = Depends(get_db)):
     """
@@ -20233,7 +20308,7 @@ def check_community_prerolls_health(db: Session = Depends(get_db)):
         response = requests.get(
             _get_community_base_url(db) + "/",
             timeout=10,
-            headers={"User-Agent": f"NeXroll/{app_version}"}
+            headers=_community_headers()
         )
         response_time_ms = int((time.time() - start_time) * 1000)
         
@@ -20291,17 +20366,26 @@ def check_community_prerolls_health(db: Session = Depends(get_db)):
 def get_community_servers():
     """
     Fetch the list of available community preroll mirror servers from the
-    central servers.json endpoint.  Returns the server list so the frontend
-    can present a server selector.
+    central servers.json endpoint.  Results are cached for 10 minutes.
     """
+    import datetime
+    now = datetime.datetime.utcnow()
+
+    # Return cached result if still fresh
+    if (_community_servers_cache["fetched_at"] and
+        (now - _community_servers_cache["fetched_at"]).total_seconds() < COMMUNITY_SERVERS_CACHE_TTL):
+        return {**_community_servers_cache["data"], "cached": True}
+
     import requests as _requests
     try:
         resp = _requests.get(COMMUNITY_SERVERS_JSON_URL, timeout=10,
-                             headers={"User-Agent": f"NeXroll/{app_version}"})
+                             headers=_community_headers())
         if resp.ok:
             data = resp.json()
             servers = data.get("servers", [])
-            return {"servers": servers, "source": COMMUNITY_SERVERS_JSON_URL}
+            result = {"servers": servers, "source": COMMUNITY_SERVERS_JSON_URL}
+            _community_servers_cache.update({"data": result, "fetched_at": now})
+            return result
         return {"servers": [], "error": f"HTTP {resp.status_code}"}
     except Exception as e:
         _file_log(f"Failed to fetch community servers list: {e}")
@@ -20419,36 +20503,7 @@ def get_fair_use_status(db: Session = Depends(get_db)):
         "accepted_at": accepted_at.isoformat() + "Z" if accepted_at else None
     }
 
-@app.get("/community-prerolls/test-scrape")
-def test_community_scrape():
-    """Test endpoint to verify scraping works"""
-    try:
-        import requests
-        from bs4 import BeautifulSoup
-        
-        url = f"{DEFAULT_COMMUNITY_BASE_URL}/Holidays/Halloween/Carving%20Pumpkin%20-%20AwesomeAustn/"
-        response = requests.get(url, timeout=10)
-        soup = BeautifulSoup(response.text, 'html.parser')
-        
-        videos = []
-        for link in soup.find_all('a'):
-            href = link.get('href', '')
-            if href.endswith('.mp4'):
-                videos.append(href)
-        
-        return {
-            "status": "success",
-            "url": url,
-            "status_code": response.status_code,
-            "videos_found": len(videos),
-            "videos": videos
-        }
-    except Exception as e:
-        return {
-            "status": "error",
-            "error": str(e),
-            "traceback": str(__import__('traceback').format_exc())
-        }
+# /community-prerolls/test-scrape removed — debug endpoint not needed in production
 
 # ===== LOCAL INDEX SYSTEM FOR FASTER SEARCHES =====
 
@@ -20485,10 +20540,7 @@ def _build_prerolls_index(progress_callback=None, base_url=None) -> dict:
     _file_log("Building Typical Nerds prerolls index (this may take a few minutes)...")
     
     base_url = (base_url or DEFAULT_COMMUNITY_BASE_URL).rstrip("/")
-    headers = {
-        "Accept": "text/html,application/json",
-        "User-Agent": f"NeXroll/{app_version} (Index Builder; +https://github.com/JFLXCLOUD/NeXroll)"
-    }
+    headers = _community_headers({"Accept": "text/html,application/json"})
     
     index_data = {
         "version": "1.0",
@@ -20843,13 +20895,29 @@ def _search_local_index(index_data: dict, query: str = "", category: str = "", p
 @app.get("/community-prerolls/build-index")
 def build_community_prerolls_index(request: Request, db: Session = Depends(get_db)):
     """
-    Build the local prerolls index by scraping Typical Nerds directory.
+    Build the local prerolls index by scraping the community directory.
     This is a manual operation triggered by the user (e.g., "Refresh Index" button).
     
     WARNING: This may take several minutes and makes many HTTP requests.
     Only use when needed (e.g., weekly or when new prerolls are added).
     """
     import time
+    global _index_build_lock
+    
+    # Require Fair Use Policy acceptance before allowing index builds
+    setting = db.query(models.Setting).first()
+    if not setting or not getattr(setting, "community_fair_use_accepted", False):
+        raise HTTPException(
+            status_code=403,
+            detail="Fair Use Policy must be accepted before building the community index"
+        )
+    
+    # Global lock — only one index build at a time across all users
+    if _index_build_lock:
+        raise HTTPException(
+            status_code=429,
+            detail="An index build is already in progress. Please wait for it to finish."
+        )
     
     # Rate limiting: Only allow one build per IP every 10 minutes
     client_ip = request.client.host if request.client else "unknown"
@@ -20868,6 +20936,7 @@ def build_community_prerolls_index(request: Request, db: Session = Depends(get_d
             )
     
     community_search_rate_limit[rate_limit_key] = current_time
+    _index_build_lock = True
     
     try:
         index_data = _build_prerolls_index(base_url=_get_community_base_url(db))
@@ -20884,9 +20953,13 @@ def build_community_prerolls_index(request: Request, db: Session = Depends(get_d
             }
         else:
             raise HTTPException(status_code=500, detail="Failed to save index to disk")
+    except HTTPException:
+        raise
     except Exception as e:
         _file_log(f"Error building prerolls index: {e}")
         raise HTTPException(status_code=500, detail=f"Failed to build index: {str(e)}")
+    finally:
+        _index_build_lock = False
 
 
 @app.get("/community-prerolls/build-progress")
@@ -21046,10 +21119,7 @@ def search_community_prerolls(request: Request, query: str = "", category: str =
         # Try to connect to the community library
         base_url = _get_community_base_url(db)
         
-        headers = {
-            "Accept": "text/html,application/json",
-            "User-Agent": f"NeXroll/{app_version} (Rate-Limited Scraper; +https://github.com/JFLXCLOUD/NeXroll)"
-        }
+        headers = _community_headers({"Accept": "text/html,application/json"})
         
         # First, try the API endpoint if it exists (unlikely)
         search_url = f"{base_url}/api/search"
@@ -21321,15 +21391,40 @@ def search_community_prerolls(request: Request, query: str = "", category: str =
 @app.post("/community-prerolls/download")
 def download_community_preroll(
     request: CommunityPrerollDownloadRequest,
+    raw_request: Request,
     db: Session = Depends(get_db)
 ):
     """
     Download a preroll from the community library and import into local storage.
     
     Downloads the file into PREROLLS_DIR and creates a Preroll database entry.
+    Rate-limited to one download every 10 seconds per IP.
     """
     import urllib.request
     import urllib.parse
+    import time as _time
+    
+    # Require Fair Use Policy acceptance
+    setting = db.query(models.Setting).first()
+    if not setting or not getattr(setting, "community_fair_use_accepted", False):
+        raise HTTPException(
+            status_code=403,
+            detail="Fair Use Policy must be accepted before downloading community prerolls"
+        )
+    
+    # Rate limit downloads: 1 per 10 seconds per IP
+    client_ip = raw_request.client.host if raw_request.client else "unknown"
+    rate_key = f"download_{client_ip}"
+    now_ts = _time.time()
+    if rate_key in community_search_rate_limit:
+        elapsed = now_ts - community_search_rate_limit[rate_key]
+        if elapsed < 10:
+            remaining = int(10 - elapsed)
+            raise HTTPException(
+                status_code=429,
+                detail=f"Please wait {remaining} seconds before downloading another preroll."
+            )
+    community_search_rate_limit[rate_key] = now_ts
     
     if not (request.preroll_id or request.url):
         raise HTTPException(status_code=422, detail="Either preroll_id or url is required")
@@ -21398,7 +21493,7 @@ def download_community_preroll(
         
         # Download file using requests for better timeout control
         try:
-            response = requests.get(download_url, stream=True, timeout=60)
+            response = requests.get(download_url, stream=True, headers=_community_headers(), timeout=60)
             response.raise_for_status()
             with open(file_path, 'wb') as f:
                 for chunk in response.iter_content(chunk_size=8192):
@@ -21889,11 +21984,15 @@ def get_random_community_preroll(
         
         def scrape_directory(url, depth=0, max_depth=4):
             """Recursively scrape directories to find all video files"""
-            if depth > max_depth:
+            if depth > max_depth or len(all_files) >= 50:
                 return
             
+            # Respectful delay between requests (200ms)
+            import time as _t
+            _t.sleep(0.2)
+            
             try:
-                response = requests.get(url, timeout=5)
+                response = requests.get(url, headers=_community_headers(), timeout=5)
                 if response.status_code != 200:
                     return
                 
@@ -21908,7 +22007,8 @@ def get_random_community_preroll(
                     
                     # Check if it's a directory
                     if href.endswith('/'):
-                        scrape_directory(full_url, depth + 1, max_depth)
+                        if len(all_files) < 50:
+                            scrape_directory(full_url, depth + 1, max_depth)
                     # Check if it's a video file
                     elif href.endswith('.mp4'):
                         title = unquote(href.replace('.mp4', '').replace('%20', ' '))
@@ -21972,9 +22072,10 @@ def get_top5_community_prerolls(
 ):
     """
     Get top 5 featured/popular prerolls from the community library.
-    These are curated selections from popular categories.
+    Results are cached for 30 minutes to reduce server load.
     """
     import requests
+    import datetime
     from bs4 import BeautifulSoup
     from urllib.parse import urljoin, unquote
     
@@ -21985,6 +22086,13 @@ def get_top5_community_prerolls(
             status_code=403, 
             detail="Fair Use Policy must be accepted before accessing community prerolls"
         )
+    
+    # Return cached result if still fresh and same platform filter
+    now = datetime.datetime.utcnow()
+    if (_community_top5_cache["fetched_at"] and
+        _community_top5_cache["platform"] == platform and
+        (now - _community_top5_cache["fetched_at"]).total_seconds() < COMMUNITY_TOP5_CACHE_TTL):
+        return {**_community_top5_cache["data"], "cached": True}
     
     try:
         _file_log(f"Top 5 community prerolls request: platform='{platform}'")
@@ -22011,7 +22119,7 @@ def get_top5_community_prerolls(
             
             try:
                 url = urljoin(base_url, path)
-                response = requests.get(url, timeout=5)
+                response = requests.get(url, headers=_community_headers(), timeout=5)
                 
                 if response.status_code != 200:
                     continue
@@ -22053,10 +22161,15 @@ def get_top5_community_prerolls(
         
         _file_log(f"Top 5 prerolls found: {len(top_prerolls)}")
         
-        return {
+        result = {
             "found": len(top_prerolls),
             "results": top_prerolls[:5]
         }
+        
+        # Cache the result
+        _community_top5_cache.update({"data": result, "fetched_at": now, "platform": platform})
+        
+        return result
     
     except Exception as e:
         _file_log(f"Top 5 prerolls exception: {e}")

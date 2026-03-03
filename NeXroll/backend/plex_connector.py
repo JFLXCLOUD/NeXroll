@@ -384,8 +384,9 @@ class PlexConnector:
                                     print(f"WARNING: Form-data set returned {set_response.status_code} but value did not change; trying POST...")
 
                             # Method C: POST request (some Plex versions use POST)
+                            encoded_path = urllib.parse.quote(preroll_path, safe=":/\\;, ")
                             set_response = requests.post(
-                                f"{prefs_url}?{pref_name}={preroll_path}",
+                                f"{prefs_url}?{pref_name}={encoded_path}",
                                 headers=self.headers,
                                 timeout=10,
                                 verify=self._verify
@@ -419,9 +420,10 @@ class PlexConnector:
 
                             for value in value_formats:
                                 print(f"Trying CinemaTrailersPrerollID = '{value}'")
+                                encoded_value = urllib.parse.quote(value, safe=":/\\;, ")
 
                                 set_response = requests.put(
-                                    f"{prefs_url}?CinemaTrailersPrerollID={value}",
+                                    f"{prefs_url}?CinemaTrailersPrerollID={encoded_value}",
                                     headers=self.headers,
                                     timeout=10
                                 )
@@ -465,8 +467,9 @@ class PlexConnector:
                     if alt_response.status_code == 200:
                         print(f"Successfully accessed alternative endpoint: {endpoint}")
                         # Try to set preroll on this endpoint
+                        encoded_path = urllib.parse.quote(preroll_path, safe=":/\\;, ")
                         set_response = requests.put(
-                            f"{alt_url}?CinemaTrailersPrerollID={preroll_path}",
+                            f"{alt_url}?CinemaTrailersPrerollID={encoded_path}",
                             headers=self.headers,
                             timeout=5,
                             verify=self._verify

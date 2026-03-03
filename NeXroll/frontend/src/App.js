@@ -12,7 +12,7 @@ import PatternExport from './components/PatternExport';
 import SequencePreviewModal from './components/SequencePreviewModal';
 import { validateSequence, stringifySequence, parseSequence, cloneSequenceWithIds } from './utils/sequenceValidator';
 import { 
-    Calendar, CalendarDays, Clock, Play, Edit, Save, Trash, Trash2, Upload, 
+    Calendar, CalendarDays, ChevronLeft, Clock, Play, Edit, Save, Trash, Trash2, Upload, 
     Search, Folder, Film, BookOpen, Star, Plus, PlusCircle, Settings, Target, CheckCircle, Link, Link2,
     Sun, Moon, RefreshCw, Download, AlertTriangle, Ban, Crown, Shuffle, Lock, Bell,
     ListOrdered, Palette, Lightbulb, Inbox, FolderOpen, Wrench, FileText, Sliders, FolderSync,
@@ -734,7 +734,8 @@ const [applyingToServer, setApplyingToServer] = useState(false);
   const [showNexupUpcomingTV, setShowNexupUpcomingTV] = useState(false);
   const [showNexupTVTrailers, setShowNexupTVTrailers] = useState(false);
   const [tvSyncProgress, setTVSyncProgress] = useState(null);
-  const [nexupUpcomingTab, setNexupUpcomingTab] = useState('movies'); // 'movies' or 'shows'
+  const [nexupUpcomingTab, setNexupUpcomingTab] = useState('movies'); // 'movies', 'shows', or 'calendar'
+  const [nexupCalMonth, setNexupCalMonth] = useState(() => { const d = new Date(); return new Date(d.getFullYear(), d.getMonth(), 1); });
   const [trailerViewMode, setTrailerViewMode] = useState('list'); // 'list' or 'detailed'
   const [playingTrailer, setPlayingTrailer] = useState(null); // { type: 'movie'|'tv', trailer: {...} }
   const [thumbnailProgress, setThumbnailProgress] = useState(null); // { status: 'Rebuilding...', phase: 'processing' }
@@ -17047,20 +17048,41 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
           >
             <Tv size={18} /> TV Shows ({nexupUpcomingTV.length})
           </button>
-        </div>
-
-        {/* Refresh Button */}
-        <div style={{ display: 'flex', gap: '0.5rem' }}>
           <button
-            onClick={() => nexupUpcomingTab === 'movies' ? handleLoadNexupUpcoming() : loadNexupUpcomingTV()}
-            disabled={nexupLoading}
-            className="button"
-            style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}
+            onClick={() => { setNexupUpcomingTab('calendar'); handleLoadNexupUpcoming(); loadNexupUpcomingTV(); }}
+            style={{
+              padding: '0.75rem 1.5rem',
+              border: 'none',
+              borderBottom: nexupUpcomingTab === 'calendar' ? '3px solid #6f42c1' : '3px solid transparent',
+              backgroundColor: 'transparent',
+              color: nexupUpcomingTab === 'calendar' ? '#6f42c1' : 'var(--text-color)',
+              cursor: 'pointer',
+              fontSize: '0.95rem',
+              fontWeight: nexupUpcomingTab === 'calendar' ? 600 : 400,
+              display: 'flex',
+              alignItems: 'center',
+              gap: '0.5rem',
+              marginBottom: '-2px'
+            }}
           >
-            {nexupLoading ? <Loader2 size={16} className="spin" /> : <RefreshCw size={16} />}
-            Refresh List
+            <CalendarDays size={18} /> Calendar
           </button>
         </div>
+
+        {/* Refresh Button - hide on calendar tab */}
+        {nexupUpcomingTab !== 'calendar' && (
+          <div style={{ display: 'flex', gap: '0.5rem' }}>
+            <button
+              onClick={() => nexupUpcomingTab === 'movies' ? handleLoadNexupUpcoming() : loadNexupUpcomingTV()}
+              disabled={nexupLoading}
+              className="button"
+              style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}
+            >
+              {nexupLoading ? <Loader2 size={16} className="spin" /> : <RefreshCw size={16} />}
+              Refresh List
+            </button>
+          </div>
+        )}
 
         {/* Movies Tab Content */}
         {nexupUpcomingTab === 'movies' && (
@@ -17219,6 +17241,137 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
             )}
           </div>
         )}
+
+        {/* Calendar Tab Content */}
+        {nexupUpcomingTab === 'calendar' && (() => {
+          const year = nexupCalMonth.getFullYear();
+          const month = nexupCalMonth.getMonth();
+          const firstDay = new Date(year, month, 1).getDay(); // 0=Sun
+          const daysInMonth = new Date(year, month + 1, 0).getDate();
+          const monthName = nexupCalMonth.toLocaleString('default', { month: 'long', year: 'numeric' });
+
+          // Build a map of date -> items
+          const dateMap = {};
+          const addItem = (item, type) => {
+            const rd = item.release_date || item.air_date;
+            if (!rd) return;
+            const d = rd.substring(0, 10); // 'YYYY-MM-DD'
+            if (!dateMap[d]) dateMap[d] = [];
+            dateMap[d].push({ ...item, _type: type });
+          };
+          nexupUpcoming.forEach(m => addItem(m, 'movie'));
+          nexupUpcomingTV.forEach(s => addItem(s, 'show'));
+
+          const cells = [];
+          // Leading blanks
+          for (let i = 0; i < firstDay; i++) cells.push(null);
+          for (let d = 1; d <= daysInMonth; d++) cells.push(d);
+          // Trailing blanks to complete last row
+          while (cells.length % 7 !== 0) cells.push(null);
+
+          const todayStr = new Date().toISOString().substring(0, 10);
+
+          return (
+            <div className="card">
+              {/* Calendar header */}
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '1rem' }}>
+                <button
+                  onClick={() => setNexupCalMonth(new Date(year, month - 1, 1))}
+                  className="button"
+                  style={{ padding: '0.4rem 0.75rem', display: 'flex', alignItems: 'center' }}
+                ><ChevronLeft size={18} /></button>
+                <h2 style={{ margin: 0, fontSize: '1.25rem', fontWeight: 600 }}>{monthName}</h2>
+                <button
+                  onClick={() => setNexupCalMonth(new Date(year, month + 1, 1))}
+                  className="button"
+                  style={{ padding: '0.4rem 0.75rem', display: 'flex', alignItems: 'center' }}
+                ><ChevronRight size={18} /></button>
+              </div>
+
+              {/* Legend */}
+              <div style={{ display: 'flex', gap: '1rem', marginBottom: '0.75rem', fontSize: '0.8rem', color: 'var(--text-secondary)', flexWrap: 'wrap' }}>
+                <span style={{ display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
+                  <span style={{ width: 10, height: 10, borderRadius: 2, backgroundColor: '#007bff', display: 'inline-block' }} /> Movie
+                </span>
+                <span style={{ display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
+                  <span style={{ width: 10, height: 10, borderRadius: 2, backgroundColor: '#17a2b8', display: 'inline-block' }} /> TV Show
+                </span>
+                <span style={{ display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
+                  <span style={{ width: 10, height: 10, borderRadius: 2, backgroundColor: '#28a745', display: 'inline-block' }} /> Available Now
+                </span>
+              </div>
+
+              {/* Day-of-week headers */}
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', gap: '1px', textAlign: 'center' }}>
+                {['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].map(d => (
+                  <div key={d} style={{ padding: '0.4rem 0', fontWeight: 600, fontSize: '0.8rem', color: 'var(--text-secondary)', borderBottom: '2px solid var(--border-color)' }}>{d}</div>
+                ))}
+              </div>
+
+              {/* Calendar grid */}
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', gap: '1px' }}>
+                {cells.map((day, i) => {
+                  if (day === null) return <div key={`blank-${i}`} style={{ minHeight: '90px', backgroundColor: 'var(--bg-color)', opacity: 0.3, borderRadius: '4px' }} />;
+                  const dateStr = `${year}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+                  const dayItems = dateMap[dateStr] || [];
+                  const isToday = dateStr === todayStr;
+                  return (
+                    <div key={day} style={{
+                      minHeight: '90px',
+                      padding: '0.3rem',
+                      backgroundColor: isToday ? 'rgba(111, 66, 193, 0.08)' : 'var(--bg-color)',
+                      borderRadius: '4px',
+                      border: isToday ? '2px solid #6f42c1' : '1px solid var(--border-color)',
+                      display: 'flex',
+                      flexDirection: 'column'
+                    }}>
+                      <div style={{ fontSize: '0.8rem', fontWeight: isToday ? 700 : 400, color: isToday ? '#6f42c1' : 'var(--text-secondary)', marginBottom: '0.2rem' }}>{day}</div>
+                      <div style={{ flex: 1, overflow: 'hidden', display: 'flex', flexDirection: 'column', gap: '2px' }}>
+                        {dayItems.slice(0, 3).map((item, j) => {
+                          const isMovie = item._type === 'movie';
+                          const bgColor = item.available_now ? '#28a745' : isMovie ? '#007bff' : '#17a2b8';
+                          const label = isMovie
+                            ? (item.title || 'Movie')
+                            : (`${item.title || 'Show'}${item.season_number > 1 ? ` S${item.season_number}` : ''}`);
+                          return (
+                            <div
+                              key={`${item._type}-${j}`}
+                              title={`${label}${item.available_now ? ' (Available Now!)' : ''}`}
+                              style={{
+                                fontSize: '0.7rem',
+                                lineHeight: '1.2',
+                                padding: '1px 4px',
+                                borderRadius: '3px',
+                                backgroundColor: bgColor,
+                                color: '#fff',
+                                whiteSpace: 'nowrap',
+                                overflow: 'hidden',
+                                textOverflow: 'ellipsis',
+                                cursor: 'default'
+                              }}
+                            >{isMovie ? '🎬' : '📺'} {label}</div>
+                          );
+                        })}
+                        {dayItems.length > 3 && (
+                          <div style={{ fontSize: '0.65rem', color: 'var(--text-secondary)', textAlign: 'center' }}>+{dayItems.length - 3} more</div>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+
+              {/* Today button */}
+              <div style={{ display: 'flex', justifyContent: 'center', marginTop: '0.75rem' }}>
+                <button
+                  onClick={() => { const d = new Date(); setNexupCalMonth(new Date(d.getFullYear(), d.getMonth(), 1)); }}
+                  className="button"
+                  style={{ fontSize: '0.85rem', padding: '0.4rem 1rem', display: 'flex', alignItems: 'center', gap: '0.35rem' }}
+                ><Calendar size={14} /> Today</button>
+              </div>
+            </div>
+          );
+        })()}
 
         {/* TV Shows Tab Content */}
         {nexupUpcomingTab === 'shows' && (
@@ -17706,6 +17859,9 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
             {nexupSettings.last_sync && (
               <p style={{ fontSize: '0.85rem', color: '#666', marginTop: '0.5rem', marginBottom: 0 }}>
                 Last synced: {new Date(nexupSettings.last_sync).toLocaleString()}
+                {nexupSettings.next_sync && nexupSettings.auto_refresh_hours > 0 && (
+                  <> &middot; Next sync: {new Date(nexupSettings.next_sync).toLocaleString()}</>
+                )}
               </p>
             )}
           </>
@@ -17871,6 +18027,9 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
             {nexupSettings.last_sonarr_sync && (
               <p style={{ fontSize: '0.85rem', color: '#666', marginTop: '0.5rem', marginBottom: 0 }}>
                 Last synced: {new Date(nexupSettings.last_sonarr_sync).toLocaleString()}
+                {nexupSettings.next_sonarr_sync && nexupSettings.auto_refresh_hours > 0 && (
+                  <> &middot; Next sync: {new Date(nexupSettings.next_sonarr_sync).toLocaleString()}</>
+                )}
               </p>
             )}
           </>
@@ -20372,7 +20531,7 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
                       placeholder="Your Server"
                       value={comingSoonListSettings.serverName}
                       onChange={(e) => setComingSoonListSettings(prev => ({ ...prev, serverName: e.target.value }))}
-                      style={{ width: '100%', padding: '0.75rem', borderRadius: '8px', border: '1px solid var(--border-color)', fontSize: '1rem' }}
+                      style={{ width: '80%', padding: '0.75rem', borderRadius: '8px', border: '1px solid var(--border-color)', fontSize: '1rem' }}
                     />
                     <p style={{ fontSize: '0.8rem', color: '#888', marginTop: '0.25rem' }}>
                       Displayed as "Coming Soon to [Your Server Name]"

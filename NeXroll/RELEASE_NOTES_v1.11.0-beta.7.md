@@ -42,6 +42,20 @@
 - Matching option card sub-description colors
 - Consistent button styles, generate button containers, and generated lists sections
 
+### Community Prerolls
+
+**Custom User-Agent Header**
+- All outbound HTTP requests to the community preroll server now include a custom `NeXRoll/{version}` User-Agent header
+- Uses a shared `COMMUNITY_USER_AGENT` constant and `_community_headers()` helper for consistency
+
+**Server Load Protections**
+- Index building now requires Fair Use Policy acceptance and uses a global lock (only one build at a time)
+- Downloads are rate-limited to one every 10 seconds per IP and require Fair Use acceptance
+- Server list (`servers.json`) responses are cached for 10 minutes
+- Top 5 featured prerolls are cached for 30 minutes
+- Random preroll fallback scrape now includes 200ms delays between requests
+- Removed unused debug/test-scrape endpoint
+
 ---
 
 ## Changes in Beta.6
