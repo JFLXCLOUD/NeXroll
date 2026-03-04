@@ -271,9 +271,13 @@ class Scheduler:
                 try:
                     _scheduler_log("NeX-Up auto-sync: Regenerating Coming Soon List videos...")
                     from backend.main import _auto_regenerate_coming_soon_list
-                    from backend.database import SessionLocal
                     # Use a fresh DB session — the original may be stale after
                     # the Radarr/Sonarr syncs consumed it across event-loop boundaries.
+                    # NOTE: SessionLocal is already imported at module level (line 18).
+                    # Do NOT re-import it here — Python treats any `from X import Y`
+                    # inside a function as making Y a local variable for the ENTIRE
+                    # function, which shadows the module-level import and causes
+                    # "local variable referenced before assignment" at earlier usage.
                     regen_db = SessionLocal()
                     try:
                         loop = asyncio.new_event_loop()

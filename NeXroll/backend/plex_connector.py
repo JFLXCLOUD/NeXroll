@@ -293,10 +293,34 @@ class PlexConnector:
         except Exception:
             return None
 
+    # Maximum preroll string length that Plex reliably accepts via query params.
+    # Plex silently ignores values over ~20KB in form-data PUTs.
+    _PLEX_MAX_QUERY_URL_LEN = 8000     # Skip Method A when URL exceeds this
+    _PLEX_MAX_PREROLL_LEN_WARN = 20000 # Warn user when value exceeds this
+
+    # Preference names that are actually preroll path settings.
+    # CinemaTrailersType, CinemaTrailersFromLibrary, etc. are NOT path settings.
+    _PREROLL_PATH_PREFS = [
+        "CinemaTrailersPrerollID",
+        "cinemaTrailersPrerollID",
+        "CinemaTrailersPreroll",
+        "cinemaTrailersPreroll",
+        "PrerollID",
+        "prerollID",
+    ]
+
     def set_preroll(self, preroll_path: str) -> bool:
         """Set the preroll video in Plex server settings"""
         try:
-            print(f"Attempting to set Plex preroll to: {preroll_path}")
+            path_len = len(preroll_path)
+            path_count = preroll_path.count(';') + 1 if preroll_path else 0
+            print(f"Attempting to set Plex preroll ({path_len} chars, ~{path_count} paths)")
+
+            # Warn if the combined preroll string is excessively long
+            if path_len > self._PLEX_MAX_PREROLL_LEN_WARN:
+                print(f"WARNING: Preroll string is very long ({path_len:,} chars, ~{path_count} files). "
+                      f"Plex may reject or silently ignore values over ~20KB. "
+                      f"Consider reducing the number of preroll files or using shorter paths.")
 
             # Method 1: Try to set via preferences API with different approaches
             prefs_url = f"{self.url}/:/prefs"
@@ -312,28 +336,18 @@ class PlexConnector:
                 try:
                     root = ET.fromstring(response.content)
 
-                    # Look for preroll-related preferences
+                    # Look for preroll-related preferences (only path-type prefs)
                     preroll_prefs = []
                     for setting in root.findall('.//Setting'):
                         setting_id = setting.get('id', '')
-                        if ('preroll' in setting_id.lower() or
-                            'cinema' in setting_id.lower() or
-                            'trailer' in setting_id.lower()):
+                        if setting_id in self._PREROLL_PATH_PREFS:
                             preroll_prefs.append(setting_id)
 
-                    print(f"Found preroll-related preferences: {preroll_prefs}")
+                    print(f"Found preroll path preferences: {preroll_prefs}")
 
-                    # Prioritize the exact preference name from Plex settings
-                    preference_names = [
-                        "CinemaTrailersPrerollID",  # Exact match from user's HTML
-                        "cinemaTrailersPrerollID",
-                        "CinemaTrailersPreroll",
-                        "cinemaTrailersPreroll",
-                        "PrerollID",
-                        "prerollID"
-                    ]
-
-                    # Add any discovered preferences that aren't already in our list
+                    # Build preference name list: prioritize known names,
+                    # then add any discovered ones that are actually path prefs
+                    preference_names = list(self._PREROLL_PATH_PREFS)
                     for pref in preroll_prefs:
                         if pref not in preference_names:
                             preference_names.append(pref)
@@ -342,28 +356,39 @@ class PlexConnector:
                     seen = set()
                     preference_names = [x for x in preference_names if not (x in seen or seen.add(x))]
 
+                    # Pre-compute encoded path for re-use
+                    encoded_path = urllib.parse.quote(preroll_path, safe=":/\\;, ")
+
+                    # Check if query-param URL would be too long
+                    sample_url = f"{prefs_url}?CinemaTrailersPrerollID={encoded_path}"
+                    skip_query_param = len(sample_url) > self._PLEX_MAX_QUERY_URL_LEN
+
+                    if skip_query_param:
+                        print(f"INFO: Encoded URL is {len(sample_url):,} chars (>{self._PLEX_MAX_QUERY_URL_LEN}); "
+                              f"skipping query-param method to avoid 400 errors")
+
                     # Try each preference name
                     for pref_name in preference_names:
                         try:
-                            print(f"Trying to set preference: {pref_name} = {preroll_path}")
+                            print(f"Trying to set preference: {pref_name}")
 
                             # Method A: PUT request with query parameters (correct method per Plex API guide)
-                            qval = urllib.parse.quote(preroll_path, safe=":/\\;, ")
-                            set_response = requests.put(
-                                f"{prefs_url}?{pref_name}={qval}",
-                                headers=self.headers,
-                                timeout=10,
-                                verify=self._verify
-                            )
+                            if not skip_query_param:
+                                set_response = requests.put(
+                                    f"{prefs_url}?{pref_name}={encoded_path}",
+                                    headers=self.headers,
+                                    timeout=10,
+                                    verify=self._verify
+                                )
 
-                            print(f"Query param response for {pref_name}: {set_response.status_code}")
-                            if set_response.status_code in [200, 201, 204]:
-                                print(f"SUCCESS: Attempted to set Plex preroll using preference: {pref_name}; verifying...")
-                                if self._verify_preroll_setting(pref_name, preroll_path):
-                                    print(f"SUCCESS: Verified preference {pref_name} updated.")
-                                    return True
-                                else:
-                                    print(f"WARNING: Preference {pref_name} returned {set_response.status_code} but value did not change; trying next method...")
+                                print(f"Query param response for {pref_name}: {set_response.status_code}")
+                                if set_response.status_code in [200, 201, 204]:
+                                    print(f"SUCCESS: Attempted to set Plex preroll using preference: {pref_name}; verifying...")
+                                    if self._verify_preroll_setting(pref_name, preroll_path):
+                                        print(f"SUCCESS: Verified preference {pref_name} updated.")
+                                        return True
+                                    else:
+                                        print(f"WARNING: Preference {pref_name} returned {set_response.status_code} but value did not change; trying next method...")
 
                             # Method B: PUT request with form data (fallback)
                             set_response = requests.put(
@@ -384,65 +409,63 @@ class PlexConnector:
                                     print(f"WARNING: Form-data set returned {set_response.status_code} but value did not change; trying POST...")
 
                             # Method C: POST request (some Plex versions use POST)
-                            encoded_path = urllib.parse.quote(preroll_path, safe=":/\\;, ")
-                            set_response = requests.post(
-                                f"{prefs_url}?{pref_name}={encoded_path}",
-                                headers=self.headers,
-                                timeout=10,
-                                verify=self._verify
-                            )
+                            if not skip_query_param:
+                                set_response = requests.post(
+                                    f"{prefs_url}?{pref_name}={encoded_path}",
+                                    headers=self.headers,
+                                    timeout=10,
+                                    verify=self._verify
+                                )
 
-                            print(f"POST response for {pref_name}: {set_response.status_code}")
-                            if set_response.status_code in [200, 201, 204]:
-                                print(f"SUCCESS: Successfully set Plex preroll using POST: {pref_name}")
-                                # Verify the setting was applied
-                                if self._verify_preroll_setting(pref_name, preroll_path):
-                                    return True
-                                else:
-                                    print(f"WARNING: Setting appeared successful but verification failed for {pref_name}")
-                                    continue
+                                print(f"POST response for {pref_name}: {set_response.status_code}")
+                                if set_response.status_code in [200, 201, 204]:
+                                    print(f"SUCCESS: Successfully set Plex preroll using POST: {pref_name}")
+                                    # Verify the setting was applied
+                                    if self._verify_preroll_setting(pref_name, preroll_path):
+                                        return True
+                                    else:
+                                        print(f"WARNING: Setting appeared successful but verification failed for {pref_name}")
+                                        continue
 
                         except Exception as e:
                             print(f"ERROR: Failed to set preference {pref_name}: {str(e)}")
                             continue
 
-                    # If CinemaTrailersPrerollID is available but all methods failed, try one more time with explicit focus
+                    # If CinemaTrailersPrerollID is available but all methods failed,
+                    # retry with just the full path (NO destructive fallbacks like "" or "0")
                     if "CinemaTrailersPrerollID" in preroll_prefs:
                         print("INFO: Retrying with CinemaTrailersPrerollID specifically...")
                         try:
-                            # Try multiple value formats for CinemaTrailersPrerollID
-                            value_formats = [
-                                preroll_path,  # Full path/URL
-                                preroll_path.split('/')[-1] if '/' in preroll_path else preroll_path.split('\\')[-1],  # Just filename
-                                "",  # Empty string to clear
-                                "0"  # Some systems use 0 to disable
-                            ]
+                            # Only try the real value — NEVER set empty/"0" as a fallback
+                            encoded_value = urllib.parse.quote(preroll_path, safe=":/\\;, ")
 
-                            for value in value_formats:
-                                print(f"Trying CinemaTrailersPrerollID = '{value}'")
-                                encoded_value = urllib.parse.quote(value, safe=":/\\;, ")
+                            print(f"Trying CinemaTrailersPrerollID = full path ({path_len} chars)")
+                            set_response = requests.put(
+                                f"{prefs_url}?CinemaTrailersPrerollID={encoded_value}",
+                                headers=self.headers,
+                                timeout=10,
+                                verify=self._verify
+                            )
 
-                                set_response = requests.put(
-                                    f"{prefs_url}?CinemaTrailersPrerollID={encoded_value}",
-                                    headers=self.headers,
-                                    timeout=10
-                                )
-
-                                if set_response.status_code in [200, 201, 204]:
-                                    print(f"SUCCESS: Successfully set CinemaTrailersPrerollID to: '{value}'")
-                                    # Verify the setting
-                                    if self._verify_preroll_setting("CinemaTrailersPrerollID", value):
-                                        return True
-                                    else:
-                                        print("WARNING: Setting succeeded but verification failed")
-                                        continue
+                            if set_response.status_code in [200, 201, 204]:
+                                print(f"SUCCESS: Successfully set CinemaTrailersPrerollID")
+                                if self._verify_preroll_setting("CinemaTrailersPrerollID", preroll_path):
+                                    return True
                                 else:
-                                    print(f"ERROR: CinemaTrailersPrerollID='{value}' failed: {set_response.status_code}")
+                                    print("WARNING: Setting succeeded but verification failed")
+                            else:
+                                print(f"ERROR: CinemaTrailersPrerollID full path failed: {set_response.status_code}")
 
                         except Exception as e:
                             print(f"ERROR: CinemaTrailersPrerollID retry failed: {str(e)}")
 
-                    print("All preference setting attempts failed")
+                    # Log clear failure reason when string is too long
+                    if path_len > self._PLEX_MAX_PREROLL_LEN_WARN:
+                        print(f"FAILURE: Could not set preroll — the combined path string ({path_len:,} chars, "
+                              f"~{path_count} files) exceeds Plex's practical limit. "
+                              f"Reduce the number of preroll files or use shorter file paths.")
+                    else:
+                        print("All preference setting attempts failed")
 
                 except ET.ParseError as e:
                     print(f"Failed to parse Plex preferences XML: {e}")
@@ -487,12 +510,8 @@ class PlexConnector:
                     print(f"Alternative endpoint {endpoint} failed: {str(e)}")
                     continue
 
-            # Method 3: Try to upload the preroll file to Plex and reference it
-            # This is a more complex approach that would require file upload
-            print("All direct preference methods failed. Preroll may need to be uploaded to Plex first.")
-
             # Return False to indicate failure - the preroll was not successfully set
-            print("All attempts to set preroll failed")
+            print("FAILURE: All attempts to set preroll failed — preroll has NOT been changed")
             return False
 
         except requests.exceptions.Timeout:
