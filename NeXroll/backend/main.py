@@ -2631,6 +2631,9 @@ def set_preroll_folder(body: PrerollFolderUpdate):
             os.makedirs(PREROLLS_DIR, exist_ok=True)
             os.makedirs(THUMBNAILS_DIR, exist_ok=True)
             print(f"Preroll folder reset to default: {PREROLLS_DIR}")
+            log_event('INFO', 'system', f'Preroll storage folder reset to default: {PREROLLS_DIR}',
+                      source='settings.preroll_folder',
+                      details={'previous': old, 'new_folder': PREROLLS_DIR, 'action': 'reset'})
             return {
                 "status": "ok",
                 "folder": PREROLLS_DIR,
@@ -2649,6 +2652,9 @@ def set_preroll_folder(body: PrerollFolderUpdate):
                 f.write("ok")
             os.remove(test_file)
         except Exception as e:
+            log_event('WARNING', 'system', f'Preroll folder change rejected — not writable: {new_path}',
+                      source='settings.preroll_folder',
+                      details={'folder': new_path, 'error': str(e)})
             return {"error": f"Folder is not writable: {e}"}
 
         # Ensure thumbnails subfolder exists
@@ -2663,6 +2669,9 @@ def set_preroll_folder(body: PrerollFolderUpdate):
         PREROLLS_DIR = new_path
         THUMBNAILS_DIR = thumb_dir
         print(f"Preroll folder changed: {old_dir} → {PREROLLS_DIR}")
+        log_event('INFO', 'system', f'Preroll storage folder changed: {old_dir} → {PREROLLS_DIR}',
+                  source='settings.preroll_folder',
+                  details={'previous': old_dir, 'new_folder': PREROLLS_DIR, 'action': 'change'})
 
         return {
             "status": "ok",
@@ -2718,6 +2727,9 @@ def move_preroll_folder(body: PrerollFolderMove):
                 f.write("ok")
             os.remove(test_file)
         except Exception as e:
+            log_event('WARNING', 'system', f'Preroll file transfer rejected — destination not writable: {new_path}',
+                      source='settings.preroll_folder_move',
+                      details={'new_folder': new_path, 'error': str(e)})
             return {"error": f"Destination folder is not writable: {e}"}
 
         # Transfer files
@@ -2771,6 +2783,13 @@ def move_preroll_folder(body: PrerollFolderMove):
         THUMBNAILS_DIR = os.path.join(new_path, "thumbnails")
         os.makedirs(THUMBNAILS_DIR, exist_ok=True)
         print(f"Preroll folder {operation}: {old_dir} → {PREROLLS_DIR} ({moved_count} files, {path_updates} DB paths updated)")
+        log_event('INFO', 'system',
+                  f'Preroll files {operation}: {old_dir} → {PREROLLS_DIR} ({moved_count} files, {path_updates} DB paths updated)',
+                  source='settings.preroll_folder_move',
+                  details={'previous': old_dir, 'new_folder': PREROLLS_DIR,
+                           'operation': operation, 'files_transferred': moved_count,
+                           'errors': error_count, 'db_paths_updated': path_updates,
+                           'total_size_mb': round(total_bytes / (1024 * 1024), 1) if total_bytes else 0})
 
         return {
             "status": "ok",
@@ -2784,6 +2803,9 @@ def move_preroll_folder(body: PrerollFolderMove):
             "message": f"Successfully {operation} {moved_count} files to {PREROLLS_DIR}" + (f" ({error_count} errors)" if error_count else ""),
         }
     except Exception as e:
+        log_event('ERROR', 'system', f'Failed to move preroll folder: {e}',
+                  source='settings.preroll_folder_move',
+                  details={'new_folder': body.new_folder, 'old_folder': body.old_folder})
         return {"error": f"Failed to move preroll folder: {e}"}
     finally:
         db.close()
