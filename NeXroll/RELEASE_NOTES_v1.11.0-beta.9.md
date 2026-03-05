@@ -22,7 +22,8 @@
 **Auto-Chunking for Large Preroll Libraries**
 - When the full preroll string is too long for Plex to accept, NeXroll now automatically selects a **random subset** of paths that fits within Plex's limits (~7,500 chars)
 - The full string is always tried first — chunking only activates as a fallback when the full value fails
-- Each scheduler cycle picks a different random selection, so all prerolls get rotation over time
+- The chunked subset is **cached and reused for 8 hours** before a fresh random selection is made, reducing unnecessary Plex API churn
+- The cache automatically invalidates if the underlying preroll list changes (e.g., files added/removed, category switched)
 - Supports both semicolon (random mode) and comma (sequential mode) delimiters
 - Example: 636 files at ~44KB → auto-chunks to ~100 random files at ~7KB → succeeds
 - Log output clearly shows: "Auto-chunking: randomly selected 102 of 636 paths (7,498 chars)"

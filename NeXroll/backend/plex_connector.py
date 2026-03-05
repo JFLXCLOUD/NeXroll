@@ -300,6 +300,14 @@ class PlexConnector:
     _PLEX_MAX_PREROLL_LEN_WARN = 20000 # Warn user when value exceeds this
     _PLEX_SAFE_PREROLL_LEN = 7500      # Target length for chunked subsets
 
+    # Chunked-rotation cache (class-level — persists across ephemeral instances)
+    # When auto-chunking is active, reuse the same random subset for this many
+    # hours before re-shuffling, so Plex isn't hit with a new set every cycle.
+    _CHUNK_ROTATION_HOURS = 8
+    _chunk_cache_value: Optional[str] = None      # The cached chunked string
+    _chunk_cache_source_hash: Optional[int] = None # hash() of the full input
+    _chunk_cache_time: Optional[datetime] = None   # When the cache was set
+
     # Preference names that are actually preroll path settings.
     # CinemaTrailersType, CinemaTrailersFromLibrary, etc. are NOT path settings.
     _PREROLL_PATH_PREFS = [
@@ -316,12 +324,28 @@ class PlexConnector:
         When the full preroll string exceeds Plex's limits, select a random
         subset of paths that fits within _PLEX_SAFE_PREROLL_LEN.
         Returns the chunked string, or None if chunking isn't needed/possible.
+        The result is cached at class level and reused for _CHUNK_ROTATION_HOURS
+        before a fresh random selection is made.
         """
         paths = [p.strip() for p in preroll_path.split(delimiter) if p.strip()]
         if len(paths) <= 1:
             return None  # Single path — chunking won't help
 
-        # Shuffle to get a different random subset each cycle
+        # Check class-level cache: reuse the same subset for _CHUNK_ROTATION_HOURS
+        source_hash = hash(preroll_path)
+        now = datetime.now()
+        cls = type(self)
+        if (cls._chunk_cache_value is not None
+                and cls._chunk_cache_source_hash == source_hash
+                and cls._chunk_cache_time is not None
+                and (now - cls._chunk_cache_time).total_seconds() < cls._CHUNK_ROTATION_HOURS * 3600):
+            remaining = cls._CHUNK_ROTATION_HOURS * 3600 - (now - cls._chunk_cache_time).total_seconds()
+            hours_left = remaining / 3600
+            print(f"INFO: Reusing cached chunk subset ({len(cls._chunk_cache_value):,} chars) — "
+                  f"next rotation in {hours_left:.1f}h")
+            return cls._chunk_cache_value
+
+        # Cache miss or expired — shuffle to get a new random subset
         random.shuffle(paths)
 
         selected = []
@@ -338,7 +362,16 @@ class PlexConnector:
             # Even a single path is too long — just use the first one
             selected = [paths[0]]
 
-        return delimiter.join(selected)
+        result = delimiter.join(selected)
+
+        # Store in class-level cache for reuse across instances
+        cls._chunk_cache_value = result
+        cls._chunk_cache_source_hash = source_hash
+        cls._chunk_cache_time = now
+        print(f"INFO: New chunk rotation — randomly selected {len(selected)} of {len(paths)} paths. "
+              f"This subset will be reused for {cls._CHUNK_ROTATION_HOURS}h before re-shuffling.")
+
+        return result
 
     def set_preroll(self, preroll_path: str) -> bool:
         """Set the preroll video in Plex server settings.
@@ -373,7 +406,7 @@ class PlexConnector:
                     result = self._try_set_preroll_value(chunked)
                     if result:
                         print(f"SUCCESS: Chunked preroll set with {chunk_count}/{path_count} random paths. "
-                              f"A different random selection will be used next cycle.")
+                              f"This subset rotates every {self._CHUNK_ROTATION_HOURS}h.")
                         return True
                     else:
                         print(f"FAILURE: Even chunked subset ({len(chunked):,} chars) failed to set.")
