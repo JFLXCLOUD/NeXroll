@@ -250,6 +250,19 @@ class Scheduler:
             sonarr_api_key = getattr(setting, 'nexup_sonarr_api_key', None)
             auto_regen = getattr(setting, 'nexup_coming_soon_list_auto_regen', False)
             
+            # Import _auto_regenerate_coming_soon_list HERE (synchronous context)
+            # NOT inside the async function. In PyInstaller, the main module runs
+            # as __main__, so `from backend.main import ...` triggers a fresh
+            # module load which calls uvicorn.run() -> asyncio.run(). That fails
+            # if done inside a running event loop.
+            regen_func = None
+            if auto_regen:
+                try:
+                    from backend.main import _auto_regenerate_coming_soon_list
+                    regen_func = _auto_regenerate_coming_soon_list
+                except Exception as e:
+                    _scheduler_log(f"NeX-Up auto-sync: Could not import regen function: {e}", level="ERROR")
+            
             # Run ALL async operations (sync + regen) inside a SINGLE asyncio.run()
             # to avoid Windows ProactorEventLoop issues when creating/destroying
             # multiple event loops in the same thread.
@@ -257,7 +270,7 @@ class Scheduler:
                 db, setting,
                 nexup_enabled, radarr_url, radarr_api_key,
                 sonarr_enabled, sonarr_url, sonarr_api_key,
-                auto_regen
+                regen_func
             ))
             
             # Update last sync time
@@ -272,12 +285,16 @@ class Scheduler:
     async def _do_nexup_async_work(self, db, setting,
                                     nexup_enabled, radarr_url, radarr_api_key,
                                     sonarr_enabled, sonarr_url, sonarr_api_key,
-                                    auto_regen):
+                                    regen_func):
         """
         Run all NeX-Up async operations (Radarr sync, Sonarr sync, Coming Soon
         regen) inside a SINGLE event loop. This avoids Windows ProactorEventLoop
         issues that occur when creating/destroying multiple event loops in the
         same thread — which caused the Coming Soon regeneration to silently hang.
+
+        regen_func: The _auto_regenerate_coming_soon_list coroutine function,
+                    pre-imported by the synchronous caller to avoid triggering
+                    module re-execution inside the running event loop.
         """
         # 1) Radarr sync
         if nexup_enabled and radarr_url and radarr_api_key:
@@ -296,15 +313,14 @@ class Scheduler:
                 _scheduler_log(f"NeX-Up auto-sync: Sonarr sync error: {e}", level="ERROR")
 
         # 3) Coming Soon List regeneration
-        if auto_regen:
+        if regen_func is not None:
             try:
                 _scheduler_log("NeX-Up auto-sync: Regenerating Coming Soon List videos...")
-                from backend.main import _auto_regenerate_coming_soon_list
                 # Use a fresh DB session — the original may be stale after
                 # the Radarr/Sonarr syncs consumed it across event-loop boundaries.
                 regen_db = SessionLocal()
                 try:
-                    await _auto_regenerate_coming_soon_list(regen_db)
+                    await regen_func(regen_db)
                     _scheduler_log("NeX-Up auto-sync: Coming Soon List regeneration completed")
                 finally:
                     regen_db.close()
