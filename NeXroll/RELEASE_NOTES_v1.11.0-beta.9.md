@@ -19,6 +19,14 @@
 - Clear failure messages now explain that too many preroll files or long paths are the cause, instead of silently failing
 - Logs the character count and approximate file count at the start of each `set_preroll()` call
 
+**Auto-Chunking for Large Preroll Libraries**
+- When the full preroll string is too long for Plex to accept, NeXroll now automatically selects a **random subset** of paths that fits within Plex's limits (~7,500 chars)
+- The full string is always tried first — chunking only activates as a fallback when the full value fails
+- Each scheduler cycle picks a different random selection, so all prerolls get rotation over time
+- Supports both semicolon (random mode) and comma (sequential mode) delimiters
+- Example: 636 files at ~44KB → auto-chunks to ~100 random files at ~7KB → succeeds
+- Log output clearly shows: "Auto-chunking: randomly selected 102 of 636 paths (7,498 chars)"
+
 **Preference Name Filtering**
 - `set_preroll()` no longer iterates through non-path preferences like `CinemaTrailersType`, `CinemaTrailersFromLibrary`, `CinemaTrailersFromTheater`, `CinemaTrailersFromBluRay`, and `CinemaTrailersIncludeEnglish`
 - These are boolean/integer settings, not path settings — attempting to set a file path into them was incorrect and wasted API calls
@@ -47,6 +55,8 @@ These fixes are critical for users with large preroll libraries (100+ files). Pr
 - Result: prerolls wiped every 5 minutes, no prerolls ever play
 
 After this fix:
-- The function correctly reports failure when Plex can't accept the value
+- The full string is always tried first (no behavior change for small libraries)
+- If it's too long, a random subset is auto-selected that fits within Plex's limits
+- Each cycle rotates to a different random subset, maintaining variety across the full library
 - Prerolls are never destructively cleared as a "fallback"
-- Users are given clear log messages explaining the length limit issue
+- Users are given clear log messages explaining what's happening
