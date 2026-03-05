@@ -241,58 +241,24 @@ class Scheduler:
             
             _scheduler_log(f"NeX-Up auto-sync starting (interval: every {auto_refresh_hours}h)")
             
-            # Perform Radarr sync if configured
+            # Gather config flags for the async wrapper
             radarr_url = getattr(setting, 'nexup_radarr_url', None)
             radarr_api_key = getattr(setting, 'nexup_radarr_api_key', None)
             nexup_enabled = getattr(setting, 'nexup_enabled', False)
-            
-            if nexup_enabled and radarr_url and radarr_api_key:
-                try:
-                    _scheduler_log("NeX-Up auto-sync: Syncing Radarr movie trailers...")
-                    asyncio.run(self._sync_radarr_trailers(db, setting))
-                except Exception as e:
-                    _scheduler_log(f"NeX-Up auto-sync: Radarr sync error: {e}", level="ERROR")
-            
-            # Perform Sonarr sync if configured
             sonarr_enabled = getattr(setting, 'nexup_sonarr_enabled', False)
             sonarr_url = getattr(setting, 'nexup_sonarr_url', None)
             sonarr_api_key = getattr(setting, 'nexup_sonarr_api_key', None)
-            
-            if sonarr_enabled and sonarr_url and sonarr_api_key:
-                try:
-                    _scheduler_log("NeX-Up auto-sync: Syncing Sonarr TV trailers...")
-                    asyncio.run(self._sync_sonarr_trailers(db, setting))
-                except Exception as e:
-                    _scheduler_log(f"NeX-Up auto-sync: Sonarr sync error: {e}", level="ERROR")
-            
-            # Auto-regenerate Coming Soon List videos if enabled
             auto_regen = getattr(setting, 'nexup_coming_soon_list_auto_regen', False)
-            if auto_regen:
-                try:
-                    _scheduler_log("NeX-Up auto-sync: Regenerating Coming Soon List videos...")
-                    from backend.main import _auto_regenerate_coming_soon_list
-                    # Use a fresh DB session — the original may be stale after
-                    # the Radarr/Sonarr syncs consumed it across event-loop boundaries.
-                    # NOTE: SessionLocal is already imported at module level (line 18).
-                    # Do NOT re-import it here — Python treats any `from X import Y`
-                    # inside a function as making Y a local variable for the ENTIRE
-                    # function, which shadows the module-level import and causes
-                    # "local variable referenced before assignment" at earlier usage.
-                    regen_db = SessionLocal()
-                    try:
-                        loop = asyncio.new_event_loop()
-                        asyncio.set_event_loop(loop)
-                        try:
-                            loop.run_until_complete(_auto_regenerate_coming_soon_list(regen_db))
-                        finally:
-                            loop.close()
-                        _scheduler_log("NeX-Up auto-sync: Coming Soon List regeneration completed")
-                    finally:
-                        regen_db.close()
-                except Exception as e:
-                    _scheduler_log(f"NeX-Up auto-sync: Coming Soon List regeneration error: {e}", level="ERROR")
-                    import traceback
-                    _scheduler_log(f"NeX-Up auto-sync: Traceback: {traceback.format_exc()}", level="ERROR")
+            
+            # Run ALL async operations (sync + regen) inside a SINGLE asyncio.run()
+            # to avoid Windows ProactorEventLoop issues when creating/destroying
+            # multiple event loops in the same thread.
+            asyncio.run(self._do_nexup_async_work(
+                db, setting,
+                nexup_enabled, radarr_url, radarr_api_key,
+                sonarr_enabled, sonarr_url, sonarr_api_key,
+                auto_regen
+            ))
             
             # Update last sync time
             self._last_nexup_sync_time = now
@@ -302,6 +268,50 @@ class Scheduler:
             _scheduler_log(f"NeX-Up auto-sync error: {e}", level="ERROR")
         finally:
             db.close()
+
+    async def _do_nexup_async_work(self, db, setting,
+                                    nexup_enabled, radarr_url, radarr_api_key,
+                                    sonarr_enabled, sonarr_url, sonarr_api_key,
+                                    auto_regen):
+        """
+        Run all NeX-Up async operations (Radarr sync, Sonarr sync, Coming Soon
+        regen) inside a SINGLE event loop. This avoids Windows ProactorEventLoop
+        issues that occur when creating/destroying multiple event loops in the
+        same thread — which caused the Coming Soon regeneration to silently hang.
+        """
+        # 1) Radarr sync
+        if nexup_enabled and radarr_url and radarr_api_key:
+            try:
+                _scheduler_log("NeX-Up auto-sync: Syncing Radarr movie trailers...")
+                await self._sync_radarr_trailers(db, setting)
+            except Exception as e:
+                _scheduler_log(f"NeX-Up auto-sync: Radarr sync error: {e}", level="ERROR")
+
+        # 2) Sonarr sync
+        if sonarr_enabled and sonarr_url and sonarr_api_key:
+            try:
+                _scheduler_log("NeX-Up auto-sync: Syncing Sonarr TV trailers...")
+                await self._sync_sonarr_trailers(db, setting)
+            except Exception as e:
+                _scheduler_log(f"NeX-Up auto-sync: Sonarr sync error: {e}", level="ERROR")
+
+        # 3) Coming Soon List regeneration
+        if auto_regen:
+            try:
+                _scheduler_log("NeX-Up auto-sync: Regenerating Coming Soon List videos...")
+                from backend.main import _auto_regenerate_coming_soon_list
+                # Use a fresh DB session — the original may be stale after
+                # the Radarr/Sonarr syncs consumed it across event-loop boundaries.
+                regen_db = SessionLocal()
+                try:
+                    await _auto_regenerate_coming_soon_list(regen_db)
+                    _scheduler_log("NeX-Up auto-sync: Coming Soon List regeneration completed")
+                finally:
+                    regen_db.close()
+            except Exception as e:
+                _scheduler_log(f"NeX-Up auto-sync: Coming Soon List regeneration error: {e}", level="ERROR")
+                import traceback
+                _scheduler_log(f"NeX-Up auto-sync: Traceback: {traceback.format_exc()}", level="ERROR")
 
     def _regenerate_coming_soon_lists(self, db: Session, setting):
         """Regenerate Coming Soon List videos after sync"""
