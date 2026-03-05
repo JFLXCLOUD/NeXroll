@@ -250,18 +250,23 @@ class Scheduler:
             sonarr_api_key = getattr(setting, 'nexup_sonarr_api_key', None)
             auto_regen = getattr(setting, 'nexup_coming_soon_list_auto_regen', False)
             
-            # Import _auto_regenerate_coming_soon_list HERE (synchronous context)
-            # NOT inside the async function. In PyInstaller, the main module runs
-            # as __main__, so `from backend.main import ...` triggers a fresh
-            # module load which calls uvicorn.run() -> asyncio.run(). That fails
-            # if done inside a running event loop.
+            # Resolve _auto_regenerate_coming_soon_list WITHOUT `from backend.main import`
+            # In PyInstaller frozen builds, backend.main is loaded as __main__.
+            # Doing `from backend.main import X` triggers a FULL re-execution of
+            # the module (including uvicorn.run()), which spawns a second server
+            # instance that crashes on port 9393 already-in-use.
+            # Instead, pull the function from the already-loaded module via sys.modules.
             regen_func = None
             if auto_regen:
                 try:
-                    from backend.main import _auto_regenerate_coming_soon_list
-                    regen_func = _auto_regenerate_coming_soon_list
+                    import sys as _sys
+                    _main_mod = _sys.modules.get('backend.main') or _sys.modules.get('__main__')
+                    if _main_mod:
+                        regen_func = getattr(_main_mod, '_auto_regenerate_coming_soon_list', None)
+                    if regen_func is None:
+                        _scheduler_log("NeX-Up auto-sync: _auto_regenerate_coming_soon_list not found in loaded modules", level="WARNING")
                 except Exception as e:
-                    _scheduler_log(f"NeX-Up auto-sync: Could not import regen function: {e}", level="ERROR")
+                    _scheduler_log(f"NeX-Up auto-sync: Could not resolve regen function: {e}", level="ERROR")
             
             # Run ALL async operations (sync + regen) inside a SINGLE asyncio.run()
             # to avoid Windows ProactorEventLoop issues when creating/destroying
@@ -1110,17 +1115,25 @@ class Scheduler:
             self._last_applied[chosen_key] = now
 
             # Record for UI feedback
-            from backend.main import RECENT_GENRE_APPLICATIONS
+            # Use sys.modules to avoid `from backend.main import` which triggers
+            # full module re-execution in PyInstaller frozen builds.
+            import sys as _sys
+            _main_mod = _sys.modules.get('backend.main') or _sys.modules.get('__main__')
+            if _main_mod:
+                RECENT_GENRE_APPLICATIONS = getattr(_main_mod, 'RECENT_GENRE_APPLICATIONS', None)
+            else:
+                RECENT_GENRE_APPLICATIONS = None
             application = {
                 "timestamp": now.isoformat() + "Z",
                 "genre": matched_genre_display,
                 "category_name": matched_cat.name,
                 "rating_key": chosen_key
             }
-            RECENT_GENRE_APPLICATIONS.append(application)
-            # Keep only last 10
-            if len(RECENT_GENRE_APPLICATIONS) > 10:
-                RECENT_GENRE_APPLICATIONS.pop(0)
+            if RECENT_GENRE_APPLICATIONS is not None:
+                RECENT_GENRE_APPLICATIONS.append(application)
+                # Keep only last 10
+                if len(RECENT_GENRE_APPLICATIONS) > 10:
+                    RECENT_GENRE_APPLICATIONS.pop(0)
 
             _scheduler_log(f"Genre mapping applied for ratingKey={chosen_key}: '{matched_genre_display}' -> category '{matched_cat.name}'")
 
