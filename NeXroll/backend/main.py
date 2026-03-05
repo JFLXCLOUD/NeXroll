@@ -482,6 +482,10 @@ def ensure_schema() -> None:
             for col_name, col_def in filler_columns:
                 if not _sqlite_has_column("settings", col_name):
                     _sqlite_add_column("settings", col_def)
+            
+            # Settings: custom preroll storage folder
+            if not _sqlite_has_column("settings", "preroll_folder"):
+                _sqlite_add_column("settings", "preroll_folder TEXT")
     except Exception as e:
         print(f"Schema ensure error: {e}")
 
@@ -593,6 +597,8 @@ def ensure_settings_schema_now() -> None:
                 "update_include_prerelease": "BOOLEAN",
                 "update_last_check": "DATETIME",
                 "update_dismissed_version": "TEXT",
+                # Custom preroll storage folder
+                "preroll_folder": "TEXT",
             }
             for col, ddl in need.items():
                 if col not in cols:
@@ -2552,6 +2558,233 @@ def system_paths():
         info["error"] = str(e)
 
     return info
+
+
+# ============== Preroll Storage Folder Settings ==============
+
+@app.get("/settings/preroll-folder")
+def get_preroll_folder():
+    """Get the current preroll storage folder path and default."""
+    db = SessionLocal()
+    try:
+        setting = db.query(models.Setting).first()
+        custom = setting.preroll_folder if setting and setting.preroll_folder else None
+        # Calculate folder stats
+        current = custom or PREROLLS_DIR
+        file_count = 0
+        total_size = 0
+        try:
+            if os.path.isdir(current):
+                for root, dirs, files in os.walk(current):
+                    # Skip thumbnails subfolder in count
+                    dirs[:] = [d for d in dirs if d.lower() != "thumbnails"]
+                    for f in files:
+                        fp = os.path.join(root, f)
+                        try:
+                            file_count += 1
+                            total_size += os.path.getsize(fp)
+                        except OSError:
+                            pass
+        except Exception:
+            pass
+        return {
+            "current_folder": current,
+            "custom_folder": custom,
+            "default_folder": PREROLLS_DIR if not custom else _resolve_data_dir(install_root),
+            "file_count": file_count,
+            "total_size_mb": round(total_size / (1024 * 1024), 1) if total_size else 0,
+            "is_custom": custom is not None,
+        }
+    finally:
+        db.close()
+
+
+class PrerollFolderUpdate(BaseModel):
+    folder: str
+
+
+@app.put("/settings/preroll-folder")
+def set_preroll_folder(body: PrerollFolderUpdate):
+    """
+    Set a custom preroll storage folder. The folder must exist and be writable.
+    Pass an empty string to reset to the auto-resolved default.
+    """
+    global PREROLLS_DIR, THUMBNAILS_DIR
+    db = SessionLocal()
+    try:
+        setting = db.query(models.Setting).first()
+        if not setting:
+            return {"error": "No settings found"}, 404
+
+        new_path = body.folder.strip()
+
+        # Empty string = reset to default
+        if not new_path:
+            old = setting.preroll_folder
+            setting.preroll_folder = None
+            db.commit()
+            # Revert globals to auto-resolved default
+            resolved = _resolve_data_dir(install_root)
+            bn = os.path.basename(os.path.normpath(resolved)).lower()
+            PREROLLS_DIR = resolved if bn == "prerolls" else os.path.join(resolved, "prerolls")
+            THUMBNAILS_DIR = os.path.join(PREROLLS_DIR, "thumbnails")
+            os.makedirs(PREROLLS_DIR, exist_ok=True)
+            os.makedirs(THUMBNAILS_DIR, exist_ok=True)
+            print(f"Preroll folder reset to default: {PREROLLS_DIR}")
+            return {
+                "status": "ok",
+                "folder": PREROLLS_DIR,
+                "message": f"Reset to default folder: {PREROLLS_DIR}",
+                "previous": old,
+            }
+
+        # Normalize path
+        new_path = os.path.normpath(new_path)
+
+        # Validate: must be writable
+        try:
+            os.makedirs(new_path, exist_ok=True)
+            test_file = os.path.join(new_path, ".nexroll_write_test.tmp")
+            with open(test_file, "w", encoding="utf-8") as f:
+                f.write("ok")
+            os.remove(test_file)
+        except Exception as e:
+            return {"error": f"Folder is not writable: {e}"}
+
+        # Ensure thumbnails subfolder exists
+        thumb_dir = os.path.join(new_path, "thumbnails")
+        os.makedirs(thumb_dir, exist_ok=True)
+
+        old_dir = PREROLLS_DIR
+        setting.preroll_folder = new_path
+        db.commit()
+
+        # Update globals
+        PREROLLS_DIR = new_path
+        THUMBNAILS_DIR = thumb_dir
+        print(f"Preroll folder changed: {old_dir} → {PREROLLS_DIR}")
+
+        return {
+            "status": "ok",
+            "folder": PREROLLS_DIR,
+            "previous": old_dir,
+            "message": f"Preroll folder set to: {PREROLLS_DIR}",
+        }
+    finally:
+        db.close()
+
+
+class PrerollFolderMove(BaseModel):
+    new_folder: str
+    move_files: bool = True  # True = move, False = copy
+
+
+@app.post("/settings/preroll-folder/move")
+def move_preroll_folder(body: PrerollFolderMove):
+    """
+    Change the preroll folder AND transfer all existing files/subfolders.
+    If move_files=True, files are moved (deleted from source after copy).
+    If move_files=False, files are copied (source remains intact).
+    Database preroll paths are updated to reflect the new location.
+    """
+    global PREROLLS_DIR, THUMBNAILS_DIR
+    db = SessionLocal()
+    try:
+        setting = db.query(models.Setting).first()
+        if not setting:
+            return {"error": "No settings found"}
+
+        new_path = os.path.normpath(body.new_folder.strip())
+        old_dir = PREROLLS_DIR
+
+        if not new_path:
+            return {"error": "New folder path is required"}
+
+        # Don't move to the same location
+        try:
+            if os.path.exists(new_path) and os.path.exists(old_dir) and os.path.samefile(new_path, old_dir):
+                return {"error": "New folder is the same as the current folder"}
+        except Exception:
+            if os.path.normpath(new_path).lower() == os.path.normpath(old_dir).lower():
+                return {"error": "New folder is the same as the current folder"}
+
+        # Validate destination is writable
+        try:
+            os.makedirs(new_path, exist_ok=True)
+            test_file = os.path.join(new_path, ".nexroll_write_test.tmp")
+            with open(test_file, "w", encoding="utf-8") as f:
+                f.write("ok")
+            os.remove(test_file)
+        except Exception as e:
+            return {"error": f"Destination folder is not writable: {e}"}
+
+        # Transfer files
+        moved_count = 0
+        error_count = 0
+        total_bytes = 0
+        operation = "moved" if body.move_files else "copied"
+
+        if os.path.isdir(old_dir):
+            for root, dirs, files in os.walk(old_dir):
+                rel = os.path.relpath(root, old_dir)
+                dest_subdir = os.path.join(new_path, rel) if rel != "." else new_path
+                os.makedirs(dest_subdir, exist_ok=True)
+
+                for f in files:
+                    src_file = os.path.join(root, f)
+                    dst_file = os.path.join(dest_subdir, f)
+                    try:
+                        if body.move_files:
+                            shutil.move(src_file, dst_file)
+                        else:
+                            shutil.copy2(src_file, dst_file)
+                        moved_count += 1
+                        try:
+                            total_bytes += os.path.getsize(dst_file)
+                        except OSError:
+                            pass
+                    except Exception as e:
+                        error_count += 1
+                        print(f"Failed to {operation[:-1]} {src_file}: {e}")
+
+        # Update preroll paths in database
+        path_updates = 0
+        old_dir_norm = os.path.normpath(old_dir)
+        prerolls = db.query(models.Preroll).all()
+        for p in prerolls:
+            if p.path and os.path.normpath(p.path).startswith(old_dir_norm):
+                rel = os.path.relpath(os.path.normpath(p.path), old_dir_norm)
+                p.path = os.path.join(new_path, rel)
+                path_updates += 1
+            if p.thumbnail and os.path.normpath(p.thumbnail).startswith(old_dir_norm):
+                rel = os.path.relpath(os.path.normpath(p.thumbnail), old_dir_norm)
+                p.thumbnail = os.path.join(new_path, rel)
+
+        # Update settings
+        setting.preroll_folder = new_path
+        db.commit()
+
+        # Update globals
+        PREROLLS_DIR = new_path
+        THUMBNAILS_DIR = os.path.join(new_path, "thumbnails")
+        os.makedirs(THUMBNAILS_DIR, exist_ok=True)
+        print(f"Preroll folder {operation}: {old_dir} → {PREROLLS_DIR} ({moved_count} files, {path_updates} DB paths updated)")
+
+        return {
+            "status": "ok",
+            "folder": PREROLLS_DIR,
+            "previous": old_dir,
+            "operation": operation,
+            "files_transferred": moved_count,
+            "errors": error_count,
+            "db_paths_updated": path_updates,
+            "total_size_mb": round(total_bytes / (1024 * 1024), 1) if total_bytes else 0,
+            "message": f"Successfully {operation} {moved_count} files to {PREROLLS_DIR}" + (f" ({error_count} errors)" if error_count else ""),
+        }
+    except Exception as e:
+        return {"error": f"Failed to move preroll folder: {e}"}
+    finally:
+        db.close()
 
 
 # ============== Login Rate Limiting ==============
@@ -12858,6 +13091,20 @@ data_dir = _resolve_data_dir(install_root)
 basename = os.path.basename(os.path.normpath(data_dir)).lower()
 PREROLLS_DIR = data_dir if basename == "prerolls" else os.path.join(data_dir, "prerolls")
 THUMBNAILS_DIR = os.path.join(PREROLLS_DIR, "thumbnails")
+
+# Check database for user-configured custom preroll folder (overrides auto-resolved default)
+try:
+    _db_tmp = SessionLocal()
+    _setting_tmp = _db_tmp.query(models.Setting).first()
+    if _setting_tmp and getattr(_setting_tmp, 'preroll_folder', None):
+        _custom = _setting_tmp.preroll_folder.strip()
+        if _custom and os.path.isdir(_custom):
+            PREROLLS_DIR = _custom
+            THUMBNAILS_DIR = os.path.join(PREROLLS_DIR, "thumbnails")
+            print(f"Using custom preroll folder from settings: {PREROLLS_DIR}")
+    _db_tmp.close()
+except Exception as _e:
+    print(f"Could not check DB for custom preroll folder: {_e}")
 
 def ensure_runtime_assets():
     """

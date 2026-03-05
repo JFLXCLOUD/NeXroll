@@ -339,6 +339,9 @@ class Setting(Base):
     filler_sequence_id = Column(Integer, ForeignKey("saved_sequences.id"), nullable=True)  # Sequence to use as filler
     filler_coming_soon_layout = Column(String, default='grid')  # 'grid' or 'list' for Coming Soon List
     filler_active = Column(String, nullable=True)  # Tracks active filler: "category:ID", "sequence:ID", "coming_soon:layout", or null
+    
+    # Custom preroll storage folder (overrides the auto-resolved default)
+    preroll_folder = Column(String, nullable=True)  # User-configured preroll storage path (None = use auto-resolved default)
 
     def get_json_value(self, key):
         """Get a JSON value from a column"""

@@ -609,6 +609,13 @@ function App() {
   // Path Mappings & External Mapping UI state
   const [pathMappings, setPathMappings] = useState([]);
   const [pathMappingsLoading, setPathMappingsLoading] = useState(false);
+
+  // Preroll Storage Folder
+  const [prerollFolderInfo, setPrerollFolderInfo] = useState(null);
+  const [prerollFolderInput, setPrerollFolderInput] = useState('');
+  const [prerollFolderSaving, setPrerollFolderSaving] = useState(false);
+  const [prerollFolderMoving, setPrerollFolderMoving] = useState(false);
+
   const [mappingTestInput, setMappingTestInput] = useState('');
   const [mappingTestResults, setMappingTestResults] = useState([]);
   const [mapRootForm, setMapRootForm] = useState({
@@ -14559,6 +14566,101 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
     }
   };
 
+  // === Preroll Storage Folder handlers ===
+  const loadPrerollFolder = React.useCallback(async () => {
+    try {
+      const res = await fetch(apiUrl('settings/preroll-folder'));
+      const data = await res.json();
+      setPrerollFolderInfo(data);
+      setPrerollFolderInput(data.current_folder || '');
+    } catch (e) {
+      console.error('Failed to load preroll folder:', e);
+    }
+  }, [apiUrl]);
+
+  const handleSavePrerollFolder = async () => {
+    if (!prerollFolderInput.trim()) return;
+    // If same as current, ignore
+    if (prerollFolderInfo && prerollFolderInput.trim() === prerollFolderInfo.current_folder) return;
+    setPrerollFolderSaving(true);
+    try {
+      const res = await fetch(apiUrl('settings/preroll-folder'), {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ folder: prerollFolderInput.trim() })
+      });
+      const data = await res.json();
+      if (data.error) {
+        alert(`Error: ${data.error}`);
+      } else {
+        // Ask if user wants to move files from old location
+        if (data.previous && data.previous !== data.folder) {
+          const choice = window.confirm(
+            `Preroll folder changed to:\n${data.folder}\n\nWould you like to move all existing preroll files from the old location?\n\nOld: ${data.previous}\nNew: ${data.folder}\n\nClick OK to move files, or Cancel to keep files in the old location.`
+          );
+          if (choice) {
+            await handleMovePrerollFiles(data.folder, data.previous);
+          }
+        }
+        await loadPrerollFolder();
+      }
+    } catch (e) {
+      alert(`Failed to save: ${e.message}`);
+    } finally {
+      setPrerollFolderSaving(false);
+    }
+  };
+
+  const handleMovePrerollFiles = async (newFolder, oldFolder) => {
+    setPrerollFolderMoving(true);
+    try {
+      const res = await fetch(apiUrl('settings/preroll-folder/move'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ new_folder: newFolder, move_files: true })
+      });
+      const data = await res.json();
+      if (data.error) {
+        alert(`Error moving files: ${data.error}`);
+      } else {
+        alert(
+          `${data.message}\n\n` +
+          `Files transferred: ${data.files_transferred}\n` +
+          `Database paths updated: ${data.db_paths_updated}\n` +
+          `Size: ${data.total_size_mb} MB` +
+          (data.errors > 0 ? `\n⚠ Errors: ${data.errors}` : '')
+        );
+        await loadPrerollFolder();
+      }
+    } catch (e) {
+      alert(`Failed to move files: ${e.message}`);
+    } finally {
+      setPrerollFolderMoving(false);
+    }
+  };
+
+  const handleResetPrerollFolder = async () => {
+    if (!window.confirm('Reset to the default preroll folder? Your files will remain in the current location.')) return;
+    setPrerollFolderSaving(true);
+    try {
+      const res = await fetch(apiUrl('settings/preroll-folder'), {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ folder: '' })
+      });
+      const data = await res.json();
+      if (data.error) {
+        alert(`Error: ${data.error}`);
+      } else {
+        await loadPrerollFolder();
+      }
+    } catch (e) {
+      alert(`Failed to reset: ${e.message}`);
+    } finally {
+      setPrerollFolderSaving(false);
+    }
+  };
+
   const handleShowSystemPaths = async () => {
     try {
       const res = await fetch(apiUrl('system/paths'));
@@ -16891,10 +16993,11 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
     }
   };
 
-  // Auto-load mappings at startup
+  // Auto-load mappings and preroll folder at startup
   React.useEffect(() => {
     try { loadPathMappings(); } catch {}
-  }, [loadPathMappings]);
+    try { loadPrerollFolder(); } catch {}
+  }, [loadPathMappings, loadPrerollFolder]);
 
   // Check auth status on startup
   React.useEffect(() => {
@@ -21232,6 +21335,12 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
         description: 'Configure path translations for Plex'
       },
       { 
+        id: 'settings/storage', 
+        icon: <HardDrive size={16} />, 
+        label: 'Storage', 
+        description: 'Configure preroll storage folder'
+      },
+      { 
         id: 'settings/apikeys', 
         icon: <Key size={16} />, 
         label: 'API Keys', 
@@ -24251,10 +24360,191 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
     </>
   );
 
+  const renderSettingsStorage = () => (
+    <>
+    <div style={{ marginBottom: '1rem' }}>
+      <h1 className="header" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.5rem' }}>
+        <HardDrive size={32} className="header-icon" /> Storage Settings
+      </h1>
+      <p style={{ color: 'var(--text-secondary)', fontSize: '0.95rem', margin: 0 }}>
+        Configure where NeXroll stores preroll video files and thumbnails.
+      </p>
+    </div>
+    <div className="card">
+      <h2 style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+        <FolderOpen size={20} style={{ color: 'var(--accent-color)' }} /> Preroll Storage Folder
+      </h2>
+      <p style={{ color: 'var(--text-secondary)', fontSize: '0.85rem', marginBottom: '1rem' }}>
+        Change where NeXroll stores uploaded preroll files. When you change this, you can optionally move all existing files to the new location.
+      </p>
+
+      {/* Current folder info */}
+      {prerollFolderInfo && (
+        <div style={{
+          padding: '0.75rem 1rem',
+          backgroundColor: 'var(--bg-color)',
+          border: '1px solid var(--border-color)',
+          borderRadius: '8px',
+          marginBottom: '1rem'
+        }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.5rem' }}>
+            <FolderOpen size={16} style={{ color: 'var(--accent-color)' }} />
+            <span style={{ fontWeight: '500' }}>Current Location</span>
+            {prerollFolderInfo.is_custom && (
+              <span style={{
+                fontSize: '0.7rem',
+                padding: '0.15rem 0.5rem',
+                backgroundColor: 'rgba(0, 212, 255, 0.15)',
+                color: 'var(--accent-color)',
+                borderRadius: '4px',
+                fontWeight: '600'
+              }}>CUSTOM</span>
+            )}
+          </div>
+          <code style={{
+            fontSize: '0.85rem',
+            backgroundColor: 'var(--card-bg)',
+            padding: '0.25rem 0.5rem',
+            borderRadius: '4px',
+            wordBreak: 'break-all',
+            display: 'block',
+            marginBottom: '0.5rem'
+          }}>
+            {prerollFolderInfo.current_folder}
+          </code>
+          <div style={{ display: 'flex', gap: '1.5rem', fontSize: '0.8rem', color: 'var(--text-secondary)' }}>
+            <span>{prerollFolderInfo.file_count} files</span>
+            <span>{prerollFolderInfo.total_size_mb} MB</span>
+          </div>
+        </div>
+      )}
+
+      {/* Change folder input */}
+      <div style={{
+        padding: '1rem',
+        backgroundColor: 'var(--bg-color)',
+        border: '1px solid var(--border-color)',
+        borderRadius: '8px',
+        marginBottom: '1rem'
+      }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.5rem' }}>
+          <FolderOpen size={16} style={{ color: '#f59e0b' }} />
+          <h3 style={{ margin: 0, fontSize: '1rem' }}>Change Storage Folder</h3>
+        </div>
+        <p style={{ marginBottom: '0.75rem', color: 'var(--text-secondary)', fontSize: '0.85rem' }}>
+          Enter the full path to a folder where you want to store preroll files. The folder must exist and be writable.
+        </p>
+        <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '0.75rem' }}>
+          <input
+            type="text"
+            className="input"
+            value={prerollFolderInput}
+            onChange={(e) => setPrerollFolderInput(e.target.value)}
+            placeholder="e.g., D:\Media\Prerolls or /mnt/media/prerolls"
+            style={{ flex: 1, fontFamily: 'monospace', fontSize: '0.85rem' }}
+            disabled={prerollFolderSaving || prerollFolderMoving}
+          />
+        </div>
+        <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
+          <button
+            className="button"
+            onClick={handleSavePrerollFolder}
+            disabled={prerollFolderSaving || prerollFolderMoving || !prerollFolderInput.trim() || (prerollFolderInfo && prerollFolderInput.trim() === prerollFolderInfo.current_folder)}
+            style={{ opacity: (prerollFolderSaving || prerollFolderMoving) ? 0.6 : 1 }}
+          >
+            {prerollFolderSaving ? (
+              <><Loader2 size={14} className="spin" style={{marginRight: '0.35rem'}} /> Saving...</>
+            ) : (
+              <><FolderOpen size={14} style={{marginRight: '0.35rem'}} /> Set Folder</>
+            )}
+          </button>
+          {prerollFolderInfo?.is_custom && (
+            <button
+              className="button"
+              onClick={handleResetPrerollFolder}
+              disabled={prerollFolderSaving || prerollFolderMoving}
+              style={{
+                backgroundColor: 'transparent',
+                border: '1px solid var(--border-color)',
+                color: 'var(--text-secondary)'
+              }}
+            >
+              <RefreshCw size={14} style={{marginRight: '0.35rem'}} /> Reset to Default
+            </button>
+          )}
+        </div>
+      </div>
+
+      {/* Transfer files section */}
+      {prerollFolderInfo?.is_custom && prerollFolderInfo?.file_count > 0 && (
+        <div style={{
+          padding: '1rem',
+          backgroundColor: 'var(--bg-color)',
+          border: '1px solid var(--border-color)',
+          borderRadius: '8px',
+          marginBottom: '1rem'
+        }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.5rem' }}>
+            <ArrowRight size={16} style={{ color: '#22c55e' }} />
+            <h3 style={{ margin: 0, fontSize: '1rem' }}>Transfer Files</h3>
+          </div>
+          <p style={{ marginBottom: '0.75rem', color: 'var(--text-secondary)', fontSize: '0.85rem' }}>
+            Move or copy files from the previous default location to the current custom folder. Database paths will be automatically updated.
+          </p>
+          {prerollFolderMoving && (
+            <div style={{
+              padding: '0.75rem 1rem',
+              backgroundColor: 'rgba(23, 162, 184, 0.1)',
+              border: '1px solid rgba(23, 162, 184, 0.3)',
+              borderRadius: '8px',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '0.5rem',
+              marginBottom: '0.75rem'
+            }}>
+              <Loader2 size={16} className="spin" style={{ color: '#17a2b8' }} />
+              <span style={{ fontSize: '0.9rem' }}>Transferring files... This may take a while for large libraries.</span>
+            </div>
+          )}
+          <button
+            className="button"
+            onClick={() => {
+              if (window.confirm(`Move all files from the default location to:\n${prerollFolderInfo.current_folder}\n\nThis will move ${prerollFolderInfo.file_count} files and update all database paths.`)) {
+                handleMovePrerollFiles(prerollFolderInfo.current_folder, prerollFolderInfo.default_folder);
+              }
+            }}
+            disabled={prerollFolderMoving}
+            style={{ opacity: prerollFolderMoving ? 0.6 : 1 }}
+          >
+            <ArrowRight size={14} style={{marginRight: '0.35rem'}} /> Move Files to Current Folder
+          </button>
+        </div>
+      )}
+
+      {/* Info notice */}
+      <div style={{
+        padding: '0.75rem 1rem',
+        backgroundColor: 'rgba(23, 162, 184, 0.1)',
+        border: '1px solid rgba(23, 162, 184, 0.3)',
+        borderRadius: '8px',
+        fontSize: '0.85rem',
+        color: 'var(--text-color)'
+      }}>
+        <strong>Note:</strong> After changing the storage folder, new uploads will go to the new location.
+        If you don't move existing files, they will remain in the old location and continue to work as long as that location is accessible.
+        The default location is automatically resolved based on your system configuration (environment variables, registry, or install directory).
+      </div>
+    </div>
+    </>
+  );
+
   // Main Settings Router
   const renderSettings = () => {
     if (activeTab === 'settings/paths') {
       return renderSettingsPaths();
+    }
+    if (activeTab === 'settings/storage') {
+      return renderSettingsStorage();
     }
     if (activeTab === 'settings/backup') {
       return renderSettingsBackup();
@@ -27854,6 +28144,7 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
            {[
              { id: 'settings', icon: <Settings size={16} />, label: 'General' },
              { id: 'settings/paths', icon: <ArrowRight size={16} />, label: 'Path Mappings' },
+             { id: 'settings/storage', icon: <HardDrive size={16} />, label: 'Storage' },
              { id: 'settings/apikeys', icon: <Key size={16} />, label: 'API Keys' },
              { id: 'settings/logs', icon: <FileText size={16} />, label: 'Logs' },
              { id: 'settings/users', icon: <Users size={16} />, label: 'Users' },
