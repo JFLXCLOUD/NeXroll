@@ -2676,6 +2676,7 @@ def set_preroll_folder(body: PrerollFolderUpdate):
 
 class PrerollFolderMove(BaseModel):
     new_folder: str
+    old_folder: str = ""  # Source folder to move FROM (if empty, uses current PREROLLS_DIR)
     move_files: bool = True  # True = move, False = copy
 
 
@@ -2695,7 +2696,8 @@ def move_preroll_folder(body: PrerollFolderMove):
             return {"error": "No settings found"}
 
         new_path = os.path.normpath(body.new_folder.strip())
-        old_dir = PREROLLS_DIR
+        # Use explicit old_folder if provided (PREROLLS_DIR may already point to new location)
+        old_dir = os.path.normpath(body.old_folder.strip()) if body.old_folder.strip() else PREROLLS_DIR
 
         if not new_path:
             return {"error": "New folder path is required"}

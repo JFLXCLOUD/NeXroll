@@ -14617,7 +14617,7 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
       const res = await fetch(apiUrl('settings/preroll-folder/move'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ new_folder: newFolder, move_files: true })
+        body: JSON.stringify({ new_folder: newFolder, old_folder: oldFolder, move_files: true })
       });
       const data = await res.json();
       if (data.error) {
