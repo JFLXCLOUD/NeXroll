@@ -1954,6 +1954,41 @@ def startup_event():
         except Exception:
             pass
     
+    # Auto-update Windows registry version if it's stale
+    # The installer writes Version to HKLM\Software\NeXroll, but when running
+    # directly from the EXE (dev/testing) or after an in-place update, the
+    # registry value can be outdated.  Keep it in sync with the running version.
+    try:
+        if sys.platform.startswith("win"):
+            import winreg
+            current_ver = getattr(app, "version", None)
+            if current_ver:
+                for access in (
+                    winreg.KEY_READ | winreg.KEY_WRITE | getattr(winreg, "KEY_WOW64_64KEY", 0),
+                    winreg.KEY_READ | winreg.KEY_WRITE | getattr(winreg, "KEY_WOW64_32KEY", 0),
+                ):
+                    try:
+                        k = winreg.OpenKeyEx(winreg.HKEY_LOCAL_MACHINE, r"Software\NeXroll", 0, access)
+                        try:
+                            reg_ver, _ = winreg.QueryValueEx(k, "Version")
+                            if reg_ver and str(reg_ver).strip() != str(current_ver).strip():
+                                winreg.SetValueEx(k, "Version", 0, winreg.REG_SZ, str(current_ver))
+                                _file_log(f"Updated registry version from {reg_ver} to {current_ver}")
+                        except FileNotFoundError:
+                            pass
+                        finally:
+                            winreg.CloseKey(k)
+                        break  # Success on first accessible view
+                    except PermissionError:
+                        continue  # Try next registry view
+                    except Exception:
+                        continue
+    except Exception as e:
+        try:
+            _file_log(f"Registry version auto-update skipped: {e}", level="DEBUG")
+        except Exception:
+            pass
+
     # Log startup banner
     _log_startup_banner()
     

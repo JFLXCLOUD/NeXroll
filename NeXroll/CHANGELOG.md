@@ -1,5 +1,67 @@
 # Changelog
 
+## [1.11.9] - 03-05-2026
+
+First stable release of the v1.11.x line (consolidates beta.1–beta.9).
+
+### Coming Soon List Generator
+- **Background Music** — Toggleable ambient audio with smooth fade-in/out
+- **Custom Audio Upload** — Replace default track with .mp3, .wav, .aac, .m4a, .ogg, .flac
+- **Custom Logo Overlay** — Watermark or Replace Server Name mode (.png, .jpg, .webp)
+- **Available Now! Feature** — Badge for downloaded items with configurable grace period (1–30 days) and max items limit
+- **Release Date Preference** — Digital First, Digital Only, Physical First, Theatrical
+- **Exclusion Filtering** — Excluded items correctly filtered from generated videos and auto-regeneration
+- **Options Panel** — Reorganized into clean 2×2 grid with unified card style
+- **Color Settings** — Expanded by default instead of collapsed
+- **Auto-Regeneration** — Regenerates on Radarr/Sonarr sync with fresh DB sessions and proper async handling
+
+### Dynamic Preroll Generator
+- **Custom Logo Overlay** — Upload logo for Coming Soon, Feature Presentation, and Now Showing templates
+
+### NeX-Up Enhancements
+- **Calendar View** — Full monthly grid with color-coded movies/TV/Available Now items
+- **Your Trailers Page** — Play button for browser preview, List/Detailed view toggle
+- **Sync Timestamp Fix** — Uses local time consistently (no future-time display)
+- **Next Sync Display** — Radarr/Sonarr cards show "Last synced · Next sync" countdown
+- **TMDB API Key Security** — Masked password-style input field
+- **Upcoming Counts** — Load automatically when opening NeX-Up tab
+
+### Plex Connector — Critical Fixes
+- **Removed Destructive Fallback Cascade** — `set_preroll()` no longer clears all prerolls via `""` fallback
+- **Auto-Chunking for Large Libraries** — Random subset selection when preroll string exceeds Plex limits (~7,500 chars)
+- **8-Hour Rotation Cache** — Chunked subset cached and rotated every 8 hours; auto-invalidates on list changes
+- **Preroll String Length Protection** — Warnings and Method A auto-skip when URL exceeds 8,000 chars
+- **Preroll Path URL Encoding** — Fixed `#` characters in filenames causing silent path truncation
+- **Preference Name Filtering** — Only actual preroll path preference names are tried
+- **Missing TLS Verify Parameter** — Added `verify=self._verify` to retry PUT request
+
+### Community Prerolls
+- **Community Server Selector** — Choose from available servers or enter custom URL
+- **Server Load Protections** — Rate limiting, global locks, caching (10min/30min)
+- **Custom User-Agent Header** — `NeXRoll/{version}` on all outbound requests
+- **Server URL Fix** — Corrected endpoint from `test.prerolls.uk` to `prerolls.uk`
+
+### Configurable Preroll Storage
+- **New Storage Tab** in Settings — Move prerolls to any local or network path
+- **File Transfer** — Transfer existing files to new location with one click
+- **Reset to Default** — Return to installation path
+
+### Scheduler Fixes
+- **SessionLocal Scoping** — Fixed redundant import shadowing module-level import
+- **PyInstaller Module Re-execution** — Uses `sys.modules` instead of `from backend.main import` to avoid spawning second server instance
+
+### UI / Theming
+- **Header Icon Theming** — All 26+ icons follow active theme (white/black)
+- **Generator Page Consistency** — Unified styles between Dynamic Preroll and Coming Soon generators
+- **Emoji-to-Icon Cleanup** — All emoji characters replaced with Lucide React icons
+
+### Bug Fixes
+- **FFmpeg Detection** — Fixed unterminated docstring in `dynamic_preroll.py`
+- **Coming Soon List Grace Period** — Items past grace period properly excluded
+- **Server Name Input Width** — Adjusted from 100% to 80%
+
+---
+
 ## [1.11.0] - 02-19-2026
 
 ### New Feature 1: Coming Soon List Generator
