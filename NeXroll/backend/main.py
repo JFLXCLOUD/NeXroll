@@ -1641,6 +1641,7 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
     error_details = exc.errors()
     _file_log(f"VALIDATION ERROR {request.method} {request.url.path}: {error_details}", level="ERROR")
     print(f"VALIDATION ERROR {request.method} {request.url.path}: {error_details}")
+    log_event('WARNING', 'api', f'Validation error: {request.method} {request.url.path}', source='validation_handler', details={'errors': str(error_details)[:500]})
     return JSONResponse(
         status_code=422,
         content={"detail": error_details}
@@ -1755,6 +1756,7 @@ async def _log_errors_mw(request, call_next):
     except Exception as e:
         try:
             _file_log(f"Unhandled error {request.method} {request.url.path}: {e}", level="ERROR")
+            log_event('ERROR', 'api', f'Unhandled error: {request.method} {request.url.path}: {e}', source='error_middleware')
         except Exception:
             pass
         raise
@@ -2320,6 +2322,7 @@ async def update_dashboard_layout(request: Request, db: Session = Depends(get_db
         raise HTTPException(status_code=422, detail=str(e))
     except Exception as e:
         db.rollback()
+        log_event('ERROR', 'system', f'Failed to save dashboard layout: {e}', source='save_layout')
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/system/version")
@@ -2534,6 +2537,7 @@ def trigger_hash_migration(db: Session = Depends(get_db)):
             "prerolls_to_process": count
         }
     except Exception as e:
+        log_event('ERROR', 'system', f'Failed to start hash migration: {e}', source='start_hash_migration')
         raise HTTPException(status_code=500, detail=f"Failed to start migration: {str(e)}")
 
 @app.get("/system/hash-migration-status")
@@ -2556,6 +2560,7 @@ def hash_migration_status(db: Session = Depends(get_db)):
             "percentage_complete": round((with_hash / total * 100), 2) if total > 0 else 100
         }
     except Exception as e:
+        log_event('ERROR', 'system', f'Failed to get hash migration status: {e}', source='hash_migration_status')
         raise HTTPException(status_code=500, detail=f"Failed to get status: {str(e)}")
 
 @app.get("/system/paths")
@@ -2967,6 +2972,7 @@ def apply_env_vars(request: Request, user: models.User = Depends(require_auth)):
 
     except Exception as e:
         _file_log(f"Failed to apply environment variables: {str(e)}", level="ERROR")
+        log_event('ERROR', 'system', f'Failed to apply environment variables: {e}', source='apply_env_vars')
         raise HTTPException(status_code=500, detail="Failed to apply environment variables")
 
 # Minimal built-in Dashboard with a Reinitialize Thumbnails button
@@ -3387,6 +3393,7 @@ def create_api_key(
     db.refresh(api_key)
     
     _file_log(f"API key created: {name} (prefix: {key_prefix})")
+    log_event('INFO', 'user', f'API key created: {name}', source='create_api_key')
     
     return {
         "id": api_key.id,
@@ -3443,6 +3450,7 @@ def delete_api_key(key_id: int, user: models.User = Depends(require_auth), db: S
     db.commit()
     
     _file_log(f"API key deleted: {key_name} (prefix: {key_prefix})")
+    log_event('INFO', 'user', f'API key deleted: {key_name}', source='delete_api_key')
     
     return {"success": True, "message": "API key deleted"}
 
@@ -3679,6 +3687,7 @@ async def external_sync_plex(
         scheduler.sync_prerolls_to_plex()
         return {"success": True, "message": "Plex sync triggered"}
     except Exception as e:
+        log_event('ERROR', 'plex', f'External API Plex sync failed: {e}', source='external_sync_plex')
         raise HTTPException(status_code=500, detail=f"Sync failed: {str(e)}")
 
 
@@ -3771,6 +3780,7 @@ async def external_active_schedules(
                     "enabled": s.enabled
                 })
     except Exception as e:
+        log_event('ERROR', 'api', f'External API: Error fetching schedules: {e}', source='external_schedules')
         raise HTTPException(status_code=500, detail=f"Error fetching schedules: {str(e)}")
     
     return {
@@ -3965,6 +3975,7 @@ async def external_create_category(
         db.refresh(db_category)
     except Exception as e:
         db.rollback()
+        log_event('ERROR', 'api', f'External API: Failed to create category: {e}', source='external_create_category')
         raise HTTPException(status_code=500, detail=f"Failed to create category: {str(e)}")
     
     return {
@@ -4039,6 +4050,7 @@ async def external_register_preroll(
         db.refresh(db_preroll)
     except Exception as e:
         db.rollback()
+        log_event('ERROR', 'api', f'External API: Failed to register preroll: {e}', source='external_register_preroll')
         raise HTTPException(status_code=500, detail=f"Failed to register preroll: {str(e)}")
     
     return {
@@ -4080,6 +4092,7 @@ async def external_assign_preroll_category(
         db.commit()
     except Exception as e:
         db.rollback()
+        log_event('ERROR', 'api', f'External API: Failed to assign category: {e}', source='external_assign_category')
         raise HTTPException(status_code=500, detail=f"Failed to assign category: {str(e)}")
     
     return {
@@ -4172,6 +4185,7 @@ async def external_create_schedule(
         db.refresh(db_schedule)
     except Exception as e:
         db.rollback()
+        log_event('ERROR', 'api', f'External API: Failed to create schedule: {e}', source='external_create_schedule')
         raise HTTPException(status_code=500, detail=f"Failed to create schedule: {str(e)}")
     
     return {
@@ -4208,6 +4222,7 @@ async def external_delete_schedule(
         db.commit()
     except Exception as e:
         db.rollback()
+        log_event('ERROR', 'api', f'External API: Failed to delete schedule {schedule_id}: {e}', source='external_delete_schedule')
         raise HTTPException(status_code=500, detail=f"Failed to delete schedule: {str(e)}")
     
     return {"success": True, "message": f"Schedule {schedule_id} deleted"}
@@ -4234,6 +4249,7 @@ async def external_toggle_schedule(
         db.commit()
     except Exception as e:
         db.rollback()
+        log_event('ERROR', 'api', f'External API: Failed to toggle schedule {schedule_id}: {e}', source='external_toggle_schedule')
         raise HTTPException(status_code=500, detail=f"Failed to update schedule: {str(e)}")
     
     return {
@@ -4286,6 +4302,7 @@ async def external_apply_category(
         setting.active_category = category_id
         db.commit()
     except Exception as e:
+        log_event('ERROR', 'api', f'External API: Failed to apply category {category_id} to Plex: {e}', source='external_apply_category')
         raise HTTPException(status_code=500, detail=f"Failed to apply to Plex: {str(e)}")
     
     return {
@@ -5257,6 +5274,7 @@ async def update_check_now(
         }
     except Exception as e:
         _file_log(f"/update/check error: {e}", level="ERROR")
+        log_event('ERROR', 'system', f'Update check failed: {e}', source='update_check_now')
         return {"success": False, "error": str(e)}
 
 
@@ -5731,11 +5749,13 @@ def connect_plex(request: PlexConnectRequest, db: Session = Depends(get_db)):
                     _file_log(f"/plex/connect: ✓ Token saved to secure store ({provider_name})")
                 else:
                     _file_log(f"/plex/connect: ⚠ Failed to save token to secure store", level="ERROR")
+                    log_event('ERROR', 'plex', 'Failed to save Plex token to secure store', source='connect_plex', details={'url': url})
                     raise HTTPException(status_code=500, detail="Failed to save token to secure storage. Please ensure Windows Credential Manager is available.")
             except HTTPException:
                 raise
             except Exception as e:
                 _file_log(f"/plex/connect: ⚠ Exception saving token: {e}", level="ERROR")
+                log_event('ERROR', 'plex', f'Plex token save exception: {e}', source='connect_plex')
                 raise HTTPException(status_code=500, detail=f"Failed to save token securely: {str(e)}")
 
             db.commit()
@@ -5748,6 +5768,7 @@ def connect_plex(request: PlexConnectRequest, db: Session = Depends(get_db)):
             }
         else:
             _file_log(f"/plex/connect: ✗ Connection test failed for {url}", level="ERROR")
+            log_event('WARNING', 'plex', f'Plex connection test failed for {url}', source='connect_plex')
             raise HTTPException(status_code=422, detail="Failed to connect to Plex server. Please check your URL and token.")
     except Exception as e:
         raise HTTPException(status_code=422, detail=f"Connection error: {str(e)}")
@@ -5807,6 +5828,7 @@ def get_plex_status(db: Session = Depends(get_db)):
                 _file_log(f"/plex/status: Disconnected - URL: {bool(plex_url)}, Token: {bool(token)}")
             except Exception as e:
                 _file_log(f"/plex/status: Error building disconnected response: {e}", level="ERROR")
+                log_event('ERROR', 'plex', f'Error building Plex status response: {e}', source='plex_status')
                 pass
             return out
 
@@ -5815,6 +5837,7 @@ def get_plex_status(db: Session = Depends(get_db)):
             info = connector.get_server_info() or {}
         except Exception as e:
             _file_log(f"/plex/status: Connection test failed for {plex_url}: {e}", level="WARNING")
+            log_event('WARNING', 'plex', f'Plex status check failed: {e}', source='plex_status')
             return {
                 "connected": False,
                 "url": plex_url,
@@ -6104,6 +6127,7 @@ def plex_auto_connect(req: PlexAutoConnectRequest, db: Session = Depends(get_db)
         db.commit()
     except Exception as e:
         db.rollback()
+        log_event('ERROR', 'plex', f'Failed to persist Plex auto-connect settings: {e}', source='plex_auto_connect')
         raise HTTPException(status_code=500, detail=f"Failed to persist Plex settings: {e}")
 
     return {"connected": True, "url": chosen, "tried": tried, "method": "auto_connect"}
@@ -6333,6 +6357,7 @@ def plex_tv_start(forward_url: str | None = None):
         }
         return {"id": sid, "url": url}
     except Exception as e:
+        log_event('ERROR', 'plex', f'Failed to start Plex OAuth: {e}', source='plex_tv_start')
         raise HTTPException(status_code=500, detail=f"Failed to start Plex OAuth: {str(e)}")
 
 
@@ -6464,6 +6489,7 @@ def plex_tv_connect(req: PlexTvConnectRequest, db: Session = Depends(get_db)):
     except HTTPException:
         raise
     except Exception as e:
+        log_event('ERROR', 'plex', f'Failed to complete Plex.tv auth: {e}', source='plex_tv_complete')
         raise HTTPException(status_code=500, detail=f"Failed to complete Plex.tv auth: {str(e)}")
 
 def calculate_file_hash(file_path: str) -> str:
@@ -6516,6 +6542,7 @@ def check_duplicate(
                 "file_hash": file_hash
             }
     except Exception as e:
+        log_event('ERROR', 'user', f'Error checking duplicate: {e}', source='check_duplicate')
         raise HTTPException(status_code=500, detail=f"Error checking duplicate: {str(e)}")
 
 @app.post("/prerolls/upload")
@@ -6620,6 +6647,7 @@ def upload_preroll(
                 db.commit()
             except Exception as e:
                 db.rollback()
+                log_event('ERROR', 'user', f'Failed to replace duplicate: {e}', source='upload_preroll')
                 raise HTTPException(status_code=500, detail=f"Failed to replace duplicate: {str(e)}")
         elif duplicate_action == "rename":
             # Auto-rename the new file to avoid conflict
@@ -6746,6 +6774,7 @@ def upload_preroll(
     except Exception as e:
         db.rollback()
         _file_log(f"upload_preroll: final commit failed: {e}")
+        log_event('ERROR', 'user', f'Upload commit failed: {e}', source='upload_preroll')
 
     # Auto-apply to Plex/Jellyfin if primary category is already applied or currently active
     auto_applied = False
@@ -6963,6 +6992,7 @@ def upload_multiple_prerolls(
             except Exception as e:
                 db.rollback()
                 _file_log(f"upload_multiple: final commit failed: {e}")
+                log_event('ERROR', 'user', f'Multi-upload commit failed: {e}', source='upload_multiple_prerolls')
 
             results.append({
                 "filename": file.filename,
@@ -7141,6 +7171,7 @@ def transcode_preroll(preroll_id: int, request: TranscodeRequest, db: Session = 
         
         if result.returncode != 0:
             _file_log(f"[TRANSCODE] FFmpeg error: {result.stderr}")
+            log_event('ERROR', 'user', f'Transcode failed for preroll {preroll_id}: FFmpeg error', source='transcode_preroll')
             raise HTTPException(status_code=500, detail=f"FFmpeg transcoding failed: {result.stderr[:500]}")
         
         # Verify output file exists
@@ -7207,6 +7238,7 @@ def transcode_preroll(preroll_id: int, request: TranscodeRequest, db: Session = 
         raise
     except Exception as e:
         _file_log(f"[TRANSCODE] Error: {e}")
+        log_event('ERROR', 'user', f'Transcode error for preroll {preroll_id}: {e}', source='transcode_preroll')
         # Cleanup temp file if it exists
         if temp_output.exists() and temp_output != original_path:
             try:
@@ -7397,6 +7429,7 @@ def update_preroll(preroll_id: int, payload: PrerollUpdate, db: Session = Depend
                 changed_thumbnail = True
         except Exception as e:
             _file_log(f"update_preroll: rename failed for id={p.id}: {e}")
+            log_event('WARNING', 'user', f'Preroll rename failed: {e}', source='update_preroll', details={'preroll_id': p.id})
 
     # Primary category change: move file under new primary category folder
     new_primary = None
@@ -7434,6 +7467,7 @@ def update_preroll(preroll_id: int, payload: PrerollUpdate, db: Session = Depend
                     changed_thumbnail = True
                 except Exception as e:
                     _file_log(f"update_preroll: move to new category failed id={p.id}: {e}")
+                    log_event('WARNING', 'user', f'Preroll category move failed: {e}', source='update_preroll', details={'preroll_id': p.id})
             else:
                 # External/mapped file: do not move on disk; only change primary category
                 p.category_id = new_primary.id
@@ -7511,6 +7545,7 @@ def update_preroll(preroll_id: int, payload: PrerollUpdate, db: Session = Depend
         db.refresh(p)
     except Exception as e:
         db.rollback()
+        log_event('ERROR', 'user', f'Failed to update preroll {preroll_id}: {e}', source='update_preroll')
         raise HTTPException(status_code=500, detail=f"Failed to update preroll: {str(e)}")
 
     return {
@@ -7616,6 +7651,7 @@ def delete_preroll(preroll_id: int, db: Session = Depends(get_db)):
         print(f"Error deleting preroll {preroll_id}: {e}")
         import traceback
         traceback.print_exc()
+        log_event('ERROR', 'user', f'Preroll deletion failed: {e}', source='delete_preroll', details={'preroll_id': preroll_id})
         raise HTTPException(status_code=500, detail=f"Error deleting preroll: {str(e)}")
 
 @app.post("/prerolls/{preroll_id}/auto-match")
@@ -7794,6 +7830,7 @@ def auto_match_single_preroll(preroll_id: int, db: Session = Depends(get_db)):
         _file_log(f"Auto-match error for preroll {preroll_id}: {e}")
         import traceback
         traceback.print_exc()
+        log_event('ERROR', 'user', f'Auto-match failed for preroll {preroll_id}: {e}', source='auto_match_community')
         raise HTTPException(status_code=500, detail=f"Auto-match failed: {str(e)}")
 
 @app.post("/prerolls/{preroll_id}/link-community/{community_id}")
@@ -8158,6 +8195,7 @@ def add_preroll_to_category(category_id: int, preroll_id: int, set_primary: bool
             p.categories = (p.categories or []) + [cat]
     except Exception as e:
         _file_log(f"add_preroll_to_category: association add failed p={p.id}, c={category_id}: {e}")
+        log_event('ERROR', 'user', f'Failed to add preroll to category: {e}', source='add_preroll_to_category')
 
     moved_primary = False
     # Optionally set as primary category (move file path)
@@ -8216,6 +8254,7 @@ def add_preroll_to_category(category_id: int, preroll_id: int, set_primary: bool
                     _file_log(f"add_preroll_to_category: primary move thumb update failed p={p.id}: {e}")
             except Exception as e:
                 _file_log(f"add_preroll_to_category: primary move failed p={p.id} to category={cat.name}: {e}")
+                log_event('ERROR', 'user', f'Category primary move failed: {e}', source='add_preroll_to_category', details={'preroll_id': p.id, 'category': cat.name})
                 raise HTTPException(status_code=500, detail="Failed to set primary category (move operation)")
         else:
             # External/mapped file: do not move on disk; only change primary category and update thumbnail
@@ -8250,6 +8289,7 @@ def add_preroll_to_category(category_id: int, preroll_id: int, set_primary: bool
         db.refresh(p)
     except Exception as e:
         db.rollback()
+        log_event('ERROR', 'user', f'Failed to add preroll {preroll_id} to category {category_id}: {e}', source='add_preroll_to_category')
         raise HTTPException(status_code=500, detail=f"Failed to add preroll to category: {str(e)}")
 
     # Auto-apply to Plex/Jellyfin if category is already applied or currently active
@@ -8312,6 +8352,7 @@ def remove_preroll_from_category(category_id: int, preroll_id: int, db: Session 
         db.refresh(p)
     except Exception as e:
         db.rollback()
+        log_event('ERROR', 'user', f'Failed to remove preroll {preroll_id} from category {category_id}: {e}', source='remove_preroll_from_category')
         raise HTTPException(status_code=500, detail=f"Failed to remove preroll from category: {str(e)}")
 
     return {
@@ -8632,6 +8673,7 @@ def create_schedule(schedule: ScheduleCreate, db: Session = Depends(get_db)):
     except Exception as e:
         db.rollback()
         _file_log(f"Schedule create failed: {e}")
+        log_event('ERROR', 'scheduler', f'Schedule creation failed: {e}', source='create_schedule')
         raise HTTPException(status_code=500, detail=f"Failed to create schedule: {str(e)}")
     db.refresh(db_schedule)
     log_event('INFO', 'scheduler', f"Schedule '{db_schedule.name}' created", details={"schedule_id": db_schedule.id, "type": db_schedule.type})
@@ -9100,6 +9142,7 @@ def update_schedule(schedule_id: int, schedule: ScheduleCreate, db: Session = De
     except Exception as e:
         db.rollback()
         _file_log(f"Schedule update failed for id={schedule_id}: {e}")
+        log_event('ERROR', 'scheduler', f'Schedule update failed: {e}', source='update_schedule', details={'schedule_id': schedule_id})
         raise HTTPException(status_code=500, detail=f"Failed to update schedule: {str(e)}")
     
     # Apply changes to Plex immediately using win/lose logic
@@ -9134,6 +9177,7 @@ def delete_schedule(schedule_id: int, db: Session = Depends(get_db)):
     except Exception as e:
         db.rollback()
         _file_log(f"Schedule delete failed for id={schedule_id}: {e}")
+        log_event('ERROR', 'scheduler', f'Schedule delete failed: {e}', source='delete_schedule', details={'schedule_id': schedule_id})
         raise HTTPException(status_code=500, detail=f"Failed to delete schedule: {str(e)}")
     
     log_event('INFO', 'scheduler', f"Schedule '{schedule_name}' deleted", source='delete_schedule',
@@ -9170,6 +9214,7 @@ def get_saved_sequences(db: Session = Depends(get_db)):
         } for seq in sequences]
     except Exception as e:
         _file_log(f"Failed to fetch saved sequences: {e}")
+        log_event('ERROR', 'nexup', f'Failed to fetch sequences: {e}', source='get_saved_sequences')
         raise HTTPException(status_code=500, detail=f"Failed to fetch sequences: {str(e)}")
 
 @app.post("/sequences")
@@ -9200,6 +9245,7 @@ def create_saved_sequence(sequence: SavedSequenceCreate, db: Session = Depends(g
     except Exception as e:
         db.rollback()
         _file_log(f"Failed to create saved sequence: {e}")
+        log_event('ERROR', 'nexup', f'Sequence creation failed: {e}', source='create_saved_sequence')
         raise HTTPException(status_code=500, detail=f"Failed to create sequence: {str(e)}")
 
 @app.get("/sequences/{sequence_id}")
@@ -10397,6 +10443,7 @@ async def import_sequence_pattern(
         raise HTTPException(status_code=400, detail="Invalid JSON format in pattern file")
     except Exception as e:
         _file_log(f"Failed to import sequence pattern: {e}")
+        log_event('ERROR', 'nexup', f'Sequence import failed: {e}', source='import_sequence_pattern')
         raise HTTPException(status_code=500, detail=f"Import failed: {str(e)}")
 
 class BundleConfirmRequest(BaseModel):
@@ -10466,6 +10513,7 @@ async def confirm_bundle_import(
     except Exception as e:
         db.rollback()
         _file_log(f"Failed to confirm bundle import: {e}")
+        log_event('ERROR', 'nexup', f'Bundle import failed: {e}', source='confirm_bundle_import')
         raise HTTPException(status_code=500, detail=f"Import failed: {str(e)}")
 
 def _find_community_id_by_name(preroll_name: str) -> Optional[str]:
@@ -10941,6 +10989,7 @@ def export_sequence_pattern(
                 )
             except Exception as e:
                 _file_log(f"Failed to create full bundle: {e}")
+                log_event('ERROR', 'nexup', f'Bundle export failed: {e}', source='export_sequence_pattern')
                 raise HTTPException(status_code=500, detail=f"Bundle creation failed: {str(e)}")
         
         _file_log(f"Exported sequence pattern ({export_mode}): {sequence.name} with {len(pattern_blocks)} blocks")
@@ -10948,6 +10997,7 @@ def export_sequence_pattern(
         
     except Exception as e:
         _file_log(f"Failed to export sequence pattern: {e}")
+        log_event('ERROR', 'nexup', f'Sequence export failed: {e}', source='export_sequence_pattern')
         raise HTTPException(status_code=500, detail=f"Export failed: {str(e)}")
 
 # Holiday presets
@@ -11070,6 +11120,7 @@ def get_holiday_countries():
             "api_available": HolidayAPI.is_api_available()
         }
     except Exception as e:
+        log_event('ERROR', 'system', f'Holiday API countries fetch failed: {e}', source='get_holiday_countries')
         raise HTTPException(status_code=500, detail=f"Failed to fetch countries: {str(e)}")
 
 @app.get("/holiday-api/holidays/{country_code}/{year}")
@@ -11092,6 +11143,7 @@ def get_holidays_for_country(country_code: str, year: int):
             "api_available": HolidayAPI.is_api_available()
         }
     except Exception as e:
+        log_event('ERROR', 'system', f'Holiday API fetch failed: {e}', source='get_holidays_for_country')
         raise HTTPException(status_code=500, detail=f"Failed to fetch holidays: {str(e)}")
 
 @app.get("/holiday-api/search")
@@ -11124,6 +11176,7 @@ def search_holiday(name: str, country_code: str = "US", year: int = None):
                 "year": year
             }
     except Exception as e:
+        log_event('ERROR', 'system', f'Holiday search failed: {e}', source='search_holiday')
         raise HTTPException(status_code=500, detail=f"Failed to search holiday: {str(e)}")
 
 @app.get("/holiday-api/next/{holiday_name}")
@@ -11155,6 +11208,7 @@ def get_next_holiday_occurrence(holiday_name: str, country_code: str = "US"):
                 "country_code": country_code.upper()
             }
     except Exception as e:
+        log_event('ERROR', 'system', f'Holiday next occurrence lookup failed: {e}', source='next_holiday')
         raise HTTPException(status_code=500, detail=f"Failed to find next occurrence: {str(e)}")
 
 @app.post("/holiday-api/create-schedule")
@@ -11260,6 +11314,7 @@ def create_schedule_from_holiday(
         import traceback
         error_details = traceback.format_exc()
         _file_log(f"[ERROR] Error creating holiday schedule: {str(e)}\n{error_details}")
+        log_event('ERROR', 'scheduler', f'Holiday schedule creation failed: {e}', source='create_schedule_from_holiday')
         raise HTTPException(status_code=500, detail=f"Failed to create schedule: {str(e)}")
 
 @app.get("/holiday-api/status")
@@ -11386,6 +11441,7 @@ def refresh_holiday_dates(db: Session = Depends(get_db)):
         
     except Exception as e:
         db.rollback()
+        log_event('ERROR', 'scheduler', f'Holiday date refresh failed: {e}', source='refresh_holiday_dates')
         raise HTTPException(status_code=500, detail=f"Failed to refresh holiday dates: {str(e)}")
 
 @app.get("/holiday-api/linked-schedules")
@@ -11407,6 +11463,7 @@ def get_holiday_linked_schedules(db: Session = Depends(get_db)):
         } for s in schedules]
         
     except Exception as e:
+        log_event('ERROR', 'scheduler', f'Error fetching holiday linked schedules: {e}', source='get_holiday_linked_schedules')
         raise HTTPException(status_code=500, detail=str(e))
 
 # Community templates endpoints
@@ -11478,6 +11535,7 @@ def create_community_template(
         return {"message": "Template created successfully", "id": template.id}
 
     except Exception as e:
+        log_event('ERROR', 'system', f'Template creation failed: {e}', source='create_community_template')
         raise HTTPException(status_code=500, detail=f"Template creation failed: {str(e)}")
 
 @app.post("/community-templates/{template_id}/import")
@@ -11528,6 +11586,7 @@ def import_community_template(template_id: int, db: Session = Depends(get_db)):
 
     except Exception as e:
         db.rollback()
+        log_event('ERROR', 'system', f'Template import failed: {e}', source='import_community_template')
         raise HTTPException(status_code=500, detail=f"Import failed: {str(e)}")
 
 @app.post("/community-templates/init")
@@ -11632,6 +11691,7 @@ def run_scheduler_now(db: Session = Depends(get_db)):
         scheduler._check_and_execute_schedules()
         return {"message": "Scheduler executed successfully"}
     except Exception as e:
+        log_event('ERROR', 'scheduler', f'Manual scheduler execution failed: {e}', source='run_scheduler_now')
         raise HTTPException(status_code=500, detail=f"Scheduler execution failed: {str(e)}")
 
 
@@ -11714,6 +11774,7 @@ def get_stable_token_config():
             "provider": secure_store.provider_info()[1],
         }
     except Exception as e:
+        log_event('ERROR', 'plex', f'Error reading stable token config: {e}', source='get_stable_token_config')
         raise HTTPException(status_code=500, detail=f"Error reading config: {str(e)}")
 
 @app.get("/plex/current-preroll")
@@ -11741,6 +11802,7 @@ def delete_stable_token():
         else:
             return {"message": "No stable token configuration found"}
     except Exception as e:
+        log_event('ERROR', 'plex', f'Error deleting stable token config: {e}', source='delete_stable_token')
         raise HTTPException(status_code=500, detail=f"Error deleting config: {str(e)}")
 
 # Path mapping management endpoints
@@ -11837,6 +11899,7 @@ def put_path_mappings(payload: PathMappingsPayload, merge: bool = False, db: Ses
         db.commit()
     except Exception as e:
         db.rollback()
+        log_event('ERROR', 'system', f'Failed to save path mappings: {e}', source='save_path_mappings')
         raise HTTPException(status_code=500, detail=f"Failed to save path mappings: {e}")
 
     return {"saved": len(out), "mappings": out, "merge": merge}
@@ -12013,6 +12076,7 @@ def browse_folders(req: BrowseFolderRequest):
     except HTTPException:
         raise
     except Exception as e:
+        log_event('ERROR', 'system', f'Error browsing folders: {e}', source='browse_folders')
         raise HTTPException(status_code=500, detail=f"Error browsing folders: {str(e)}")
 
 
@@ -12300,6 +12364,7 @@ def backup_database(db: Session = Depends(get_db)):
 
         return data
     except Exception as e:
+        log_event('ERROR', 'system', f'Database backup failed: {e}', source='backup_database')
         raise HTTPException(status_code=500, detail=f"Backup failed: {str(e)}")
 
 @app.post("/backup/files")
@@ -12417,6 +12482,7 @@ def backup_files():
             background=BackgroundTask(lambda: os.unlink(zip_path) if os.path.exists(zip_path) else None)
         )
     except Exception as e:
+        log_event('ERROR', 'system', f'System backup failed: {e}', source='backup_files')
         raise HTTPException(status_code=500, detail=f"System backup failed: {str(e)}")
 
 @app.post("/restore/database")
@@ -12636,6 +12702,7 @@ def restore_database(backup_data: dict, db: Session = Depends(get_db)):
         import traceback
         traceback.print_exc()
         db.rollback()
+        log_event('ERROR', 'system', f'Database restore failed: {e}', source='restore_database')
         raise HTTPException(status_code=500, detail=f"Restore failed: {str(e)}")
 
 @app.post("/restore/files")
@@ -12738,6 +12805,7 @@ def restore_files(file: UploadFile = File(...), db: Session = Depends(get_db)):
         print(f"RESTORE ERROR: {str(e)}")
         import traceback
         traceback.print_exc()
+        log_event('ERROR', 'system', f'System restore failed: {e}', source='system_restore')
         raise HTTPException(status_code=500, detail=f"System restore failed: {str(e)}")
 
 @app.post("/maintenance/fix-thumbnail-paths")
@@ -12772,6 +12840,7 @@ def fix_thumbnail_paths(db: Session = Depends(get_db)):
         return {"message": f"Fixed {updated_count} thumbnail paths"}
     except Exception as e:
         db.rollback()
+        log_event('ERROR', 'system', f'Error fixing thumbnail paths: {e}', source='fix_thumbnail_paths')
         raise HTTPException(status_code=500, detail=f"Error fixing thumbnail paths: {str(e)}")
 
 @app.post("/thumbnails/rebuild")
@@ -12887,6 +12956,7 @@ def thumbnails_rebuild(category: str = None, force: bool = False, db: Session = 
         except Exception as e:
             db.rollback()
             _file_log(f"thumbnails_rebuild commit failed: {e}")
+            log_event('ERROR', 'system', f'Thumbnail rebuild commit failed: {e}', source='thumbnails_rebuild')
             raise HTTPException(status_code=500, detail=f"Thumbnail rebuild failed to commit: {str(e)}")
 
         return {
@@ -12902,6 +12972,7 @@ def thumbnails_rebuild(category: str = None, force: bool = False, db: Session = 
         raise
     except Exception as e:
         _file_log(f"thumbnails_rebuild error: {e}")
+        log_event('ERROR', 'system', f'Thumbnail rebuild error: {e}', source='thumbnails_rebuild')
         raise HTTPException(status_code=500, detail=f"Thumbnail rebuild error: {str(e)}")
 
 # Debug: Print current working directory
@@ -13731,6 +13802,7 @@ def create_or_update_genre_map(payload: GenreMapCreate, db: Session = Depends(ge
             db.refresh(existing)
         except Exception as e:
             db.rollback()
+            log_event('ERROR', 'system', f'Failed to update genre mapping: {e}', source='update_genre_map')
             raise HTTPException(status_code=500, detail=f"Failed to update mapping: {e}")
         return {
             "updated": True,
@@ -13959,6 +14031,7 @@ def get_active_category(db: Session = Depends(get_db)):
             }
         }
     except Exception as e:
+        log_event('ERROR', 'system', f'Error getting active category: {e}', source='get_active_category')
         raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
 
 @app.get("/settings/active-fallback")
@@ -13973,6 +14046,7 @@ def get_active_fallback(db: Session = Depends(get_db)):
         return {"active_fallback_category_id": fallback_id}
     except Exception as e:
         _file_log(f"Error getting active fallback: {str(e)}", level="ERROR")
+        log_event('ERROR', 'system', f'Error getting active fallback: {e}', source='get_active_fallback')
         raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
 
 @app.get("/settings/timezone")
@@ -13986,6 +14060,7 @@ def get_timezone(db: Session = Depends(get_db)):
         timezone = getattr(setting, "timezone", "UTC")
         return {"timezone": timezone or "UTC"}
     except Exception as e:
+        log_event('ERROR', 'system', f'Error getting timezone: {e}', source='get_timezone')
         raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
 
 @app.put("/settings/timezone")
@@ -14024,6 +14099,7 @@ async def set_timezone(request: Request, db: Session = Depends(get_db)):
         return {"timezone": tz, "message": "Timezone updated successfully"}
     except Exception as e:
         db.rollback()
+        log_event('ERROR', 'system', f'Error setting timezone: {e}', source='set_timezone')
         raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
 
 @app.get("/settings/timezones")
@@ -14073,6 +14149,7 @@ def update_dashboard_tile_order(order: list[str], db: Session = Depends(get_db))
         return {"message": "Dashboard tile order updated"}
     except Exception as e:
         db.rollback()
+        log_event('ERROR', 'system', f'Failed to update dashboard tile order: {e}', source='update_dashboard_tile_order')
         raise HTTPException(status_code=500, detail=f"Failed to update dashboard tile order: {e}")
 
 @app.get("/settings/genre")
@@ -14126,6 +14203,7 @@ def set_dashboard_tile_order(tile_order: list[str], db: Session = Depends(get_db
         return {"saved": True, "tile_order": tile_order}
     except Exception as e:
         db.rollback()
+        log_event('ERROR', 'system', f'Failed to save dashboard tile order: {e}', source='save_dashboard_tile_order')
         raise HTTPException(status_code=500, detail=f"Failed to save dashboard tile order: {str(e)}")
 
 @app.put("/settings/genre")
@@ -14193,6 +14271,7 @@ def update_verbose_logging(verbose_logging: bool, db: Session = Depends(get_db))
     status = "enabled" if verbose_logging else "disabled"
     print(f"Verbose logging {status}")
     _file_log(f"Verbose logging {status}")
+    log_event('INFO', 'system', f'Verbose logging {status}', source='update_verbose_logging')
     
     return {"message": f"Verbose logging {status}", "verbose_logging": verbose_logging}
 
@@ -14221,6 +14300,7 @@ def update_passive_mode(passive_mode: bool, db: Session = Depends(get_db)):
     status = "enabled" if passive_mode else "disabled"
     print(f"Passive mode (coexistence) {status}")
     _file_log(f"Passive mode (coexistence) {status}")
+    log_event('INFO', 'system', f'Passive mode {status}', source='update_passive_mode')
     
     return {"message": f"Passive mode {status}", "passive_mode": passive_mode}
 
@@ -14249,6 +14329,7 @@ def update_clear_when_inactive(clear_when_inactive: bool, db: Session = Depends(
     status = "enabled" if clear_when_inactive else "disabled"
     print(f"Clear when inactive {status}")
     _file_log(f"Clear when inactive {status}")
+    log_event('INFO', 'system', f'Clear when inactive {status}', source='update_clear_when_inactive')
     
     return {"message": f"Clear when inactive {status}", "clear_when_inactive": clear_when_inactive}
 
@@ -14346,6 +14427,7 @@ def update_filler_settings(
         except Exception as e:
             print(f"Error applying filler immediately: {e}")
             _file_log(f"Error applying filler immediately: {e}")
+            log_event('ERROR', 'system', f'Filler apply failed: {e}', source='update_filler_settings')
     
     return {
         "message": f"Filler category updated" + (" and applied to Plex" if applied else ""),
@@ -14671,6 +14753,7 @@ def update_nexup_settings(
     db.commit()
     
     _file_log(f"NeX-Up settings updated")
+    log_event('INFO', 'nexup', 'NeX-Up settings updated', source='update_nexup_settings')
     return {"message": "NeX-Up settings updated", "success": True}
 
 @app.post("/nexup/radarr/connect")
@@ -14707,6 +14790,7 @@ async def connect_radarr(
             db.commit()
             
             _file_log(f"Radarr connected: {result.get('appName')} v{result.get('version')}")
+            log_event('INFO', 'nexup', f'Radarr connected: {result.get("appName")} v{result.get("version")}', source='connect_radarr')
             return {
                 "success": True,
                 "message": f"Connected to {result.get('appName', 'Radarr')} v{result.get('version', 'Unknown')}",
@@ -14721,6 +14805,7 @@ async def connect_radarr(
             }
     except Exception as e:
         _file_log(f"Radarr connect error: {str(e)}")
+        log_event('ERROR', 'nexup', f'Radarr connection failed: {e}', source='connect_radarr')
         return {
             "success": False,
             "message": f"Connection error: {str(e)}"
@@ -14737,6 +14822,7 @@ def disconnect_radarr(db: Session = Depends(get_db)):
         db.commit()
     
     _file_log("Radarr disconnected")
+    log_event('INFO', 'nexup', 'Radarr disconnected', source='disconnect_radarr')
     return {"success": True, "message": "Radarr disconnected"}
 
 @app.get("/nexup/radarr/upcoming")
@@ -14873,6 +14959,7 @@ async def connect_sonarr(
             db.commit()
             
             _file_log(f"Sonarr connected: {result.get('appName')} v{result.get('version')}")
+            log_event('INFO', 'nexup', f'Sonarr connected: {result.get("appName")} v{result.get("version")}', source='connect_sonarr')
             return {
                 "success": True,
                 "message": f"Connected to {result.get('appName', 'Sonarr')} v{result.get('version', 'Unknown')}",
@@ -14887,6 +14974,7 @@ async def connect_sonarr(
             }
     except Exception as e:
         _file_log(f"Sonarr connect error: {str(e)}")
+        log_event('ERROR', 'nexup', f'Sonarr connection failed: {e}', source='connect_sonarr')
         return {
             "success": False,
             "message": f"Connection error: {str(e)}"
@@ -14904,6 +14992,7 @@ def disconnect_sonarr(db: Session = Depends(get_db)):
         db.commit()
     
     _file_log("Sonarr disconnected")
+    log_event('INFO', 'nexup', 'Sonarr disconnected', source='disconnect_sonarr')
     return {"success": True, "message": "Sonarr disconnected"}
 
 @app.get("/nexup/sonarr/upcoming")
@@ -15145,6 +15234,7 @@ async def download_tv_trailer(
             trailer.status = 'error'
             trailer.error_message = 'Download failed - no file returned'
             _file_log(f"Sonarr: Download failed for '{show_info.get('title')}'", level="ERROR")
+            log_event('ERROR', 'nexup', f'TV trailer download failed: {show_info.get("title")}', source='download_tv_trailer', db=db)
             
             db.commit()
             
@@ -15160,6 +15250,7 @@ async def download_tv_trailer(
         trailer.error_message = str(e)
         db.commit()
         _file_log(f"Sonarr: Download exception for series_id={sonarr_series_id}: {str(e)}", level="ERROR")
+        log_event('ERROR', 'nexup', f'TV trailer download exception: {e}', source='download_tv_trailer', db=db)
         raise HTTPException(status_code=500, detail=str(e))
 
 async def _create_preroll_from_tv_trailer(trailer, setting, db):
@@ -15454,6 +15545,7 @@ async def _auto_regenerate_coming_soon_list(db: Session):
         
         if not generator.check_ffmpeg_available():
             _file_log("Coming Soon List auto-regen: FFmpeg not available", level="WARNING")
+            log_event('WARNING', 'nexup', 'Coming Soon List auto-regen skipped: FFmpeg not available', source='auto_regen_coming_soon')
             return
         
         # Determine which layouts to generate based on auto_regen_layout setting
@@ -15514,6 +15606,7 @@ async def sync_sonarr_trailers(db: Session = Depends(get_db)):
     global _nexup_sync_progress
     
     _file_log("Sonarr Sync: Starting TV trailer sync")
+    log_event('INFO', 'nexup', 'Sonarr TV trailer sync started', source='sync_sonarr_trailers', db=db)
     setting = db.query(models.Setting).first()
     if not setting or not getattr(setting, 'nexup_sonarr_url', None):
         _file_log("Sonarr Sync: Failed - not connected")
@@ -15623,6 +15716,7 @@ async def sync_sonarr_trailers(db: Session = Depends(get_db)):
                     _file_log(f"Sonarr Sync: Deleted trailer file: {trailer.local_path}")
                 except Exception as e:
                     _file_log(f"Sonarr Sync: Failed to delete trailer file: {e}", level="ERROR")
+                    log_event('ERROR', 'nexup', f'Failed to delete expired TV trailer file: {e}', source='sync_sonarr_trailers', db=db)
             
             # Also remove from prerolls if it exists
             preroll = db.query(models.Preroll).filter(
@@ -15777,6 +15871,7 @@ async def sync_sonarr_trailers(db: Session = Depends(get_db)):
                 _nexup_sync_progress["errors"] = len(results["errors"])
                 _nexup_sync_progress["status"] = f"Failed to download '{show['title']}' S{show['season_number']}"
                 _file_log(f"Sonarr Sync: Failed to download trailer for '{show['title']}' S{show['season_number']}", level="ERROR")
+                log_event('ERROR', 'nexup', f'Sonarr sync download failed: {show["title"]} S{show["season_number"]}', source='sync_sonarr_trailers', db=db)
             
             db.commit()
             
@@ -15785,6 +15880,7 @@ async def sync_sonarr_trailers(db: Session = Depends(get_db)):
             _nexup_sync_progress["errors"] = len(results["errors"])
             _nexup_sync_progress["status"] = f"Error: {show['title']} - {str(e)[:50]}"
             _file_log(f"Sonarr Sync: Error downloading '{show['title']}': {str(e)}", level="ERROR")
+            log_event('ERROR', 'nexup', f'Sonarr sync download error: {show["title"]}: {e}', source='sync_sonarr_trailers', db=db)
     
     # Add skip counts to results
     results["skipped_no_trailer"] = skipped_no_trailer
@@ -15800,6 +15896,8 @@ async def sync_sonarr_trailers(db: Session = Depends(get_db)):
     _nexup_sync_progress["syncing"] = False
     
     _file_log(f"Sonarr Sync: Complete - checked={results['checked']}, eligible={results['eligible']}, downloaded={results['downloaded']}, skipped_no_trailer={skipped_no_trailer}, errors={len(results['errors'])}")
+    log_event('INFO', 'nexup', f'Sonarr sync complete: {results["downloaded"]} downloaded, {results["expired"]} expired, {len(results["errors"])} errors',
+             source='sync_sonarr_trailers', details={'downloaded': results['downloaded'], 'expired': results['expired'], 'errors': len(results['errors'])}, db=db)
     
     # Add help message if no downloads and many skipped
     if results['downloaded'] == 0 and skipped_no_trailer > 0:
@@ -16696,11 +16794,13 @@ async def download_trailer(radarr_movie_id: int, db: Session = Depends(get_db)):
                 help_msg += "Cookies file exists but may be expired. Re-export fresh cookies from your browser."
             
             _file_log(f"Failed to download trailer for {movie.get('title')} - {help_msg}")
+            log_event('ERROR', 'nexup', f'Trailer download failed: {movie.get("title")} - YouTube bot block', source='download_trailer', db=db)
             raise HTTPException(status_code=500, detail=help_msg)
     except HTTPException:
         raise
     except Exception as e:
         _file_log(f"Error downloading trailer: {str(e)}")
+        log_event('ERROR', 'nexup', f'Trailer download error: {e}', source='download_trailer', db=db)
         raise HTTPException(status_code=500, detail=f"Error downloading trailer: {str(e)}")
     
     # Parse release date
@@ -16854,6 +16954,7 @@ async def add_manual_trailer(
             result = await downloader.download_trailer(url, title, tmdb_id)
             if not result:
                 _file_log(f"NeX-Up: Manual download failed for '{title}' - no result returned")
+                log_event('ERROR', 'nexup', f'Manual trailer download failed: {title}', source='add_manual_trailer', db=db)
                 raise HTTPException(status_code=500, detail=f"Failed to download trailer from {url}. Check if YouTube authentication is configured.")
             
             final_path = result['path']
@@ -16862,6 +16963,7 @@ async def add_manual_trailer(
             raise
         except Exception as e:
             _file_log(f"NeX-Up: Manual download error for '{title}': {str(e)}")
+            log_event('ERROR', 'nexup', f'Manual trailer download error: {title}: {e}', source='add_manual_trailer', db=db)
             raise HTTPException(status_code=500, detail=f"Download error: {str(e)}")
         _file_log(f"NeX-Up: Downloaded manual trailer for '{title}' from {url}")
     else:
@@ -16991,6 +17093,7 @@ def delete_nexup_trailer(trailer_id: int, db: Session = Depends(get_db)):
             os.remove(trailer.local_path)
         except Exception as e:
             _file_log(f"Failed to delete trailer file: {e}")
+            log_event('WARNING', 'nexup', f'Failed to delete trailer file: {e}', source='delete_nexup_trailer', db=db)
     
     title = trailer.title
     db.delete(trailer)
@@ -17089,6 +17192,7 @@ async def sync_nexup(db: Session = Depends(get_db)):
     cookies_file = Path(storage_path) / 'youtube_cookies.txt'
     _file_log(f"NeX-Up sync: storage_path={storage_path}")
     _file_log(f"NeX-Up sync: cookies_file={cookies_file} (exists={cookies_file.exists()})")
+    log_event('INFO', 'nexup', 'NeX-Up Radarr sync started', source='sync_nexup', db=db)
     
     downloader = TrailerDownloader(storage_path, getattr(setting, 'nexup_quality', '1080') or '1080', max_duration=max_duration)
     
@@ -17282,6 +17386,7 @@ async def sync_nexup(db: Session = Depends(get_db)):
                         _nexup_sync_progress["cookie_error"] = True  # Flag for UI to show help
                         results["errors"].append(f"{movie['title']}: {error_msg}")
                         _file_log(f"NeX-Up sync: YOUTUBE BOT BLOCK - '{movie['title']}' - cookies may be invalid or IP is rate-limited")
+                        log_event('ERROR', 'nexup', f'YouTube bot block during Radarr sync: {movie["title"]}', source='sync_nexup', db=db)
                     else:
                         _nexup_sync_progress["status"] = f"Failed to download '{movie['title']}'"
                         results["errors"].append(f"{movie['title']}: No trailer source available")
@@ -17292,6 +17397,7 @@ async def sync_nexup(db: Session = Depends(get_db)):
                 _nexup_sync_progress["status"] = f"Error downloading '{movie['title']}'"
                 _nexup_sync_progress["errors"] = len(results["errors"]) + 1
                 _file_log(f"NeX-Up sync: ERROR downloading '{movie['title']}': {e}")
+                log_event('ERROR', 'nexup', f'Radarr sync download error: {movie["title"]}: {e}', source='sync_nexup', db=db)
                 results["errors"].append(f"{movie['title']}: {str(e)}")
         
         # Update last sync time (use local time for display)
@@ -17302,6 +17408,8 @@ async def sync_nexup(db: Session = Depends(get_db)):
         _nexup_sync_progress["progress"] = 100
         _nexup_sync_progress["syncing"] = False
         _file_log(f"NeX-Up sync complete: {results['downloaded']} downloaded, {results['expired']} expired")
+        log_event('INFO', 'nexup', f'NeX-Up Radarr sync complete: {results["downloaded"]} downloaded, {results["expired"]} expired',
+                 source='sync_nexup', details={'downloaded': results['downloaded'], 'expired': results['expired'], 'errors': len(results.get('errors', []))}, db=db)
         
     except Exception as e:
         _nexup_sync_progress["status"] = f"Sync error: {str(e)}"
@@ -17309,6 +17417,7 @@ async def sync_nexup(db: Session = Depends(get_db)):
         _nexup_sync_progress["progress"] = 100
         results["errors"].append(str(e))
         _file_log(f"NeX-Up sync error: {e}")
+        log_event('ERROR', 'nexup', f'NeX-Up sync error: {e}', source='sync_nexup', db=db)
     
     # Auto-regenerate Coming Soon List if enabled
     await _auto_regenerate_coming_soon_list(db)
@@ -17435,6 +17544,7 @@ def get_preroll_templates():
         _file_log(f"[TEMPLATES] ERROR loading templates/ffmpeg: {e}", level="ERROR")
         import traceback
         _file_log(f"[TEMPLATES] Traceback: {traceback.format_exc()}", level="ERROR")
+        log_event('ERROR', 'system', f'Template/FFmpeg load error: {e}', source='get_nexup_templates')
         # Return a safe fallback so frontend doesn't break entirely
         return {
             "templates": [],
@@ -17461,6 +17571,7 @@ def get_ffmpeg_status():
         _file_log(f"[FFMPEG-STATUS] ERROR: {e}", level="ERROR")
         import traceback
         _file_log(f"[FFMPEG-STATUS] Traceback: {traceback.format_exc()}", level="ERROR")
+        log_event('ERROR', 'system', f'FFmpeg status check error: {e}', source='ffmpeg_status')
         return {
             "available": False,
             "ffmpeg_path": None,
@@ -17542,9 +17653,11 @@ async def generate_dynamic_preroll(
                 "message": f"Generated '{template}' preroll with {theme} theme successfully"
             }
         else:
+            log_event('ERROR', 'nexup', 'Dynamic preroll generation returned no output', source='generate_dynamic_preroll', db=db)
             raise HTTPException(status_code=500, detail="Failed to generate preroll video")
     except Exception as e:
         _file_log(f"Error generating dynamic preroll: {e}")
+        log_event('ERROR', 'nexup', f'Dynamic preroll generation failed: {e}', source='generate_dynamic_preroll', db=db)
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -18386,6 +18499,7 @@ async def generate_preroll_from_preview(
         raise HTTPException(status_code=400, detail=f"Invalid base64 image data: {e}")
     except Exception as e:
         _file_log(f"[PREROLL-IMG] Error: {e}")
+        log_event('ERROR', 'user', f'Preroll from image generation failed: {e}', source='generate_preroll_from_image')
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/nexup/preroll/settings")
@@ -20117,6 +20231,7 @@ def diagnostics_bundle(db: Session = Depends(get_db)):
             filename=os.path.basename(tmp_path),
         )
     except Exception as e:
+        log_event('ERROR', 'system', f'Failed to build diagnostics bundle: {e}', source='diagnostics_bundle')
         raise HTTPException(status_code=500, detail=f"Failed to build diagnostics bundle: {e}")
 
 # Server-Sent Events stream for lightweight live status
@@ -20199,6 +20314,7 @@ def connect_jellyfin(request: JellyfinConnectRequest, db: Session = Depends(get_
             pass
 
         db.commit()
+        log_event('INFO', 'jellyfin', 'Jellyfin server connected successfully', source='connect_jellyfin')
         return {
             "connected": True,
             "message": "Successfully connected to Jellyfin server",
@@ -20207,6 +20323,7 @@ def connect_jellyfin(request: JellyfinConnectRequest, db: Session = Depends(get_
     except HTTPException:
         raise
     except Exception as e:
+        log_event('WARNING', 'jellyfin', f'Jellyfin connection failed: {e}', source='connect_jellyfin')
         raise HTTPException(status_code=422, detail=f"Connection error: {str(e)}")
 
 @app.get("/jellyfin/status")
@@ -20279,6 +20396,7 @@ def disconnect_jellyfin(db: Session = Depends(get_db)):
             pass
         db.commit()
 
+    log_event('INFO', 'jellyfin', 'Jellyfin server disconnected', source='disconnect_jellyfin')
     return {"disconnected": True, "message": "Successfully disconnected from Jellyfin server"}
 
 # --- Jellyfin Category Apply/Remove (stub plan) ---
@@ -20565,6 +20683,7 @@ def apply_category_to_jellyfin(category_id: int, db: Session = Depends(get_db)):
             }
 
     except Exception as e:
+        log_event('ERROR', 'jellyfin', f'Jellyfin plugin update error: {e}', source='apply_category_to_jellyfin')
         return {
             "applied": False,
             "supported": False,
@@ -20807,6 +20926,7 @@ def accept_fair_use_policy(db: Session = Depends(get_db)):
         }
     except Exception as e:
         db.rollback()
+        log_event('ERROR', 'system', f'Failed to record fair use acceptance: {e}', source='accept_fair_use')
         raise HTTPException(status_code=500, detail=f"Failed to record acceptance: {str(e)}")
 
 @app.get("/community-prerolls/fair-use/status")
@@ -21284,6 +21404,7 @@ def build_community_prerolls_index(request: Request, db: Session = Depends(get_d
         raise
     except Exception as e:
         _file_log(f"Error building prerolls index: {e}")
+        log_event('ERROR', 'system', f'Community index build failed: {e}', source='build_community_index')
         raise HTTPException(status_code=500, detail=f"Failed to build index: {str(e)}")
     finally:
         _index_build_lock = False
@@ -21713,6 +21834,7 @@ def search_community_prerolls(request: Request, query: str = "", category: str =
         
     except Exception as e:
         _file_log(f"Community search exception: {e}")
+        log_event('ERROR', 'system', f'Community search error: {e}', source='search_community_prerolls')
         raise HTTPException(status_code=500, detail=f"Search failed: {str(e)}")
 
 @app.post("/community-prerolls/download")
@@ -21828,6 +21950,7 @@ def download_community_preroll(
                         f.write(chunk)
         except Exception as dl_err:
             _file_log(f"Community preroll download failed: {str(dl_err)}", level="ERROR")
+            log_event('ERROR', 'user', f'Community preroll download failed: {dl_err}', source='download_community_preroll')
             raise HTTPException(status_code=500, detail="Download failed. Check logs for details.")
         
         # Get file info
@@ -21949,9 +22072,12 @@ def download_community_preroll(
                         _file_log(f"download_community_preroll: Successfully auto-applied category '{category.name}' to Plex")
                     else:
                         _file_log(f"download_community_preroll: Failed to auto-apply category '{category.name}' to Plex")
+                        log_event('WARNING', 'plex', f'Failed to auto-apply category after community download: {category.name}', source='download_community_preroll')
                 except Exception as e:
                     _file_log(f"download_community_preroll: Error auto-applying to Plex: {e}")
+                    log_event('WARNING', 'plex', f'Error auto-applying category to Plex: {e}', source='download_community_preroll')
         
+        log_event('INFO', 'user', f'Community preroll downloaded: {preroll.display_name or preroll.filename}', source='download_community_preroll', details={'preroll_id': preroll.id, 'auto_applied': auto_applied})
         return {
             "downloaded": True,
             "id": preroll.id,
@@ -21974,6 +22100,7 @@ def download_community_preroll(
         error_details = traceback.format_exc()
         _file_log(f"DOWNLOAD ERROR: {error_details}")
         print(f"DOWNLOAD ERROR: {error_details}", flush=True)
+        log_event('ERROR', 'user', f'Community preroll download error: {str(e)}', source='download_community_preroll')
         try:
             db.rollback()
         except Exception:
@@ -22000,6 +22127,7 @@ def get_downloaded_community_preroll_ids(db: Session = Depends(get_db)):
 
         return {"downloaded_ids": ids}
     except Exception as e:
+        log_event('ERROR', 'system', f'Failed to get community downloaded IDs: {e}', source='get_downloaded_ids')
         raise HTTPException(status_code=500, detail=f"Failed to get downloaded IDs: {str(e)}")
 
 @app.post("/community-prerolls/clear-matches")
@@ -22036,6 +22164,7 @@ def clear_community_matches_endpoint(db: Session = Depends(get_db)):
     except Exception as e:
         db.rollback()
         _file_log(f"Failed to clear community matches: {e}")
+        log_event('ERROR', 'system', f'Failed to clear community matches: {e}', source='clear_community_matches')
         raise HTTPException(status_code=500, detail=f"Failed to clear matches: {str(e)}")
 
 @app.post("/community-prerolls/migrate-legacy")
@@ -22214,6 +22343,7 @@ def migrate_legacy_community_prerolls_endpoint(
         }
         
     except Exception as e:
+        log_event('ERROR', 'system', f'Legacy community migration failed: {e}', source='migrate_legacy_community')
         raise HTTPException(status_code=500, detail=f"Migration failed: {str(e)}")
 
 @app.get("/community-prerolls/random")
@@ -22390,6 +22520,7 @@ def get_random_community_preroll(
     
     except Exception as e:
         _file_log(f"Random preroll exception: {e}")
+        log_event('ERROR', 'system', f'Random community preroll selection failed: {e}', source='random_community_preroll')
         raise HTTPException(status_code=500, detail=f"Random selection failed: {str(e)}")
 
 @app.get("/community-prerolls/top5")
@@ -22500,6 +22631,7 @@ def get_top5_community_prerolls(
     
     except Exception as e:
         _file_log(f"Top 5 prerolls exception: {e}")
+        log_event('ERROR', 'system', f'Top 5 community prerolls fetch failed: {e}', source='top5_community_prerolls')
         raise HTTPException(status_code=500, detail=f"Top 5 fetch failed: {str(e)}")
 
 def _fetch_movie_poster(title: str) -> str:
@@ -22694,6 +22826,7 @@ def get_latest_community_prerolls(
     
     except Exception as e:
         _file_log(f"Latest prerolls exception: {e}")
+        log_event('ERROR', 'system', f'Latest prerolls fetch failed: {e}', source='latest_community_prerolls')
         raise HTTPException(status_code=500, detail=f"Latest prerolls fetch failed: {str(e)}")
 
 # IMPORTANT: Generic /settings/{key} endpoints MUST come after specific /settings/* endpoints
@@ -22726,6 +22859,7 @@ def update_setting(key: str, value: dict | list | str, db: Session = Depends(get
             return {"status": "success"}
         except Exception as e:
             db.rollback()
+            log_event('ERROR', 'system', f'Failed to update setting "{key}": {e}', source='update_setting')
             raise HTTPException(status_code=500, detail=str(e))
     else:
         raise HTTPException(status_code=400, detail="Failed to set value")
@@ -23003,6 +23137,7 @@ def get_dashboard_stats(db: Session = Depends(get_db)):
             "recent_prerolls": recent_list
         }
     except Exception as e:
+        log_event('ERROR', 'system', f'Failed to gather stats: {e}', source='get_stats')
         raise HTTPException(status_code=500, detail=f"Failed to gather stats: {str(e)}")
 
 if __name__ == "__main__" and not getattr(sys, "frozen", False):
