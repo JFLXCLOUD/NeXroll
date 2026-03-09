@@ -220,11 +220,17 @@ class DynamicPrerollGenerator:
         ]
     
     def _escape_text(self, text: str) -> str:
-        """Escape text for FFmpeg drawtext filter"""
-        # Escape special characters for FFmpeg
+        """Escape text for FFmpeg drawtext filter.
+        
+        Apostrophes (') are replaced with the typographic right single quote
+        (\u2019) instead of backslash-escaping because FFmpeg's filter graph
+        parser uses ' as the option-value delimiter and \\' is unreliable.
+        The replacement character is visually identical and cp1252-safe.
+        """
         text = text.replace("\\", "\\\\")
         text = text.replace(":", "\\:")
-        text = text.replace("'", "\\'")
+        text = text.replace("'", "\u2019")  # typographic right single quote
+        text = text.replace(";", "\\;")     # filter separator
         return text
     
     def _build_glow_text(self, text: str, fontsize: int, color: str, font_param: str,
