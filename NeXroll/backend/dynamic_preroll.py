@@ -1608,57 +1608,54 @@ class DynamicPrerollGenerator:
                 )
             
             # Build grid layout with FFmpeg
-            # Calculate grid layout based on count - using 2 rows for larger posters
+            # Calculate grid layout: <=6 items = single row, >6 = two rows
             num_items = len(valid_items)
-            if num_items <= 4:
-                cols, rows = 2, 2
-            elif num_items <= 6:
-                cols, rows = 3, 2
-            elif num_items <= 8:
-                cols, rows = 4, 2
-            elif num_items <= 10:
-                cols, rows = 5, 2
+            if num_items <= 6:
+                # Single row - all posters side by side
+                cols = num_items
+                rows = 1
             else:
-                cols, rows = 6, 2  # Max 12 items
+                # Two rows - distribute evenly (top row gets extra if odd)
+                cols = (num_items + 1) // 2
+                rows = 2
             
-            # Adjust poster sizes based on number of columns - optimized for 1920x1080 with 2 rows
-            # Maximum vertical space: 1080 - header(160) - bottom margin(40) = 880px for 2 rows
-            # Each row gets ~440px (poster + date spacing)
-            if cols <= 2:
-                poster_width = 300
-                poster_height = 450
-                spacing_x = 100
-                spacing_y = 30
-                start_y = 200  # After header, vertically centered
-                date_spacing = 50  # Space between rows for date text
-            elif cols == 3:
-                poster_width = 280
-                poster_height = 420
-                spacing_x = 80
-                spacing_y = 25
-                start_y = 200
-                date_spacing = 45
-            elif cols == 4:
-                poster_width = 250
-                poster_height = 375
-                spacing_x = 60
-                spacing_y = 20
-                start_y = 200
-                date_spacing = 40
-            elif cols == 5:
-                poster_width = 210
-                poster_height = 315
-                spacing_x = 50
-                spacing_y = 15
-                start_y = 210
-                date_spacing = 35
-            else:  # 6 cols - larger posters to fill the space
-                poster_width = 200
-                poster_height = 300
-                spacing_x = 45
-                spacing_y = 12
-                start_y = 210
-                date_spacing = 32
+            # Poster sizes optimized for 1920x1080
+            if rows == 1:
+                # Single row sizing - posters can be larger with full vertical space
+                spacing_y = 0  # No vertical spacing needed for single row
+                if cols <= 1:
+                    poster_width, poster_height = 350, 525
+                    spacing_x, start_y, date_spacing = 0, 200, 40
+                elif cols == 2:
+                    poster_width, poster_height = 320, 480
+                    spacing_x, start_y, date_spacing = 120, 200, 40
+                elif cols == 3:
+                    poster_width, poster_height = 300, 450
+                    spacing_x, start_y, date_spacing = 80, 200, 40
+                elif cols == 4:
+                    poster_width, poster_height = 270, 405
+                    spacing_x, start_y, date_spacing = 65, 200, 38
+                elif cols == 5:
+                    poster_width, poster_height = 240, 360
+                    spacing_x, start_y, date_spacing = 55, 210, 35
+                else:  # 6
+                    poster_width, poster_height = 220, 330
+                    spacing_x, start_y, date_spacing = 50, 220, 32
+            else:
+                # Two row sizing - sized to fit within 1080px height
+                # Constraint: start_y + 2*poster_h + spacing_y + date_spacing + date_text(~36) <= 1080
+                if cols <= 4:  # 7-8 items
+                    poster_width, poster_height = 240, 360
+                    spacing_x, spacing_y = 60, 20
+                    start_y, date_spacing = 190, 35
+                elif cols == 5:  # 9-10 items
+                    poster_width, poster_height = 210, 315
+                    spacing_x, spacing_y = 50, 15
+                    start_y, date_spacing = 190, 32
+                else:  # 6 cols, 11-12 items
+                    poster_width, poster_height = 200, 300
+                    spacing_x, spacing_y = 42, 12
+                    start_y, date_spacing = 190, 30
             
             grid_width = cols * poster_width + (cols - 1) * spacing_x
             grid_height = rows * poster_height + (rows - 1) * spacing_y
