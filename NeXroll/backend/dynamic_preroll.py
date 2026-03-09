@@ -603,7 +603,9 @@ class DynamicPrerollGenerator:
             result = subprocess.run(
                 cmd, 
                 capture_output=True, 
-                text=True, 
+                text=True,
+                encoding='utf-8',
+                errors='replace',
                 timeout=120,
                 startupinfo=STARTUPINFO,
                 creationflags=CREATE_NO_WINDOW
@@ -773,7 +775,9 @@ class DynamicPrerollGenerator:
             result = subprocess.run(
                 cmd, 
                 capture_output=True, 
-                text=True, 
+                text=True,
+                encoding='utf-8',
+                errors='replace',
                 timeout=120,
                 startupinfo=STARTUPINFO,
                 creationflags=CREATE_NO_WINDOW
@@ -828,7 +832,9 @@ class DynamicPrerollGenerator:
             result = subprocess.run(
                 cmd, 
                 capture_output=True, 
-                text=True, 
+                text=True,
+                encoding='utf-8',
+                errors='replace',
                 timeout=90,
                 startupinfo=STARTUPINFO,
                 creationflags=CREATE_NO_WINDOW
@@ -1239,6 +1245,8 @@ class DynamicPrerollGenerator:
                 cmd,
                 capture_output=True,
                 text=True,
+                encoding='utf-8',
+                errors='replace',
                 timeout=60,
                 startupinfo=STARTUPINFO,
                 creationflags=CREATE_NO_WINDOW
@@ -1464,11 +1472,12 @@ class DynamicPrerollGenerator:
                 try:
                     from datetime import datetime
                     dt = datetime.fromisoformat(release_date.replace('Z', '+00:00'))
-                    date_str = dt.strftime('%b %d, %Y')
+                    date_str = dt.strftime('%b %d %Y')
                 except:
                     date_str = release_date[:10] if len(release_date) >= 10 else release_date
             else:
                 date_str = "TBA"
+            date_str = self._escape_text(date_str)
             
             item_y = list_start_y + (i * line_height)
             fade_delay = 0.8 + (i * 0.15)  # Staggered fade-in
@@ -1491,10 +1500,10 @@ class DynamicPrerollGenerator:
                 f"(t-{fade_delay})/0.4,1))'"
             )
             
-            # Subtle dot separator
+            # Subtle dot separator (ASCII-safe for Windows cp1252 compatibility)
             filter_parts.append(
-                f"drawtext=text='●':fontsize=16:fontcolor={accent_color}@0.5{font_param}:"
-                f"x=165:y={item_y+12}:alpha='if(lt(t,{fade_delay}),0,if(lt(t,{fade_delay+0.4}),"
+                f"drawtext=text='>':fontsize=20:fontcolor={accent_color}@0.5{font_param}:"
+                f"x=165:y={item_y+8}:alpha='if(lt(t,{fade_delay}),0,if(lt(t,{fade_delay+0.4}),"
                 f"(t-{fade_delay})/0.4,1))'"
             )
         
@@ -1854,6 +1863,8 @@ class DynamicPrerollGenerator:
                 cmd,
                 capture_output=True,
                 text=True,
+                encoding='utf-8',
+                errors='replace',
                 timeout=120,
                 startupinfo=STARTUPINFO,
                 creationflags=CREATE_NO_WINDOW
@@ -1926,6 +1937,8 @@ def check_ffmpeg_available() -> Dict[str, Any]:
             [ffmpeg, '-version'],
             capture_output=True,
             text=True,
+            encoding='utf-8',
+            errors='replace',
             timeout=10,
             startupinfo=STARTUPINFO,
             creationflags=CREATE_NO_WINDOW
