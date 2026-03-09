@@ -15477,6 +15477,7 @@ async def _auto_regenerate_coming_soon_list(db: Session):
                 bg_color=bg_ffmpeg,
                 text_color=text_ffmpeg,
                 accent_color=accent_ffmpeg,
+                max_items=max_items,
                 include_audio=include_audio,
                 custom_audio_path=custom_audio_path,
                 custom_logo_path=custom_logo_path,
