@@ -15293,6 +15293,7 @@ async def _auto_regenerate_coming_soon_list(db: Session):
             return
         
         _file_log("Coming Soon List auto-regen: Starting automatic regeneration")
+        log_event('INFO', 'nexup', 'Coming Soon List auto-regeneration started', source='auto_regen_coming_soon', db=db)
         
         # Get saved settings
         auto_regen_layout = getattr(setting, 'nexup_coming_soon_list_auto_regen_layout', 'both')
@@ -15492,11 +15493,20 @@ async def _auto_regenerate_coming_soon_list(db: Session):
         
         if success_count == len(layouts_to_generate):
             _file_log(f"Coming Soon List auto-regen: All {success_count} layout(s) generated successfully")
+            log_event('INFO', 'nexup', f'Coming Soon List auto-regen completed ({success_count} layout(s))',
+                     source='auto_regen_coming_soon', details={'layouts': layouts_to_generate, 'success': success_count}, db=db)
         elif success_count > 0:
             _file_log(f"Coming Soon List auto-regen: {success_count}/{len(layouts_to_generate)} layouts generated")
+            log_event('WARNING', 'nexup', f'Coming Soon List auto-regen partial: {success_count}/{len(layouts_to_generate)} layouts',
+                     source='auto_regen_coming_soon', details={'layouts': layouts_to_generate, 'success': success_count}, db=db)
+        else:
+            log_event('ERROR', 'nexup', 'Coming Soon List auto-regen failed: no layouts generated',
+                     source='auto_regen_coming_soon', details={'layouts': layouts_to_generate}, db=db)
             
     except Exception as e:
         _file_log(f"Coming Soon List auto-regen: Error - {str(e)}", level="ERROR")
+        log_event('ERROR', 'nexup', f'Coming Soon List auto-regen error: {e}',
+                 source='auto_regen_coming_soon', details={'error': str(e)}, db=db)
 
 @app.post("/nexup/sonarr/sync")
 async def sync_sonarr_trailers(db: Session = Depends(get_db)):
@@ -17903,6 +17913,8 @@ async def generate_coming_soon_list(
     from backend.sonarr_connector import SonarrConnector
     
     _file_log(f"[COMING-SOON-LIST] Request params: layout={layout}, source={source}, duration={duration}, max_items={max_items}")
+    log_event('INFO', 'nexup', f'Coming Soon List generation started (layout={layout}, source={source}, max_items={max_items})',
+             source='generate_coming_soon_list', db=db)
     
     # Wire up verbose logging if enabled
     if _is_verbose_logging_enabled():
@@ -18098,6 +18110,8 @@ async def generate_coming_soon_list(
         
         if output_path:
             _file_log(f"[COMING-SOON-LIST] Generated: {output_path}")
+            log_event('INFO', 'nexup', f'Coming Soon List generated successfully ({layout} layout, {min(len(items), max_items)} items)',
+                     source='generate_coming_soon_list', details={'layout': layout, 'path': str(output_path), 'items': min(len(items), max_items)}, db=db)
             
             # Save server name to settings (shared with Dynamic Preroll Generator)
             if server_name and server_name.strip():
@@ -18119,9 +18133,15 @@ async def generate_coming_soon_list(
                 "message": f"Generated Coming Soon list with {min(len(items), max_items)} items (of {len(items)} eligible)"
             }
         else:
+            log_event('ERROR', 'nexup', 'Coming Soon List generation returned no output',
+                     source='generate_coming_soon_list', details={'layout': layout}, db=db)
             raise HTTPException(status_code=500, detail="Failed to generate Coming Soon list video")
+    except HTTPException:
+        raise
     except Exception as e:
         _file_log(f"Error generating Coming Soon list: {e}")
+        log_event('ERROR', 'nexup', f'Coming Soon List generation failed: {e}',
+                 source='generate_coming_soon_list', details={'layout': layout, 'error': str(e)}, db=db)
         raise HTTPException(status_code=500, detail=str(e))
 
 
