@@ -23140,6 +23140,190 @@ def get_dashboard_stats(db: Session = Depends(get_db)):
         log_event('ERROR', 'system', f'Failed to gather stats: {e}', source='get_stats')
         raise HTTPException(status_code=500, detail=f"Failed to gather stats: {str(e)}")
 
+# ---------------------------------------------------------------------------
+#  Plugin Intros API  –  Called by the NeXroll Jellyfin / Emby plugin
+#  to retrieve the currently-active preroll paths for intro injection.
+# ---------------------------------------------------------------------------
+
+def _resolve_current_intros(db: Session) -> dict:
+    """
+    Resolve the currently-active preroll paths based on scheduler / filler
+    state and return them as a dict:
+        {"paths": [str, ...], "mode": "shuffle"|"sequential"|"single"}
+    Returns an empty list when nothing is active.
+    """
+    setting = db.query(models.Setting).first()
+    if not setting:
+        return {"paths": [], "mode": "shuffle"}
+
+    # --- Helper: query prerolls belonging to a category (primary + M2M) ---
+    def _prerolls_for_category(cid: int):
+        return (
+            db.query(models.Preroll)
+            .outerjoin(
+                models.preroll_categories,
+                models.Preroll.id == models.preroll_categories.c.preroll_id,
+            )
+            .filter(
+                or_(
+                    models.Preroll.category_id == cid,
+                    models.preroll_categories.c.category_id == cid,
+                )
+            )
+            .distinct()
+            .all()
+        )
+
+    # --- Helper: resolve a SavedSequence into ordered paths ---
+    def _resolve_sequence(sequence_id: int) -> list[str]:
+        seq = (
+            db.query(models.SavedSequence)
+            .filter(models.SavedSequence.id == sequence_id)
+            .first()
+        )
+        if not seq:
+            return []
+        blocks = seq.get_blocks()
+        if not blocks:
+            return []
+        paths: list[str] = []
+        for block in blocks:
+            try:
+                btype = str(block.get("type", "")).lower()
+            except Exception:
+                continue
+            if btype == "random":
+                cid = int(block.get("category_id") or 0)
+                count = int(block.get("count") or 1)
+                if not cid:
+                    continue
+                pool = _prerolls_for_category(cid)
+                if not pool:
+                    continue
+                k = min(max(count, 1), len(pool))
+                picks = random.sample(pool, k) if len(pool) > k else pool
+                for p in picks:
+                    paths.append(os.path.abspath(p.path))
+            elif btype == "fixed":
+                pids: list[int] = []
+                ids_array = block.get("preroll_ids")
+                if ids_array and isinstance(ids_array, list):
+                    pids = [int(x) for x in ids_array if x]
+                else:
+                    pid = block.get("preroll_id")
+                    if pid:
+                        pids = [int(pid)]
+                for pid in pids:
+                    p = db.query(models.Preroll).filter(models.Preroll.id == pid).first()
+                    if p:
+                        paths.append(os.path.abspath(p.path))
+        return paths
+
+    # --- 1. Filler takes priority ---
+    filler_active = getattr(setting, "filler_active", None)
+    if filler_active:
+        parts = filler_active.split(":", 1)
+        if len(parts) == 2:
+            filler_type, filler_value = parts
+
+            if filler_type == "coming_soon":
+                # Resolve the Coming Soon List video file
+                storage = getattr(setting, "nexup_storage_path", None)
+                if storage:
+                    video = os.path.join(storage, "dynamic_prerolls", f"coming_soon_{filler_value}.mp4")
+                    if os.path.exists(video):
+                        return {"paths": [os.path.abspath(video)], "mode": "single"}
+
+            elif filler_type == "sequence":
+                try:
+                    seq_id = int(filler_value)
+                    paths = _resolve_sequence(seq_id)
+                    if paths:
+                        return {"paths": paths, "mode": "sequential"}
+                except (ValueError, TypeError):
+                    pass
+
+            elif filler_type == "category":
+                try:
+                    cat_id = int(filler_value)
+                    prerolls = _prerolls_for_category(cat_id)
+                    if prerolls:
+                        cat = db.query(models.Category).filter(models.Category.id == cat_id).first()
+                        mode = "shuffle"
+                        if cat and getattr(cat, "plex_mode", "shuffle") == "playlist":
+                            mode = "sequential"
+                        return {
+                            "paths": [os.path.abspath(p.path) for p in prerolls],
+                            "mode": mode,
+                        }
+                except (ValueError, TypeError):
+                    pass
+
+    # --- 2. Normal active category ---
+    category_id = getattr(setting, "active_category", None)
+    if category_id:
+        prerolls = _prerolls_for_category(category_id)
+        if prerolls:
+            cat = db.query(models.Category).filter(models.Category.id == category_id).first()
+            mode = "shuffle"
+            if cat and getattr(cat, "plex_mode", "shuffle") == "playlist":
+                mode = "sequential"
+            return {
+                "paths": [os.path.abspath(p.path) for p in prerolls],
+                "mode": mode,
+            }
+
+    return {"paths": [], "mode": "shuffle"}
+
+
+@app.get("/plugin/intros")
+def plugin_get_intros(
+    db: Session = Depends(get_db),
+    media_type: Optional[str] = Query(None, description="Media type (Movie, Episode, etc.)"),
+    item_id: Optional[str] = Query(None, description="Media item ID (for future genre matching)"),
+):
+    """
+    Called by the NeXroll Jellyfin / Emby plugin to get the currently-active
+    preroll paths.  Returns a Jellyfin-compatible intro list.
+
+    The plugin is responsible for translating local/container paths to
+    Jellyfin-accessible paths using its own path-mapping configuration.
+    """
+    try:
+        result = _resolve_current_intros(db)
+        paths = result.get("paths", [])
+        mode = result.get("mode", "shuffle")
+
+        items = []
+        for p in paths:
+            items.append({
+                "Path": p,
+                "Name": os.path.splitext(os.path.basename(p))[0],
+            })
+
+        log_event(
+            "INFO", "plugin", f"Plugin intros requested – returning {len(items)} path(s), mode={mode}",
+            source="plugin_get_intros",
+            details={"count": len(items), "mode": mode, "media_type": media_type},
+            db=db,
+        )
+
+        return {
+            "Items": items,
+            "TotalRecordCount": len(items),
+            "Mode": mode,
+        }
+    except Exception as e:
+        log_event("ERROR", "plugin", f"Plugin intros error: {e}", source="plugin_get_intros", db=db)
+        raise HTTPException(status_code=500, detail=f"Failed to resolve intros: {str(e)}")
+
+
+@app.get("/plugin/health")
+def plugin_health():
+    """Simple health-check for the plugin to verify NeXroll is reachable."""
+    return {"status": "ok", "app": "NeXroll"}
+
+
 if __name__ == "__main__" and not getattr(sys, "frozen", False):
     import uvicorn
     port = int(os.environ.get("NEXROLL_PORT", "9393"))

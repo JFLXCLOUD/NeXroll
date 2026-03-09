@@ -24641,6 +24641,65 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
           </div>
         )}
       </div>
+
+      {/* NeXroll Intros Plugin Card */}
+      <div className="card">
+        <h2 style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+          <span style={{ fontSize: '1.25rem' }}>🔌</span> NeXroll Intros Plugin
+        </h2>
+        <p style={{ marginBottom: '1rem', color: 'var(--text-secondary)' }}>
+          Install the <strong>NeXroll Intros</strong> plugin in your Jellyfin (or Emby) server to automatically
+          inject preroll videos before movies and episodes — powered by your NeXroll schedules, filler system,
+          sequences, and Coming Soon lists.
+        </p>
+
+        <div style={{ background: 'var(--bg-color, #1a1a2e)', border: '1px solid var(--border-color)', borderRadius: '8px', padding: '1rem', marginBottom: '1rem' }}>
+          <h3 style={{ marginTop: 0, marginBottom: '0.75rem', fontSize: '0.95rem' }}>Quick Start</h3>
+          <ol style={{ margin: 0, paddingLeft: '1.25rem', lineHeight: '1.7' }}>
+            <li>Download the <strong>NeXroll Intros</strong> plugin DLL from <a href="https://github.com/sahara101/NeXroll/releases" target="_blank" rel="noopener noreferrer" style={{ color: 'var(--accent-color, #6c5ce7)' }}>GitHub Releases</a></li>
+            <li>Copy it to your Jellyfin plugins folder: <code>plugins/NeXroll Intros/</code></li>
+            <li>Restart Jellyfin</li>
+            <li>Open Jellyfin Dashboard → Plugins → <strong>NeXroll Intros</strong></li>
+            <li>Enter your NeXroll server URL: <code style={{ userSelect: 'all' }}>{window.location.origin}</code></li>
+            <li>Configure path mapping if NeXroll and Jellyfin see files at different paths</li>
+            <li>Click <strong>Test Connection</strong>, then <strong>Save</strong></li>
+          </ol>
+        </div>
+
+        <details style={{ marginBottom: '0.5rem' }}>
+          <summary style={{ cursor: 'pointer', fontWeight: 'bold', padding: '0.25rem 0' }}>
+            How does it work?
+          </summary>
+          <div style={{ padding: '0.5rem 0 0 0.5rem', color: 'var(--text-secondary)', lineHeight: '1.6' }}>
+            <p style={{ margin: '0.25rem 0' }}>
+              The plugin implements Jellyfin's <code>IIntroProvider</code> interface. When a user presses play,
+              Jellyfin asks all intro providers for videos to show first. The NeXroll plugin calls this server's
+              <code>/plugin/intros</code> endpoint to get the current preroll paths in real time — reflecting
+              whatever schedule, filler, or sequence is active right now.
+            </p>
+            <p style={{ margin: '0.25rem 0' }}>
+              An Emby variant is also available for Emby Server 4.8+.
+            </p>
+          </div>
+        </details>
+
+        <details>
+          <summary style={{ cursor: 'pointer', fontWeight: 'bold', padding: '0.25rem 0' }}>
+            Path Mapping (Docker / NAS)
+          </summary>
+          <div style={{ padding: '0.5rem 0 0 0.5rem', color: 'var(--text-secondary)', lineHeight: '1.6' }}>
+            <p style={{ margin: '0.25rem 0' }}>
+              If NeXroll and Jellyfin/Emby see preroll files at different paths (common with Docker volumes or NAS mounts),
+              configure the path prefix replacement in the plugin's settings page inside Jellyfin/Emby.
+            </p>
+            <p style={{ margin: '0.25rem 0' }}>
+              <strong>Example:</strong> NeXroll stores files at <code>/data/prerolls/</code> and Jellyfin
+              accesses them at <code>/mnt/media/prerolls/</code> — set "NeXroll Path Prefix" to <code>/data/prerolls</code>
+              and "Jellyfin Path Prefix" to <code>/mnt/media/prerolls</code>.
+            </p>
+          </div>
+        </details>
+      </div>
     </div>
   );
 

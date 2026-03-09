@@ -1,0 +1,190 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>NeXroll Intros</title>
+</head>
+<body>
+    <div id="NexrollConfigPage" data-role="page" class="page type-interior pluginConfigurationPage"
+         data-require="emby-input,emby-button,emby-checkbox,emby-select">
+
+        <div data-role="content">
+            <div class="content-primary">
+
+                <h2 class="sectionTitle">NeXroll Intros Configuration</h2>
+                <p class="fieldDescription">
+                    Connect this Jellyfin server to your NeXroll instance to automatically
+                    inject preroll intros before movies and episodes.
+                </p>
+
+                <form id="NexrollConfigForm">
+
+                    <!-- Server Connection -->
+                    <div class="inputContainer">
+                        <label class="inputLabel" for="txtNexrollUrl">NeXroll Server URL</label>
+                        <input is="emby-input" id="txtNexrollUrl" type="url"
+                               placeholder="http://192.168.1.50:9393" />
+                        <div class="fieldDescription">
+                            The base URL of your NeXroll server (include port).
+                        </div>
+                    </div>
+
+                    <div class="inputContainer">
+                        <label class="inputLabel" for="txtApiKey">API Key (optional)</label>
+                        <input is="emby-input" id="txtApiKey" type="text"
+                               placeholder="Leave blank if not required" />
+                        <div class="fieldDescription">
+                            Reserved for future authentication support.
+                        </div>
+                    </div>
+
+                    <!-- Path Mapping -->
+                    <h3 class="sectionTitle">Path Mapping</h3>
+                    <p class="fieldDescription">
+                        If NeXroll and Jellyfin see preroll files at different paths
+                        (e.g., Docker volume mounts), configure prefix replacement here.
+                    </p>
+
+                    <div class="inputContainer">
+                        <label class="inputLabel" for="txtPathFrom">NeXroll Path Prefix</label>
+                        <input is="emby-input" id="txtPathFrom" type="text"
+                               placeholder="/data/prerolls" />
+                        <div class="fieldDescription">
+                            The path prefix as reported by NeXroll (local/container path).
+                        </div>
+                    </div>
+
+                    <div class="inputContainer">
+                        <label class="inputLabel" for="txtPathTo">Jellyfin Path Prefix</label>
+                        <input is="emby-input" id="txtPathTo" type="text"
+                               placeholder="/mnt/media/prerolls" />
+                        <div class="fieldDescription">
+                            The equivalent path that Jellyfin can access.
+                        </div>
+                    </div>
+
+                    <!-- Media Type Toggles -->
+                    <h3 class="sectionTitle">Media Types</h3>
+
+                    <div class="checkboxContainer checkboxContainer-withDescription">
+                        <label>
+                            <input is="emby-checkbox" id="chkMovies" type="checkbox" />
+                            <span>Enable intros for Movies</span>
+                        </label>
+                    </div>
+
+                    <div class="checkboxContainer checkboxContainer-withDescription">
+                        <label>
+                            <input is="emby-checkbox" id="chkEpisodes" type="checkbox" />
+                            <span>Enable intros for Episodes</span>
+                        </label>
+                    </div>
+
+                    <!-- Limits -->
+                    <div class="inputContainer">
+                        <label class="inputLabel" for="txtMaxIntros">Max Intros Per Playback</label>
+                        <input is="emby-input" id="txtMaxIntros" type="number" min="0"
+                               placeholder="0 = unlimited" />
+                        <div class="fieldDescription">
+                            Maximum number of intros to play before each item. 0 means all.
+                        </div>
+                    </div>
+
+                    <div class="inputContainer">
+                        <label class="inputLabel" for="txtTimeout">Request Timeout (seconds)</label>
+                        <input is="emby-input" id="txtTimeout" type="number" min="1" max="30"
+                               placeholder="5" />
+                        <div class="fieldDescription">
+                            How long to wait for the NeXroll server to respond.
+                        </div>
+                    </div>
+
+                    <!-- Test & Save -->
+                    <div style="margin-top: 1.5em;">
+                        <button is="emby-button" type="button" id="btnTest"
+                                class="raised button-submit block">
+                            <span>Test Connection</span>
+                        </button>
+                    </div>
+                    <div id="testResult" style="margin-top: 0.5em; display: none;"></div>
+
+                    <div style="margin-top: 1em;">
+                        <button is="emby-button" type="submit"
+                                class="raised button-submit block emby-button">
+                            <span>Save</span>
+                        </button>
+                    </div>
+
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <script type="text/javascript">
+        var NexrollConfig = {
+            pluginUniqueId: 'a1b2c3d4-e5f6-7890-abcd-nexroll000001'
+        };
+
+        document.querySelector('#NexrollConfigPage')
+            .addEventListener('pageshow', function () {
+                Dashboard.showLoadingMsg();
+                ApiClient.getPluginConfiguration(NexrollConfig.pluginUniqueId).then(function (config) {
+                    document.querySelector('#txtNexrollUrl').value = config.NexrollUrl || '';
+                    document.querySelector('#txtApiKey').value = config.ApiKey || '';
+                    document.querySelector('#txtPathFrom').value = config.PathPrefixFrom || '';
+                    document.querySelector('#txtPathTo').value = config.PathPrefixTo || '';
+                    document.querySelector('#chkMovies').checked = config.EnableForMovies !== false;
+                    document.querySelector('#chkEpisodes').checked = config.EnableForEpisodes !== false;
+                    document.querySelector('#txtMaxIntros').value = config.MaxIntros || 0;
+                    document.querySelector('#txtTimeout').value = config.TimeoutSeconds || 5;
+                    Dashboard.hideLoadingMsg();
+                });
+            });
+
+        document.querySelector('#NexrollConfigForm')
+            .addEventListener('submit', function (e) {
+                e.preventDefault();
+                Dashboard.showLoadingMsg();
+                ApiClient.getPluginConfiguration(NexrollConfig.pluginUniqueId).then(function (config) {
+                    config.NexrollUrl = document.querySelector('#txtNexrollUrl').value.trim();
+                    config.ApiKey = document.querySelector('#txtApiKey').value.trim();
+                    config.PathPrefixFrom = document.querySelector('#txtPathFrom').value.trim();
+                    config.PathPrefixTo = document.querySelector('#txtPathTo').value.trim();
+                    config.EnableForMovies = document.querySelector('#chkMovies').checked;
+                    config.EnableForEpisodes = document.querySelector('#chkEpisodes').checked;
+                    config.MaxIntros = parseInt(document.querySelector('#txtMaxIntros').value) || 0;
+                    config.TimeoutSeconds = parseInt(document.querySelector('#txtTimeout').value) || 5;
+
+                    ApiClient.updatePluginConfiguration(NexrollConfig.pluginUniqueId, config).then(function () {
+                        Dashboard.processPluginConfigurationUpdateResult();
+                    });
+                });
+                return false;
+            });
+
+        document.querySelector('#btnTest').addEventListener('click', function () {
+            var url = document.querySelector('#txtNexrollUrl').value.trim();
+            var resultEl = document.querySelector('#testResult');
+            if (!url) {
+                resultEl.style.display = 'block';
+                resultEl.innerHTML = '<span style="color:#e74c3c;">Please enter a NeXroll URL first.</span>';
+                return;
+            }
+            resultEl.style.display = 'block';
+            resultEl.innerHTML = '<span>Testing…</span>';
+
+            fetch(url.replace(/\/+$/, '') + '/plugin/health')
+                .then(function (resp) { return resp.json(); })
+                .then(function (data) {
+                    if (data && data.status === 'ok') {
+                        resultEl.innerHTML = '<span style="color:#27ae60;">&#10004; Connected to NeXroll successfully!</span>';
+                    } else {
+                        resultEl.innerHTML = '<span style="color:#e74c3c;">Unexpected response from server.</span>';
+                    }
+                })
+                .catch(function (err) {
+                    resultEl.innerHTML = '<span style="color:#e74c3c;">&#10008; Could not reach NeXroll: ' + err.message + '</span>';
+                });
+        });
+    </script>
+</body>
+</html>
