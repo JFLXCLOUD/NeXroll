@@ -1,5 +1,21 @@
 # Changelog
 
+## [1.11.12] - 03-09-2026
+
+Hotfix release addressing Coming Soon List generation failures, grid layout clipping, and adding comprehensive database logging.
+
+### Bug Fixes
+- **Coming Soon List: Unicode Character Fix** — Fixed `●` (U+25CF) bullet character causing FFmpeg `EINVAL` failure and `UnicodeDecodeError` on Windows (replaced with ASCII `>`)
+- **Coming Soon List: Apostrophe Escaping** — Fixed ASCII apostrophe `'` breaking FFmpeg's `drawtext` option-value delimiter (replaced with typographic `'` U+2019 in text escaping)
+- **Coming Soon List: Auto-Regen Max Items** — Fixed `_auto_regenerate_coming_soon_list()` ignoring the user's max items setting (always defaulting to 8)
+- **Coming Soon List: Grid Layout Poster Clipping** — Redesigned grid layout so ≤6 items use a single row and >6 items use two rows, preventing bottom-row posters from being clipped below 1080px
+
+### Improvements
+- **Comprehensive Database Logging** — Added `log_event()` calls across all major areas of the application so warnings and errors now appear in the Settings > Logs UI (previously only written to `app.log` file)
+  - Covers: Plex/Jellyfin connect/disconnect, community prerolls, external API, preroll management, scheduler, sequences, holidays, backup/restore, thumbnails, NeX-Up sync, trailer downloads, dynamic preroll generation, system settings, and more
+
+---
+
 ## [1.11.9] - 03-05-2026
 
 First stable release of the v1.11.x line (consolidates beta.1–beta.9).
