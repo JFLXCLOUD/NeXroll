@@ -1750,6 +1750,28 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Open CORS for /plugin/* routes — called from Jellyfin/Emby web UIs on any origin.
+# API key authentication provides actual security; the browser just needs CORS headers.
+@app.middleware("http")
+async def _plugin_cors_mw(request: Request, call_next):
+    if request.url.path.startswith("/plugin/"):
+        origin = request.headers.get("origin", "*")
+        if request.method == "OPTIONS":
+            return Response(
+                status_code=204,
+                headers={
+                    "Access-Control-Allow-Origin": origin,
+                    "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+                    "Access-Control-Allow-Headers": "X-Api-Key, X-Plugin-Server-Type, X-Plugin-Server-Name, X-Plugin-Server-Version, Content-Type",
+                    "Access-Control-Max-Age": "86400",
+                },
+            )
+        response = await call_next(request)
+        response.headers["Access-Control-Allow-Origin"] = origin
+        response.headers["Access-Control-Allow-Headers"] = "X-Api-Key, X-Plugin-Server-Type, X-Plugin-Server-Name, X-Plugin-Server-Version, Content-Type"
+        return response
+    return await call_next(request)
+
 # Log unhandled exceptions and 4xx/5xx responses to writable logs (with fallback)
 @app.middleware("http")
 async def _log_errors_mw(request, call_next):
