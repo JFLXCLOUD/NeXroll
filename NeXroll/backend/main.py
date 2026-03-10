@@ -1737,40 +1737,15 @@ def _build_plex_headers() -> dict:
     return headers
 
 # CORS middleware for frontend integration
+# allow_origin_regex also permits any Jellyfin/Emby web UI origin to reach /plugin/* routes.
+# The plugin endpoints use API-key auth so open CORS is safe.
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost:3000",
-        "http://127.0.0.1:3000",
-        "http://localhost:9393",
-        "http://127.0.0.1:9393",
-    ],  # React dev server and production port (localhost and 127.0.0.1)
-    allow_credentials=True,
+    allow_origin_regex=r".*",   # plugin routes need any origin; API key provides real security
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
-# Open CORS for /plugin/* routes — called from Jellyfin/Emby web UIs on any origin.
-# API key authentication provides actual security; the browser just needs CORS headers.
-@app.middleware("http")
-async def _plugin_cors_mw(request: Request, call_next):
-    if request.url.path.startswith("/plugin/"):
-        origin = request.headers.get("origin", "*")
-        if request.method == "OPTIONS":
-            return Response(
-                status_code=204,
-                headers={
-                    "Access-Control-Allow-Origin": origin,
-                    "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
-                    "Access-Control-Allow-Headers": "X-Api-Key, X-Plugin-Server-Type, X-Plugin-Server-Name, X-Plugin-Server-Version, Content-Type",
-                    "Access-Control-Max-Age": "86400",
-                },
-            )
-        response = await call_next(request)
-        response.headers["Access-Control-Allow-Origin"] = origin
-        response.headers["Access-Control-Allow-Headers"] = "X-Api-Key, X-Plugin-Server-Type, X-Plugin-Server-Name, X-Plugin-Server-Version, Content-Type"
-        return response
-    return await call_next(request)
 
 # Log unhandled exceptions and 4xx/5xx responses to writable logs (with fallback)
 @app.middleware("http")
@@ -23504,10 +23479,21 @@ def plugin_get_intros(
 
 
 @app.get("/plugin/health")
-def plugin_health(request: Request, db: Session = Depends(get_db)):
+def plugin_health(
+    request: Request,
+    db: Session = Depends(get_db),
+    api_key: Optional[str] = Query(None, description="API key (alternative to X-Api-Key header)"),
+    server_type: Optional[str] = Query(None, alias="server_type"),
+    server_name: Optional[str] = Query(None, alias="server_name"),
+    server_version: Optional[str] = Query(None, alias="server_version"),
+):
     """Simple health-check for the plugin to verify NeXroll is reachable.
-    If an API key is provided, validates it and tracks the connection."""
-    api_key_value = request.headers.get("X-Api-Key") or request.query_params.get("api_key")
+    Accepts API key and server info via headers OR query params so the
+    Jellyfin config page can call this without triggering a CORS preflight."""
+    api_key_value = request.headers.get("X-Api-Key") or api_key
+    srv_type = request.headers.get("X-Plugin-Server-Type") or server_type or "unknown"
+    srv_name = request.headers.get("X-Plugin-Server-Name") or server_name or ""
+    srv_ver = request.headers.get("X-Plugin-Server-Version") or server_version or ""
     authenticated = False
     key_name = None
     if api_key_value:
@@ -23515,15 +23501,12 @@ def plugin_health(request: Request, db: Session = Depends(get_db)):
         if key_record:
             authenticated = True
             key_name = key_record.name
-            server_type = request.headers.get("X-Plugin-Server-Type", "unknown")
-            server_name = request.headers.get("X-Plugin-Server-Name", "")
-            server_version = request.headers.get("X-Plugin-Server-Version", "")
             PLUGIN_CLIENTS[key_record.name] = {
                 "api_key_name": key_record.name,
                 "api_key_id": key_record.id,
-                "server_type": server_type,
-                "server_name": server_name,
-                "server_version": server_version,
+                "server_type": srv_type,
+                "server_name": srv_name,
+                "server_version": srv_ver,
                 "last_seen": datetime.datetime.utcnow().isoformat(),
             }
         else:

@@ -172,6 +172,7 @@
             };
 
             // ---------- Test Connection ----------
+            // Uses query parameters instead of custom headers to avoid CORS preflight.
             window.NexrollPlugin.testConnection = function () {
                 var url = document.querySelector('#txtNexrollUrl').value.trim();
                 var apiKey = document.querySelector('#txtApiKey').value.trim();
@@ -184,18 +185,20 @@
                 resultEl.style.display = 'block';
                 resultEl.innerHTML = '<span>Testing&hellip;</span>';
 
-                var headers = {
-                    'X-Plugin-Server-Type': 'Jellyfin',
-                    'X-Plugin-Server-Name': 'Jellyfin (config test)'
-                };
+                // Build URL with query params (no custom headers = no CORS preflight)
+                var healthUrl = url.replace(/\/+$/, '') + '/plugin/health?server_type=Jellyfin&server_name=' + encodeURIComponent('Jellyfin (config test)');
                 if (apiKey) {
-                    headers['X-Api-Key'] = apiKey;
+                    healthUrl += '&api_key=' + encodeURIComponent(apiKey);
                 }
 
-                fetch(url.replace(/\/+$/, '') + '/plugin/health', { headers: headers })
+                fetch(healthUrl)
                     .then(function (resp) {
                         if (resp.status === 401) {
                             resultEl.innerHTML = '<span style="color:#e74c3c;">&#10008; Invalid or expired API key.</span>';
+                            return null;
+                        }
+                        if (!resp.ok) {
+                            resultEl.innerHTML = '<span style="color:#e74c3c;">&#10008; Server returned HTTP ' + resp.status + '</span>';
                             return null;
                         }
                         return resp.json();
