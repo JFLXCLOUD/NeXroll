@@ -123,6 +123,8 @@ def ensure_schema() -> None:
                 ("path_mappings", "path_mappings TEXT"),
                 ("override_expires_at", "override_expires_at DATETIME"),
                 ("jellyfin_url", "jellyfin_url TEXT"),
+                ("emby_url", "emby_url TEXT"),
+                ("emby_api_key", "emby_api_key TEXT"),
                 ("last_seen_version", "last_seen_version TEXT"),
                 ("last_schedule_fallback", "last_schedule_fallback INTEGER"),
             ]:
@@ -20398,6 +20400,115 @@ def disconnect_jellyfin(db: Session = Depends(get_db)):
 
     log_event('INFO', 'jellyfin', 'Jellyfin server disconnected', source='disconnect_jellyfin')
     return {"disconnected": True, "message": "Successfully disconnected from Jellyfin server"}
+
+# --- Emby Integration ---
+class EmbyConnectRequest(BaseModel):
+    url: str
+    api_key: str
+
+@app.post("/emby/connect")
+def connect_emby(request: EmbyConnectRequest, db: Session = Depends(get_db)):
+    url = (request.url or "").strip()
+    api_key = (request.api_key or "").strip()
+
+    if not url:
+        raise HTTPException(status_code=422, detail="Emby server URL is required")
+    if not api_key:
+        raise HTTPException(status_code=422, detail="Emby API key is required")
+
+    if not url.startswith(('http://', 'https://')):
+        url = f"http://{url}"
+
+    try:
+        # Verify connectivity by calling Emby's public system info endpoint
+        resp = requests.get(f"{url.rstrip('/')}/emby/System/Info/Public", timeout=10)
+        if resp.status_code != 200:
+            raise HTTPException(status_code=422, detail="Failed to connect to Emby server. Please check your URL.")
+        info = resp.json()
+
+        setting = db.query(models.Setting).first()
+        if not setting:
+            setting = models.Setting(plex_url=None, plex_token=None, emby_url=url)
+            db.add(setting)
+        else:
+            setting.emby_url = url
+            try:
+                setting.updated_at = datetime.datetime.utcnow()
+            except Exception:
+                pass
+
+        try:
+            secure_store.set_emby_api_key(api_key)
+        except Exception:
+            pass
+
+        db.commit()
+        log_event('INFO', 'emby', 'Emby server connected successfully', source='connect_emby')
+        return {
+            "connected": True,
+            "message": "Successfully connected to Emby server",
+            "name": info.get("ServerName", ""),
+            "version": info.get("Version", ""),
+            "token_storage": secure_store.provider_info()[1]
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        log_event('WARNING', 'emby', f'Emby connection failed: {e}', source='connect_emby')
+        raise HTTPException(status_code=422, detail=f"Connection error: {str(e)}")
+
+@app.get("/emby/status")
+def get_emby_status(db: Session = Depends(get_db)):
+    """Return Emby connection status. Always returns 200."""
+    try:
+        setting = db.query(models.Setting).first()
+    except Exception:
+        setting = None
+
+    emby_url = getattr(setting, "emby_url", None) if setting else None
+    api_key = None
+    try:
+        api_key = secure_store.get_emby_api_key()
+    except Exception:
+        pass
+
+    if not emby_url:
+        return {"connected": False, "url": emby_url, "has_api_key": bool(api_key)}
+
+    try:
+        resp = requests.get(f"{emby_url.rstrip('/')}/emby/System/Info/Public", timeout=10)
+        if resp.status_code == 200:
+            info = resp.json()
+            return {
+                "connected": True,
+                "url": emby_url,
+                "has_api_key": bool(api_key),
+                "name": info.get("ServerName", ""),
+                "version": info.get("Version", ""),
+            }
+    except Exception:
+        pass
+    return {"connected": False, "url": emby_url, "has_api_key": bool(api_key)}
+
+@app.post("/emby/disconnect")
+def disconnect_emby(db: Session = Depends(get_db)):
+    """Disconnect from Emby server by clearing stored credentials"""
+    try:
+        secure_store.delete_emby_api_key()
+    except Exception:
+        pass
+
+    setting = db.query(models.Setting).first()
+    if setting:
+        setting.emby_url = None
+        try:
+            setting.updated_at = datetime.datetime.utcnow()
+        except Exception:
+            pass
+        db.commit()
+
+    log_event('INFO', 'emby', 'Emby server disconnected', source='disconnect_emby')
+    return {"disconnected": True, "message": "Successfully disconnected from Emby server"}
 
 # --- Jellyfin Category Apply/Remove (stub plan) ---
 @app.post("/categories/{category_id}/apply-to-jellyfin")

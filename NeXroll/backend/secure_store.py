@@ -605,3 +605,21 @@ def set_jellyfin_api_key(api_key: str) -> bool:
 
 def delete_jellyfin_api_key() -> bool:
     return delete_secret(_JELLYFIN_API_KEY)
+
+# ----------------------------
+# Convenience for Emby API key
+# ----------------------------
+
+_EMBY_API_KEY = "emby_api_key"
+
+def has_emby_api_key() -> bool:
+    return has_secret(_EMBY_API_KEY)
+
+def get_emby_api_key() -> Optional[str]:
+    return get_secret(_EMBY_API_KEY)
+
+def set_emby_api_key(api_key: str) -> bool:
+    return set_secret(_EMBY_API_KEY, api_key)
+
+def delete_emby_api_key() -> bool:
+    return delete_secret(_EMBY_API_KEY)

@@ -19,7 +19,7 @@ URLs (default):
 |-----|-------------|
 | `jbrns/nexroll:latest` | Latest stable release (recommended for production) |
 | `jbrns/nexroll:beta` | Latest beta/pre-release version (for testing new features) |
-| `jbrns/nexroll:1.11.12` | Specific version (pin to a known good version) |
+| `jbrns/nexroll:1.12.0` | Specific version (pin to a known good version) |
 
 **To use the beta channel**, change your image tag:
 ```yaml

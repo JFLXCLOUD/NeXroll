@@ -219,6 +219,8 @@ class Setting(Base):
     plex_token = Column(String)  # Plex auth token (manual/stable/OAuth)
     jellyfin_url = Column(String)  # Jellyfin base URL (e.g., http://192.168.1.x:8096)
     jellyfin_api_key = Column(String, nullable=True)  # Jellyfin API key for auth
+    emby_url = Column(String, nullable=True)  # Emby base URL (e.g., http://192.168.1.x:8096)
+    emby_api_key = Column(String, nullable=True)  # Emby API key for auth
     # Community Prerolls settings
     community_fair_use_accepted = Column(Boolean, default=False)  # Whether user accepted Fair Use Policy
     community_fair_use_accepted_at = Column(DateTime, nullable=True)  # Timestamp of acceptance

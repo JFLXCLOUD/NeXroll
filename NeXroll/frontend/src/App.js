@@ -499,6 +499,14 @@ function App() {
     api_key: ''
   });
 
+  // Emby connection UI state
+  const [embyStatus, setEmbyStatus] = useState('Disconnected');
+  const [embyServerInfo, setEmbyServerInfo] = useState(null);
+  const [embyConfig, setEmbyConfig] = useState({
+    url: '',
+    api_key: ''
+  });
+
   // Plex.tv OAuth UI state and helpers
   const [plexOAuth, setPlexOAuth] = useState({ id: null, url: '', status: 'idle', error: null });
   const oauthPollRef = React.useRef(null);
@@ -1712,6 +1720,7 @@ const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
     return Promise.all([
       fetch(apiUrl('plex/status')),
       fetch(apiUrl('jellyfin/status')),
+      fetch(apiUrl('emby/status')),
       fetch(apiUrl('prerolls')),
       fetch(apiUrl('schedules')),
       fetch(apiUrl('categories')),
@@ -1730,11 +1739,13 @@ const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
       fetch(apiUrl('community-prerolls/downloaded-ids')),
       fetch(apiUrl('update/settings'))
     ]).then(responses => Promise.all(responses.map(safeJson)))
-      .then(([plex, jellyfin, prerolls, schedules, categories, holidays, scheduler, tags, templates, stableToken, sysVersion, ffmpeg, sysDeps, recentGenreApps, activeCat, activeScheduleIdsData, communityIndex, communityDownloaded, updateSettingsData]) => {
+      .then(([plex, jellyfin, emby, prerolls, schedules, categories, holidays, scheduler, tags, templates, stableToken, sysVersion, ffmpeg, sysDeps, recentGenreApps, activeCat, activeScheduleIdsData, communityIndex, communityDownloaded, updateSettingsData]) => {
         setPlexStatus(plex.connected ? 'Connected' : 'Disconnected');
         setPlexServerInfo(plex);
         setJellyfinStatus(jellyfin.connected ? 'Connected' : 'Disconnected');
         setJellyfinServerInfo(jellyfin);
+        setEmbyStatus(emby.connected ? 'Connected' : 'Disconnected');
+        setEmbyServerInfo(emby);
         setPrerolls(Array.isArray(prerolls) ? prerolls : []);
         setSchedules(Array.isArray(schedules) ? schedules : []);
         setCategories(Array.isArray(categories) ? categories : []);
