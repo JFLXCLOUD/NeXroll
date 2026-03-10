@@ -16,7 +16,7 @@
                     inject preroll intros before movies and episodes.
                 </p>
 
-                <form id="NexrollConfigForm">
+                <div id="NexrollConfigForm">
 
                     <!-- Server Connection -->
                     <div class="inputContainer">
@@ -33,7 +33,7 @@
                         <input is="emby-input" id="txtApiKey" type="text"
                                placeholder="Enter a NeXroll API key" />
                         <div class="fieldDescription">
-                            Create an API key in NeXroll (Settings → API Keys) and paste it here.
+                            Create an API key in NeXroll (Settings &rarr; API Keys) and paste it here.
                             This authenticates requests and shows this Jellyfin server as connected in NeXroll.
                         </div>
                     </div>
@@ -102,114 +102,140 @@
                     <!-- Test & Save -->
                     <div style="margin-top: 1.5em;">
                         <button is="emby-button" type="button" id="btnTest"
-                                class="raised button-submit block">
+                                class="raised button-submit block"
+                                onclick="NexrollPlugin.testConnection()">
                             <span>Test Connection</span>
                         </button>
                     </div>
                     <div id="testResult" style="margin-top: 0.5em; display: none;"></div>
 
                     <div style="margin-top: 1em;">
-                        <button is="emby-button" type="submit"
-                                class="raised button-submit block emby-button">
+                        <button is="emby-button" type="button" id="btnSave"
+                                class="raised button-submit block emby-button"
+                                onclick="NexrollPlugin.saveConfig()">
                             <span>Save</span>
                         </button>
                     </div>
 
-                </form>
+                </div>
             </div>
         </div>
     </div>
 
     <script type="text/javascript">
-        var NexrollConfig = {
-            pluginUniqueId: 'a1b2c3d4-e5f6-7890-abcd-ae0c01100001'
-        };
+        // NeXroll plugin config – uses window.NexrollPlugin so inline onclick handlers work
+        // even when Jellyfin injects the HTML via innerHTML (which skips addEventListener).
+        window.NexrollPlugin = window.NexrollPlugin || {};
 
-        document.querySelector('#NexrollConfigPage')
-            .addEventListener('pageshow', function () {
-                Dashboard.showLoadingMsg();
-                ApiClient.getPluginConfiguration(NexrollConfig.pluginUniqueId).then(function (config) {
-                    document.querySelector('#txtNexrollUrl').value = config.NexrollUrl || '';
-                    document.querySelector('#txtApiKey').value = config.ApiKey || '';
-                    document.querySelector('#txtPathFrom').value = config.PathPrefixFrom || '';
-                    document.querySelector('#txtPathTo').value = config.PathPrefixTo || '';
-                    document.querySelector('#chkMovies').checked = config.EnableForMovies !== false;
-                    document.querySelector('#chkEpisodes').checked = config.EnableForEpisodes !== false;
-                    document.querySelector('#txtMaxIntros').value = config.MaxIntros || 0;
-                    document.querySelector('#txtTimeout').value = config.TimeoutSeconds || 5;
-                    Dashboard.hideLoadingMsg();
-                });
-            });
+        (function () {
+            var PLUGIN_ID = 'a1b2c3d4-e5f6-7890-abcd-ae0c01100001';
 
-        document.querySelector('#NexrollConfigForm')
-            .addEventListener('submit', function (e) {
-                e.preventDefault();
-                Dashboard.showLoadingMsg();
-                ApiClient.getPluginConfiguration(NexrollConfig.pluginUniqueId).then(function (config) {
-                    config.NexrollUrl = document.querySelector('#txtNexrollUrl').value.trim();
-                    config.ApiKey = document.querySelector('#txtApiKey').value.trim();
-                    config.PathPrefixFrom = document.querySelector('#txtPathFrom').value.trim();
-                    config.PathPrefixTo = document.querySelector('#txtPathTo').value.trim();
-                    config.EnableForMovies = document.querySelector('#chkMovies').checked;
-                    config.EnableForEpisodes = document.querySelector('#chkEpisodes').checked;
-                    config.MaxIntros = parseInt(document.querySelector('#txtMaxIntros').value) || 0;
-                    config.TimeoutSeconds = parseInt(document.querySelector('#txtTimeout').value) || 5;
-
-                    ApiClient.updatePluginConfiguration(NexrollConfig.pluginUniqueId, config).then(function () {
-                        Dashboard.processPluginConfigurationUpdateResult();
+            // ---------- Load saved config into form ----------
+            function loadConfig() {
+                try {
+                    ApiClient.getPluginConfiguration(PLUGIN_ID).then(function (config) {
+                        document.querySelector('#txtNexrollUrl').value = config.NexrollUrl || '';
+                        document.querySelector('#txtApiKey').value = config.ApiKey || '';
+                        document.querySelector('#txtPathFrom').value = config.PathPrefixFrom || '';
+                        document.querySelector('#txtPathTo').value = config.PathPrefixTo || '';
+                        document.querySelector('#chkMovies').checked = config.EnableForMovies !== false;
+                        document.querySelector('#chkEpisodes').checked = config.EnableForEpisodes !== false;
+                        document.querySelector('#txtMaxIntros').value = config.MaxIntros || 0;
+                        document.querySelector('#txtTimeout').value = config.TimeoutSeconds || 5;
+                        if (typeof Dashboard !== 'undefined') Dashboard.hideLoadingMsg();
                     });
-                });
-                return false;
-            });
-
-        document.querySelector('#btnTest').addEventListener('click', function () {
-            var url = document.querySelector('#txtNexrollUrl').value.trim();
-            var apiKey = document.querySelector('#txtApiKey').value.trim();
-            var resultEl = document.querySelector('#testResult');
-            if (!url) {
-                resultEl.style.display = 'block';
-                resultEl.innerHTML = '<span style="color:#e74c3c;">Please enter a NeXroll URL first.</span>';
-                return;
+                } catch (e) { console.error('[NeXroll] loadConfig error:', e); }
             }
-            resultEl.style.display = 'block';
-            resultEl.innerHTML = '<span>Testing…</span>';
 
-            var headers = {
-                'X-Plugin-Server-Type': 'Jellyfin',
-                'X-Plugin-Server-Name': 'Jellyfin (config test)'
+            // ---------- Save ----------
+            window.NexrollPlugin.saveConfig = function () {
+                try {
+                    if (typeof Dashboard !== 'undefined') Dashboard.showLoadingMsg();
+                    ApiClient.getPluginConfiguration(PLUGIN_ID).then(function (config) {
+                        config.NexrollUrl = document.querySelector('#txtNexrollUrl').value.trim();
+                        config.ApiKey = document.querySelector('#txtApiKey').value.trim();
+                        config.PathPrefixFrom = document.querySelector('#txtPathFrom').value.trim();
+                        config.PathPrefixTo = document.querySelector('#txtPathTo').value.trim();
+                        config.EnableForMovies = document.querySelector('#chkMovies').checked;
+                        config.EnableForEpisodes = document.querySelector('#chkEpisodes').checked;
+                        config.MaxIntros = parseInt(document.querySelector('#txtMaxIntros').value) || 0;
+                        config.TimeoutSeconds = parseInt(document.querySelector('#txtTimeout').value) || 5;
+
+                        ApiClient.updatePluginConfiguration(PLUGIN_ID, config).then(function () {
+                            if (typeof Dashboard !== 'undefined') Dashboard.processPluginConfigurationUpdateResult();
+                            var r = document.querySelector('#testResult');
+                            r.style.display = 'block';
+                            r.innerHTML = '<span style="color:#27ae60;">&#10004; Settings saved.</span>';
+                        });
+                    });
+                } catch (e) { console.error('[NeXroll] saveConfig error:', e); }
             };
-            if (apiKey) {
-                headers['X-Api-Key'] = apiKey;
-            }
 
-            fetch(url.replace(/\/+$/, '') + '/plugin/health', { headers: headers })
-                .then(function (resp) {
-                    if (resp.status === 401) {
-                        resultEl.innerHTML = '<span style="color:#e74c3c;">&#10008; Invalid or expired API key.</span>';
-                        return null;
-                    }
-                    return resp.json();
-                })
-                .then(function (data) {
-                    if (!data) return;
-                    if (data && data.status === 'ok') {
-                        var msg = '&#10004; Connected to NeXroll successfully!';
-                        if (data.authenticated) {
-                            msg += ' <span style="color:#3498db;">(Authenticated as: ' + (data.key_name || 'API Key') + ')</span>';
-                        } else if (apiKey) {
-                            msg += ' <span style="color:#e67e22;">(Warning: API key not recognized)</span>';
-                        } else {
-                            msg += ' <span style="color:#95a5a6;">(No API key – anonymous access)</span>';
+            // ---------- Test Connection ----------
+            window.NexrollPlugin.testConnection = function () {
+                var url = document.querySelector('#txtNexrollUrl').value.trim();
+                var apiKey = document.querySelector('#txtApiKey').value.trim();
+                var resultEl = document.querySelector('#testResult');
+                if (!url) {
+                    resultEl.style.display = 'block';
+                    resultEl.innerHTML = '<span style="color:#e74c3c;">Please enter a NeXroll URL first.</span>';
+                    return;
+                }
+                resultEl.style.display = 'block';
+                resultEl.innerHTML = '<span>Testing&hellip;</span>';
+
+                var headers = {
+                    'X-Plugin-Server-Type': 'Jellyfin',
+                    'X-Plugin-Server-Name': 'Jellyfin (config test)'
+                };
+                if (apiKey) {
+                    headers['X-Api-Key'] = apiKey;
+                }
+
+                fetch(url.replace(/\/+$/, '') + '/plugin/health', { headers: headers })
+                    .then(function (resp) {
+                        if (resp.status === 401) {
+                            resultEl.innerHTML = '<span style="color:#e74c3c;">&#10008; Invalid or expired API key.</span>';
+                            return null;
                         }
-                        resultEl.innerHTML = '<span style="color:#27ae60;">' + msg + '</span>';
-                    } else {
-                        resultEl.innerHTML = '<span style="color:#e74c3c;">Unexpected response from server.</span>';
-                    }
-                })
-                .catch(function (err) {
-                    resultEl.innerHTML = '<span style="color:#e74c3c;">&#10008; Could not reach NeXroll: ' + err.message + '</span>';
-                });
-        });
+                        return resp.json();
+                    })
+                    .then(function (data) {
+                        if (!data) return;
+                        if (data.status === 'ok') {
+                            var msg = '&#10004; Connected to NeXroll successfully!';
+                            if (data.authenticated) {
+                                msg += ' <span style="color:#3498db;">(Authenticated as: ' + (data.key_name || 'API Key') + ')</span>';
+                            } else if (apiKey) {
+                                msg += ' <span style="color:#e67e22;">(Warning: API key not recognized)</span>';
+                            } else {
+                                msg += ' <span style="color:#95a5a6;">(No API key &ndash; anonymous access)</span>';
+                            }
+                            resultEl.innerHTML = '<span style="color:#27ae60;">' + msg + '</span>';
+                        } else {
+                            resultEl.innerHTML = '<span style="color:#e74c3c;">Unexpected response from server.</span>';
+                        }
+                    })
+                    .catch(function (err) {
+                        resultEl.innerHTML = '<span style="color:#e74c3c;">&#10008; Could not reach NeXroll: ' + err.message + '</span>';
+                    });
+            };
+
+            // ---------- Initialization ----------
+            // Try pageshow event (works if Jellyfin dispatches it on the config page element).
+            var page = document.querySelector('#NexrollConfigPage');
+            if (page) {
+                page.addEventListener('pageshow', loadConfig);
+                page.addEventListener('viewshow', loadConfig);
+            }
+            // Fallback: also load immediately in case the events never fire.
+            if (typeof ApiClient !== 'undefined') {
+                loadConfig();
+            } else {
+                // ApiClient not yet available — retry after a short delay
+                setTimeout(function () { try { loadConfig(); } catch(e) {} }, 500);
+            }
+        })();
     </script>
 </body>
 </html>
