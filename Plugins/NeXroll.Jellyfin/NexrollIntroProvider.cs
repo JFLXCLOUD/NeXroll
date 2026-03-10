@@ -1,11 +1,14 @@
 using System.Net.Http.Json;
 using System.Net.Http.Headers;
+using System.Security.Cryptography;
+using System.Text;
 using Jellyfin.Data.Entities;
 using MediaBrowser.Controller.Entities;
 using MediaBrowser.Controller.Entities.Movies;
 using MediaBrowser.Controller.Entities.TV;
 using MediaBrowser.Controller.Library;
 using MediaBrowser.Model.Dto;
+using MediaBrowser.Model.IO;
 using Microsoft.Extensions.Logging;
 
 namespace NeXroll.Jellyfin;
@@ -14,17 +17,32 @@ namespace NeXroll.Jellyfin;
 /// Jellyfin intro provider that fetches the currently-active preroll
 /// paths from a NeXroll server and returns them as <see cref="IntroInfo"/>
 /// items for playback injection.
+///
+/// Jellyfin's <c>ResolveIntro</c> requires intro files to exist in its
+/// database as Video items.  This provider downloads preroll files to a
+/// local cache, resolves them via <c>ILibraryManager.ResolvePath</c>, and
+/// saves them to the database so they can be returned by <c>ItemId</c>.
 /// </summary>
 public class NexrollIntroProvider : IIntroProvider
 {
     private readonly ILogger<NexrollIntroProvider> _logger;
+    private readonly ILibraryManager _libraryManager;
+    private readonly IFileSystem _fileSystem;
     private static readonly HttpClient _httpClient = new();
+    private static readonly string _cacheDir = Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+        "NeXroll", "intro_cache");
 
     public string Name => "NeXroll Intros";
 
-    public NexrollIntroProvider(ILogger<NexrollIntroProvider> logger)
+    public NexrollIntroProvider(
+        ILogger<NexrollIntroProvider> logger,
+        ILibraryManager libraryManager,
+        IFileSystem fileSystem)
     {
         _logger = logger;
+        _libraryManager = libraryManager;
+        _fileSystem = fileSystem;
     }
 
     /// <summary>
@@ -117,10 +135,9 @@ public class NexrollIntroProvider : IIntroProvider
 
             foreach (var intro in items.Take(maxCount))
             {
-                var path = TranslatePath(intro.Path, config);
-                if (string.IsNullOrWhiteSpace(path)) continue;
-
-                intros.Add(new IntroInfo { Path = path });
+                var introInfo = await ResolveIntroInfo(intro, config).ConfigureAwait(false);
+                if (introInfo is not null)
+                    intros.Add(introInfo);
             }
 
             _logger.LogInformation(
@@ -143,6 +160,134 @@ public class NexrollIntroProvider : IIntroProvider
         {
             _logger.LogError(ex, "Unexpected error fetching intros from NeXroll");
             return Enumerable.Empty<IntroInfo>();
+        }
+    }
+
+    /// <summary>
+    /// Resolve a preroll item to an IntroInfo that Jellyfin can actually play.
+    /// Downloads the file to a local cache if needed, then ensures it exists
+    /// as a Video item in Jellyfin's database (required by ResolveIntro).
+    /// Returns IntroInfo with ItemId for direct database lookup.
+    /// </summary>
+    private async Task<IntroInfo?> ResolveIntroInfo(NexrollIntroItem intro, PluginConfiguration config)
+    {
+        // Get a local file path for the intro (download if necessary)
+        var localPath = await EnsureLocalFile(intro, config).ConfigureAwait(false);
+        if (string.IsNullOrWhiteSpace(localPath))
+            return null;
+
+        // Ensure the video is registered in Jellyfin's database
+        var videoId = EnsureVideoInDatabase(localPath, intro.Name);
+        if (videoId is null)
+        {
+            // Fall back to path-based IntroInfo (may not work but worth trying)
+            _logger.LogWarning("NeXroll: Could not register '{Name}' in DB, falling back to path", intro.Name);
+            return new IntroInfo { Path = localPath };
+        }
+
+        _logger.LogDebug("NeXroll: Resolved '{Name}' as ItemId {Id}", intro.Name, videoId.Value);
+        return new IntroInfo { ItemId = videoId.Value };
+    }
+
+    /// <summary>
+    /// Ensure the intro file exists on the local filesystem. Downloads from
+    /// the NeXroll streaming endpoint if the file is remote or UNC.
+    /// </summary>
+    private async Task<string?> EnsureLocalFile(NexrollIntroItem intro, PluginConfiguration config)
+    {
+        // 1) Try the original (translated) file path — works for LOCAL drives only
+        var translated = TranslatePath(intro.Path, config);
+        if (!string.IsNullOrWhiteSpace(translated)
+            && !translated.StartsWith(@"\\", StringComparison.Ordinal)
+            && File.Exists(translated))
+        {
+            return translated;
+        }
+
+        // 2) Fall back to streaming download to local cache
+        if (string.IsNullOrWhiteSpace(intro.StreamUrl))
+        {
+            _logger.LogDebug("NeXroll: No local file and no StreamUrl for '{Name}'", intro.Name);
+            return null;
+        }
+
+        try
+        {
+            Directory.CreateDirectory(_cacheDir);
+
+            var ext = Path.GetExtension(intro.Path);
+            if (string.IsNullOrEmpty(ext)) ext = ".mp4";
+            var hash = SHA256Hash(intro.Path);
+            var cached = Path.Combine(_cacheDir, $"{hash}{ext}");
+
+            if (File.Exists(cached))
+            {
+                _logger.LogDebug("NeXroll: Using cached intro '{Name}' at {Path}", intro.Name, cached);
+                return cached;
+            }
+
+            _logger.LogInformation("NeXroll: Downloading intro '{Name}' to cache", intro.Name);
+            using var dlCts = new CancellationTokenSource(TimeSpan.FromSeconds(60));
+            using var dlResp = await _httpClient.GetAsync(intro.StreamUrl, HttpCompletionOption.ResponseHeadersRead, dlCts.Token).ConfigureAwait(false);
+            dlResp.EnsureSuccessStatusCode();
+
+            var tmpPath = cached + ".tmp";
+            await using (var fs = new FileStream(tmpPath, FileMode.Create, FileAccess.Write, FileShare.None))
+            {
+                await dlResp.Content.CopyToAsync(fs, dlCts.Token).ConfigureAwait(false);
+            }
+
+            File.Move(tmpPath, cached, overwrite: true);
+            _logger.LogInformation("NeXroll: Cached intro '{Name}' ({Size:N0} bytes) at {Path}",
+                intro.Name, new FileInfo(cached).Length, cached);
+            return cached;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "NeXroll: Failed to download intro '{Name}' from streaming endpoint", intro.Name);
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// Ensure a video file at the given local path is registered in Jellyfin's
+    /// item database.  Jellyfin's ResolveIntro requires the Video to exist in
+    /// the DB when looking up by ItemId.  We use ResolvePath to create the
+    /// Video object (which computes its deterministic GUID), then check if it
+    /// already exists in the DB.  If not, we save it.
+    /// </summary>
+    private Guid? EnsureVideoInDatabase(string localPath, string introName)
+    {
+        try
+        {
+            var fileInfo = _fileSystem.GetFileSystemInfo(localPath);
+            var resolved = _libraryManager.ResolvePath(fileInfo);
+
+            if (resolved is not Video video)
+            {
+                _logger.LogWarning("NeXroll: ResolvePath did not return a Video for '{Path}'", localPath);
+                return null;
+            }
+
+            // Check if it already exists in the database
+            var existing = _libraryManager.GetItemById(video.Id);
+            if (existing is Video)
+            {
+                _logger.LogDebug("NeXroll: Video '{Name}' already in DB with Id {Id}", introName, video.Id);
+                return video.Id;
+            }
+
+            // Not in DB yet — save it
+            video.Name = introName;
+            _libraryManager.CreateItem(video, null);
+            _logger.LogInformation("NeXroll: Registered intro '{Name}' in Jellyfin DB with Id {Id}", introName, video.Id);
+
+            return video.Id;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "NeXroll: Failed to register video in DB for '{Path}'", localPath);
+            return null;
         }
     }
 
@@ -193,5 +338,12 @@ public class NexrollIntroProvider : IIntroProvider
     {
         public string Path { get; set; } = string.Empty;
         public string Name { get; set; } = string.Empty;
+        public string StreamUrl { get; set; } = string.Empty;
+    }
+
+    private static string SHA256Hash(string input)
+    {
+        var bytes = SHA256.HashData(Encoding.UTF8.GetBytes(input));
+        return Convert.ToHexString(bytes).ToLowerInvariant();
     }
 }

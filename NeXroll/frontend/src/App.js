@@ -1758,6 +1758,10 @@ const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
             .then(pluginData => {
               setJellyfinPluginInfo(pluginData);
               if (pluginData.detected) {
+                if (pluginData.auto_configured) {
+                  // Plugin was just auto-configured by the backend
+                  console.log('[NeXroll] Jellyfin plugin auto-configured successfully');
+                }
                 if (pluginData.config?.NexrollUrl) {
                   setJellyfinPluginNexrollUrl(prev => prev || pluginData.config.NexrollUrl);
                 } else if (pluginData.suggested_nexroll_url) {
@@ -24849,21 +24853,30 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
         {/* State: Plugin NOT found */}
         {jellyfinStatus === 'Connected' && jellyfinPluginInfo && !jellyfinPluginInfo.detected && (
           <>
-            <div style={{ padding: '1rem', borderRadius: '8px', backgroundColor: 'rgba(231, 76, 60, 0.08)', border: '1px solid rgba(231, 76, 60, 0.2)', marginBottom: '1rem' }}>
-              <strong style={{ color: '#e74c3c' }}>Plugin Not Found</strong>
+            <div style={{ padding: '1rem', borderRadius: '8px', backgroundColor: jellyfinPluginInfo.auth_error ? 'rgba(230, 126, 34, 0.08)' : 'rgba(231, 76, 60, 0.08)', border: `1px solid ${jellyfinPluginInfo.auth_error ? 'rgba(230, 126, 34, 0.2)' : 'rgba(231, 76, 60, 0.2)'}`, marginBottom: '1rem' }}>
+              <strong style={{ color: jellyfinPluginInfo.auth_error ? '#e67e22' : '#e74c3c' }}>
+                {jellyfinPluginInfo.auth_error ? 'API Key Issue' : 'Plugin Not Found'}
+              </strong>
               <p style={{ margin: '0.5rem 0 0', color: 'var(--text-secondary)', fontSize: '0.9rem' }}>
                 {jellyfinPluginInfo.error || jellyfinPluginInfo.message || 'The NeXroll Intros plugin was not detected on your Jellyfin server.'}
               </p>
+              {jellyfinPluginInfo.auth_error && (
+                <p style={{ margin: '0.5rem 0 0', color: 'var(--text-secondary)', fontSize: '0.85rem' }}>
+                  Disconnect and reconnect with a valid Jellyfin admin API key from Dashboard → API Keys.
+                </p>
+              )}
             </div>
 
-            <div style={{ background: 'var(--bg-color, #1a1a2e)', border: '1px solid var(--border-color)', borderRadius: '8px', padding: '1rem', marginBottom: '1rem' }}>
-              <h3 style={{ marginTop: 0, marginBottom: '0.75rem', fontSize: '0.95rem' }}>Install the Plugin</h3>
-              <ol style={{ margin: 0, paddingLeft: '1.25rem', lineHeight: '1.7' }}>
-                <li>Download the <strong>NeXroll Intros</strong> plugin DLL from <a href="https://github.com/sahara101/NeXroll/releases" target="_blank" rel="noopener noreferrer" style={{ color: 'var(--accent-color, #6c5ce7)' }}>GitHub Releases</a></li>
-                <li>Copy it to your Jellyfin plugins folder: <code>plugins/NeXroll Intros/</code></li>
-                <li>Restart Jellyfin</li>
-              </ol>
-            </div>
+            {!jellyfinPluginInfo.auth_error && (
+              <div style={{ background: 'var(--bg-color, #1a1a2e)', border: '1px solid var(--border-color)', borderRadius: '8px', padding: '1rem', marginBottom: '1rem' }}>
+                <h3 style={{ marginTop: 0, marginBottom: '0.75rem', fontSize: '0.95rem' }}>Install the Plugin</h3>
+                <ol style={{ margin: 0, paddingLeft: '1.25rem', lineHeight: '1.7' }}>
+                  <li>Download the <strong>NeXroll Intros</strong> plugin DLL from the NeXroll releases page</li>
+                  <li>Copy it to your Jellyfin plugins folder: <code>plugins/NeXroll Intros/</code></li>
+                  <li>Restart Jellyfin</li>
+                </ol>
+              </div>
+            )}
 
             <button onClick={handleDetectJellyfinPlugin} className="button button-primary">
               Retry Detection
@@ -24889,6 +24902,11 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
                   {jellyfinPluginInfo.config?.ApiKey && (
                     <span className="nx-chip" style={{ marginLeft: '0.5rem', backgroundColor: 'rgba(39, 174, 96, 0.15)', color: '#27ae60', fontSize: '0.7rem' }}>
                       API Key Active
+                    </span>
+                  )}
+                  {jellyfinPluginInfo.auto_configured && (
+                    <span className="nx-chip" style={{ marginLeft: '0.5rem', backgroundColor: 'rgba(52, 152, 219, 0.15)', color: '#3498db', fontSize: '0.7rem' }}>
+                      Auto-Configured
                     </span>
                   )}
                 </div>
@@ -25080,7 +25098,7 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
         <div style={{ background: 'var(--bg-color, #1a1a2e)', border: '1px solid var(--border-color)', borderRadius: '8px', padding: '1rem', marginBottom: '1rem' }}>
           <h3 style={{ marginTop: 0, marginBottom: '0.75rem', fontSize: '0.95rem' }}>Quick Start</h3>
           <ol style={{ margin: 0, paddingLeft: '1.25rem', lineHeight: '1.7' }}>
-            <li>Download the <strong>NeXroll Intros</strong> Emby plugin DLL from <a href="https://github.com/sahara101/NeXroll/releases" target="_blank" rel="noopener noreferrer" style={{ color: 'var(--accent-color, #52c41a)' }}>GitHub Releases</a></li>
+            <li>Download the <strong>NeXroll Intros</strong> Emby plugin DLL from the NeXroll releases page</li>
             <li>Copy it to your Emby plugins folder: <code>plugins/NeXroll Intros/</code></li>
             <li>Restart Emby</li>
             <li>Open Emby Settings → Plugins → <strong>NeXroll Intros</strong></li>

@@ -295,15 +295,24 @@ class JellyfinConnector:
     def list_plugins(self) -> Optional[list]:
         """
         GET /Plugins
-        Returns a list of installed plugins (or None on failure).
+        Returns a list of installed plugins, None on failure,
+        or raises PermissionError on 401/403.
         """
         try:
             r = self._request("GET", "/Plugins", timeout=10)
-            if getattr(r, "status_code", 0) == 200:
+            status = getattr(r, "status_code", 0)
+            if status == 200:
                 try:
                     return r.json() if r.content else []
                 except Exception:
                     return []
+            if status in (401, 403):
+                raise PermissionError(
+                    "Jellyfin API key does not have permission to list plugins. "
+                    "Please reconnect with a valid admin API key."
+                )
+        except PermissionError:
+            raise
         except Exception:
             return None
         return None
@@ -312,6 +321,7 @@ class JellyfinConnector:
         """
         Find a plugin by case-insensitive display name substring match (e.g., 'Local Intros').
         Returns the plugin dict or None if not found.
+        Raises PermissionError if the API key lacks permission.
         """
         try:
             if not name_substr:
@@ -323,6 +333,8 @@ class JellyfinConnector:
                 if needle in n:
                     return p
             return None
+        except PermissionError:
+            raise
         except Exception:
             return None
 

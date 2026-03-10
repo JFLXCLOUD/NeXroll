@@ -90,6 +90,10 @@ NeXroll/build/
 NeXroll/dist/
 NeXroll/__pycache__/
 
+# .NET build artifacts
+Plugins/**/bin/
+Plugins/**/obj/
+
 # Dev/temp documentation
 *_IMPLEMENTATION.md
 *_IMPLEMENTATION_*.md

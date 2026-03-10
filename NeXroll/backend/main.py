@@ -20455,7 +20455,10 @@ def detect_jellyfin_plugin(request: Request, db: Session = Depends(get_db)):
         connector = JellyfinConnector(jellyfin_url, api_key)
 
         # Search for the plugin by name
-        plugin = connector.find_plugin_by_name("NeXroll")
+        try:
+            plugin = connector.find_plugin_by_name("NeXroll")
+        except PermissionError as pe:
+            return {"detected": False, "error": str(pe), "auth_error": True}
 
         if not plugin:
             return {"detected": False, "message": "NeXroll Intros plugin not found on Jellyfin server"}
@@ -20468,9 +20471,66 @@ def detect_jellyfin_plugin(request: Request, db: Session = Depends(get_db)):
         # Suggest NeXroll URL from the current request origin
         suggested_url = str(request.base_url).rstrip("/")
 
+        # --- Auto-configure the plugin if it has no NexrollUrl set ---
+        auto_configured = False
+        if not config.get("NexrollUrl"):
+            try:
+                # Generate an API key for the plugin
+                raw_key = _generate_api_key()
+                key_hash = _hash_api_key(raw_key)
+                key_prefix = _get_key_prefix(raw_key)
+
+                # Deactivate previous auto-generated keys
+                existing_auto_keys = db.query(models.APIKey).filter(
+                    models.APIKey.name == "Jellyfin Plugin (Auto)",
+                    models.APIKey.is_active == True
+                ).all()
+                for k in existing_auto_keys:
+                    k.is_active = False
+                db.flush()
+
+                new_key = models.APIKey(
+                    name="Jellyfin Plugin (Auto)",
+                    key_hash=key_hash,
+                    key_prefix=key_prefix,
+                    permissions="read",
+                    description="Auto-generated for Jellyfin NeXroll Intros plugin",
+                    is_active=True,
+                )
+                db.add(new_key)
+                db.commit()
+
+                plugin_config = {
+                    "NexrollUrl": suggested_url,
+                    "ApiKey": raw_key,
+                    "PathPrefixFrom": "",
+                    "PathPrefixTo": "",
+                    "EnableForMovies": True,
+                    "EnableForEpisodes": True,
+                    "MaxIntros": 0,
+                    "TimeoutSeconds": 5,
+                }
+
+                success = connector.set_plugin_configuration(plugin_id, plugin_config)
+                if success:
+                    auto_configured = True
+                    config = {**plugin_config, "ApiKey": f"{key_prefix}..."}
+                    log_event('INFO', 'jellyfin',
+                              f'Plugin auto-configured — URL: {suggested_url}',
+                              source='detect_jellyfin_plugin', db=db)
+                else:
+                    log_event('WARNING', 'jellyfin',
+                              'Plugin auto-configuration push failed',
+                              source='detect_jellyfin_plugin', db=db)
+            except Exception as auto_err:
+                log_event('WARNING', 'jellyfin',
+                          f'Plugin auto-configuration error: {auto_err}',
+                          source='detect_jellyfin_plugin', db=db)
+
         log_event('INFO', 'jellyfin', f'Plugin detected: {plugin.get("Name")} v{plugin.get("Version")}', source='detect_jellyfin_plugin')
         return {
             "detected": True,
+            "auto_configured": auto_configured,
             "plugin": {
                 "id": plugin_id,
                 "name": plugin.get("Name") or plugin.get("name") or "NeXroll Intros",
@@ -23204,12 +23264,17 @@ def plugin_get_intros(
         paths = result.get("paths", [])
         mode = result.get("mode", "shuffle")
 
+        base_url = str(request.base_url).rstrip("/")
         items = []
         for p in paths:
-            items.append({
+            item = {
                 "Path": p,
                 "Name": os.path.splitext(os.path.basename(p))[0],
-            })
+            }
+            # Include a signed streaming URL so plugins can fall back to HTTP
+            # when the file path isn't resolvable by the media server.
+            item["StreamUrl"] = _build_stream_url(base_url, p)
+            items.append(item)
 
         log_event(
             "INFO", "plugin", f"Plugin intros requested – returning {len(items)} path(s), mode={mode}",
@@ -23270,6 +23335,67 @@ def plugin_clients():
     return {"clients": list(PLUGIN_CLIENTS.values()), "count": len(PLUGIN_CLIENTS)}
 
 
+# --- Plugin streaming: serve preroll files over HTTP so Jellyfin/Emby can ---
+# --- resolve them as playable media (their ResolvePath rejects UNC paths). ---
+_STREAM_SECRET = os.environ.get("NEXROLL_STREAM_SECRET") or hashlib.sha256(
+    (os.environ.get("COMPUTERNAME", "") + "NeXroll-stream").encode()
+).hexdigest()
+
+
+def _sign_stream_path(file_path: str, expires: int) -> str:
+    """Create an HMAC token for a file path + expiry timestamp."""
+    msg = f"{file_path}|{expires}"
+    return hmac.new(_STREAM_SECRET.encode(), msg.encode(), hashlib.sha256).hexdigest()
+
+
+def _build_stream_url(base_url: str, file_path: str) -> str:
+    """Build a signed streaming URL for a preroll file."""
+    expires = int(datetime.datetime.utcnow().timestamp()) + 86400  # 24 hours
+    token = _sign_stream_path(file_path, expires)
+    encoded_path = base64.urlsafe_b64encode(file_path.encode("utf-8")).decode("ascii")
+    return f"{base_url.rstrip('/')}/plugin/stream?p={encoded_path}&e={expires}&t={token}"
+
+
+@app.get("/plugin/stream")
+def plugin_stream_preroll(
+    p: str = Query(..., description="Base64url-encoded file path"),
+    e: int = Query(..., description="Expiry timestamp"),
+    t: str = Query(..., description="HMAC signature"),
+):
+    """
+    Serve a preroll video file over HTTP.  Jellyfin/Emby plugins use this
+    when the original file path (e.g. a UNC path) cannot be resolved by the
+    media server's internal library manager.
+
+    Protected by a time-limited HMAC signature generated by /plugin/intros.
+    """
+    # Decode the path
+    try:
+        file_path = base64.urlsafe_b64decode(p.encode("ascii")).decode("utf-8")
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid path encoding")
+
+    # Check expiry
+    now = int(datetime.datetime.utcnow().timestamp())
+    if now > e:
+        raise HTTPException(status_code=403, detail="Stream link expired")
+
+    # Verify HMAC
+    expected = _sign_stream_path(file_path, e)
+    if not hmac.compare_digest(t, expected):
+        raise HTTPException(status_code=403, detail="Invalid stream token")
+
+    # Verify the file exists
+    if not os.path.isfile(file_path):
+        raise HTTPException(status_code=404, detail="Preroll file not found")
+
+    ext = os.path.splitext(file_path)[1].lower()
+    mime_map = {".mp4": "video/mp4", ".mkv": "video/x-matroska", ".avi": "video/x-msvideo",
+                ".mov": "video/quicktime", ".webm": "video/webm", ".wmv": "video/x-ms-wmv"}
+    media_type = mime_map.get(ext, "video/mp4")
+    return FileResponse(file_path, media_type=media_type, filename=os.path.basename(file_path))
+
+
 @app.post("/plugin/register")
 def plugin_register(request: Request, db: Session = Depends(get_db)):
     """
@@ -23309,17 +23435,6 @@ try:
 except Exception as e:
     print(f"Error mounting frontend directory: {e}")
     sys.exit(1)
-
-# Auto-start when running as packaged EXE (PyInstaller onefile)
-if getattr(sys, "frozen", False):
-    _file_log("Starting FastAPI (frozen build)")
-    try:
-        import uvicorn
-        port = int(os.environ.get("NEXROLL_PORT", "9393"))
-        uvicorn.run(app, host="0.0.0.0", port=port, log_config=None)
-    except Exception as e:
-        _file_log(f"Uvicorn failed: {e}")
-        raise
 
 def _bootstrap_jellyfin_from_env() -> None:
     """
@@ -23712,6 +23827,20 @@ def _resolve_current_intros(db: Session) -> dict:
             }
 
     return {"paths": [], "mode": "shuffle"}
+
+
+# Auto-start when running as packaged EXE (PyInstaller onefile)
+# MUST be after ALL function/class/global definitions so they are available
+# when uvicorn starts serving requests.
+if getattr(sys, "frozen", False):
+    _file_log("Starting FastAPI (frozen build)")
+    try:
+        import uvicorn
+        port = int(os.environ.get("NEXROLL_PORT", "9393"))
+        uvicorn.run(app, host="0.0.0.0", port=port, log_config=None)
+    except Exception as e:
+        _file_log(f"Uvicorn failed: {e}")
+        raise
 
 
 if __name__ == "__main__" and not getattr(sys, "frozen", False):

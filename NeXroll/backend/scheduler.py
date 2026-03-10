@@ -1751,6 +1751,24 @@ class Scheduler:
         setting = db.query(models.Setting).first()
         # Allow secure-store token fallback via PlexConnector; only require URL here
         if not setting or not getattr(setting, "plex_url", None):
+            # If Jellyfin or Emby is configured, the plugin endpoint serves prerolls
+            # based on active_category — no need to push to Plex, just succeed so
+            # the caller sets active_category in the DB.
+            if setting and (getattr(setting, "jellyfin_url", None) or getattr(setting, "emby_url", None)):
+                _scheduler_log(f"Plex not configured; setting active category {category_id} for plugin-based server(s)")
+                # Mark category in DB for UI display
+                try:
+                    db.query(models.Category).update({"apply_to_plex": False})
+                    cat = db.query(models.Category).filter(models.Category.id == category_id).first()
+                    if cat:
+                        cat.apply_to_plex = True
+                    db.commit()
+                except Exception:
+                    try:
+                        db.rollback()
+                    except Exception:
+                        pass
+                return True
             _scheduler_log("Plex not configured (missing URL); cannot apply category.", level="WARNING")
             return False
 
@@ -1879,6 +1897,18 @@ class Scheduler:
         """
         setting = db.query(models.Setting).first()
         if not setting or not getattr(setting, "plex_url", None):
+            # For Jellyfin/Emby, clearing means unsetting active_category (handled by caller)
+            if setting and (getattr(setting, "jellyfin_url", None) or getattr(setting, "emby_url", None)):
+                _scheduler_log("Plex not configured; clearing active category for plugin-based server(s)")
+                try:
+                    db.query(models.Category).update({"apply_to_plex": False})
+                    db.commit()
+                except Exception:
+                    try:
+                        db.rollback()
+                    except Exception:
+                        pass
+                return True
             _scheduler_log("Plex not configured (missing URL); cannot clear prerolls.", level="WARNING")
             return False
 
@@ -1994,6 +2024,10 @@ class Scheduler:
         setting = db.query(models.Setting).first()
         # Allow secure-store token fallback via PlexConnector; only require URL here
         if not setting or not getattr(setting, "plex_url", None):
+            # For Jellyfin/Emby, the plugin endpoint resolves sequences from active_category
+            if setting and (getattr(setting, "jellyfin_url", None) or getattr(setting, "emby_url", None)):
+                _scheduler_log(f"Plex not configured; setting sequence for plugin-based server(s) ({len(paths)} paths)")
+                return True
             _scheduler_log("Plex not configured (missing URL); cannot apply sequence.", level="WARNING")
             return False
 
@@ -2208,6 +2242,10 @@ class Scheduler:
         # Apply path mappings and send to Plex
         setting = db.query(models.Setting).first()
         if not setting or not getattr(setting, "plex_url", None):
+            # For Jellyfin/Emby, blended prerolls are served via the plugin endpoint
+            if setting and (getattr(setting, "jellyfin_url", None) or getattr(setting, "emby_url", None)):
+                _scheduler_log(f"Plex not configured; applying blended schedules for plugin-based server(s)")
+                return True
             _scheduler_log("Plex not configured (missing URL); cannot apply blended schedules.", level="WARNING")
             return False
         
@@ -2344,6 +2382,10 @@ class Scheduler:
             # Apply path mappings and send to Plex
             setting = db.query(models.Setting).first()
             if not setting or not getattr(setting, "plex_url", None):
+                # For Jellyfin/Emby, filler sequences are served via the plugin endpoint
+                if setting and (getattr(setting, "jellyfin_url", None) or getattr(setting, "emby_url", None)):
+                    _scheduler_log(f"Plex not configured; applying filler sequence for plugin-based server(s)")
+                    return True
                 _scheduler_log("Plex not configured (missing URL); cannot apply filler sequence.", level="WARNING")
                 return False
             
@@ -2484,6 +2526,10 @@ class Scheduler:
             plex_path = _translate_for_plex(video_path)
             
             if not setting.plex_url:
+                # For Jellyfin/Emby, Coming Soon videos are served via the plugin endpoint
+                if getattr(setting, "jellyfin_url", None) or getattr(setting, "emby_url", None):
+                    _scheduler_log(f"Plex not configured; applying Coming Soon List for plugin-based server(s)")
+                    return True
                 _scheduler_log("Plex not configured; cannot apply Coming Soon List", level="WARNING")
                 return False
             
