@@ -20424,6 +20424,167 @@ def disconnect_jellyfin(db: Session = Depends(get_db)):
     log_event('INFO', 'jellyfin', 'Jellyfin server disconnected', source='disconnect_jellyfin')
     return {"disconnected": True, "message": "Successfully disconnected from Jellyfin server"}
 
+
+# --- Jellyfin Plugin Detection & Remote Configuration ---
+NEXROLL_PLUGIN_ID = "a1b2c3d4-e5f6-7890-abcd-ae0c01100001"
+
+
+@app.get("/jellyfin/plugin/detect")
+def detect_jellyfin_plugin(request: Request, db: Session = Depends(get_db)):
+    """
+    Detect if NeXroll Intros plugin is installed on the connected Jellyfin server.
+    Returns plugin info and current configuration so NeXroll can manage it remotely.
+    """
+    setting = db.query(models.Setting).first()
+    jellyfin_url = getattr(setting, "jellyfin_url", None) if setting else None
+
+    if not jellyfin_url:
+        return {"detected": False, "error": "Jellyfin not connected"}
+
+    api_key = None
+    try:
+        api_key = secure_store.get_jellyfin_api_key()
+    except Exception:
+        api_key = None
+
+    if not api_key:
+        return {"detected": False, "error": "No Jellyfin API key found"}
+
+    try:
+        from backend.jellyfin_connector import JellyfinConnector
+        connector = JellyfinConnector(jellyfin_url, api_key)
+
+        # Search for the plugin by name
+        plugin = connector.find_plugin_by_name("NeXroll")
+
+        if not plugin:
+            return {"detected": False, "message": "NeXroll Intros plugin not found on Jellyfin server"}
+
+        plugin_id = plugin.get("Id") or plugin.get("id") or NEXROLL_PLUGIN_ID
+
+        # Get current plugin configuration
+        config = connector.get_plugin_configuration(plugin_id) or {}
+
+        # Suggest NeXroll URL from the current request origin
+        suggested_url = str(request.base_url).rstrip("/")
+
+        log_event('INFO', 'jellyfin', f'Plugin detected: {plugin.get("Name")} v{plugin.get("Version")}', source='detect_jellyfin_plugin')
+        return {
+            "detected": True,
+            "plugin": {
+                "id": plugin_id,
+                "name": plugin.get("Name") or plugin.get("name") or "NeXroll Intros",
+                "version": plugin.get("Version") or plugin.get("version") or "",
+                "status": plugin.get("Status") or plugin.get("status") or "",
+            },
+            "config": config,
+            "suggested_nexroll_url": suggested_url,
+        }
+    except Exception as e:
+        log_event('WARNING', 'jellyfin', f'Plugin detection failed: {e}', source='detect_jellyfin_plugin')
+        return {"detected": False, "error": str(e)}
+
+
+class JellyfinPluginConfigureRequest(BaseModel):
+    nexroll_url: str
+    path_prefix_from: str = ""
+    path_prefix_to: str = ""
+    enable_for_movies: bool = True
+    enable_for_episodes: bool = True
+    max_intros: int = 0
+    timeout_seconds: int = 5
+
+
+@app.post("/jellyfin/plugin/configure")
+def configure_jellyfin_plugin(req: JellyfinPluginConfigureRequest, db: Session = Depends(get_db)):
+    """
+    Push NeXroll configuration to the Jellyfin plugin remotely.
+    Auto-generates an API key for the plugin and writes it into the plugin config
+    via Jellyfin's /Plugins/{id}/Configuration API.
+    """
+    setting = db.query(models.Setting).first()
+    jellyfin_url = getattr(setting, "jellyfin_url", None) if setting else None
+
+    if not jellyfin_url:
+        raise HTTPException(status_code=422, detail="Jellyfin not connected")
+
+    jf_api_key = None
+    try:
+        jf_api_key = secure_store.get_jellyfin_api_key()
+    except Exception:
+        pass
+
+    if not jf_api_key:
+        raise HTTPException(status_code=422, detail="No Jellyfin API key found")
+
+    try:
+        from backend.jellyfin_connector import JellyfinConnector
+        connector = JellyfinConnector(jellyfin_url, jf_api_key)
+
+        # Find the plugin on Jellyfin
+        plugin = connector.find_plugin_by_name("NeXroll")
+        if not plugin:
+            raise HTTPException(status_code=404, detail="NeXroll Intros plugin not found on Jellyfin server. Please install the plugin DLL first.")
+
+        plugin_id = plugin.get("Id") or plugin.get("id") or NEXROLL_PLUGIN_ID
+
+        # --- API key rotation: deactivate previous auto-generated key, create fresh one ---
+        existing_auto_keys = db.query(models.APIKey).filter(
+            models.APIKey.name == "Jellyfin Plugin (Auto)",
+            models.APIKey.is_active == True
+        ).all()
+        for k in existing_auto_keys:
+            k.is_active = False
+        db.flush()
+
+        raw_key = _generate_api_key()
+        key_hash = _hash_api_key(raw_key)
+        key_prefix = _get_key_prefix(raw_key)
+
+        new_key = models.APIKey(
+            name="Jellyfin Plugin (Auto)",
+            key_hash=key_hash,
+            key_prefix=key_prefix,
+            permissions="read",
+            description="Auto-generated for Jellyfin NeXroll Intros plugin",
+            is_active=True,
+        )
+        db.add(new_key)
+        db.commit()
+
+        # Build the plugin configuration payload (matches PluginConfiguration.cs)
+        plugin_config = {
+            "NexrollUrl": req.nexroll_url.rstrip("/"),
+            "ApiKey": raw_key,
+            "PathPrefixFrom": req.path_prefix_from,
+            "PathPrefixTo": req.path_prefix_to,
+            "EnableForMovies": req.enable_for_movies,
+            "EnableForEpisodes": req.enable_for_episodes,
+            "MaxIntros": req.max_intros,
+            "TimeoutSeconds": req.timeout_seconds,
+        }
+
+        # Push config to Jellyfin
+        success = connector.set_plugin_configuration(plugin_id, plugin_config)
+
+        if not success:
+            raise HTTPException(status_code=500, detail="Failed to push configuration to Jellyfin plugin")
+
+        log_event('INFO', 'jellyfin', f'Plugin configured remotely — URL: {req.nexroll_url}', source='configure_jellyfin_plugin')
+
+        return {
+            "success": True,
+            "message": "Plugin configured successfully",
+            "config": {**plugin_config, "ApiKey": f"{key_prefix}..."},  # mask key in response
+            "api_key_prefix": key_prefix,
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        log_event('WARNING', 'jellyfin', f'Plugin configuration failed: {e}', source='configure_jellyfin_plugin')
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 # --- Emby Integration ---
 class EmbyConnectRequest(BaseModel):
     url: str

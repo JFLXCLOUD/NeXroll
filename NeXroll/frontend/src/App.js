@@ -499,6 +499,13 @@ function App() {
     api_key: ''
   });
 
+  // Jellyfin plugin remote-detection state
+  const [jellyfinPluginInfo, setJellyfinPluginInfo] = useState(null);
+  const [jellyfinPluginConfiguring, setJellyfinPluginConfiguring] = useState(false);
+  const [jellyfinPluginNexrollUrl, setJellyfinPluginNexrollUrl] = useState('');
+  const [jellyfinPluginPathFrom, setJellyfinPluginPathFrom] = useState('');
+  const [jellyfinPluginPathTo, setJellyfinPluginPathTo] = useState('');
+
   // Emby connection UI state
   const [embyStatus, setEmbyStatus] = useState('Disconnected');
   const [embyServerInfo, setEmbyServerInfo] = useState(null);
@@ -1744,6 +1751,26 @@ const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
         setPlexServerInfo(plex);
         setJellyfinStatus(jellyfin.connected ? 'Connected' : 'Disconnected');
         setJellyfinServerInfo(jellyfin);
+        // Auto-detect Jellyfin plugin when connected
+        if (jellyfin.connected && jellyfin.connection_type === 'direct') {
+          fetch(apiUrl('jellyfin/plugin/detect'))
+            .then(r => r.json())
+            .then(pluginData => {
+              setJellyfinPluginInfo(pluginData);
+              if (pluginData.detected) {
+                if (pluginData.config?.NexrollUrl) {
+                  setJellyfinPluginNexrollUrl(prev => prev || pluginData.config.NexrollUrl);
+                } else if (pluginData.suggested_nexroll_url) {
+                  setJellyfinPluginNexrollUrl(prev => prev || pluginData.suggested_nexroll_url);
+                }
+                setJellyfinPluginPathFrom(prev => prev || pluginData.config?.PathPrefixFrom || '');
+                setJellyfinPluginPathTo(prev => prev || pluginData.config?.PathPrefixTo || '');
+              }
+            })
+            .catch(() => setJellyfinPluginInfo(null));
+        } else {
+          setJellyfinPluginInfo(null);
+        }
         setEmbyStatus(emby.connected ? 'Connected' : 'Disconnected');
         setEmbyServerInfo(emby);
         setPrerolls(Array.isArray(prerolls) ? prerolls : []);
@@ -14061,6 +14088,8 @@ const DashboardTiles = {
         if (data && data.connected) {
           alert('Successfully connected to Jellyfin!');
           fetchData();
+          // Auto-detect plugin after successful connection
+          setTimeout(() => handleDetectJellyfinPlugin(), 500);
         } else {
           alert('Failed to connect to Jellyfin. Please check your URL and API key.');
         }
@@ -14082,11 +14111,72 @@ const DashboardTiles = {
         setJellyfinConfig({ url: '', api_key: '' });
         setJellyfinStatus('Disconnected');
         setJellyfinServerInfo(null);
+        setJellyfinPluginInfo(null);
+        setJellyfinPluginNexrollUrl('');
+        setJellyfinPluginPathFrom('');
+        setJellyfinPluginPathTo('');
         fetchData();
       })
       .catch(error => {
         console.error('Jellyfin disconnect error:', error);
         alert('Failed to disconnect from Jellyfin: ' + error.message);
+      });
+  };
+
+  // Jellyfin plugin detection & remote configuration
+  const handleDetectJellyfinPlugin = () => {
+    fetch(apiUrl('jellyfin/plugin/detect'))
+      .then(res => res.json())
+      .then(data => {
+        setJellyfinPluginInfo(data);
+        if (data.detected) {
+          // Pre-fill fields from current plugin config or suggested URL
+          if (data.config?.NexrollUrl) {
+            setJellyfinPluginNexrollUrl(data.config.NexrollUrl);
+          } else if (data.suggested_nexroll_url && !jellyfinPluginNexrollUrl) {
+            setJellyfinPluginNexrollUrl(data.suggested_nexroll_url);
+          }
+          setJellyfinPluginPathFrom(data.config?.PathPrefixFrom || '');
+          setJellyfinPluginPathTo(data.config?.PathPrefixTo || '');
+        }
+      })
+      .catch(err => {
+        console.error('Plugin detect error:', err);
+        setJellyfinPluginInfo({ detected: false, error: err.message });
+      });
+  };
+
+  const handleConfigureJellyfinPlugin = () => {
+    if (!jellyfinPluginNexrollUrl) {
+      alert('Please enter the NeXroll server URL that Jellyfin can reach.');
+      return;
+    }
+    setJellyfinPluginConfiguring(true);
+    fetch(apiUrl('jellyfin/plugin/configure'), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        nexroll_url: jellyfinPluginNexrollUrl,
+        path_prefix_from: jellyfinPluginPathFrom,
+        path_prefix_to: jellyfinPluginPathTo,
+      })
+    })
+      .then(res => {
+        if (!res.ok) return res.json().then(e => { throw new Error(e.detail || 'Configuration failed'); });
+        return res.json();
+      })
+      .then(data => {
+        setJellyfinPluginConfiguring(false);
+        if (data.success) {
+          alert('Plugin configured successfully! Jellyfin will now use NeXroll for prerolls.');
+          handleDetectJellyfinPlugin(); // refresh plugin info
+        } else {
+          alert('Failed to configure plugin: ' + (data.detail || 'Unknown error'));
+        }
+      })
+      .catch(err => {
+        setJellyfinPluginConfiguring(false);
+        alert('Error configuring plugin: ' + err.message);
       });
   };
 
@@ -24735,60 +24825,167 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
         )}
       </div>
 
-      {/* NeXroll Intros Plugin Card */}
+      {/* NeXroll Intros Plugin — Auto-detect & Remote Configure */}
       <div className="card">
         <h2 style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
           <span style={{ fontSize: '1.25rem' }}>🔌</span> NeXroll Intros Plugin
         </h2>
-        <p style={{ marginBottom: '1rem', color: 'var(--text-secondary)' }}>
-          Install the <strong>NeXroll Intros</strong> plugin in your Jellyfin server to automatically
-          inject preroll videos before movies and episodes — powered by your NeXroll schedules, filler system,
-          sequences, and Coming Soon lists.
-        </p>
 
-        <div style={{ background: 'var(--bg-color, #1a1a2e)', border: '1px solid var(--border-color)', borderRadius: '8px', padding: '1rem', marginBottom: '1rem' }}>
-          <h3 style={{ marginTop: 0, marginBottom: '0.75rem', fontSize: '0.95rem' }}>Quick Start</h3>
-          <ol style={{ margin: 0, paddingLeft: '1.25rem', lineHeight: '1.7' }}>
-            <li>Download the <strong>NeXroll Intros</strong> Jellyfin plugin DLL from <a href="https://github.com/sahara101/NeXroll/releases" target="_blank" rel="noopener noreferrer" style={{ color: 'var(--accent-color, #6c5ce7)' }}>GitHub Releases</a></li>
-            <li>Copy it to your Jellyfin plugins folder: <code>plugins/NeXroll Intros/</code></li>
-            <li>Restart Jellyfin</li>
-            <li>Open Jellyfin Dashboard → Plugins → <strong>NeXroll Intros</strong></li>
-            <li>Enter your NeXroll server URL: <code style={{ userSelect: 'all' }}>{window.location.origin}</code></li>
-            <li>Configure path mapping if NeXroll and Jellyfin see files at different paths</li>
-            <li>Click <strong>Test Connection</strong>, then <strong>Save</strong></li>
-          </ol>
-        </div>
+        {/* State: Jellyfin not connected */}
+        {jellyfinStatus !== 'Connected' && (
+          <p style={{ color: 'var(--text-secondary)' }}>
+            Connect to Jellyfin first to detect and configure the NeXroll Intros plugin.
+          </p>
+        )}
 
-        <details style={{ marginBottom: '0.5rem' }}>
-          <summary style={{ cursor: 'pointer', fontWeight: 'bold', padding: '0.25rem 0' }}>
-            How does it work?
-          </summary>
-          <div style={{ padding: '0.5rem 0 0 0.5rem', color: 'var(--text-secondary)', lineHeight: '1.6' }}>
-            <p style={{ margin: '0.25rem 0' }}>
-              The plugin implements Jellyfin's <code>IIntroProvider</code> interface. When a user presses play,
-              Jellyfin asks all intro providers for videos to show first. The NeXroll plugin calls this server's
-              <code>/plugin/intros</code> endpoint to get the current preroll paths in real time — reflecting
-              whatever schedule, filler, or sequence is active right now.
-            </p>
+        {/* State: Connected but plugin not yet probed */}
+        {jellyfinStatus === 'Connected' && jellyfinServerInfo?.connection_type === 'direct' && !jellyfinPluginInfo && (
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', padding: '0.75rem 0' }}>
+            <div style={{ width: 16, height: 16, border: '2px solid var(--accent-color, #6c5ce7)', borderTop: '2px solid transparent', borderRadius: '50%', animation: 'spin 1s linear infinite' }} />
+            <span style={{ color: 'var(--text-secondary)' }}>Detecting plugin on Jellyfin server...</span>
           </div>
-        </details>
+        )}
 
-        <details>
-          <summary style={{ cursor: 'pointer', fontWeight: 'bold', padding: '0.25rem 0' }}>
-            Path Mapping (Docker / NAS)
-          </summary>
-          <div style={{ padding: '0.5rem 0 0 0.5rem', color: 'var(--text-secondary)', lineHeight: '1.6' }}>
-            <p style={{ margin: '0.25rem 0' }}>
-              If NeXroll and Jellyfin see preroll files at different paths (common with Docker volumes or NAS mounts),
-              configure the path prefix replacement in the plugin's settings page inside Jellyfin.
-            </p>
-            <p style={{ margin: '0.25rem 0' }}>
-              <strong>Example:</strong> NeXroll stores files at <code>/data/prerolls/</code> and Jellyfin
-              accesses them at <code>/mnt/media/prerolls/</code> — set "NeXroll Path Prefix" to <code>/data/prerolls</code>
-              and "Jellyfin Path Prefix" to <code>/mnt/media/prerolls</code>.
-            </p>
-          </div>
-        </details>
+        {/* State: Plugin NOT found */}
+        {jellyfinStatus === 'Connected' && jellyfinPluginInfo && !jellyfinPluginInfo.detected && (
+          <>
+            <div style={{ padding: '1rem', borderRadius: '8px', backgroundColor: 'rgba(231, 76, 60, 0.08)', border: '1px solid rgba(231, 76, 60, 0.2)', marginBottom: '1rem' }}>
+              <strong style={{ color: '#e74c3c' }}>Plugin Not Found</strong>
+              <p style={{ margin: '0.5rem 0 0', color: 'var(--text-secondary)', fontSize: '0.9rem' }}>
+                {jellyfinPluginInfo.error || jellyfinPluginInfo.message || 'The NeXroll Intros plugin was not detected on your Jellyfin server.'}
+              </p>
+            </div>
+
+            <div style={{ background: 'var(--bg-color, #1a1a2e)', border: '1px solid var(--border-color)', borderRadius: '8px', padding: '1rem', marginBottom: '1rem' }}>
+              <h3 style={{ marginTop: 0, marginBottom: '0.75rem', fontSize: '0.95rem' }}>Install the Plugin</h3>
+              <ol style={{ margin: 0, paddingLeft: '1.25rem', lineHeight: '1.7' }}>
+                <li>Download the <strong>NeXroll Intros</strong> plugin DLL from <a href="https://github.com/sahara101/NeXroll/releases" target="_blank" rel="noopener noreferrer" style={{ color: 'var(--accent-color, #6c5ce7)' }}>GitHub Releases</a></li>
+                <li>Copy it to your Jellyfin plugins folder: <code>plugins/NeXroll Intros/</code></li>
+                <li>Restart Jellyfin</li>
+              </ol>
+            </div>
+
+            <button onClick={handleDetectJellyfinPlugin} className="button button-primary">
+              Retry Detection
+            </button>
+          </>
+        )}
+
+        {/* State: Plugin DETECTED */}
+        {jellyfinStatus === 'Connected' && jellyfinPluginInfo?.detected && (
+          <>
+            {/* Detection badge */}
+            <div style={{ padding: '1rem', borderRadius: '8px', backgroundColor: 'rgba(39, 174, 96, 0.08)', border: '1px solid rgba(39, 174, 96, 0.2)', marginBottom: '1rem' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
+                <span className="nx-chip nx-status ok">Detected</span>
+                <strong>{jellyfinPluginInfo.plugin?.name || 'NeXroll Intros'}</strong>
+                {jellyfinPluginInfo.plugin?.version && (
+                  <span style={{ color: 'var(--text-secondary)', fontSize: '0.85rem' }}>v{jellyfinPluginInfo.plugin.version}</span>
+                )}
+              </div>
+              {jellyfinPluginInfo.config?.NexrollUrl ? (
+                <div style={{ marginTop: '0.5rem', fontSize: '0.9rem', color: 'var(--text-secondary)' }}>
+                  Currently linked to: <code style={{ userSelect: 'all' }}>{jellyfinPluginInfo.config.NexrollUrl}</code>
+                  {jellyfinPluginInfo.config?.ApiKey && (
+                    <span className="nx-chip" style={{ marginLeft: '0.5rem', backgroundColor: 'rgba(39, 174, 96, 0.15)', color: '#27ae60', fontSize: '0.7rem' }}>
+                      API Key Active
+                    </span>
+                  )}
+                </div>
+              ) : (
+                <div style={{ marginTop: '0.5rem', fontSize: '0.9rem', color: '#e67e22' }}>
+                  Not yet configured — use the form below to link the plugin to NeXroll.
+                </div>
+              )}
+            </div>
+
+            {/* Configure form */}
+            <div style={{ marginBottom: '1rem' }}>
+              <div style={{ marginBottom: '0.75rem' }}>
+                <label style={{ display: 'block', marginBottom: '0.25rem', fontWeight: 'bold' }}>
+                  NeXroll Server URL
+                </label>
+                <input
+                  type="url"
+                  value={jellyfinPluginNexrollUrl}
+                  onChange={(e) => setJellyfinPluginNexrollUrl(e.target.value)}
+                  placeholder="http://127.0.0.1:9876"
+                  style={{ width: '100%', padding: '0.5rem' }}
+                />
+                <small style={{ color: 'var(--text-secondary)', display: 'block', marginTop: '0.25rem' }}>
+                  The URL your Jellyfin server can reach NeXroll at. Auto-detected from your current session.
+                </small>
+              </div>
+
+              <details style={{ marginBottom: '0.75rem' }}>
+                <summary style={{ cursor: 'pointer', fontWeight: 'bold', padding: '0.25rem 0' }}>
+                  Path Mapping (Docker / NAS)
+                </summary>
+                <div style={{ padding: '0.75rem 0 0', display: 'grid', gap: '0.5rem' }}>
+                  <div>
+                    <label style={{ display: 'block', marginBottom: '0.25rem' }}>NeXroll Path Prefix</label>
+                    <input
+                      type="text"
+                      value={jellyfinPluginPathFrom}
+                      onChange={(e) => setJellyfinPluginPathFrom(e.target.value)}
+                      placeholder="/data/prerolls"
+                      style={{ width: '100%', padding: '0.5rem' }}
+                    />
+                  </div>
+                  <div>
+                    <label style={{ display: 'block', marginBottom: '0.25rem' }}>Jellyfin Path Prefix</label>
+                    <input
+                      type="text"
+                      value={jellyfinPluginPathTo}
+                      onChange={(e) => setJellyfinPluginPathTo(e.target.value)}
+                      placeholder="/mnt/media/prerolls"
+                      style={{ width: '100%', padding: '0.5rem' }}
+                    />
+                  </div>
+                  <small style={{ color: 'var(--text-secondary)' }}>
+                    Only needed if NeXroll and Jellyfin see preroll files at different paths (common with Docker or NAS mounts).
+                  </small>
+                </div>
+              </details>
+
+              <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
+                <button
+                  onClick={handleConfigureJellyfinPlugin}
+                  className="button button-success"
+                  disabled={jellyfinPluginConfiguring || !jellyfinPluginNexrollUrl}
+                >
+                  {jellyfinPluginConfiguring
+                    ? 'Configuring...'
+                    : jellyfinPluginInfo.config?.NexrollUrl
+                      ? 'Update Plugin Configuration'
+                      : 'Link Plugin to NeXroll'}
+                </button>
+                <button onClick={handleDetectJellyfinPlugin} className="button" style={{ opacity: 0.7 }}>
+                  Refresh
+                </button>
+              </div>
+            </div>
+
+            {/* How it works */}
+            <details>
+              <summary style={{ cursor: 'pointer', fontWeight: 'bold', padding: '0.25rem 0' }}>
+                How does it work?
+              </summary>
+              <div style={{ padding: '0.5rem 0 0 0.5rem', color: 'var(--text-secondary)', lineHeight: '1.6' }}>
+                <p style={{ margin: '0.25rem 0' }}>
+                  The plugin implements Jellyfin's <code>IIntroProvider</code> interface. When a user presses play,
+                  Jellyfin asks all intro providers for videos to show first. The NeXroll plugin calls this server's
+                  <code>/plugin/intros</code> endpoint to get the current preroll paths in real time — reflecting
+                  whatever schedule, filler, or sequence is active right now.
+                </p>
+                <p style={{ margin: '0.25rem 0' }}>
+                  NeXroll auto-generates a secure API key and pushes it to the plugin, so no manual
+                  setup is needed on the Jellyfin side.
+                </p>
+              </div>
+            </details>
+          </>
+        )}
       </div>
     </div>
   );
