@@ -24694,15 +24694,39 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
       <div className="card">
         <h2>Jellyfin Status</h2>
         <div style={{ display: 'grid', gap: '0.5rem' }}>
-          <div><strong>Connection:</strong> <span className={`nx-chip nx-status ${jellyfinStatus === 'Connected' ? 'ok' : 'bad'}`}>{jellyfinStatus}</span></div>
+          <div><strong>Connection:</strong> <span className={`nx-chip nx-status ${jellyfinStatus === 'Connected' ? 'ok' : 'bad'}`}>{jellyfinStatus}</span>
+            {jellyfinServerInfo?.connection_type === 'plugin' && (
+              <span className="nx-chip" style={{ marginLeft: '0.5rem', backgroundColor: 'rgba(108, 92, 231, 0.15)', color: '#6c5ce7', fontSize: '0.75rem' }}>
+                via Plugin (API Key)
+              </span>
+            )}
+            {jellyfinServerInfo?.connection_type === 'direct' && (
+              <span className="nx-chip" style={{ marginLeft: '0.5rem', backgroundColor: 'rgba(39, 174, 96, 0.15)', color: '#27ae60', fontSize: '0.75rem' }}>
+                Direct Connection
+              </span>
+            )}
+          </div>
           {jellyfinServerInfo && (
             <>
               {jellyfinServerInfo.name && <div><strong>Server:</strong> {jellyfinServerInfo.name}</div>}
               {jellyfinServerInfo.version && <div><strong>Version:</strong> {jellyfinServerInfo.version}</div>}
             </>
           )}
+          {jellyfinServerInfo?.plugin_clients?.length > 0 && (
+            <div style={{ marginTop: '0.5rem', padding: '0.75rem', borderRadius: '6px', backgroundColor: 'rgba(108, 92, 231, 0.06)', border: '1px solid rgba(108, 92, 231, 0.2)' }}>
+              <strong style={{ color: '#6c5ce7' }}>🔌 Plugin Clients:</strong>
+              {jellyfinServerInfo.plugin_clients.map((client, idx) => (
+                <div key={idx} style={{ marginTop: '0.25rem', fontSize: '0.9rem' }}>
+                  {client.server_name || 'Jellyfin'} {client.server_version ? `(v${client.server_version})` : ''}
+                  <span style={{ color: 'var(--text-secondary)', marginLeft: '0.5rem', fontSize: '0.8rem' }}>
+                    via key "{client.api_key_name}" — last seen {client.last_seen ? new Date(client.last_seen + 'Z').toLocaleString() : 'N/A'}
+                  </span>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
-        {jellyfinStatus === 'Connected' && (
+        {jellyfinStatus === 'Connected' && jellyfinServerInfo?.connection_type !== 'plugin' && (
           <div style={{ marginTop: '1rem', paddingTop: '1rem', borderTop: '1px solid var(--border-color)' }}>
             <button onClick={handleDisconnectJellyfin} className="button button-danger">
               Disconnect from Jellyfin

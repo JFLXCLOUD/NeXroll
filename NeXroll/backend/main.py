@@ -20333,6 +20333,7 @@ def get_jellyfin_status(db: Session = Depends(get_db)):
     """
     Return Jellyfin connection status without throwing 500s.
     Always returns 200 with a JSON object. Logs internal errors where applicable.
+    Includes plugin client connections (Jellyfin servers connected via API key).
     """
     try:
         setting = db.query(models.Setting).first()
@@ -20347,7 +20348,13 @@ def get_jellyfin_status(db: Session = Depends(get_db)):
     except Exception:
         api_key = None
 
-    # If URL missing, report disconnected with hints
+    # Gather plugin clients that identify as Jellyfin
+    jellyfin_plugin_clients = [
+        c for c in PLUGIN_CLIENTS.values()
+        if c.get("server_type", "").lower() == "jellyfin"
+    ]
+
+    # If URL missing, check if there's a plugin connection instead
     if not jellyfin_url:
         out = {"connected": False}
         try:
@@ -20356,6 +20363,14 @@ def get_jellyfin_status(db: Session = Depends(get_db)):
             out["provider"] = secure_store.provider_info()[1]
         except Exception:
             pass
+        # If a Jellyfin plugin is connected via API key, report that
+        if jellyfin_plugin_clients:
+            out["connected"] = True
+            out["connection_type"] = "plugin"
+            out["plugin_clients"] = jellyfin_plugin_clients
+            client = jellyfin_plugin_clients[0]
+            out["name"] = client.get("server_name", "Jellyfin (via Plugin)")
+            out["version"] = client.get("server_version", "")
         return out
 
     try:
@@ -20371,13 +20386,24 @@ def get_jellyfin_status(db: Session = Depends(get_db)):
             info.setdefault("provider", secure_store.provider_info()[1])
         except Exception:
             pass
+        info["connection_type"] = "direct"
+        if jellyfin_plugin_clients:
+            info["plugin_clients"] = jellyfin_plugin_clients
         return info
     except Exception:
-        return {
+        out = {
             "connected": False,
             "url": jellyfin_url,
             "has_api_key": bool(api_key)
         }
+        if jellyfin_plugin_clients:
+            out["connected"] = True
+            out["connection_type"] = "plugin"
+            out["plugin_clients"] = jellyfin_plugin_clients
+            client = jellyfin_plugin_clients[0]
+            out["name"] = client.get("server_name", "Jellyfin (via Plugin)")
+            out["version"] = client.get("server_version", "")
+        return out
 
 @app.post("/jellyfin/disconnect")
 def disconnect_jellyfin(db: Session = Depends(get_db)):
@@ -23387,8 +23413,15 @@ def _resolve_current_intros(db: Session) -> dict:
     return {"paths": [], "mode": "shuffle"}
 
 
+# --- Plugin Connection Tracking ---
+# In-memory registry of plugin clients that have authenticated via API key.
+# Each entry: {"api_key_name": str, "server_type": str, "server_name": str, "server_version": str, "last_seen": datetime}
+PLUGIN_CLIENTS: dict[str, dict] = {}  # keyed by api_key_name
+
+
 @app.get("/plugin/intros")
 def plugin_get_intros(
+    request: Request,
     db: Session = Depends(get_db),
     media_type: Optional[str] = Query(None, description="Media type (Movie, Episode, etc.)"),
     item_id: Optional[str] = Query(None, description="Media item ID (for future genre matching)"),
@@ -23397,9 +23430,28 @@ def plugin_get_intros(
     Called by the NeXroll Jellyfin / Emby plugin to get the currently-active
     preroll paths.  Returns a Jellyfin-compatible intro list.
 
-    The plugin is responsible for translating local/container paths to
-    Jellyfin-accessible paths using its own path-mapping configuration.
+    Accepts optional API key authentication via X-Api-Key header.
+    If provided and valid, the plugin client is tracked as connected.
     """
+    # Optional API key auth — allow unauthenticated for backwards compatibility
+    api_key_value = request.headers.get("X-Api-Key") or request.query_params.get("api_key")
+    if api_key_value:
+        key_record = validate_api_key(api_key_value, "read", db)
+        if not key_record:
+            raise HTTPException(status_code=401, detail="Invalid or expired API key")
+        # Track plugin client
+        server_type = request.headers.get("X-Plugin-Server-Type", "unknown")
+        server_name = request.headers.get("X-Plugin-Server-Name", "")
+        server_version = request.headers.get("X-Plugin-Server-Version", "")
+        PLUGIN_CLIENTS[key_record.name] = {
+            "api_key_name": key_record.name,
+            "api_key_id": key_record.id,
+            "server_type": server_type,
+            "server_name": server_name,
+            "server_version": server_version,
+            "last_seen": datetime.datetime.utcnow().isoformat(),
+        }
+
     try:
         result = _resolve_current_intros(db)
         paths = result.get("paths", [])
@@ -23430,9 +23482,69 @@ def plugin_get_intros(
 
 
 @app.get("/plugin/health")
-def plugin_health():
-    """Simple health-check for the plugin to verify NeXroll is reachable."""
-    return {"status": "ok", "app": "NeXroll"}
+def plugin_health(request: Request, db: Session = Depends(get_db)):
+    """Simple health-check for the plugin to verify NeXroll is reachable.
+    If an API key is provided, validates it and tracks the connection."""
+    api_key_value = request.headers.get("X-Api-Key") or request.query_params.get("api_key")
+    authenticated = False
+    key_name = None
+    if api_key_value:
+        key_record = validate_api_key(api_key_value, "read", db)
+        if key_record:
+            authenticated = True
+            key_name = key_record.name
+            server_type = request.headers.get("X-Plugin-Server-Type", "unknown")
+            server_name = request.headers.get("X-Plugin-Server-Name", "")
+            server_version = request.headers.get("X-Plugin-Server-Version", "")
+            PLUGIN_CLIENTS[key_record.name] = {
+                "api_key_name": key_record.name,
+                "api_key_id": key_record.id,
+                "server_type": server_type,
+                "server_name": server_name,
+                "server_version": server_version,
+                "last_seen": datetime.datetime.utcnow().isoformat(),
+            }
+        else:
+            raise HTTPException(status_code=401, detail="Invalid or expired API key")
+    return {"status": "ok", "app": "NeXroll", "authenticated": authenticated, "key_name": key_name}
+
+
+@app.get("/plugin/clients")
+def plugin_clients():
+    """Return the list of plugin clients that have connected via API key."""
+    return {"clients": list(PLUGIN_CLIENTS.values()), "count": len(PLUGIN_CLIENTS)}
+
+
+@app.post("/plugin/register")
+def plugin_register(request: Request, db: Session = Depends(get_db)):
+    """
+    Called by a plugin (Jellyfin/Emby) to register itself with NeXroll.
+    Requires a valid API key. Stores plugin client info for status display.
+    """
+    api_key_value = request.headers.get("X-Api-Key") or request.query_params.get("api_key")
+    if not api_key_value:
+        raise HTTPException(status_code=401, detail="API key required")
+    key_record = validate_api_key(api_key_value, "read", db)
+    if not key_record:
+        raise HTTPException(status_code=401, detail="Invalid or expired API key")
+
+    server_type = request.headers.get("X-Plugin-Server-Type", "unknown")
+    server_name = request.headers.get("X-Plugin-Server-Name", "")
+    server_version = request.headers.get("X-Plugin-Server-Version", "")
+
+    PLUGIN_CLIENTS[key_record.name] = {
+        "api_key_name": key_record.name,
+        "api_key_id": key_record.id,
+        "server_type": server_type,
+        "server_name": server_name,
+        "server_version": server_version,
+        "last_seen": datetime.datetime.utcnow().isoformat(),
+    }
+
+    log_event("INFO", "plugin", f"Plugin registered: {server_type} '{server_name}' via API key '{key_record.name}'",
+              source="plugin_register", db=db)
+    return {"registered": True, "message": f"Registered {server_type} plugin '{server_name}'"}
+
 
 
 if __name__ == "__main__" and not getattr(sys, "frozen", False):

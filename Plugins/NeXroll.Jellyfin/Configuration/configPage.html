@@ -29,11 +29,12 @@
                     </div>
 
                     <div class="inputContainer">
-                        <label class="inputLabel" for="txtApiKey">API Key (optional)</label>
+                        <label class="inputLabel" for="txtApiKey">NeXroll API Key</label>
                         <input is="emby-input" id="txtApiKey" type="text"
-                               placeholder="Leave blank if not required" />
+                               placeholder="Enter a NeXroll API key" />
                         <div class="fieldDescription">
-                            Reserved for future authentication support.
+                            Create an API key in NeXroll (Settings → API Keys) and paste it here.
+                            This authenticates requests and shows this Jellyfin server as connected in NeXroll.
                         </div>
                     </div>
 
@@ -163,6 +164,7 @@
 
         document.querySelector('#btnTest').addEventListener('click', function () {
             var url = document.querySelector('#txtNexrollUrl').value.trim();
+            var apiKey = document.querySelector('#txtApiKey').value.trim();
             var resultEl = document.querySelector('#testResult');
             if (!url) {
                 resultEl.style.display = 'block';
@@ -172,11 +174,34 @@
             resultEl.style.display = 'block';
             resultEl.innerHTML = '<span>Testing…</span>';
 
-            fetch(url.replace(/\/+$/, '') + '/plugin/health')
-                .then(function (resp) { return resp.json(); })
+            var headers = {
+                'X-Plugin-Server-Type': 'Jellyfin',
+                'X-Plugin-Server-Name': 'Jellyfin (config test)'
+            };
+            if (apiKey) {
+                headers['X-Api-Key'] = apiKey;
+            }
+
+            fetch(url.replace(/\/+$/, '') + '/plugin/health', { headers: headers })
+                .then(function (resp) {
+                    if (resp.status === 401) {
+                        resultEl.innerHTML = '<span style="color:#e74c3c;">&#10008; Invalid or expired API key.</span>';
+                        return null;
+                    }
+                    return resp.json();
+                })
                 .then(function (data) {
+                    if (!data) return;
                     if (data && data.status === 'ok') {
-                        resultEl.innerHTML = '<span style="color:#27ae60;">&#10004; Connected to NeXroll successfully!</span>';
+                        var msg = '&#10004; Connected to NeXroll successfully!';
+                        if (data.authenticated) {
+                            msg += ' <span style="color:#3498db;">(Authenticated as: ' + (data.key_name || 'API Key') + ')</span>';
+                        } else if (apiKey) {
+                            msg += ' <span style="color:#e67e22;">(Warning: API key not recognized)</span>';
+                        } else {
+                            msg += ' <span style="color:#95a5a6;">(No API key – anonymous access)</span>';
+                        }
+                        resultEl.innerHTML = '<span style="color:#27ae60;">' + msg + '</span>';
                     } else {
                         resultEl.innerHTML = '<span style="color:#e74c3c;">Unexpected response from server.</span>';
                     }

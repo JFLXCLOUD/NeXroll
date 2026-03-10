@@ -11,6 +11,12 @@
             items for playback injection.
             </summary>
         </member>
+        <member name="M:NeXroll.Jellyfin.NexrollIntroProvider.BuildRequest(System.Net.Http.HttpMethod,System.String,NeXroll.Jellyfin.PluginConfiguration)">
+            <summary>
+            Build an HttpRequestMessage with the standard NeXroll plugin headers
+            (API key + server identity).
+            </summary>
+        </member>
         <member name="M:NeXroll.Jellyfin.NexrollIntroProvider.GetIntros(MediaBrowser.Controller.Entities.BaseItem,Jellyfin.Data.Entities.User)">
             <inheritdoc />
         </member>

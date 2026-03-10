@@ -1,4 +1,5 @@
 using System.Net.Http.Json;
+using System.Net.Http.Headers;
 using Jellyfin.Data.Entities;
 using MediaBrowser.Controller.Entities;
 using MediaBrowser.Controller.Entities.Movies;
@@ -24,6 +25,36 @@ public class NexrollIntroProvider : IIntroProvider
     public NexrollIntroProvider(ILogger<NexrollIntroProvider> logger)
     {
         _logger = logger;
+    }
+
+    /// <summary>
+    /// Build an HttpRequestMessage with the standard NeXroll plugin headers
+    /// (API key + server identity).
+    /// </summary>
+    private static HttpRequestMessage BuildRequest(HttpMethod method, string url, PluginConfiguration config)
+    {
+        var request = new HttpRequestMessage(method, url);
+
+        // API key authentication
+        if (!string.IsNullOrWhiteSpace(config.ApiKey))
+        {
+            request.Headers.Add("X-Api-Key", config.ApiKey.Trim());
+        }
+
+        // Server identity headers for plugin tracking
+        request.Headers.Add("X-Plugin-Server-Type", "Jellyfin");
+
+        // Try to get Jellyfin server name/version from the running instance
+        try
+        {
+            var serverName = System.Environment.MachineName;
+            request.Headers.Add("X-Plugin-Server-Name", serverName);
+        }
+        catch { /* ignore */ }
+
+        request.Headers.Add("X-Plugin-Server-Version", typeof(NexrollIntroProvider).Assembly.GetName().Version?.ToString() ?? "1.0.0");
+
+        return request;
     }
 
     /// <inheritdoc />
@@ -61,7 +92,11 @@ public class NexrollIntroProvider : IIntroProvider
             using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(
                 config.TimeoutSeconds > 0 ? config.TimeoutSeconds : 5));
 
-            var response = await _httpClient.GetFromJsonAsync<NexrollIntroResponse>(url, cts.Token)
+            using var request = BuildRequest(HttpMethod.Get, url, config);
+            using var httpResponse = await _httpClient.SendAsync(request, cts.Token).ConfigureAwait(false);
+            httpResponse.EnsureSuccessStatusCode();
+
+            var response = await httpResponse.Content.ReadFromJsonAsync<NexrollIntroResponse>(cancellationToken: cts.Token)
                 .ConfigureAwait(false);
 
             if (response?.Items is null || response.Items.Count == 0)
