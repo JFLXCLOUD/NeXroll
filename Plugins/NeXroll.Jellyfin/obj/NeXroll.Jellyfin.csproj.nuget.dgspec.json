@@ -1,0 +1,103 @@
+{
+  "format": 1,
+  "restore": {
+    "C:\\Users\\HDTV\\Documents\\Preroll Projects\\NeXroll-main\\Plugins\\NeXroll.Jellyfin\\NeXroll.Jellyfin.csproj": {}
+  },
+  "projects": {
+    "C:\\Users\\HDTV\\Documents\\Preroll Projects\\NeXroll-main\\Plugins\\NeXroll.Jellyfin\\NeXroll.Jellyfin.csproj": {
+      "version": "1.0.0",
+      "restore": {
+        "projectUniqueName": "C:\\Users\\HDTV\\Documents\\Preroll Projects\\NeXroll-main\\Plugins\\NeXroll.Jellyfin\\NeXroll.Jellyfin.csproj",
+        "projectName": "NeXroll.Jellyfin",
+        "projectPath": "C:\\Users\\HDTV\\Documents\\Preroll Projects\\NeXroll-main\\Plugins\\NeXroll.Jellyfin\\NeXroll.Jellyfin.csproj",
+        "packagesPath": "C:\\Users\\HDTV\\.nuget\\packages\\",
+        "outputPath": "C:\\Users\\HDTV\\Documents\\Preroll Projects\\NeXroll-main\\Plugins\\NeXroll.Jellyfin\\obj\\",
+        "projectStyle": "PackageReference",
+        "configFilePaths": [
+          "C:\\Users\\HDTV\\AppData\\Roaming\\NuGet\\NuGet.Config"
+        ],
+        "originalTargetFrameworks": [
+          "net8.0"
+        ],
+        "sources": {
+          "https://api.nuget.org/v3/index.json": {}
+        },
+        "frameworks": {
+          "net8.0": {
+            "targetAlias": "net8.0",
+            "projectReferences": {}
+          }
+        },
+        "warningProperties": {
+          "warnAsError": [
+            "NU1605"
+          ]
+        },
+        "restoreAuditProperties": {
+          "enableAudit": "true",
+          "auditLevel": "low",
+          "auditMode": "direct"
+        },
+        "SdkAnalysisLevel": "10.0.100"
+      },
+      "frameworks": {
+        "net8.0": {
+          "targetAlias": "net8.0",
+          "dependencies": {
+            "Jellyfin.Controller": {
+              "target": "Package",
+              "version": "[10.10.*, )"
+            },
+            "Jellyfin.Data": {
+              "target": "Package",
+              "version": "[10.10.*, )"
+            },
+            "Jellyfin.Model": {
+              "target": "Package",
+              "version": "[10.10.*, )"
+            },
+            "Microsoft.Extensions.Logging.Abstractions": {
+              "target": "Package",
+              "version": "[8.0.*, )"
+            },
+            "System.Net.Http.Json": {
+              "target": "Package",
+              "version": "[8.0.*, )"
+            }
+          },
+          "imports": [
+            "net461",
+            "net462",
+            "net47",
+            "net471",
+            "net472",
+            "net48",
+            "net481"
+          ],
+          "assetTargetFallback": true,
+          "warn": true,
+          "downloadDependencies": [
+            {
+              "name": "Microsoft.AspNetCore.App.Ref",
+              "version": "[8.0.24, 8.0.24]"
+            },
+            {
+              "name": "Microsoft.NETCore.App.Ref",
+              "version": "[8.0.24, 8.0.24]"
+            },
+            {
+              "name": "Microsoft.WindowsDesktop.App.Ref",
+              "version": "[8.0.24, 8.0.24]"
+            }
+          ],
+          "frameworkReferences": {
+            "Microsoft.NETCore.App": {
+              "privateAssets": "all"
+            }
+          },
+          "runtimeIdentifierGraphPath": "C:\\Program Files\\dotnet\\sdk\\10.0.103/PortableRuntimeIdentifierGraph.json"
+        }
+      }
+    }
+  }
+}

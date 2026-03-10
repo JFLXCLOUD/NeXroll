@@ -12,6 +12,7 @@
 
   <ItemGroup>
     <PackageReference Include="Jellyfin.Controller" Version="10.10.*" />
+    <PackageReference Include="Jellyfin.Data" Version="10.10.*" />
     <PackageReference Include="Jellyfin.Model" Version="10.10.*" />
     <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="8.0.*" />
     <PackageReference Include="System.Net.Http.Json" Version="8.0.*" />
