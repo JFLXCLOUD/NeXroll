@@ -15,7 +15,7 @@ public class Plugin : BasePlugin<PluginConfiguration>, IHasWebPages
     public override string Name => "NeXroll Intros";
 
     /// <summary>Unique plugin identifier.</summary>
-    public override Guid Id => new("a1b2c3d4-e5f6-7890-abcd-nexroll000001");
+    public override Guid Id => new("a1b2c3d4-e5f6-7890-abcd-ae0c01100001");
 
     /// <summary>Short description for the plugin catalog.</summary>
     public override string Description =>
