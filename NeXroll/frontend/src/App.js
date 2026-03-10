@@ -2599,9 +2599,12 @@ const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
   const getActiveConnectedServer = () => {
     const plexConnected = plexStatus === 'Connected';
     const jellyConnected = jellyfinStatus === 'Connected';
-    if (plexConnected && !jellyConnected) return 'plex';
-    if (!plexConnected && jellyConnected) return 'jellyfin';
-    if (plexConnected && jellyConnected) return 'conflict';
+    const embyConnected = embyStatus === 'Connected';
+    const count = [plexConnected, jellyConnected, embyConnected].filter(Boolean).length;
+    if (count > 1) return 'conflict';
+    if (plexConnected) return 'plex';
+    if (jellyConnected) return 'jellyfin';
+    if (embyConnected) return 'emby';
     return null;
   };
 
@@ -2613,11 +2616,16 @@ const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
     if (server === 'jellyfin') {
       return handleApplyCategoryToJellyfin(categoryId, categoryName);
     }
-    if (server === 'conflict') {
-      alert('Both Plex and Jellyfin are connected. Only one media server connection is allowed. Disconnect one on the Connect tab, then try again.');
+    if (server === 'emby') {
+      // Emby uses the plugin for preroll injection — no direct "apply" needed
+      alert('Emby uses the NeXroll Intros plugin for preroll injection. Set an active category or filler, and the plugin will pick it up automatically.');
       return;
     }
-    alert('No media server connected. Connect to Plex or Jellyfin first.');
+    if (server === 'conflict') {
+      alert('Multiple media servers are connected. Only one connection is allowed at a time. Disconnect extras on the Connect tab, then try again.');
+      return;
+    }
+    alert('No media server connected. Connect to Plex, Jellyfin, or Emby first.');
   };
 
   // ========== Category Management Advanced Features ==========
@@ -14082,6 +14090,56 @@ const DashboardTiles = {
       });
   };
 
+  // Emby connect/disconnect handlers
+  const handleConnectEmby = (e) => {
+    e.preventDefault();
+    const server = getActiveConnectedServer();
+    if (server && server !== 'emby') {
+      alert(`Disconnect ${server === 'plex' ? 'Plex' : 'Jellyfin'} first (only one media server connection at a time).`);
+      return;
+    }
+    fetch(apiUrl('emby/connect'), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        url: embyConfig.url,
+        api_key: embyConfig.api_key
+      })
+    })
+      .then(res => res.json())
+      .then(data => {
+        if (data && data.connected) {
+          alert('Successfully connected to Emby!');
+          fetchData();
+        } else {
+          alert(data?.detail || 'Failed to connect to Emby. Please check your URL and API key.');
+        }
+      })
+      .catch(error => {
+        console.error('Emby connection error:', error);
+        alert('Failed to connect to Emby: ' + error.message);
+      });
+  };
+
+  const handleDisconnectEmby = async () => {
+    if (!await showConfirm('Are you sure you want to disconnect from Emby? This will clear all stored connection settings.', { title: 'Disconnect Emby', type: 'danger', confirmText: 'Disconnect' })) return;
+    fetch(apiUrl('emby/disconnect'), {
+      method: 'POST'
+    })
+      .then(res => res.json())
+      .then(() => {
+        alert('Successfully disconnected from Emby!');
+        setEmbyConfig({ url: '', api_key: '' });
+        setEmbyStatus('Disconnected');
+        setEmbyServerInfo(null);
+        fetchData();
+      })
+      .catch(error => {
+        console.error('Emby disconnect error:', error);
+        alert('Failed to disconnect from Emby: ' + error.message);
+      });
+  };
+
   // -------- Plex Stable Token: save/update (advanced) --------
   const handleSaveStableToken = async (e) => {
     e.preventDefault();
@@ -24659,7 +24717,7 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
           <span style={{ fontSize: '1.25rem' }}>🔌</span> NeXroll Intros Plugin
         </h2>
         <p style={{ marginBottom: '1rem', color: 'var(--text-secondary)' }}>
-          Install the <strong>NeXroll Intros</strong> plugin in your Jellyfin (or Emby) server to automatically
+          Install the <strong>NeXroll Intros</strong> plugin in your Jellyfin server to automatically
           inject preroll videos before movies and episodes — powered by your NeXroll schedules, filler system,
           sequences, and Coming Soon lists.
         </p>
@@ -24667,7 +24725,7 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
         <div style={{ background: 'var(--bg-color, #1a1a2e)', border: '1px solid var(--border-color)', borderRadius: '8px', padding: '1rem', marginBottom: '1rem' }}>
           <h3 style={{ marginTop: 0, marginBottom: '0.75rem', fontSize: '0.95rem' }}>Quick Start</h3>
           <ol style={{ margin: 0, paddingLeft: '1.25rem', lineHeight: '1.7' }}>
-            <li>Download the <strong>NeXroll Intros</strong> plugin DLL from <a href="https://github.com/sahara101/NeXroll/releases" target="_blank" rel="noopener noreferrer" style={{ color: 'var(--accent-color, #6c5ce7)' }}>GitHub Releases</a></li>
+            <li>Download the <strong>NeXroll Intros</strong> Jellyfin plugin DLL from <a href="https://github.com/sahara101/NeXroll/releases" target="_blank" rel="noopener noreferrer" style={{ color: 'var(--accent-color, #6c5ce7)' }}>GitHub Releases</a></li>
             <li>Copy it to your Jellyfin plugins folder: <code>plugins/NeXroll Intros/</code></li>
             <li>Restart Jellyfin</li>
             <li>Open Jellyfin Dashboard → Plugins → <strong>NeXroll Intros</strong></li>
@@ -24688,8 +24746,138 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
               <code>/plugin/intros</code> endpoint to get the current preroll paths in real time — reflecting
               whatever schedule, filler, or sequence is active right now.
             </p>
+          </div>
+        </details>
+
+        <details>
+          <summary style={{ cursor: 'pointer', fontWeight: 'bold', padding: '0.25rem 0' }}>
+            Path Mapping (Docker / NAS)
+          </summary>
+          <div style={{ padding: '0.5rem 0 0 0.5rem', color: 'var(--text-secondary)', lineHeight: '1.6' }}>
             <p style={{ margin: '0.25rem 0' }}>
-              An Emby variant is also available for Emby Server 4.8+.
+              If NeXroll and Jellyfin see preroll files at different paths (common with Docker volumes or NAS mounts),
+              configure the path prefix replacement in the plugin's settings page inside Jellyfin.
+            </p>
+            <p style={{ margin: '0.25rem 0' }}>
+              <strong>Example:</strong> NeXroll stores files at <code>/data/prerolls/</code> and Jellyfin
+              accesses them at <code>/mnt/media/prerolls/</code> — set "NeXroll Path Prefix" to <code>/data/prerolls</code>
+              and "Jellyfin Path Prefix" to <code>/mnt/media/prerolls</code>.
+            </p>
+          </div>
+        </details>
+      </div>
+    </div>
+  );
+
+  const renderEmby = () => (
+    <div>
+      <h1 className="header" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.5rem' }}>
+        <Tv size={32} className="header-icon" /> Emby Integration
+      </h1>
+      <p style={{ color: 'var(--text-secondary)', fontSize: '0.95rem', margin: 0, marginBottom: '1rem' }}>
+        Connect your Emby server to enable preroll management via the NeXroll Intros plugin.
+      </p>
+
+      <div className="card">
+        <h2>Connect to Emby Server</h2>
+        <p style={{ marginBottom: '1rem', color: 'var(--text-color)' }}>
+          Enter your Emby server URL and API key to establish a connection.
+        </p>
+        <form onSubmit={handleConnectEmby}>
+          <div style={{ display: 'grid', gap: '1rem', marginBottom: '1rem' }}>
+            <div>
+              <label style={{ display: 'block', marginBottom: '0.5rem', fontWeight: 'bold' }}>
+                Emby Server URL
+              </label>
+              <input
+                type="url"
+                placeholder="http://127.0.0.1:8096"
+                value={embyConfig.url}
+                onChange={(e) => setEmbyConfig({ ...embyConfig, url: e.target.value })}
+                required
+                style={{ width: '100%', padding: '0.5rem' }}
+              />
+            </div>
+            <div>
+              <label style={{ display: 'block', marginBottom: '0.5rem', fontWeight: 'bold' }}>
+                API Key
+              </label>
+              <input
+                type="password"
+                placeholder="Enter your Emby API key"
+                value={embyConfig.api_key}
+                onChange={(e) => setEmbyConfig({ ...embyConfig, api_key: e.target.value })}
+                required
+                style={{ width: '100%', padding: '0.5rem' }}
+              />
+              <details className="nx-plex-help" style={{ marginTop: '0.5rem' }}>
+                <summary>How to create an Emby API key</summary>
+                <ol style={{ marginTop: '0.5rem' }}>
+                  <li>Open Emby Web Dashboard</li>
+                  <li>Go to Advanced → API Keys</li>
+                  <li>Create a new API key and copy it</li>
+                </ol>
+              </details>
+            </div>
+          </div>
+          <button type="submit" className="button button-success">
+            Connect to Emby
+          </button>
+        </form>
+      </div>
+
+      <div className="card">
+        <h2>Emby Status</h2>
+        <div style={{ display: 'grid', gap: '0.5rem' }}>
+          <div><strong>Connection:</strong> <span className={`nx-chip nx-status ${embyStatus === 'Connected' ? 'ok' : 'bad'}`}>{embyStatus}</span></div>
+          {embyServerInfo && (
+            <>
+              {embyServerInfo.name && <div><strong>Server:</strong> {embyServerInfo.name}</div>}
+              {embyServerInfo.version && <div><strong>Version:</strong> {embyServerInfo.version}</div>}
+            </>
+          )}
+        </div>
+        {embyStatus === 'Connected' && (
+          <div style={{ marginTop: '1rem', paddingTop: '1rem', borderTop: '1px solid var(--border-color)' }}>
+            <button onClick={handleDisconnectEmby} className="button button-danger">
+              Disconnect from Emby
+            </button>
+          </div>
+        )}
+      </div>
+
+      {/* NeXroll Intros Plugin Card - Emby */}
+      <div className="card">
+        <h2 style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+          <span style={{ fontSize: '1.25rem' }}>🔌</span> NeXroll Intros Plugin
+        </h2>
+        <p style={{ marginBottom: '1rem', color: 'var(--text-secondary)' }}>
+          Install the <strong>NeXroll Intros</strong> plugin in your Emby server to automatically
+          inject preroll videos before movies and episodes.
+        </p>
+
+        <div style={{ background: 'var(--bg-color, #1a1a2e)', border: '1px solid var(--border-color)', borderRadius: '8px', padding: '1rem', marginBottom: '1rem' }}>
+          <h3 style={{ marginTop: 0, marginBottom: '0.75rem', fontSize: '0.95rem' }}>Quick Start</h3>
+          <ol style={{ margin: 0, paddingLeft: '1.25rem', lineHeight: '1.7' }}>
+            <li>Download the <strong>NeXroll Intros</strong> Emby plugin DLL from <a href="https://github.com/sahara101/NeXroll/releases" target="_blank" rel="noopener noreferrer" style={{ color: 'var(--accent-color, #52c41a)' }}>GitHub Releases</a></li>
+            <li>Copy it to your Emby plugins folder: <code>plugins/NeXroll Intros/</code></li>
+            <li>Restart Emby</li>
+            <li>Open Emby Settings → Plugins → <strong>NeXroll Intros</strong></li>
+            <li>Enter your NeXroll server URL: <code style={{ userSelect: 'all' }}>{window.location.origin}</code></li>
+            <li>Configure path mapping if NeXroll and Emby see files at different paths</li>
+            <li>Click <strong>Test Connection</strong>, then <strong>Save</strong></li>
+          </ol>
+        </div>
+
+        <details style={{ marginBottom: '0.5rem' }}>
+          <summary style={{ cursor: 'pointer', fontWeight: 'bold', padding: '0.25rem 0' }}>
+            How does it work?
+          </summary>
+          <div style={{ padding: '0.5rem 0 0 0.5rem', color: 'var(--text-secondary)', lineHeight: '1.6' }}>
+            <p style={{ margin: '0.25rem 0' }}>
+              The plugin implements Emby's <code>IIntroProvider</code> interface. When a user presses play,
+              Emby asks all intro providers for videos to show first. The NeXroll plugin calls this server's
+              <code>/plugin/intros</code> endpoint to get the current preroll paths in real time.
             </p>
           </div>
         </details>
@@ -24700,13 +24888,13 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
           </summary>
           <div style={{ padding: '0.5rem 0 0 0.5rem', color: 'var(--text-secondary)', lineHeight: '1.6' }}>
             <p style={{ margin: '0.25rem 0' }}>
-              If NeXroll and Jellyfin/Emby see preroll files at different paths (common with Docker volumes or NAS mounts),
-              configure the path prefix replacement in the plugin's settings page inside Jellyfin/Emby.
+              If NeXroll and Emby see preroll files at different paths (common with Docker volumes or NAS mounts),
+              configure the path prefix replacement in the plugin's settings page inside Emby.
             </p>
             <p style={{ margin: '0.25rem 0' }}>
-              <strong>Example:</strong> NeXroll stores files at <code>/data/prerolls/</code> and Jellyfin
+              <strong>Example:</strong> NeXroll stores files at <code>/data/prerolls/</code> and Emby
               accesses them at <code>/mnt/media/prerolls/</code> — set "NeXroll Path Prefix" to <code>/data/prerolls</code>
-              and "Jellyfin Path Prefix" to <code>/mnt/media/prerolls</code>.
+              and "Emby Path Prefix" to <code>/mnt/media/prerolls</code>.
             </p>
           </div>
         </details>
@@ -24720,7 +24908,7 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
         <Link2 size={32} className="header-icon" /> Connections
       </h1>
       <p style={{ color: 'var(--text-secondary)', fontSize: '0.95rem', margin: 0, marginBottom: '1rem' }}>
-        Connect to your Plex or Jellyfin media server.
+        Connect to your Plex, Jellyfin, or Emby media server.
       </p>
 
       {/* Secondary tabs for media servers */}
@@ -24789,6 +24977,33 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
             {jellyfinStatus}
           </span>
         </button>
+        <button
+          id="tab-emby"
+          role="tab"
+          aria-selected={activeServer === 'emby'}
+          aria-controls="panel-emby"
+          onClick={() => setActiveServer('emby')}
+          style={{
+            padding: '0.5rem 0.75rem',
+            border: 'none',
+            borderBottom: activeServer === 'emby' ? '3px solid #52c41a' : '3px solid transparent',
+            background: 'transparent',
+            cursor: 'pointer',
+            color: 'var(--text-color)',
+            display: 'flex',
+            alignItems: 'center',
+            gap: '0.5rem',
+            fontWeight: activeServer === 'emby' ? 'bold' : 'normal'
+          }}
+        >
+          Emby
+          <span
+            className={`nx-chip nx-status ${embyStatus === 'Connected' ? 'ok' : 'bad'}`}
+            style={{ fontSize: '0.75rem' }}
+          >
+            {embyStatus}
+          </span>
+        </button>
       </div>
 
       {/* Context banner */}
@@ -24807,7 +25022,7 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
                 borderRadius: '6px'
               }}
             >
-              Conflict detected: both Plex and Jellyfin are connected. Disconnect one before proceeding.
+              Conflict detected: multiple media servers are connected. Please disconnect all but one before proceeding.
             </div>
           );
         }
@@ -24842,14 +25057,14 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
               gap: '0.5rem'
             }}
           >
-            <span style={{ fontWeight: 'bold' }}>Active server:</span> {s === 'plex' ? 'Plex' : 'Jellyfin'}
+            <span style={{ fontWeight: 'bold' }}>Active server:</span> {s === 'plex' ? 'Plex' : s === 'emby' ? 'Emby' : 'Jellyfin'}
           </div>
         );
       })()}
 
       {/* Active panel */}
       <div id={`panel-${activeServer}`} role="tabpanel" aria-labelledby={`tab-${activeServer}`}>
-        {activeServer === 'plex' ? renderPlex() : renderJellyfin()}
+        {activeServer === 'plex' ? renderPlex() : activeServer === 'emby' ? renderEmby() : renderJellyfin()}
       </div>
     </div>
   );
