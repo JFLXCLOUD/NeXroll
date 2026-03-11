@@ -2,14 +2,16 @@
 
 ![NeXroll Logo](https://github.com/JFLXCLOUD/NeXroll/raw/main/NeXroll/frontend/NeXroll_Logo_WHT.png?raw=true)
 
-**NeXroll** is a modern preroll management system for Plex and Jellyfin with a beautiful web UI, powerful scheduling, and seamless media server integration.
+**NeXroll** is a modern preroll management system for **Plex**, **Jellyfin**, and **Emby** with a beautiful web UI, powerful scheduling, and seamless media server integration.
 
 **Web UI**: http://localhost:9393
 
 [![Discord](https://img.shields.io/discord/1439077075117150313?label=Discord&logo=discord&logoColor=white)](https://discord.gg/nexroll)
 
-## What's New in v1.11.0
+## What's New in v1.12.0
 
+- **Emby Support**: Full Emby integration with the NeXroll Intros plugin and Cinema Mode
+- **Plugin Auto-Detection**: NeXroll can detect and configure Jellyfin/Emby plugins directly from the Connect tab
 - **Coming Soon List Generator**: Create dynamic video prerolls showcasing upcoming movies and shows from Radarr/Sonarr with grid or list layouts
 - **Authentication System**: Secure access with API keys and optional username/password login
 - **Enhanced Update System**: Configurable update checking with changelog display
@@ -72,7 +74,9 @@
 
 ### Media Server Integration
 - **Plex**: Direct API integration with path translation support
-- **Jellyfin**: Category-based preroll management (requires Local Intros plugin)
+- **Jellyfin**: Preroll injection via NeXroll Intros plugin with auto-detection and remote configuration
+- **Emby**: Preroll injection via NeXroll Intros plugin with Cinema Mode integration
+- Plugin auto-detection and configuration from the NeXroll Connect tab
 - Secure credential storage with encryption
 - Genre-based preroll mapping (experimental)
 
@@ -112,6 +116,8 @@ Search for "NeXroll" in Community Applications
 - [Path Mappings](https://github.com/JFLXCLOUD/NeXroll/wiki/Path-Mappings)
 - [API Documentation](https://github.com/JFLXCLOUD/NeXroll/wiki/API)
 - [Troubleshooting](https://github.com/JFLXCLOUD/NeXroll/wiki/Troubleshooting)
+- [Jellyfin Setup](https://github.com/JFLXCLOUD/NeXroll/wiki/Jellyfin)
+- [Emby Setup](https://github.com/JFLXCLOUD/NeXroll/wiki/Emby)
 - [FAQ](https://github.com/JFLXCLOUD/NeXroll/wiki/FAQ)
 
 ## Support

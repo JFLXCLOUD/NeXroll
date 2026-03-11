@@ -4,7 +4,7 @@ This guide covers installing NeXroll on different platforms.
 
 ## System Requirements
 
-- **Plex Media Server** or **Jellyfin** (with Local Intros plugin)
+- **Plex Media Server**, **Jellyfin** (10.10+), or **Emby** (4.8+)
 - Network access between NeXroll and your media server
 - Storage space for preroll videos
 - **FFmpeg** (required for thumbnail generation, video scaling, and Coming Soon List Generator)
@@ -163,9 +163,10 @@ After installing:
 1. Open NeXroll at `http://localhost:9393` (or your server's IP)
 2. **(Optional)** Set up [Authentication](Configuration#authentication) if you want to secure access
 3. Go to the **Connect** tab
-4. Connect to your Plex or Jellyfin server
-5. Configure [Path Mappings](Path-Mappings) if needed
-6. Start adding prerolls!
+4. Connect to your Plex, Jellyfin, or Emby server
+5. For Jellyfin/Emby: Install the **NeXroll Intros plugin** — see [Jellyfin Setup](Jellyfin) or [Emby Setup](Emby)
+6. Configure [Path Mappings](Path-Mappings) if needed
+7. Start adding prerolls!
 
 ## Updating
 

@@ -4,7 +4,7 @@
 
 ### What is NeXroll?
 
-NeXroll is a preroll manager for Plex and Jellyfin that lets you organize, schedule, and automatically rotate preroll videos before your movies and shows.
+NeXroll is a preroll manager for **Plex**, **Jellyfin**, and **Emby** that lets you organize, schedule, and automatically rotate preroll videos before your movies and shows.
 
 ### Is NeXroll free?
 
@@ -12,7 +12,11 @@ Yes, NeXroll is completely free and open source.
 
 ### Does NeXroll work with Jellyfin?
 
-Yes, but Jellyfin requires the [Local Intros plugin](https://github.com/dkanada/jellyfin-plugin-intros) to support prerolls.
+Yes! Jellyfin requires the **NeXroll Intros plugin** (included with NeXroll). See the [Jellyfin Setup](Jellyfin) guide for installation.
+
+### Does NeXroll work with Emby?
+
+Yes! Emby requires the **NeXroll Intros plugin** and **Cinema Mode** enabled (Emby Premiere subscription required). See the [Emby Setup](Emby) guide for installation.
 
 ---
 
@@ -49,7 +53,14 @@ Or use the [Plex Token Finder](https://support.plex.tv/articles/204059436-findin
 
 1. Open Jellyfin Dashboard
 2. Go to **API Keys**
-3. Click **Create** and name it "NeXroll"
+3. Click the **+** button and name it "NeXroll"
+4. Copy the generated key
+
+### How do I get an Emby API key?
+
+1. Open Emby Dashboard
+2. Go to **Settings → API Keys**
+3. Click **New API Key** and name it "NeXroll"
 4. Copy the generated key
 
 ---
@@ -89,7 +100,7 @@ Supported formats: MP4, MKV, AVI, MOV, WMV, FLV, WebM, M4V, TS, MPG, MPEG. MP4 w
 
 ### Where should I store preroll files?
 
-Store them where both NeXroll and Plex/Jellyfin can access them:
+Store them where both NeXroll and your media server (Plex/Jellyfin/Emby) can access them:
 - **Docker**: Mount a shared volume
 - **Windows**: Use a shared folder or local path both can reach
 
@@ -227,6 +238,20 @@ See [Path Mappings](Path-Mappings) for detailed examples.
 3. **File access**: Can Plex access the preroll files?
 4. **Plex settings**: Check Settings → Server → Extras in Plex
 
+### Prerolls aren't playing in Jellyfin
+
+1. **Plugin installed?**: Verify the NeXroll Intros plugin is in Dashboard → Plugins
+2. **Plugin configured?**: Check that the NeXroll URL is set in the plugin settings
+3. **Active prerolls?**: Ensure you have an active category, filler, or schedule
+4. See [Jellyfin Setup — Troubleshooting](Jellyfin#troubleshooting) for more
+
+### Prerolls aren't playing in Emby
+
+1. **Cinema Mode enabled?**: Must be turned ON in Emby Settings → Cinema Mode
+2. **"Include trailers from my movies in my library"**: This must be checked
+3. **Refresh Custom Intros**: Run this task from Scheduled Tasks → Library
+4. See [Emby Setup — Troubleshooting](Emby#troubleshooting) for more
+
 ### Prerolls play but wrong ones
 
 1. Check which schedule is currently active
@@ -235,8 +260,8 @@ See [Path Mappings](Path-Mappings) for detailed examples.
 
 ### Changes aren't taking effect
 
-- Plex caches preroll settings — restart Plex or wait a few minutes
-- Click "Apply to Plex" to push changes immediately
+- **Plex**: Caches preroll settings — restart Plex or wait a few minutes. Click "Apply to Plex" to push changes immediately
+- **Jellyfin/Emby**: The plugin fetches fresh preroll lists at each playback. For Emby, run "Refresh Custom Intros" after adding new prerolls
 
 ### NeXroll can't connect to Plex
 
@@ -259,11 +284,11 @@ See [Troubleshooting](Troubleshooting) for more solutions.
 
 ### Does NeXroll support multiple Plex servers?
 
-Currently, NeXroll connects to one Plex server at a time. You can switch servers in the Connect tab.
+Currently, NeXroll connects to one server per media platform (one Plex, one Jellyfin, one Emby). You can have all three connected simultaneously.
 
-### Can I use NeXroll with Plex and Jellyfin simultaneously?
+### Can I use NeXroll with Plex, Jellyfin, and Emby simultaneously?
 
-You can have both connected, but you'll need to apply prerolls to each separately.
+Yes! You can connect all three at once. Plex prerolls are applied directly via the API. Jellyfin and Emby prerolls are served through the NeXroll Intros plugin installed on each server.
 
 ### Is there a mobile app?
 
@@ -271,7 +296,7 @@ No dedicated app, but the web interface works on mobile browsers.
 
 ### Does NeXroll modify my media files?
 
-No. NeXroll only tells Plex/Jellyfin which preroll files to play. It never modifies your movies or preroll videos (except when using the Video Scaling feature to transcode prerolls you specifically select).
+No. NeXroll only tells Plex/Jellyfin/Emby which preroll files to play. It never modifies your movies or preroll videos (except when using the Video Scaling feature to transcode prerolls you specifically select).
 
 ### Can I access NeXroll programmatically?
 

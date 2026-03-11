@@ -54,19 +54,30 @@ Jellyfin also requires the **NeXroll Intros plugin** to play prerolls. See the f
 
 Emby also requires the **NeXroll Intros plugin** and **Cinema Mode** enabled. See the full [Emby Setup](Emby) guide for plugin installation and Cinema Mode configuration.
 
-## Step 4: Configure Path Mappings
+## Step 4: Install Media Server Plugin (Jellyfin/Emby Only)
+
+If you're using Jellyfin or Emby, you need to install the **NeXroll Intros plugin** on your media server for prerolls to play.
+
+- **Jellyfin**: See the full [Jellyfin Setup](Jellyfin) guide
+- **Emby**: See the full [Emby Setup](Emby) guide
+
+NeXroll can auto-detect and configure the plugin from the **Connect** tab — look for the **Plugin Detection** panel.
+
+> **Plex users**: No plugin needed. NeXroll applies prerolls directly via the Plex API.
+
+## Step 5: Configure Path Mappings
 
 If NeXroll and your media server see files at different paths (common with Docker), set up path mappings:
 
 1. Go to **Settings → Path Mappings**
 2. Add a mapping:
    - **NeXroll Path**: Where NeXroll sees prerolls (e.g., `/data/prerolls`)
-   - **Plex Path**: Where Plex sees the same files (e.g., `/media/prerolls`)
+   - **Media Server Path**: Where Plex/Jellyfin/Emby sees the same files (e.g., `/media/prerolls`)
 3. Click **Save**
 
 See [Path Mappings](Path-Mappings) for detailed examples.
 
-## Step 5: Add Your Prerolls
+## Step 6: Add Your Prerolls
 
 ### Upload Prerolls
 
@@ -95,17 +106,19 @@ Categories help organize prerolls by theme:
 4. Save the category
 5. Assign prerolls to categories using the searchable thumbnail grid
 
-## Step 6: Apply Prerolls
+## Step 7: Apply Prerolls
 
-### Quick Apply (Manual)
+### Quick Apply (Manual — Plex Only)
 
 Apply a category's prerolls to Plex immediately:
 
 1. Go to **Dashboard → Categories**
 2. Find your category
-3. Click **Apply to Plex** (or Jellyfin)
+3. Click **Apply to Plex**
 
 Plex will now use those prerolls!
+
+> **Jellyfin/Emby users**: The NeXroll Intros plugin automatically fetches active prerolls at playback time — no manual "apply" step is needed. Just make sure the plugin is configured and you have an active category, schedule, or filler set.
 
 ### Scheduled (Automatic)
 
@@ -122,7 +135,7 @@ Set up schedules to automatically change prerolls:
 
 NeXroll automatically applies the right prerolls based on your schedules.
 
-## Step 7: Set Up NeX-Up (Optional)
+## Step 8: Set Up NeX-Up (Optional)
 
 NeX-Up brings a movie theater "Coming Soon" experience to your server:
 
@@ -135,15 +148,28 @@ NeX-Up brings a movie theater "Coming Soon" experience to your server:
 
 See [NeX-Up Guide](NeX-Up) for the full setup.
 
-## Step 8: Verify It Works
+## Step 9: Verify It Works
 
+### Plex
 1. Open Plex and play any movie
 2. Your preroll should play before the movie starts
+
+### Jellyfin
+1. Play any movie in Jellyfin
+2. A preroll should play before the movie
+3. Check Jellyfin logs for "NeXroll" messages if troubleshooting
+
+### Emby
+1. Play any movie in Emby
+2. A preroll should play before the movie
+3. If not, verify Cinema Mode is enabled and "Include trailers from my movies in my library" is checked
+4. Run "Refresh Custom Intros" from Scheduled Tasks if needed
 
 If it doesn't work:
 - Check [Troubleshooting](Troubleshooting)
 - Verify path mappings
-- Ensure Plex can access the preroll files
+- Ensure your media server can access the preroll files
+- For Jellyfin/Emby: Verify the NeXroll Intros plugin is installed and configured
 
 ## What's Next?
 

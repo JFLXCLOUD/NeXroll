@@ -146,7 +146,7 @@ NeXroll includes a built-in logging system for debugging and monitoring.
 Go to **Settings → Logs** to:
 - View logs in real-time
 - Filter by level: DEBUG, INFO, WARNING, ERROR, CRITICAL
-- Filter by category: system, scheduler, api, user, plex, jellyfin, nexup
+- Filter by category: system, scheduler, api, user, plex, jellyfin, emby, nexup
 - Search through log entries
 - Export logs as JSON or CSV
 

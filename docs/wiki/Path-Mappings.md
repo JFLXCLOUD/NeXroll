@@ -1,6 +1,6 @@
 # Path Mappings
 
-Path mappings are **critical** for NeXroll to work with Plex and Jellyfin when they're running on different systems or in containers.
+Path mappings are **critical** for NeXroll to work with Plex, Jellyfin, and Emby when they're running on different systems or in containers.
 
 ## Why Path Mappings Matter
 
@@ -8,7 +8,9 @@ NeXroll stores preroll files at a certain path (e.g., `/data/prerolls` in Docker
 
 **Note**: Path mappings also apply to NeX-Up trailers stored in the trailer storage path.
 
-Without proper mappings, Plex receives a path it can't access, and prerolls won't play.
+Without proper mappings, your media server receives a path it can't access, and prerolls won't play.
+
+> **Note for Jellyfin/Emby plugin users**: Path mappings can also be configured directly in the NeXroll Intros plugin settings on each server. The plugin-level mapping translates paths between NeXroll and the media server's file system.
 
 ## How It Works
 
@@ -20,10 +22,10 @@ Without proper mappings, Plex receives a path it can't access, and prerolls won'
 ## Configuring Mappings
 
 1. Go to **Settings**
-2. Find **UNC/Local → Plex Path Mappings**
+2. Find **UNC/Local → Media Server Path Mappings**
 3. Add your mappings:
    - **Source Path**: The path as NeXroll sees it
-   - **Destination Path**: The path as Plex/Jellyfin sees it
+   - **Destination Path**: The path as your media server (Plex/Jellyfin/Emby) sees it
 
 ## Common Scenarios
 
@@ -128,16 +130,17 @@ You don't need to worry about escaping - just enter paths naturally.
 
 ## Troubleshooting
 
-### Prerolls Not Playing in Plex
+### Prerolls Not Playing
 
-1. **Check Test Translation**: Does it produce a valid Plex path?
-2. **Verify Plex Access**: Can Plex access the translated path?
-3. **Check Permissions**: Does Plex have read permissions?
-4. **Network Paths**: If using UNC paths, ensure Plex service can access network
+1. **Check Test Translation**: Does it produce a valid path for your media server?
+2. **Verify access**: Can your media server (Plex/Jellyfin/Emby) access the translated path?
+3. **Check Permissions**: Does the media server have read permissions?
+4. **Network Paths**: If using UNC paths, ensure the service can access network shares
+5. **Jellyfin/Emby**: Also check plugin-level path mapping in the NeXroll Intros plugin settings
 
 ### UNC Paths Not Working
 
-Windows services (including Plex) may not have access to network shares by default.
+Windows services (including Plex and Emby) may not have access to network shares by default.
 
 **Solutions:**
 - Use mapped drive letters instead of UNC paths

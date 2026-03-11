@@ -43,12 +43,32 @@ Common issues and solutions for NeXroll.
    - Correct: `http://192.168.1.100:8096`
    
 2. **Verify API Key:**
-   - Dashboard → Advanced → API Keys
+   - Dashboard → API Keys
    - Create a new key specifically for NeXroll
 
-3. **Install Local Intros plugin:**
-   - Jellyfin requires this plugin for preroll support
-   - Dashboard → Plugins → Catalog → Local Intros
+3. **Install NeXroll Intros plugin:**
+   - The NeXroll Intros plugin is required for preroll playback
+   - See [Jellyfin Setup](Jellyfin) for installation
+   - NeXroll can auto-detect and configure the plugin from the Connect tab
+
+### Cannot Connect to Emby
+
+**Solutions:**
+
+1. **Check URL format:**
+   - Correct: `http://192.168.1.100:8096` (include port)
+   
+2. **Verify API Key:**
+   - Settings → API Keys → New API Key
+
+3. **Install NeXroll Intros plugin:**
+   - Copy `NeXroll.Emby.dll` directly to Emby's `plugins/` folder (not a subfolder)
+   - See [Emby Setup](Emby) for installation
+
+4. **Enable Cinema Mode:**
+   - Settings → Cinema Mode → Enable
+   - Check "Include trailers from my movies in my library"
+   - See [Emby Setup](Emby#step-4-enable-cinema-mode) for details
 
 ## Authentication Issues
 
@@ -108,13 +128,15 @@ Full list: https://en.wikipedia.org/wiki/List_of_tz_database_time_zones
 4. **Verify timezone**: See above
 5. **Check priority/conflicts**: Higher-priority exclusive schedules may override
 
-### Prerolls Not Updating in Plex
+### Prerolls Not Updating
 
 1. **Check scheduler status** on Dashboard
 2. **Verify path mappings** are correct
-3. **Manually test** with "Apply to Plex" button
-4. **Check Plex connection** is still valid
-5. **Check Settings → Logs** for scheduler activity
+3. **Plex**: Manually test with "Apply to Plex" button
+4. **Jellyfin/Emby**: Verify the NeXroll Intros plugin is configured with the correct NeXroll URL
+5. **Emby**: Run "Refresh Custom Intros" from Scheduled Tasks after adding new prerolls
+6. **Check media server connection** is still valid
+7. **Check Settings → Logs** for scheduler activity
 
 ## NeX-Up Issues
 
@@ -199,9 +221,10 @@ docker compose up -d
 ### Prerolls Not Playing
 
 1. **Test translation**: Settings → Test Translation
-2. **Verify Plex can access** the translated path
-3. **Check permissions**: Can Plex read the files?
+2. **Verify your media server can access** the translated path
+3. **Check permissions**: Can the media server read the files?
 4. **NeX-Up trailers**: Don't forget to add mappings for trailer storage paths too
+5. **Jellyfin/Emby**: Also check plugin-level path mapping in the NeXroll Intros plugin settings
 
 ### UNC Paths Not Working
 
