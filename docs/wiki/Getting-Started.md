@@ -42,7 +42,17 @@ You can also generate **API Keys** for external integrations. See [Configuration
 4. Click **Test Connection**
 5. If successful, click **Save**
 
-**Note**: Jellyfin requires the [Local Intros plugin](https://github.com/dkanada/jellyfin-plugin-intros) for preroll support.
+Jellyfin also requires the **NeXroll Intros plugin** to play prerolls. See the full [Jellyfin Setup](Jellyfin) guide for plugin installation and Cinema Mode configuration.
+
+### Connecting to Emby
+
+1. Go to the **Connect** tab
+2. Enter your **Emby URL** (e.g., `http://192.168.1.100:8096`)
+3. Enter your **API Key**
+   - In Emby: Settings → API Keys → New API Key
+4. Click **Connect**
+
+Emby also requires the **NeXroll Intros plugin** and **Cinema Mode** enabled. See the full [Emby Setup](Emby) guide for plugin installation and Cinema Mode configuration.
 
 ## Step 4: Configure Path Mappings
 

@@ -8,6 +8,11 @@
 * [Docker Setup](Docker)
 * [Configuration](Configuration)
 
+### Media Server Setup
+
+* [Jellyfin Setup](Jellyfin)
+* [Emby Setup](Emby)
+
 ### Features
 
 * [NeX-Up (Trailers)](NeX-Up)
