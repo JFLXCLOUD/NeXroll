@@ -514,6 +514,13 @@ function App() {
     api_key: ''
   });
 
+  // Emby plugin remote-detection state
+  const [embyPluginInfo, setEmbyPluginInfo] = useState(null);
+  const [embyPluginConfiguring, setEmbyPluginConfiguring] = useState(false);
+  const [embyPluginNexrollUrl, setEmbyPluginNexrollUrl] = useState('');
+  const [embyPluginPathFrom, setEmbyPluginPathFrom] = useState('');
+  const [embyPluginPathTo, setEmbyPluginPathTo] = useState('');
+
   // Plex.tv OAuth UI state and helpers
   const [plexOAuth, setPlexOAuth] = useState({ id: null, url: '', status: 'idle', error: null });
   const oauthPollRef = React.useRef(null);
@@ -1777,6 +1784,29 @@ const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
         }
         setEmbyStatus(emby.connected ? 'Connected' : 'Disconnected');
         setEmbyServerInfo(emby);
+        // Auto-detect Emby plugin when connected
+        if (emby.connected && emby.connection_type === 'direct') {
+          fetch(apiUrl('emby/plugin/detect'))
+            .then(r => r.json())
+            .then(pluginData => {
+              setEmbyPluginInfo(pluginData);
+              if (pluginData.detected) {
+                if (pluginData.auto_configured) {
+                  console.log('[NeXroll] Emby plugin auto-configured successfully');
+                }
+                if (pluginData.config?.NexrollUrl) {
+                  setEmbyPluginNexrollUrl(prev => prev || pluginData.config.NexrollUrl);
+                } else if (pluginData.suggested_nexroll_url) {
+                  setEmbyPluginNexrollUrl(prev => prev || pluginData.suggested_nexroll_url);
+                }
+                setEmbyPluginPathFrom(prev => prev || pluginData.config?.PathPrefixFrom || '');
+                setEmbyPluginPathTo(prev => prev || pluginData.config?.PathPrefixTo || '');
+              }
+            })
+            .catch(() => setEmbyPluginInfo(null));
+        } else {
+          setEmbyPluginInfo(null);
+        }
         setPrerolls(Array.isArray(prerolls) ? prerolls : []);
         setSchedules(Array.isArray(schedules) ? schedules : []);
         setCategories(Array.isArray(categories) ? categories : []);
@@ -4299,16 +4329,29 @@ const DashboardTiles = {
               </div>
             );
           }
+          if (s === 'emby') {
+            return (
+              <div>
+                <strong>Emby:</strong>
+                <span className={`nx-chip nx-status ok`} style={{ marginLeft: '0.35rem' }}>Connected</span>
+                {embyServerInfo?.name && (
+                  <span style={{ fontSize: '0.9rem', marginLeft: '0.5rem', color: 'var(--text-color)' }}>
+                    - {embyServerInfo.name}{embyServerInfo.version ? ` (${embyServerInfo.version})` : ''}
+                  </span>
+                )}
+              </div>
+            );
+          }
           if (s === 'conflict') {
             return (
               <div style={{ fontSize: '0.9rem', color: '#dc3545' }}>
-                Conflict: Both Plex and Jellyfin are connected. Disconnect one on the Connect tab.
+                Multiple servers connected. Disconnect extras on the Connect tab.
               </div>
             );
           }
           return (
             <div style={{ fontSize: '0.9rem', color: 'var(--text-secondary, #666)' }}>
-              No media server connected. Connect to Plex or Jellyfin on the Connect tab.
+              No media server connected. Connect to Plex, Jellyfin, or Emby on the Connect tab.
             </div>
           );
         })()}
@@ -14205,6 +14248,8 @@ const DashboardTiles = {
         if (data && data.connected) {
           alert('Successfully connected to Emby!');
           fetchData();
+          // Auto-detect plugin after successful connection
+          setTimeout(() => handleDetectEmbyPlugin(), 500);
         } else {
           alert(data?.detail || 'Failed to connect to Emby. Please check your URL and API key.');
         }
@@ -14226,11 +14271,71 @@ const DashboardTiles = {
         setEmbyConfig({ url: '', api_key: '' });
         setEmbyStatus('Disconnected');
         setEmbyServerInfo(null);
+        setEmbyPluginInfo(null);
+        setEmbyPluginNexrollUrl('');
+        setEmbyPluginPathFrom('');
+        setEmbyPluginPathTo('');
         fetchData();
       })
       .catch(error => {
         console.error('Emby disconnect error:', error);
         alert('Failed to disconnect from Emby: ' + error.message);
+      });
+  };
+
+  // Emby plugin detection & remote configuration
+  const handleDetectEmbyPlugin = () => {
+    fetch(apiUrl('emby/plugin/detect'))
+      .then(res => res.json())
+      .then(data => {
+        setEmbyPluginInfo(data);
+        if (data.detected) {
+          if (data.config?.NexrollUrl) {
+            setEmbyPluginNexrollUrl(data.config.NexrollUrl);
+          } else if (data.suggested_nexroll_url && !embyPluginNexrollUrl) {
+            setEmbyPluginNexrollUrl(data.suggested_nexroll_url);
+          }
+          setEmbyPluginPathFrom(data.config?.PathPrefixFrom || '');
+          setEmbyPluginPathTo(data.config?.PathPrefixTo || '');
+        }
+      })
+      .catch(err => {
+        console.error('Emby plugin detect error:', err);
+        setEmbyPluginInfo({ detected: false, error: err.message });
+      });
+  };
+
+  const handleConfigureEmbyPlugin = () => {
+    if (!embyPluginNexrollUrl) {
+      alert('Please enter the NeXroll server URL that Emby can reach.');
+      return;
+    }
+    setEmbyPluginConfiguring(true);
+    fetch(apiUrl('emby/plugin/configure'), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        nexroll_url: embyPluginNexrollUrl,
+        path_prefix_from: embyPluginPathFrom,
+        path_prefix_to: embyPluginPathTo,
+      })
+    })
+      .then(res => {
+        if (!res.ok) return res.json().then(e => { throw new Error(e.detail || 'Configuration failed'); });
+        return res.json();
+      })
+      .then(data => {
+        setEmbyPluginConfiguring(false);
+        if (data.success) {
+          alert('Plugin configured successfully! Emby will now use NeXroll for prerolls.');
+          handleDetectEmbyPlugin();
+        } else {
+          alert('Failed to configure plugin: ' + (data.detail || 'Unknown error'));
+        }
+      })
+      .catch(err => {
+        setEmbyPluginConfiguring(false);
+        alert('Error configuring plugin: ' + err.message);
       });
   };
 
@@ -25068,15 +25173,39 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
       <div className="card">
         <h2>Emby Status</h2>
         <div style={{ display: 'grid', gap: '0.5rem' }}>
-          <div><strong>Connection:</strong> <span className={`nx-chip nx-status ${embyStatus === 'Connected' ? 'ok' : 'bad'}`}>{embyStatus}</span></div>
+          <div><strong>Connection:</strong> <span className={`nx-chip nx-status ${embyStatus === 'Connected' ? 'ok' : 'bad'}`}>{embyStatus}</span>
+            {embyServerInfo?.connection_type === 'plugin' && (
+              <span className="nx-chip" style={{ marginLeft: '0.5rem', backgroundColor: 'rgba(108, 92, 231, 0.15)', color: '#6c5ce7', fontSize: '0.75rem' }}>
+                via Plugin (API Key)
+              </span>
+            )}
+            {embyServerInfo?.connection_type === 'direct' && (
+              <span className="nx-chip" style={{ marginLeft: '0.5rem', backgroundColor: 'rgba(39, 174, 96, 0.15)', color: '#27ae60', fontSize: '0.75rem' }}>
+                Direct Connection
+              </span>
+            )}
+          </div>
           {embyServerInfo && (
             <>
               {embyServerInfo.name && <div><strong>Server:</strong> {embyServerInfo.name}</div>}
               {embyServerInfo.version && <div><strong>Version:</strong> {embyServerInfo.version}</div>}
             </>
           )}
+          {embyServerInfo?.plugin_clients?.length > 0 && (
+            <div style={{ marginTop: '0.5rem', padding: '0.75rem', borderRadius: '6px', backgroundColor: 'rgba(108, 92, 231, 0.06)', border: '1px solid rgba(108, 92, 231, 0.2)' }}>
+              <strong style={{ color: '#6c5ce7' }}>🔌 Plugin Clients:</strong>
+              {embyServerInfo.plugin_clients.map((client, idx) => (
+                <div key={idx} style={{ marginTop: '0.25rem', fontSize: '0.9rem' }}>
+                  {client.server_name || 'Emby'} {client.server_version ? `(v${client.server_version})` : ''}
+                  <span style={{ color: 'var(--text-secondary)', marginLeft: '0.5rem', fontSize: '0.8rem' }}>
+                    via key "{client.api_key_name}" — last seen {client.last_seen ? new Date(client.last_seen + 'Z').toLocaleString() : 'N/A'}
+                  </span>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
-        {embyStatus === 'Connected' && (
+        {embyStatus === 'Connected' && embyServerInfo?.connection_type !== 'plugin' && (
           <div style={{ marginTop: '1rem', paddingTop: '1rem', borderTop: '1px solid var(--border-color)' }}>
             <button onClick={handleDisconnectEmby} className="button button-danger">
               Disconnect from Emby
@@ -25085,58 +25214,181 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
         )}
       </div>
 
-      {/* NeXroll Intros Plugin Card - Emby */}
+      {/* NeXroll Intros Plugin — Auto-detect & Remote Configure */}
       <div className="card">
         <h2 style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
           <span style={{ fontSize: '1.25rem' }}>🔌</span> NeXroll Intros Plugin
         </h2>
-        <p style={{ marginBottom: '1rem', color: 'var(--text-secondary)' }}>
-          Install the <strong>NeXroll Intros</strong> plugin in your Emby server to automatically
-          inject preroll videos before movies and episodes.
-        </p>
 
-        <div style={{ background: 'var(--bg-color, #1a1a2e)', border: '1px solid var(--border-color)', borderRadius: '8px', padding: '1rem', marginBottom: '1rem' }}>
-          <h3 style={{ marginTop: 0, marginBottom: '0.75rem', fontSize: '0.95rem' }}>Quick Start</h3>
-          <ol style={{ margin: 0, paddingLeft: '1.25rem', lineHeight: '1.7' }}>
-            <li>Download the <strong>NeXroll Intros</strong> Emby plugin DLL from the NeXroll releases page</li>
-            <li>Copy it to your Emby plugins folder: <code>plugins/NeXroll Intros/</code></li>
-            <li>Restart Emby</li>
-            <li>Open Emby Settings → Plugins → <strong>NeXroll Intros</strong></li>
-            <li>Enter your NeXroll server URL: <code style={{ userSelect: 'all' }}>{window.location.origin}</code></li>
-            <li>Configure path mapping if NeXroll and Emby see files at different paths</li>
-            <li>Click <strong>Test Connection</strong>, then <strong>Save</strong></li>
-          </ol>
-        </div>
+        {/* State: Emby not connected */}
+        {embyStatus !== 'Connected' && (
+          <p style={{ color: 'var(--text-secondary)' }}>
+            Connect to Emby first to detect and configure the NeXroll Intros plugin.
+          </p>
+        )}
 
-        <details style={{ marginBottom: '0.5rem' }}>
-          <summary style={{ cursor: 'pointer', fontWeight: 'bold', padding: '0.25rem 0' }}>
-            How does it work?
-          </summary>
-          <div style={{ padding: '0.5rem 0 0 0.5rem', color: 'var(--text-secondary)', lineHeight: '1.6' }}>
-            <p style={{ margin: '0.25rem 0' }}>
-              The plugin implements Emby's <code>IIntroProvider</code> interface. When a user presses play,
-              Emby asks all intro providers for videos to show first. The NeXroll plugin calls this server's
-              <code>/plugin/intros</code> endpoint to get the current preroll paths in real time.
-            </p>
+        {/* State: Connected but plugin not yet probed */}
+        {embyStatus === 'Connected' && embyServerInfo?.connection_type === 'direct' && !embyPluginInfo && (
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', padding: '0.75rem 0' }}>
+            <div style={{ width: 16, height: 16, border: '2px solid var(--accent-color, #6c5ce7)', borderTop: '2px solid transparent', borderRadius: '50%', animation: 'spin 1s linear infinite' }} />
+            <span style={{ color: 'var(--text-secondary)' }}>Detecting plugin on Emby server...</span>
           </div>
-        </details>
+        )}
 
-        <details>
-          <summary style={{ cursor: 'pointer', fontWeight: 'bold', padding: '0.25rem 0' }}>
-            Path Mapping (Docker / NAS)
-          </summary>
-          <div style={{ padding: '0.5rem 0 0 0.5rem', color: 'var(--text-secondary)', lineHeight: '1.6' }}>
-            <p style={{ margin: '0.25rem 0' }}>
-              If NeXroll and Emby see preroll files at different paths (common with Docker volumes or NAS mounts),
-              configure the path prefix replacement in the plugin's settings page inside Emby.
-            </p>
-            <p style={{ margin: '0.25rem 0' }}>
-              <strong>Example:</strong> NeXroll stores files at <code>/data/prerolls/</code> and Emby
-              accesses them at <code>/mnt/media/prerolls/</code> — set "NeXroll Path Prefix" to <code>/data/prerolls</code>
-              and "Emby Path Prefix" to <code>/mnt/media/prerolls</code>.
-            </p>
-          </div>
-        </details>
+        {/* State: Plugin NOT found */}
+        {embyStatus === 'Connected' && embyPluginInfo && !embyPluginInfo.detected && (
+          <>
+            <div style={{ padding: '1rem', borderRadius: '8px', backgroundColor: embyPluginInfo.auth_error ? 'rgba(230, 126, 34, 0.08)' : 'rgba(231, 76, 60, 0.08)', border: `1px solid ${embyPluginInfo.auth_error ? 'rgba(230, 126, 34, 0.2)' : 'rgba(231, 76, 60, 0.2)'}`, marginBottom: '1rem' }}>
+              <strong style={{ color: embyPluginInfo.auth_error ? '#e67e22' : '#e74c3c' }}>
+                {embyPluginInfo.auth_error ? 'API Key Issue' : 'Plugin Not Found'}
+              </strong>
+              <p style={{ margin: '0.5rem 0 0', color: 'var(--text-secondary)', fontSize: '0.9rem' }}>
+                {embyPluginInfo.error || embyPluginInfo.message || 'The NeXroll Intros plugin was not detected on your Emby server.'}
+              </p>
+              {embyPluginInfo.auth_error && (
+                <p style={{ margin: '0.5rem 0 0', color: 'var(--text-secondary)', fontSize: '0.85rem' }}>
+                  Disconnect and reconnect with a valid Emby admin API key from Advanced → API Keys.
+                </p>
+              )}
+            </div>
+
+            {!embyPluginInfo.auth_error && (
+              <div style={{ background: 'var(--bg-color, #1a1a2e)', border: '1px solid var(--border-color)', borderRadius: '8px', padding: '1rem', marginBottom: '1rem' }}>
+                <h3 style={{ marginTop: 0, marginBottom: '0.75rem', fontSize: '0.95rem' }}>Install the Plugin</h3>
+                <ol style={{ margin: 0, paddingLeft: '1.25rem', lineHeight: '1.7' }}>
+                  <li>Download the <strong>NeXroll Intros</strong> plugin DLL from the NeXroll releases page</li>
+                  <li>Copy it to your Emby plugins folder: <code>plugins/NeXroll Intros/</code></li>
+                  <li>Restart Emby</li>
+                </ol>
+              </div>
+            )}
+
+            <button onClick={handleDetectEmbyPlugin} className="button button-primary">
+              Retry Detection
+            </button>
+          </>
+        )}
+
+        {/* State: Plugin DETECTED */}
+        {embyStatus === 'Connected' && embyPluginInfo?.detected && (
+          <>
+            {/* Detection badge */}
+            <div style={{ padding: '1rem', borderRadius: '8px', backgroundColor: 'rgba(39, 174, 96, 0.08)', border: '1px solid rgba(39, 174, 96, 0.2)', marginBottom: '1rem' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
+                <span className="nx-chip nx-status ok">Detected</span>
+                <strong>{embyPluginInfo.plugin?.name || 'NeXroll Intros'}</strong>
+                {embyPluginInfo.plugin?.version && (
+                  <span style={{ color: 'var(--text-secondary)', fontSize: '0.85rem' }}>v{embyPluginInfo.plugin.version}</span>
+                )}
+              </div>
+              {embyPluginInfo.config?.NexrollUrl ? (
+                <div style={{ marginTop: '0.5rem', fontSize: '0.9rem', color: 'var(--text-secondary)' }}>
+                  Currently linked to: <code style={{ userSelect: 'all' }}>{embyPluginInfo.config.NexrollUrl}</code>
+                  {embyPluginInfo.config?.ApiKey && (
+                    <span className="nx-chip" style={{ marginLeft: '0.5rem', backgroundColor: 'rgba(39, 174, 96, 0.15)', color: '#27ae60', fontSize: '0.7rem' }}>
+                      API Key Active
+                    </span>
+                  )}
+                  {embyPluginInfo.auto_configured && (
+                    <span className="nx-chip" style={{ marginLeft: '0.5rem', backgroundColor: 'rgba(52, 152, 219, 0.15)', color: '#3498db', fontSize: '0.7rem' }}>
+                      Auto-Configured
+                    </span>
+                  )}
+                </div>
+              ) : (
+                <div style={{ marginTop: '0.5rem', fontSize: '0.9rem', color: '#e67e22' }}>
+                  Not yet configured — use the form below to link the plugin to NeXroll.
+                </div>
+              )}
+            </div>
+
+            {/* Configure form */}
+            <div style={{ marginBottom: '1rem' }}>
+              <div style={{ marginBottom: '0.75rem' }}>
+                <label style={{ display: 'block', marginBottom: '0.25rem', fontWeight: 'bold' }}>
+                  NeXroll Server URL
+                </label>
+                <input
+                  type="url"
+                  value={embyPluginNexrollUrl}
+                  onChange={(e) => setEmbyPluginNexrollUrl(e.target.value)}
+                  placeholder="http://127.0.0.1:9876"
+                  style={{ width: '100%', padding: '0.5rem' }}
+                />
+                <small style={{ color: 'var(--text-secondary)', display: 'block', marginTop: '0.25rem' }}>
+                  The URL your Emby server can reach NeXroll at. Auto-detected from your current session.
+                </small>
+              </div>
+
+              <details style={{ marginBottom: '0.75rem' }}>
+                <summary style={{ cursor: 'pointer', fontWeight: 'bold', padding: '0.25rem 0' }}>
+                  Path Mapping (Docker / NAS)
+                </summary>
+                <div style={{ padding: '0.75rem 0 0', display: 'grid', gap: '0.5rem' }}>
+                  <div>
+                    <label style={{ display: 'block', marginBottom: '0.25rem' }}>NeXroll Path Prefix</label>
+                    <input
+                      type="text"
+                      value={embyPluginPathFrom}
+                      onChange={(e) => setEmbyPluginPathFrom(e.target.value)}
+                      placeholder="/data/prerolls"
+                      style={{ width: '100%', padding: '0.5rem' }}
+                    />
+                  </div>
+                  <div>
+                    <label style={{ display: 'block', marginBottom: '0.25rem' }}>Emby Path Prefix</label>
+                    <input
+                      type="text"
+                      value={embyPluginPathTo}
+                      onChange={(e) => setEmbyPluginPathTo(e.target.value)}
+                      placeholder="/mnt/media/prerolls"
+                      style={{ width: '100%', padding: '0.5rem' }}
+                    />
+                  </div>
+                  <small style={{ color: 'var(--text-secondary)' }}>
+                    Only needed if NeXroll and Emby see preroll files at different paths (common with Docker or NAS mounts).
+                  </small>
+                </div>
+              </details>
+
+              <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
+                <button
+                  onClick={handleConfigureEmbyPlugin}
+                  className="button button-success"
+                  disabled={embyPluginConfiguring || !embyPluginNexrollUrl}
+                >
+                  {embyPluginConfiguring
+                    ? 'Configuring...'
+                    : embyPluginInfo.config?.NexrollUrl
+                      ? 'Update Plugin Configuration'
+                      : 'Link Plugin to NeXroll'}
+                </button>
+                <button onClick={handleDetectEmbyPlugin} className="button" style={{ opacity: 0.7 }}>
+                  Refresh
+                </button>
+              </div>
+            </div>
+
+            {/* How it works */}
+            <details>
+              <summary style={{ cursor: 'pointer', fontWeight: 'bold', padding: '0.25rem 0' }}>
+                How does it work?
+              </summary>
+              <div style={{ padding: '0.5rem 0 0 0.5rem', color: 'var(--text-secondary)', lineHeight: '1.6' }}>
+                <p style={{ margin: '0.25rem 0' }}>
+                  The plugin implements Emby's <code>IIntroProvider</code> interface. When a user presses play,
+                  Emby asks all intro providers for videos to show first. The NeXroll plugin calls this server's
+                  <code>/plugin/intros</code> endpoint to get the current preroll paths in real time — reflecting
+                  whatever schedule, filler, or sequence is active right now.
+                </p>
+                <p style={{ margin: '0.25rem 0' }}>
+                  NeXroll auto-generates a secure API key and pushes it to the plugin, so no manual
+                  setup is needed on the Emby side.
+                </p>
+              </div>
+            </details>
+          </>
+        )}
       </div>
     </div>
   );
@@ -30928,7 +31180,8 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
               {scheduleMode === 'advanced' && (
                 <div className="nx-field nx-span-2" style={{ marginTop: '1rem' }}>
                   <SequenceBuilder
-                    initialSequence={sequenceBlocks}
+                    blocks={sequenceBlocks}
+                    onBlocksChange={setSequenceBlocks}
                     categories={categories}
                     prerolls={prerolls}
                     scheduleId={editingSchedule?.id || null}

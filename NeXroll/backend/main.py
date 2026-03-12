@@ -20703,7 +20703,8 @@ def connect_emby(request: EmbyConnectRequest, db: Session = Depends(get_db)):
 
 @app.get("/emby/status")
 def get_emby_status(db: Session = Depends(get_db)):
-    """Return Emby connection status. Always returns 200."""
+    """Return Emby connection status. Always returns 200.
+    Includes plugin client connections (Emby servers connected via API key)."""
     try:
         setting = db.query(models.Setting).first()
     except Exception:
@@ -20716,23 +20717,49 @@ def get_emby_status(db: Session = Depends(get_db)):
     except Exception:
         pass
 
+    # Gather plugin clients that identify as Emby
+    emby_plugin_clients = [
+        c for c in PLUGIN_CLIENTS.values()
+        if c.get("server_type", "").lower() == "emby"
+    ]
+
     if not emby_url:
-        return {"connected": False, "url": emby_url, "has_api_key": bool(api_key)}
+        out = {"connected": False, "url": emby_url, "has_api_key": bool(api_key)}
+        if emby_plugin_clients:
+            out["connected"] = True
+            out["connection_type"] = "plugin"
+            out["plugin_clients"] = emby_plugin_clients
+            client = emby_plugin_clients[0]
+            out["name"] = client.get("server_name", "Emby (via Plugin)")
+            out["version"] = client.get("server_version", "")
+        return out
 
     try:
         resp = requests.get(f"{emby_url.rstrip('/')}/emby/System/Info/Public", timeout=10)
         if resp.status_code == 200:
             info = resp.json()
-            return {
+            out = {
                 "connected": True,
                 "url": emby_url,
                 "has_api_key": bool(api_key),
                 "name": info.get("ServerName", ""),
                 "version": info.get("Version", ""),
+                "connection_type": "direct",
             }
+            if emby_plugin_clients:
+                out["plugin_clients"] = emby_plugin_clients
+            return out
     except Exception:
         pass
-    return {"connected": False, "url": emby_url, "has_api_key": bool(api_key)}
+    out = {"connected": False, "url": emby_url, "has_api_key": bool(api_key)}
+    if emby_plugin_clients:
+        out["connected"] = True
+        out["connection_type"] = "plugin"
+        out["plugin_clients"] = emby_plugin_clients
+        client = emby_plugin_clients[0]
+        out["name"] = client.get("server_name", "Emby (via Plugin)")
+        out["version"] = client.get("server_version", "")
+    return out
 
 @app.post("/emby/disconnect")
 def disconnect_emby(db: Session = Depends(get_db)):
@@ -20753,6 +20780,261 @@ def disconnect_emby(db: Session = Depends(get_db)):
 
     log_event('INFO', 'emby', 'Emby server disconnected', source='disconnect_emby')
     return {"disconnected": True, "message": "Successfully disconnected from Emby server"}
+
+
+# --- Emby Plugin Detection & Remote Configuration ---
+NEXROLL_EMBY_PLUGIN_ID = "a1b2c3d4-e5f6-7890-abcd-ae0c01200002"
+
+
+class EmbyPluginConfigureRequest(BaseModel):
+    nexroll_url: str
+    path_prefix_from: str = ""
+    path_prefix_to: str = ""
+    enable_for_movies: bool = True
+    enable_for_episodes: bool = True
+    max_intros: int = 0
+    timeout_seconds: int = 5
+
+
+@app.get("/emby/plugin/detect")
+def detect_emby_plugin(request: Request, db: Session = Depends(get_db)):
+    """
+    Detect if NeXroll Intros plugin is installed on the connected Emby server.
+    Returns plugin info and current configuration so NeXroll can manage it remotely.
+    """
+    setting = db.query(models.Setting).first()
+    emby_url = getattr(setting, "emby_url", None) if setting else None
+
+    if not emby_url:
+        return {"detected": False, "error": "Emby not connected"}
+
+    api_key = None
+    try:
+        api_key = secure_store.get_emby_api_key()
+    except Exception:
+        api_key = None
+
+    if not api_key:
+        return {"detected": False, "error": "No Emby API key found"}
+
+    base = emby_url.rstrip("/")
+    headers = {"X-Emby-Token": api_key}
+
+    try:
+        # List installed plugins
+        resp = requests.get(f"{base}/emby/Plugins", headers=headers, timeout=10)
+        if resp.status_code == 401 or resp.status_code == 403:
+            return {"detected": False, "error": "API key does not have permission to list plugins. Use an admin API key.", "auth_error": True}
+        if resp.status_code != 200:
+            return {"detected": False, "error": f"Failed to query Emby plugins (HTTP {resp.status_code})"}
+
+        plugins = resp.json()
+        plugin = None
+        for p in plugins:
+            name = (p.get("Name") or p.get("name") or "").lower()
+            if "nexroll" in name:
+                plugin = p
+                break
+
+        if not plugin:
+            return {"detected": False, "message": "NeXroll Intros plugin not found on Emby server"}
+
+        plugin_id = plugin.get("Id") or plugin.get("id") or NEXROLL_EMBY_PLUGIN_ID
+
+        # Get current plugin configuration
+        config = {}
+        try:
+            cfg_resp = requests.get(f"{base}/emby/Plugins/{plugin_id}/Configuration", headers=headers, timeout=10)
+            if cfg_resp.status_code == 200:
+                config = cfg_resp.json() or {}
+        except Exception:
+            pass
+
+        suggested_url = str(request.base_url).rstrip("/")
+
+        # Auto-configure the plugin if it has no NexrollUrl set
+        auto_configured = False
+        if not config.get("NexrollUrl"):
+            try:
+                raw_key = _generate_api_key()
+                key_hash = _hash_api_key(raw_key)
+                key_prefix = _get_key_prefix(raw_key)
+
+                # Deactivate previous auto-generated keys
+                existing_auto_keys = db.query(models.APIKey).filter(
+                    models.APIKey.name == "Emby Plugin (Auto)",
+                    models.APIKey.is_active == True
+                ).all()
+                for k in existing_auto_keys:
+                    k.is_active = False
+                db.flush()
+
+                new_key = models.APIKey(
+                    name="Emby Plugin (Auto)",
+                    key_hash=key_hash,
+                    key_prefix=key_prefix,
+                    permissions="read",
+                    description="Auto-generated for Emby NeXroll Intros plugin",
+                    is_active=True,
+                )
+                db.add(new_key)
+                db.commit()
+
+                plugin_config = {
+                    "NexrollUrl": suggested_url,
+                    "ApiKey": raw_key,
+                    "PathPrefixFrom": "",
+                    "PathPrefixTo": "",
+                    "EnableForMovies": True,
+                    "EnableForEpisodes": True,
+                    "MaxIntros": 0,
+                    "TimeoutSeconds": 5,
+                }
+
+                push_resp = requests.post(
+                    f"{base}/emby/Plugins/{plugin_id}/Configuration",
+                    headers={**headers, "Content-Type": "application/json"},
+                    json=plugin_config,
+                    timeout=10,
+                )
+                if push_resp.status_code in (200, 204):
+                    auto_configured = True
+                    config = {**plugin_config, "ApiKey": f"{key_prefix}..."}
+                    log_event('INFO', 'emby',
+                              f'Plugin auto-configured — URL: {suggested_url}',
+                              source='detect_emby_plugin', db=db)
+                else:
+                    log_event('WARNING', 'emby',
+                              f'Plugin auto-configuration push failed (HTTP {push_resp.status_code})',
+                              source='detect_emby_plugin', db=db)
+            except Exception as auto_err:
+                log_event('WARNING', 'emby',
+                          f'Plugin auto-configuration error: {auto_err}',
+                          source='detect_emby_plugin', db=db)
+
+        log_event('INFO', 'emby', f'Plugin detected: {plugin.get("Name")} v{plugin.get("Version")}', source='detect_emby_plugin')
+        return {
+            "detected": True,
+            "auto_configured": auto_configured,
+            "plugin": {
+                "id": plugin_id,
+                "name": plugin.get("Name") or plugin.get("name") or "NeXroll Intros",
+                "version": plugin.get("Version") or plugin.get("version") or "",
+                "status": plugin.get("Status") or plugin.get("status") or "",
+            },
+            "config": config,
+            "suggested_nexroll_url": suggested_url,
+        }
+    except Exception as e:
+        log_event('WARNING', 'emby', f'Plugin detection failed: {e}', source='detect_emby_plugin')
+        return {"detected": False, "error": str(e)}
+
+
+@app.post("/emby/plugin/configure")
+def configure_emby_plugin(req: EmbyPluginConfigureRequest, db: Session = Depends(get_db)):
+    """
+    Push NeXroll configuration to the Emby plugin remotely.
+    Auto-generates an API key for the plugin and writes it into the plugin config
+    via Emby's /Plugins/{id}/Configuration API.
+    """
+    setting = db.query(models.Setting).first()
+    emby_url = getattr(setting, "emby_url", None) if setting else None
+
+    if not emby_url:
+        raise HTTPException(status_code=422, detail="Emby not connected")
+
+    emby_api_key = None
+    try:
+        emby_api_key = secure_store.get_emby_api_key()
+    except Exception:
+        pass
+
+    if not emby_api_key:
+        raise HTTPException(status_code=422, detail="No Emby API key found")
+
+    base = emby_url.rstrip("/")
+    headers = {"X-Emby-Token": emby_api_key}
+
+    try:
+        # Find the plugin on Emby
+        resp = requests.get(f"{base}/emby/Plugins", headers=headers, timeout=10)
+        if resp.status_code != 200:
+            raise HTTPException(status_code=502, detail=f"Failed to query Emby plugins (HTTP {resp.status_code})")
+
+        plugins = resp.json()
+        plugin = None
+        for p in plugins:
+            name = (p.get("Name") or p.get("name") or "").lower()
+            if "nexroll" in name:
+                plugin = p
+                break
+
+        if not plugin:
+            raise HTTPException(status_code=404, detail="NeXroll Intros plugin not found on Emby server. Please install the plugin DLL first.")
+
+        plugin_id = plugin.get("Id") or plugin.get("id") or NEXROLL_EMBY_PLUGIN_ID
+
+        # API key rotation: deactivate previous auto-generated key, create fresh one
+        existing_auto_keys = db.query(models.APIKey).filter(
+            models.APIKey.name == "Emby Plugin (Auto)",
+            models.APIKey.is_active == True
+        ).all()
+        for k in existing_auto_keys:
+            k.is_active = False
+        db.flush()
+
+        raw_key = _generate_api_key()
+        key_hash = _hash_api_key(raw_key)
+        key_prefix = _get_key_prefix(raw_key)
+
+        new_key = models.APIKey(
+            name="Emby Plugin (Auto)",
+            key_hash=key_hash,
+            key_prefix=key_prefix,
+            permissions="read",
+            description="Auto-generated for Emby NeXroll Intros plugin",
+            is_active=True,
+        )
+        db.add(new_key)
+        db.commit()
+
+        # Build the plugin configuration payload (matches PluginConfiguration.cs)
+        plugin_config = {
+            "NexrollUrl": req.nexroll_url.rstrip("/"),
+            "ApiKey": raw_key,
+            "PathPrefixFrom": req.path_prefix_from,
+            "PathPrefixTo": req.path_prefix_to,
+            "EnableForMovies": req.enable_for_movies,
+            "EnableForEpisodes": req.enable_for_episodes,
+            "MaxIntros": req.max_intros,
+            "TimeoutSeconds": req.timeout_seconds,
+        }
+
+        # Push config to Emby
+        push_resp = requests.post(
+            f"{base}/emby/Plugins/{plugin_id}/Configuration",
+            headers={**headers, "Content-Type": "application/json"},
+            json=plugin_config,
+            timeout=10,
+        )
+
+        if push_resp.status_code not in (200, 204):
+            raise HTTPException(status_code=500, detail=f"Failed to push configuration to Emby plugin (HTTP {push_resp.status_code})")
+
+        log_event('INFO', 'emby', f'Plugin configured remotely — URL: {req.nexroll_url}', source='configure_emby_plugin')
+
+        return {
+            "success": True,
+            "message": "Plugin configured successfully",
+            "config": {**plugin_config, "ApiKey": f"{key_prefix}..."},
+            "api_key_prefix": key_prefix,
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        log_event('WARNING', 'emby', f'Plugin configuration failed: {e}', source='configure_emby_plugin')
+        raise HTTPException(status_code=500, detail=str(e))
+
 
 # --- Jellyfin Category Apply/Remove (stub plan) ---
 @app.post("/categories/{category_id}/apply-to-jellyfin")

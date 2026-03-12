@@ -12,7 +12,7 @@ public class Plugin : BasePlugin<PluginConfiguration>, IHasWebPages
 {
     public override string Name => "NeXroll Intros";
 
-    public override Guid Id => new("a1b2c3d4-e5f6-7890-abcd-nexroll000002");
+    public override Guid Id => new("a1b2c3d4-e5f6-7890-abcd-ae0c01200002");
 
     public override string Description =>
         "Injects preroll intros from a NeXroll server before movies and episodes.";
@@ -35,6 +35,11 @@ public class Plugin : BasePlugin<PluginConfiguration>, IHasWebPages
             {
                 Name = Name,
                 EmbeddedResourcePath = $"{GetType().Namespace}.Configuration.configPage.html"
+            },
+            new PluginPageInfo
+            {
+                Name = Name + ".js",
+                EmbeddedResourcePath = $"{GetType().Namespace}.Configuration.configPage.js"
             }
         };
     }
