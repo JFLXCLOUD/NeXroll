@@ -19,7 +19,7 @@ A Jellyfin plugin that injects preroll intros from your **NeXroll** server befor
 
 ### Option 1: Pre-built DLL (Recommended)
 
-1. Download the latest `NeXroll.Jellyfin.dll` from the [Releases](https://github.com/YOUR_REPO/releases) page.
+1. Download the latest [`NeXroll.Jellyfin.dll`](https://github.com/JFLXCLOUD/NeXroll/raw/main/Plugins/NeXroll.Jellyfin.dll) from the repository.
 2. Create a folder in your Jellyfin plugins directory:
    ```
    Jellyfin/data/plugins/NeXroll Intros/

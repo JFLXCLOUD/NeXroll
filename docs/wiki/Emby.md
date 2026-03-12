@@ -43,7 +43,7 @@ If NeXroll is already connected to Emby, it can detect and configure the plugin 
 
 ### Option 2: Manual Install
 
-1. Download `NeXroll.Emby.dll` from the [Releases](https://github.com/JFLXCLOUD/NeXroll/releases) page
+1. Download [`NeXroll.Emby.dll`](https://github.com/JFLXCLOUD/NeXroll/raw/main/Plugins/NeXroll.Emby.dll) from the repository
 2. Copy the DLL to your Emby plugins directory:
    ```
    <Emby Data>/plugins/NeXroll.Emby.dll

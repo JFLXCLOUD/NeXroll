@@ -29,7 +29,9 @@ Emby does not publish its SDK on NuGet. You need to reference the server DLLs di
    dotnet publish -c Release -o ./publish
    ```
 
-4. Copy `publish/NeXroll.Emby.dll` to `Emby/plugins/NeXroll Intros/`.
+4. Copy `publish/NeXroll.Emby.dll` to Emby's `plugins/` folder.
+
+Alternatively, download the pre-built [`NeXroll.Emby.dll`](https://github.com/JFLXCLOUD/NeXroll/raw/main/Plugins/NeXroll.Emby.dll) from the repository.
 
 5. Restart Emby.
 

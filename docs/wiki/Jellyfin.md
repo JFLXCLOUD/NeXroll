@@ -43,7 +43,7 @@ If NeXroll is already connected to Jellyfin, it can detect and configure the plu
 
 ### Option 2: Pre-built DLL
 
-1. Download `NeXroll.Jellyfin.dll` from the [Releases](https://github.com/JFLXCLOUD/NeXroll/releases) page
+1. Download [`NeXroll.Jellyfin.dll`](https://github.com/JFLXCLOUD/NeXroll/raw/main/Plugins/NeXroll.Jellyfin.dll) from the repository
 2. Create a folder in your Jellyfin plugins directory:
    ```
    <Jellyfin Data>/plugins/NeXroll Intros/
