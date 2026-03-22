@@ -21,7 +21,7 @@ import {
     Youtube, Globe, Key, Rocket, FileUp, ArrowRight, HardDrive, ListChecks, Unlink, LinkIcon,
     Tv, ClipboardList, Info, RotateCw, LayoutDashboard, BarChart3, PieChart as PieChartIcon, Activity, TrendingUp, Server, Timer,
     Database, Archive, Shield, UserPlus, Users, LayoutGrid, List, Layers, Terminal, AlertCircle, Filter, BarChart2, HelpCircle,
-    Music, Wand2, GitCompare, Square
+    Music, Wand2, GitCompare, Square, Plug
   } from 'lucide-react';
 import { BarChart, Bar, XAxis, YAxis, ResponsiveContainer, Cell, Tooltip } from 'recharts';
 
@@ -26506,7 +26506,7 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
           )}
           {jellyfinServerInfo?.plugin_clients?.length > 0 && (
             <div style={{ marginTop: '0.5rem', padding: '0.75rem', borderRadius: '6px', backgroundColor: 'rgba(108, 92, 231, 0.06)', border: '1px solid rgba(108, 92, 231, 0.2)' }}>
-              <strong style={{ color: '#6c5ce7' }}>🔌 Plugin Clients:</strong>
+              <strong style={{ color: '#6c5ce7' }}><Plug size={14} style={{ verticalAlign: 'middle', marginRight: '0.25rem' }} /> Plugin Clients:</strong>
               {jellyfinServerInfo.plugin_clients.map((client, idx) => (
                 <div key={idx} style={{ marginTop: '0.25rem', fontSize: '0.9rem' }}>
                   {client.server_name || 'Jellyfin'} {client.server_version ? `(v${client.server_version})` : ''}
@@ -26530,13 +26530,13 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
       {/* NeXroll Intros Plugin — Auto-detect & Remote Configure */}
       <div className="card">
         <h2 style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-          <span style={{ fontSize: '1.25rem' }}>🔌</span> NeXroll Intros Plugin
+          <Plug size={20} style={{ color: 'var(--accent-color, #7c4dff)' }} /> NeXroll Intros Plugin
         </h2>
 
         {/* Plugin download link — always visible when connected */}
         {jellyfinStatus === 'Connected' && (
           <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '1rem', padding: '0.6rem 1rem', background: 'var(--bg-color, #1a1a2e)', border: '1px solid var(--border-color)', borderRadius: '8px', fontSize: '0.9rem' }}>
-            <span>📥</span>
+            <Download size={16} style={{ color: 'var(--accent-color, #7c4dff)' }} />
             <span>Download Plugin:</span>
             <a href="https://github.com/JFLXCLOUD/NeXroll/raw/main/Plugins/NeXroll.Jellyfin.dll" target="_blank" rel="noopener noreferrer" style={{ color: 'var(--accent-color, #7c4dff)', fontWeight: 600 }}>NeXroll.Jellyfin.dll</a>
           </div>
@@ -26795,7 +26795,7 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
           )}
           {embyServerInfo?.plugin_clients?.length > 0 && (
             <div style={{ marginTop: '0.5rem', padding: '0.75rem', borderRadius: '6px', backgroundColor: 'rgba(108, 92, 231, 0.06)', border: '1px solid rgba(108, 92, 231, 0.2)' }}>
-              <strong style={{ color: '#6c5ce7' }}>🔌 Plugin Clients:</strong>
+              <strong style={{ color: '#6c5ce7' }}><Plug size={14} style={{ verticalAlign: 'middle', marginRight: '0.25rem' }} /> Plugin Clients:</strong>
               {embyServerInfo.plugin_clients.map((client, idx) => (
                 <div key={idx} style={{ marginTop: '0.25rem', fontSize: '0.9rem' }}>
                   {client.server_name || 'Emby'} {client.server_version ? `(v${client.server_version})` : ''}
@@ -26819,13 +26819,13 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
       {/* NeXroll Intros Plugin — Auto-detect & Remote Configure */}
       <div className="card">
         <h2 style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-          <span style={{ fontSize: '1.25rem' }}>🔌</span> NeXroll Intros Plugin
+          <Plug size={20} style={{ color: 'var(--accent-color, #7c4dff)' }} /> NeXroll Intros Plugin
         </h2>
 
         {/* Plugin download link — always visible when connected */}
         {embyStatus === 'Connected' && (
           <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '1rem', padding: '0.6rem 1rem', background: 'var(--bg-color, #1a1a2e)', border: '1px solid var(--border-color)', borderRadius: '8px', fontSize: '0.9rem' }}>
-            <span>📥</span>
+            <Download size={16} style={{ color: 'var(--accent-color, #7c4dff)' }} />
             <span>Download Plugin:</span>
             <a href="https://github.com/JFLXCLOUD/NeXroll/raw/main/Plugins/NeXroll.Emby.dll" target="_blank" rel="noopener noreferrer" style={{ color: 'var(--accent-color, #7c4dff)', fontWeight: 600 }}>NeXroll.Emby.dll</a>
           </div>
