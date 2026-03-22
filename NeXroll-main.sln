@@ -1,0 +1,36 @@
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio Version 17
+VisualStudioVersion = 17.5.2.0
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "Plugins", "Plugins", "{07D57EEB-2F50-60C4-C011-FE4FA775C9A8}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "NeXroll.Emby", "Plugins\NeXroll.Emby\NeXroll.Emby.csproj", "{B2AED8CC-5EB9-D9B5-3D06-53991EBE4A05}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "NeXroll.Jellyfin", "Plugins\NeXroll.Jellyfin\NeXroll.Jellyfin.csproj", "{6378B345-EB93-5BFE-8D08-E4273EC29FF2}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|Any CPU = Debug|Any CPU
+		Release|Any CPU = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{B2AED8CC-5EB9-D9B5-3D06-53991EBE4A05}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{B2AED8CC-5EB9-D9B5-3D06-53991EBE4A05}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{B2AED8CC-5EB9-D9B5-3D06-53991EBE4A05}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{B2AED8CC-5EB9-D9B5-3D06-53991EBE4A05}.Release|Any CPU.Build.0 = Release|Any CPU
+		{6378B345-EB93-5BFE-8D08-E4273EC29FF2}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{6378B345-EB93-5BFE-8D08-E4273EC29FF2}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{6378B345-EB93-5BFE-8D08-E4273EC29FF2}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{6378B345-EB93-5BFE-8D08-E4273EC29FF2}.Release|Any CPU.Build.0 = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(SolutionProperties) = preSolution
+		HideSolutionNode = FALSE
+	EndGlobalSection
+	GlobalSection(NestedProjects) = preSolution
+		{B2AED8CC-5EB9-D9B5-3D06-53991EBE4A05} = {07D57EEB-2F50-60C4-C011-FE4FA775C9A8}
+		{6378B345-EB93-5BFE-8D08-E4273EC29FF2} = {07D57EEB-2F50-60C4-C011-FE4FA775C9A8}
+	EndGlobalSection
+	GlobalSection(ExtensibilityGlobals) = postSolution
+		SolutionGuid = {7E610623-22B0-40EF-915D-232E25D30F73}
+	EndGlobalSection
+EndGlobal

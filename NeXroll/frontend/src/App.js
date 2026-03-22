@@ -28658,6 +28658,9 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
         // Refresh downloaded IDs to update the UI
         await loadDownloadedCommunityIds();
         
+        // Refresh preroll library so the new preroll + thumbnail appears
+        if (typeof fetchData === 'function') await fetchData();
+        
         // Reset form
         setCommunityShowAddToCategory(prev => ({ ...prev, [preroll.id]: false }));
         setCommunitySelectedCategory(null);

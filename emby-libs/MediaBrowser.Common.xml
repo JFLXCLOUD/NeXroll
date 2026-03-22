@@ -1,0 +1,927 @@
+<?xml version="1.0"?>
+<doc>
+    <assembly>
+        <name>MediaBrowser.Common</name>
+    </assembly>
+    <members>
+        <member name="P:MediaBrowser.Common.Configuration.ConfigurationUpdateEventArgs.Key">
+            <summary>
+            Gets or sets the key.
+            </summary>
+            <value>The key.</value>
+        </member>
+        <member name="P:MediaBrowser.Common.Configuration.ConfigurationUpdateEventArgs.NewConfiguration">
+            <summary>
+            Gets or sets the new configuration.
+            </summary>
+            <value>The new configuration.</value>
+        </member>
+        <member name="T:MediaBrowser.Common.Configuration.IApplicationPaths">
+            <summary>
+            Interface IApplicationPaths
+            </summary>
+        </member>
+        <member name="P:MediaBrowser.Common.Configuration.IApplicationPaths.ProgramDataPath">
+            <summary>
+            Gets the path to the program data folder
+            </summary>
+            <value>The program data path.</value>
+        </member>
+        <member name="P:MediaBrowser.Common.Configuration.IApplicationPaths.ProgramSystemPath">
+            <summary>
+            Gets the path to the program system folder
+            </summary>
+            <value>The program data path.</value>
+        </member>
+        <member name="P:MediaBrowser.Common.Configuration.IApplicationPaths.DataPath">
+            <summary>
+            Gets the folder path to the data directory
+            </summary>
+            <value>The data directory.</value>
+        </member>
+        <member name="M:MediaBrowser.Common.Configuration.IApplicationPaths.GetImageCachePath">
+            <summary>
+            Gets the image cache path.
+            </summary>
+            <value>The image cache path.</value>
+        </member>
+        <member name="P:MediaBrowser.Common.Configuration.IApplicationPaths.ImageCachePath">
+            <summary>
+            Gets the path to the image cache.
+            </summary>
+            <value>The image cache path.</value>
+        </member>
+        <member name="P:MediaBrowser.Common.Configuration.IApplicationPaths.PluginsPath">
+            <summary>
+            Gets the path to the plugin directory
+            </summary>
+            <value>The plugins path.</value>
+        </member>
+        <member name="P:MediaBrowser.Common.Configuration.IApplicationPaths.PluginConfigurationsPath">
+            <summary>
+            Gets the path to the plugin configurations directory
+            </summary>
+            <value>The plugin configurations path.</value>
+        </member>
+        <member name="P:MediaBrowser.Common.Configuration.IApplicationPaths.TempUpdatePath">
+            <summary>
+            Gets the path to where temporary update files will be stored
+            </summary>
+            <value>The plugin configurations path.</value>
+        </member>
+        <member name="P:MediaBrowser.Common.Configuration.IApplicationPaths.LogDirectoryPath">
+            <summary>
+            Gets the path to the log directory
+            </summary>
+            <value>The log directory path.</value>
+        </member>
+        <member name="P:MediaBrowser.Common.Configuration.IApplicationPaths.ConfigurationDirectoryPath">
+            <summary>
+            Gets the path to the application configuration root directory
+            </summary>
+            <value>The configuration directory path.</value>
+        </member>
+        <member name="P:MediaBrowser.Common.Configuration.IApplicationPaths.SystemConfigurationFilePath">
+            <summary>
+            Gets the path to the system configuration file
+            </summary>
+            <value>The system configuration file path.</value>
+        </member>
+        <member name="P:MediaBrowser.Common.Configuration.IApplicationPaths.CachePath">
+            <summary>
+            Gets the folder path to the cache directory
+            </summary>
+            <value>The cache directory.</value>
+        </member>
+        <member name="P:MediaBrowser.Common.Configuration.IApplicationPaths.TempDirectory">
+            <summary>
+            Gets the folder path to the temp directory within the cache folder
+            </summary>
+            <value>The temp directory.</value>
+        </member>
+        <member name="E:MediaBrowser.Common.Configuration.IConfigurationManager.NamedConfigurationUpdating">
+            <summary>
+            Occurs when [configuration updating].
+            </summary>
+        </member>
+        <member name="E:MediaBrowser.Common.Configuration.IConfigurationManager.ConfigurationUpdated">
+            <summary>
+            Occurs when [configuration updated].
+            </summary>
+        </member>
+        <member name="E:MediaBrowser.Common.Configuration.IConfigurationManager.NamedConfigurationUpdated">
+            <summary>
+            Occurs when [named configuration updated].
+            </summary>
+        </member>
+        <member name="P:MediaBrowser.Common.Configuration.IConfigurationManager.CommonApplicationPaths">
+            <summary>
+            Gets or sets the application paths.
+            </summary>
+            <value>The application paths.</value>
+        </member>
+        <member name="P:MediaBrowser.Common.Configuration.IConfigurationManager.CommonConfiguration">
+            <summary>
+            Gets the configuration.
+            </summary>
+            <value>The configuration.</value>
+        </member>
+        <member name="M:MediaBrowser.Common.Configuration.IConfigurationManager.SaveConfiguration">
+            <summary>
+            Saves the configuration.
+            </summary>
+        </member>
+        <member name="M:MediaBrowser.Common.Configuration.IConfigurationManager.ReplaceConfiguration(MediaBrowser.Model.Configuration.BaseApplicationConfiguration)">
+            <summary>
+            Replaces the configuration.
+            </summary>
+            <param name="newConfiguration">The new configuration.</param>
+        </member>
+        <member name="M:MediaBrowser.Common.Configuration.IConfigurationManager.GetConfiguration(System.String)">
+            <summary>
+            Gets the configuration.
+            </summary>
+            <param name="key">The key.</param>
+            <returns>System.Object.</returns>
+        </member>
+        <member name="M:MediaBrowser.Common.Configuration.IConfigurationManager.GetConfigurationType(System.String)">
+            <summary>
+            Gets the type of the configuration.
+            </summary>
+            <param name="key">The key.</param>
+            <returns>Type.</returns>
+        </member>
+        <member name="M:MediaBrowser.Common.Configuration.IConfigurationManager.SaveConfiguration(System.String,System.Object)">
+            <summary>
+            Saves the configuration.
+            </summary>
+            <param name="key">The key.</param>
+            <param name="configuration">The configuration.</param>
+        </member>
+        <member name="M:MediaBrowser.Common.Configuration.IConfigurationManager.AddParts(System.Collections.Generic.IEnumerable{MediaBrowser.Common.Configuration.IConfigurationFactory})">
+            <summary>
+            Adds the parts.
+            </summary>
+            <param name="factories">The factories.</param>
+        </member>
+        <member name="T:MediaBrowser.Common.Events.EventHelper">
+            <summary>
+            Class EventHelper
+            </summary>
+        </member>
+        <member name="M:MediaBrowser.Common.Events.EventHelper.QueueEventIfNotNull(System.EventHandler,System.Object,System.EventArgs,MediaBrowser.Model.Logging.ILogger)">
+            <summary>
+            Fires the event.
+            </summary>
+            <param name="handler">The handler.</param>
+            <param name="sender">The sender.</param>
+            <param name="args">The <see cref="T:System.EventArgs" /> instance containing the event data.</param>
+            <param name="logger">The logger.</param>
+        </member>
+        <member name="M:MediaBrowser.Common.Events.EventHelper.QueueEventIfNotNull``1(System.EventHandler{``0},System.Object,``0,MediaBrowser.Model.Logging.ILogger)">
+            <summary>
+            Queues the event.
+            </summary>
+            <typeparam name="T"></typeparam>
+            <param name="handler">The handler.</param>
+            <param name="sender">The sender.</param>
+            <param name="args">The args.</param>
+            <param name="logger">The logger.</param>
+        </member>
+        <member name="M:MediaBrowser.Common.Events.EventHelper.FireEventIfNotNull(System.EventHandler,System.Object,System.EventArgs,MediaBrowser.Model.Logging.ILogger)">
+            <summary>
+            Fires the event.
+            </summary>
+            <param name="handler">The handler.</param>
+            <param name="sender">The sender.</param>
+            <param name="args">The <see cref="T:System.EventArgs" /> instance containing the event data.</param>
+            <param name="logger">The logger.</param>
+        </member>
+        <member name="M:MediaBrowser.Common.Events.EventHelper.FireEventIfNotNull``1(System.EventHandler{``0},System.Object,``0,MediaBrowser.Model.Logging.ILogger)">
+            <summary>
+            Fires the event.
+            </summary>
+            <typeparam name="T"></typeparam>
+            <param name="handler">The handler.</param>
+            <param name="sender">The sender.</param>
+            <param name="args">The args.</param>
+            <param name="logger">The logger.</param>
+        </member>
+        <member name="T:MediaBrowser.Common.Extensions.BaseExtensions">
+            <summary>
+            Class BaseExtensions
+            </summary>
+        </member>
+        <member name="M:MediaBrowser.Common.Extensions.BaseExtensions.StripHtml(System.String)">
+            <summary>
+            Strips the HTML.
+            </summary>
+            <param name="htmlString">The HTML string.</param>
+            <returns>System.String.</returns>
+        </member>
+        <member name="M:MediaBrowser.Common.Extensions.BaseExtensions.GetMD5(System.String)">
+            <summary>
+            Gets the M d5.
+            </summary>
+            <param name="str">The STR.</param>
+            <returns>Guid.</returns>
+        </member>
+        <member name="T:MediaBrowser.Common.Extensions.ResourceNotFoundException">
+            <summary>
+            Class ResourceNotFoundException
+            </summary>
+        </member>
+        <member name="M:MediaBrowser.Common.Extensions.ResourceNotFoundException.#ctor">
+            <summary>
+            Initializes a new instance of the <see cref="T:MediaBrowser.Common.Extensions.ResourceNotFoundException" /> class.
+            </summary>
+        </member>
+        <member name="M:MediaBrowser.Common.Extensions.ResourceNotFoundException.#ctor(System.String)">
+            <summary>
+            Initializes a new instance of the <see cref="T:MediaBrowser.Common.Extensions.ResourceNotFoundException" /> class.
+            </summary>
+            <param name="message">The message.</param>
+        </member>
+        <member name="M:MediaBrowser.Common.Extensions.ServiceUnavailableException.#ctor">
+            <summary>
+            Initializes a new instance of the <see cref="T:MediaBrowser.Common.Extensions.ServiceUnavailableException" /> class.
+            </summary>
+        </member>
+        <member name="M:MediaBrowser.Common.Extensions.ServiceUnavailableException.#ctor(System.String)">
+            <summary>
+            Initializes a new instance of the <see cref="T:MediaBrowser.Common.Extensions.ServiceUnavailableException" /> class.
+            </summary>
+            <param name="message">The message.</param>
+        </member>
+        <member name="M:MediaBrowser.Common.Extensions.RangeRequestOutOfRangeException.#ctor">
+            <summary>
+            Initializes a new instance of the <see cref="T:MediaBrowser.Common.Extensions.RangeRequestOutOfRangeException" /> class.
+            </summary>
+        </member>
+        <member name="M:MediaBrowser.Common.Extensions.RangeRequestOutOfRangeException.#ctor(System.String)">
+            <summary>
+            Initializes a new instance of the <see cref="T:MediaBrowser.Common.Extensions.RangeRequestOutOfRangeException" /> class.
+            </summary>
+            <param name="message">The message.</param>
+        </member>
+        <member name="M:MediaBrowser.Common.Extensions.RateLimitExceededException.#ctor">
+            <summary>
+            Initializes a new instance of the <see cref="T:MediaBrowser.Common.Extensions.RateLimitExceededException" /> class.
+            </summary>
+        </member>
+        <member name="M:MediaBrowser.Common.Extensions.RateLimitExceededException.#ctor(System.String)">
+            <summary>
+            Initializes a new instance of the <see cref="T:MediaBrowser.Common.Extensions.RateLimitExceededException" /> class.
+            </summary>
+            <param name="message">The message.</param>
+        </member>
+        <member name="T:MediaBrowser.Common.IApplicationHost">
+            <summary>
+            An interface to be implemented by the applications hosting a kernel
+            </summary>
+        </member>
+        <member name="P:MediaBrowser.Common.IApplicationHost.OperatingSystemDisplayName">
+            <summary>
+            Gets the display name of the operating system.
+            </summary>
+            <value>The display name of the operating system.</value>
+        </member>
+        <member name="P:MediaBrowser.Common.IApplicationHost.Name">
+            <summary>
+            Gets the name.
+            </summary>
+            <value>The name.</value>
+        </member>
+        <member name="P:MediaBrowser.Common.IApplicationHost.SystemId">
+            <summary>
+            Gets the device identifier.
+            </summary>
+            <value>The device identifier.</value>
+        </member>
+        <member name="E:MediaBrowser.Common.IApplicationHost.ApplicationUpdated">
+            <summary>
+            Occurs when [application updated].
+            </summary>
+        </member>
+        <member name="P:MediaBrowser.Common.IApplicationHost.HasPendingRestart">
+            <summary>
+            Gets or sets a value indicating whether this instance has pending kernel reload.
+            </summary>
+            <value><c>true</c> if this instance has pending kernel reload; otherwise, <c>false</c>.</value>
+        </member>
+        <member name="P:MediaBrowser.Common.IApplicationHost.CanSelfRestart">
+            <summary>
+            Gets a value indicating whether this instance can self restart.
+            </summary>
+            <value><c>true</c> if this instance can self restart; otherwise, <c>false</c>.</value>
+        </member>
+        <member name="E:MediaBrowser.Common.IApplicationHost.HasPendingRestartChanged">
+            <summary>
+            Occurs when [has pending restart changed].
+            </summary>
+        </member>
+        <member name="M:MediaBrowser.Common.IApplicationHost.NotifyPendingRestart">
+            <summary>
+            Notifies the pending restart.
+            </summary>
+        </member>
+        <member name="M:MediaBrowser.Common.IApplicationHost.Restart">
+            <summary>
+            Restarts this instance.
+            </summary>
+        </member>
+        <member name="P:MediaBrowser.Common.IApplicationHost.ApplicationVersion">
+            <summary>
+            Gets the application version.
+            </summary>
+            <value>The application version.</value>
+        </member>
+        <member name="P:MediaBrowser.Common.IApplicationHost.CanSelfUpdate">
+            <summary>
+            Gets or sets a value indicating whether this instance can self update.
+            </summary>
+            <value><c>true</c> if this instance can self update; otherwise, <c>false</c>.</value>
+        </member>
+        <member name="M:MediaBrowser.Common.IApplicationHost.GetExports``1(System.Boolean)">
+            <summary>
+            Gets the exports.
+            </summary>
+            <typeparam name="T"></typeparam>
+            <param name="manageLiftime">if set to <c>true</c> [manage liftime].</param>
+            <returns>IEnumerable{``0}.</returns>
+        </member>
+        <member name="M:MediaBrowser.Common.IApplicationHost.CheckForApplicationUpdate(System.Threading.CancellationToken,System.Boolean,System.IProgress{System.Double})">
+            <summary>
+            Checks for update.
+            </summary>
+            <returns>Task{CheckForUpdateResult}.</returns>
+        </member>
+        <member name="M:MediaBrowser.Common.IApplicationHost.UpdateApplication(MediaBrowser.Model.Updates.PackageVersionInfo,System.Threading.CancellationToken,System.IProgress{System.Double})">
+            <summary>
+            Updates the application.
+            </summary>
+            <returns>Task.</returns>
+        </member>
+        <member name="M:MediaBrowser.Common.IApplicationHost.Resolve``1">
+            <summary>
+            Resolves this instance.
+            </summary>
+            <typeparam name="T"></typeparam>
+            <returns>``0.</returns>
+        </member>
+        <member name="M:MediaBrowser.Common.IApplicationHost.TryResolve``1">
+            <summary>
+            Resolves this instance.
+            </summary>
+            <typeparam name="T"></typeparam>
+            <returns>``0.</returns>
+        </member>
+        <member name="M:MediaBrowser.Common.IApplicationHost.Shutdown">
+            <summary>
+            Shuts down.
+            </summary>
+        </member>
+        <member name="P:MediaBrowser.Common.IApplicationHost.Plugins">
+            <summary>
+            Gets the plugins.
+            </summary>
+            <value>The plugins.</value>
+        </member>
+        <member name="M:MediaBrowser.Common.IApplicationHost.RemovePlugin(MediaBrowser.Common.Plugins.IPlugin)">
+            <summary>
+            Removes the plugin.
+            </summary>
+            <param name="plugin">The plugin.</param>
+        </member>
+        <member name="M:MediaBrowser.Common.IApplicationHost.Init">
+            <summary>
+            Inits this instance.
+            </summary>
+        </member>
+        <member name="M:MediaBrowser.Common.IApplicationHost.CreateInstance(System.Type)">
+            <summary>
+            Creates the instance.
+            </summary>
+            <param name="type">The type.</param>
+            <returns>System.Object.</returns>
+        </member>
+        <member name="T:MediaBrowser.Common.Net.HttpRequestOptions">
+            <summary>
+            Class HttpRequestOptions
+            </summary>
+        </member>
+        <member name="P:MediaBrowser.Common.Net.HttpRequestOptions.Url">
+            <summary>
+            Gets or sets the URL.
+            </summary>
+            <value>The URL.</value>
+        </member>
+        <member name="P:MediaBrowser.Common.Net.HttpRequestOptions.AcceptHeader">
+            <summary>
+            Gets or sets the accept header.
+            </summary>
+            <value>The accept header.</value>
+        </member>
+        <member name="P:MediaBrowser.Common.Net.HttpRequestOptions.CancellationToken">
+            <summary>
+            Gets or sets the cancellation token.
+            </summary>
+            <value>The cancellation token.</value>
+        </member>
+        <member name="P:MediaBrowser.Common.Net.HttpRequestOptions.UserAgent">
+            <summary>
+            Gets or sets the user agent.
+            </summary>
+            <value>The user agent.</value>
+        </member>
+        <member name="P:MediaBrowser.Common.Net.HttpRequestOptions.Referer">
+            <summary>
+            Gets or sets the referrer.
+            </summary>
+            <value>The referrer.</value>
+        </member>
+        <member name="P:MediaBrowser.Common.Net.HttpRequestOptions.Host">
+            <summary>
+            Gets or sets the host.
+            </summary>
+            <value>The host.</value>
+        </member>
+        <member name="P:MediaBrowser.Common.Net.HttpRequestOptions.Progress">
+            <summary>
+            Gets or sets the progress.
+            </summary>
+            <value>The progress.</value>
+        </member>
+        <member name="P:MediaBrowser.Common.Net.HttpRequestOptions.EnableHttpCompression">
+            <summary>
+            Gets or sets a value indicating whether [enable HTTP compression].
+            </summary>
+            <value><c>true</c> if [enable HTTP compression]; otherwise, <c>false</c>.</value>
+        </member>
+        <member name="T:MediaBrowser.Common.Net.HttpResponseInfo">
+            <summary>
+            Class HttpResponseInfo
+            </summary>
+        </member>
+        <member name="P:MediaBrowser.Common.Net.HttpResponseInfo.ContentType">
+            <summary>
+            Gets or sets the type of the content.
+            </summary>
+            <value>The type of the content.</value>
+        </member>
+        <member name="P:MediaBrowser.Common.Net.HttpResponseInfo.ResponseUrl">
+            <summary>
+            Gets or sets the response URL.
+            </summary>
+            <value>The response URL.</value>
+        </member>
+        <member name="P:MediaBrowser.Common.Net.HttpResponseInfo.Content">
+            <summary>
+            Gets or sets the content.
+            </summary>
+            <value>The content.</value>
+        </member>
+        <member name="P:MediaBrowser.Common.Net.HttpResponseInfo.StatusCode">
+            <summary>
+            Gets or sets the status code.
+            </summary>
+            <value>The status code.</value>
+        </member>
+        <member name="P:MediaBrowser.Common.Net.HttpResponseInfo.TempFilePath">
+            <summary>
+            Gets or sets the temp file path.
+            </summary>
+            <value>The temp file path.</value>
+        </member>
+        <member name="P:MediaBrowser.Common.Net.HttpResponseInfo.ContentLength">
+            <summary>
+            Gets or sets the length of the content.
+            </summary>
+            <value>The length of the content.</value>
+        </member>
+        <member name="P:MediaBrowser.Common.Net.HttpResponseInfo.Headers">
+            <summary>
+            Gets or sets the headers.
+            </summary>
+            <value>The headers.</value>
+        </member>
+        <member name="T:MediaBrowser.Common.Net.IHttpClient">
+            <summary>
+            Interface IHttpClient
+            </summary>
+        </member>
+        <member name="M:MediaBrowser.Common.Net.IHttpClient.GetResponse(MediaBrowser.Common.Net.HttpRequestOptions)">
+            <summary>
+            Gets the response.
+            </summary>
+            <param name="options">The options.</param>
+            <returns>Task{HttpResponseInfo}.</returns>
+        </member>
+        <member name="M:MediaBrowser.Common.Net.IHttpClient.Get(MediaBrowser.Common.Net.HttpRequestOptions)">
+            <summary>
+            Gets the specified options.
+            </summary>
+            <param name="options">The options.</param>
+            <returns>Task{Stream}.</returns>
+        </member>
+        <member name="M:MediaBrowser.Common.Net.IHttpClient.SendAsync(MediaBrowser.Common.Net.HttpRequestOptions,System.String)">
+            <summary>
+            Sends the asynchronous.
+            </summary>
+            <param name="options">The options.</param>
+            <param name="httpMethod">The HTTP method.</param>
+            <returns>Task{HttpResponseInfo}.</returns>
+        </member>
+        <member name="M:MediaBrowser.Common.Net.IHttpClient.Post(MediaBrowser.Common.Net.HttpRequestOptions)">
+            <summary>
+            Posts the specified options.
+            </summary>
+            <param name="options">The options.</param>
+            <returns>Task{HttpResponseInfo}.</returns>
+        </member>
+        <member name="M:MediaBrowser.Common.Net.IHttpClient.GetTempFile(MediaBrowser.Common.Net.HttpRequestOptions)">
+            <summary>
+            Downloads the contents of a given url into a temporary location
+            </summary>
+            <param name="options">The options.</param>
+            <returns>Task{System.String}.</returns>
+            <exception cref="T:System.ArgumentNullException">progress</exception>
+            <exception cref="T:MediaBrowser.Model.Net.HttpException"></exception>
+        </member>
+        <member name="M:MediaBrowser.Common.Net.IHttpClient.GetTempFileResponse(MediaBrowser.Common.Net.HttpRequestOptions)">
+            <summary>
+            Gets the temporary file response.
+            </summary>
+            <param name="options">The options.</param>
+            <returns>Task{HttpResponseInfo}.</returns>
+        </member>
+        <member name="M:MediaBrowser.Common.Net.INetworkManager.GetRandomUnusedTcpPort">
+            <summary>
+            Gets a random port number that is currently available
+            </summary>
+            <returns>System.Int32.</returns>
+        </member>
+        <member name="M:MediaBrowser.Common.Net.INetworkManager.GetMacAddresses">
+            <summary>
+            Returns MAC Address from first Network Card in Computer
+            </summary>
+            <returns>[string] MAC Address</returns>
+        </member>
+        <member name="M:MediaBrowser.Common.Net.INetworkManager.IsInPrivateAddressSpace(System.ReadOnlySpan{System.Char})">
+            <summary>
+            Determines whether [is in private address space] [the specified endpoint].
+            </summary>
+            <param name="endpoint">The endpoint.</param>
+            <returns><c>true</c> if [is in private address space] [the specified endpoint]; otherwise, <c>false</c>.</returns>
+        </member>
+        <member name="M:MediaBrowser.Common.Net.INetworkManager.GetNetworkShares(System.String)">
+            <summary>
+            Gets the network shares.
+            </summary>
+            <param name="path">The path.</param>
+            <returns>IEnumerable{NetworkShare}.</returns>
+        </member>
+        <member name="M:MediaBrowser.Common.Net.INetworkManager.GetNetworkDevices(System.Threading.CancellationToken)">
+            <summary>
+            Gets available devices within the domain
+            </summary>
+            <returns>PC's in the Domain</returns>
+        </member>
+        <member name="M:MediaBrowser.Common.Net.INetworkManager.IsInLocalNetwork(System.String,System.Threading.CancellationToken)">
+            <summary>Determines whether [is in local network] [the specified endpoint].</summary>
+            <param name="endpoint">The endpoint.</param>
+            <param name="cancellationToken">The cancellation token.</param>
+            <returns><c>true</c> if [is in local network] [the specified endpoint]; otherwise, <c>false</c>.</returns>
+        </member>
+        <member name="P:MediaBrowser.Common.Plugins.BasePlugin.Name">
+            <summary>
+            Gets the name of the plugin
+            </summary>
+            <value>The name.</value>
+        </member>
+        <member name="P:MediaBrowser.Common.Plugins.BasePlugin.Description">
+            <summary>
+            Gets the description.
+            </summary>
+            <value>The description.</value>
+        </member>
+        <member name="P:MediaBrowser.Common.Plugins.BasePlugin.Id">
+            <summary>
+            Gets the unique id.
+            </summary>
+            <value>The unique id.</value>
+        </member>
+        <member name="P:MediaBrowser.Common.Plugins.BasePlugin.Version">
+            <summary>
+            Gets the plugin version
+            </summary>
+            <value>The version.</value>
+        </member>
+        <member name="P:MediaBrowser.Common.Plugins.BasePlugin.AssemblyFilePath">
+            <summary>
+            Gets the path to the assembly file
+            </summary>
+            <value>The assembly file path.</value>
+        </member>
+        <member name="M:MediaBrowser.Common.Plugins.BasePlugin.GetPluginInfo">
+            <summary>
+            Gets the plugin info.
+            </summary>
+            <returns>PluginInfo.</returns>
+        </member>
+        <member name="M:MediaBrowser.Common.Plugins.BasePlugin.OnUninstalling">
+            <summary>
+            Called when just before the plugin is uninstalled from the server.
+            </summary>
+        </member>
+        <member name="P:MediaBrowser.Common.Plugins.BasePlugin.DataFolderPath">
+            <summary>
+            Gets the full path to the data folder, where the plugin can store any miscellaneous files needed
+            </summary>
+            <value>The data folder path.</value>
+        </member>
+        <member name="T:MediaBrowser.Common.Plugins.BasePlugin`1">
+            <summary>
+            Provides a common base class for all plugins
+            </summary>
+            <typeparam name="TConfigurationType">The type of the T configuration type.</typeparam>
+        </member>
+        <member name="P:MediaBrowser.Common.Plugins.BasePlugin`1.ApplicationPaths">
+            <summary>
+            Gets the application paths.
+            </summary>
+            <value>The application paths.</value>
+        </member>
+        <member name="P:MediaBrowser.Common.Plugins.BasePlugin`1.XmlSerializer">
+            <summary>
+            Gets the XML serializer.
+            </summary>
+            <value>The XML serializer.</value>
+        </member>
+        <member name="P:MediaBrowser.Common.Plugins.BasePlugin`1.IsFirstRun">
+            <summary>
+            Gets a value indicating whether this instance is first run.
+            </summary>
+            <value><c>true</c> if this instance is first run; otherwise, <c>false</c>.</value>
+        </member>
+        <member name="P:MediaBrowser.Common.Plugins.BasePlugin`1.ConfigurationType">
+            <summary>
+            Gets the type of configuration this plugin uses
+            </summary>
+            <value>The type of the configuration.</value>
+        </member>
+        <member name="P:MediaBrowser.Common.Plugins.BasePlugin`1.AssemblyFileName">
+            <summary>
+            Gets the name the assembly file
+            </summary>
+            <value>The name of the assembly file.</value>
+        </member>
+        <member name="F:MediaBrowser.Common.Plugins.BasePlugin`1._configurationSyncLock">
+            <summary>
+            The _configuration sync lock
+            </summary>
+        </member>
+        <member name="F:MediaBrowser.Common.Plugins.BasePlugin`1._configuration">
+            <summary>
+            The _configuration
+            </summary>
+        </member>
+        <member name="P:MediaBrowser.Common.Plugins.BasePlugin`1.Configuration">
+            <summary>
+            Gets the plugin's configuration
+            </summary>
+            <value>The configuration.</value>
+        </member>
+        <member name="P:MediaBrowser.Common.Plugins.BasePlugin`1.ConfigurationFileName">
+            <summary>
+            Gets the name of the configuration file. Subclasses should override
+            </summary>
+            <value>The name of the configuration file.</value>
+        </member>
+        <member name="P:MediaBrowser.Common.Plugins.BasePlugin`1.ConfigurationFilePath">
+            <summary>
+            Gets the full path to the configuration file
+            </summary>
+            <value>The configuration file path.</value>
+        </member>
+        <member name="M:MediaBrowser.Common.Plugins.BasePlugin`1.#ctor(MediaBrowser.Common.Configuration.IApplicationPaths,MediaBrowser.Model.Serialization.IXmlSerializer)">
+            <summary>
+            Initializes a new instance of the <see cref="T:MediaBrowser.Common.Plugins.BasePlugin`1" /> class.
+            </summary>
+            <param name="applicationPaths">The application paths.</param>
+            <param name="xmlSerializer">The XML serializer.</param>
+        </member>
+        <member name="F:MediaBrowser.Common.Plugins.BasePlugin`1._configurationSaveLock">
+            <summary>
+            The _save lock
+            </summary>
+        </member>
+        <member name="M:MediaBrowser.Common.Plugins.BasePlugin`1.SaveConfiguration">
+            <summary>
+            Saves the current configuration to the file system
+            </summary>
+        </member>
+        <member name="M:MediaBrowser.Common.Plugins.BasePlugin`1.UpdateConfiguration(MediaBrowser.Model.Plugins.BasePluginConfiguration)">
+            <summary>
+            Completely overwrites the current configuration with a new copy
+            Returns true or false indicating success or failure
+            </summary>
+            <param name="configuration">The configuration.</param>
+            <exception cref="T:System.ArgumentNullException">configuration</exception>
+        </member>
+        <member name="P:MediaBrowser.Common.Plugins.BasePlugin`1.MediaBrowser#Common#Plugins#IHasPluginConfiguration#Configuration">
+            <summary>
+            Gets the plugin's configuration
+            </summary>
+            <value>The configuration.</value>
+        </member>
+        <member name="T:MediaBrowser.Common.Plugins.IPlugin">
+            <summary>
+            Interface IPlugin
+            </summary>
+        </member>
+        <member name="P:MediaBrowser.Common.Plugins.IPlugin.Name">
+            <summary>
+            Gets the name of the plugin
+            </summary>
+            <value>The name.</value>
+        </member>
+        <member name="P:MediaBrowser.Common.Plugins.IPlugin.Description">
+            <summary>
+            Gets the description.
+            </summary>
+            <value>The description.</value>
+        </member>
+        <member name="P:MediaBrowser.Common.Plugins.IPlugin.Id">
+            <summary>
+            Gets the unique id.
+            </summary>
+            <value>The unique id.</value>
+        </member>
+        <member name="P:MediaBrowser.Common.Plugins.IPlugin.Version">
+            <summary>
+            Gets the plugin version
+            </summary>
+            <value>The version.</value>
+        </member>
+        <member name="P:MediaBrowser.Common.Plugins.IPlugin.AssemblyFilePath">
+            <summary>
+            Gets the path to the assembly file
+            </summary>
+            <value>The assembly file path.</value>
+        </member>
+        <member name="P:MediaBrowser.Common.Plugins.IPlugin.DataFolderPath">
+            <summary>
+            Gets the full path to the data folder, where the plugin can store any miscellaneous files needed
+            </summary>
+            <value>The data folder path.</value>
+        </member>
+        <member name="M:MediaBrowser.Common.Plugins.IPlugin.GetPluginInfo">
+            <summary>
+            Gets the plugin info.
+            </summary>
+            <returns>PluginInfo.</returns>
+        </member>
+        <member name="M:MediaBrowser.Common.Plugins.IPlugin.OnUninstalling">
+            <summary>
+            Called when just before the plugin is uninstalled from the server.
+            </summary>
+        </member>
+        <member name="P:MediaBrowser.Common.Plugins.IHasPluginConfiguration.ConfigurationType">
+            <summary>
+            Gets the type of configuration this plugin uses
+            </summary>
+            <value>The type of the configuration.</value>
+        </member>
+        <member name="M:MediaBrowser.Common.Plugins.IHasPluginConfiguration.UpdateConfiguration(MediaBrowser.Model.Plugins.BasePluginConfiguration)">
+            <summary>
+            Completely overwrites the current configuration with a new copy
+            Returns true or false indicating success or failure
+            </summary>
+            <param name="configuration">The configuration.</param>
+            <exception cref="T:System.ArgumentNullException">configuration</exception>
+        </member>
+        <member name="P:MediaBrowser.Common.Plugins.IHasPluginConfiguration.Configuration">
+            <summary>
+            Gets the plugin's configuration
+            </summary>
+            <value>The configuration.</value>
+        </member>
+        <member name="T:MediaBrowser.Common.Progress.ActionableProgress`1">
+            <summary>
+            Class ActionableProgress
+            </summary>
+            <typeparam name="T"></typeparam>
+        </member>
+        <member name="F:MediaBrowser.Common.Progress.ActionableProgress`1._action">
+            <summary>
+            The _actions
+            </summary>
+        </member>
+        <member name="M:MediaBrowser.Common.Progress.ActionableProgress`1.RegisterAction(System.Action{`0})">
+            <summary>
+            Registers the action.
+            </summary>
+            <param name="action">The action.</param>
+        </member>
+        <member name="M:MediaBrowser.Common.Security.IRequiresRegistration.LoadRegistrationInfoAsync">
+            <summary>
+            Load all registration information required for this entity.
+            Your class should re-load all MBRegistrationRecords when this is called even if they were
+            previously loaded.
+            </summary>
+            <returns></returns>
+        </member>
+        <member name="M:MediaBrowser.Common.Security.ISecurityManager.IsSupporter(System.Threading.CancellationToken)">
+            <summary>
+            Gets a value indicating whether this instance is MB supporter.
+            </summary>
+            <value><c>true</c> if this instance is MB supporter; otherwise, <c>false</c>.</value>
+        </member>
+        <member name="P:MediaBrowser.Common.Security.ISecurityManager.SupporterKey">
+            <summary>
+            Gets or sets the supporter key.
+            </summary>
+            <value>The supporter key.</value>
+        </member>
+        <member name="M:MediaBrowser.Common.Security.ISecurityManager.GetRegistrationStatus(System.String,System.Threading.CancellationToken)">
+            <summary>
+            Gets the registration status. Overload to support existing plug-ins.
+            </summary>
+        </member>
+        <member name="M:MediaBrowser.Common.Security.ISecurityManager.RegisterAppStoreSale(System.String,System.Boolean)">
+            <summary>Register and app store sale with our back-end</summary>
+            <param name="parameters">Json parameters to pass to admin server</param>
+            <param name="updatePremiereKey">if set to <c>true</c> [update premiere key].</param>
+            <returns></returns>
+        </member>
+        <member name="P:MediaBrowser.Common.Updates.IInstallationManager.CurrentInstallations">
+            <summary>
+            The current installations
+            </summary>
+        </member>
+        <member name="P:MediaBrowser.Common.Updates.IInstallationManager.CompletedInstallations">
+            <summary>
+            The completed installations
+            </summary>
+        </member>
+        <member name="E:MediaBrowser.Common.Updates.IInstallationManager.PluginUninstalled">
+            <summary>
+            Occurs when [plugin uninstalled].
+            </summary>
+        </member>
+        <member name="E:MediaBrowser.Common.Updates.IInstallationManager.PluginUpdated">
+            <summary>
+            Occurs when [plugin updated].
+            </summary>
+        </member>
+        <member name="E:MediaBrowser.Common.Updates.IInstallationManager.PluginInstalled">
+            <summary>
+            Occurs when [plugin updated].
+            </summary>
+        </member>
+        <member name="M:MediaBrowser.Common.Updates.IInstallationManager.GetAvailablePackages(System.Threading.CancellationToken,System.Boolean,System.String,System.Version)">
+            <summary>
+            Gets all available packages.
+            </summary>
+            <param name="cancellationToken">The cancellation token.</param>
+            <param name="withRegistration">if set to <c>true</c> [with registration].</param>
+            <param name="packageType">Type of the package.</param>
+            <param name="applicationVersion">The application version.</param>
+            <returns>Task{List{PackageInfo}}.</returns>
+        </member>
+        <member name="M:MediaBrowser.Common.Updates.IInstallationManager.GetPackage(System.String,System.String,MediaBrowser.Model.Updates.PackageVersionClass,System.Version,System.Threading.CancellationToken)">
+            <summary>
+            Gets the package.
+            </summary>
+        </member>
+        <member name="M:MediaBrowser.Common.Updates.IInstallationManager.GetLatestCompatibleVersion(System.String,System.String,System.Version,MediaBrowser.Model.Updates.PackageVersionClass,System.Threading.CancellationToken)">
+            <summary>
+            Gets the latest compatible version.
+            </summary>
+        </member>
+        <member name="M:MediaBrowser.Common.Updates.IInstallationManager.GetAvailablePluginUpdates(System.Version,System.Threading.CancellationToken)">
+            <summary>
+            Gets the available plugin updates.
+            </summary>
+        </member>
+        <member name="M:MediaBrowser.Common.Updates.IInstallationManager.InstallPackage(MediaBrowser.Model.Updates.PackageVersionInfo,System.Boolean,System.IProgress{System.Double},System.Threading.CancellationToken)">
+            <summary>
+            Installs the package.
+            </summary>
+            <param name="package">The package.</param>
+            <param name="isPlugin">if set to <c>true</c> [is plugin].</param>
+            <param name="progress">The progress.</param>
+            <param name="cancellationToken">The cancellation token.</param>
+            <returns>Task.</returns>
+            <exception cref="T:System.ArgumentNullException">package</exception>
+        </member>
+        <member name="M:MediaBrowser.Common.Updates.IInstallationManager.UninstallPlugin(MediaBrowser.Common.Plugins.IPlugin)">
+            <summary>
+            Uninstalls a plugin
+            </summary>
+            <param name="plugin">The plugin.</param>
+            <exception cref="T:System.ArgumentException"></exception>
+        </member>
+    </members>
+</doc>

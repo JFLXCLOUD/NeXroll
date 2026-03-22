@@ -1212,15 +1212,20 @@ def _generate_thumbnail_for_preroll(preroll, video_path: str, category_name: str
         thumb_abs = os.path.join(thumbnail_dir, thumb_filename)
         tmp_thumb = thumb_abs + ".tmp.jpg"
         
-        # Try ffmpeg to extract a frame at 5 seconds
-        res = _run_subprocess(
-            [get_ffmpeg_cmd(), "-v", "error", "-y", "-ss", "5", "-i", video_path, "-vframes", "1", "-q:v", "2", "-f", "mjpeg", tmp_thumb],
-            capture_output=True,
-            text=True,
-            timeout=30
-        )
+        # Try ffmpeg to extract a frame – try multiple seek positions for short videos
+        thumb_ok = False
+        for seek_sec in ("5", "1", "0"):
+            res = _run_subprocess(
+                [get_ffmpeg_cmd(), "-v", "error", "-y", "-ss", seek_sec, "-i", video_path, "-vframes", "1", "-q:v", "2", "-f", "mjpeg", tmp_thumb],
+                capture_output=True,
+                text=True,
+                timeout=30
+            )
+            if getattr(res, "returncode", 1) == 0 and os.path.exists(tmp_thumb) and os.path.getsize(tmp_thumb) > 0:
+                thumb_ok = True
+                break
         
-        if getattr(res, "returncode", 1) != 0 or not os.path.exists(tmp_thumb):
+        if not thumb_ok:
             _file_log(f"FFmpeg thumbnail generation failed for {video_path}: {getattr(res, 'stderr', '')}")
             _generate_placeholder(tmp_thumb)
         
@@ -6785,12 +6790,17 @@ def upload_preroll(
     try:
         thumbnail_abs = os.path.join(thumbnail_category_path, f"{preroll.id}_{file.filename}.jpg")
         tmp_thumb = thumbnail_abs + ".tmp.jpg"
-        res = _run_subprocess(
-            [get_ffmpeg_cmd(), "-v", "error", "-y", "-ss", "5", "-i", file_path, "-vframes", "1", "-q:v", "2", "-f", "mjpeg", tmp_thumb],
-            capture_output=True,
-            text=True,
-        )
-        if getattr(res, "returncode", 1) != 0 or not os.path.exists(tmp_thumb):
+        thumb_ok = False
+        for seek_sec in ("5", "1", "0"):
+            res = _run_subprocess(
+                [get_ffmpeg_cmd(), "-v", "error", "-y", "-ss", seek_sec, "-i", file_path, "-vframes", "1", "-q:v", "2", "-f", "mjpeg", tmp_thumb],
+                capture_output=True,
+                text=True,
+            )
+            if getattr(res, "returncode", 1) == 0 and os.path.exists(tmp_thumb) and os.path.getsize(tmp_thumb) > 0:
+                thumb_ok = True
+                break
+        if not thumb_ok:
             _file_log(f"FFmpeg thumbnail generation failed: {getattr(res, 'stderr', '')}")
             _generate_placeholder(tmp_thumb)
         try:
@@ -7002,12 +7012,17 @@ def upload_multiple_prerolls(
             try:
                 thumb_abs = os.path.join(thumb_cat_path, f"{preroll.id}_{file.filename}.jpg")
                 tmp = thumb_abs + ".tmp.jpg"
-                res = _run_subprocess(
-                    [get_ffmpeg_cmd(), "-v", "error", "-y", "-ss", "5", "-i", file_path, "-vframes", "1", "-q:v", "2", "-f", "mjpeg", tmp],
-                    capture_output=True,
-                    text=True,
-                )
-                if getattr(res, "returncode", 1) != 0 or not os.path.exists(tmp):
+                thumb_ok = False
+                for seek_sec in ("5", "1", "0"):
+                    res = _run_subprocess(
+                        [get_ffmpeg_cmd(), "-v", "error", "-y", "-ss", seek_sec, "-i", file_path, "-vframes", "1", "-q:v", "2", "-f", "mjpeg", tmp],
+                        capture_output=True,
+                        text=True,
+                    )
+                    if getattr(res, "returncode", 1) == 0 and os.path.exists(tmp) and os.path.getsize(tmp) > 0:
+                        thumb_ok = True
+                        break
+                if not thumb_ok:
                     _file_log(f"FFmpeg thumbnail generation failed: {getattr(res, 'stderr', '')}")
                     _generate_placeholder(tmp)
                 try:
@@ -7548,12 +7563,17 @@ def update_preroll(preroll_id: int, payload: PrerollUpdate, db: Session = Depend
             # Regenerate from video file
             video_abs = p.path if os.path.isabs(p.path) else os.path.join(data_dir, p.path)
             tmp = new_thumb_abs + ".tmp.jpg"
-            res = _run_subprocess(
-                [get_ffmpeg_cmd(), "-v", "error", "-y", "-ss", "5", "-i", video_abs, "-vframes", "1", "-q:v", "2", "-f", "mjpeg", tmp],
-                capture_output=True,
-                text=True,
-            )
-            if getattr(res, "returncode", 1) != 0 or not os.path.exists(tmp):
+            thumb_ok = False
+            for seek_sec in ("5", "1", "0"):
+                res = _run_subprocess(
+                    [get_ffmpeg_cmd(), "-v", "error", "-y", "-ss", seek_sec, "-i", video_abs, "-vframes", "1", "-q:v", "2", "-f", "mjpeg", tmp],
+                    capture_output=True,
+                    text=True,
+                )
+                if getattr(res, "returncode", 1) == 0 and os.path.exists(tmp) and os.path.getsize(tmp) > 0:
+                    thumb_ok = True
+                    break
+            if not thumb_ok:
                 _generate_placeholder(tmp)
             try:
                 if os.path.exists(new_thumb_abs):
@@ -8282,12 +8302,17 @@ def add_preroll_to_category(category_id: int, preroll_id: int, set_primary: bool
                     new_thumb_abs = os.path.join(tgt_dir, f"{p.id}_{p.filename}.jpg")
                     video_abs = p.path if os.path.isabs(p.path) else os.path.join(data_dir, p.path)
                     tmp = new_thumb_abs + ".tmp.jpg"
-                    res = _run_subprocess(
-                        [get_ffmpeg_cmd(), "-v", "error", "-y", "-ss", "5", "-i", video_abs, "-vframes", "1", "-q:v", "2", "-f", "mjpeg", tmp],
-                        capture_output=True,
-                        text=True,
-                    )
-                    if getattr(res, "returncode", 1) != 0 or not os.path.exists(tmp):
+                    thumb_ok = False
+                    for seek_sec in ("5", "1", "0"):
+                        res = _run_subprocess(
+                            [get_ffmpeg_cmd(), "-v", "error", "-y", "-ss", seek_sec, "-i", video_abs, "-vframes", "1", "-q:v", "2", "-f", "mjpeg", tmp],
+                            capture_output=True,
+                            text=True,
+                        )
+                        if getattr(res, "returncode", 1) == 0 and os.path.exists(tmp) and os.path.getsize(tmp) > 0:
+                            thumb_ok = True
+                            break
+                    if not thumb_ok:
                         _generate_placeholder(tmp)
                     try:
                         if os.path.exists(new_thumb_abs):
@@ -8313,12 +8338,17 @@ def add_preroll_to_category(category_id: int, preroll_id: int, set_primary: bool
                 new_thumb_abs = os.path.join(tgt_dir, f"{p.id}_{p.filename}.jpg")
                 video_abs = p.path if os.path.isabs(p.path) else os.path.join(data_dir, p.path)
                 tmp = new_thumb_abs + ".tmp.jpg"
-                res = _run_subprocess(
-                    [get_ffmpeg_cmd(), "-v", "error", "-y", "-ss", "5", "-i", video_abs, "-vframes", "1", "-q:v", "2", "-f", "mjpeg", tmp],
-                    capture_output=True,
-                    text=True,
-                )
-                if getattr(res, "returncode", 1) != 0 or not os.path.exists(tmp):
+                thumb_ok = False
+                for seek_sec in ("5", "1", "0"):
+                    res = _run_subprocess(
+                        [get_ffmpeg_cmd(), "-v", "error", "-y", "-ss", seek_sec, "-i", video_abs, "-vframes", "1", "-q:v", "2", "-f", "mjpeg", tmp],
+                        capture_output=True,
+                        text=True,
+                    )
+                    if getattr(res, "returncode", 1) == 0 and os.path.exists(tmp) and os.path.getsize(tmp) > 0:
+                        thumb_ok = True
+                        break
+                if not thumb_ok:
                     _generate_placeholder(tmp)
                 try:
                     if os.path.exists(new_thumb_abs):
@@ -12728,12 +12758,17 @@ def map_preroll_root(req: MapRootRequest, db: Session = Depends(get_db)):
             try:
                 thumb_abs = os.path.join(thumb_cat_dir, f"{p.id}_{filename}.jpg")
                 tmp = thumb_abs + ".tmp.jpg"
-                res = _run_subprocess(
-                    [get_ffmpeg_cmd(), "-v", "error", "-y", "-ss", "5", "-i", abs_src, "-vframes", "1", "-q:v", "2", "-f", "mjpeg", tmp],
-                    capture_output=True,
-                    text=True,
-                )
-                if getattr(res, "returncode", 1) != 0 or not os.path.exists(tmp):
+                thumb_ok = False
+                for seek_sec in ("5", "1", "0"):
+                    res = _run_subprocess(
+                        [get_ffmpeg_cmd(), "-v", "error", "-y", "-ss", seek_sec, "-i", abs_src, "-vframes", "1", "-q:v", "2", "-f", "mjpeg", tmp],
+                        capture_output=True,
+                        text=True,
+                    )
+                    if getattr(res, "returncode", 1) == 0 and os.path.exists(tmp) and os.path.getsize(tmp) > 0:
+                        thumb_ok = True
+                        break
+                if not thumb_ok:
                     _generate_placeholder(tmp)
                 try:
                     if os.path.exists(thumb_abs):
@@ -13383,17 +13418,22 @@ def thumbnails_rebuild(category: str = None, force: bool = False, db: Session = 
                     failures.append({"id": p.id, "file": p.filename, "reason": "placeholder_failed"})
                 continue
 
-            # Generate thumbnail with ffmpeg
+            # Generate thumbnail with ffmpeg – try multiple seek positions for short videos
             try:
                 # Use a .jpg temp name and force MJPEG so ffmpeg doesn't mis-detect format
                 tmp_thumb = target_thumb + ".tmp.jpg"
-                res = _run_subprocess(
-                    [get_ffmpeg_cmd(), "-v", "error", "-y", "-ss", "5", "-i", video_path, "-vframes", "1", "-q:v", "2", "-f", "mjpeg", tmp_thumb],
-                    capture_output=True,
-                    text=True,
-                )
-                if res.returncode != 0 or not os.path.exists(tmp_thumb):
-                    _file_log(f"rebuild_thumbnail failed for '{video_path}': {res.stderr}")
+                thumb_ok = False
+                for seek_sec in ("5", "1", "0"):
+                    res = _run_subprocess(
+                        [get_ffmpeg_cmd(), "-v", "error", "-y", "-ss", seek_sec, "-i", video_path, "-vframes", "1", "-q:v", "2", "-f", "mjpeg", tmp_thumb],
+                        capture_output=True,
+                        text=True,
+                    )
+                    if getattr(res, "returncode", 1) == 0 and os.path.exists(tmp_thumb) and os.path.getsize(tmp_thumb) > 0:
+                        thumb_ok = True
+                        break
+                if not thumb_ok:
+                    _file_log(f"rebuild_thumbnail failed for '{video_path}': {getattr(res, 'stderr', '')}")
                     try:
                         if os.path.exists(tmp_thumb):
                             os.remove(tmp_thumb)
@@ -13899,17 +13939,22 @@ def get_or_create_thumbnail(category: str, thumb_name: str):
         except Exception:
             raise HTTPException(status_code=404, detail="Source video not found for thumbnail")
 
-    # Generate the thumbnail using ffmpeg
+    # Generate the thumbnail using ffmpeg – try multiple seek positions for short videos
     try:
         # Write to a temp path first, then move into place to avoid partial reads
         tmp_thumb = thumb_path + ".tmp.jpg"
-        res = _run_subprocess(
-            [get_ffmpeg_cmd(), "-v", "error", "-y", "-ss", "5", "-i", video_path, "-vframes", "1", "-q:v", "2", "-f", "mjpeg", tmp_thumb],
-            capture_output=True,
-            text=True,
-        )
-        if res.returncode != 0 or not os.path.exists(tmp_thumb):
-            _file_log(f"Thumbnail generation failed for '{video_path}': {res.stderr}")
+        thumb_ok = False
+        for seek_sec in ("5", "1", "0"):
+            res = _run_subprocess(
+                [get_ffmpeg_cmd(), "-v", "error", "-y", "-ss", seek_sec, "-i", video_path, "-vframes", "1", "-q:v", "2", "-f", "mjpeg", tmp_thumb],
+                capture_output=True,
+                text=True,
+            )
+            if getattr(res, "returncode", 1) == 0 and os.path.exists(tmp_thumb) and os.path.getsize(tmp_thumb) > 0:
+                thumb_ok = True
+                break
+        if not thumb_ok:
+            _file_log(f"Thumbnail generation failed for '{video_path}': {getattr(res, 'stderr', '')}")
             # Fallback to placeholder
             _generate_placeholder(tmp_thumb)
         # Atomic-ish replace
@@ -23167,13 +23212,19 @@ def download_community_preroll(
         try:
             thumb_abs = os.path.join(thumbnail_category_dir, f"{preroll.id}_{os.path.basename(file_path)}.jpg")
             tmp_thumb = thumb_abs + ".tmp.jpg"
-            res = _run_subprocess(
-                [get_ffmpeg_cmd(), "-v", "error", "-y", "-ss", "5", "-i", file_path, "-vframes", "1", "-q:v", "2", "-f", "mjpeg", tmp_thumb],
-                capture_output=True,
-                text=True,
-                timeout=30
-            )
-            if getattr(res, "returncode", 1) != 0 or not os.path.exists(tmp_thumb):
+            thumb_ok = False
+            for seek_sec in ("5", "1", "0"):
+                res = _run_subprocess(
+                    [get_ffmpeg_cmd(), "-v", "error", "-y", "-ss", seek_sec, "-i", file_path, "-vframes", "1", "-q:v", "2", "-f", "mjpeg", tmp_thumb],
+                    capture_output=True,
+                    text=True,
+                    timeout=30
+                )
+                if getattr(res, "returncode", 1) == 0 and os.path.exists(tmp_thumb) and os.path.getsize(tmp_thumb) > 0:
+                    thumb_ok = True
+                    break
+            if not thumb_ok:
+                _file_log(f"Community preroll FFmpeg thumbnail failed for {file_path}: {getattr(res, 'stderr', '')}")
                 _generate_placeholder(tmp_thumb)
             try:
                 if os.path.exists(thumb_abs):
