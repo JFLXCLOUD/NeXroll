@@ -94,6 +94,11 @@ NeXroll/__pycache__/
 Plugins/**/bin/
 Plugins/**/obj/
 
+# Emby reference libs and .NET dev files
+emby-libs/
+*.sln
+reflect_emby.cs
+
 # Dev/temp documentation
 *_IMPLEMENTATION.md
 *_IMPLEMENTATION_*.md
