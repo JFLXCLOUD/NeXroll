@@ -26533,6 +26533,15 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
           <span style={{ fontSize: '1.25rem' }}>🔌</span> NeXroll Intros Plugin
         </h2>
 
+        {/* Plugin download link — always visible when connected */}
+        {jellyfinStatus === 'Connected' && (
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '1rem', padding: '0.6rem 1rem', background: 'var(--bg-color, #1a1a2e)', border: '1px solid var(--border-color)', borderRadius: '8px', fontSize: '0.9rem' }}>
+            <span>📥</span>
+            <span>Download Plugin:</span>
+            <a href="https://github.com/JFLXCLOUD/NeXroll/raw/main/Plugins/NeXroll.Jellyfin.dll" target="_blank" rel="noopener noreferrer" style={{ color: 'var(--accent-color, #7c4dff)', fontWeight: 600 }}>NeXroll.Jellyfin.dll</a>
+          </div>
+        )}
+
         {/* State: Jellyfin not connected */}
         {jellyfinStatus !== 'Connected' && (
           <p style={{ color: 'var(--text-secondary)' }}>
@@ -26812,6 +26821,15 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
         <h2 style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
           <span style={{ fontSize: '1.25rem' }}>🔌</span> NeXroll Intros Plugin
         </h2>
+
+        {/* Plugin download link — always visible when connected */}
+        {embyStatus === 'Connected' && (
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '1rem', padding: '0.6rem 1rem', background: 'var(--bg-color, #1a1a2e)', border: '1px solid var(--border-color)', borderRadius: '8px', fontSize: '0.9rem' }}>
+            <span>📥</span>
+            <span>Download Plugin:</span>
+            <a href="https://github.com/JFLXCLOUD/NeXroll/raw/main/Plugins/NeXroll.Emby.dll" target="_blank" rel="noopener noreferrer" style={{ color: 'var(--accent-color, #7c4dff)', fontWeight: 600 }}>NeXroll.Emby.dll</a>
+          </div>
+        )}
 
         {/* State: Emby not connected */}
         {embyStatus !== 'Connected' && (
