@@ -1185,6 +1185,29 @@ def _generate_placeholder(out_path: str, width: int = 426, height: int = 240):
         except Exception:
             pass
 
+def _safe_thumbnail_relpath(thumb_abs: str) -> str:
+    """
+    Compute a relative thumbnail path suitable for DB storage and URL construction.
+    Uses os.path.relpath(thumb_abs, data_dir) when possible, but falls back to
+    constructing the path from THUMBNAILS_DIR when paths are on different drives/UNC shares.
+    """
+    try:
+        rel = os.path.relpath(thumb_abs, data_dir).replace("\\", "/")
+        return rel
+    except ValueError:
+        # Cross-drive / UNC mismatch – construct path manually
+        try:
+            rel_to_prerolls = os.path.relpath(thumb_abs, PREROLLS_DIR).replace("\\", "/")
+            return f"prerolls/{rel_to_prerolls}"
+        except ValueError:
+            # Last resort: use just the last path components
+            parts = thumb_abs.replace("\\", "/").split("/")
+            # Find "thumbnails" in path and take from there
+            for i, p in enumerate(parts):
+                if p.lower() == "thumbnails":
+                    return "prerolls/" + "/".join(parts[i:])
+            return "prerolls/thumbnails/" + os.path.basename(thumb_abs)
+
 def _generate_thumbnail_for_preroll(preroll, video_path: str, category_name: str = None) -> Optional[str]:
     """
     Generate a thumbnail for a preroll and update its thumbnail field.
@@ -1239,7 +1262,7 @@ def _generate_thumbnail_for_preroll(preroll, video_path: str, category_name: str
         os.replace(tmp_thumb, thumb_abs)
         
         # Return relative path
-        thumbnail_rel = os.path.relpath(thumb_abs, data_dir).replace("\\", "/")
+        thumbnail_rel = _safe_thumbnail_relpath(thumb_abs)
         _file_log(f"Generated thumbnail for preroll {preroll.id}: {thumbnail_rel}")
         return thumbnail_rel
         
@@ -6809,7 +6832,7 @@ def upload_preroll(
         except Exception:
             pass
         os.replace(tmp_thumb, thumbnail_abs)
-        thumbnail_path = os.path.relpath(thumbnail_abs, data_dir).replace("\\", "/")
+        thumbnail_path = _safe_thumbnail_relpath(thumbnail_abs)
         preroll.thumbnail = thumbnail_path
     except Exception as e:
         _file_log(f"upload_preroll: thumbnail generation error: {e}")
@@ -7031,7 +7054,7 @@ def upload_multiple_prerolls(
                 except Exception:
                     pass
                 os.replace(tmp, thumb_abs)
-                thumbnail_rel = os.path.relpath(thumb_abs, data_dir).replace("\\", "/")
+                thumbnail_rel = _safe_thumbnail_relpath(thumb_abs)
                 preroll.thumbnail = thumbnail_rel
             except Exception as e:
                 _file_log(f"upload_multiple: thumbnail generation error: {e}")
@@ -7598,7 +7621,7 @@ def update_preroll(preroll_id: int, payload: PrerollUpdate, db: Session = Depend
                 pass
 
         # Store relative path
-        rel = os.path.relpath(new_thumb_abs, data_dir).replace("\\", "/")
+        rel = _safe_thumbnail_relpath(new_thumb_abs)
         p.thumbnail = rel
     except Exception as e:
         _file_log(f"update_preroll: thumbnail update failed id={p.id}: {e}")
@@ -8320,7 +8343,7 @@ def add_preroll_to_category(category_id: int, preroll_id: int, set_primary: bool
                     except Exception:
                         pass
                     os.replace(tmp, new_thumb_abs)
-                    rel = os.path.relpath(new_thumb_abs, data_dir).replace("\\", "/")
+                    rel = _safe_thumbnail_relpath(new_thumb_abs)
                     p.thumbnail = rel
                 except Exception as e:
                     _file_log(f"add_preroll_to_category: primary move thumb update failed p={p.id}: {e}")
@@ -8356,7 +8379,7 @@ def add_preroll_to_category(category_id: int, preroll_id: int, set_primary: bool
                 except Exception:
                     pass
                 os.replace(tmp, new_thumb_abs)
-                rel = os.path.relpath(new_thumb_abs, data_dir).replace("\\", "/")
+                rel = _safe_thumbnail_relpath(new_thumb_abs)
                 p.thumbnail = rel
             except Exception as e:
                 _file_log(f"add_preroll_to_category: external primary thumb update failed p={p.id}: {e}")
@@ -12776,7 +12799,7 @@ def map_preroll_root(req: MapRootRequest, db: Session = Depends(get_db)):
                 except Exception:
                     pass
                 os.replace(tmp, thumb_abs)
-                thumb_rel = os.path.relpath(thumb_abs, data_dir).replace("\\", "/")
+                thumb_rel = _safe_thumbnail_relpath(thumb_abs)
                 p.thumbnail = thumb_rel
             except Exception as e:
                 try:
@@ -13389,7 +13412,7 @@ def thumbnails_rebuild(category: str = None, force: bool = False, db: Session = 
             # If not forcing and file exists, ensure DB path is set and skip
             if os.path.exists(target_thumb) and not force:
                 if not p.thumbnail:
-                    rel = os.path.relpath(target_thumb, data_dir).replace("\\", "/")
+                    rel = _safe_thumbnail_relpath(target_thumb)
                     p.thumbnail = rel
                 skipped += 1
                 continue
@@ -13411,7 +13434,7 @@ def thumbnails_rebuild(category: str = None, force: bool = False, db: Session = 
                     except Exception:
                         pass
                     os.replace(tmp_thumb, target_thumb)
-                    rel = os.path.relpath(target_thumb, data_dir).replace("\\", "/")
+                    rel = _safe_thumbnail_relpath(target_thumb)
                     p.thumbnail = rel
                     generated += 1
                 except Exception:
@@ -13451,7 +13474,7 @@ def thumbnails_rebuild(category: str = None, force: bool = False, db: Session = 
                 os.replace(tmp_thumb, target_thumb)
 
                 # Update DB with relative thumbnail path for static serving
-                rel = os.path.relpath(target_thumb, data_dir).replace("\\", "/")
+                rel = _safe_thumbnail_relpath(target_thumb)
                 p.thumbnail = rel
                 generated += 1
             except FileNotFoundError:
@@ -23232,7 +23255,7 @@ def download_community_preroll(
             except Exception:
                 pass
             os.replace(tmp_thumb, thumb_abs)
-            thumbnail_path = os.path.relpath(thumb_abs, data_dir).replace("\\", "/")
+            thumbnail_path = _safe_thumbnail_relpath(thumb_abs)
             preroll.thumbnail = thumbnail_path
         except Exception as e:
             _file_log(f"Community preroll thumbnail generation error: {e}")
