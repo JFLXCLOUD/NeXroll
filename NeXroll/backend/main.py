@@ -18,7 +18,7 @@ import io
 import shutil
 import subprocess
 from pathlib import Path
-from urllib.parse import unquote
+from urllib.parse import unquote, quote
 import uuid
 import time
 import re
@@ -127,6 +127,8 @@ def ensure_schema() -> None:
                 ("emby_api_key", "emby_api_key TEXT"),
                 ("last_seen_version", "last_seen_version TEXT"),
                 ("last_schedule_fallback", "last_schedule_fallback INTEGER"),
+                ("applied_sequence_id", "applied_sequence_id INTEGER"),
+                ("applied_sequence_name", "applied_sequence_name TEXT"),
             ]:
                 if not _sqlite_has_column("settings", col):
                     _sqlite_add_column("settings", ddl)
@@ -635,6 +637,46 @@ def ensure_settings_schema_now() -> None:
 
 # Run schema upgrades early so requests won't hit missing columns
 ensure_schema()
+
+# ---- Migrate legacy plaintext API keys from DB to secure_store ----
+def _migrate_legacy_api_keys():
+    """
+    If emby_api_key or jellyfin_api_key are still sitting in the database
+    as plaintext (from older versions), move them to secure_store and
+    clear the DB columns so they are never exposed in exports or backups.
+    """
+    try:
+        db = SessionLocal()
+        setting = db.query(models.Setting).first()
+        if not setting:
+            db.close()
+            return
+        migrated = []
+        for attr, ss_set, ss_has in (
+            ("emby_api_key", secure_store.set_emby_api_key, secure_store.has_emby_api_key),
+            ("jellyfin_api_key", secure_store.set_jellyfin_api_key, secure_store.has_jellyfin_api_key),
+        ):
+            val = getattr(setting, attr, None)
+            if val and str(val).strip():
+                key = str(val).strip()
+                # Only migrate if secure_store doesn't already have a value
+                if not ss_has():
+                    ss_set(key)
+                # Clear plaintext from DB regardless
+                setattr(setting, attr, None)
+                migrated.append(attr)
+        if migrated:
+            setting.updated_at = datetime.datetime.utcnow()
+            db.commit()
+            _file_log(f"Security migration: Moved {', '.join(migrated)} from DB to secure store")
+        db.close()
+    except Exception as e:
+        try:
+            _file_log(f"Security migration warning: {e}", level="WARNING")
+        except Exception:
+            pass
+
+_migrate_legacy_api_keys()
 
 def migrate_preroll_hashes() -> None:
     """
@@ -1233,6 +1275,8 @@ class ScheduleCreate(BaseModel):
     blend_enabled: bool = False  # Allow blending with other overlapping schedules
     priority: int = 5  # Priority level 1-10 (higher wins during overlap)
     exclusive: bool = False  # When active, this schedule wins exclusively (no blending)
+    holiday_name: Optional[str] = None  # Holiday name for dynamic date lookup
+    holiday_country: Optional[str] = None  # Country code for holiday lookup
 
 class ScheduleResponse(BaseModel):
     id: int
@@ -3736,7 +3780,7 @@ async def external_now_showing(
                 active_schedules.append({
                     "id": s.id,
                     "name": s.name,
-                    "schedule_type": s.schedule_type
+                    "schedule_type": s.type
                 })
     except Exception:
         pass
@@ -3925,12 +3969,14 @@ class ExternalPrerollRegister(BaseModel):
 
 class ExternalScheduleCreate(BaseModel):
     name: str
-    schedule_type: str = "date_range"  # date_range, daily, weekly, monthly, yearly
+    schedule_type: str = "daily"  # daily, weekly, monthly, yearly, holiday
     start_date: str  # ISO format datetime
     end_date: Optional[str] = None
     category_id: Optional[int] = None
     sequence_id: Optional[int] = None
     fallback_category_id: Optional[int] = None
+    holiday_name: Optional[str] = None
+    holiday_country: Optional[str] = None
     priority: int = 5
     blend_enabled: bool = False
     exclusive: bool = False
@@ -4112,7 +4158,7 @@ async def external_create_schedule(
     Create a new schedule via external API.
     Requires API key with FULL permissions.
     
-    schedule_type options: date_range, daily, weekly, monthly, yearly
+    schedule_type options: daily, weekly, monthly, yearly, holiday
     """
     name = (schedule.name or "").strip()
     if not name:
@@ -4171,6 +4217,8 @@ async def external_create_schedule(
         end_date=end_date,
         category_id=schedule.category_id,
         fallback_category_id=schedule.fallback_category_id,
+        holiday_name=schedule.holiday_name,
+        holiday_country=schedule.holiday_country,
         sequence=sequence_json,
         is_active=schedule.enabled,
         blend_enabled=schedule.blend_enabled,
@@ -8664,7 +8712,9 @@ def create_schedule(schedule: ScheduleCreate, db: Session = Depends(get_db)):
         color=schedule.color,
         blend_enabled=schedule.blend_enabled,
         priority=schedule.priority,
-        exclusive=schedule.exclusive
+        exclusive=schedule.exclusive,
+        holiday_name=schedule.holiday_name,
+        holiday_country=schedule.holiday_country
     )
     db.add(db_schedule)
     try:
@@ -8701,7 +8751,9 @@ def create_schedule(schedule: ScheduleCreate, db: Session = Depends(get_db)):
         "color": getattr(created_schedule, "color", None),
         "blend_enabled": getattr(created_schedule, "blend_enabled", False),
         "priority": getattr(created_schedule, "priority", 5),
-        "exclusive": getattr(created_schedule, "exclusive", False)
+        "exclusive": getattr(created_schedule, "exclusive", False),
+        "holiday_name": getattr(created_schedule, "holiday_name", None),
+        "holiday_country": getattr(created_schedule, "holiday_country", None)
     }
 
 @app.get("/schedules")
@@ -8734,7 +8786,9 @@ def get_schedules(db: Session = Depends(get_db)):
             "color": getattr(s, "color", None),
             "blend_enabled": getattr(s, "blend_enabled", False),
             "priority": getattr(s, "priority", 5),
-            "exclusive": getattr(s, "exclusive", False)
+            "exclusive": getattr(s, "exclusive", False),
+            "holiday_name": getattr(s, "holiday_name", None),
+            "holiday_country": getattr(s, "holiday_country", None)
         })
     
     return result
@@ -9134,6 +9188,8 @@ def update_schedule(schedule_id: int, schedule: ScheduleCreate, db: Session = De
     db_schedule.blend_enabled = schedule.blend_enabled
     db_schedule.priority = schedule.priority
     db_schedule.exclusive = schedule.exclusive
+    db_schedule.holiday_name = schedule.holiday_name
+    db_schedule.holiday_country = schedule.holiday_country
 
     try:
         db.commit()
@@ -9322,6 +9378,154 @@ def delete_saved_sequence(sequence_id: int, db: Session = Depends(get_db)):
         _file_log(f"Failed to delete sequence {sequence_id}: {e}")
         log_event('ERROR', 'nexup', f"Failed to delete sequence: {e}", source='delete_sequence', db=db)
         raise HTTPException(status_code=500, detail=f"Failed to delete sequence: {str(e)}")
+
+@app.post("/sequences/{sequence_id}/apply")
+def apply_sequence_to_server(sequence_id: int, db: Session = Depends(get_db)):
+    """Apply a saved sequence's prerolls directly to the media server (Plex/Jellyfin/Emby)."""
+    saved_seq = db.query(models.SavedSequence).filter(models.SavedSequence.id == sequence_id).first()
+    if not saved_seq:
+        raise HTTPException(status_code=404, detail="Sequence not found")
+
+    setting = db.query(models.Setting).first()
+    if not setting:
+        raise HTTPException(status_code=400, detail="Server not configured")
+
+    blocks = saved_seq.get_blocks()
+    if not blocks:
+        raise HTTPException(status_code=400, detail="Sequence has no blocks")
+
+    # Helper to gather prerolls for a category (primary and many-to-many)
+    def _prerolls_for_category(cid: int):
+        return db.query(models.Preroll) \
+            .outerjoin(models.preroll_categories, models.Preroll.id == models.preroll_categories.c.preroll_id) \
+            .filter(or_(models.Preroll.category_id == cid, models.preroll_categories.c.category_id == cid)) \
+            .distinct().all()
+
+    # Resolve blocks into ordered file paths
+    paths = []
+    for block in blocks:
+        try:
+            block_type = str(block.get("type", "")).lower()
+        except Exception:
+            continue
+
+        if block_type == "random":
+            cid = int(block.get("category_id") or 0)
+            count = int(block.get("count") or 1)
+            if not cid:
+                continue
+            pool = _prerolls_for_category(cid)
+            if not pool:
+                continue
+            k = min(max(count, 1), len(pool))
+            picks = random.sample(pool, k) if len(pool) > k else pool
+            for p in picks:
+                paths.append(os.path.abspath(p.path))
+
+        elif block_type == "fixed":
+            pids = []
+            ids_array = block.get("preroll_ids")
+            if ids_array and isinstance(ids_array, list):
+                pids = [int(x) for x in ids_array if x]
+            else:
+                pid = block.get("preroll_id")
+                if pid:
+                    pids = [int(pid)]
+            for pid in pids:
+                p = db.query(models.Preroll).filter(models.Preroll.id == pid).first()
+                if p:
+                    paths.append(os.path.abspath(p.path))
+
+    if not paths:
+        raise HTTPException(status_code=400, detail="Sequence produced no valid preroll paths")
+
+    # Apply path mappings
+    mappings = []
+    try:
+        raw = getattr(setting, "path_mappings", None)
+        if raw:
+            data = json.loads(raw)
+            if isinstance(data, list):
+                mappings = [m for m in data if isinstance(m, dict) and m.get("local") and m.get("plex")]
+    except Exception:
+        mappings = []
+
+    def _translate(local_path: str) -> str:
+        try:
+            lp = os.path.normpath(local_path)
+            best = None
+            best_src = None
+            best_len = -1
+            for m in mappings:
+                src = os.path.normpath(str(m.get("local")))
+                if sys.platform.startswith("win"):
+                    if lp.lower().startswith(src.lower()) and len(src) > best_len:
+                        best, best_src, best_len = m, src, len(src)
+                else:
+                    if lp.startswith(src) and len(src) > best_len:
+                        best, best_src, best_len = m, src, len(src)
+            if best:
+                dst = str(best.get("plex"))
+                rest = lp[len(best_src):].lstrip("\\/")
+                if "/" in dst and "\\" not in dst:
+                    return dst.rstrip("/") + "/" + rest.replace("\\", "/")
+                elif "\\" in dst:
+                    return dst.rstrip("\\") + "\\" + rest.replace("/", "\\")
+                else:
+                    return dst.rstrip("/") + "/" + rest.replace("\\", "/")
+        except Exception:
+            pass
+        return local_path
+
+    translated = [_translate(p) for p in paths]
+    # Sequences are always playlist mode (ordered playback)
+    preroll_string = ",".join(translated)
+
+    applied_to = []
+
+    # Apply to Plex
+    if getattr(setting, "plex_url", None) and getattr(setting, "plex_token", None):
+        try:
+            connector = PlexConnector(setting.plex_url, setting.plex_token)
+            connector.set_preroll(preroll_string)
+            applied_to.append("plex")
+        except Exception as e:
+            _file_log(f"Failed to apply sequence to Plex: {e}")
+
+    # Apply to Jellyfin (plugin serves via /resolve-preroll endpoint)
+    if getattr(setting, "jellyfin_url", None):
+        applied_to.append("jellyfin")
+
+    # Apply to Emby (plugin serves via /resolve-preroll endpoint)
+    if getattr(setting, "emby_url", None):
+        applied_to.append("emby")
+
+    if not applied_to:
+        raise HTTPException(status_code=400, detail="No media server configured (Plex/Jellyfin/Emby)")
+
+    # Set a short override so the scheduler doesn't immediately revert, and track applied sequence
+    try:
+        setting.override_expires_at = datetime.datetime.utcnow() + datetime.timedelta(minutes=15)
+        setting.applied_sequence_id = sequence_id
+        setting.applied_sequence_name = saved_seq.name
+        setting.updated_at = datetime.datetime.utcnow()
+        db.commit()
+    except Exception:
+        try:
+            db.rollback()
+        except Exception:
+            pass
+
+    _file_log(f"Applied sequence '{saved_seq.name}' ({len(paths)} prerolls) to: {', '.join(applied_to)}")
+    log_event('INFO', 'nexup', f"Sequence '{saved_seq.name}' applied to {', '.join(applied_to)}", 
+              source='apply_sequence', details={"sequence_id": sequence_id, "preroll_count": len(paths)}, db=db)
+
+    return {
+        "success": True,
+        "sequence_name": saved_seq.name,
+        "preroll_count": len(paths),
+        "applied_to": applied_to
+    }
 
 @app.get("/sequences/preview-video/{preview_id}/{video_path:path}")
 async def get_preview_video(preview_id: str, video_path: str):
@@ -11694,6 +11898,127 @@ def run_scheduler_now(db: Session = Depends(get_db)):
         raise HTTPException(status_code=500, detail=f"Scheduler execution failed: {str(e)}")
 
 
+@app.get("/scheduler/debug")
+def scheduler_debug(db: Session = Depends(get_db)):
+    """Diagnostic endpoint: show full scheduler evaluation for all schedules"""
+    now = datetime.datetime.now()
+    setting = db.query(models.Setting).first()
+    schedules = db.query(models.Schedule).filter(models.Schedule.is_active == True).all()
+
+    schedule_evals = []
+    for s in schedules:
+        eval_info = {
+            "id": s.id,
+            "name": s.name,
+            "type": s.type,
+            "category_id": s.category_id,
+            "has_sequence": bool(getattr(s, "sequence", None)),
+            "start_date": s.start_date.isoformat() if s.start_date else None,
+            "end_date": s.end_date.isoformat() if s.end_date else None,
+            "recurrence_pattern": s.recurrence_pattern,
+            "priority": getattr(s, "priority", 5),
+            "exclusive": getattr(s, "exclusive", False),
+        }
+        # Evaluate date window
+        if not s.start_date:
+            eval_info["is_active"] = False
+            eval_info["reason"] = "no start_date"
+        else:
+            date_active = False
+            if s.end_date:
+                date_active = s.start_date <= now <= s.end_date
+            else:
+                date_active = now >= s.start_date
+            eval_info["date_active"] = date_active
+            if not date_active:
+                eval_info["is_active"] = False
+                eval_info["reason"] = f"outside date window (start={s.start_date.isoformat()}, end={s.end_date.isoformat() if s.end_date else 'indefinite'}, now={now.isoformat()})"
+            else:
+                # Check recurrence pattern
+                if s.recurrence_pattern:
+                    try:
+                        pattern = json.loads(s.recurrence_pattern)
+                        eval_info["parsed_pattern"] = pattern
+                        # weekDays check
+                        week_days = pattern.get("weekDays")
+                        if week_days and isinstance(week_days, list) and len(week_days) > 0:
+                            day_map = {0: "monday", 1: "tuesday", 2: "wednesday", 3: "thursday", 4: "friday", 5: "saturday", 6: "sunday"}
+                            current_day_name = day_map.get(now.weekday())
+                            eval_info["current_weekday"] = current_day_name
+                            if current_day_name not in week_days:
+                                eval_info["is_active"] = False
+                                eval_info["reason"] = f"weekday {current_day_name} not in {week_days}"
+                                schedule_evals.append(eval_info)
+                                continue
+                        # monthDays check
+                        month_days = pattern.get("monthDays")
+                        if month_days and isinstance(month_days, list) and len(month_days) > 0:
+                            if now.day not in month_days:
+                                eval_info["is_active"] = False
+                                eval_info["reason"] = f"day {now.day} not in monthDays {month_days}"
+                                schedule_evals.append(eval_info)
+                                continue
+                        # timeRange check
+                        time_range = pattern.get("timeRange")
+                        if time_range and time_range.get("start"):
+                            start_str = time_range.get("start", "")
+                            end_str = time_range.get("end", "")
+                            try:
+                                sp = start_str.split(":")
+                                start_val = int(sp[0]) * 60 + (int(sp[1]) if len(sp) > 1 else 0)
+                                ep = end_str.split(":") if end_str else ["23", "59"]
+                                end_val = int(ep[0]) * 60 + (int(ep[1]) if len(ep) > 1 else 59)
+                                current_val = now.hour * 60 + now.minute
+                                if start_val <= end_val:
+                                    time_active = start_val <= current_val <= end_val
+                                else:
+                                    time_active = current_val >= start_val or current_val <= end_val
+                                eval_info["time_check"] = {
+                                    "start": start_str, "end": end_str,
+                                    "start_minutes": start_val, "end_minutes": end_val,
+                                    "current_minutes": current_val, "current_time": f"{now.hour:02d}:{now.minute:02d}",
+                                    "is_overnight": start_val > end_val,
+                                    "time_active": time_active
+                                }
+                                eval_info["is_active"] = time_active
+                                if not time_active:
+                                    eval_info["reason"] = f"outside time range {start_str}-{end_str} (now={now.hour:02d}:{now.minute:02d})"
+                            except Exception as te:
+                                eval_info["time_parse_error"] = str(te)
+                                eval_info["is_active"] = True
+                        else:
+                            eval_info["is_active"] = True
+                            eval_info["reason"] = "no timeRange constraint"
+                    except json.JSONDecodeError as je:
+                        eval_info["json_error"] = str(je)
+                        eval_info["is_active"] = True
+                else:
+                    eval_info["is_active"] = True
+                    eval_info["reason"] = "no recurrence_pattern (date-only)"
+        schedule_evals.append(eval_info)
+
+    override_info = None
+    if setting:
+        ovr = getattr(setting, "override_expires_at", None)
+        if ovr:
+            override_info = {
+                "override_expires_at": ovr.isoformat(),
+                "is_active": now < ovr,
+                "current_time": now.isoformat()
+            }
+
+    return {
+        "current_time": now.isoformat(),
+        "current_weekday": {0: "monday", 1: "tuesday", 2: "wednesday", 3: "thursday", 4: "friday", 5: "saturday", 6: "sunday"}.get(now.weekday()),
+        "setting_active_category": getattr(setting, "active_category", None) if setting else None,
+        "setting_filler_active": getattr(setting, "filler_active", None) if setting else None,
+        "override": override_info,
+        "total_enabled_schedules": len(schedules),
+        "active_schedules": [e for e in schedule_evals if e.get("is_active")],
+        "inactive_schedules": [e for e in schedule_evals if not e.get("is_active")],
+    }
+
+
 @app.post("/schedules/validate-cron")
 def validate_cron(pattern: str):
     """
@@ -11790,6 +12115,154 @@ def get_current_preroll(db: Session = Depends(get_db)):
         "current_preroll": current_preroll,
         "has_preroll": current_preroll is not None and current_preroll != ""
     }
+
+@app.get("/plex/current-preroll-details")
+def get_current_preroll_details(db: Session = Depends(get_db)):
+    """Get detailed info about each preroll currently applied to Plex, for preview playback."""
+    setting = db.query(models.Setting).first()
+    if not setting or not setting.plex_url:
+        return {"prerolls": [], "applied_sequence": None, "mode": "shuffle"}
+
+    current_preroll = None
+    try:
+        connector = PlexConnector(setting.plex_url, setting.plex_token)
+        current_preroll = connector.get_current_preroll()
+    except Exception:
+        pass
+
+    if not current_preroll:
+        return {"prerolls": [], "applied_sequence": None, "mode": "shuffle"}
+
+    # Determine playback mode from context:
+    # 1. Check filler state first (coming_soon = single, sequence = sequential)
+    # 2. Check applied sequence (sequential)
+    # 3. Detect from Plex delimiter (; = shuffle, , = sequential/playlist)
+    # 4. Check active category's plex_mode
+    filler_active = getattr(setting, "filler_active", None)
+    mode = "shuffle"  # default
+
+    if filler_active:
+        parts = filler_active.split(":", 1)
+        if len(parts) == 2:
+            filler_type = parts[0]
+            if filler_type == "coming_soon":
+                mode = "single"
+            elif filler_type == "sequence":
+                mode = "sequential"
+            elif filler_type == "category":
+                # Look up the filler category's plex_mode
+                try:
+                    cat_id = int(parts[1])
+                    cat = db.query(models.Category).filter(models.Category.id == cat_id).first()
+                    if cat:
+                        mode = getattr(cat, "plex_mode", "shuffle") or "shuffle"
+                except (ValueError, Exception):
+                    pass
+    else:
+        # Check applied sequence
+        seq_id = getattr(setting, "applied_sequence_id", None)
+        if seq_id:
+            override_exp = getattr(setting, "override_expires_at", None)
+            if override_exp and override_exp > datetime.datetime.now():
+                mode = "sequential"
+
+        # Check active category plex_mode
+        if mode == "shuffle":
+            active_cat_id = getattr(setting, "active_category", None)
+            if active_cat_id:
+                cat = db.query(models.Category).filter(models.Category.id == active_cat_id).first()
+                if cat:
+                    mode = getattr(cat, "plex_mode", "shuffle") or "shuffle"
+
+        # Fallback: infer from Plex delimiter
+        if mode == "shuffle":
+            if "," in current_preroll and ";" not in current_preroll:
+                mode = "sequential"
+            # If only ; present, stays as shuffle
+
+    # Parse the preroll string — Plex uses ; for shuffle and , for playlist
+    if "," in current_preroll:
+        raw_paths = [p.strip() for p in current_preroll.split(",") if p.strip()]
+    elif ";" in current_preroll:
+        raw_paths = [p.strip() for p in current_preroll.split(";") if p.strip()]
+    else:
+        raw_paths = [current_preroll.strip()] if current_preroll.strip() else []
+
+    # Reverse path mappings to find local paths
+    mappings = []
+    try:
+        raw_map = getattr(setting, "path_mappings", None)
+        if raw_map:
+            data = json.loads(raw_map)
+            if isinstance(data, list):
+                mappings = [m for m in data if isinstance(m, dict) and m.get("local") and m.get("plex")]
+    except Exception:
+        pass
+
+    def _reverse_translate(plex_path: str) -> str:
+        """Reverse a Plex path back to local path using path mappings."""
+        try:
+            for m in mappings:
+                dst = str(m.get("plex", ""))
+                src = str(m.get("local", ""))
+                if not dst or not src:
+                    continue
+                # Normalize for comparison
+                pp = plex_path.replace("\\", "/")
+                dd = dst.replace("\\", "/").rstrip("/")
+                if pp.lower().startswith(dd.lower()):
+                    rest = pp[len(dd):].lstrip("/")
+                    return os.path.join(src, rest.replace("/", os.sep))
+        except Exception:
+            pass
+        return plex_path
+
+    results = []
+    for plex_path in raw_paths:
+        local_path = _reverse_translate(plex_path)
+        norm_local = os.path.normpath(local_path)
+
+        # Try to match to a preroll in the database
+        preroll = None
+        all_prerolls = db.query(models.Preroll).all()
+        for p in all_prerolls:
+            if os.path.normpath(p.path) == norm_local:
+                preroll = p
+                break
+
+        if preroll:
+            cat = db.query(models.Category).filter(models.Category.id == preroll.category_id).first()
+            results.append({
+                "id": preroll.id,
+                "filename": preroll.filename,
+                "display_name": preroll.display_name or preroll.filename,
+                "category_name": cat.name if cat else "Unknown",
+                "path": plex_path,
+                "preview_url": f"/static/prerolls/{quote(cat.name if cat else 'Unknown', safe='')}/{quote(preroll.filename, safe='')}"
+            })
+        else:
+            fname = os.path.basename(plex_path)
+            results.append({
+                "id": None,
+                "filename": fname,
+                "display_name": fname,
+                "category_name": None,
+                "path": plex_path,
+                "preview_url": None
+            })
+
+    # Include applied sequence info
+    applied_sequence = None
+    seq_id = getattr(setting, "applied_sequence_id", None)
+    if seq_id:
+        override_exp = getattr(setting, "override_expires_at", None)
+        if override_exp and override_exp > datetime.datetime.utcnow():
+            applied_sequence = {
+                "id": seq_id,
+                "name": getattr(setting, "applied_sequence_name", None) or "Unknown Sequence"
+            }
+
+    return {"prerolls": results, "applied_sequence": applied_sequence, "mode": mode}
 
 @app.delete("/plex/stable-token")
 def delete_stable_token():
@@ -13961,7 +14434,31 @@ def get_active_category(db: Session = Depends(get_db)):
     try:
         setting = db.query(models.Setting).first()
         if not setting:
-            return {"active_category": None}
+            return {"active_category": None, "applied_sequence": None}
+        
+        # Check if a sequence was manually applied (and override hasn't expired)
+        applied_sequence = None
+        seq_id = getattr(setting, "applied_sequence_id", None)
+        if seq_id:
+            override_exp = getattr(setting, "override_expires_at", None)
+            # Use local time (not UTC) since override_expires_at is set using datetime.now()
+            if override_exp and override_exp > datetime.datetime.now():
+                seq_name = getattr(setting, "applied_sequence_name", None) or "Unknown Sequence"
+                applied_sequence = {
+                    "id": seq_id,
+                    "name": seq_name
+                }
+            else:
+                # Override expired — clear the applied sequence
+                try:
+                    setting.applied_sequence_id = None
+                    setting.applied_sequence_name = None
+                    db.commit()
+                except Exception:
+                    try:
+                        db.rollback()
+                    except Exception:
+                        pass
         
         # Check if filler is active (stored as "type:value" string)
         filler_active = getattr(setting, "filler_active", None)
@@ -13977,7 +14474,8 @@ def get_active_category(db: Session = Depends(get_db)):
                             "plex_mode": "single",
                             "is_filler": True,
                             "filler_type": "coming_soon"
-                        }
+                        },
+                        "applied_sequence": applied_sequence
                     }
                 elif filler_type == "sequence":
                     try:
@@ -13992,7 +14490,8 @@ def get_active_category(db: Session = Depends(get_db)):
                                     "is_filler": True,
                                     "filler_type": "sequence",
                                     "sequence_id": sequence_id
-                                }
+                                },
+                                "applied_sequence": applied_sequence
                             }
                     except ValueError:
                         pass
@@ -14008,7 +14507,8 @@ def get_active_category(db: Session = Depends(get_db)):
                                     "plex_mode": getattr(category, "plex_mode", "shuffle"),
                                     "is_filler": True,
                                     "filler_type": "category"
-                                }
+                                },
+                                "applied_sequence": applied_sequence
                             }
                     except ValueError:
                         pass
@@ -14016,18 +14516,19 @@ def get_active_category(db: Session = Depends(get_db)):
         # Normal category lookup
         category_id = getattr(setting, "active_category", None)
         if category_id is None:
-            return {"active_category": None}
+            return {"active_category": None, "applied_sequence": applied_sequence}
         
         category = db.query(models.Category).filter(models.Category.id == category_id).first()
         if not category:
-            return {"active_category": None}
+            return {"active_category": None, "applied_sequence": applied_sequence}
 
         return {
             "active_category": {
                 "id": category.id,
                 "name": category.name,
                 "plex_mode": getattr(category, "plex_mode", "shuffle")
-            }
+            },
+            "applied_sequence": applied_sequence
         }
     except Exception as e:
         log_event('ERROR', 'system', f'Error getting active category: {e}', source='get_active_category')
@@ -20115,13 +20616,18 @@ def diagnostics_bundle(db: Session = Depends(get_db)):
         except Exception:
             pass
 
-        # Also pull from secure store (tokens may only live there)
-        try:
-            ss_token = secure_store.get("plex_token")
-            if ss_token:
-                _sensitive_values.add(ss_token)
-        except Exception:
-            pass
+        # Also pull from secure store (tokens/keys may only live there)
+        for _ss_getter in (
+            secure_store.get_plex_token,
+            secure_store.get_jellyfin_api_key,
+            secure_store.get_emby_api_key,
+        ):
+            try:
+                _ss_val = _ss_getter()
+                if _ss_val and len(_ss_val) >= 6:
+                    _sensitive_values.add(_ss_val)
+            except Exception:
+                pass
 
         # Build compiled regex patterns for scrubbing
         # 1) Known URL-parameter keys that carry secrets
@@ -20130,9 +20636,9 @@ def diagnostics_bundle(db: Session = Depends(get_db)):
             r'=)([^&\s"\']+)',
             _re.IGNORECASE,
         )
-        # 2) Authorization / X-Plex-Token headers
+        # 2) Authorization / media-server token headers
         _header_re = _re.compile(
-            r'((?:Authorization|X-Plex-Token|X-Api-Key|ApiKey)\s*[:=]\s*)(\S+)',
+            r'((?:Authorization|X-Plex-Token|X-Api-Key|ApiKey|X-Emby-Token|X-MediaBrowser-Token)\s*[:=]\s*)(\S+)',
             _re.IGNORECASE,
         )
         # 3) Literal known values
@@ -20420,6 +20926,11 @@ def disconnect_jellyfin(db: Session = Depends(get_db)):
         except Exception:
             pass
         db.commit()
+
+    # Clear any Jellyfin plugin client registrations from in-memory tracker
+    jf_keys = [k for k, v in PLUGIN_CLIENTS.items() if v.get("server_type", "").lower() == "jellyfin"]
+    for k in jf_keys:
+        del PLUGIN_CLIENTS[k]
 
     log_event('INFO', 'jellyfin', 'Jellyfin server disconnected', source='disconnect_jellyfin')
     return {"disconnected": True, "message": "Successfully disconnected from Jellyfin server"}
@@ -20777,6 +21288,11 @@ def disconnect_emby(db: Session = Depends(get_db)):
         except Exception:
             pass
         db.commit()
+
+    # Clear any Emby plugin client registrations from in-memory tracker
+    emby_keys = [k for k, v in PLUGIN_CLIENTS.items() if v.get("server_type", "").lower() == "emby"]
+    for k in emby_keys:
+        del PLUGIN_CLIENTS[k]
 
     log_event('INFO', 'emby', 'Emby server disconnected', source='disconnect_emby')
     return {"disconnected": True, "message": "Successfully disconnected from Emby server"}
@@ -23865,7 +24381,7 @@ def get_dashboard_stats(db: Session = Depends(get_db)):
         active_schedules = 0
         inactive_schedules = 0
         upcoming_schedules = 0
-        schedule_types = {"one-time": 0, "recurring": 0, "holiday": 0, "indefinite": 0}
+        schedule_types = {"daily": 0, "weekly": 0, "monthly": 0, "yearly": 0, "holiday": 0}
         
         for s in schedules:
             if not s.is_active:
@@ -23882,16 +24398,12 @@ def get_dashboard_stats(db: Session = Depends(get_db)):
                 else:
                     inactive_schedules += 1
             
-            # Count by type
-            stype = (s.type or "one-time").lower()
-            if "holiday" in stype:
-                schedule_types["holiday"] += 1
-            elif s.recurrence_pattern:
-                schedule_types["recurring"] += 1
-            elif s.end_date is None and s.start_date:
-                schedule_types["indefinite"] += 1
+            # Count by actual type
+            stype = (s.type or "daily").lower()
+            if stype in schedule_types:
+                schedule_types[stype] += 1
             else:
-                schedule_types["one-time"] += 1
+                schedule_types["daily"] += 1
         
         # --- NeX-Up Statistics ---
         setting = db.query(models.Setting).first()

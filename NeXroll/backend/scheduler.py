@@ -1174,20 +1174,33 @@ class Scheduler:
                 return  # Exit early - don't apply prerolls or fallback
 
             # Respect temporary override window set by genre-apply (prevents immediate scheduler override)
+            # BUT: active schedules always take priority over overrides — the override only
+            # protects genre/manual prerolls when NO schedules are in their active window.
             try:
                 ovr = getattr(setting, "override_expires_at", None)
             except Exception:
                 ovr = None
             if ovr is not None:
                 try:
-                    if now < ovr:
-                        # Only log override once per minute to avoid spam
+                    if now < ovr and not active:
+                        # Override is active AND no schedules need to run — respect override
                         state_key = f"override:{ovr.isoformat()}"
                         if self._last_logged_state != state_key or (self._last_logged_time and (now - self._last_logged_time).total_seconds() > 60):
-                            _scheduler_log(f"override active until {ovr.isoformat()}Z; skipping schedule apply")
+                            _scheduler_log(f"override active until {ovr.isoformat()}; no active schedules — skipping schedule apply")
                             self._last_logged_state = state_key
                             self._last_logged_time = now
                         return
+                    elif now < ovr and active:
+                        # Override is active BUT schedules are active — schedules win
+                        active_names = ', '.join(f"'{s.name}'" for s in active[:3])
+                        state_key = f"override_overridden:{ovr.isoformat()}:{len(active)}"
+                        if self._last_logged_state != state_key:
+                            _scheduler_log(f"override active until {ovr.isoformat()} but {len(active)} schedule(s) active ({active_names}) — schedules take priority")
+                            self._last_logged_state = state_key
+                            self._last_logged_time = now
+                        # Clear the override since a schedule is taking over
+                        setting.override_expires_at = None
+                        db.commit()
                 except Exception:
                     # If comparison fails for any reason, ignore override
                     pass
@@ -1349,15 +1362,19 @@ class Scheduler:
                             if filler_type == "category":
                                 filler_category_id = getattr(setting, "filler_category_id", None)
                                 if filler_category_id:
-                                    desired_category_id = filler_category_id
                                     state_key = f"filler_category:{filler_category_id}"
                                     if self._last_logged_state != state_key:
                                         _scheduler_log(f"No active schedules; using FILLER category {filler_category_id}")
                                         self._last_logged_state = state_key
                                         self._last_logged_time = now
-                                    # Set filler_active to track filler state
-                                    setting.filler_active = f"category:{filler_category_id}"
+                                    # Apply the filler category directly and return early
+                                    applied_ok = self._apply_category_to_plex(filler_category_id, db, schedule=None)
+                                    if applied_ok:
+                                        setting.filler_active = f"category:{filler_category_id}"
+                                        setting.active_category = None  # Clear normal category tracking
+                                        db.commit()
                                     filler_applied = True
+                                    return  # Filler category applied, exit early
                                     
                             elif filler_type == "sequence":
                                 filler_sequence_id = getattr(setting, "filler_sequence_id", None)
@@ -1407,8 +1424,43 @@ class Scheduler:
                                 self._last_logged_state = state_key
                                 self._last_logged_time = now
 
-            # Apply category change to Plex only if it differs from current
-            if desired_category_id and setting.active_category != desired_category_id:
+            # Apply category/sequence to Plex
+            # First handle sequence-only schedules (no category_id but has sequence)
+            if desired_category_id is None and chosen_schedule and getattr(chosen_schedule, "sequence", None):
+                # Check if this sequence schedule was already applied (avoid re-applying every tick)
+                last_rotation = self._last_rotation_time.get(chosen_schedule.id)
+                needs_apply = False
+                if setting.filler_active is not None:
+                    # Filler is currently showing — need to switch to this schedule
+                    needs_apply = True
+                elif last_rotation is None:
+                    # Never applied yet
+                    needs_apply = True
+                elif (now - last_rotation).total_seconds() >= self._rotation_interval_seconds:
+                    # Time to rotate random blocks
+                    needs_apply = True
+
+                if needs_apply:
+                    applied_ok = self._apply_schedule_sequence_to_plex(chosen_schedule, db)
+                    if applied_ok:
+                        self._last_rotation_time[chosen_schedule.id] = now
+                        setting.active_category = None  # No category to track
+                        setting.filler_active = None  # Clear filler state when a schedule is active
+                        chosen_schedule.last_run = now
+                        chosen_schedule.next_run = self._calculate_next_run(chosen_schedule)
+                        db.commit()
+                        state_key = f"sequence_schedule:{chosen_schedule.id}"
+                        if self._last_logged_state != state_key:
+                            _scheduler_log(f"Applied sequence-only schedule '{chosen_schedule.name}' (ID {chosen_schedule.id})")
+                            self._last_logged_state = state_key
+                            self._last_logged_time = now
+                else:
+                    state_key = f"sequence_schedule:{chosen_schedule.id}"
+                    if self._last_logged_state != state_key:
+                        _scheduler_log(f"Sequence schedule '{chosen_schedule.name}' already active")
+                        self._last_logged_state = state_key
+                        self._last_logged_time = now
+            elif desired_category_id and setting.active_category != desired_category_id:
                 applied_ok = False
                 # If this schedule defines an explicit sequence, honor it; otherwise apply whole category
                 if chosen_schedule and getattr(chosen_schedule, "sequence", None):
@@ -1425,13 +1477,13 @@ class Scheduler:
                         chosen_schedule.last_run = now
                         chosen_schedule.next_run = self._calculate_next_run(chosen_schedule)
                     db.commit()
-            elif desired_category_id is None:
+            elif desired_category_id is None and not (chosen_schedule and getattr(chosen_schedule, "sequence", None)):
                 state_key = "no_category_to_apply"
                 if self._last_logged_state != state_key:
                     _scheduler_log(f"No category to apply (desired_category_id is None)")
                     self._last_logged_state = state_key
                     self._last_logged_time = now
-            elif setting.active_category == desired_category_id:
+            elif desired_category_id and setting.active_category == desired_category_id:
                 # Check if we need to rotate random blocks in a sequence
                 should_rotate = False
                 if chosen_schedule and getattr(chosen_schedule, "sequence", None):
@@ -1633,33 +1685,122 @@ class Scheduler:
     def _is_schedule_active(self, schedule: models.Schedule, now: datetime.datetime) -> bool:
         """
         Determine whether a schedule should be considered active at 'now'.
-        - If end_date is provided: active for the whole window [start_date, end_date].
-        - If no end_date: treat as an ongoing schedule starting at start_date (indefinite)
-          until another schedule takes precedence or a fallback is applied when no schedule is active.
-        - For daily schedules with timeRange: also check if current time is within the time window.
+        
+        Type-specific behavior:
+        - daily/weekly/monthly: Date window + recurrence_pattern (weekDays/monthDays/timeRange)
+        - yearly: Matches month/day from start_date each year (ignores year). Supports dynamic
+          holiday lookup via holiday_name/holiday_country fields.
+        - holiday: Uses holiday_name/holiday_country for dynamic date lookup via Holiday API,
+          falls back to month/day from start_date if no holiday fields are set.
         
         NOTE: Both schedule dates and 'now' are expected to be in local time (naive datetimes).
-        This simplifies comparisons and avoids timezone conversion bugs.
         """
         if not schedule or not getattr(schedule, "start_date", None):
             return False
 
-        # First check date window
-        date_active = False
-        if getattr(schedule, "end_date", None):
-            # Windowed schedules: active between start and end (inclusive)
-            date_active = schedule.start_date <= now <= schedule.end_date
+        schedule_type = getattr(schedule, "type", "") or ""
+
+        # --- Yearly type: match month/day, ignore year ---
+        if schedule_type == "yearly":
+            # If holiday_name + holiday_country are set, use dynamic Holiday API lookup
+            h_name = getattr(schedule, "holiday_name", None)
+            h_country = getattr(schedule, "holiday_country", None)
+            if h_name and h_country:
+                holiday_date = self._get_holiday_date(h_name, h_country, now.year)
+                if holiday_date:
+                    if not (now.month == holiday_date.month and now.day == holiday_date.day):
+                        _scheduler_verbose(f"Schedule '{schedule.name}' (yearly/holiday-dynamic) not active: "
+                                           f"today {now.month}/{now.day} != holiday {holiday_date.month}/{holiday_date.day}")
+                        return False
+                    # Month/day match — fall through to time range check below
+                else:
+                    _scheduler_verbose(f"Schedule '{schedule.name}' (yearly/holiday-dynamic) "
+                                       f"could not resolve holiday '{h_name}' for {now.year}")
+                    return False
+            else:
+                # Standard yearly: match month/day from start_date
+                if not (now.month == schedule.start_date.month and now.day == schedule.start_date.day):
+                    # Also check end_date range within the year if set
+                    if getattr(schedule, "end_date", None):
+                        # Build this year's range from the stored month/day
+                        try:
+                            this_year_start = schedule.start_date.replace(year=now.year)
+                            this_year_end = schedule.end_date.replace(year=now.year)
+                            if not (this_year_start <= now <= this_year_end):
+                                _scheduler_verbose(f"Schedule '{schedule.name}' (yearly) not in range "
+                                                   f"{this_year_start} - {this_year_end}")
+                                return False
+                        except ValueError:
+                            return False  # e.g., Feb 29 in non-leap year
+                    else:
+                        _scheduler_verbose(f"Schedule '{schedule.name}' (yearly) not active: "
+                                           f"today {now.month}/{now.day} != {schedule.start_date.month}/{schedule.start_date.day}")
+                        return False
+            # Yearly passed date check — skip to time range check below
+
+        # --- Holiday type: dynamic date lookup ---
+        elif schedule_type == "holiday":
+            h_name = getattr(schedule, "holiday_name", None)
+            h_country = getattr(schedule, "holiday_country", None)
+            if h_name and h_country:
+                holiday_date = self._get_holiday_date(h_name, h_country, now.year)
+                if holiday_date:
+                    if not (now.month == holiday_date.month and now.day == holiday_date.day):
+                        _scheduler_verbose(f"Schedule '{schedule.name}' (holiday) not active: "
+                                           f"today {now.month}/{now.day} != {h_name} {holiday_date.month}/{holiday_date.day}")
+                        return False
+                else:
+                    _scheduler_verbose(f"Schedule '{schedule.name}' (holiday) could not resolve '{h_name}' for {now.year}")
+                    return False
+            else:
+                # No holiday fields — fall back to yearly-style month/day from start_date
+                if getattr(schedule, "end_date", None):
+                    try:
+                        this_year_start = schedule.start_date.replace(year=now.year)
+                        this_year_end = schedule.end_date.replace(year=now.year)
+                        if not (this_year_start <= now <= this_year_end):
+                            return False
+                    except ValueError:
+                        return False
+                else:
+                    if not (now.month == schedule.start_date.month and now.day == schedule.start_date.day):
+                        return False
+
+        # --- Daily/Weekly/Monthly and others: standard date window check ---
         else:
-            # Indefinite schedule: active from start onward
-            date_active = now >= schedule.start_date
+            date_active = False
+            if getattr(schedule, "end_date", None):
+                date_active = schedule.start_date <= now <= schedule.end_date
+            else:
+                date_active = now >= schedule.start_date
+            
+            if not date_active:
+                return False
         
-        if not date_active:
-            return False
-        
-        # Now check time range for daily schedules with timeRange in recurrence_pattern
+        # Check recurrence pattern constraints (weekDays, monthDays, timeRange)
         if schedule.recurrence_pattern:
             try:
                 pattern = json.loads(schedule.recurrence_pattern)
+                
+                # Check weekDays for weekly schedules
+                week_days = pattern.get("weekDays")
+                if week_days and isinstance(week_days, list) and len(week_days) > 0:
+                    # Map Python weekday (0=Mon..6=Sun) to our day names
+                    day_map = {0: "monday", 1: "tuesday", 2: "wednesday", 3: "thursday", 4: "friday", 5: "saturday", 6: "sunday"}
+                    current_day_name = day_map.get(now.weekday())
+                    if current_day_name not in week_days:
+                        _scheduler_verbose(f"Schedule '{schedule.name}' not active on {current_day_name} (weekDays: {week_days})")
+                        return False
+                
+                # Check monthDays for monthly schedules
+                month_days = pattern.get("monthDays")
+                if month_days and isinstance(month_days, list) and len(month_days) > 0:
+                    current_day_of_month = now.day
+                    if current_day_of_month not in month_days:
+                        _scheduler_verbose(f"Schedule '{schedule.name}' not active on day {current_day_of_month} (monthDays: {month_days})")
+                        return False
+                
+                # Check timeRange
                 time_range = pattern.get("timeRange")
                 if time_range and time_range.get("start"):
                     # This schedule has a time-of-day constraint
@@ -2557,55 +2698,6 @@ class Scheduler:
         finally:
             db.close()
 
-    def _should_execute_schedule(self, schedule: models.Schedule, now: datetime.datetime, db: Session) -> bool:
-        """Determine if a schedule should execute now"""
-        if schedule.type == "monthly":
-            # Execute on the same day each month
-            return (now.day == schedule.start_date.day and
-                   now.hour == schedule.start_date.hour and
-                   now.minute == schedule.start_date.minute)
-
-        elif schedule.type == "yearly":
-            # Check if this schedule uses dynamic holiday lookup
-            if schedule.recurrence_pattern:
-                try:
-                    pattern = json.loads(schedule.recurrence_pattern)
-                    if pattern.get('type') == 'holiday_dynamic':
-                        # Dynamic holiday: look up current year's date from Holiday API
-                        holiday_date = self._get_holiday_date(pattern.get('name'), pattern.get('country'), now.year)
-                        if holiday_date:
-                            return (now.month == holiday_date.month and
-                                   now.day == holiday_date.day and
-                                   now.hour == schedule.start_date.hour and
-                                   now.minute == schedule.start_date.minute)
-                        return False
-                except Exception as e:
-                    _scheduler_log(f"Error parsing holiday pattern: {e}", level="ERROR")
-            
-            # Standard yearly schedule: execute on the same date each year
-            return (now.month == schedule.start_date.month and
-                   now.day == schedule.start_date.day and
-                   now.hour == schedule.start_date.hour and
-                   now.minute == schedule.start_date.minute)
-
-        elif schedule.type == "holiday":
-            # Check holiday presets
-            holiday = db.query(models.HolidayPreset).filter(
-                models.HolidayPreset.category_id == schedule.category_id
-            ).first()
-            if holiday:
-                return (now.month == holiday.month and
-                       now.day == holiday.day and
-                       now.hour == schedule.start_date.hour and
-                       now.minute == schedule.start_date.minute)
-
-        elif schedule.type == "custom":
-            # Custom recurrence pattern (simplified - could use cron parser)
-            if schedule.recurrence_pattern:
-                return self._matches_pattern(now, schedule.recurrence_pattern)
-
-        return False
-
     def _get_holiday_date(self, holiday_name: str, country_code: str, year: int) -> Optional[datetime.date]:
         """
         Look up the date for a holiday in a specific year using the Holiday API.
@@ -2861,88 +2953,6 @@ class Scheduler:
                 db.close()
 
         return None
-
-    def _matches_pattern(self, now: datetime.datetime, pattern: str) -> bool:
-        """Check if current time matches a recurrence pattern.
-        
-        IMPORTANT: timeRange values are stored in user's local timezone,
-        so we must convert 'now' (which is UTC) to local time before comparing.
-        """
-        try:
-            pattern_data = json.loads(pattern)
-            
-            # Check time range if present
-            time_range = pattern_data.get("timeRange")
-            if time_range and time_range.get("start"):
-                start_time_str = time_range.get("start", "")
-                end_time_str = time_range.get("end", "")
-                
-                if start_time_str:
-                    start_parts = start_time_str.split(":")
-                    start_hour = int(start_parts[0])
-                    start_minute = int(start_parts[1]) if len(start_parts) > 1 else 0
-                    
-                    end_hour = 23
-                    end_minute = 59
-                    if end_time_str:
-                        end_parts = end_time_str.split(":")
-                        end_hour = int(end_parts[0])
-                        end_minute = int(end_parts[1]) if len(end_parts) > 1 else 59
-                    
-                    # CRITICAL: Convert UTC 'now' to user's local timezone
-                    db = SessionLocal()
-                    try:
-                        setting = db.query(models.Setting).first()
-                        user_tz_str = setting.timezone if setting and setting.timezone else "UTC"
-                        try:
-                            user_tz = pytz.timezone(user_tz_str)
-                        except:
-                            user_tz = pytz.UTC
-                        
-                        utc_now = now.replace(tzinfo=pytz.UTC) if now.tzinfo is None else now
-                        local_now = utc_now.astimezone(user_tz)
-                        current_hour = local_now.hour
-                        current_minute = local_now.minute
-                    finally:
-                        db.close()
-                    
-                    current_time_val = current_hour * 60 + current_minute
-                    start_time_val = start_hour * 60 + start_minute
-                    end_time_val = end_hour * 60 + end_minute
-                    
-                    # Handle overnight ranges
-                    if start_time_val <= end_time_val:
-                        if not (start_time_val <= current_time_val <= end_time_val):
-                            return False
-                    else:
-                        # Overnight range (e.g., 22:00 to 03:00)
-                        if not (current_time_val >= start_time_val or current_time_val <= end_time_val):
-                            return False
-            
-            # Check days of week if present
-            days = pattern_data.get("daysOfWeek")
-            if days and isinstance(days, list):
-                # Python weekday: Monday=0, Sunday=6
-                # Note: we should also use local time for day-of-week check
-                db = SessionLocal()
-                try:
-                    setting = db.query(models.Setting).first()
-                    user_tz_str = setting.timezone if setting and setting.timezone else "UTC"
-                    try:
-                        user_tz = pytz.timezone(user_tz_str)
-                    except:
-                        user_tz = pytz.UTC
-                    
-                    utc_now = now.replace(tzinfo=pytz.UTC) if now.tzinfo is None else now
-                    local_now = utc_now.astimezone(user_tz)
-                    if local_now.weekday() not in days:
-                        return False
-                finally:
-                    db.close()
-            
-            return True
-        except (json.JSONDecodeError, ValueError, IndexError):
-            return True  # If pattern is invalid, default to match
 
 # Global scheduler instance
 scheduler = Scheduler()

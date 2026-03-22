@@ -15,9 +15,9 @@ VSVersionInfo(
         '040904B0',
         [StringStruct('CompanyName', 'JFLXCLOUD'),
          StringStruct('FileDescription', 'NeXroll'),
-         StringStruct('FileVersion', '1.12.0-beta.1'),
+         StringStruct('FileVersion', '1.12.0-beta.2'),
          StringStruct('ProductName', 'NeXroll'),
-         StringStruct('ProductVersion', '1.12.0-beta.1'),
+         StringStruct('ProductVersion', '1.12.0-beta.2'),
          StringStruct('LegalCopyright', '© 2025 JFLXCLOUD')]
       )
     ]),

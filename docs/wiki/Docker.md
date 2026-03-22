@@ -113,17 +113,21 @@ NeXroll is available in Unraid Community Applications.
 | `PUID` | User ID for file permissions | 99 |
 | `PGID` | Group ID for file permissions | 100 |
 
-## Path Mappings (Critical for Plex/Jellyfin)
+## Path Mappings (Critical for Plex/Jellyfin/Emby)
 
-For Plex/Jellyfin to find your preroll files, you must configure path mappings in Settings → Path Mappings.
+For your media server to find preroll files, you must configure path mappings in Settings → Path Mappings.
+
+For **Jellyfin and Emby**, path mappings can also be configured in the NeXroll Intros plugin settings (Path Prefix From/To), which is handled automatically when using NeXroll's **Configure Plugin** button.
 
 ### Common Examples
 
-| Scenario | NeXroll Path | Plex/Jellyfin Path |
+| Scenario | NeXroll Path | Media Server Path |
 |----------|--------------|-------------------|
 | Docker → Windows Plex (drive) | /data/prerolls | Z:\Prerolls |
 | Docker → Windows Plex (UNC) | /data/prerolls | \\\\NAS\Prerolls |
 | Docker → Linux Plex | /data/prerolls | /media/prerolls |
+| Docker → Jellyfin (Docker) | /data/prerolls | /media/prerolls |
+| Docker → Emby (Docker) | /data/prerolls | /media/prerolls |
 | Unraid → Unraid Plex | /data/prerolls | /mnt/user/media/prerolls |
 
 **Don't forget NeX-Up trailers!** If using a separate trailer volume, add a path mapping for that too.
@@ -183,7 +187,7 @@ docker run -d --name nexroll `
   jbrns/nexroll:latest
 ```
 
-## Connecting to Plex/Jellyfin
+## Connecting to Media Servers
 
 ### Plex Connection
 
@@ -199,11 +203,47 @@ For Docker environments, Plex is typically at:
 
 ### Jellyfin Connection
 
-1. Enter your Jellyfin server URL: `http://192.168.1.100:8096`
-2. Create an API Key in Jellyfin: Dashboard → Advanced → API Keys
-3. Enter the API Key in NeXroll
+Jellyfin uses a **server connection + plugin** approach for preroll injection.
 
-**Note**: Jellyfin requires the "Local Intros" plugin for preroll support.
+1. In NeXroll, go to **Connect → Jellyfin**
+2. Enter your Jellyfin server URL (e.g., `http://192.168.1.100:8096`)
+3. Create an API Key in Jellyfin: **Dashboard → API Keys → Create** (the `+` button)
+4. Enter the API Key in NeXroll and click **Connect**
+
+**Plugin Setup**: Install the **NeXroll Intros** plugin in Jellyfin (see the [Jellyfin Setup](Jellyfin) wiki page for details). NeXroll can auto-detect and configure the plugin once connected:
+
+1. In **Connect → Jellyfin**, click **Detect Plugin**
+2. If detected, click **Configure Plugin** — NeXroll will automatically push the server URL, generate an API key, and set path mappings
+
+The plugin uses Jellyfin's `IIntroProvider` interface to inject prerolls at playback time. It downloads preroll files to a local cache and registers them in Jellyfin's database.
+
+For Docker, use the NeXroll container's service name or host IP as the URL:
+- `http://nexroll:9393` (docker-compose service name)
+- `http://host.docker.internal:9393` (Docker Desktop)
+- `http://172.17.0.1:9393` (Linux bridge network)
+
+### Emby Connection
+
+Emby uses a **server connection + plugin + Cinema Mode** approach for preroll injection.
+
+1. In NeXroll, go to **Connect → Emby**
+2. Enter your Emby server URL (e.g., `http://192.168.1.100:8096`)
+3. Create an API Key in Emby: **Settings → API Keys → New API Key**
+4. Enter the API Key in NeXroll and click **Connect**
+
+**Plugin Setup**: Install the **NeXroll Intros** plugin in Emby (see the [Emby Setup](Emby) wiki page for details). NeXroll can auto-detect and configure the plugin once connected:
+
+1. In **Connect → Emby**, click **Detect Plugin**
+2. If detected, click **Configure Plugin** — NeXroll will automatically push the server URL, generate an API key, and set path mappings
+
+**Cinema Mode (Required)**: In Emby, go to **Settings → Cinema Mode** and ensure:
+- Cinema Mode is **On**
+- "Enable intros for Movies" and/or "Enable intros for Episodes" are checked
+- **"Include trailers from my movies in my library"** is checked — without this, prerolls won't play
+
+After initial setup, run **Scheduled Tasks → Refresh Custom Intros** in Emby to register the cached preroll files.
+
+> **Note**: Emby Premiere is required for Cinema Mode functionality.
 
 ## Updating
 
@@ -229,6 +269,19 @@ Your data is preserved in the mounted volumes.
 - Try `http://host.docker.internal:32400` (Docker Desktop)
 - Check Docker network settings
 - Verify Plex allows connections from Docker's IP range
+
+### Cannot Connect to Jellyfin/Emby
+- Try `http://host.docker.internal:8096` (Docker Desktop) or use the LAN IP
+- If using docker-compose, use the service name (e.g., `http://jellyfin:8096`)
+- Verify port 8096 (or your custom port) is accessible from NeXroll's container
+- For plugin communication, ensure NeXroll's port 9393 is reachable from the media server container
+
+### Jellyfin/Emby Plugin Not Working
+- Verify the plugin is installed — check **Dashboard → Plugins** in your media server
+- Test plugin connectivity: use **Detect Plugin** in NeXroll's Connect page
+- For Emby: ensure Cinema Mode is enabled and "Include trailers from my movies in my library" is checked
+- For Emby: run **Scheduled Tasks → Refresh Custom Intros** after initial setup
+- Check that NeXroll is reachable from the media server at the configured URL
 
 ### Permission Errors
 ```bash
@@ -279,7 +332,9 @@ docker start nexroll
 
 Or use the built-in **System & Files Backup** feature in Settings.
 
-## Full Stack Example with Plex
+## Full Stack Examples
+
+### With Plex
 
 ```yaml
 version: "3.8"
@@ -311,3 +366,75 @@ services:
       - plex
     restart: unless-stopped
 ```
+
+### With Jellyfin
+
+```yaml
+version: "3.8"
+services:
+  jellyfin:
+    image: jellyfin/jellyfin:latest
+    ports:
+      - "8096:8096"
+    volumes:
+      - ./jellyfin-config:/config
+      - ./media:/media
+    environment:
+      - TZ=America/New_York
+    restart: unless-stopped
+
+  nexroll:
+    image: jbrns/nexroll:latest
+    ports:
+      - "9393:9393"
+    environment:
+      - NEXROLL_PORT=9393
+      - NEXROLL_DB_DIR=/data
+      - NEXROLL_PREROLL_PATH=/data/prerolls
+      - TZ=America/New_York
+    volumes:
+      - ./nexroll-data:/data
+      - ./media/prerolls:/data/prerolls
+    depends_on:
+      - jellyfin
+    restart: unless-stopped
+```
+
+In the plugin config, set path mapping: **NeXroll Prefix** `/data/prerolls` → **Jellyfin Prefix** `/media/prerolls`
+
+### With Emby
+
+```yaml
+version: "3.8"
+services:
+  emby:
+    image: emby/embyserver:latest
+    ports:
+      - "8096:8096"
+    volumes:
+      - ./emby-config:/config
+      - ./media:/media
+    environment:
+      - TZ=America/New_York
+    restart: unless-stopped
+
+  nexroll:
+    image: jbrns/nexroll:latest
+    ports:
+      - "9393:9393"
+    environment:
+      - NEXROLL_PORT=9393
+      - NEXROLL_DB_DIR=/data
+      - NEXROLL_PREROLL_PATH=/data/prerolls
+      - TZ=America/New_York
+    volumes:
+      - ./nexroll-data:/data
+      - ./media/prerolls:/data/prerolls
+    depends_on:
+      - emby
+    restart: unless-stopped
+```
+
+In the plugin config, set path mapping: **NeXroll Prefix** `/data/prerolls` → **Emby Prefix** `/media/prerolls`
+
+Remember to enable **Cinema Mode** in Emby and run **Refresh Custom Intros** after setup.

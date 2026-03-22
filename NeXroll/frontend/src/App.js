@@ -21,7 +21,7 @@ import {
     Youtube, Globe, Key, Rocket, FileUp, ArrowRight, HardDrive, ListChecks, Unlink, LinkIcon,
     Tv, ClipboardList, Info, RotateCw, LayoutDashboard, BarChart3, PieChart as PieChartIcon, Activity, TrendingUp, Server, Timer,
     Database, Archive, Shield, UserPlus, Users, LayoutGrid, List, Layers, Terminal, AlertCircle, Filter, BarChart2, HelpCircle,
-    Music
+    Music, Wand2, GitCompare, Square
   } from 'lucide-react';
 import { BarChart, Bar, XAxis, YAxis, ResponsiveContainer, Cell, Tooltip } from 'recharts';
 
@@ -454,6 +454,7 @@ function App() {
     library: ''
   });
   const [schedulerStatus, setSchedulerStatus] = useState({ running: false, active_schedules: 0 });
+  const [nextScheduleCountdown, setNextScheduleCountdown] = useState(null);
   const [backupFile, setBackupFile] = useState(null);
   const [backupProgress, setBackupProgress] = useState({ active: false, type: '', message: '' });
   const [communityTemplates, setCommunityTemplates] = useState([]);
@@ -537,6 +538,8 @@ function App() {
   const [showUpdateBanner, setShowUpdateBanner] = useState(false);
   const [updateSettings, setUpdateSettings] = useState({ check_interval: 'daily', include_prerelease: false, last_check: null, dismissed_version: null });
   const [activeCategory, setActiveCategory] = useState(null);
+  const [appliedSequence, setAppliedSequence] = useState(null); // Manually applied sequence info
+  const [currentPrerollPreview, setCurrentPrerollPreview] = useState(null); // {prerolls: [...], index: 0} for preview modal
   const [activeScheduleIds, setActiveScheduleIds] = useState([]);
   
   // Changelog modal state
@@ -950,6 +953,12 @@ const [calendarFilterType, setCalendarFilterType] = useState('all'); // 'all', '
 const [calendarShowConflictsOnly, setCalendarShowConflictsOnly] = useState(false); // Show only days with conflicts
 const [calendarShowInactive, setCalendarShowInactive] = useState(false); // Show inactive schedules too
 
+// Conflict Resolution Wizard state
+const [showConflictWizard, setShowConflictWizard] = useState(false);
+const [conflictResolutions, setConflictResolutions] = useState({}); // { conflictId: selectedFixId }
+const [conflictWizardApplying, setConflictWizardApplying] = useState(false);
+const [conflictWizardResults, setConflictWizardResults] = useState(null); // { applied: [], failed: [] }
+
 // Holiday Browser state
 const [showHolidayBrowser, setShowHolidayBrowser] = useState(false);
 const [holidayCountries, setHolidayCountries] = useState([]);
@@ -1131,7 +1140,9 @@ const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
     color: '',
     blend_enabled: false,
     priority: 5,
-    exclusive: false
+    exclusive: false,
+    holiday_name: '',
+    holiday_country: ''
   });
 
   // Sequence Builder state
@@ -1142,6 +1153,7 @@ const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
   const [showSequenceImportModal, setShowSequenceImportModal] = useState(false);
   const [showSequenceExportModal, setShowSequenceExportModal] = useState(false);
   const [exportingSequence, setExportingSequence] = useState(null); // Sequence being exported
+  const [applyingSequenceId, setApplyingSequenceId] = useState(null); // Track which sequence is being applied to server
   const [showSequencePreviewModal, setShowSequencePreviewModal] = useState(false);
   const [previewingSequence, setPreviewingSequence] = useState(null); // Sequence being previewed
   const [editingSequenceId, setEditingSequenceId] = useState(null); // Track which sequence is being edited
@@ -1826,10 +1838,13 @@ const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
         // Set active category
         if (activeCat?.__error) {
           setActiveCategory(null);
+          setAppliedSequence(null);
         } else if (activeCat?.active_category) {
           setActiveCategory(activeCat.active_category);
+          setAppliedSequence(activeCat.applied_sequence || null);
         } else {
           setActiveCategory(null);
+          setAppliedSequence(activeCat?.applied_sequence || null);
         }
         // Set active schedule IDs
         if (activeScheduleIdsData?.active_schedule_ids) {
@@ -1892,6 +1907,128 @@ const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
     // Check changelog after a short delay to let the app load
     setTimeout(checkChangelog, 1000);
   }, []);
+
+  // Countdown timer for next scheduled event
+  useEffect(() => {
+    const computeCountdown = () => {
+      const now = new Date();
+      let nearest = null;
+      let nearestName = null;
+      let nearestCatId = null;
+
+      // Helper: compute the next future activation time for a schedule
+      const getNextActivation = (s) => {
+        if (!s.start_date) return null;
+        const startDate = new Date(s.start_date);
+        const endDate = s.end_date ? new Date(s.end_date) : null;
+
+        // If the schedule hasn't started yet, its start is the next activation
+        // (but only if it would be active on that start date/time)
+        if (startDate > now) {
+          return startDate;
+        }
+
+        // If the schedule has ended, skip it
+        if (endDate && endDate <= now) return null;
+
+        // Schedule date range encompasses now — check recurrence for next occurrence
+        let pattern = null;
+        if (s.recurrence_pattern) {
+          try { pattern = JSON.parse(s.recurrence_pattern); } catch { /* ignore */ }
+        }
+
+        const timeRange = pattern?.timeRange;
+        const weekDays = pattern?.weekDays;
+        const monthDays = pattern?.monthDays;
+        const dayNames = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
+
+        // Parse time range
+        let startHour = 0, startMinute = 0, hasTimeRange = false;
+        if (timeRange?.start) {
+          hasTimeRange = true;
+          const sp = timeRange.start.split(':');
+          startHour = parseInt(sp[0], 10);
+          startMinute = sp.length > 1 ? parseInt(sp[1], 10) : 0;
+        }
+
+        // Check if schedule is currently active right now (already showing)
+        const isActiveNow = (() => {
+          // Check weekDay constraint
+          if (weekDays?.length > 0 && !weekDays.includes(dayNames[now.getDay()])) return false;
+          // Check monthDay constraint
+          if (monthDays?.length > 0 && !monthDays.includes(now.getDate())) return false;
+          // Check time range
+          if (hasTimeRange) {
+            const endTimeStr = timeRange.end || '23:59';
+            const ep = endTimeStr.split(':');
+            const endHour = parseInt(ep[0], 10);
+            const endMinute = ep.length > 1 ? parseInt(ep[1], 10) : 59;
+            const curr = now.getHours() * 60 + now.getMinutes();
+            const startVal = startHour * 60 + startMinute;
+            const endVal = endHour * 60 + endMinute;
+            if (startVal <= endVal) {
+              if (curr < startVal || curr > endVal) return false;
+            } else {
+              // Overnight
+              if (curr < startVal && curr > endVal) return false;
+            }
+          }
+          return true;
+        })();
+
+        // If currently active, we want the NEXT change (not this one)
+        // So we need to find when this schedule ends AND when the next different schedule starts
+        // Skip currently active schedules — we want what's NEXT to be applied
+        if (isActiveNow) return null;
+
+        // Not currently active but within date range — find next occurrence
+        // Scan forward up to 60 days to find the next matching day+time
+        for (let dayOffset = 0; dayOffset <= 60; dayOffset++) {
+          const candidate = new Date(now);
+          candidate.setDate(candidate.getDate() + dayOffset);
+          candidate.setHours(startHour, startMinute, 0, 0);
+
+          // If same day, candidate must be in the future
+          if (candidate <= now) continue;
+
+          // Check end_date
+          if (endDate && candidate > endDate) break;
+
+          // Check weekDay constraint
+          if (weekDays?.length > 0 && !weekDays.includes(dayNames[candidate.getDay()])) continue;
+
+          // Check monthDay constraint
+          if (monthDays?.length > 0 && !monthDays.includes(candidate.getDate())) continue;
+
+          return candidate;
+        }
+
+        return null;
+      };
+
+      for (const s of schedules) {
+        if (!s.is_active) continue;
+        const nextTime = getNextActivation(s);
+        if (!nextTime) continue;
+        if (!nearest || nextTime < nearest) {
+          nearest = nextTime;
+          nearestName = s.name;
+          nearestCatId = s.category_id;
+        }
+      }
+
+      if (!nearest) { setNextScheduleCountdown(null); return; }
+      const diff = nearest - now;
+      const days = Math.floor(diff / 86400000);
+      const hours = Math.floor((diff % 86400000) / 3600000);
+      const minutes = Math.floor((diff % 3600000) / 60000);
+      const seconds = Math.floor((diff % 60000) / 1000);
+      setNextScheduleCountdown({ days, hours, minutes, seconds, name: nearestName, categoryId: nearestCatId, targetTime: nearest });
+    };
+    computeCountdown();
+    const countdownInterval = setInterval(computeCountdown, 1000);
+    return () => clearInterval(countdownInterval);
+  }, [schedules]);
 
   useEffect(() => {
     fetchData();
@@ -2283,6 +2420,87 @@ const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
     fetchData();
   };
 
+  // Shared validation for schedule recurrence patterns (used by both create and update)
+  const validateScheduleRecurrence = () => {
+    if (scheduleForm.type === 'daily' && !timeRange.start) {
+      alert('Please select at least a start time for daily schedules');
+      return false;
+    }
+    if (scheduleForm.type === 'weekly' && weekDays.length === 0) {
+      alert('Please select at least one day of the week for weekly schedules');
+      return false;
+    }
+    if (scheduleForm.type === 'monthly' && monthDays.length === 0) {
+      alert('Please select at least one day of the month for monthly schedules');
+      return false;
+    }
+    if (scheduleForm.type === 'holiday' && !scheduleForm.holiday_name?.trim()) {
+      alert('Please enter a holiday name (e.g., Thanksgiving, Christmas, Easter)');
+      return false;
+    }
+    if (scheduleForm.type === 'holiday' && !scheduleForm.holiday_country?.trim()) {
+      alert('Please enter a country code (e.g., US, CA, GB)');
+      return false;
+    }
+    return true;
+  };
+
+  // Build the common schedule data object + recurrence pattern (used by both create and update)
+  const buildScheduleData = () => {
+    const data = {
+      name: scheduleForm.name.trim(),
+      type: scheduleForm.type,
+      start_date: scheduleForm.start_date,
+      shuffle: scheduleForm.shuffle,
+      playlist: scheduleForm.playlist,
+      blend_enabled: scheduleForm.blend_enabled,
+      priority: scheduleForm.priority,
+      exclusive: scheduleForm.exclusive
+    };
+
+    if (scheduleForm.end_date && scheduleForm.end_date.trim()) {
+      data.end_date = scheduleForm.end_date;
+    }
+    if (scheduleForm.color && scheduleForm.color.trim()) {
+      data.color = scheduleForm.color;
+    }
+
+    // Holiday fields for dynamic date lookup
+    if ((scheduleForm.type === 'holiday' || scheduleForm.type === 'yearly') && scheduleForm.holiday_name) {
+      data.holiday_name = scheduleForm.holiday_name.trim();
+      data.holiday_country = (scheduleForm.holiday_country || 'US').trim();
+    } else {
+      data.holiday_name = null;
+      data.holiday_country = null;
+    }
+
+    // Build recurrence pattern based on schedule type
+    const recurrencePattern = {};
+    if (scheduleForm.type === 'daily' && timeRange.start) {
+      recurrencePattern.timeRange = timeRange;
+    }
+    if (scheduleForm.type === 'weekly' && weekDays.length > 0) {
+      recurrencePattern.weekDays = weekDays;
+      if (timeRange.start && timeRange.end) {
+        recurrencePattern.timeRange = timeRange;
+      }
+    }
+    if (scheduleForm.type === 'monthly' && monthDays.length > 0) {
+      recurrencePattern.monthDays = monthDays;
+    }
+    if (Object.keys(recurrencePattern).length > 0) {
+      data.recurrence_pattern = JSON.stringify(recurrencePattern);
+    } else {
+      data.recurrence_pattern = null;
+    }
+
+    if (scheduleForm.fallback_category_id) {
+      data.fallback_category_id = parseInt(scheduleForm.fallback_category_id);
+    }
+
+    return data;
+  };
+
   const handleCreateSchedule = async (e) => {
     e.preventDefault();
 
@@ -2297,18 +2515,7 @@ const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
     }
 
     // Validate recurrence patterns
-    if (scheduleForm.type === 'daily' && !timeRange.start) {
-      alert('Please select at least a start time for daily schedules');
-      return;
-    }
-    if (scheduleForm.type === 'weekly' && weekDays.length === 0) {
-      alert('Please select at least one day of the week for weekly schedules');
-      return;
-    }
-    if (scheduleForm.type === 'monthly' && monthDays.length === 0) {
-      alert('Please select at least one day of the month for monthly schedules');
-      return;
-    }
+    if (!validateScheduleRecurrence()) return;
 
     // Advanced mode: validate sequence and save to library
     if (scheduleMode === 'advanced') {
@@ -2360,49 +2567,7 @@ const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
       }
     }
 
-    const scheduleData = {
-      name: scheduleForm.name.trim(),
-      type: scheduleForm.type,
-      start_date: scheduleForm.start_date,
-      shuffle: scheduleForm.shuffle,
-      playlist: scheduleForm.playlist,
-      blend_enabled: scheduleForm.blend_enabled,
-      priority: scheduleForm.priority,
-      exclusive: scheduleForm.exclusive
-    };
-
-    // Only add end_date if it has a value
-    if (scheduleForm.end_date && scheduleForm.end_date.trim()) {
-      scheduleData.end_date = scheduleForm.end_date;
-    }
-
-    // Only add color if it has a value
-    if (scheduleForm.color && scheduleForm.color.trim()) {
-      scheduleData.color = scheduleForm.color;
-    }
-
-    // Add recurrence pattern based on schedule type
-    const recurrencePattern = {};
-    if (scheduleForm.type === 'daily' && timeRange.start) {
-      recurrencePattern.timeRange = timeRange;
-    }
-    if (scheduleForm.type === 'weekly' && weekDays.length > 0) {
-      recurrencePattern.weekDays = weekDays;
-      // Add time range for weekly schedules if specified
-      if (timeRange.start && timeRange.end) {
-        recurrencePattern.timeRange = timeRange;
-      }
-      // Add time range for weekly schedules if specified
-      if (timeRange.start && timeRange.end) {
-        recurrencePattern.timeRange = timeRange;
-      }
-    }
-    if (scheduleForm.type === 'monthly' && monthDays.length > 0) {
-      recurrencePattern.monthDays = monthDays;
-    }
-    if (Object.keys(recurrencePattern).length > 0) {
-      scheduleData.recurrence_pattern = JSON.stringify(recurrencePattern);
-    }
+    const scheduleData = buildScheduleData();
 
     // Add category_id for simple mode, sequence for advanced mode
     if (scheduleMode === 'simple') {
@@ -2414,10 +2579,6 @@ const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
       // Backend expects category_id, so we'll use first category from sequence or null
       const firstCategory = blocks.find(b => b.type === 'random')?.category_id;
       scheduleData.category_id = firstCategory || null;
-    }
-
-    if (scheduleForm.fallback_category_id) {
-      scheduleData.fallback_category_id = parseInt(scheduleForm.fallback_category_id);
     }
 
     fetch(apiUrl('schedules'), {
@@ -2729,7 +2890,9 @@ const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
   
   // Check if two time ranges overlap
   const timeRangesOverlap = (start1, end1, start2, end2) => {
-    if (!start1 || !start2) return false;
+    // No time range = "all day" — overlaps with everything
+    if (!start1 && !start2) return true;
+    if (!start1 || !start2) return true;
     
     const toMinutes = (time) => {
       if (!time) return null;
@@ -2762,10 +2925,154 @@ const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
       return s1 < e2 && s2 < e1;
     }
   };
+
+  // ========== Unified Day Conflict State ==========
+  // This is the single source of truth for conflict detection across ALL views.
+  // Matches the backend scheduler logic in scheduler.py _check_and_execute_schedules().
+  //
+  // BACKEND RULES:
+  //   1. Exclusive schedules ALWAYS win over everything (no blending possible)
+  //      - If multiple exclusives: highest priority wins, then earliest end_date, then lowest id
+  //   2. If no exclusive: check for blend mode (2+ blend_enabled schedules → blend together)
+  //   3. If no exclusive, no blend: highest priority wins (normal deterministic selection)
+  //
+  // CONFLICT DEFINITION (when user action is needed):
+  //   TRUE CONFLICT = same-priority exclusive schedules overlap on the same day/time
+  //     → The backend picks one randomly/arbitrarily — result is unpredictable
+  //   Everything else is DETERMINISTIC and handled by the priority system:
+  //     - Different-priority exclusives → higher wins (by design)
+  //     - Exclusive vs non-exclusive → exclusive wins (by design)
+  //     - Non-exclusive priority differences → higher wins (by design)
+  //     - Blend mode → all blend together (by design)
+  //     - Exclusive with time range → wins during its window, non-exclusive schedules
+  //       run outside that window (by design, not a conflict)
+  //
+  // WHAT IS NOT A CONFLICT:
+  //   - Different priorities (higher always wins deterministically)
+  //   - Exclusive blocking non-exclusive (that's what exclusive MEANS)
+  //   - Blend-enabled schedules (they intentionally coexist)
+  //   - Schedules with non-overlapping time ranges
+  //   - Fallback/filler categories (only play when nothing else is active)
+  //
+  const computeDayConflictState = (contentScheds) => {
+    // Exclusive schedules
+    const exclusiveScheds = contentScheds.filter(s => s.exclusive);
+    const hasExclusive = exclusiveScheds.length > 0;
+
+    // Check if ALL exclusive schedules have time restrictions
+    const exclusiveHasTimeRange = hasExclusive && exclusiveScheds.every(s => {
+      if (!s.recurrence_pattern) return false;
+      try {
+        const pattern = JSON.parse(s.recurrence_pattern);
+        return pattern.timeRange?.start ? true : false;
+      } catch (e) { return false; }
+    });
+
+    // Non-exclusive schedules
+    const nonExclusiveScheds = contentScheds.filter(s => !s.exclusive);
+    const blendScheds = nonExclusiveScheds.filter(s => s.blend_enabled);
+
+    // Blend mode detection:
+    // - When no exclusive: 2+ blend_enabled non-exclusive schedules
+    // - When exclusive has time range: 2+ blend_enabled operate outside the exclusive window
+    const hasBlend = (!hasExclusive && blendScheds.length >= 2) ||
+                     (exclusiveHasTimeRange && blendScheds.length >= 2);
+
+    // CONFLICT DETECTION:
+    // A TRUE conflict ONLY exists when the backend cannot deterministically choose a winner.
+    // This happens in ONE scenario: same-priority exclusive schedules on the same day.
+    let hasConflict = false;
+    let samePriorityExclusiveConflict = false;
+
+    if (exclusiveScheds.length > 1) {
+      // Check if any exclusive schedules share the SAME priority
+      const priorities = exclusiveScheds.map(s => s.priority ?? 5);
+      const uniquePriorities = new Set(priorities);
+      if (uniquePriorities.size < priorities.length) {
+        // At least two exclusives share a priority → true conflict
+        hasConflict = true;
+        samePriorityExclusiveConflict = true;
+      }
+      // Different-priority exclusives are NOT a conflict (higher priority wins deterministically)
+    }
+
+    // For non-exclusive schedules without any exclusive present:
+    // Multiple non-exclusive, non-blend schedules with the SAME priority = conflict
+    if (!hasExclusive && contentScheds.length > 1 && !hasBlend) {
+      const nonBlendScheds = contentScheds.filter(s => !s.blend_enabled);
+      if (nonBlendScheds.length > 1) {
+        const priorities = nonBlendScheds.map(s => s.priority ?? 5);
+        const uniquePriorities = new Set(priorities);
+        if (uniquePriorities.size < priorities.length) {
+          // Same-priority non-exclusive, non-blend schedules → true conflict
+          hasConflict = true;
+        }
+        // Different priorities → deterministic winner, not a conflict
+      }
+    }
+
+    // Winner determination (matches backend scheduler.py logic)
+    let winner = null;
+    let nonExclusiveWinner = null;
+
+    if (contentScheds.length > 0) {
+      const prioritySort = (a, b) => {
+        const pA = a.priority ?? 5; const pB = b.priority ?? 5;
+        if (pA !== pB) return pB - pA;
+        const eA = a.end_date ? new Date(a.end_date).getTime() : Number.MAX_SAFE_INTEGER;
+        const eB = b.end_date ? new Date(b.end_date).getTime() : Number.MAX_SAFE_INTEGER;
+        if (eA !== eB) return eA - eB;
+        const sA = a.start_date ? new Date(a.start_date).getTime() : 0;
+        const sB = b.start_date ? new Date(b.start_date).getTime() : 0;
+        if (sA !== sB) return sA - sB;
+        return a.id - b.id;
+      };
+
+      if (hasExclusive) {
+        // Exclusive wins
+        const sorted = [...exclusiveScheds].sort(prioritySort);
+        winner = sorted[0];
+
+        // If exclusive has time range, also compute non-exclusive winner
+        if (exclusiveHasTimeRange && nonExclusiveScheds.length > 0) {
+          if (hasBlend) {
+            nonExclusiveWinner = 'blend';
+          } else if (nonExclusiveScheds.length === 1) {
+            nonExclusiveWinner = nonExclusiveScheds[0];
+          } else {
+            const nonExSorted = [...nonExclusiveScheds].sort(prioritySort);
+            nonExclusiveWinner = nonExSorted[0];
+          }
+        }
+      } else if (hasBlend) {
+        // Blend mode - blending scheds are all "winners"
+        winner = blendScheds[0]; // Nominal winner for tracking
+        nonExclusiveWinner = 'blend';
+      } else {
+        // Normal priority selection
+        const sorted = [...contentScheds].sort(prioritySort);
+        winner = sorted[0];
+      }
+    }
+
+    return {
+      hasConflict,
+      samePriorityExclusiveConflict,
+      hasBlend,
+      hasExclusive,
+      exclusiveHasTimeRange,
+      exclusiveScheds,
+      nonExclusiveScheds,
+      blendScheds,
+      winner,
+      nonExclusiveWinner
+    };
+  };
   
-  // Check if two schedules could conflict (same days, overlapping times, same priority, both exclusive)
+  // Check if a schedule has true conflicts (same-priority, same-type overlap where outcome is unpredictable)
   const getScheduleConflicts = (schedule) => {
-    if (!schedule || !schedule.exclusive) return [];
+    if (!schedule) return [];
+    if (!schedule.start_date) return []; // No start date = not visible on calendar
     
     const conflicts = [];
     
@@ -2786,14 +3093,23 @@ const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
     // Check against all other schedules
     schedules.forEach(other => {
       if (other.id === schedule.id) return; // Skip self
-      if (!other.exclusive) return; // Only check exclusive schedules
       if (!other.is_active) return; // Inactive schedules don't conflict
+      if (!other.start_date) return; // No start date = not visible on calendar
       
-      // Normalize other priority (default to 5 if not set)
-      const otherPriority = other.priority ?? 5;
-      
-      // Different priorities don't conflict - higher priority wins deterministically
-      if (otherPriority !== thisPriority) return;
+      // Scenario 1: Both exclusive, same priority (unpredictable winner)
+      if (schedule.exclusive && other.exclusive) {
+        const otherPriority = other.priority ?? 5;
+        if (otherPriority !== thisPriority) return; // Different priorities = deterministic
+      }
+      // Scenario 2: Both non-exclusive, both non-blend, same priority
+      else if (!schedule.exclusive && !other.exclusive && !schedule.blend_enabled && !other.blend_enabled) {
+        const otherPriority = other.priority ?? 5;
+        if (otherPriority !== thisPriority) return; // Different priorities = deterministic
+      }
+      // All other scenarios are deterministic (not conflicts)
+      else {
+        return;
+      }
       
       // Parse other schedule's recurrence pattern
       let otherPattern = {};
@@ -2848,6 +3164,64 @@ const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
         }
       }
       
+      // Check if both are monthly schedules with overlapping days-of-month
+      else if (schedule.type === 'monthly' && other.type === 'monthly') {
+        const thisMonthDays = thisPattern.monthDays || [];
+        const otherMonthDays = otherPattern.monthDays || [];
+        const overlappingMonthDays = thisMonthDays.filter(d => otherMonthDays.includes(d));
+        if (thisMonthDays.length > 0 && otherMonthDays.length > 0 && overlappingMonthDays.length === 0) return;
+        
+        const thisStart = schedule.start_date ? new Date(schedule.start_date) : new Date(0);
+        const thisEnd = schedule.end_date ? new Date(schedule.end_date) : new Date('2099-12-31');
+        const otherStart = other.start_date ? new Date(other.start_date) : new Date(0);
+        const otherEnd = other.end_date ? new Date(other.end_date) : new Date('2099-12-31');
+        
+        if (thisStart <= otherEnd && otherStart <= thisEnd) {
+          if (timeRangesOverlap(
+            thisTimeRange.start, thisTimeRange.end,
+            otherTimeRange.start, otherTimeRange.end
+          )) {
+            conflicts.push({
+              schedule: other,
+              overlappingDays: overlappingMonthDays,
+              thisTime: thisTimeRange,
+              otherTime: otherTimeRange,
+              note: 'Monthly schedules overlap on same day(s) of month'
+            });
+          }
+        }
+      }
+      
+      // Check yearly/holiday vs yearly/holiday — date window overlap (month+day)
+      else if (['yearly', 'holiday'].includes(schedule.type) && ['yearly', 'holiday'].includes(other.type)) {
+        const thisStart = schedule.start_date ? new Date(schedule.start_date) : null;
+        const thisEnd = schedule.end_date ? new Date(schedule.end_date) : thisStart;
+        const otherStart = other.start_date ? new Date(other.start_date) : null;
+        const otherEnd = other.end_date ? new Date(other.end_date) : otherStart;
+        
+        if (thisStart && otherStart) {
+          // Compare month/day windows (ignore year for yearly recurrence)
+          const thisStartMD = thisStart.getMonth() * 100 + thisStart.getDate();
+          const thisEndMD = thisEnd ? thisEnd.getMonth() * 100 + thisEnd.getDate() : thisStartMD;
+          const otherStartMD = otherStart.getMonth() * 100 + otherStart.getDate();
+          const otherEndMD = otherEnd ? otherEnd.getMonth() * 100 + otherEnd.getDate() : otherStartMD;
+          
+          if (thisStartMD <= otherEndMD && otherStartMD <= thisEndMD) {
+            if (timeRangesOverlap(
+              thisTimeRange.start, thisTimeRange.end,
+              otherTimeRange.start, otherTimeRange.end
+            )) {
+              conflicts.push({
+                schedule: other,
+                thisTime: thisTimeRange,
+                otherTime: otherTimeRange,
+                note: 'Yearly/holiday schedules overlap on same calendar dates'
+              });
+            }
+          }
+        }
+      }
+      
       // Mixed types - check if they could potentially overlap
       else if ((schedule.type === 'weekly' && other.type === 'daily') || 
                (schedule.type === 'daily' && other.type === 'weekly')) {
@@ -2864,9 +3238,398 @@ const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
           });
         }
       }
+      
+      // Any other mixed type combination — simplified date range + time range check
+      else {
+        const thisStart = schedule.start_date ? new Date(schedule.start_date) : new Date(0);
+        const thisEnd = schedule.end_date ? new Date(schedule.end_date) : new Date('2099-12-31');
+        const otherStart = other.start_date ? new Date(other.start_date) : new Date(0);
+        const otherEnd = other.end_date ? new Date(other.end_date) : new Date('2099-12-31');
+        
+        if (thisStart <= otherEnd && otherStart <= thisEnd) {
+          if (timeRangesOverlap(
+            thisTimeRange.start, thisTimeRange.end,
+            otherTimeRange.start, otherTimeRange.end
+          )) {
+            conflicts.push({
+              schedule: other,
+              thisTime: thisTimeRange,
+              otherTime: otherTimeRange,
+              note: 'Different schedule types may overlap'
+            });
+          }
+        }
+      }
     });
     
     return conflicts;
+  };
+
+  // Analyze ALL schedule conflicts across the entire configuration
+  // Returns structured conflict objects with suggested auto-resolutions
+  const analyzeAllConflicts = () => {
+    const allConflicts = [];
+    const seen = new Set(); // Avoid duplicate pairs
+    const activeSchedules = schedules.filter(s => s.is_active);
+
+    const normalizeDay = (dateStr) => {
+      if (!dateStr) return null;
+      const d = new Date(dateStr);
+      return new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
+    };
+
+    // Check all pairs of active schedules
+    for (let i = 0; i < activeSchedules.length; i++) {
+      for (let j = i + 1; j < activeSchedules.length; j++) {
+        const a = activeSchedules[i];
+        const b = activeSchedules[j];
+        const pairKey = [a.id, b.id].sort().join('-');
+        if (seen.has(pairKey)) continue;
+
+        // Parse recurrence patterns
+        let patternA = {}, patternB = {};
+        try { patternA = a.recurrence_pattern ? JSON.parse(a.recurrence_pattern) : {}; } catch (e) { patternA = {}; }
+        try { patternB = b.recurrence_pattern ? JSON.parse(b.recurrence_pattern) : {}; } catch (e) { patternB = {}; }
+
+        const priorityA = a.priority ?? 5;
+        const priorityB = b.priority ?? 5;
+        const timeA = patternA.timeRange || {};
+        const timeB = patternB.timeRange || {};
+
+        // Find overlapping days (look ahead 30 days)
+        const today = new Date();
+        const overlappingDays = [];
+        for (let d = 0; d < 30; d++) {
+          const checkDate = new Date(today.getFullYear(), today.getMonth(), today.getDate() + d);
+          const dayTime = checkDate.getTime();
+          if (isScheduleActiveOnDay(a, dayTime, normalizeDay) && isScheduleActiveOnDay(b, dayTime, normalizeDay)) {
+            overlappingDays.push(checkDate);
+          }
+        }
+
+        if (overlappingDays.length === 0) continue;
+
+        // Check if times overlap (if both have time ranges)
+        const hasTimeOverlap = timeRangesOverlap(timeA.start, timeA.end, timeB.start, timeB.end);
+        const bothHaveTimeRanges = !!(timeA.start && timeB.start);
+        
+        // If both have time ranges and they DON'T overlap, no conflict
+        if (bothHaveTimeRanges && !hasTimeOverlap) continue;
+
+        // Both exclusive, same priority = random selection conflict (HIGH severity)
+        if (a.exclusive && b.exclusive && priorityA === priorityB) {
+          seen.add(pairKey);
+          const categoryA = categories.find(c => c.id === a.category_id);
+          const categoryB = categories.find(c => c.id === b.category_id);
+          
+          const suggestions = [];
+          // Suggestion 1: Raise A's priority
+          if (priorityA < 10) {
+            suggestions.push({
+              id: `${pairKey}-raise-a`,
+              label: `Raise "${a.name}" priority to ${priorityA + 1} (makes it always win)`,
+              icon: 'crown',
+              changes: [{ scheduleId: a.id, field: 'priority', value: priorityA + 1 }]
+            });
+          }
+          // Suggestion 2: Raise B's priority
+          if (priorityB < 10) {
+            suggestions.push({
+              id: `${pairKey}-raise-b`,
+              label: `Raise "${b.name}" priority to ${priorityB + 1} (makes it always win)`,
+              icon: 'crown',
+              changes: [{ scheduleId: b.id, field: 'priority', value: priorityB + 1 }]
+            });
+          }
+          // Suggestion 3: Convert one to blend mode
+          suggestions.push({
+            id: `${pairKey}-blend-a`,
+            label: `Make "${a.name}" non-exclusive + enable blending (both play)`,
+            icon: 'shuffle',
+            changes: [{ scheduleId: a.id, field: 'exclusive', value: false }, { scheduleId: a.id, field: 'blend_enabled', value: true }]
+          });
+          suggestions.push({
+            id: `${pairKey}-blend-b`,
+            label: `Make "${b.name}" non-exclusive + enable blending (both play)`,
+            icon: 'shuffle',
+            changes: [{ scheduleId: b.id, field: 'exclusive', value: false }, { scheduleId: b.id, field: 'blend_enabled', value: true }]
+          });
+          // Suggestion 4: Split time ranges (only if both are daily/weekly with time support)
+          if ((a.type === 'daily' || a.type === 'weekly') && (b.type === 'daily' || b.type === 'weekly')) {
+            suggestions.push({
+              id: `${pairKey}-split-time`,
+              label: `Split time ranges: "${a.name}" 12AM-12PM, "${b.name}" 12PM-12AM`,
+              icon: 'clock',
+              changes: [
+                { scheduleId: a.id, field: 'timeRange', value: { start: '00:00', end: '12:00' } },
+                { scheduleId: b.id, field: 'timeRange', value: { start: '12:00', end: '23:59' } }
+              ]
+            });
+          }
+
+          allConflicts.push({
+            id: pairKey,
+            type: 'same-priority-exclusive',
+            severity: 'high',
+            scheduleA: a,
+            scheduleB: b,
+            categoryA: categoryA?.name || 'Unknown',
+            categoryB: categoryB?.name || 'Unknown',
+            overlappingDays,
+            description: `Both schedules are exclusive with priority ${priorityA}. NeXroll randomly picks one during overlap — results may be unpredictable.`,
+            suggestions
+          });
+        }
+        // Both exclusive, different priority = one always overrides the other (deterministic, not a conflict)
+        else if (a.exclusive && b.exclusive && priorityA !== priorityB) {
+          const winner = priorityA > priorityB ? a : b;
+          const loser = priorityA > priorityB ? b : a;
+          const loserPriority = priorityA > priorityB ? priorityB : priorityA;
+          const winnerPriority = priorityA > priorityB ? priorityA : priorityB;
+          const categoryLoser = categories.find(c => c.id === loser.category_id);
+
+          seen.add(pairKey);
+          const suggestions = [];
+          // Suggestion: Convert loser to blend
+          suggestions.push({
+            id: `${pairKey}-blend-loser`,
+            label: `Make "${loser.name}" non-exclusive + enable blending (plays alongside winner)`,
+            icon: 'shuffle',
+            changes: [{ scheduleId: loser.id, field: 'exclusive', value: false }, { scheduleId: loser.id, field: 'blend_enabled', value: true }]
+          });
+          // Suggestion: Raise loser priority above winner
+          if (winnerPriority < 10) {
+            suggestions.push({
+              id: `${pairKey}-raise-loser`,
+              label: `Raise "${loser.name}" priority to ${winnerPriority + 1} (makes it win instead)`,
+              icon: 'crown',
+              changes: [{ scheduleId: loser.id, field: 'priority', value: winnerPriority + 1 }]
+            });
+          }
+          // Suggestion: Disable the overridden schedule
+          suggestions.push({
+            id: `${pairKey}-disable-loser`,
+            label: `Disable "${loser.name}" during overlap period (it never plays anyway)`,
+            icon: 'ban',
+            changes: [{ scheduleId: loser.id, field: 'is_active', value: false }]
+          });
+
+          allConflicts.push({
+            id: pairKey,
+            type: 'exclusive-override',
+            severity: 'info',
+            scheduleA: winner,
+            scheduleB: loser,
+            categoryA: categories.find(c => c.id === winner.category_id)?.name || 'Unknown',
+            categoryB: categoryLoser?.name || 'Unknown',
+            overlappingDays,
+            description: `"${winner.name}" (priority ${winnerPriority}) always overrides "${loser.name}" (priority ${loserPriority}). The lower-priority schedule never plays during overlap.`,
+            suggestions
+          });
+        }
+        // One exclusive, one non-exclusive = exclusive overrides
+        else if ((a.exclusive && !b.exclusive) || (!a.exclusive && b.exclusive)) {
+          const exclusive = a.exclusive ? a : b;
+          const nonExclusive = a.exclusive ? b : a;
+          const exclusivePriority = exclusive.priority ?? 5;
+          const nonExclusivePriority = nonExclusive.priority ?? 5;
+
+          // Only flag if the exclusive actually wins (same or higher priority)
+          if (exclusivePriority >= nonExclusivePriority) {
+            seen.add(pairKey);
+            const categoryNonExcl = categories.find(c => c.id === nonExclusive.category_id);
+            const suggestions = [];
+            suggestions.push({
+              id: `${pairKey}-blend-non-excl`,
+              label: `Enable blending on "${nonExclusive.name}" (allows it to play alongside exclusive)`,
+              icon: 'shuffle',
+              changes: [{ scheduleId: nonExclusive.id, field: 'blend_enabled', value: true }]
+            });
+            if (nonExclusivePriority < 10) {
+              suggestions.push({
+                id: `${pairKey}-raise-non-excl`,
+                label: `Make "${nonExclusive.name}" exclusive with priority ${exclusivePriority + 1} (makes it win)`,
+                icon: 'lock',
+                changes: [
+                  { scheduleId: nonExclusive.id, field: 'exclusive', value: true },
+                  { scheduleId: nonExclusive.id, field: 'priority', value: exclusivePriority + 1 }
+                ]
+              });
+            }
+
+            allConflicts.push({
+              id: pairKey,
+              type: 'exclusive-blocks-nonexclusive',
+              severity: 'info',
+              scheduleA: exclusive,
+              scheduleB: nonExclusive,
+              categoryA: categories.find(c => c.id === exclusive.category_id)?.name || 'Unknown',
+              categoryB: categoryNonExcl?.name || 'Unknown',
+              overlappingDays,
+              description: `"${exclusive.name}" is exclusive and blocks "${nonExclusive.name}" from playing during overlap. This is by design — exclusive schedules always take priority.`,
+              suggestions
+            });
+          }
+        }
+        // Both non-exclusive, same priority, neither is blending = conflict (backend picks arbitrarily)
+        else if (!a.exclusive && !b.exclusive && priorityA === priorityB && !a.blend_enabled && !b.blend_enabled) {
+          seen.add(pairKey);
+          const categoryA = categories.find(c => c.id === a.category_id);
+          const categoryB = categories.find(c => c.id === b.category_id);
+
+          const suggestions = [];
+          // Suggestion 1: Raise A's priority
+          if (priorityA < 10) {
+            suggestions.push({
+              id: `${pairKey}-raise-a`,
+              label: `Raise "${a.name}" priority to ${priorityA + 1} (makes it always win)`,
+              icon: 'crown',
+              changes: [{ scheduleId: a.id, field: 'priority', value: priorityA + 1 }]
+            });
+          }
+          // Suggestion 2: Raise B's priority
+          if (priorityB < 10) {
+            suggestions.push({
+              id: `${pairKey}-raise-b`,
+              label: `Raise "${b.name}" priority to ${priorityB + 1} (makes it always win)`,
+              icon: 'crown',
+              changes: [{ scheduleId: b.id, field: 'priority', value: priorityB + 1 }]
+            });
+          }
+          // Suggestion 3: Enable blend on both
+          suggestions.push({
+            id: `${pairKey}-blend-both`,
+            label: `Enable blending on both (prerolls from both schedules play together)`,
+            icon: 'shuffle',
+            changes: [
+              { scheduleId: a.id, field: 'blend_enabled', value: true },
+              { scheduleId: b.id, field: 'blend_enabled', value: true }
+            ]
+          });
+
+          allConflicts.push({
+            id: pairKey,
+            type: 'same-priority-nonexclusive',
+            severity: 'high',
+            scheduleA: a,
+            scheduleB: b,
+            categoryA: categoryA?.name || 'Unknown',
+            categoryB: categoryB?.name || 'Unknown',
+            overlappingDays,
+            description: `Both schedules have priority ${priorityA} and neither is blending. NeXroll picks one arbitrarily — results may be unpredictable.`,
+            suggestions
+          });
+        }
+      }
+    }
+
+    // Sort: high severity first, then info
+    const severityOrder = { high: 0, medium: 1, low: 2, info: 3 };
+    allConflicts.sort((a, b) => severityOrder[a.severity] - severityOrder[b.severity]);
+    return allConflicts;
+  };
+
+  // Apply a single conflict resolution fix
+  const applyConflictFix = async (changes) => {
+    const results = [];
+    // Group changes by scheduleId
+    const bySchedule = {};
+    for (const change of changes) {
+      if (!bySchedule[change.scheduleId]) bySchedule[change.scheduleId] = [];
+      bySchedule[change.scheduleId].push(change);
+    }
+
+    for (const [schedId, schedChanges] of Object.entries(bySchedule)) {
+      const sched = schedules.find(s => s.id === parseInt(schedId));
+      if (!sched) { results.push({ schedId, success: false, error: 'Schedule not found' }); continue; }
+
+      // Build the update payload from existing schedule data
+      let pattern = {};
+      try { pattern = sched.recurrence_pattern ? JSON.parse(sched.recurrence_pattern) : {}; } catch (e) { pattern = {}; }
+
+      const payload = {
+        name: sched.name,
+        type: sched.type,
+        start_date: sched.start_date,
+        end_date: sched.end_date || null,
+        category_id: sched.category_id,
+        shuffle: sched.shuffle,
+        playlist: sched.playlist,
+        recurrence_pattern: sched.recurrence_pattern || null,
+        preroll_ids: sched.preroll_ids || null,
+        fallback_category_id: sched.fallback_category_id || null,
+        sequence: sched.sequence || null,
+        color: sched.color || null,
+        is_active: sched.is_active,
+        blend_enabled: sched.blend_enabled,
+        priority: sched.priority ?? 5,
+        exclusive: sched.exclusive ?? false
+      };
+
+      // Apply each change
+      for (const change of schedChanges) {
+        if (change.field === 'timeRange') {
+          // Merge time range into recurrence pattern
+          pattern.timeRange = change.value;
+          payload.recurrence_pattern = JSON.stringify(pattern);
+        } else {
+          payload[change.field] = change.value;
+        }
+      }
+
+      try {
+        const res = await fetch(apiUrl(`schedules/${schedId}`), {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload)
+        });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        results.push({ schedId, success: true });
+      } catch (err) {
+        results.push({ schedId, success: false, error: err.message });
+      }
+    }
+    return results;
+  };
+
+  // Apply all selected conflict resolutions
+  const applyAllConflictResolutions = async (allConflicts) => {
+    setConflictWizardApplying(true);
+    const applied = [];
+    const failed = [];
+
+    for (const conflict of allConflicts) {
+      const selectedFixId = conflictResolutions[conflict.id];
+      if (!selectedFixId) continue;
+      const fix = conflict.suggestions.find(s => s.id === selectedFixId);
+      if (!fix) continue;
+
+      const results = await applyConflictFix(fix.changes);
+      const allOk = results.every(r => r.success);
+      if (allOk) {
+        applied.push({ conflict, fix });
+      } else {
+        failed.push({ conflict, fix, errors: results.filter(r => !r.success) });
+      }
+    }
+
+    setConflictWizardApplying(false);
+    setConflictWizardResults({ applied, failed });
+    fetchData(); // Refresh schedule data
+  };
+
+  // Auto-resolve: pick the best suggestion for each conflict
+  const autoResolveConflicts = (allConflicts) => {
+    const auto = {};
+    for (const conflict of allConflicts) {
+      if (conflict.suggestions.length > 0) {
+        // For same-priority: prefer raising the first schedule's priority
+        // For overrides: prefer enabling blend on the loser
+        // For exclusive-blocks: prefer enabling blend
+        auto[conflict.id] = conflict.suggestions[0].id;
+      }
+    }
+    setConflictResolutions(auto);
   };
 
   // Bulk selection handlers
@@ -3248,7 +4011,9 @@ const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
       color: schedule.color || '',
       blend_enabled: schedule.blend_enabled || false,
       priority: schedule.priority ?? 5,
-      exclusive: schedule.exclusive || false
+      exclusive: schedule.exclusive || false,
+      holiday_name: schedule.holiday_name || '',
+      holiday_country: schedule.holiday_country || ''
     });
 
     // Parse recurrence pattern
@@ -3320,18 +4085,7 @@ const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
     if (!editingSchedule) return;
 
     // Validate recurrence patterns
-    if (scheduleForm.type === 'daily' && !timeRange.start) {
-      alert('Please select at least a start time for daily schedules');
-      return;
-    }
-    if (scheduleForm.type === 'weekly' && weekDays.length === 0) {
-      alert('Please select at least one day of the week for weekly schedules');
-      return;
-    }
-    if (scheduleForm.type === 'monthly' && monthDays.length === 0) {
-      alert('Please select at least one day of the month for monthly schedules');
-      return;
-    }
+    if (!validateScheduleRecurrence()) return;
 
     // Validate based on mode
     if (scheduleMode === 'advanced') {
@@ -3353,47 +4107,7 @@ const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
       }
     }
 
-    const scheduleData = {
-      name: scheduleForm.name.trim(),
-      type: scheduleForm.type,
-      start_date: scheduleForm.start_date,
-      shuffle: scheduleForm.shuffle,
-      playlist: scheduleForm.playlist,
-      blend_enabled: scheduleForm.blend_enabled,
-      priority: scheduleForm.priority,
-      exclusive: scheduleForm.exclusive
-    };
-
-    // Only add end_date if it has a value
-    if (scheduleForm.end_date && scheduleForm.end_date.trim()) {
-      scheduleData.end_date = scheduleForm.end_date;
-    }
-
-    // Only add color if it has a value
-    if (scheduleForm.color && scheduleForm.color.trim()) {
-      scheduleData.color = scheduleForm.color;
-    }
-
-    // Add recurrence pattern based on schedule type
-    const recurrencePattern = {};
-    if (scheduleForm.type === 'daily' && timeRange.start) {
-      recurrencePattern.timeRange = timeRange;
-    }
-    if (scheduleForm.type === 'weekly' && weekDays.length > 0) {
-      recurrencePattern.weekDays = weekDays;
-      // Add time range for weekly schedules if set
-      if (timeRange.start && timeRange.end) {
-        recurrencePattern.timeRange = timeRange;
-      }
-    }
-    if (scheduleForm.type === 'monthly' && monthDays.length > 0) {
-      recurrencePattern.monthDays = monthDays;
-    }
-    if (Object.keys(recurrencePattern).length > 0) {
-      scheduleData.recurrence_pattern = JSON.stringify(recurrencePattern);
-    } else {
-      scheduleData.recurrence_pattern = null; // Clear if not applicable
-    }
+    const scheduleData = buildScheduleData();
 
     // Add category_id for simple mode, sequence for advanced mode
     if (scheduleMode === 'simple') {
@@ -3409,10 +4123,6 @@ const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
       const firstCategory = blocks.find(b => b.type === 'random')?.category_id;
       scheduleData.category_id = firstCategory || parseInt(scheduleForm.category_id) || editingSchedule.category_id || 1;
       scheduleData.preroll_ids = '';
-    }
-
-    if (scheduleForm.fallback_category_id) {
-      scheduleData.fallback_category_id = parseInt(scheduleForm.fallback_category_id);
     }
 
     console.log('Sending schedule data:', scheduleData);
@@ -3453,7 +4163,7 @@ const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
         setScheduleForm({
           name: '', type: 'monthly', start_date: '', end_date: '',
           category_id: '', shuffle: true, playlist: false, fallback_category_id: '', color: '',
-          blend_enabled: false, priority: 5, exclusive: false
+          holiday_name: '', holiday_country: '', blend_enabled: false, priority: 5, exclusive: false
         });
         setScheduleMode('simple');
         setSequenceBlocks([]);
@@ -4373,27 +5083,114 @@ const DashboardTiles = {
       <p>{formatBytes(totalStorageBytes)} used</p>
     </div>
   ),
-  schedules: () => (
-    <div className="card">
-      <h2 style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}><Calendar size={18} /> Schedules</h2>
-      <p>{schedules.filter(s => s.is_active).length} of {schedules.length} active</p>
-    </div>
-  ),
+  schedules: () => {
+    const enabled = schedules.filter(s => s.is_active);
+    const disabled = schedules.filter(s => !s.is_active);
+    const withConflicts = enabled.filter(s => getScheduleConflicts(s).length > 0);
+    return (
+      <div className="card">
+        <h2 style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}><Calendar size={18} /> Schedules</h2>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', marginTop: '0.5rem' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '1.05rem' }}>
+            <CheckCircle size={18} style={{ color: 'var(--success-color, #28a745)', flexShrink: 0 }} />
+            <span>{enabled.length} Enabled</span>
+          </div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '1.05rem' }}>
+            <Ban size={18} style={{ color: 'var(--text-secondary, #888)', flexShrink: 0 }} />
+            <span>{disabled.length} Disabled</span>
+          </div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '1.05rem' }}>
+            <AlertTriangle size={18} style={{ color: withConflicts.length > 0 ? '#ff9800' : 'var(--text-secondary, #888)', flexShrink: 0 }} />
+            <span style={{ color: withConflicts.length > 0 ? '#ff9800' : undefined }}>{withConflicts.length} Conflicting</span>
+          </div>
+          {withConflicts.length > 0 && (
+            <button
+              type="button"
+              onClick={() => { setShowConflictWizard(true); setConflictResolutions({}); setConflictWizardResults(null); }}
+              style={{
+                display: 'flex', alignItems: 'center', gap: '4px',
+                padding: '4px 10px', borderRadius: '20px', fontSize: '0.75rem', fontWeight: 600,
+                background: 'linear-gradient(135deg, rgba(239,68,68,0.12), rgba(245,158,11,0.12))',
+                color: '#ef4444', border: 'none', cursor: 'pointer', marginTop: '0.25rem'
+              }}
+              title="Open Conflict Resolution Wizard"
+            >
+              <Wand2 size={12} /> Resolve Conflicts
+            </button>
+          )}
+        </div>
+      </div>
+    );
+  },
   scheduler: () => (
     <div className="card">
       <h2 style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}><Timer size={18} /> Scheduler</h2>
       <p style={{ color: schedulerStatus.running ? 'var(--success-color, #28a745)' : 'var(--error-color, #dc3545)' }}>
         {schedulerStatus.running ? 'Running' : 'Stopped'}
       </p>
-      <button onClick={toggleScheduler} className="button" style={{ marginTop: '0.5rem' }}>
-        {schedulerStatus.running ? 'Stop' : 'Start'} Scheduler
+      {schedulerStatus.running && nextScheduleCountdown && (
+        <div style={{ marginTop: '0.5rem' }}>
+          <p style={{ fontSize: '0.75rem', color: 'var(--text-secondary, #888)', margin: '0 0 0.15rem', fontWeight: 600 }}>
+            Next Up: <span style={{ color: '#007bff', fontWeight: 'bold' }}>{nextScheduleCountdown.name}</span>
+          </p>
+          <div style={{ display: 'flex', justifyContent: 'center', gap: '0.35rem', marginTop: '0.4rem' }}>
+            {[
+              { val: nextScheduleCountdown.days, label: 'D' },
+              { val: nextScheduleCountdown.hours, label: 'H' },
+              { val: nextScheduleCountdown.minutes, label: 'M' },
+              { val: nextScheduleCountdown.seconds, label: 'S' }
+            ].filter((seg, i) => i > 0 || seg.val > 0).map((seg, i) => (
+              <div key={i} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', minWidth: '36px' }}>
+                <span style={{
+                  fontSize: '1.15rem', fontWeight: 'bold', fontFamily: 'monospace',
+                  color: 'var(--text-color, #fff)',
+                  background: 'var(--card-bg, rgba(0,0,0,0.15))',
+                  borderRadius: '6px', padding: '0.15rem 0.35rem',
+                  border: '1px solid var(--border-color, #333)',
+                  lineHeight: 1.2
+                }}>{String(seg.val).padStart(2, '0')}</span>
+                <span style={{ fontSize: '0.55rem', color: 'var(--text-secondary, #888)', marginTop: '0.1rem', fontWeight: 600 }}>{seg.label}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+      {schedulerStatus.running && !nextScheduleCountdown && (
+        <p style={{ fontSize: '0.7rem', color: 'var(--text-secondary, #888)', margin: '0.5rem 0 0', fontStyle: 'italic' }}>No upcoming schedules</p>
+      )}
+      <button onClick={toggleScheduler} className="button" style={{
+        marginTop: '0.5rem',
+        padding: '0.3rem 0.6rem',
+        fontSize: '0.8rem',
+        backgroundColor: '#6366f1',
+        borderColor: '#6366f1',
+        display: 'inline-flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        gap: '0.3rem'
+      }}>
+        {schedulerStatus.running ? <><Square size={13} /> Stop</> : <><Play size={13} /> Start</>} Scheduler
       </button>
     </div>
   ),
   current_category: () => (
     <div className="card">
       <h2 style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}><Folder size={18} /> Currently Showing</h2>
-      {activeCategory ? (
+      {appliedSequence ? (
+        <div>
+          <p style={{ fontWeight: 'bold', color: '#8b5cf6' }}>
+            {appliedSequence.name}
+          </p>
+          <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary, #666)' }}>
+            Mode: Sequence (Manual Apply)
+          </p>
+          {activeCategory && (
+            <p style={{ fontSize: '0.8rem', color: 'var(--text-secondary, #666)', fontStyle: 'italic', marginTop: '0.25rem' }}>
+              Scheduled: {activeCategory.name}
+            </p>
+          )}
+        </div>
+      ) : activeCategory ? (
         <div>
           <p style={{ fontWeight: 'bold', color: 'var(--success-color, #28a745)' }}>
             {activeCategory.name}
@@ -4425,6 +5222,49 @@ const DashboardTiles = {
         </div>
       ) : (
         <p style={{ color: 'var(--text-secondary, #666)' }}>No category applied</p>
+      )}
+      {(activeCategory || appliedSequence) && (
+        <button
+          className="button"
+          onClick={async () => {
+            try {
+              const resp = await fetch(apiUrl('plex/current-preroll-details'));
+              const data = await resp.json();
+              if (data.prerolls && data.prerolls.length > 0) {
+                const mode = data.mode || 'shuffle';
+                if (mode === 'shuffle') {
+                  // Shuffle: pick 1 random preroll
+                  const randomIndex = Math.floor(Math.random() * data.prerolls.length);
+                  setCurrentPrerollPreview({ prerolls: [data.prerolls[randomIndex]], index: 0, mode: 'shuffle', totalCount: data.prerolls.length });
+                } else if (mode === 'single') {
+                  // Single / Coming Soon: show just the one video
+                  setCurrentPrerollPreview({ prerolls: [data.prerolls[0]], index: 0, mode: 'single' });
+                } else {
+                  // Sequential / playlist / sequence: play all in order
+                  setCurrentPrerollPreview({ prerolls: data.prerolls, index: 0, mode: 'sequential' });
+                }
+              } else {
+                showAlert('No prerolls currently applied to server', 'info');
+              }
+            } catch {
+              showAlert('Failed to fetch current preroll details', 'error');
+            }
+          }}
+          style={{
+            marginTop: '0.5rem',
+            padding: '0.3rem 0.6rem',
+            fontSize: '0.8rem',
+            backgroundColor: '#6366f1',
+            borderColor: '#6366f1',
+            display: 'inline-flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            gap: '0.3rem'
+          }}
+          title="Preview what's currently applied to the server"
+        >
+          <Play size={13} /> Preview
+        </button>
       )}
     </div>
   ),
@@ -4819,7 +5659,12 @@ const DashboardTiles = {
       return renderDashboardQuickActions();
     }
     // Default: Overview (tiles)
-    return renderDashboardOverview();
+    return (
+      <>
+        {renderDashboardOverview()}
+        {showConflictWizard && renderConflictWizard()}
+      </>
+    );
   };
 
   // ============================================
@@ -6135,7 +6980,7 @@ const DashboardTiles = {
         </SortableContext>
       </DndContext>
 
-      {/* Dashboard Weekly Calendar */}
+      {/* Dashboard Weekly Calendar Snapshot */}
       {(() => {
         // Calculate current week (always show current week on dashboard)
         const now = new Date();
@@ -6168,7 +7013,7 @@ const DashboardTiles = {
 
         const todayTime = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
 
-        // Build day data for each day
+        // Build day data for each day (uses unified conflict detection)
         const dayData = new Map();
         days.forEach(day => {
           const t = new Date(day.getFullYear(), day.getMonth(), day.getDate()).getTime();
@@ -6176,145 +7021,396 @@ const DashboardTiles = {
             if (!s.start_date) return false;
             return isScheduleActiveOnDay(s, t, normalizeDay);
           });
-          // Filter to schedules that have actual content
           const contentScheds = activeScheds.filter(s => s.category_id || s.sequence);
-          dayData.set(t, { schedules: activeScheds, contentScheds });
+          const state = computeDayConflictState(contentScheds);
+
+          dayData.set(t, { 
+            schedules: activeScheds, contentScheds, 
+            ...state
+          });
         });
 
+        // Per-day schedule counts
+        const dayScheduleCounts = days.map(day => {
+          const t = new Date(day.getFullYear(), day.getMonth(), day.getDate()).getTime();
+          return scheds.filter(s => s.start_date && isScheduleActiveOnDay(s, t, normalizeDay)).length;
+        });
+
+        // Summary stats
+        const totalActiveThisWeek = new Set(scheds.filter(s => 
+          days.some(day => {
+            const t = new Date(day.getFullYear(), day.getMonth(), day.getDate()).getTime();
+            return s.start_date && isScheduleActiveOnDay(s, t, normalizeDay);
+          })
+        ).map(s => s.id)).size;
+
+        const hasAnyConflicts = Array.from(dayData.values()).some(d => d.hasConflict);
+        const hasAnyBlends = Array.from(dayData.values()).some(d => d.hasBlend);
+        const hasAnyExclusives = Array.from(dayData.values()).some(d => d.hasExclusive);
+        const conflictDayCount = Array.from(dayData.values()).filter(d => d.hasConflict).length;
+
+        // Schedule type badge colors
+        const typeBadgeColors = {
+          daily: { bg: 'rgba(59,130,246,0.12)', color: '#3b82f6' },
+          weekly: { bg: 'rgba(16,185,129,0.12)', color: '#10b981' },
+          monthly: { bg: 'rgba(245,158,11,0.12)', color: '#f59e0b' },
+          yearly: { bg: 'rgba(139,92,246,0.12)', color: '#8b5cf6' },
+          holiday: { bg: 'rgba(244,63,94,0.12)', color: '#f43f5e' },
+        };
+
         return (
-          <div className="card" style={{ marginTop: '1.5rem', padding: '1.5rem' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
-              <h2 style={{ margin: 0, display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                <Calendar size={20} /> This Week
-              </h2>
-              <button 
-                className="button button-secondary" 
-                onClick={() => { setActiveTab('schedules'); setShowCalendar(true); }}
-                style={{ fontSize: '0.85rem', padding: '0.4rem 0.8rem' }}
-              >
-                View Full Calendar
-              </button>
-            </div>
-            
-            {/* Day headers */}
-            <div style={{ 
-              display: 'grid', 
-              gridTemplateColumns: '120px repeat(7, 1fr)', 
-              gap: '4px',
-              marginBottom: '8px'
+          <div className="card" style={{ marginTop: '1.5rem', padding: 0, overflow: 'hidden' }}>
+            {/* Header */}
+            <div style={{
+              padding: '1rem 1.25rem',
+              borderBottom: '1px solid var(--border-color)',
+              background: darkMode ? 'rgba(255,255,255,0.02)' : 'rgba(0,0,0,0.015)',
             }}>
-              <div></div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '10px' }}>
+                <div>
+                  <h2 style={{ margin: 0, display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '1.25rem', fontWeight: 700 }}>
+                    <CalendarDays size={20} style={{ color: 'var(--button-bg)' }} /> This Week's Schedule
+                  </h2>
+                  <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginTop: '4px' }}>
+                    {days[0].toLocaleDateString(undefined, { month: 'short', day: 'numeric' })} &ndash; {days[6].toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })}
+                  </div>
+                </div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+                  {/* Status pills */}
+                  <div style={{
+                    display: 'flex', alignItems: 'center', gap: '5px',
+                    padding: '4px 10px', borderRadius: '20px',
+                    backgroundColor: darkMode ? 'rgba(59,130,246,0.12)' : 'rgba(59,130,246,0.08)',
+                    color: 'var(--button-bg)', fontSize: '0.75rem', fontWeight: 600
+                  }}>
+                    <Calendar size={12} /> {totalActiveThisWeek} schedule{totalActiveThisWeek !== 1 ? 's' : ''}
+                  </div>
+                  {hasAnyBlends && (
+                    <div style={{
+                      display: 'flex', alignItems: 'center', gap: '5px',
+                      padding: '4px 10px', borderRadius: '20px',
+                      backgroundColor: 'rgba(139,92,246,0.1)', color: '#8b5cf6',
+                      fontSize: '0.75rem', fontWeight: 600
+                    }}>
+                      <Shuffle size={12} /> Blend
+                    </div>
+                  )}
+                  {hasAnyExclusives && (
+                    <div style={{
+                      display: 'flex', alignItems: 'center', gap: '5px',
+                      padding: '4px 10px', borderRadius: '20px',
+                      backgroundColor: 'rgba(20,184,166,0.1)', color: '#14B8A6',
+                      fontSize: '0.75rem', fontWeight: 600
+                    }}>
+                      <Lock size={12} /> Exclusive
+                    </div>
+                  )}
+                  {hasAnyConflicts && (
+                    <div style={{
+                      display: 'flex', alignItems: 'center', gap: '5px',
+                      padding: '4px 10px', borderRadius: '20px',
+                      backgroundColor: 'rgba(255,152,0,0.1)', color: '#ff9800',
+                      fontSize: '0.75rem', fontWeight: 600
+                    }}>
+                      <AlertTriangle size={12} /> {conflictDayCount} conflict{conflictDayCount !== 1 ? 's' : ''}
+                    </div>
+                  )}
+                  {hasAnyConflicts && (
+                    <button
+                      type="button"
+                      onClick={() => { setShowConflictWizard(true); setConflictResolutions({}); setConflictWizardResults(null); }}
+                      style={{
+                        display: 'flex', alignItems: 'center', gap: '4px',
+                        padding: '4px 10px', borderRadius: '20px', fontSize: '0.75rem', fontWeight: 600,
+                        background: 'linear-gradient(135deg, rgba(239,68,68,0.12), rgba(245,158,11,0.12))',
+                        color: '#ef4444', border: 'none', cursor: 'pointer'
+                      }}
+                      title="Open Conflict Resolution Wizard"
+                    >
+                      <Wand2 size={12} /> Fix
+                    </button>
+                  )}
+                  <button 
+                    className="button button-secondary" 
+                    onClick={() => { setActiveTab('schedules'); setShowCalendar(true); setCalendarMode('week'); }}
+                    style={{ fontSize: '0.75rem', padding: '4px 10px', display: 'flex', alignItems: 'center', gap: '4px' }}
+                  >
+                    Full Calendar <ChevronRight size={12} />
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            {/* Day column headers */}
+            <div style={{
+              display: 'grid',
+              gridTemplateColumns: '150px repeat(7, 1fr)',
+              borderBottom: '1px solid var(--border-color)',
+            }}>
+              <div style={{
+                padding: '8px 12px',
+                display: 'flex', alignItems: 'center',
+                fontSize: '0.7rem', fontWeight: 600, textTransform: 'uppercase',
+                letterSpacing: '0.05em', color: 'var(--text-muted)',
+                borderRight: '1px solid var(--border-color)',
+              }}>
+                Schedule
+              </div>
               {days.map((day, idx) => {
                 const t = new Date(day.getFullYear(), day.getMonth(), day.getDate()).getTime();
                 const isToday = t === todayTime;
                 const dd = dayData.get(t);
-                const hasSchedules = dd?.contentScheds?.length > 0;
-                
+                const dHasConflict = dd?.hasConflict;
+                const dHasBlend = dd?.hasBlend;
+                const dHasExclusive = dd?.hasExclusive;
+                const dExclusiveHasTimeRange = dd?.exclusiveHasTimeRange;
+                const isFullDayExclusive = dHasExclusive && !dExclusiveHasTimeRange;
+                const schedCount = dayScheduleCounts[idx];
+
+                let accentColor = isToday ? 'var(--button-bg)' : 'var(--text-muted)';
+                let accentBg = 'transparent';
+                if (isFullDayExclusive) { accentColor = '#ef4444'; accentBg = 'rgba(239,68,68,0.05)'; }
+                else if (dHasBlend) { accentColor = '#8b5cf6'; accentBg = 'rgba(139,92,246,0.05)'; }
+                else if (dHasConflict) { accentColor = '#ff9800'; accentBg = 'rgba(255,152,0,0.05)'; }
+                else if (isToday) { accentBg = darkMode ? 'rgba(59,130,246,0.06)' : 'rgba(59,130,246,0.04)'; }
+
                 return (
-                  <div key={idx} style={{ 
+                  <div key={idx} style={{
                     textAlign: 'center',
-                    fontWeight: isToday ? 700 : 500,
-                    fontSize: '0.85rem',
-                    color: isToday ? 'var(--button-bg)' : 'var(--text-color)',
-                    padding: '8px 4px',
-                    borderRadius: '4px',
-                    backgroundColor: isToday ? (darkMode ? 'rgba(59, 130, 246, 0.15)' : 'rgba(59, 130, 246, 0.1)') : 'transparent'
+                    padding: '8px 4px 6px',
+                    borderRight: idx < 6 ? '1px solid var(--border-color)' : 'none',
+                    backgroundColor: accentBg,
                   }}>
-                    <div>{day.toLocaleDateString(undefined, { weekday: 'short' })}</div>
-                    <div style={{ fontSize: '0.75rem', opacity: 0.7 }}>{day.getDate()}</div>
+                    <div style={{
+                      fontSize: '0.65rem', fontWeight: 600, textTransform: 'uppercase',
+                      letterSpacing: '0.06em', color: accentColor, marginBottom: '3px',
+                      display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '2px',
+                    }}>
+                      {day.toLocaleDateString(undefined, { weekday: 'short' })}
+                      {isFullDayExclusive && <Lock size={9} />}
+                      {dHasBlend && !dHasExclusive && <Shuffle size={9} />}
+                      {dHasConflict && !dHasBlend && !dHasExclusive && <AlertTriangle size={9} />}
+                    </div>
+                    <div style={{
+                      display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+                      width: '28px', height: '28px', borderRadius: '50%',
+                      fontSize: '0.85rem', fontWeight: isToday ? 800 : 600,
+                      color: isToday ? '#fff' : 'var(--text-color)',
+                      backgroundColor: isToday ? 'var(--button-bg)' : 'transparent',
+                      boxShadow: isToday ? '0 2px 8px rgba(59,130,246,0.35)' : 'none',
+                    }}>
+                      {day.getDate()}
+                    </div>
+                    <div style={{
+                      marginTop: '2px', fontSize: '0.6rem', fontWeight: 500,
+                      color: 'var(--text-muted)', opacity: schedCount > 0 ? 1 : 0.5,
+                    }}>
+                      {schedCount > 0 ? `${schedCount} active` : 'none'}
+                    </div>
                   </div>
                 );
               })}
             </div>
-            
+
             {/* Schedule rows */}
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+            <div style={{ padding: 0 }}>
               {scheds.length === 0 ? (
                 <div style={{ 
-                  textAlign: 'center', 
-                  padding: '2rem', 
-                  color: 'var(--text-muted)',
-                  fontStyle: 'italic'
+                  textAlign: 'center', padding: '2.5rem 1rem', color: 'var(--text-muted)',
                 }}>
-                  No active schedules this week
+                  <Calendar size={36} style={{ opacity: 0.2, marginBottom: '0.5rem' }} />
+                  <div style={{ fontSize: '0.95rem', fontWeight: 500 }}>No active schedules this week</div>
+                  <div style={{ fontSize: '0.8rem', marginTop: '0.25rem', opacity: 0.7 }}>
+                    Create a schedule to see it here
+                  </div>
                 </div>
               ) : scheds.map((sched, idx) => {
-                // Find continuous spans for this schedule across the week
                 const spans = [];
                 let currentSpan = null;
                 
                 days.forEach((day, dayIdx) => {
                   const t = new Date(day.getFullYear(), day.getMonth(), day.getDate()).getTime();
                   const isActive = isScheduleActiveOnDay(sched, t, normalizeDay);
+                  const dd = dayData.get(t);
+                  const isWinner = dd?.winner?.id === sched.id;
+                  const dHasConflict = dd?.hasConflict;
+                  const dHasBlend = dd?.hasBlend;
+                  const dHasExclusive = dd?.hasExclusive;
+                  const dExclusiveHasTimeRange = dd?.exclusiveHasTimeRange;
+                  const isInBlend = dHasBlend && sched.blend_enabled;
+                  const isExclusive = dHasExclusive && sched.exclusive;
+                  
+                  // Check if this non-exclusive schedule wins during non-exclusive hours
+                  const nonExWinner = dd?.nonExclusiveWinner;
+                  const isNonExclusiveWinner = !sched.exclusive && (
+                    nonExWinner === 'blend' ? sched.blend_enabled : nonExWinner?.id === sched.id
+                  );
                   
                   if (isActive) {
                     if (!currentSpan) {
-                      currentSpan = { start: dayIdx, end: dayIdx };
+                      currentSpan = { start: dayIdx, end: dayIdx, conflicts: [], isWinner: [], blends: [], exclusives: [], exclusiveHasTimeRange: [], isNonExclusiveWinner: [] };
                     } else {
                       currentSpan.end = dayIdx;
                     }
+                    currentSpan.conflicts.push(dHasConflict);
+                    currentSpan.isWinner.push(isWinner);
+                    currentSpan.blends.push(isInBlend);
+                    currentSpan.exclusives.push(isExclusive);
+                    currentSpan.exclusiveHasTimeRange.push(dExclusiveHasTimeRange);
+                    currentSpan.isNonExclusiveWinner.push(isNonExclusiveWinner);
                   } else {
-                    if (currentSpan) {
-                      spans.push(currentSpan);
-                      currentSpan = null;
-                    }
+                    if (currentSpan) { spans.push(currentSpan); currentSpan = null; }
                   }
                 });
                 if (currentSpan) spans.push(currentSpan);
-                
                 if (spans.length === 0) return null;
+
+                const hasAnyWinsForSched = spans.some(span => span.isWinner.some(w => w));
+                const hasAnyNonExclusiveWins = spans.some(span => span.isNonExclusiveWinner.some(w => w));
+                const hasTimeRestrictedExclusiveOverlap = spans.some(span => span.exclusiveHasTimeRange.some(e => e));
+                const hasAnyLossesForSched = spans.some(span => span.conflicts.some((c, i) => c && !span.isWinner[i]));
+                const isActualLoser = hasAnyLossesForSched && !hasAnyWinsForSched && !hasAnyNonExclusiveWins && !hasTimeRestrictedExclusiveOverlap;
+                const hasAnyBlendsForSched = spans.some(span => span.blends.some(b => b));
+                const hasAnyExclusivesForSched = spans.some(span => span.exclusives.some(e => e));
+                const hasAnyConflictsForSched = spans.some(span => span.conflicts.some(c => c));
+
+                let schedTimeRange = null;
+                if (sched.exclusive && sched.recurrence_pattern) {
+                  try { const p = JSON.parse(sched.recurrence_pattern); if (p?.timeRange?.start) schedTimeRange = `${p.timeRange.start}-${p.timeRange.end || '23:59'}`; } catch(e) {}
+                }
+
+                // Status icon
+                let statusIcon = null;
+                if (hasAnyExclusivesForSched) statusIcon = <Lock size={11} style={{ color: '#14B8A6', flexShrink: 0 }} />;
+                else if (hasAnyBlendsForSched) statusIcon = <Shuffle size={11} style={{ color: '#8b5cf6', flexShrink: 0 }} />;
+                else if (hasAnyConflictsForSched) statusIcon = (hasAnyWinsForSched || hasAnyNonExclusiveWins)
+                  ? <Crown size={11} style={{ color: '#ffd700', flexShrink: 0 }} />
+                  : <AlertTriangle size={11} style={{ color: '#ff9800', flexShrink: 0 }} />;
+
+                const tBadge = typeBadgeColors[sched.type] || { bg: 'rgba(107,114,128,0.12)', color: '#6b7280' };
+
+                const activeDayCount = days.filter(day => {
+                  const t = new Date(day.getFullYear(), day.getMonth(), day.getDate()).getTime();
+                  return isScheduleActiveOnDay(sched, t, normalizeDay);
+                }).length;
                 
                 return (
-                  <div key={idx} style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
-                    <div style={{ 
-                      minWidth: '112px', 
-                      fontWeight: 500, 
-                      fontSize: '0.85rem',
-                      color: 'var(--text-color)',
-                      overflow: 'hidden',
-                      textOverflow: 'ellipsis',
-                      whiteSpace: 'nowrap'
-                    }}>
-                      {sched.name}
+                  <div key={idx} style={{
+                    display: 'grid',
+                    gridTemplateColumns: '150px 1fr',
+                    borderBottom: '1px solid var(--border-color)',
+                    minHeight: '48px',
+                    transition: 'background-color 0.15s',
+                  }}
+                  onMouseEnter={e => e.currentTarget.style.backgroundColor = darkMode ? 'rgba(255,255,255,0.02)' : 'rgba(0,0,0,0.015)'}
+                  onMouseLeave={e => e.currentTarget.style.backgroundColor = 'transparent'}
+                  >
+                    {/* Label */}
+                    <div style={{
+                      padding: '6px 10px', display: 'flex', alignItems: 'center', gap: '7px',
+                      borderRight: '1px solid var(--border-color)', overflow: 'hidden',
+                    }} title={sched.name}>
+                      <div style={{
+                        width: '8px', height: '8px', borderRadius: '50%',
+                        backgroundColor: sched.color || sched.cat.color, flexShrink: 0,
+                        boxShadow: `0 0 4px ${sched.color || sched.cat.color}40`,
+                      }} />
+                      <div style={{ minWidth: 0, flex: 1 }}>
+                        <div style={{
+                          fontSize: '0.8rem', fontWeight: 600, color: 'var(--text-color)',
+                          whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
+                          opacity: isActualLoser ? 0.5 : 1,
+                          textDecoration: isActualLoser ? 'line-through' : 'none',
+                        }}>
+                          {sched.name}
+                        </div>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '3px', marginTop: '1px' }}>
+                          <span style={{
+                            fontSize: '0.55rem', fontWeight: 600, textTransform: 'uppercase',
+                            letterSpacing: '0.04em', padding: '0px 4px', borderRadius: '3px',
+                            backgroundColor: tBadge.bg, color: tBadge.color,
+                          }}>
+                            {sched.type || 'daily'}
+                          </span>
+                          {schedTimeRange && (
+                            <span style={{ fontSize: '0.55rem', color: 'var(--text-muted)' }}>{schedTimeRange}</span>
+                          )}
+                          {statusIcon && <span style={{ display: 'inline-flex' }}>{statusIcon}</span>}
+                        </div>
+                      </div>
                     </div>
-                    <div style={{ flex: 1, position: 'relative', height: '28px', display: 'flex' }}>
-                      {days.map((day, dayIdx) => (
-                        <div key={dayIdx} style={{ 
-                          flex: 1, 
-                          borderLeft: dayIdx === 0 ? 'none' : '1px solid var(--border-color)',
-                          position: 'relative'
-                        }} />
-                      ))}
+
+                    {/* Timeline */}
+                    <div style={{ position: 'relative', display: 'flex', alignItems: 'center', padding: '5px 0' }}>
+                      {days.map((day, dayIdx) => {
+                        const t = new Date(day.getFullYear(), day.getMonth(), day.getDate()).getTime();
+                        const isToday = t === todayTime;
+                        return (
+                          <div key={dayIdx} style={{
+                            flex: 1, height: '100%', position: 'relative',
+                            borderRight: dayIdx < 6 ? '1px solid var(--border-color)' : 'none',
+                            backgroundColor: isToday ? (darkMode ? 'rgba(59,130,246,0.05)' : 'rgba(59,130,246,0.03)') : 'transparent',
+                          }} />
+                        );
+                      })}
                       {spans.map((span, spanIdx) => {
-                        const width = ((span.end - span.start + 1) / 7) * 100;
-                        const left = (span.start / 7) * 100;
-                        
+                        const colWidth = 100 / 7;
+                        const left = span.start * colWidth + colWidth * 0.08;
+                        const width = (span.end - span.start + 1) * colWidth - colWidth * 0.16;
+                        const spanIsExclusive = span.exclusives.some(e => e);
+                        const spanIsWinner = span.isWinner.some(w => w);
+                        const spanIsNonExclusiveWinner = span.isNonExclusiveWinner.some(w => w);
+                        const spanHasTimeRestrictedExclusive = span.exclusiveHasTimeRange.some(e => e);
+                        const spanIsInBlend = span.blends.some(b => b);
+                        const spanHasConflict = span.conflicts.some(c => c);
+                        const spanIsLoser = spanHasConflict && !spanIsWinner && !spanIsNonExclusiveWinner && !spanHasTimeRestrictedExclusive && !spanIsInBlend;
+
+                        let borderStyle = 'none';
+                        let shadowStyle = '0 1px 3px rgba(0,0,0,0.12)';
+                        let opacityStyle = 1;
+                        if (spanIsExclusive) {
+                          borderStyle = schedTimeRange ? '2px dashed rgba(20,184,166,0.8)' : '2px solid rgba(20,184,166,0.8)';
+                          shadowStyle = '0 0 6px rgba(20,184,166,0.25), 0 1px 3px rgba(0,0,0,0.12)';
+                        } else if (spanIsWinner) {
+                          borderStyle = '2px solid rgba(255,215,0,0.7)';
+                          shadowStyle = '0 0 6px rgba(255,215,0,0.3), 0 1px 3px rgba(0,0,0,0.12)';
+                        } else if (spanIsInBlend) {
+                          borderStyle = '2px solid rgba(139,92,246,0.7)';
+                          shadowStyle = '0 0 5px rgba(139,92,246,0.25), 0 1px 3px rgba(0,0,0,0.1)';
+                        } else if (spanIsLoser) {
+                          borderStyle = '2px dashed rgba(255,152,0,0.6)';
+                          opacityStyle = 0.4;
+                        }
+
+                        let tooltipText = `${sched.name} — ${activeDayCount} day${activeDayCount !== 1 ? 's' : ''} this week`;
+                        if (spanIsExclusive) tooltipText = `🔒 ${sched.name} — Exclusive${schedTimeRange ? ` (${schedTimeRange})` : ''}`;
+                        else if (spanIsWinner) tooltipText = `👑 ${sched.name} — Active (wins)`;
+                        else if (spanIsInBlend) tooltipText = `🔀 ${sched.name} — Blending`;
+                        else if (spanIsLoser) tooltipText = `⚠️ ${sched.name} — Overridden`;
+
+                        const barColor = sched.color || sched.cat.color;
+
                         return (
                           <div 
-                            key={spanIdx} 
-                            title={sched.name}
+                            key={spanIdx} title={tooltipText}
                             style={{
-                              position: 'absolute',
-                              left: `${left}%`,
-                              width: `${width}%`,
-                              height: '100%',
-                              backgroundColor: sched.color || sched.cat.color,
-                              borderRadius: '4px',
-                              padding: '4px 8px',
-                              color: '#fff',
-                              fontSize: '0.7rem',
-                              fontWeight: 500,
-                              display: 'flex',
-                              alignItems: 'center',
-                              justifyContent: 'center',
-                              gap: '4px',
-                              boxShadow: '0 2px 4px rgba(0,0,0,0.2)',
-                              overflow: 'hidden',
-                              textOverflow: 'ellipsis',
-                              whiteSpace: 'nowrap'
+                              position: 'absolute', left: `${left}%`, width: `${width}%`,
+                              top: '5px', bottom: '5px',
+                              background: spanIsLoser ? barColor : `linear-gradient(135deg, ${barColor}, ${barColor}dd)`,
+                              borderRadius: '5px', padding: '0 8px', color: '#fff',
+                              fontSize: '0.7rem', fontWeight: 600,
+                              display: 'flex', alignItems: 'center', justifyContent: width > 20 ? 'flex-start' : 'center',
+                              gap: '4px', boxShadow: shadowStyle, border: borderStyle,
+                              opacity: opacityStyle, textDecoration: spanIsLoser ? 'line-through' : 'none',
+                              overflow: 'hidden', whiteSpace: 'nowrap', textOverflow: 'ellipsis',
+                              cursor: 'default', textShadow: '0 1px 2px rgba(0,0,0,0.3)', zIndex: 2,
                             }}
                           >
-                            {sched.name}
+                            {spanIsExclusive && <Lock size={11} style={{ flexShrink: 0 }} />}
+                            {spanIsWinner && !spanIsExclusive && <Crown size={11} style={{ flexShrink: 0 }} />}
+                            {spanIsInBlend && !spanIsWinner && <Shuffle size={11} style={{ flexShrink: 0 }} />}
+                            {spanIsLoser && <AlertTriangle size={10} style={{ flexShrink: 0, opacity: 0.8 }} />}
+                            <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>{sched.name}</span>
                           </div>
                         );
                       })}
@@ -6323,35 +7419,43 @@ const DashboardTiles = {
                 );
               }).filter(Boolean)}
               
-              {/* Filler row - shows when filler is enabled */}
+              {/* Filler row */}
               {fillerSettings.enabled && (
-                <div style={{ display: 'flex', gap: '8px', alignItems: 'center', marginTop: '4px', borderTop: '1px dashed var(--border-color)', paddingTop: '8px' }}>
-                  <div style={{ 
-                    minWidth: '112px', 
-                    fontWeight: 500, 
-                    fontSize: '0.85rem',
-                    color: '#00d4ff',
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: '4px'
+                <div style={{
+                  display: 'grid', gridTemplateColumns: '150px 1fr',
+                  borderBottom: '1px solid var(--border-color)', minHeight: '42px',
+                }}>
+                  <div style={{
+                    padding: '6px 10px', display: 'flex', alignItems: 'center', gap: '7px',
+                    borderRight: '1px solid var(--border-color)',
                   }}>
-                    <Layers size={14} />
-                    Filler
+                    <div style={{
+                      width: '8px', height: '8px', borderRadius: '50%',
+                      backgroundColor: '#00d4ff', flexShrink: 0,
+                      boxShadow: '0 0 4px rgba(0,212,255,0.4)',
+                    }} />
+                    <div style={{ minWidth: 0 }}>
+                      <div style={{ fontSize: '0.8rem', fontWeight: 600, color: '#00d4ff' }}>Filler</div>
+                      <span style={{
+                        fontSize: '0.55rem', fontWeight: 600, textTransform: 'uppercase',
+                        padding: '0px 4px', borderRadius: '3px',
+                        backgroundColor: 'rgba(0,212,255,0.1)', color: '#00d4ff',
+                      }}>fallback</span>
+                    </div>
                   </div>
-                  <div style={{ flex: 1, position: 'relative', height: '28px', display: 'flex' }}>
+                  <div style={{ position: 'relative', display: 'flex', alignItems: 'center', padding: '5px 0' }}>
                     {days.map((day, dayIdx) => {
                       const t = new Date(day.getFullYear(), day.getMonth(), day.getDate()).getTime();
                       const dd = dayData.get(t);
                       const hasSchedules = dd?.contentScheds?.length > 0;
+                      const isToday = t === todayTime;
                       
                       return (
-                        <div key={dayIdx} style={{ 
-                          flex: 1, 
-                          borderLeft: dayIdx === 0 ? 'none' : '1px solid var(--border-color)',
-                          position: 'relative',
-                          display: 'flex',
-                          alignItems: 'center',
-                          justifyContent: 'center'
+                        <div key={dayIdx} style={{
+                          flex: 1, height: '100%', position: 'relative',
+                          borderRight: dayIdx < 6 ? '1px solid var(--border-color)' : 'none',
+                          backgroundColor: isToday ? (darkMode ? 'rgba(59,130,246,0.05)' : 'rgba(59,130,246,0.03)') : 'transparent',
+                          display: 'flex', alignItems: 'center', justifyContent: 'center',
                         }}>
                           {!hasSchedules && (
                             <div 
@@ -6361,17 +7465,12 @@ const DashboardTiles = {
                                 ? (savedSequences.find(s => s.id === fillerSettings.sequence_id)?.name || 'Sequence')
                                 : `Coming Soon (${fillerSettings.coming_soon_layout})`}`}
                               style={{
-                                width: '90%',
-                                height: '100%',
-                                backgroundColor: 'rgba(0, 212, 255, 0.2)',
-                                border: '2px dashed #00d4ff',
-                                borderRadius: '4px',
-                                display: 'flex',
-                                alignItems: 'center',
-                                justifyContent: 'center',
-                                fontSize: '0.65rem',
-                                color: '#00d4ff',
-                                fontStyle: 'italic'
+                                width: '88%', height: '70%',
+                                backgroundColor: 'rgba(0,212,255,0.12)',
+                                border: '2px dashed rgba(0,212,255,0.5)',
+                                borderRadius: '5px',
+                                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                                fontSize: '0.6rem', color: '#00d4ff', fontStyle: 'italic',
                               }}
                             >
                               Active
@@ -6384,6 +7483,31 @@ const DashboardTiles = {
                 </div>
               )}
             </div>
+
+            {/* Compact legend footer */}
+            {scheds.length > 0 && (
+              <div style={{ 
+                padding: '8px 1.25rem',
+                borderTop: '1px solid var(--border-color)',
+                backgroundColor: darkMode ? 'rgba(255,255,255,0.02)' : 'rgba(0,0,0,0.015)',
+                display: 'flex', alignItems: 'center', gap: '14px', flexWrap: 'wrap',
+                fontSize: '0.7rem', color: 'var(--text-muted)',
+              }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '3px' }}>
+                  <Lock size={10} style={{ color: '#14B8A6' }} /> <span>Exclusive</span>
+                </div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '3px' }}>
+                  <Crown size={10} style={{ color: '#ffd700' }} /> <span>Winner</span>
+                </div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '3px' }}>
+                  <Shuffle size={10} style={{ color: '#8b5cf6' }} /> <span>Blend</span>
+                </div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '3px' }}>
+                  <span style={{ opacity: 0.5 }}><AlertTriangle size={10} style={{ color: '#ff9800' }} /></span>
+                  <span style={{ textDecoration: 'line-through', opacity: 0.6 }}>Overridden</span>
+                </div>
+              </div>
+            )}
           </div>
         );
       })()}
@@ -7736,6 +8860,356 @@ const DashboardTiles = {
   };
 
   // Calendar page - separate view
+
+  // Conflict Resolution Wizard
+  const renderConflictWizard = () => {
+    const allConflicts = analyzeAllConflicts();
+    const selectedCount = Object.keys(conflictResolutions).filter(k => conflictResolutions[k]).length;
+    const severityColors = { high: '#ef4444', medium: '#f59e0b', low: '#3b82f6', info: '#6b7280' };
+    const severityLabels = { high: 'Conflict', medium: 'Medium', low: 'Low', info: 'Info' };
+    const severityBg = { high: 'rgba(239,68,68,0.12)', medium: 'rgba(245,158,11,0.12)', low: 'rgba(59,130,246,0.12)', info: 'rgba(107,114,128,0.12)' };
+    const fixIconMap = { crown: <Crown size={14} />, shuffle: <Shuffle size={14} />, clock: <Clock size={14} />, lock: <Lock size={14} />, ban: <Ban size={14} /> };
+
+    return (
+      <Modal
+        title={
+          <span style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+            <GitCompare size={20} style={{ color: '#14B8A6' }} />
+            Conflict Resolution Wizard
+          </span>
+        }
+        onClose={() => {
+          setShowConflictWizard(false);
+          setConflictResolutions({});
+          setConflictWizardResults(null);
+        }}
+        width={960}
+        zIndex={1100}
+      >
+        {/* Results view after applying */}
+        {conflictWizardResults ? (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+            <div style={{
+              padding: '1rem 1.25rem',
+              borderRadius: '10px',
+              background: conflictWizardResults.failed.length === 0
+                ? 'linear-gradient(135deg, rgba(16,185,129,0.15), rgba(20,184,166,0.1))'
+                : 'linear-gradient(135deg, rgba(245,158,11,0.15), rgba(239,68,68,0.1))',
+              border: `1px solid ${conflictWizardResults.failed.length === 0 ? 'rgba(16,185,129,0.3)' : 'rgba(245,158,11,0.3)'}`
+            }}>
+              <div style={{ fontWeight: 600, fontSize: '1.05rem', marginBottom: '0.5rem', color: 'var(--text-color)' }}>
+                {conflictWizardResults.failed.length === 0
+                  ? <span style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}><CheckCircle size={18} style={{ color: '#10b981' }} /> All Fixes Applied Successfully</span>
+                  : <span style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}><AlertTriangle size={18} style={{ color: '#f59e0b' }} /> Some Fixes Had Issues</span>
+                }
+              </div>
+              {conflictWizardResults.applied.length > 0 && (
+                <div style={{ fontSize: '0.9rem', color: 'var(--text-secondary)', marginBottom: '0.25rem' }}>
+                  {conflictWizardResults.applied.length} conflict{conflictWizardResults.applied.length !== 1 ? 's' : ''} resolved successfully
+                </div>
+              )}
+              {conflictWizardResults.failed.length > 0 && (
+                <div style={{ fontSize: '0.9rem', color: '#ef4444' }}>
+                  {conflictWizardResults.failed.length} fix{conflictWizardResults.failed.length !== 1 ? 'es' : ''} failed — try editing those schedules manually
+                </div>
+              )}
+            </div>
+
+            {/* Detail of what was applied */}
+            {conflictWizardResults.applied.map(({ conflict, fix }) => (
+              <div key={conflict.id} style={{
+                padding: '0.75rem 1rem',
+                borderRadius: '8px',
+                background: 'rgba(16,185,129,0.06)',
+                border: '1px solid rgba(16,185,129,0.15)',
+                display: 'flex', alignItems: 'center', gap: '0.75rem',
+                fontSize: '0.9rem', color: 'var(--text-color)'
+              }}>
+                <CheckCircle size={16} style={{ color: '#10b981', flexShrink: 0 }} />
+                <span><strong>{conflict.scheduleA.name}</strong> vs <strong>{conflict.scheduleB.name}</strong> — {fix.label}</span>
+              </div>
+            ))}
+
+            <div style={{ display: 'flex', justifyContent: 'flex-end', paddingTop: '0.5rem' }}>
+              <button
+                type="button"
+                className="button"
+                onClick={() => {
+                  setShowConflictWizard(false);
+                  setConflictResolutions({});
+                  setConflictWizardResults(null);
+                }}
+                style={{ padding: '0.6rem 1.5rem' }}
+              >
+                Done
+              </button>
+            </div>
+          </div>
+        ) : allConflicts.length === 0 ? (
+          /* No conflicts state */
+          <div style={{
+            textAlign: 'center', padding: '2.5rem 1.5rem',
+            display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '1rem'
+          }}>
+            <div style={{
+              width: 56, height: 56, borderRadius: '50%',
+              background: 'linear-gradient(135deg, rgba(16,185,129,0.15), rgba(20,184,166,0.1))',
+              display: 'flex', alignItems: 'center', justifyContent: 'center'
+            }}>
+              <CheckCircle size={28} style={{ color: '#10b981' }} />
+            </div>
+            <div>
+              <div style={{ fontWeight: 600, fontSize: '1.1rem', color: 'var(--text-color)', marginBottom: '0.25rem' }}>No Conflicts Detected</div>
+              <div style={{ color: 'var(--text-secondary)', fontSize: '0.9rem' }}>
+                All your active schedules are configured without conflicts over the next 30 days.
+              </div>
+            </div>
+          </div>
+        ) : (
+          /* Conflict list */
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+            {/* Summary bar */}
+            <div style={{
+              display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '0.75rem',
+              padding: '0.75rem 1rem', borderRadius: '10px',
+              background: 'linear-gradient(135deg, var(--card-bg), var(--bg-color))',
+              border: '1px solid var(--border-color)'
+            }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '1rem', flexWrap: 'wrap' }}>
+                <span style={{ fontWeight: 600, color: 'var(--text-color)', fontSize: '0.95rem' }}>
+                  {allConflicts.filter(c => c.severity !== 'info').length} Conflict{allConflicts.filter(c => c.severity !== 'info').length !== 1 ? 's' : ''}{allConflicts.filter(c => c.severity === 'info').length > 0 ? `, ${allConflicts.filter(c => c.severity === 'info').length} Note${allConflicts.filter(c => c.severity === 'info').length !== 1 ? 's' : ''}` : ''}
+                </span>
+                {['high', 'medium', 'low', 'info'].map(sev => {
+                  const count = allConflicts.filter(c => c.severity === sev).length;
+                  if (count === 0) return null;
+                  return (
+                    <span key={sev} style={{
+                      fontSize: '0.8rem', padding: '0.2rem 0.6rem', borderRadius: '12px',
+                      background: severityBg[sev], color: severityColors[sev], fontWeight: 600
+                    }}>
+                      {count} {severityLabels[sev]}
+                    </span>
+                  );
+                })}
+              </div>
+              <button
+                type="button"
+                className="button"
+                onClick={() => autoResolveConflicts(allConflicts)}
+                style={{
+                  padding: '0.45rem 1rem', fontSize: '0.85rem',
+                  display: 'flex', alignItems: 'center', gap: '0.4rem',
+                  background: 'linear-gradient(135deg, #14B8A6, #10b981)',
+                  color: '#fff', border: 'none', borderRadius: '8px', fontWeight: 600,
+                  cursor: 'pointer'
+                }}
+                title="Auto-select the recommended fix for every conflict"
+              >
+                <Wand2 size={14} /> Auto-Resolve All
+              </button>
+            </div>
+
+            {/* Individual conflict cards */}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+              {allConflicts.map((conflict, idx) => {
+                const selectedFix = conflictResolutions[conflict.id];
+                const colorA = conflict.scheduleA.color || '#14B8A6';
+                const colorB = conflict.scheduleB.color || '#f59e0b';
+
+                return (
+                  <div key={conflict.id} style={{
+                    borderRadius: '10px',
+                    border: `1px solid ${selectedFix ? 'rgba(16,185,129,0.4)' : 'var(--border-color)'}`,
+                    background: selectedFix ? 'rgba(16,185,129,0.03)' : 'var(--card-bg)',
+                    transition: 'border-color 0.2s, background 0.2s'
+                  }}>
+                    {/* Conflict header */}
+                    <div style={{
+                      padding: '0.75rem 1rem',
+                      background: severityBg[conflict.severity],
+                      borderBottom: '1px solid var(--border-color)',
+                      borderRadius: '10px 10px 0 0',
+                      display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.75rem',
+                      flexWrap: 'wrap'
+                    }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', flex: 1, minWidth: 0, flexWrap: 'wrap' }}>
+                        <span style={{
+                          fontSize: '0.75rem', fontWeight: 700, padding: '0.15rem 0.5rem', borderRadius: '6px',
+                          background: severityColors[conflict.severity], color: '#fff', textTransform: 'uppercase',
+                          letterSpacing: '0.05em', flexShrink: 0
+                        }}>
+                          {severityLabels[conflict.severity]}
+                        </span>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', fontSize: '0.9rem', fontWeight: 600, color: 'var(--text-color)', minWidth: 0, flexWrap: 'wrap' }}>
+                          <span style={{
+                            width: 10, height: 10, borderRadius: '50%', background: colorA, flexShrink: 0,
+                            border: '2px solid rgba(255,255,255,0.3)', boxShadow: `0 0 4px ${colorA}40`
+                          }} />
+                          <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{conflict.scheduleA.name}</span>
+                          <span style={{ color: 'var(--text-secondary)', fontWeight: 400, flexShrink: 0 }}>vs</span>
+                          <span style={{
+                            width: 10, height: 10, borderRadius: '50%', background: colorB, flexShrink: 0,
+                            border: '2px solid rgba(255,255,255,0.3)', boxShadow: `0 0 4px ${colorB}40`
+                          }} />
+                          <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{conflict.scheduleB.name}</span>
+                        </div>
+                      </div>
+                      {selectedFix && (
+                        <CheckCircle size={16} style={{ color: '#10b981', flexShrink: 0 }} />
+                      )}
+                    </div>
+
+                    {/* Conflict body */}
+                    <div style={{ padding: '0.75rem 1rem' }}>
+                      {/* Schedule comparison */}
+                      <div style={{
+                        display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem',
+                        marginBottom: '0.75rem'
+                      }}>
+                        {[conflict.scheduleA, conflict.scheduleB].map((sched, si) => {
+                          const cat = si === 0 ? conflict.categoryA : conflict.categoryB;
+                          const col = si === 0 ? colorA : colorB;
+                          const p = sched.priority ?? 5;
+                          return (
+                            <div key={sched.id} style={{
+                              padding: '0.6rem 0.75rem', borderRadius: '8px',
+                              background: 'var(--bg-color)', border: '1px solid var(--border-color)',
+                              borderLeft: `3px solid ${col}`
+                            }}>
+                              <div style={{ fontSize: '0.85rem', fontWeight: 600, color: 'var(--text-color)', marginBottom: '0.3rem' }}>{sched.name}</div>
+                              <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', display: 'flex', flexDirection: 'column', gap: '0.15rem' }}>
+                                <span>Category: {cat}</span>
+                                <span>Priority: {p} · {sched.exclusive ? '🔒 Exclusive' : sched.blend_enabled ? '🔀 Blend' : 'Standard'}</span>
+                                <span>Type: {sched.type}</span>
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+
+                      {/* Description */}
+                      <div style={{
+                        fontSize: '0.85rem', color: 'var(--text-secondary)',
+                        padding: '0.5rem 0.75rem', borderRadius: '6px',
+                        background: severityBg[conflict.severity],
+                        marginBottom: '0.75rem', lineHeight: 1.4
+                      }}>
+                        <AlertTriangle size={13} style={{ color: severityColors[conflict.severity], marginRight: '0.4rem', verticalAlign: 'middle' }} />
+                        {conflict.description}
+                        <span style={{ display: 'block', marginTop: '0.25rem', fontSize: '0.8rem', opacity: 0.8 }}>
+                          Overlapping on {conflict.overlappingDays.length} day{conflict.overlappingDays.length !== 1 ? 's' : ''} in the next 30 days
+                        </span>
+                      </div>
+
+                      {/* Fix options */}
+                      <div style={{ fontSize: '0.85rem', fontWeight: 600, color: 'var(--text-color)', marginBottom: '0.4rem' }}>
+                        Suggested Fixes:
+                      </div>
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '0.35rem' }}>
+                        {conflict.suggestions.map((fix) => (
+                          <label
+                            key={fix.id}
+                            style={{
+                              display: 'flex', alignItems: 'center', gap: '0.5rem',
+                              padding: '0.5rem 0.75rem', borderRadius: '8px', cursor: 'pointer',
+                              border: `1px solid ${selectedFix === fix.id ? 'rgba(20,184,166,0.5)' : 'var(--border-color)'}`,
+                              background: selectedFix === fix.id ? 'rgba(20,184,166,0.08)' : 'transparent',
+                              transition: 'all 0.15s'
+                            }}
+                          >
+                            <input
+                              type="radio"
+                              name={`conflict-${conflict.id}`}
+                              checked={selectedFix === fix.id}
+                              onChange={() => setConflictResolutions(prev => ({ ...prev, [conflict.id]: fix.id }))}
+                              style={{ accentColor: '#14B8A6', flexShrink: 0 }}
+                            />
+                            <span style={{ color: severityColors[conflict.severity], flexShrink: 0, display: 'flex' }}>
+                              {fixIconMap[fix.icon] || <Wand2 size={14} />}
+                            </span>
+                            <span style={{ fontSize: '0.85rem', color: 'var(--text-color)', lineHeight: 1.4, wordBreak: 'break-word' }}>{fix.label}</span>
+                          </label>
+                        ))}
+                        {/* Skip option */}
+                        <label
+                          style={{
+                            display: 'flex', alignItems: 'center', gap: '0.5rem',
+                            padding: '0.5rem 0.75rem', borderRadius: '8px', cursor: 'pointer',
+                            border: `1px solid ${selectedFix === 'skip' ? 'rgba(107,114,128,0.4)' : 'var(--border-color)'}`,
+                            background: selectedFix === 'skip' ? 'rgba(107,114,128,0.06)' : 'transparent',
+                            transition: 'all 0.15s'
+                          }}
+                        >
+                          <input
+                            type="radio"
+                            name={`conflict-${conflict.id}`}
+                            checked={selectedFix === 'skip'}
+                            onChange={() => setConflictResolutions(prev => ({ ...prev, [conflict.id]: 'skip' }))}
+                            style={{ accentColor: '#6b7280', flexShrink: 0 }}
+                          />
+                          <span style={{ color: '#6b7280', flexShrink: 0, display: 'flex' }}><X size={14} /></span>
+                          <span style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>Skip — leave as is</span>
+                        </label>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+
+            {/* Bottom action bar */}
+            <div style={{
+              display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+              paddingTop: '0.75rem', borderTop: '1px solid var(--border-color)', gap: '0.75rem'
+            }}>
+              <div style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
+                {selectedCount} of {allConflicts.length} conflicts have a fix selected
+              </div>
+              <div style={{ display: 'flex', gap: '0.5rem' }}>
+                <button
+                  type="button"
+                  className="button"
+                  onClick={() => {
+                    setShowConflictWizard(false);
+                    setConflictResolutions({});
+                  }}
+                  style={{
+                    padding: '0.55rem 1.25rem', fontSize: '0.9rem',
+                    background: 'var(--bg-color)', color: 'var(--text-color)',
+                    border: '1px solid var(--border-color)', borderRadius: '8px',
+                    cursor: 'pointer'
+                  }}
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  className="button"
+                  disabled={selectedCount === 0 || conflictWizardApplying}
+                  onClick={() => applyAllConflictResolutions(allConflicts)}
+                  style={{
+                    padding: '0.55rem 1.25rem', fontSize: '0.9rem',
+                    background: selectedCount > 0 ? 'linear-gradient(135deg, #14B8A6, #10b981)' : '#6b7280',
+                    color: '#fff', border: 'none', borderRadius: '8px',
+                    cursor: selectedCount > 0 ? 'pointer' : 'not-allowed',
+                    opacity: conflictWizardApplying ? 0.7 : 1,
+                    display: 'flex', alignItems: 'center', gap: '0.4rem', fontWeight: 600
+                  }}
+                >
+                  {conflictWizardApplying ? (
+                    <><Loader2 size={14} style={{ animation: 'spin 1s linear infinite' }} /> Applying...</>
+                  ) : (
+                    <><Check size={14} /> Apply {selectedCount} Fix{selectedCount !== 1 ? 'es' : ''}</>
+                  )}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+      </Modal>
+    );
+  };
+
   const renderCalendarPage = () => (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
       {/* Header */}
@@ -7996,7 +9470,11 @@ const DashboardTiles = {
       </div>
     </div>
   )}
+
 </div>
+
+{/* Conflict Resolution Wizard Modal */}
+{showConflictWizard && renderConflictWizard()}
 
 {/* Calendar Filters Panel */}
 <div className="card" style={{ 
@@ -8713,140 +10191,20 @@ const DashboardTiles = {
 
     const todayTime = new Date(new Date().getFullYear(), new Date().getMonth(), new Date().getDate()).getTime();
 
-    // Build conflict map for each day
-    const dayConflicts = new Map(); // dayTime -> { schedules: [], hasConflict: boolean, hasBlend: boolean, hasExclusive: boolean, winner: schedule }
+    // Build conflict map for each day (uses unified conflict detection)
+    const dayConflicts = new Map();
     days.forEach(day => {
       const t = new Date(day.getFullYear(), day.getMonth(), day.getDate()).getTime();
       const activeScheds = scheds.filter(s => {
         if (!s.start_date) return false;
         return isScheduleActiveOnDay(s, t, normalizeDay);
       });
-      
-      // Filter to schedules that have actual content (category or sequence) - exclude pure fallback-only schedules
-      // A schedule is "fallback-only" if it has NO category_id AND NO sequence, only a fallback_category_id
       const contentScheds = activeScheds.filter(s => s.category_id || s.sequence);
-      
-      // Check for exclusive schedules first (they override everything)
-      const exclusiveScheds = contentScheds.filter(s => s.exclusive);
-      const hasExclusive = exclusiveScheds.length > 0;
-      
-      // Check if all exclusive schedules have time restrictions (meaning they don't win all day)
-      // If ANY exclusive schedule has a time range, the "exclusive" styling should be toned down
-      // because other schedules will be active during the non-exclusive hours
-      const exclusiveHasTimeRange = hasExclusive && exclusiveScheds.every(s => {
-        if (!s.recurrence_pattern) return false;
-        try {
-          const pattern = JSON.parse(s.recurrence_pattern);
-          return pattern.timeRange?.start ? true : false;
-        } catch (e) {
-          return false;
-        }
-      });
-      
-      // Non-exclusive schedules (schedules that run when the exclusive is NOT in its time window)
-      const nonExclusiveScheds = contentScheds.filter(s => !s.exclusive);
-      
-      // Check for blend mode among non-exclusive schedules
-      // When exclusive has time range, blending happens during non-exclusive hours
-      const blendScheds = nonExclusiveScheds.filter(s => s.blend_enabled);
-      // Blend mode is active if:
-      // - No exclusive (original logic), OR
-      // - Exclusive has time range AND 2+ non-exclusive schedules with blend enabled
-      const hasBlend = (!hasExclusive && blendScheds.length >= 2) || 
-                       (exclusiveHasTimeRange && blendScheds.length >= 2);
-      
-      // Conflict exists if 2+ schedules overlap but NOT all in blend mode and not exclusive taking over
-      // When exclusive has time range, there's no "conflict" during non-exclusive hours if blending
-      const hasConflict = contentScheds.length > 1 && !hasBlend && !(exclusiveHasTimeRange && blendScheds.length >= 2);
-      
-      // Determine winner using the same logic as backend:
-      // 1. If exclusive schedules exist AND they don't have time ranges, exclusive wins all day
-      // 2. If exclusive has time range, it wins during its window, but non-exclusive schedules also win during their time
-      // 3. Otherwise, highest priority wins, then earliest end date, then earliest start, then lowest ID
-      let winner = null;
-      let nonExclusiveWinner = null; // Winner among non-exclusive schedules (active outside exclusive's time range)
-      
-      if (contentScheds.length > 0) {
-        if (hasExclusive && !exclusiveHasTimeRange) {
-          // Full-day exclusive: highest priority exclusive wins all day
-          const sorted = [...exclusiveScheds].sort((a, b) => {
-            const priorityA = a.priority ?? 5;
-            const priorityB = b.priority ?? 5;
-            if (priorityA !== priorityB) return priorityB - priorityA; // Higher priority first
-            
-            const endA = a.end_date ? new Date(a.end_date).getTime() : Number.MAX_SAFE_INTEGER;
-            const endB = b.end_date ? new Date(b.end_date).getTime() : Number.MAX_SAFE_INTEGER;
-            if (endA !== endB) return endA - endB;
-            
-            return a.id - b.id;
-          });
-          winner = sorted[0];
-        } else if (hasExclusive && exclusiveHasTimeRange) {
-          // Time-restricted exclusive: wins during its time window
-          const sorted = [...exclusiveScheds].sort((a, b) => {
-            const priorityA = a.priority ?? 5;
-            const priorityB = b.priority ?? 5;
-            if (priorityA !== priorityB) return priorityB - priorityA;
-            const endA = a.end_date ? new Date(a.end_date).getTime() : Number.MAX_SAFE_INTEGER;
-            const endB = b.end_date ? new Date(b.end_date).getTime() : Number.MAX_SAFE_INTEGER;
-            if (endA !== endB) return endA - endB;
-            return a.id - b.id;
-          });
-          winner = sorted[0]; // Exclusive wins during its time
-          
-          // Also determine winner among non-exclusive schedules (for the rest of the day)
-          if (nonExclusiveScheds.length > 0) {
-            if (hasBlend) {
-              // All blending schedules are "winners" during non-exclusive hours
-              nonExclusiveWinner = 'blend'; // Special marker for blend mode
-            } else {
-              const nonExSorted = [...nonExclusiveScheds].sort((a, b) => {
-                const priorityA = a.priority ?? 5;
-                const priorityB = b.priority ?? 5;
-                if (priorityA !== priorityB) return priorityB - priorityA;
-                const endA = a.end_date ? new Date(a.end_date).getTime() : Number.MAX_SAFE_INTEGER;
-                const endB = b.end_date ? new Date(b.end_date).getTime() : Number.MAX_SAFE_INTEGER;
-                if (endA !== endB) return endA - endB;
-                const startA = new Date(a.start_date).getTime();
-                const startB = new Date(b.start_date).getTime();
-                if (startA !== startB) return startA - startB;
-                return a.id - b.id;
-              });
-              nonExclusiveWinner = nonExSorted[0];
-            }
-          }
-        } else {
-          // Normal: highest priority wins
-          const sorted = [...contentScheds].sort((a, b) => {
-            const priorityA = a.priority ?? 5;
-            const priorityB = b.priority ?? 5;
-            if (priorityA !== priorityB) return priorityB - priorityA; // Higher priority first
-            
-            const endA = a.end_date ? new Date(a.end_date).getTime() : Number.MAX_SAFE_INTEGER;
-            const endB = b.end_date ? new Date(b.end_date).getTime() : Number.MAX_SAFE_INTEGER;
-            if (endA !== endB) return endA - endB;
-            
-            const startA = new Date(a.start_date).getTime();
-            const startB = new Date(b.start_date).getTime();
-            if (startA !== startB) return startA - startB;
-            
-            return a.id - b.id;
-          });
-          winner = sorted[0];
-        }
-      }
+      const state = computeDayConflictState(contentScheds);
       
       dayConflicts.set(t, { 
         schedules: activeScheds, 
-        hasConflict, 
-        hasBlend, 
-        hasExclusive, 
-        exclusiveHasTimeRange, 
-        blendScheds, 
-        exclusiveScheds, 
-        nonExclusiveScheds,
-        winner,
-        nonExclusiveWinner // New: winner among non-exclusive schedules when exclusive has time range
+        ...state
       });
     });
     
@@ -8855,139 +10213,211 @@ const DashboardTiles = {
     const hasAnyBlends = Array.from(dayConflicts.values()).some(d => d.hasBlend);
     const hasAnyExclusives = Array.from(dayConflicts.values()).some(d => d.hasExclusive);
 
+    // Compute per-day schedule counts for headers
+    const dayScheduleCounts = days.map(day => {
+      const t = new Date(day.getFullYear(), day.getMonth(), day.getDate()).getTime();
+      return scheds.filter(s => s.start_date && isScheduleActiveOnDay(s, t, normalizeDay)).length;
+    });
+
+    // Weekly summary stats
+    const totalActiveThisWeek = new Set(scheds.filter(s => 
+      days.some(day => {
+        const t = new Date(day.getFullYear(), day.getMonth(), day.getDate()).getTime();
+        return s.start_date && isScheduleActiveOnDay(s, t, normalizeDay);
+      })
+    ).map(s => s.id)).size;
+
+    const conflictDayCount = Array.from(dayConflicts.values()).filter(d => d.hasConflict).length;
+    const blendDayCount = Array.from(dayConflicts.values()).filter(d => d.hasBlend).length;
+    const exclusiveDayCount = Array.from(dayConflicts.values()).filter(d => d.hasExclusive).length;
+
     return (
-      <div className="card" style={{ padding: '1.5rem' }}>
-        <div style={{ 
-          display: 'flex', 
-          justifyContent: 'space-between', 
-          alignItems: 'center',
-          marginBottom: '1.5rem',
-          flexWrap: 'wrap',
-          gap: '8px'
+      <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
+        {/* Header area */}
+        <div style={{
+          padding: '1.25rem 1.5rem',
+          borderBottom: `1px solid var(--border-color)`,
+          background: darkMode ? 'rgba(255,255,255,0.02)' : 'rgba(0,0,0,0.015)',
         }}>
-          <h2 style={{ 
-            margin: 0,
-            fontSize: '1.8rem',
-            fontWeight: 600,
-            color: 'var(--text-color)'
+          <div style={{ 
+            display: 'flex', 
+            justifyContent: 'space-between', 
+            alignItems: 'center',
+            flexWrap: 'wrap',
+            gap: '12px'
           }}>
-            Week of {days[0].toLocaleDateString(undefined, { month: 'long', day: 'numeric', year: 'numeric' })}
-          </h2>
+            <div>
+              <h2 style={{ 
+                margin: 0,
+                fontSize: '1.5rem',
+                fontWeight: 700,
+                color: 'var(--text-color)',
+                letterSpacing: '-0.01em'
+              }}>
+                {days[0].toLocaleDateString(undefined, { month: 'long', day: 'numeric' })} &ndash; {days[6].toLocaleDateString(undefined, { month: 'long', day: 'numeric', year: 'numeric' })}
+              </h2>
+            </div>
           
-          <div style={{ display: 'flex', gap: '8px' }}>
-            {hasAnyBlends && (
+            {/* Compact status pills */}
+            <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
               <div style={{
-                display: 'flex',
-                alignItems: 'center',
-                gap: '8px',
-                padding: '8px 12px',
-                backgroundColor: 'rgba(139, 92, 246, 0.15)',
-                border: '1px solid rgba(139, 92, 246, 0.5)',
-                borderRadius: '8px',
-                color: '#8b5cf6'
+                display: 'flex', alignItems: 'center', gap: '6px',
+                padding: '5px 12px', borderRadius: '20px',
+                backgroundColor: darkMode ? 'rgba(59,130,246,0.15)' : 'rgba(59,130,246,0.08)',
+                color: 'var(--button-bg)', fontSize: '0.8rem', fontWeight: 600
               }}>
-                <Shuffle size={16} />
-                <span style={{ fontSize: '0.85rem', fontWeight: 600 }}>Blend Mode Active</span>
+                <Calendar size={13} />
+                {totalActiveThisWeek} schedule{totalActiveThisWeek !== 1 ? 's' : ''}
               </div>
-            )}
-            {hasAnyExclusives && (
-              <div style={{
-                display: 'flex',
-                alignItems: 'center',
-                gap: '8px',
-                padding: '8px 12px',
-                backgroundColor: 'rgba(20, 184, 166, 0.15)',
-                border: '1px solid rgba(20, 184, 166, 0.5)',
-                borderRadius: '8px',
-                color: '#14B8A6'
-              }}>
-                <Lock size={16} />
-                <span style={{ fontSize: '0.85rem', fontWeight: 600 }}>Exclusive Schedule Active</span>
-              </div>
-            )}
-            {hasAnyConflicts && (
-              <div style={{
-                display: 'flex',
-                alignItems: 'center',
-                gap: '8px',
-                padding: '8px 12px',
-                backgroundColor: 'rgba(255, 152, 0, 0.15)',
-                border: '1px solid rgba(255, 152, 0, 0.5)',
-                borderRadius: '8px',
-                color: '#ff9800'
-              }}>
-                <AlertTriangle size={16} />
-                <span style={{ fontSize: '0.85rem', fontWeight: 600 }}>Schedule Conflicts Detected</span>
-              </div>
-            )}
+              {hasAnyBlends && (
+                <div style={{
+                  display: 'flex', alignItems: 'center', gap: '6px',
+                  padding: '5px 12px', borderRadius: '20px',
+                  backgroundColor: 'rgba(139, 92, 246, 0.12)',
+                  color: '#8b5cf6', fontSize: '0.8rem', fontWeight: 600
+                }}>
+                  <Shuffle size={13} /> Blend
+                </div>
+              )}
+              {hasAnyExclusives && (
+                <div style={{
+                  display: 'flex', alignItems: 'center', gap: '6px',
+                  padding: '5px 12px', borderRadius: '20px',
+                  backgroundColor: 'rgba(20, 184, 166, 0.12)',
+                  color: '#14B8A6', fontSize: '0.8rem', fontWeight: 600
+                }}>
+                  <Lock size={13} /> Exclusive
+                </div>
+              )}
+              {hasAnyConflicts && (
+                <div style={{
+                  display: 'flex', alignItems: 'center', gap: '6px',
+                  padding: '5px 12px', borderRadius: '20px',
+                  backgroundColor: 'rgba(255, 152, 0, 0.12)',
+                  color: '#ff9800', fontSize: '0.8rem', fontWeight: 600
+                }}>
+                  <AlertTriangle size={13} /> {conflictDayCount} conflict{conflictDayCount !== 1 ? 's' : ''}
+                </div>
+              )}
+            </div>
           </div>
         </div>
-        
-        {/* Day headers with conflict/blend indicators */}
-        <div style={{ 
-          display: 'grid', 
-          gridTemplateColumns: '158px repeat(7, 1fr)', 
-          gap: '4px',
-          marginBottom: '8px'
+
+        {/* Day columns header strip */}
+        <div style={{
+          display: 'grid',
+          gridTemplateColumns: '170px repeat(7, 1fr)',
+          borderBottom: '1px solid var(--border-color)',
         }}>
-          <div></div>
+          {/* Label column header */}
+          <div style={{
+            padding: '10px 12px',
+            display: 'flex',
+            alignItems: 'center',
+            fontSize: '0.75rem',
+            fontWeight: 600,
+            textTransform: 'uppercase',
+            letterSpacing: '0.05em',
+            color: 'var(--text-muted)',
+            borderRight: '1px solid var(--border-color)',
+          }}>
+            Schedule
+          </div>
           {days.map((day, idx) => {
             const t = new Date(day.getFullYear(), day.getMonth(), day.getDate()).getTime();
             const isToday = t === todayTime;
             const dayData = dayConflicts.get(t);
-            const hasConflict = dayData?.hasConflict;
-            const hasBlend = dayData?.hasBlend;
-            const hasExclusive = dayData?.hasExclusive;
-            const exclusiveHasTimeRange = dayData?.exclusiveHasTimeRange;
-            // Full-day exclusive gets bold red styling; time-restricted exclusive gets subtle styling
-            const isFullDayExclusive = hasExclusive && !exclusiveHasTimeRange;
-            // Time-restricted exclusive + blend = show blend styling (purple) since blending happens most of the day
-            const hasTimeRestrictedExclusiveWithBlend = exclusiveHasTimeRange && hasBlend;
-            
+            const dHasConflict = dayData?.hasConflict;
+            const dHasBlend = dayData?.hasBlend;
+            const dHasExclusive = dayData?.hasExclusive;
+            const dExclusiveHasTimeRange = dayData?.exclusiveHasTimeRange;
+            const isFullDayExclusive = dHasExclusive && !dExclusiveHasTimeRange;
+            const schedCount = dayScheduleCounts[idx];
+
+            // Determine header accent color
+            let accentColor = isToday ? 'var(--button-bg)' : 'var(--text-muted)';
+            let accentBg = 'transparent';
+            if (isFullDayExclusive) { accentColor = '#ef4444'; accentBg = 'rgba(239,68,68,0.06)'; }
+            else if (dHasBlend) { accentColor = '#8b5cf6'; accentBg = 'rgba(139,92,246,0.06)'; }
+            else if (dHasConflict) { accentColor = '#ff9800'; accentBg = 'rgba(255,152,0,0.06)'; }
+            else if (isToday) { accentBg = darkMode ? 'rgba(59,130,246,0.08)' : 'rgba(59,130,246,0.05)'; }
+
             return (
-              <div key={idx} style={{ 
+              <div key={idx} style={{
                 textAlign: 'center',
-                fontWeight: isToday ? 700 : 500,
-                fontSize: '0.85rem',
-                color: isFullDayExclusive 
-                  ? '#ef4444' 
-                  : (hasTimeRestrictedExclusiveWithBlend || hasBlend) 
-                    ? '#8b5cf6' 
-                    : (hasConflict ? '#ff9800' : (isToday ? 'var(--button-bg)' : 'var(--text-color)')),
-                padding: '8px 4px',
-                borderRadius: '4px',
-                backgroundColor: isFullDayExclusive 
-                  ? 'rgba(239, 68, 68, 0.15)'
-                  : ((hasTimeRestrictedExclusiveWithBlend || hasBlend)
-                    ? 'rgba(139, 92, 246, 0.15)'
-                    : (hasConflict 
-                      ? 'rgba(255, 152, 0, 0.15)' 
-                      : (isToday ? (darkMode ? 'rgba(59, 130, 246, 0.15)' : 'rgba(59, 130, 246, 0.1)') : 'transparent'))),
-                border: isFullDayExclusive 
-                  ? '1px solid rgba(239, 68, 68, 0.5)' 
-                  : ((hasTimeRestrictedExclusiveWithBlend || hasBlend)
-                    ? '1px solid rgba(139, 92, 246, 0.5)' 
-                    : (hasConflict ? '1px solid rgba(255, 152, 0, 0.5)' : 'none'))
+                padding: '10px 4px 8px',
+                borderRight: idx < 6 ? '1px solid var(--border-color)' : 'none',
+                backgroundColor: accentBg,
+                position: 'relative',
+                transition: 'background-color 0.2s',
               }}>
-                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '4px', flexWrap: 'wrap' }}>
+                <div style={{
+                  fontSize: '0.7rem',
+                  fontWeight: 600,
+                  textTransform: 'uppercase',
+                  letterSpacing: '0.06em',
+                  color: accentColor,
+                  marginBottom: '4px',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  gap: '3px',
+                }}>
                   {day.toLocaleDateString(undefined, { weekday: 'short' })}
-                  {hasTimeRestrictedExclusiveWithBlend && (
+                  {isFullDayExclusive && <Lock size={10} />}
+                  {dHasBlend && !dHasExclusive && <Shuffle size={10} />}
+                  {dHasConflict && !dHasBlend && !dHasExclusive && <AlertTriangle size={10} />}
+                  {dHasExclusive && dExclusiveHasTimeRange && dHasBlend && (
                     <>
-                      <Shuffle size={12} title="Blend mode active outside exclusive time" />
-                      <Lock size={10} style={{ opacity: 0.6 }} title="Exclusive during specific hours" />
+                      <Shuffle size={10} style={{ opacity: 0.8 }} />
+                      <Lock size={9} style={{ opacity: 0.5 }} />
                     </>
                   )}
-                  {isFullDayExclusive && <Lock size={12} />}
-                  {hasBlend && !hasExclusive && <Shuffle size={12} />}
-                  {hasConflict && !hasBlend && !hasExclusive && <AlertTriangle size={12} />}
                 </div>
-                <div style={{ fontSize: '0.75rem', opacity: 0.7 }}>{day.getDate()}</div>
+                <div style={{
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  width: '32px',
+                  height: '32px',
+                  borderRadius: '50%',
+                  fontSize: '0.95rem',
+                  fontWeight: isToday ? 800 : 600,
+                  color: isToday ? '#fff' : 'var(--text-color)',
+                  backgroundColor: isToday ? 'var(--button-bg)' : 'transparent',
+                  boxShadow: isToday ? '0 2px 8px rgba(59,130,246,0.35)' : 'none',
+                  transition: 'all 0.2s',
+                }}>
+                  {day.getDate()}
+                </div>
+                {schedCount > 0 && (
+                  <div style={{
+                    marginTop: '3px',
+                    fontSize: '0.65rem',
+                    fontWeight: 500,
+                    color: 'var(--text-muted)',
+                  }}>
+                    {schedCount} active
+                  </div>
+                )}
+                {schedCount === 0 && (
+                  <div style={{
+                    marginTop: '3px',
+                    fontSize: '0.65rem',
+                    fontWeight: 500,
+                    color: 'var(--text-muted)',
+                    opacity: 0.5,
+                  }}>
+                    none
+                  </div>
+                )}
               </div>
             );
           })}
         </div>
         
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+        {/* Schedule rows with timeline bars */}
+        <div style={{ padding: '0' }}>
           {scheds.map((sched, idx) => {
             // Find continuous spans for this schedule across the week
             const spans = [];
@@ -9045,13 +10475,9 @@ const DashboardTiles = {
             
             // Determine overall status for this schedule in the week
             const hasAnyWins = spans.some(span => span.isWinner.some(w => w));
-            // Check if this schedule wins during non-exclusive hours (when there's a time-restricted exclusive)
             const hasAnyNonExclusiveWins = spans.some(span => span.isNonExclusiveWinner.some(w => w));
-            // A schedule is only a "loser" if it loses during ALL its active hours
-            // If there's a time-restricted exclusive and this schedule wins during non-exclusive hours, it's not a loser
             const hasTimeRestrictedExclusiveOverlap = spans.some(span => span.exclusiveHasTimeRange.some(e => e));
             const hasAnyLosses = spans.some(span => span.conflicts.some((c, i) => c && !span.isWinner[i]));
-            // Not a real loser if we win during non-exclusive hours
             const isActualLoser = hasAnyLosses && !hasAnyWins && !hasAnyNonExclusiveWins && !hasTimeRestrictedExclusiveOverlap;
             const hasAnyConflictsForSched = spans.some(span => span.conflicts.some(c => c));
             const hasAnyBlends = spans.some(span => span.blends.some(b => b));
@@ -9071,114 +10497,190 @@ const DashboardTiles = {
             // Check for same-priority exclusive conflicts
             const samePriorityConflicts = getScheduleConflicts(sched);
             const hasSamePriorityConflict = samePriorityConflicts.length > 0;
+
+            // Determine the status icon and label for the schedule row
+            let statusIcon = null;
+            let statusLabel = '';
+            if (hasSamePriorityConflict) {
+              statusIcon = <AlertTriangle size={13} style={{ color: '#ff9800', flexShrink: 0 }} />;
+              statusLabel = 'Conflict';
+            } else if (hasAnyExclusivesForSched) {
+              statusIcon = <Lock size={13} style={{ color: '#14B8A6', flexShrink: 0 }} />;
+              statusLabel = 'Exclusive';
+            } else if (hasAnyBlends) {
+              statusIcon = <Shuffle size={13} style={{ color: '#8b5cf6', flexShrink: 0 }} />;
+              statusLabel = 'Blend';
+            } else if (hasAnyConflictsForSched) {
+              statusIcon = (hasAnyWins || hasAnyNonExclusiveWins)
+                ? <Crown size={13} style={{ color: '#ffd700', flexShrink: 0 }} />
+                : <AlertTriangle size={13} style={{ color: '#ff9800', flexShrink: 0 }} />;
+              statusLabel = (hasAnyWins || hasAnyNonExclusiveWins) ? 'Winner' : 'Overridden';
+            }
+
+            // Schedule type badge color
+            const typeBadgeColors = {
+              daily: { bg: 'rgba(59,130,246,0.12)', color: '#3b82f6' },
+              weekly: { bg: 'rgba(16,185,129,0.12)', color: '#10b981' },
+              monthly: { bg: 'rgba(245,158,11,0.12)', color: '#f59e0b' },
+              yearly: { bg: 'rgba(139,92,246,0.12)', color: '#8b5cf6' },
+              holiday: { bg: 'rgba(244,63,94,0.12)', color: '#f43f5e' },
+            };
+            const tBadge = typeBadgeColors[sched.type] || { bg: 'rgba(107,114,128,0.12)', color: '#6b7280' };
+
+            // Total active days for this schedule this week
+            const activeDayCount = days.filter(day => {
+              const t = new Date(day.getFullYear(), day.getMonth(), day.getDate()).getTime();
+              return isScheduleActiveOnDay(sched, t, normalizeDay);
+            }).length;
             
             return (
-              <div key={idx} style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
-                <div style={{ 
-                  minWidth: '150px', 
-                  fontWeight: 500, 
-                  fontSize: '0.9rem',
-                  color: 'var(--text-color)',
+              <div key={idx} style={{
+                display: 'grid',
+                gridTemplateColumns: '170px 1fr',
+                borderBottom: '1px solid var(--border-color)',
+                minHeight: '52px',
+                transition: 'background-color 0.15s',
+              }}
+              onMouseEnter={e => e.currentTarget.style.backgroundColor = darkMode ? 'rgba(255,255,255,0.02)' : 'rgba(0,0,0,0.015)'}
+              onMouseLeave={e => e.currentTarget.style.backgroundColor = 'transparent'}
+              >
+                {/* Schedule label */}
+                <div style={{
+                  padding: '8px 12px',
                   display: 'flex',
                   alignItems: 'center',
-                  gap: '6px'
+                  gap: '8px',
+                  borderRight: '1px solid var(--border-color)',
+                  overflow: 'hidden',
                 }}
-                title={hasSamePriorityConflict ? `⚠️ Same priority conflict with: ${samePriorityConflicts.map(c => c.schedule.name).join(', ')}\n\nBoth schedules are exclusive with the same priority.\nNeXroll will randomly pick one during overlapping times.\nSet different priorities to have deterministic behavior.` : ''}
+                title={hasSamePriorityConflict ? `⚠️ Same priority conflict with: ${samePriorityConflicts.map(c => c.schedule.name).join(', ')}\n\nBoth schedules are exclusive with the same priority.\nNeXroll will randomly pick one during overlapping times.\nSet different priorities to have deterministic behavior.` : sched.name}
                 >
-                  {hasSamePriorityConflict ? (
-                    <AlertTriangle size={14} style={{ color: '#ff9800', flexShrink: 0 }} title={`Same priority conflict with: ${samePriorityConflicts.map(c => c.schedule.name).join(', ')}`} />
-                  ) : hasAnyExclusivesForSched ? (() => {
-                    // Get time range if available
-                    let timeRangeStr = schedTimeRange ? ` (${schedTimeRange})` : '';
-                    return <Lock size={14} style={{ color: '#14B8A6', flexShrink: 0 }} title={`Exclusive - wins over other schedules${timeRangeStr ? ' during ' + timeRangeStr : ''}`} />;
-                  })() : hasAnyBlends ? (
-                    <Shuffle size={14} style={{ color: '#8b5cf6', flexShrink: 0 }} title={hasTimeRestrictedExclusiveOverlap 
-                      ? "Blending with other schedules (outside exclusive schedule's time window)" 
-                      : "Blending with other schedules"} />
-                  ) : hasAnyConflictsForSched && (
-                    (hasAnyWins || hasAnyNonExclusiveWins) ? (
-                      <Crown size={14} style={{ color: '#ffd700', flexShrink: 0 }} title="Wins conflict (active)" />
-                    ) : (
-                      <AlertTriangle size={14} style={{ color: '#ff9800', flexShrink: 0 }} title="Loses conflict (overridden)" />
-                    )
-                  )}
-                  <span style={{ 
-                    opacity: isActualLoser ? 0.5 : 1,
-                    textDecoration: isActualLoser ? 'line-through' : 'none'
-                  }}>
-                    {sched.name}
-                    {schedTimeRange && <span style={{ fontSize: '0.75rem', opacity: 0.7, marginLeft: '4px' }}>({schedTimeRange})</span>}
-                  </span>
+                  {/* Color dot */}
+                  <div style={{
+                    width: '10px',
+                    height: '10px',
+                    borderRadius: '50%',
+                    backgroundColor: sched.color || sched.cat.color,
+                    flexShrink: 0,
+                    boxShadow: `0 0 4px ${sched.color || sched.cat.color}40`,
+                  }} />
+                  <div style={{ minWidth: 0, flex: 1 }}>
+                    <div style={{
+                      fontSize: '0.85rem',
+                      fontWeight: 600,
+                      color: 'var(--text-color)',
+                      whiteSpace: 'nowrap',
+                      overflow: 'hidden',
+                      textOverflow: 'ellipsis',
+                      opacity: isActualLoser ? 0.5 : 1,
+                      textDecoration: isActualLoser ? 'line-through' : 'none',
+                    }}>
+                      {sched.name}
+                    </div>
+                    <div style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '4px',
+                      marginTop: '2px',
+                    }}>
+                      <span style={{
+                        fontSize: '0.6rem',
+                        fontWeight: 600,
+                        textTransform: 'uppercase',
+                        letterSpacing: '0.04em',
+                        padding: '1px 5px',
+                        borderRadius: '3px',
+                        backgroundColor: tBadge.bg,
+                        color: tBadge.color,
+                      }}>
+                        {sched.type || 'daily'}
+                      </span>
+                      {schedTimeRange && (
+                        <span style={{ fontSize: '0.6rem', color: 'var(--text-muted)' }}>
+                          {schedTimeRange}
+                        </span>
+                      )}
+                      {statusIcon && (
+                        <span style={{ display: 'inline-flex', alignItems: 'center', gap: '2px', fontSize: '0.6rem', color: 'var(--text-muted)' }}>
+                          {statusIcon}
+                        </span>
+                      )}
+                    </div>
+                  </div>
                 </div>
-                <div style={{ flex: 1, position: 'relative', height: '32px', display: 'flex' }}>
-                  {days.map((day, dayIdx) => (
-                    <div key={dayIdx} style={{ 
-                      flex: 1, 
-                      borderLeft: dayIdx === 0 ? 'none' : '1px solid var(--border-color)',
-                      position: 'relative'
-                    }} />
-                  ))}
+
+                {/* Timeline bar area */}
+                <div style={{ position: 'relative', display: 'flex', alignItems: 'center', padding: '6px 0' }}>
+                  {/* Day column grid lines + today highlight */}
+                  {days.map((day, dayIdx) => {
+                    const t = new Date(day.getFullYear(), day.getMonth(), day.getDate()).getTime();
+                    const isToday = t === todayTime;
+                    return (
+                      <div key={dayIdx} style={{
+                        flex: 1,
+                        borderRight: dayIdx < 6 ? '1px solid var(--border-color)' : 'none',
+                        height: '100%',
+                        position: 'relative',
+                        backgroundColor: isToday 
+                          ? (darkMode ? 'rgba(59,130,246,0.06)' : 'rgba(59,130,246,0.04)') 
+                          : 'transparent',
+                      }} />
+                    );
+                  })}
+                  {/* Rendered bars on top */}
                   {spans.map((span, spanIdx) => {
-                    const width = ((span.end - span.start + 1) / 7) * 100;
-                    const left = (span.start / 7) * 100;
+                    const colWidth = 100 / 7;
+                    const left = span.start * colWidth + colWidth * 0.08;
+                    const width = (span.end - span.start + 1) * colWidth - colWidth * 0.16;
                     const spanHasConflict = span.conflicts.some(c => c);
                     const spanIsWinner = span.isWinner.some(w => w);
                     const spanIsNonExclusiveWinner = span.isNonExclusiveWinner.some(w => w);
                     const spanHasTimeRestrictedExclusive = span.exclusiveHasTimeRange.some(e => e);
                     const spanIsInBlend = span.blends.some(b => b);
                     const spanIsExclusive = span.exclusives.some(e => e);
-                    
-                    // A span is only a "loser" if it doesn't win anywhere
-                    // If there's a time-restricted exclusive and this schedule wins during non-exclusive hours, it's not a loser
                     const spanIsLoser = spanHasConflict && !spanIsWinner && !spanIsNonExclusiveWinner && !spanHasTimeRestrictedExclusive && !spanIsInBlend;
                     
-                    // Determine visual style based on status
+                    // Visual style based on status
                     let borderStyle = 'none';
-                    let shadowStyle = '0 2px 4px rgba(0,0,0,0.2)';
+                    let shadowStyle = '0 1px 3px rgba(0,0,0,0.15)';
                     let opacityStyle = 1;
-                    let textDecorationStyle = 'none';
                     
                     if (spanIsExclusive) {
-                      // Exclusive schedule - gold lock border
                       borderStyle = schedTimeRange 
-                        ? '2px dashed rgba(20, 184, 166, 0.8)' // Time-restricted exclusive
-                        : '2px solid rgba(20, 184, 166, 0.8)'; // Full-day exclusive
-                      shadowStyle = '0 0 8px rgba(20, 184, 166, 0.4), 0 2px 4px rgba(0,0,0,0.2)';
+                        ? '2px dashed rgba(20, 184, 166, 0.8)'
+                        : '2px solid rgba(20, 184, 166, 0.8)';
+                      shadowStyle = '0 0 8px rgba(20,184,166,0.3), 0 2px 6px rgba(0,0,0,0.15)';
                     } else if (spanIsWinner) {
-                      // Winner - gold crown border
-                      borderStyle = '2px solid rgba(255, 215, 0, 0.8)';
-                      shadowStyle = '0 0 8px rgba(255, 215, 0, 0.6), 0 2px 4px rgba(0,0,0,0.2)';
+                      borderStyle = '2px solid rgba(255, 215, 0, 0.7)';
+                      shadowStyle = '0 0 8px rgba(255,215,0,0.4), 0 2px 6px rgba(0,0,0,0.15)';
                     } else if (spanIsInBlend || spanIsNonExclusiveWinner) {
-                      // Blending or wins during non-exclusive hours - purple border
-                      borderStyle = '2px solid rgba(139, 92, 246, 0.8)';
-                      shadowStyle = '0 0 6px rgba(139, 92, 246, 0.4), 0 2px 4px rgba(0,0,0,0.2)';
+                      borderStyle = '2px solid rgba(139, 92, 246, 0.7)';
+                      shadowStyle = '0 0 6px rgba(139,92,246,0.3), 0 2px 4px rgba(0,0,0,0.12)';
                     } else if (spanHasTimeRestrictedExclusive && !spanIsExclusive) {
-                      // Has time-restricted exclusive on same day but this is a non-exclusive schedule
-                      // Show as active (it runs outside the exclusive's time window)
-                      borderStyle = '2px solid rgba(139, 92, 246, 0.6)';
-                      shadowStyle = '0 0 4px rgba(139, 92, 246, 0.3), 0 2px 4px rgba(0,0,0,0.2)';
+                      borderStyle = '2px solid rgba(139, 92, 246, 0.5)';
+                      shadowStyle = '0 0 4px rgba(139,92,246,0.2), 0 1px 3px rgba(0,0,0,0.1)';
                     } else if (spanIsLoser) {
-                      // True loser - dimmed with strikethrough
-                      borderStyle = '2px dashed rgba(255, 152, 0, 0.8)';
-                      opacityStyle = 0.5;
-                      textDecorationStyle = 'line-through';
+                      borderStyle = '2px dashed rgba(255, 152, 0, 0.7)';
+                      opacityStyle = 0.45;
                     }
                     
-                    // Build tooltip
-                    let tooltipText = sched.name;
+                    // Tooltip
+                    let tooltipText = `${sched.name} — ${activeDayCount} day${activeDayCount !== 1 ? 's' : ''} this week`;
                     if (spanIsExclusive) {
-                      tooltipText = `🔒 ${sched.name} - EXCLUSIVE${schedTimeRange ? ` (${schedTimeRange})` : ''}\nWins over all other schedules${schedTimeRange ? ' during this time window' : ''}`;
+                      tooltipText = `🔒 ${sched.name} — EXCLUSIVE${schedTimeRange ? ` (${schedTimeRange})` : ''}\nWins over all other schedules${schedTimeRange ? ' during this time window' : ''}`;
                     } else if (spanIsWinner) {
-                      tooltipText = `👑 ${sched.name} - ACTIVE (wins conflict)\nPriority: Ends soonest → Started earliest → Lowest ID`;
+                      tooltipText = `👑 ${sched.name} — ACTIVE (wins conflict)\nHighest priority among overlapping schedules`;
                     } else if (spanIsInBlend) {
                       tooltipText = spanHasTimeRestrictedExclusive
-                        ? `🔀 ${sched.name} - BLENDING\nActive outside exclusive schedule's time window`
-                        : `🔀 ${sched.name} - BLENDING\nPlays together with other blend-enabled schedules`;
+                        ? `🔀 ${sched.name} — BLENDING\nActive outside exclusive schedule's time window`
+                        : `🔀 ${sched.name} — BLENDING\nPlays together with other blend-enabled schedules`;
                     } else if (spanHasTimeRestrictedExclusive && !spanIsExclusive) {
-                      tooltipText = `✓ ${sched.name} - ACTIVE\nRuns outside the exclusive schedule's time window`;
+                      tooltipText = `✓ ${sched.name} — ACTIVE\nRuns outside exclusive schedule's time window`;
                     } else if (spanIsLoser) {
-                      tooltipText = `⚠️ ${sched.name} - OVERRIDDEN\nAnother schedule has higher priority`;
+                      tooltipText = `⚠️ ${sched.name} — OVERRIDDEN\nAnother schedule has higher priority`;
                     }
+
+                    const barColor = sched.color || sched.cat.color;
                     
                     return (
                       <div 
@@ -9188,28 +10690,38 @@ const DashboardTiles = {
                           position: 'absolute',
                           left: `${left}%`,
                           width: `${width}%`,
-                          height: '100%',
-                          backgroundColor: sched.color || sched.cat.color,
-                          borderRadius: '4px',
-                          padding: '4px 8px',
+                          top: '6px',
+                          bottom: '6px',
+                          background: spanIsLoser 
+                            ? barColor 
+                            : `linear-gradient(135deg, ${barColor}, ${barColor}dd)`,
+                          borderRadius: '6px',
+                          padding: '0 10px',
                           color: '#fff',
                           fontSize: '0.75rem',
-                          fontWeight: 500,
+                          fontWeight: 600,
                           display: 'flex',
                           alignItems: 'center',
-                          justifyContent: 'center',
-                          gap: '4px',
+                          justifyContent: width > 20 ? 'flex-start' : 'center',
+                          gap: '5px',
                           boxShadow: shadowStyle,
                           border: borderStyle,
                           opacity: opacityStyle,
-                          textDecoration: textDecorationStyle
+                          textDecoration: spanIsLoser ? 'line-through' : 'none',
+                          overflow: 'hidden',
+                          whiteSpace: 'nowrap',
+                          textOverflow: 'ellipsis',
+                          cursor: 'default',
+                          transition: 'opacity 0.2s, box-shadow 0.2s',
+                          textShadow: '0 1px 2px rgba(0,0,0,0.3)',
+                          zIndex: 2,
                         }}
                       >
                         {spanIsExclusive && <Lock size={12} style={{ flexShrink: 0 }} />}
                         {spanIsWinner && !spanIsExclusive && <Crown size={12} style={{ flexShrink: 0 }} />}
                         {(spanIsInBlend || (spanHasTimeRestrictedExclusive && !spanIsExclusive && !spanIsLoser)) && !spanIsWinner && <Shuffle size={12} style={{ flexShrink: 0 }} />}
-                        {spanIsLoser && <span>⚠️</span>}
-                        {sched.name}
+                        {spanIsLoser && <AlertTriangle size={11} style={{ flexShrink: 0, opacity: 0.8 }} />}
+                        <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>{sched.name}</span>
                       </div>
                     );
                   })}
@@ -9217,29 +10729,81 @@ const DashboardTiles = {
               </div>
             );
           }).filter(Boolean)}
-        </div>
-        
-        {/* Legend */}
-        {hasAnyConflicts && (
-          <div style={{ 
-            marginTop: '1rem',
-            padding: '12px',
-            backgroundColor: darkMode ? 'rgba(255,255,255,0.03)' : 'rgba(0,0,0,0.02)',
-            borderRadius: '8px',
-            fontSize: '0.8rem',
-            color: 'var(--text-muted)'
-          }}>
-            <div style={{ fontWeight: 600, marginBottom: '8px', color: 'var(--text-color)' }}>Conflict Resolution Rules:</div>
-            <div style={{ display: 'flex', gap: '16px', flexWrap: 'wrap' }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                <Crown size={14} style={{ color: '#ffd700' }} />
-                <span>Winner (active) - Ends soonest, started earliest, or lowest ID</span>
-              </div>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                <span style={{ opacity: 0.5, textDecoration: 'line-through' }}>⚠️ Overridden</span>
-                <span>- Lower priority schedule</span>
+
+          {/* Empty state */}
+          {scheds.length === 0 && (
+            <div style={{
+              textAlign: 'center',
+              padding: '3rem 1.5rem',
+              color: 'var(--text-muted)',
+            }}>
+              <Calendar size={40} style={{ opacity: 0.25, marginBottom: '0.75rem' }} />
+              <div style={{ fontSize: '1rem', fontWeight: 500 }}>No schedules this week</div>
+              <div style={{ fontSize: '0.85rem', marginTop: '0.25rem', opacity: 0.7 }}>
+                Create a schedule in the Schedules tab to see it here
               </div>
             </div>
+          )}
+
+          {scheds.length > 0 && scheds.every(s => {
+            return !days.some(day => {
+              const t = new Date(day.getFullYear(), day.getMonth(), day.getDate()).getTime();
+              return s.start_date && isScheduleActiveOnDay(s, t, normalizeDay);
+            });
+          }) && (
+            <div style={{
+              textAlign: 'center',
+              padding: '2.5rem 1.5rem',
+              color: 'var(--text-muted)',
+            }}>
+              <Calendar size={40} style={{ opacity: 0.25, marginBottom: '0.75rem' }} />
+              <div style={{ fontSize: '1rem', fontWeight: 500 }}>No active schedules this week</div>
+              <div style={{ fontSize: '0.85rem', marginTop: '0.25rem', opacity: 0.7 }}>
+                Schedules exist but none are active during this date range
+              </div>
+            </div>
+          )}
+        </div>
+        
+        {/* Legend — always show when there are schedules */}
+        {scheds.length > 0 && (
+          <div style={{ 
+            padding: '10px 1.5rem',
+            borderTop: '1px solid var(--border-color)',
+            backgroundColor: darkMode ? 'rgba(255,255,255,0.02)' : 'rgba(0,0,0,0.015)',
+            display: 'flex',
+            alignItems: 'center',
+            gap: '16px',
+            flexWrap: 'wrap',
+            fontSize: '0.75rem',
+            color: 'var(--text-muted)',
+          }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+              <Lock size={12} style={{ color: '#14B8A6' }} />
+              <span>Exclusive</span>
+            </div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+              <Crown size={12} style={{ color: '#ffd700' }} />
+              <span>Winner</span>
+            </div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+              <Shuffle size={12} style={{ color: '#8b5cf6' }} />
+              <span>Blend</span>
+            </div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+              <span style={{ opacity: 0.5 }}>
+                <AlertTriangle size={12} style={{ color: '#ff9800' }} />
+              </span>
+              <span style={{ textDecoration: 'line-through', opacity: 0.6 }}>Overridden</span>
+            </div>
+            {hasAnyConflicts && (
+              <>
+                <div style={{ width: '1px', height: '14px', backgroundColor: 'var(--border-color)' }} />
+                <span style={{ fontStyle: 'italic', opacity: 0.8 }}>
+                  Priority: Ends soonest → Started earliest → Lowest ID
+                </span>
+              </>
+            )}
           </div>
         )}
       </div>
@@ -9453,90 +11017,17 @@ const DashboardTiles = {
       }
     }
     
-    // Detect conflicts, blend mode, and exclusive schedules - multiple schedules with content on same day
+    // Detect conflicts, blend mode, and exclusive schedules using unified conflict detection
     for (const [dayTime, dayData] of byDay.entries()) {
-      // Filter to schedules that have actual content (category or sequence) - exclude pure fallback-only schedules
       const contentSchedules = Array.from(dayData.schedules).filter(s => s.category_id || s.sequence);
-      
-      // Check for exclusive schedules first (they override everything)
-      const exclusiveScheds = contentSchedules.filter(s => s.exclusive);
-      const hasExclusive = exclusiveScheds.length > 0;
-      
-      // Check if all exclusive schedules have time restrictions
-      const exclusiveHasTimeRange = hasExclusive && exclusiveScheds.every(s => {
-        if (!s.recurrence_pattern) return false;
-        try {
-          const pattern = JSON.parse(s.recurrence_pattern);
-          return pattern.timeRange?.start ? true : false;
-        } catch (e) {
-          return false;
-        }
-      });
-      
-      // Non-exclusive schedules
-      const nonExclusiveScheds = contentSchedules.filter(s => !s.exclusive);
-      
-      // Check for blend mode among non-exclusive schedules
-      const blendScheds = nonExclusiveScheds.filter(s => s.blend_enabled);
-      
-      if (hasExclusive) {
-        dayData.hasExclusive = true;
-        dayData.exclusiveScheds = exclusiveScheds;
-        dayData.exclusiveHasTimeRange = exclusiveHasTimeRange;
-        
-        // Multiple exclusive schedules competing = conflict (only case that matters)
-        if (exclusiveScheds.length > 1) {
-          dayData.hasConflict = true;
-        }
-        
-        // When there's an exclusive schedule, it handles priority resolution
-        // Non-exclusive schedules are either blending or have clear priority - NOT a conflict
-        
-        // Check blend mode among non-exclusive schedules
-        if (blendScheds.length >= 2) {
-          dayData.hasBlend = true;
-          dayData.blendScheds = blendScheds;
-          dayData.nonExclusiveWinner = 'blend';
-        } else if (nonExclusiveScheds.length === 1) {
-          // Single non-exclusive schedule - no blend display needed
-          dayData.nonExclusiveWinner = nonExclusiveScheds[0];
-        } else if (nonExclusiveScheds.length > 1) {
-          // Multiple non-exclusive schedules
-          // NOT a conflict - exclusive handles its window, rest have clear priority
-          // Determine winner among non-exclusive schedules for display purposes
-          const sorted = [...nonExclusiveScheds].sort((a, b) => {
-            const priorityA = a.priority ?? 5;
-            const priorityB = b.priority ?? 5;
-            if (priorityA !== priorityB) return priorityB - priorityA;
-            const endA = a.end_date ? new Date(a.end_date).getTime() : Number.MAX_SAFE_INTEGER;
-            const endB = b.end_date ? new Date(b.end_date).getTime() : Number.MAX_SAFE_INTEGER;
-            if (endA !== endB) return endA - endB;
-            const startA = new Date(a.start_date).getTime();
-            const startB = new Date(b.start_date).getTime();
-            if (startA !== startB) return startA - startB;
-            return a.id - b.id;
-          });
-          dayData.nonExclusiveWinner = sorted[0];
-        }
-      } else {
-        // No exclusive schedules
-        if (blendScheds.length >= 2) {
-          // Multiple blending schedules - blend mode, no conflict
-          dayData.hasBlend = true;
-          dayData.blendScheds = blendScheds;
-        } else if (contentSchedules.length > 1) {
-          // Multiple schedules - check if it's a blend scenario or conflict
-          if (blendScheds.length === contentSchedules.length) {
-            // All schedules have blend enabled - show as blend
-            dayData.hasBlend = true;
-            dayData.blendScheds = blendScheds;
-          } else {
-            // Not all schedules are blending - true conflict
-            dayData.hasConflict = true;
-          }
-        }
-        // Single schedule case: no hasBlend, no hasConflict - just show normally
-      }
+      const state = computeDayConflictState(contentSchedules);
+      dayData.hasConflict = state.hasConflict;
+      dayData.hasBlend = state.hasBlend;
+      dayData.hasExclusive = state.hasExclusive;
+      dayData.exclusiveHasTimeRange = state.exclusiveHasTimeRange;
+      dayData.exclusiveScheds = state.exclusiveScheds;
+      dayData.blendScheds = state.blendScheds;
+      dayData.nonExclusiveWinner = state.nonExclusiveWinner;
     }
     
     // Show fallback category on days with no active schedules
@@ -9602,20 +11093,20 @@ const DashboardTiles = {
     };
     
     for (const [dayTime, dayData] of byDay.entries()) {
-      if (dayData.schedules.size === 0) {
-        const closestFallback = findClosestFallback(dayTime);
-        if (closestFallback) {
-          // No active schedules on this day, show the closest fallback
+      const closestFallback = findClosestFallback(dayTime);
+      if (closestFallback) {
+        if (dayData.schedules.size === 0) {
+          // No active schedules on this day - fallback is the only thing showing
           dayData.isFallback = true;
-          const fallbackSched = {
-            ...closestFallback,
-            category_id: closestFallback.fallback_category_id,
-            name: `${closestFallback.name} (Fallback)`,
-            cat: catMap.get(closestFallback.fallback_category_id) || { name: 'Fallback', color: '#6c757d' },
-            isFallbackDisplay: true
-          };
-          dayData.schedules.add(fallbackSched);
         }
+        const fallbackSched = {
+          ...closestFallback,
+          category_id: closestFallback.fallback_category_id,
+          name: `${closestFallback.name} (Filler)`,
+          cat: catMap.get(closestFallback.fallback_category_id) || { name: 'Filler', color: '#6c757d' },
+          isFallbackDisplay: true
+        };
+        dayData.schedules.add(fallbackSched);
       }
     }
 
@@ -9736,7 +11227,7 @@ const DashboardTiles = {
               <strong>{totalConflicts} day{totalConflicts !== 1 ? 's' : ''}</strong> have overlapping schedules. 
               The schedule that ends soonest takes priority. Look for the <Crown size={12} style={{ display: 'inline', verticalAlign: 'middle' }} /> crown icon.
             </p>
-            <div style={{ display: 'flex', gap: '0.5rem', fontSize: '0.8rem' }}>
+            <div style={{ display: 'flex', gap: '0.5rem', fontSize: '0.8rem', alignItems: 'center', flexWrap: 'wrap' }}>
               <span style={{ 
                 padding: '0.25rem 0.5rem', 
                 borderRadius: '4px',
@@ -9756,6 +11247,38 @@ const DashboardTiles = {
               }}>
                 Faded = Overridden
               </span>
+              <span style={{ flex: 1 }} />
+              {(() => {
+                const conflicts = analyzeAllConflicts();
+                const highCount = conflicts.filter(c => c.severity === 'high').length;
+                const infoCount = conflicts.filter(c => c.severity === 'info').length;
+                const actionableCount = conflicts.length - infoCount;
+                return (
+                  <button
+                    type="button"
+                    onClick={() => { setShowConflictWizard(true); setConflictResolutions({}); setConflictWizardResults(null); }}
+                    title={actionableCount > 0 ? `${actionableCount} conflict${actionableCount !== 1 ? 's' : ''} detected — click to resolve` : `${infoCount} note${infoCount !== 1 ? 's' : ''} — click to review`}
+                    style={{
+                      display: 'flex', alignItems: 'center', gap: '0.4rem',
+                      padding: '0.4rem 0.85rem', borderRadius: '8px', fontWeight: 600, fontSize: '0.8rem',
+                      cursor: 'pointer', border: 'none', transition: 'all 0.2s',
+                      background: 'linear-gradient(135deg, rgba(239,68,68,0.15), rgba(245,158,11,0.15))',
+                      color: '#ef4444'
+                    }}
+                  >
+                    <GitCompare size={14} />
+                    Resolve {actionableCount} Conflict{actionableCount !== 1 ? 's' : ''}
+                    {highCount > 0 && (
+                      <span style={{
+                        background: '#ef4444', color: '#fff', fontSize: '0.65rem',
+                        padding: '0.1rem 0.35rem', borderRadius: '10px', fontWeight: 700
+                      }}>
+                        {highCount}
+                      </span>
+                    )}
+                  </button>
+                );
+              })()}
             </div>
           </div>
         )}
@@ -9837,7 +11360,13 @@ const DashboardTiles = {
               uniqueCats.get(s.category_id).schedules.push(s.name);
               uniqueCats.get(s.category_id).schedObjs.push(s);
             });
-            const catEntries = Array.from(uniqueCats.entries());
+            const catEntries = Array.from(uniqueCats.entries())
+              .sort((a, b) => {
+                // Sort fallback/filler entries last so they don't push regular schedules out of the 3-slot display
+                const aIsFallback = a[1].schedObjs.some(s => s.isFallbackDisplay) ? 1 : 0;
+                const bIsFallback = b[1].schedObjs.some(s => s.isFallbackDisplay) ? 1 : 0;
+                return aIsFallback - bIsFallback;
+              });
             
             // Determine which schedule would win in a conflict (mimics backend logic)
             const nonFallbackSchedules = schedArray.filter(s => !s.fallback_category_id && s.start_date);
@@ -10004,6 +11533,8 @@ const DashboardTiles = {
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', marginTop: '32px' }}>
                   {catEntries.slice(0, 3).map(([catId, data], i) => {
                     const scheduleNames = data.schedules.join(', ');
+                    // Check if this entry is a fallback/filler display
+                    const isFallbackEntry = data.schedObjs.some(s => s.isFallbackDisplay);
                     // Check if any of these schedules is the winning one
                     const isWinner = winningSchedule && data.schedules.some(name => 
                       name === winningSchedule.name || name === `${winningSchedule.name} (Fallback)`
@@ -10022,7 +11553,7 @@ const DashboardTiles = {
                       }
                     }
                     
-                    let tooltipText = `${scheduleNames}${dayData.isFallback ? ' (Fallback)' : ''}\nCategory: ${data.cat.name}\nType: ${data.schedObjs[0]?.type || 'unknown'}`;
+                    let tooltipText = `${scheduleNames}${isFallbackEntry ? ' (Filler)' : ''}\nCategory: ${data.cat.name}\nType: ${data.schedObjs[0]?.type || 'unknown'}`;
                     
                     // Check if this schedule is part of blend mode or exclusive
                     const isInBlend = dayData.hasBlend && data.schedObjs.some(s => s.blend_enabled);
@@ -10064,7 +11595,7 @@ const DashboardTiles = {
                       tooltipText += '\n\nBLENDING - Prerolls mixed with other schedules';
                     } else if (dayData.hasConflict && isWinner) {
                       tooltipText += '\n\nACTIVE - This schedule takes priority';
-                    } else if (dayData.hasConflict && !dayData.isFallback) {
+                    } else if (dayData.hasConflict && !isFallbackEntry) {
                       tooltipText += '\n\nOVERRIDDEN - Higher priority schedule is active';
                     }
                     
@@ -10079,8 +11610,8 @@ const DashboardTiles = {
                         key={catId + '_' + i} 
                         title={tooltipText} 
                         style={{
-                        backgroundColor: dayData.isFallback ? 'transparent' : (isInactive ? '#6c757d' : scheduleColor),
-                        border: dayData.isFallback 
+                        backgroundColor: isFallbackEntry ? 'transparent' : (isInactive ? '#6c757d' : scheduleColor),
+                        border: isFallbackEntry 
                           ? `2px dashed ${scheduleColor}` 
                           : (hasSamePriorityConflict
                             ? '2px solid rgba(255, 152, 0, 0.9)'
@@ -10091,7 +11622,7 @@ const DashboardTiles = {
                                 : (isInBlend 
                                   ? '2px solid rgba(139, 92, 246, 0.8)' 
                                   : (isWinner && dayData.hasConflict ? '2px solid rgba(255, 215, 0, 0.8)' : 'none'))))),
-                        color: dayData.isFallback ? scheduleColor : '#fff', 
+                        color: isFallbackEntry ? scheduleColor : '#fff', 
                         borderRadius: '4px',
                         padding: '3px 6px', 
                         fontSize: '0.7rem',
@@ -10099,7 +11630,7 @@ const DashboardTiles = {
                         whiteSpace: 'nowrap', 
                         overflow: 'hidden', 
                         textOverflow: 'ellipsis',
-                        boxShadow: dayData.isFallback 
+                        boxShadow: isFallbackEntry 
                           ? 'none' 
                           : (hasSamePriorityConflict
                               ? '0 2px 8px rgba(255, 152, 0, 0.5)'
@@ -10110,7 +11641,7 @@ const DashboardTiles = {
                                     : (isWinner && dayData.hasConflict 
                                         ? '0 2px 8px rgba(255, 215, 0, 0.4)' 
                                         : '0 1px 3px rgba(0,0,0,0.2)')))),
-                        opacity: dayData.isFallback 
+                        opacity: isFallbackEntry 
                           ? 0.8 
                           : (dayData.hasConflict && !isWinner && !isInBlend && !isExclusive ? 0.5 : (isInactive ? 0.6 : 1)),
                         position: 'relative',
@@ -10274,8 +11805,8 @@ const DashboardTiles = {
         const d = new Date(calendarYear, month, day);
         const t = d.getTime();
         
-        let activeSchedulesForDay = 0;
         let dayHasAnySchedule = false;
+        const contentSchedsForDay = [];
         
         // Check each schedule to see if it's active on this day
         // Apply calendar filters
@@ -10291,9 +11822,9 @@ const DashboardTiles = {
           if (isActive) {
             map.set(s.category_id, (map.get(s.category_id) || 0) + 1);
             dayHasAnySchedule = true;
-            // Only count non-fallback schedules for conflicts
-            if (!s.fallback_category_id) {
-              activeSchedulesForDay++;
+            // Collect content schedules (category or sequence) for conflict detection
+            if (s.category_id || s.sequence) {
+              contentSchedsForDay.push(s);
             }
           }
         }
@@ -10303,9 +11834,12 @@ const DashboardTiles = {
           counts[month].uniqueScheduledDays++;
         }
         
-        // Track if this day has conflicts (multiple active non-fallback schedules)
-        if (activeSchedulesForDay > 1) {
-          counts[month].conflictDays++;
+        // Track if this day has true conflicts using unified helper
+        if (contentSchedsForDay.length > 1) {
+          const dayState = computeDayConflictState(contentSchedsForDay);
+          if (dayState.hasConflict) {
+            counts[month].conflictDays++;
+          }
         }
       }
     }
@@ -10926,7 +12460,6 @@ const DashboardTiles = {
                   <option value="monthly">🗓️ Monthly</option>
                   <option value="yearly">📋 Yearly</option>
                   <option value="holiday">🎉 Holiday</option>
-                  <option value="custom">⚙️ Custom</option>
                 </select>
               </div>
               
@@ -11367,6 +12900,65 @@ const DashboardTiles = {
               </h3>
             </div>
             
+            {/* Holiday Schedule: Holiday Name & Country */}
+            {(scheduleForm.type === 'holiday' || scheduleForm.type === 'yearly') && (
+              <div style={{ 
+                marginBottom: '1.5rem', 
+                padding: '1.25rem', 
+                backgroundColor: 'var(--card-bg)', 
+                borderRadius: '10px', 
+                border: '2px solid var(--border-color)'
+              }}>
+                <h4 style={{ margin: '0 0 1rem 0', fontSize: '1rem', fontWeight: 600 }}>
+                  🎉 Holiday Auto-Update (Optional)
+                </h4>
+                <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', margin: '0 0 1rem 0' }}>
+                  Set a holiday name and country to automatically update this schedule's date each year via the Holiday API.
+                  Leave blank to use the fixed start/end dates above.
+                </p>
+                <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: '1rem' }}>
+                  <div>
+                    <label style={{ display: 'block', marginBottom: '0.5rem', fontSize: '0.9rem', fontWeight: 600, color: 'var(--text-color)' }}>
+                      Holiday Name
+                    </label>
+                    <input
+                      className="nx-input"
+                      type="text"
+                      placeholder="e.g., Thanksgiving, Easter, Christmas"
+                      value={scheduleForm.holiday_name}
+                      onChange={(e) => setScheduleForm({...scheduleForm, holiday_name: e.target.value})}
+                      style={{ 
+                        padding: '0.65rem', 
+                        fontSize: '0.95rem',
+                        border: '2px solid var(--border-color)',
+                        borderRadius: '6px',
+                        width: '90%'
+                      }}
+                    />
+                  </div>
+                  <div>
+                    <label style={{ display: 'block', marginBottom: '0.5rem', fontSize: '0.9rem', fontWeight: 600, color: 'var(--text-color)' }}>
+                      Country
+                    </label>
+                    <input
+                      className="nx-input"
+                      type="text"
+                      placeholder="e.g., US, CA, GB"
+                      value={scheduleForm.holiday_country}
+                      onChange={(e) => setScheduleForm({...scheduleForm, holiday_country: e.target.value})}
+                      style={{ 
+                        padding: '0.65rem', 
+                        fontSize: '0.95rem',
+                        border: '2px solid var(--border-color)',
+                        borderRadius: '6px',
+                        width: '90%'
+                      }}
+                    />
+                  </div>
+                </div>
+              </div>
+            )}
+
             {/* Simple Mode: Category Selection */}
             {scheduleMode === 'simple' && (
               <>
@@ -11733,7 +13325,8 @@ const DashboardTiles = {
               onClick={() => {
                 setScheduleForm({
                   name: '', type: 'monthly', start_date: '', end_date: '',
-                  category_id: '', shuffle: true, playlist: false, fallback_category_id: ''
+                  category_id: '', shuffle: true, playlist: false, fallback_category_id: '', color: '',
+                  holiday_name: '', holiday_country: '', blend_enabled: false, priority: 5, exclusive: false
                 });
                 setScheduleMode('simple');
                 setSequenceBlocks([]);
@@ -17550,7 +19143,7 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
                           fontSize: '0.85rem',
                           fontWeight: 500
                         }}>
-                          ✓ Downloaded
+                          ✓ Trailer Downloaded
                         </span>
                       ) : movie.trailer_url ? (
                         <button
@@ -17845,7 +19438,7 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
                           fontSize: '0.85rem',
                           fontWeight: 500
                         }}>
-                          ✓ Downloaded
+                          ✓ Trailer Downloaded
                         </span>
                       ) : (
                         <button
@@ -24976,7 +26569,7 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
               <div style={{ background: 'var(--bg-color, #1a1a2e)', border: '1px solid var(--border-color)', borderRadius: '8px', padding: '1rem', marginBottom: '1rem' }}>
                 <h3 style={{ marginTop: 0, marginBottom: '0.75rem', fontSize: '0.95rem' }}>Install the Plugin</h3>
                 <ol style={{ margin: 0, paddingLeft: '1.25rem', lineHeight: '1.7' }}>
-                  <li>Download the <strong>NeXroll Intros</strong> plugin DLL from the NeXroll releases page</li>
+                  <li>Download the <strong>NeXroll Intros</strong> plugin DLL: <a href="https://github.com/JFLXCLOUD/NeXroll/raw/main/Plugins/NeXroll.Jellyfin.dll" target="_blank" rel="noopener noreferrer" style={{ color: 'var(--accent-color, #7c4dff)' }}>NeXroll.Jellyfin.dll</a></li>
                   <li>Copy it to your Jellyfin plugins folder: <code>plugins/NeXroll Intros/</code></li>
                   <li>Restart Jellyfin</li>
                 </ol>
@@ -25256,7 +26849,7 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
               <div style={{ background: 'var(--bg-color, #1a1a2e)', border: '1px solid var(--border-color)', borderRadius: '8px', padding: '1rem', marginBottom: '1rem' }}>
                 <h3 style={{ marginTop: 0, marginBottom: '0.75rem', fontSize: '0.95rem' }}>Install the Plugin</h3>
                 <ol style={{ margin: 0, paddingLeft: '1.25rem', lineHeight: '1.7' }}>
-                  <li>Download the <strong>NeXroll Intros</strong> plugin DLL from the NeXroll releases page</li>
+                  <li>Download the <strong>NeXroll Intros</strong> plugin DLL: <a href="https://github.com/JFLXCLOUD/NeXroll/raw/main/Plugins/NeXroll.Emby.dll" target="_blank" rel="noopener noreferrer" style={{ color: 'var(--accent-color, #7c4dff)' }}>NeXroll.Emby.dll</a></li>
                   <li>Copy it to your Emby plugins folder: <code>plugins/NeXroll Intros/</code></li>
                   <li>Restart Emby</li>
                 </ol>
@@ -26344,11 +27937,12 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
                 {/* Action Buttons */}
                 <div style={{ 
                   display: 'flex', 
-                  gap: '0.5rem',
+                  gap: '0.35rem',
                   marginTop: '0.75rem',
                   paddingTop: '0.75rem',
                   borderTop: '1px solid var(--border-color)',
-                  flexWrap: 'wrap'
+                  flexWrap: 'wrap',
+                  alignItems: 'center'
                 }}>
                   <button 
                     className="button"
@@ -26358,17 +27952,17 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
                       setShowSequencePreviewModal(true);
                     }}
                     style={{ 
-                      padding: '0.4rem 0.75rem', 
-                      fontSize: '0.8rem',
+                      padding: '0.3rem 0.55rem', 
+                      fontSize: '0.75rem',
                       backgroundColor: '#10b981',
                       borderColor: '#10b981',
-                      display: 'flex',
+                      display: 'inline-flex',
                       alignItems: 'center',
-                      gap: '0.35rem'
+                      gap: '0.25rem'
                     }}
                     title="Preview sequence playback"
                   >
-                    <Play size={13} /> Play
+                    <Play size={12} /> Play
                   </button>
                   <button 
                     className="button"
@@ -26378,17 +27972,17 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
                       setShowSequenceExportModal(true);
                     }}
                     style={{ 
-                      padding: '0.4rem 0.75rem', 
-                      fontSize: '0.8rem',
+                      padding: '0.3rem 0.55rem', 
+                      fontSize: '0.75rem',
                       backgroundColor: '#17a2b8',
                       borderColor: '#17a2b8',
-                      display: 'flex',
+                      display: 'inline-flex',
                       alignItems: 'center',
-                      gap: '0.35rem'
+                      gap: '0.25rem'
                     }}
                     title="Export sequence"
                   >
-                    <Save size={13} /> Export
+                    <Save size={12} /> Export
                   </button>
                   <button 
                     className="button"
@@ -26397,17 +27991,57 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
                       createScheduleFromSequence(sequence);
                     }}
                     style={{ 
-                      padding: '0.4rem 0.75rem', 
-                      fontSize: '0.8rem',
+                      padding: '0.3rem 0.55rem', 
+                      fontSize: '0.75rem',
                       backgroundColor: '#f59e0b',
                       borderColor: '#f59e0b',
-                      display: 'flex',
+                      display: 'inline-flex',
                       alignItems: 'center',
-                      gap: '0.35rem'
+                      gap: '0.25rem'
                     }}
-                    title="Use this sequence to create a new schedule"
+                    title="Create a schedule from this sequence"
                   >
-                    <Calendar size={13} /> Schedule
+                    <Calendar size={12} /> Schedule
+                  </button>
+                  <button 
+                    className="button"
+                    disabled={applyingSequenceId === sequence.id}
+                    onClick={async (e) => {
+                      e.stopPropagation();
+                      setApplyingSequenceId(sequence.id);
+                      try {
+                        const resp = await fetch(apiUrl(`sequences/${sequence.id}/apply`), { method: 'POST' });
+                        const data = await resp.json();
+                        if (resp.ok && data.success) {
+                          showAlert(`Applied "${data.sequence_name}" (${data.preroll_count} prerolls) to ${data.applied_to.join(', ')}`, 'success');
+                          // Refresh active category to reflect applied sequence
+                          try {
+                            const catResp = await fetch(apiUrl('settings/active-category'));
+                            const catData = await catResp.json();
+                            setActiveCategory(catData?.active_category || null);
+                            setAppliedSequence(catData?.applied_sequence || null);
+                          } catch {}
+                        } else {
+                          showAlert(data.detail || 'Failed to apply sequence', 'error');
+                        }
+                      } catch (err) {
+                        showAlert('Failed to apply sequence to server', 'error');
+                      } finally {
+                        setApplyingSequenceId(null);
+                      }
+                    }}
+                    style={{ 
+                      padding: '0.3rem 0.55rem', 
+                      fontSize: '0.75rem',
+                      backgroundColor: '#8b5cf6',
+                      borderColor: '#8b5cf6',
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      gap: '0.25rem'
+                    }}
+                    title="Apply this sequence directly to your media server"
+                  >
+                    <Server size={12} /> {applyingSequenceId === sequence.id ? 'Applying...' : 'Apply'}
                   </button>
                   <button 
                     className="button"
@@ -26416,15 +28050,15 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
                       loadSequenceIntoBuilder(sequence);
                     }}
                     style={{ 
-                      padding: '0.4rem 0.75rem', 
-                      fontSize: '0.8rem',
-                      display: 'flex',
+                      padding: '0.3rem 0.55rem', 
+                      fontSize: '0.75rem',
+                      display: 'inline-flex',
                       alignItems: 'center',
-                      gap: '0.35rem'
+                      gap: '0.25rem'
                     }}
                     title="Edit sequence"
                   >
-                    <Edit size={13} /> Edit
+                    <Edit size={12} /> Edit
                   </button>
                   <button 
                     className="button"
@@ -26435,17 +28069,16 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
                       }
                     }}
                     style={{ 
-                      padding: '0.4rem 0.75rem', 
-                      fontSize: '0.8rem',
+                      padding: '0.3rem 0.55rem', 
+                      fontSize: '0.75rem',
                       backgroundColor: '#dc3545',
-                      display: 'flex',
+                      display: 'inline-flex',
                       alignItems: 'center',
-                      gap: '0.35rem',
                       marginLeft: 'auto'
                     }}
                     title="Delete sequence"
                   >
-                    <Trash size={13} />
+                    <Trash size={12} />
                   </button>
                 </div>
               </div>
@@ -30245,6 +31878,113 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
        </div>
      )}
 
+     {/* Current Preroll Preview Modal (from Dashboard "Currently Showing" card) */}
+     {currentPrerollPreview && (
+       <div style={{
+         position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
+         backgroundColor: 'rgba(0,0,0,0.7)',
+         display: 'flex', alignItems: 'center', justifyContent: 'center',
+         zIndex: 9999
+       }} onClick={() => setCurrentPrerollPreview(null)}>
+         <div style={{
+           backgroundColor: 'var(--card-bg, #1a1a2e)',
+           padding: '1.25rem',
+           borderRadius: '12px',
+           maxWidth: '720px',
+           width: '90%',
+           maxHeight: '85vh',
+           overflow: 'auto',
+           border: '1px solid var(--border-color, #333)'
+         }} onClick={e => e.stopPropagation()}>
+           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
+             <h3 style={{ margin: 0, display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+               <Play size={18} /> Now Playing on Server
+               {currentPrerollPreview.mode === 'shuffle' ? (
+                 <span style={{ fontSize: '0.8rem', color: 'var(--text-secondary, #888)', fontWeight: 'normal' }}>
+                   (Shuffle — 1 of {currentPrerollPreview.totalCount || currentPrerollPreview.prerolls.length})
+                 </span>
+               ) : currentPrerollPreview.prerolls.length > 1 && (
+                 <span style={{ fontSize: '0.8rem', color: 'var(--text-secondary, #888)', fontWeight: 'normal' }}>
+                   ({currentPrerollPreview.index + 1} of {currentPrerollPreview.prerolls.length})
+                 </span>
+               )}
+             </h3>
+             <button onClick={() => setCurrentPrerollPreview(null)} style={{ background: 'none', border: 'none', color: 'var(--text-color, #fff)', cursor: 'pointer', fontSize: '1.2rem' }}>✕</button>
+           </div>
+           {(() => {
+             const current = currentPrerollPreview.prerolls[currentPrerollPreview.index];
+             if (!current) return <p>No preroll data</p>;
+             const videoUrl = current.preview_url ? apiUrl(current.preview_url.replace(/^\//, '')) : null;
+             return (
+               <div>
+                 <p style={{ margin: '0 0 0.5rem', fontWeight: 'bold', color: '#8b5cf6' }}>
+                   {current.display_name}
+                   {current.category_name && (
+                     <span style={{ fontWeight: 'normal', color: 'var(--text-secondary, #888)', fontSize: '0.85rem' }}> — {current.category_name}</span>
+                   )}
+                 </p>
+                 {videoUrl ? (
+                   <video
+                     key={currentPrerollPreview.index}
+                     controls
+                     autoPlay
+                     style={{ width: '100%', maxHeight: '400px', borderRadius: '8px', backgroundColor: '#000' }}
+                     onEnded={() => {
+                       // Auto-advance only for sequential/playlist mode
+                       if (currentPrerollPreview.mode === 'sequential' && currentPrerollPreview.index < currentPrerollPreview.prerolls.length - 1) {
+                         setCurrentPrerollPreview(prev => ({ ...prev, index: prev.index + 1 }));
+                       }
+                     }}
+                   >
+                     <source src={videoUrl} type="video/mp4" />
+                     Your browser does not support the video tag.
+                   </video>
+                 ) : (
+                   <div style={{ padding: '2rem', textAlign: 'center', color: 'var(--text-secondary, #888)', backgroundColor: 'rgba(0,0,0,0.3)', borderRadius: '8px' }}>
+                     <p>Preview unavailable for this file</p>
+                     <p style={{ fontSize: '0.8rem', wordBreak: 'break-all' }}>{current.path}</p>
+                   </div>
+                 )}
+                 {currentPrerollPreview.mode === 'sequential' && currentPrerollPreview.prerolls.length > 1 && (
+                   <div style={{ display: 'flex', justifyContent: 'center', gap: '0.5rem', marginTop: '0.75rem' }}>
+                     <button
+                       className="button"
+                       disabled={currentPrerollPreview.index === 0}
+                       onClick={() => setCurrentPrerollPreview(prev => ({ ...prev, index: prev.index - 1 }))}
+                       style={{ padding: '0.3rem 0.75rem', fontSize: '0.8rem' }}
+                     >
+                       ← Prev
+                     </button>
+                     {currentPrerollPreview.prerolls.map((_, i) => (
+                       <button
+                         key={i}
+                         onClick={() => setCurrentPrerollPreview(prev => ({ ...prev, index: i }))}
+                         style={{
+                           width: '28px', height: '28px', borderRadius: '50%', border: 'none', cursor: 'pointer',
+                           backgroundColor: i === currentPrerollPreview.index ? '#8b5cf6' : 'var(--border-color, #444)',
+                           color: '#fff', fontSize: '0.75rem', fontWeight: 'bold'
+                         }}
+                       >
+                         {i + 1}
+                       </button>
+                     ))}
+                     <button
+                       className="button"
+                       disabled={currentPrerollPreview.index >= currentPrerollPreview.prerolls.length - 1}
+                       onClick={() => setCurrentPrerollPreview(prev => ({ ...prev, index: prev.index + 1 }))}
+                       style={{ padding: '0.3rem 0.75rem', fontSize: '0.8rem' }}
+                     >
+                       Next →
+                     </button>
+                   </div>
+                 )}
+               </div>
+             );
+           })()}
+         </div>
+       </div>
+     )}
+
      {/* Community Prerolls Video Preview Modal */}
      {communityPreviewingPreroll && (
        <div 
@@ -30773,7 +32513,8 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
             setEditingSchedule(null);
             setScheduleForm({
               name: '', type: 'monthly', start_date: '', end_date: '',
-              category_id: '', shuffle: true, playlist: false, fallback_category_id: ''
+              category_id: '', shuffle: true, playlist: false, fallback_category_id: '', color: '',
+              holiday_name: '', holiday_country: '', blend_enabled: false, priority: 5, exclusive: false
             });
             setScheduleMode('simple');
             setSequenceBlocks([]);
@@ -30834,12 +32575,11 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
                   value={scheduleForm.type}
                   onChange={(e) => setScheduleForm({...scheduleForm, type: e.target.value})}
                 >
-                  <option value="daily">Daily</option>
-                  <option value="weekly">Weekly</option>
-                  <option value="monthly">Monthly</option>
-                  <option value="yearly">Yearly</option>
-                  <option value="holiday">Holiday</option>
-                  <option value="custom">Custom</option>
+                  <option value="daily">📅 Daily</option>
+                  <option value="weekly">📆 Weekly</option>
+                  <option value="monthly">🗓️ Monthly</option>
+                  <option value="yearly">📋 Yearly</option>
+                  <option value="holiday">🎉 Holiday</option>
                 </select>
               </div>
               <div className="nx-field">
@@ -31067,6 +32807,42 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
                 </div>
               )}
               
+              {/* Holiday Schedule: Holiday Name & Country */}
+              {(scheduleForm.type === 'holiday' || scheduleForm.type === 'yearly') && (
+                <div className="nx-field nx-span-2" style={{ padding: '1rem', backgroundColor: 'var(--card-bg)', borderRadius: '0.5rem', border: '1px solid var(--border-color)' }}>
+                  <label className="nx-label" style={{ marginBottom: '0.75rem', fontWeight: 600 }}>
+                    🎉 Holiday Auto-Update (Optional)
+                  </label>
+                  <p style={{ fontSize: '0.85rem', color: '#666', margin: '0 0 0.75rem 0' }}>
+                    Set a holiday name and country to automatically update this schedule's date each year.
+                  </p>
+                  <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: '1rem' }}>
+                    <div>
+                      <label style={{ display: 'block', marginBottom: '0.5rem', fontSize: '0.9rem', color: '#666' }}>Holiday Name</label>
+                      <input
+                        className="nx-input"
+                        type="text"
+                        placeholder="e.g., Thanksgiving, Easter"
+                        value={scheduleForm.holiday_name}
+                        onChange={(e) => setScheduleForm({...scheduleForm, holiday_name: e.target.value})}
+                        style={{ width: '100%' }}
+                      />
+                    </div>
+                    <div>
+                      <label style={{ display: 'block', marginBottom: '0.5rem', fontSize: '0.9rem', color: '#666' }}>Country</label>
+                      <input
+                        className="nx-input"
+                        type="text"
+                        placeholder="e.g., US, CA, GB"
+                        value={scheduleForm.holiday_country}
+                        onChange={(e) => setScheduleForm({...scheduleForm, holiday_country: e.target.value})}
+                        style={{ width: '100%' }}
+                      />
+                    </div>
+                  </div>
+                </div>
+              )}
+
               {/* Simple Mode: Category Selection */}
               {scheduleMode === 'simple' && (
                 <div className="nx-field">
@@ -31239,7 +33015,8 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
                   setEditingSchedule(null);
                   setScheduleForm({
                     name: '', type: 'monthly', start_date: '', end_date: '',
-                    category_id: '', shuffle: true, playlist: false, fallback_category_id: '', color: ''
+                    category_id: '', shuffle: true, playlist: false, fallback_category_id: '', color: '',
+                    holiday_name: '', holiday_country: '', blend_enabled: false, priority: 5, exclusive: false
                   });
                   setScheduleMode('simple');
                   setSequenceBlocks([]);
@@ -31652,7 +33429,7 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
                           fontSize: '0.85rem',
                           fontWeight: 500
                         }}>
-                          ✓ Downloaded
+                          ✓ Trailer Downloaded
                         </span>
                       ) : movie.trailer_url ? (
                         <button
@@ -31915,7 +33692,7 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
                           fontSize: '0.85rem',
                           fontWeight: 500
                         }}>
-                          ✓ Downloaded
+                          ✓ Trailer Downloaded
                         </span>
                       ) : show.trailer_url ? (
                         <button
