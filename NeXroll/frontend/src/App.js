@@ -9887,6 +9887,63 @@ const DashboardTiles = {
           </div>
         </div>
         
+        {/* Conflict Summary Panel - Day View */}
+        {hasAnyConflicts && !calendarShowConflictsOnly && (() => {
+          const conflictHourCount = hours.filter(h => h.hasSamePriorityExclusiveConflict || (h.hasConflict && !h.hasBlend && !h.hasExclusive)).length;
+          if (conflictHourCount === 0) return null;
+          const conflicts = analyzeAllConflicts();
+          const highCount = conflicts.filter(c => c.severity === 'high').length;
+          const infoCount = conflicts.filter(c => c.severity === 'info').length;
+          const actionableCount = conflicts.length - infoCount;
+          return (
+            <div style={{
+              marginBottom: '1rem',
+              padding: '1rem',
+              borderRadius: '8px',
+              backgroundColor: 'rgba(255, 152, 0, 0.08)',
+              border: '1px solid rgba(255, 152, 0, 0.25)'
+            }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.75rem', fontWeight: 600, color: '#ff9800' }}>
+                <AlertTriangle size={18} />
+                <span>Schedule Conflicts Detected</span>
+              </div>
+              <p style={{ margin: '0 0 0.75rem 0', fontSize: '0.85rem', color: 'var(--text-secondary)', lineHeight: 1.5 }}>
+                <strong>{conflictHourCount} hour{conflictHourCount !== 1 ? 's' : ''}</strong> have overlapping schedules today.
+                The schedule that ends soonest takes priority. Look for the <Crown size={12} style={{ display: 'inline', verticalAlign: 'middle' }} /> crown icon.
+              </p>
+              <div style={{ display: 'flex', gap: '0.5rem', fontSize: '0.8rem', alignItems: 'center', flexWrap: 'wrap' }}>
+                <span style={{ padding: '0.25rem 0.5rem', borderRadius: '4px', backgroundColor: 'rgba(255, 215, 0, 0.2)', border: '1px solid rgba(255, 215, 0, 0.5)', display: 'flex', alignItems: 'center', gap: '4px' }}>
+                  <Crown size={12} /> = Active
+                </span>
+                <span style={{ padding: '0.25rem 0.5rem', borderRadius: '4px', backgroundColor: 'rgba(0,0,0,0.1)', opacity: 0.6 }}>
+                  Faded = Overridden
+                </span>
+                <span style={{ flex: 1 }} />
+                <button
+                  type="button"
+                  onClick={() => { setShowConflictWizard(true); setConflictResolutions({}); setConflictWizardResults(null); }}
+                  title={actionableCount > 0 ? `${actionableCount} conflict${actionableCount !== 1 ? 's' : ''} detected — click to resolve` : `${infoCount} note${infoCount !== 1 ? 's' : ''} — click to review`}
+                  style={{
+                    display: 'flex', alignItems: 'center', gap: '0.4rem',
+                    padding: '0.4rem 0.85rem', borderRadius: '8px', fontWeight: 600, fontSize: '0.8rem',
+                    cursor: 'pointer', border: 'none', transition: 'all 0.2s',
+                    background: 'linear-gradient(135deg, rgba(239,68,68,0.15), rgba(245,158,11,0.15))',
+                    color: '#ef4444'
+                  }}
+                >
+                  <GitCompare size={14} />
+                  Resolve {actionableCount} Conflict{actionableCount !== 1 ? 's' : ''}
+                  {highCount > 0 && (
+                    <span style={{ background: '#ef4444', color: '#fff', fontSize: '0.65rem', padding: '0.1rem 0.35rem', borderRadius: '10px', fontWeight: 700 }}>
+                      {highCount}
+                    </span>
+                  )}
+                </button>
+              </div>
+            </div>
+          );
+        })()}
+        
         {/* Summary of active schedules */}
         {daySchedules.length > 0 && (
           <div style={{
@@ -10302,6 +10359,62 @@ const DashboardTiles = {
             </div>
           </div>
         </div>
+
+        {/* Day columns header strip */}
+        {/* Conflict Summary Panel - Week View */}
+        {conflictDayCount > 0 && !calendarShowConflictsOnly && (() => {
+          const conflicts = analyzeAllConflicts();
+          const highCount = conflicts.filter(c => c.severity === 'high').length;
+          const infoCount = conflicts.filter(c => c.severity === 'info').length;
+          const actionableCount = conflicts.length - infoCount;
+          return (
+            <div style={{
+              margin: '0.75rem 1.5rem',
+              padding: '1rem',
+              borderRadius: '8px',
+              backgroundColor: 'rgba(255, 152, 0, 0.08)',
+              border: '1px solid rgba(255, 152, 0, 0.25)'
+            }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.75rem', fontWeight: 600, color: '#ff9800' }}>
+                <AlertTriangle size={18} />
+                <span>Schedule Conflicts Detected</span>
+              </div>
+              <p style={{ margin: '0 0 0.75rem 0', fontSize: '0.85rem', color: 'var(--text-secondary)', lineHeight: 1.5 }}>
+                <strong>{conflictDayCount} day{conflictDayCount !== 1 ? 's' : ''}</strong> this week have overlapping schedules.
+                The schedule that ends soonest takes priority. Look for the <Crown size={12} style={{ display: 'inline', verticalAlign: 'middle' }} /> crown icon.
+              </p>
+              <div style={{ display: 'flex', gap: '0.5rem', fontSize: '0.8rem', alignItems: 'center', flexWrap: 'wrap' }}>
+                <span style={{ padding: '0.25rem 0.5rem', borderRadius: '4px', backgroundColor: 'rgba(255, 215, 0, 0.2)', border: '1px solid rgba(255, 215, 0, 0.5)', display: 'flex', alignItems: 'center', gap: '4px' }}>
+                  <Crown size={12} /> = Active
+                </span>
+                <span style={{ padding: '0.25rem 0.5rem', borderRadius: '4px', backgroundColor: 'rgba(0,0,0,0.1)', opacity: 0.6 }}>
+                  Faded = Overridden
+                </span>
+                <span style={{ flex: 1 }} />
+                <button
+                  type="button"
+                  onClick={() => { setShowConflictWizard(true); setConflictResolutions({}); setConflictWizardResults(null); }}
+                  title={actionableCount > 0 ? `${actionableCount} conflict${actionableCount !== 1 ? 's' : ''} detected — click to resolve` : `${infoCount} note${infoCount !== 1 ? 's' : ''} — click to review`}
+                  style={{
+                    display: 'flex', alignItems: 'center', gap: '0.4rem',
+                    padding: '0.4rem 0.85rem', borderRadius: '8px', fontWeight: 600, fontSize: '0.8rem',
+                    cursor: 'pointer', border: 'none', transition: 'all 0.2s',
+                    background: 'linear-gradient(135deg, rgba(239,68,68,0.15), rgba(245,158,11,0.15))',
+                    color: '#ef4444'
+                  }}
+                >
+                  <GitCompare size={14} />
+                  Resolve {actionableCount} Conflict{actionableCount !== 1 ? 's' : ''}
+                  {highCount > 0 && (
+                    <span style={{ background: '#ef4444', color: '#fff', fontSize: '0.65rem', padding: '0.1rem 0.35rem', borderRadius: '10px', fontWeight: 700 }}>
+                      {highCount}
+                    </span>
+                  )}
+                </button>
+              </div>
+            </div>
+          );
+        })()}
 
         {/* Day columns header strip */}
         <div style={{
@@ -11950,6 +12063,63 @@ const DashboardTiles = {
           borderBottom: '2px solid var(--border-color)',
           paddingBottom: '0.75rem'
         }}>{calendarYear} Overview</h2>
+        
+        {/* Conflict Summary Panel - Year View */}
+        {(() => {
+          const totalYearConflicts = counts.reduce((sum, entry) => sum + entry.conflictDays, 0);
+          if (totalYearConflicts === 0 || calendarShowConflictsOnly) return null;
+          const conflicts = analyzeAllConflicts();
+          const highCount = conflicts.filter(c => c.severity === 'high').length;
+          const infoCount = conflicts.filter(c => c.severity === 'info').length;
+          const actionableCount = conflicts.length - infoCount;
+          return (
+            <div style={{
+              marginBottom: '1rem',
+              padding: '1rem',
+              borderRadius: '8px',
+              backgroundColor: 'rgba(255, 152, 0, 0.08)',
+              border: '1px solid rgba(255, 152, 0, 0.25)'
+            }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.75rem', fontWeight: 600, color: '#ff9800' }}>
+                <AlertTriangle size={18} />
+                <span>Schedule Conflicts Detected</span>
+              </div>
+              <p style={{ margin: '0 0 0.75rem 0', fontSize: '0.85rem', color: 'var(--text-secondary)', lineHeight: 1.5 }}>
+                <strong>{totalYearConflicts} day{totalYearConflicts !== 1 ? 's' : ''}</strong> across {calendarYear} have overlapping schedules.
+                The schedule that ends soonest takes priority. Look for the <Crown size={12} style={{ display: 'inline', verticalAlign: 'middle' }} /> crown icon.
+              </p>
+              <div style={{ display: 'flex', gap: '0.5rem', fontSize: '0.8rem', alignItems: 'center', flexWrap: 'wrap' }}>
+                <span style={{ padding: '0.25rem 0.5rem', borderRadius: '4px', backgroundColor: 'rgba(255, 215, 0, 0.2)', border: '1px solid rgba(255, 215, 0, 0.5)', display: 'flex', alignItems: 'center', gap: '4px' }}>
+                  <Crown size={12} /> = Active
+                </span>
+                <span style={{ padding: '0.25rem 0.5rem', borderRadius: '4px', backgroundColor: 'rgba(0,0,0,0.1)', opacity: 0.6 }}>
+                  Faded = Overridden
+                </span>
+                <span style={{ flex: 1 }} />
+                <button
+                  type="button"
+                  onClick={() => { setShowConflictWizard(true); setConflictResolutions({}); setConflictWizardResults(null); }}
+                  title={actionableCount > 0 ? `${actionableCount} conflict${actionableCount !== 1 ? 's' : ''} detected — click to resolve` : `${infoCount} note${infoCount !== 1 ? 's' : ''} — click to review`}
+                  style={{
+                    display: 'flex', alignItems: 'center', gap: '0.4rem',
+                    padding: '0.4rem 0.85rem', borderRadius: '8px', fontWeight: 600, fontSize: '0.8rem',
+                    cursor: 'pointer', border: 'none', transition: 'all 0.2s',
+                    background: 'linear-gradient(135deg, rgba(239,68,68,0.15), rgba(245,158,11,0.15))',
+                    color: '#ef4444'
+                  }}
+                >
+                  <GitCompare size={14} />
+                  Resolve {actionableCount} Conflict{actionableCount !== 1 ? 's' : ''}
+                  {highCount > 0 && (
+                    <span style={{ background: '#ef4444', color: '#fff', fontSize: '0.65rem', padding: '0.1rem 0.35rem', borderRadius: '10px', fontWeight: 700 }}>
+                      {highCount}
+                    </span>
+                  )}
+                </button>
+              </div>
+            </div>
+          );
+        })()}
         
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: '16px' }}>
           {counts.map((entry) => {
