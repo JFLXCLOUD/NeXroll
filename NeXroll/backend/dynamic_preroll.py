@@ -80,6 +80,59 @@ class DynamicPrerollGenerator:
         'monochrome': {'bg': '0x1a1a1a', 'primary': '0xffffff', 'secondary': '0xaaaaaa', 'accent': '0xcccccc'},
     }
     
+    # Language translations for static text in generated videos
+    TRANSLATIONS = {
+        'en': {
+            'coming_soon': 'COMING SOON',
+            'to': 'to',
+            'feature_presentation': 'FEATURE PRESENTATION',
+            'feature': 'FEATURE',
+            'presentation': 'PRESENTATION',
+            'now_showing': 'NOW SHOWING',
+            'at': 'at',
+            'coming_soon_to': 'COMING SOON TO',
+            'available_now': 'Available Now!',
+        },
+        'fr': {
+            'coming_soon': 'PROCHAINEMENT',
+            'to': 'sur',
+            'feature_presentation': 'LONG M\\u00c9TRAGE',
+            'feature': 'LONG',
+            'presentation': 'M\\u00c9TRAGE',
+            'now_showing': "\\u00c0 L'AFFICHE",
+            'at': 'sur',
+            'coming_soon_to': 'PROCHAINEMENT SUR',
+            'available_now': 'Maintenant disponible!',
+        },
+        'es': {
+            'coming_soon': 'PR\\u00d3XIMAMENTE',
+            'to': 'en',
+            'feature_presentation': 'FUNCI\\u00d3N PRINCIPAL',
+            'feature': 'FUNCI\\u00d3N',
+            'presentation': 'PRINCIPAL',
+            'now_showing': 'EN CARTELERA',
+            'at': 'en',
+            'coming_soon_to': 'PR\\u00d3XIMAMENTE EN',
+            'available_now': '\\u00a1Disponible!',
+        },
+        'de': {
+            'coming_soon': 'DEMN\\u00c4CHST',
+            'to': 'auf',
+            'feature_presentation': 'HAUPTFILM',
+            'feature': 'HAUPT',
+            'presentation': 'FILM',
+            'now_showing': 'JETZT IM PROGRAMM',
+            'at': 'auf',
+            'coming_soon_to': 'DEMN\\u00c4CHST AUF',
+            'available_now': 'Jetzt verf\\u00fcgbar!',
+        },
+    }
+    
+    def _get_text(self, key: str, language: str = 'en') -> str:
+        """Get translated text for a given key and language."""
+        lang = self.TRANSLATIONS.get(language, self.TRANSLATIONS['en'])
+        return lang.get(key, self.TRANSLATIONS['en'].get(key, key))
+    
     def __init__(self, output_dir: str = None):
         """
         Initialize the generator.
@@ -307,7 +360,8 @@ class DynamicPrerollGenerator:
         text_color: str = "white",
         accent_color: str = "0x00d4ff",
         style: str = "cinematic",
-        theme: str = "midnight"
+        theme: str = "midnight",
+        language: str = 'en'
     ) -> Optional[str]:
         """
         Generate a "Coming Soon to [Server Name]" intro video with advanced effects.
@@ -341,17 +395,17 @@ class DynamicPrerollGenerator:
         if style == 'neon':
             return self._generate_neon_coming_soon(
                 server_name, duration, output_filename, width, height,
-                bg_color, text_color, accent_color
+                bg_color, text_color, accent_color, language
             )
         elif style == 'minimal':
             return self._generate_minimal_coming_soon(
                 server_name, duration, output_filename, width, height,
-                bg_color, text_color, accent_color
+                bg_color, text_color, accent_color, language
             )
         else:
             return self._generate_cinematic_coming_soon(
                 server_name, duration, output_filename, width, height,
-                bg_color, text_color, accent_color
+                bg_color, text_color, accent_color, language
             )
     
     def _generate_cinematic_coming_soon(
@@ -363,7 +417,8 @@ class DynamicPrerollGenerator:
         height: int,
         bg_color: str,
         text_color: str,
-        accent_color: str
+        accent_color: str,
+        language: str = 'en'
     ) -> Optional[str]:
         """Generate cinematic style with glow effects and dramatic presentation"""
         output_path = self.output_dir / output_filename
@@ -372,19 +427,22 @@ class DynamicPrerollGenerator:
         _, font_param = self._get_font_path('arial')
         _, bold_font_param = self._get_font_path('arial_bold')
         
+        coming_soon_text = self._escape_text(self._get_text('coming_soon', language))
+        to_text = self._escape_text(self._get_text('to', language))
+        
         # Cinematic style: dramatic text with multiple glow layers, film grain, fades
         filter_str = (
             # Outer glow layer (creates "bloom" effect)
-            f"drawtext=text='COMING SOON':fontsize=85:fontcolor={accent_color}@0.2{bold_font_param}:"
+            f"drawtext=text='{coming_soon_text}':fontsize=85:fontcolor={accent_color}@0.2{bold_font_param}:"
             f"x=(w-text_w)/2:y=(h/2)-100:shadowcolor={accent_color}@0.15:shadowx=8:shadowy=8,"
             # Mid glow
-            f"drawtext=text='COMING SOON':fontsize=82:fontcolor={accent_color}@0.35{bold_font_param}:"
+            f"drawtext=text='{coming_soon_text}':fontsize=82:fontcolor={accent_color}@0.35{bold_font_param}:"
             f"x=(w-text_w)/2:y=(h/2)-100:shadowcolor={accent_color}@0.25:shadowx=5:shadowy=5,"
             # Main title
-            f"drawtext=text='COMING SOON':fontsize=80:fontcolor={text_color}{bold_font_param}:"
+            f"drawtext=text='{coming_soon_text}':fontsize=80:fontcolor={text_color}{bold_font_param}:"
             f"x=(w-text_w)/2:y=(h/2)-100:shadowcolor=black@0.8:shadowx=3:shadowy=3,"
             # "to" text with fade-in
-            f"drawtext=text='to':fontsize=42:fontcolor={text_color}@0.85{font_param}:"
+            f"drawtext=text='{to_text}':fontsize=42:fontcolor={text_color}@0.85{font_param}:"
             f"x=(w-text_w)/2:y=(h/2)-15:alpha='if(lt(t,0.8),0,if(lt(t,1.5),(t-0.8)/0.7,1))',"
             # Server name outer glow
             f"drawtext=text='{escaped_server}':fontsize=65:fontcolor={accent_color}@0.25{bold_font_param}:"
@@ -411,7 +469,8 @@ class DynamicPrerollGenerator:
         height: int,
         bg_color: str,
         text_color: str,
-        accent_color: str
+        accent_color: str,
+        language: str = 'en'
     ) -> Optional[str]:
         """Generate neon glow style with pulsing effects"""
         output_path = self.output_dir / output_filename
@@ -420,19 +479,22 @@ class DynamicPrerollGenerator:
         _, font_param = self._get_font_path('arial')
         _, bold_font_param = self._get_font_path('arial_bold')
         
+        coming_soon_text = self._escape_text(self._get_text('coming_soon', language))
+        to_text = self._escape_text(self._get_text('to', language))
+        
         # Neon effect: multiple glow layers (static, since dynamic alpha expressions are complex)
         filter_str = (
             # Outer glow layer 3 (widest, faintest)
-            f"drawtext=text='COMING SOON':fontsize=85:fontcolor={accent_color}@0.2{bold_font_param}:"
+            f"drawtext=text='{coming_soon_text}':fontsize=85:fontcolor={accent_color}@0.2{bold_font_param}:"
             f"x=(w-text_w)/2:y=(h/2)-95:shadowcolor={accent_color}@0.15:shadowx=8:shadowy=8,"
             # Outer glow layer 2
-            f"drawtext=text='COMING SOON':fontsize=82:fontcolor={accent_color}@0.35{bold_font_param}:"
+            f"drawtext=text='{coming_soon_text}':fontsize=82:fontcolor={accent_color}@0.35{bold_font_param}:"
             f"x=(w-text_w)/2:y=(h/2)-97:shadowcolor={accent_color}@0.25:shadowx=5:shadowy=5,"
             # Main text with glow
-            f"drawtext=text='COMING SOON':fontsize=80:fontcolor={text_color}{bold_font_param}:"
+            f"drawtext=text='{coming_soon_text}':fontsize=80:fontcolor={text_color}{bold_font_param}:"
             f"x=(w-text_w)/2:y=(h/2)-100:shadowcolor={accent_color}@0.6:shadowx=3:shadowy=3,"
             # "to" with fade in
-            f"drawtext=text='to':fontsize=40:fontcolor={text_color}@0.8{font_param}:"
+            f"drawtext=text='{to_text}':fontsize=40:fontcolor={text_color}@0.8{font_param}:"
             f"x=(w-text_w)/2:y=(h/2)-15:alpha='if(lt(t,0.8),0,if(lt(t,1.3),(t-0.8)/0.5,1))',"
             # Server name glow layer
             f"drawtext=text='{escaped_server}':fontsize=65:fontcolor={accent_color}@0.3{bold_font_param}:"
@@ -457,13 +519,17 @@ class DynamicPrerollGenerator:
         height: int,
         bg_color: str,
         text_color: str,
-        accent_color: str
+        accent_color: str,
+        language: str = 'en'
     ) -> Optional[str]:
         """Generate elegant minimal style"""
         output_path = self.output_dir / output_filename
         escaped_server = self._escape_text(server_name)
         
         _, font_param = self._get_font_path('segoe')
+        
+        coming_soon_text = self._escape_text(self._get_text('coming_soon', language))
+        to_text = self._escape_text(self._get_text('to', language))
         
         # Calculate positions based on actual dimensions
         line_x = width // 4
@@ -476,10 +542,10 @@ class DynamicPrerollGenerator:
             # Thin decorative line
             f"drawbox=x={line_x}:y={line_y_top}:w={line_w}:h=1:c={accent_color}@0.5:t=fill,"
             # Main text - elegant fade in
-            f"drawtext=text='COMING SOON':fontsize=55:fontcolor={text_color}{font_param}:"
+            f"drawtext=text='{coming_soon_text}':fontsize=55:fontcolor={text_color}{font_param}:"
             f"x=(w-text_w)/2:y=(h/2)-45:alpha='if(lt(t,0.3),0,if(lt(t,1),(t-0.3)/0.7,1))',"
             # Server name
-            f"drawtext=text='to {escaped_server}':fontsize=35:fontcolor={accent_color}{font_param}:"
+            f"drawtext=text='{to_text} {escaped_server}':fontsize=35:fontcolor={accent_color}{font_param}:"
             f"x=(w-text_w)/2:y=(h/2)+20:alpha='if(lt(t,0.8),0,if(lt(t,1.5),(t-0.8)/0.7,1))',"
             # Bottom decorative line
             f"drawbox=x={line_x}:y={line_y_bottom}:w={line_w}:h=1:c={accent_color}@0.5:t=fill,"
@@ -499,7 +565,8 @@ class DynamicPrerollGenerator:
         bg_color: str,
         text_color: str,
         accent_color: str,
-        style: str = "default"
+        style: str = "default",
+        language: str = 'en'
     ) -> Optional[str]:
         """Enhanced fallback that still looks good but uses simpler filters"""
         output_path = self.output_dir / output_filename
@@ -508,16 +575,19 @@ class DynamicPrerollGenerator:
         _, font_param = self._get_font_path('arial')
         _, bold_font_param = self._get_font_path('arial_bold')
         
+        coming_soon_text = self._escape_text(self._get_text('coming_soon', language))
+        to_text = self._escape_text(self._get_text('to', language))
+        
         # Simple but visually appealing filter (no color= prefix, handled by _run_ffmpeg_simple)
         filter_str = (
             # Shadow/glow layer
-            f"drawtext=text='COMING SOON':fontsize=82:fontcolor={accent_color}@0.3{bold_font_param}:"
+            f"drawtext=text='{coming_soon_text}':fontsize=82:fontcolor={accent_color}@0.3{bold_font_param}:"
             f"x=(w-text_w)/2+3:y=(h/2)-97:shadowcolor={accent_color}@0.2:shadowx=5:shadowy=5,"
             # Main title
-            f"drawtext=text='COMING SOON':fontsize=80:fontcolor={text_color}{bold_font_param}:"
+            f"drawtext=text='{coming_soon_text}':fontsize=80:fontcolor={text_color}{bold_font_param}:"
             f"x=(w-text_w)/2:y=(h/2)-100:shadowcolor=black@0.7:shadowx=3:shadowy=3,"
             # "to"
-            f"drawtext=text='to':fontsize=42:fontcolor={text_color}@0.8{font_param}:"
+            f"drawtext=text='{to_text}':fontsize=42:fontcolor={text_color}@0.8{font_param}:"
             f"x=(w-text_w)/2:y=(h/2)-10,"
             # Server name glow
             f"drawtext=text='{escaped_server}':fontsize=62:fontcolor={accent_color}@0.4{bold_font_param}:"
@@ -879,7 +949,8 @@ class DynamicPrerollGenerator:
         bg_color: str = "0x0a0a0a",
         text_color: str = "0xffd700",  # Gold
         style: str = "classic",
-        theme: str = "midnight"
+        theme: str = "midnight",
+        language: str = 'en'
     ) -> Optional[str]:
         """Generate "Feature Presentation" intro with different styles"""
         if not self.is_available():
@@ -897,12 +968,12 @@ class DynamicPrerollGenerator:
         if style == 'modern':
             return self._generate_modern_feature_presentation(
                 server_name, duration, output_filename, width, height,
-                bg_color, text_color, theme
+                bg_color, text_color, theme, language
             )
         else:
             return self._generate_classic_feature_presentation(
                 server_name, duration, output_filename, width, height,
-                bg_color, text_color
+                bg_color, text_color, language
             )
     
     def _generate_classic_feature_presentation(
@@ -913,7 +984,8 @@ class DynamicPrerollGenerator:
         width: int,
         height: int,
         bg_color: str,
-        text_color: str
+        text_color: str,
+        language: str = 'en'
     ) -> Optional[str]:
         """Classic theater-style Feature Presentation"""
         output_path = self.output_dir / output_filename
@@ -921,6 +993,9 @@ class DynamicPrerollGenerator:
         
         _, font_param = self._get_font_path('georgia')
         _, bold_font_param = self._get_font_path('arial_bold')
+        
+        feature_presentation_text = self._escape_text(self._get_text('feature_presentation', language))
+        at_text = self._escape_text(self._get_text('at', language))
         
         # Pre-calculate positions
         line_x = width // 5
@@ -939,14 +1014,14 @@ class DynamicPrerollGenerator:
             f"drawbox=x={line_x - 10}:y={top_diamond_y}:w=8:h=8:c={text_color}@0.8:t=fill",
             f"drawbox=x={right_diamond_x}:y={top_diamond_y}:w=8:h=8:c={text_color}@0.8:t=fill",
             # Outer glow for main text
-            f"drawtext=text='FEATURE PRESENTATION':fontsize=67:fontcolor={text_color}@0.3{bold_font_param}:x=(w-text_w)/2:y=(h/2)-55:shadowcolor={text_color}@0.2:shadowx=6:shadowy=6",
+            f"drawtext=text='{feature_presentation_text}':fontsize=67:fontcolor={text_color}@0.3{bold_font_param}:x=(w-text_w)/2:y=(h/2)-55:shadowcolor={text_color}@0.2:shadowx=6:shadowy=6",
             # Main text
-            f"drawtext=text='FEATURE PRESENTATION':fontsize=65:fontcolor={text_color}{bold_font_param}:x=(w-text_w)/2:y=(h/2)-55:shadowcolor=black@0.7:shadowx=3:shadowy=3",
+            f"drawtext=text='{feature_presentation_text}':fontsize=65:fontcolor={text_color}{bold_font_param}:x=(w-text_w)/2:y=(h/2)-55:shadowcolor=black@0.7:shadowx=3:shadowy=3",
         ]
         
         if escaped_server:
             filter_parts.extend([
-                f"drawtext=text='at {escaped_server}':fontsize=32:fontcolor=white@0.8{font_param}:x=(w-text_w)/2:y=(h/2)+30:alpha='if(lt(t,1),0,if(lt(t,1.8),(t-1)/0.8,1))'"
+                f"drawtext=text='{at_text} {escaped_server}':fontsize=32:fontcolor=white@0.8{font_param}:x=(w-text_w)/2:y=(h/2)+30:alpha='if(lt(t,1),0,if(lt(t,1.8),(t-1)/0.8,1))'"
             ])
         
         # Bottom decorative line
@@ -970,7 +1045,8 @@ class DynamicPrerollGenerator:
         height: int,
         bg_color: str = "0x0d0d1a",
         text_color: str = "0xffffff",
-        theme: str = "midnight"
+        theme: str = "midnight",
+        language: str = 'en'
     ) -> Optional[str]:
         """Modern sleek Feature Presentation style"""
         output_path = self.output_dir / output_filename
@@ -988,6 +1064,9 @@ class DynamicPrerollGenerator:
         else:
             accent = "0x6366f1"  # Indigo default
         
+        feature_text = self._escape_text(self._get_text('feature', language))
+        presentation_text = self._escape_text(self._get_text('presentation', language))
+        
         # Pre-calculate positions
         gradient_y_1 = height - 100
         gradient_y_2 = height - 80
@@ -997,8 +1076,8 @@ class DynamicPrerollGenerator:
             f"drawbox=x=0:y={gradient_y_1}:w={width}:h=100:c={accent}@0.1:t=fill",
             f"drawbox=x=0:y={gradient_y_2}:w={width}:h=80:c={accent}@0.05:t=fill",
             # Main text with modern feel
-            f"drawtext=text='FEATURE':fontsize=90:fontcolor=white{bold_font_param}:x=(w-text_w)/2:y=(h/2)-80",
-            f"drawtext=text='PRESENTATION':fontsize=45:fontcolor={accent}{font_param}:x=(w-text_w)/2:y=(h/2)+10:alpha='if(lt(t,0.5),0,if(lt(t,1.2),(t-0.5)/0.7,1))'",
+            f"drawtext=text='{feature_text}':fontsize=90:fontcolor=white{bold_font_param}:x=(w-text_w)/2:y=(h/2)-80",
+            f"drawtext=text='{presentation_text}':fontsize=45:fontcolor={accent}{font_param}:x=(w-text_w)/2:y=(h/2)+10:alpha='if(lt(t,0.5),0,if(lt(t,1.2),(t-0.5)/0.7,1))'",
         ]
         
         if escaped_server:
@@ -1018,7 +1097,8 @@ class DynamicPrerollGenerator:
         output_filename: str = "now_showing_preroll.mp4",
         width: int = 1920,
         height: int = 1080,
-        theme: str = "midnight"
+        theme: str = "midnight",
+        language: str = 'en'
     ) -> Optional[str]:
         """Generate retro "Now Showing" style with film grain"""
         if not self.is_available() or not self.output_dir:
@@ -1042,6 +1122,9 @@ class DynamicPrerollGenerator:
             text_color = colors['primary']
             accent = colors['secondary']
         
+        now_showing_text = self._escape_text(self._get_text('now_showing', language))
+        at_text = self._escape_text(self._get_text('at', language))
+        
         # Pre-calculate positions
         vignette_right_x = width - 100
         underline_x = (width // 2) - 150
@@ -1054,14 +1137,14 @@ class DynamicPrerollGenerator:
             f"drawbox=x=0:y=0:w=100:h={height}:c=black@0.3:t=fill",
             f"drawbox=x={vignette_right_x}:y=0:w=100:h={height}:c=black@0.3:t=fill",
             # Main "NOW SHOWING" text
-            f"drawtext=text='NOW SHOWING':fontsize=95:fontcolor={text_color}{font_param}:x=(w-text_w)/2:y=(h/2)-70:shadowcolor=black@0.8:shadowx=4:shadowy=4",
+            f"drawtext=text='{now_showing_text}':fontsize=95:fontcolor={text_color}{font_param}:x=(w-text_w)/2:y=(h/2)-70:shadowcolor=black@0.8:shadowx=4:shadowy=4",
             # Decorative underline
             f"drawbox=x={underline_x}:y={underline_y}:w=300:h=3:c={accent}:t=fill",
         ]
         
         if escaped_server:
             filter_parts.append(
-                f"drawtext=text='at {escaped_server}':fontsize=35:fontcolor={accent}{regular_font}:x=(w-text_w)/2:y=(h/2)+50"
+                f"drawtext=text='{at_text} {escaped_server}':fontsize=35:fontcolor={accent}{regular_font}:x=(w-text_w)/2:y=(h/2)+50"
             )
         
         # Fades (removed flicker effect that was causing issues)
@@ -1076,7 +1159,8 @@ class DynamicPrerollGenerator:
         variables: Dict[str, str],
         duration: float = None,
         output_filename: Optional[str] = None,
-        theme: str = "midnight"
+        theme: str = "midnight",
+        language: str = 'en'
     ) -> Optional[str]:
         """
         Generate a preroll from a template with variables.
@@ -1115,7 +1199,8 @@ class DynamicPrerollGenerator:
                 duration=duration,
                 output_filename=output_filename,
                 style=style,
-                theme=theme
+                theme=theme,
+                language=language
             )
         elif template_id.startswith('feature_presentation'):
             return self.generate_feature_presentation(
@@ -1123,14 +1208,16 @@ class DynamicPrerollGenerator:
                 duration=duration,
                 output_filename=output_filename,
                 style=style,
-                theme=theme
+                theme=theme,
+                language=language
             )
         elif template_id == 'now_showing':
             return self.generate_now_showing(
                 server_name=server_name,
                 duration=duration,
                 output_filename=output_filename,
-                theme=theme
+                theme=theme,
+                language=language
             )
         
         return None
@@ -1332,7 +1419,8 @@ class DynamicPrerollGenerator:
         include_audio: bool = False,
         custom_audio_path: str = None,
         custom_logo_path: str = None,
-        logo_mode: str = "watermark"
+        logo_mode: str = "watermark",
+        language: str = 'en'
     ) -> Optional[str]:
         """Generate a Coming Soon List video.
         
@@ -1381,7 +1469,8 @@ class DynamicPrerollGenerator:
                 include_audio=include_audio,
                 custom_audio_path=custom_audio_path,
                 custom_logo_path=custom_logo_path,
-                logo_mode=logo_mode
+                logo_mode=logo_mode,
+                language=language
             )
         else:
             return self._generate_list_text_layout(
@@ -1390,7 +1479,8 @@ class DynamicPrerollGenerator:
                 include_audio=include_audio,
                 custom_audio_path=custom_audio_path,
                 custom_logo_path=custom_logo_path,
-                logo_mode=logo_mode
+                logo_mode=logo_mode,
+                language=language
             )
     
     def _generate_list_text_layout(
@@ -1407,7 +1497,8 @@ class DynamicPrerollGenerator:
         include_audio: bool = False,
         custom_audio_path: str = None,
         custom_logo_path: str = None,
-        logo_mode: str = "watermark"
+        logo_mode: str = "watermark",
+        language: str = 'en'
     ) -> Optional[str]:
         """Generate text-only list layout (no posters)"""
         output_path = self.output_dir / output_filename
@@ -1416,6 +1507,10 @@ class DynamicPrerollGenerator:
         
         _, font_param = self._get_font_path('arial')
         _, bold_font_param = self._get_font_path('arial_bold')
+        
+        coming_soon_to_text = self._escape_text(self._get_text('coming_soon_to', language))
+        coming_soon_text = self._escape_text(self._get_text('coming_soon', language))
+        to_text = self._escape_text(self._get_text('to', language))
         
         # Calculate layout - dynamically adjust for item count
         header_y = 80
@@ -1448,16 +1543,16 @@ class DynamicPrerollGenerator:
         if has_replace_logo:
             # Replace mode: single-line "COMING SOON TO" header, logo below
             filter_parts.append(
-                f"drawtext=text='COMING SOON TO':fontsize=80:fontcolor={accent_color}{bold_font_param}:"
+                f"drawtext=text='{coming_soon_to_text}':fontsize=80:fontcolor={accent_color}{bold_font_param}:"
                 f"x=(w-text_w)/2:y={header_y}:shadowcolor=black@0.6:shadowx=2:shadowy=2"
             )
         else:
             filter_parts.append(
-                f"drawtext=text='COMING SOON':fontsize=80:fontcolor={accent_color}{bold_font_param}:"
+                f"drawtext=text='{coming_soon_text}':fontsize=80:fontcolor={accent_color}{bold_font_param}:"
                 f"x=(w-text_w)/2:y={header_y}:shadowcolor=black@0.6:shadowx=2:shadowy=2"
             )
             filter_parts.append(
-                f"drawtext=text='to {escaped_server}':fontsize=50:fontcolor={text_color}@0.9{font_param}:"
+                f"drawtext=text='{to_text} {escaped_server}':fontsize=50:fontcolor={text_color}@0.9{font_param}:"
                 f"x=(w-text_w)/2:y={subtitle_y}:alpha='if(lt(t,0.5),0,if(lt(t,1),(t-0.5)/0.5,1))'"
             )
             # Divider line (only in watermark/normal mode)
@@ -1473,7 +1568,7 @@ class DynamicPrerollGenerator:
             # Format release date or "Available Now!" status
             release_date = item.get('release_date', '')
             if item.get('available_now', False):
-                date_str = 'Available Now!'
+                date_str = self._get_text('available_now', language)
             elif release_date:
                 try:
                     from datetime import datetime
@@ -1541,7 +1636,8 @@ class DynamicPrerollGenerator:
         include_audio: bool = False,
         custom_audio_path: str = None,
         custom_logo_path: str = None,
-        logo_mode: str = "watermark"
+        logo_mode: str = "watermark",
+        language: str = 'en'
     ) -> Optional[str]:
         """
         Generate grid layout with poster images.
@@ -1557,6 +1653,10 @@ class DynamicPrerollGenerator:
         
         _, font_param = self._get_font_path('arial')
         _, bold_font_param = self._get_font_path('arial_bold')
+        
+        coming_soon_to_text = self._escape_text(self._get_text('coming_soon_to', language))
+        coming_soon_text = self._escape_text(self._get_text('coming_soon', language))
+        to_text = self._escape_text(self._get_text('to', language))
         
         # Create temp directory for poster images
         temp_dir = tempfile.mkdtemp(prefix="nexroll_posters_")
@@ -1604,7 +1704,8 @@ class DynamicPrerollGenerator:
                     bg_color, text_color, accent_color, width, height,
                     include_audio=include_audio,
                     custom_audio_path=custom_audio_path,
-                    custom_logo_path=custom_logo_path
+                    custom_logo_path=custom_logo_path,
+                    language=language
                 )
             
             # Build grid layout with FFmpeg
@@ -1735,7 +1836,7 @@ class DynamicPrerollGenerator:
                 # Format release date or "Available Now!" status
                 release_date = item.get('release_date', '')
                 if item.get('available_now', False):
-                    date_str = 'Available Now!'
+                    date_str = self._get_text('available_now', language)
                 elif release_date:
                     try:
                         from datetime import datetime
@@ -1768,14 +1869,14 @@ class DynamicPrerollGenerator:
                 # Replace mode: "COMING SOON TO" shifted left, logo placed to its right
                 # Offset text left by ~80px to leave room for logo on the right
                 header_filter = (
-                    f"drawtext=text='COMING SOON TO':fontsize=55:fontcolor={accent_color}{bold_font_param}:"
+                    f"drawtext=text='{coming_soon_to_text}':fontsize=55:fontcolor={accent_color}{bold_font_param}:"
                     f"x=(w-text_w)/2-80:y=50:shadowcolor=black@0.5:shadowx=2:shadowy=2"
                 )
             else:
                 header_filter = (
-                    f"drawtext=text='COMING SOON':fontsize=55:fontcolor={accent_color}{bold_font_param}:"
+                    f"drawtext=text='{coming_soon_text}':fontsize=55:fontcolor={accent_color}{bold_font_param}:"
                     f"x=(w-text_w)/2:y=50:shadowcolor=black@0.5:shadowx=2:shadowy=2,"
-                    f"drawtext=text='to {escaped_server}':fontsize=30:fontcolor={text_color}@0.9{font_param}:"
+                    f"drawtext=text='{to_text} {escaped_server}':fontsize=30:fontcolor={text_color}@0.9{font_param}:"
                     f"x=(w-text_w)/2:y=115"
                 )
             
@@ -1888,7 +1989,8 @@ class DynamicPrerollGenerator:
                     bg_color, text_color, accent_color, width, height,
                     include_audio=include_audio,
                     custom_audio_path=custom_audio_path,
-                    custom_logo_path=custom_logo_path
+                    custom_logo_path=custom_logo_path,
+                    language=language
                 )
                 
         except Exception as e:
@@ -1900,7 +2002,8 @@ class DynamicPrerollGenerator:
                 bg_color, text_color, accent_color, width, height,
                 include_audio=include_audio,
                 custom_audio_path=custom_audio_path,
-                custom_logo_path=custom_logo_path
+                custom_logo_path=custom_logo_path,
+                language=language
             )
         finally:
             # Clean up temp directory

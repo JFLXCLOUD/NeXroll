@@ -235,6 +235,8 @@ def ensure_schema() -> None:
                 ("nexup_coming_soon_list_custom_audio_path", "nexup_coming_soon_list_custom_audio_path TEXT"),
                 ("nexup_coming_soon_list_custom_logo_path", "nexup_coming_soon_list_custom_logo_path TEXT"),
                 ("nexup_coming_soon_list_logo_mode", "nexup_coming_soon_list_logo_mode TEXT DEFAULT 'watermark'"),
+                ("nexup_coming_soon_list_language", "nexup_coming_soon_list_language TEXT DEFAULT 'en'"),
+                ("nexup_dynamic_preroll_language", "nexup_dynamic_preroll_language TEXT DEFAULT 'en'"),
                 ("nexup_coming_soon_available_days", "nexup_coming_soon_available_days INTEGER DEFAULT 1"),
                 ("nexup_coming_soon_max_available_now", "nexup_coming_soon_max_available_now INTEGER DEFAULT 0"),
                 ("nexup_trailer_retention_days", "nexup_trailer_retention_days INTEGER DEFAULT 7"),
@@ -15135,6 +15137,8 @@ def get_nexup_settings(user: models.User = Depends(require_auth), db: Session = 
         "coming_soon_list_custom_audio_filename": os.path.basename(getattr(setting, 'nexup_coming_soon_list_custom_audio_path', '') or '') or None,
         "coming_soon_list_custom_logo_filename": os.path.basename(getattr(setting, 'nexup_coming_soon_list_custom_logo_path', '') or '') or None,
         "coming_soon_list_logo_mode": getattr(setting, 'nexup_coming_soon_list_logo_mode', 'watermark'),
+        "coming_soon_list_language": getattr(setting, 'nexup_coming_soon_list_language', 'en'),
+        "dynamic_preroll_language": getattr(setting, 'nexup_dynamic_preroll_language', 'en'),
         # Release date preference (which date to use for "Coming Soon")
         "release_date_preference": getattr(setting, 'nexup_release_date_preference', 'digital_first'),
         # Available Now! settings
@@ -15175,6 +15179,8 @@ def update_nexup_settings(
     coming_soon_list_server_name: Optional[str] = None,
     coming_soon_list_include_audio: Optional[bool] = None,
     coming_soon_list_logo_mode: Optional[str] = None,
+    coming_soon_list_language: Optional[str] = None,
+    dynamic_preroll_language: Optional[str] = None,
     release_date_preference: Optional[str] = None,
     coming_soon_available_days: Optional[int] = None,
     coming_soon_max_available_now: Optional[int] = None,
@@ -15304,6 +15310,13 @@ def update_nexup_settings(
     if coming_soon_list_logo_mode is not None:
         if coming_soon_list_logo_mode in ['watermark', 'replace']:
             setting.nexup_coming_soon_list_logo_mode = coming_soon_list_logo_mode
+    # Language settings
+    if coming_soon_list_language is not None:
+        if coming_soon_list_language in ['en', 'fr', 'es', 'de']:
+            setting.nexup_coming_soon_list_language = coming_soon_list_language
+    if dynamic_preroll_language is not None:
+        if dynamic_preroll_language in ['en', 'fr', 'es', 'de']:
+            setting.nexup_dynamic_preroll_language = dynamic_preroll_language
     # Release date preference
     if release_date_preference is not None:
         if release_date_preference in ['digital_first', 'digital_only', 'physical_first', 'theatrical']:
@@ -15967,6 +15980,7 @@ async def _auto_regenerate_coming_soon_list(db: Session):
         custom_audio_path = getattr(setting, 'nexup_coming_soon_list_custom_audio_path', None)
         custom_logo_path = getattr(setting, 'nexup_coming_soon_list_custom_logo_path', None)
         logo_mode = getattr(setting, 'nexup_coming_soon_list_logo_mode', 'watermark')
+        language = getattr(setting, 'nexup_coming_soon_list_language', 'en') or 'en'
         storage_path = getattr(setting, 'nexup_storage_path', None)
         
         if not storage_path:
@@ -16142,7 +16156,8 @@ async def _auto_regenerate_coming_soon_list(db: Session):
                 include_audio=include_audio,
                 custom_audio_path=custom_audio_path,
                 custom_logo_path=custom_logo_path,
-                logo_mode=logo_mode
+                logo_mode=logo_mode,
+                language=language
             )
             
             if output_path:
@@ -18153,6 +18168,7 @@ async def generate_dynamic_preroll(
     server_name: str = "Your Server",
     duration: int = 5,
     theme: str = "midnight",
+    language: str = "en",
     db: Session = Depends(get_db)
 ):
     """
@@ -18194,7 +18210,7 @@ async def generate_dynamic_preroll(
     variables = {"server_name": server_name}
     
     try:
-        output_path = generator.generate_from_template(template, variables, duration, theme=theme)
+        output_path = generator.generate_from_template(template, variables, duration, theme=theme, language=language)
         
         if output_path:
             # Save settings for regeneration
@@ -18203,7 +18219,8 @@ async def generate_dynamic_preroll(
                     nexup_dynamic_preroll_template=template,
                     nexup_dynamic_preroll_server_name=server_name,
                     nexup_dynamic_preroll_duration=duration,
-                    nexup_dynamic_preroll_theme=theme
+                    nexup_dynamic_preroll_theme=theme,
+                    nexup_dynamic_preroll_language=language
                 )
             )
             db.commit()
@@ -18574,6 +18591,7 @@ async def generate_coming_soon_list(
     accent_color: str = "#00d4ff",
     server_name: str = None,  # Optional custom server name override
     include_audio: bool = False,
+    language: str = "en",
     db: Session = Depends(get_db)
 ):
     """
@@ -18786,7 +18804,8 @@ async def generate_coming_soon_list(
             include_audio=include_audio,
             custom_audio_path=getattr(setting, 'nexup_coming_soon_list_custom_audio_path', None),
             custom_logo_path=getattr(setting, 'nexup_coming_soon_list_custom_logo_path', None),
-            logo_mode=getattr(setting, 'nexup_coming_soon_list_logo_mode', 'watermark')
+            logo_mode=getattr(setting, 'nexup_coming_soon_list_logo_mode', 'watermark'),
+            language=language
         )
         
         if output_path:
@@ -19101,6 +19120,7 @@ def get_preroll_settings(db: Session = Depends(get_db)):
         "server_name": getattr(setting, 'nexup_dynamic_preroll_server_name', ''),
         "duration": getattr(setting, 'nexup_dynamic_preroll_duration', 5),
         "theme": getattr(setting, 'nexup_dynamic_preroll_theme', 'midnight'),
+        "language": getattr(setting, 'nexup_dynamic_preroll_language', 'en'),
         "preroll_path": preroll_path,
         "custom_logo_filename": os.path.basename(getattr(setting, 'nexup_dynamic_preroll_custom_logo_path', '') or '') or None
     }

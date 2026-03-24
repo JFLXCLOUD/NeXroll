@@ -782,6 +782,7 @@ const [applyingToServer, setApplyingToServer] = useState(false);
     server_name: '',
     duration: 5,
     theme: 'midnight',
+    language: 'en',
     preroll_path: null,
     customLogoFilename: null
   });
@@ -809,6 +810,7 @@ const [applyingToServer, setApplyingToServer] = useState(false);
     customAudioFilename: null,  // User-uploaded custom audio filename
     customLogoFilename: null,  // User-uploaded custom logo filename
     logoMode: 'watermark',  // 'watermark' = faded bg, 'replace' = replaces server name
+    language: 'en',  // Text language: en, fr, es, de
     availableDays: 1,  // Days to show "Available Now!" before auto-removal
     maxAvailableNow: 0  // Max "Available Now!" items to show (0 = no limit)
   });
@@ -817,6 +819,17 @@ const [applyingToServer, setApplyingToServer] = useState(false);
   const [comingSoonListsCollapsed, setComingSoonListsCollapsed] = useState(false);
   const [previewingComingSoonList, setPreviewingComingSoonList] = useState(null);
   const comingSoonListSettingsLoadedRef = React.useRef(false);  // Track if initial load done
+  const dynamicPrerollSettingsLoadedRef = React.useRef(false);  // Track if initial load done
+  
+  // Translation lookup for live preview text
+  const prerollTranslations = {
+    en: { coming_soon: 'COMING SOON', to: 'to', feature_presentation: 'FEATURE PRESENTATION', now_showing: 'NOW SHOWING', at: 'at', coming_soon_to: 'COMING SOON TO', available_now: 'Available Now!' },
+    fr: { coming_soon: 'PROCHAINEMENT', to: 'sur', feature_presentation: 'LONG M\u00c9TRAGE', now_showing: "\u00c0 L'AFFICHE", at: 'sur', coming_soon_to: 'PROCHAINEMENT SUR', available_now: 'Maintenant disponible!' },
+    es: { coming_soon: 'PR\u00d3XIMAMENTE', to: 'en', feature_presentation: 'FUNCI\u00d3N PRINCIPAL', now_showing: 'EN CARTELERA', at: 'en', coming_soon_to: 'PR\u00d3XIMAMENTE EN', available_now: '\u00a1Disponible!' },
+    de: { coming_soon: 'DEMN\u00c4CHST', to: 'auf', feature_presentation: 'HAUPTFILM', now_showing: 'JETZT IM PROGRAMM', at: 'auf', coming_soon_to: 'DEMN\u00c4CHST AUF', available_now: 'Jetzt verf\u00fcgbar!' },
+  };
+  const getPrerollText = (key) => (prerollTranslations[dynamicPrerollSettings.language] || prerollTranslations.en)[key] || prerollTranslations.en[key];
+  const getCSLText = (key) => (prerollTranslations[comingSoonListSettings.language] || prerollTranslations.en)[key] || prerollTranslations.en[key];
   
   // API Keys Management State
   const [apiKeys, setApiKeys] = useState([]);
@@ -12357,9 +12370,10 @@ const DashboardTiles = {
           }}>
             {[
               { num: 1, label: 'Mode', icon: <Target size={16} /> },
-              { num: 2, label: 'Details', icon: <Edit size={16} /> },
-              { num: 3, label: scheduleMode === 'simple' ? 'Category' : 'Sequence', icon: scheduleMode === 'simple' ? <Folder size={16} /> : <Film size={16} /> },
-              { num: 4, label: 'Review', icon: <CheckCircle size={16} /> }
+              { num: 2, label: 'Basic Info', icon: <Edit size={16} /> },
+              { num: 3, label: 'Recurrence', icon: <Calendar size={16} /> },
+              { num: 4, label: scheduleMode === 'simple' ? 'Content' : 'Sequence', icon: scheduleMode === 'simple' ? <Folder size={16} /> : <Film size={16} /> },
+              { num: 5, label: 'Settings', icon: <Settings size={16} /> }
             ].map((step, index, arr) => (
               <React.Fragment key={step.num}>
                 <div style={{
@@ -12674,6 +12688,58 @@ const DashboardTiles = {
                   Leave blank for indefinite schedule
                 </p>
               </div>
+
+              {/* Holiday Preset - shown for holiday/yearly types */}
+              {(scheduleForm.type === 'holiday' || scheduleForm.type === 'yearly') && (
+                <div style={{ gridColumn: '1 / -1' }}>
+                  <label style={{ display: 'block', marginBottom: '0.5rem', fontSize: '0.95rem', fontWeight: 600, color: 'var(--text-color)' }}>
+                    Holiday Preset <span style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>(Optional)</span>
+                  </label>
+                  <select
+                    className="nx-select"
+                    value=""
+                    onChange={(e) => {
+                      const preset = holidayPresets.find(p => p.id === parseInt(e.target.value));
+                      if (preset) {
+                        const currentYear = new Date().getFullYear();
+                        let startDate, endDate;
+                        if (preset.start_month && preset.start_day && preset.end_month && preset.end_day) {
+                          startDate = new Date(currentYear, preset.start_month - 1, preset.start_day, 0, 0, 0);
+                          endDate = new Date(currentYear, preset.end_month - 1, preset.end_day, 23, 59, 59);
+                        } else {
+                          startDate = new Date(currentYear, preset.month - 1, preset.day, 12, 0, 0);
+                          endDate = new Date(currentYear, preset.month - 1, preset.day, 23, 59, 59);
+                        }
+                        setScheduleForm({
+                          ...scheduleForm,
+                          name: `${preset.name} Schedule`,
+                          type: 'holiday',
+                          start_date: toLocalInputFromDate(startDate),
+                          end_date: toLocalInputFromDate(endDate),
+                          category_id: preset.category_id ? preset.category_id.toString() : scheduleForm.category_id
+                        });
+                      }
+                    }}
+                    style={{ 
+                      padding: '0.75rem', 
+                      fontSize: '1rem',
+                      border: '2px solid var(--border-color)',
+                      borderRadius: '6px',
+                      width: '100%'
+                    }}
+                  >
+                    <option value="">Select a holiday to auto-fill name, dates & category</option>
+                    {holidayPresets.map(preset => (
+                      <option key={preset.id} value={preset.id}>
+                        {preset.name} ({preset.start_month ? `${preset.start_month}/${preset.start_day} - ${preset.end_month}/${preset.end_day}` : `${preset.month}/${preset.day}`})
+                      </option>
+                    ))}
+                  </select>
+                  <p style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', margin: '0.25rem 0 0 0' }}>
+                    Auto-fills schedule name, dates, and category from a holiday preset
+                  </p>
+                </div>
+              )}
             </div>
           </div>
 
@@ -13156,57 +13222,6 @@ const DashboardTiles = {
                       ))}
                     </select>
                   </div>
-                  
-                  <div>
-                    <label style={{ display: 'block', marginBottom: '0.5rem', fontSize: '0.95rem', fontWeight: 600, color: 'var(--text-color)' }}>
-                      Holiday Preset <span style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>(Optional)</span>
-                    </label>
-                    <select
-                      className="nx-select"
-                      value=""
-                      onChange={(e) => {
-                        const preset = holidayPresets.find(p => p.id === parseInt(e.target.value));
-                        if (preset) {
-                          const currentYear = new Date().getFullYear();
-
-                          // Use date range fields if available, otherwise fall back to single day
-                          let startDate, endDate;
-                          if (preset.start_month && preset.start_day && preset.end_month && preset.end_day) {
-                            // Use the new date range fields
-                            startDate = new Date(currentYear, preset.start_month - 1, preset.start_day, 0, 0, 0);
-                            endDate = new Date(currentYear, preset.end_month - 1, preset.end_day, 23, 59, 59);
-                          } else {
-                            // Fall back to old single day format for backward compatibility
-                            startDate = new Date(currentYear, preset.month - 1, preset.day, 12, 0, 0);
-                            endDate = new Date(currentYear, preset.month - 1, preset.day, 23, 59, 59);
-                          }
-
-                          setScheduleForm({
-                            ...scheduleForm,
-                            name: `${preset.name} Schedule`,
-                            type: 'holiday',
-                            start_date: toLocalInputFromDate(startDate),
-                            end_date: toLocalInputFromDate(endDate),
-                            category_id: preset.category_id.toString()
-                          });
-                        }
-                      }}
-                      style={{ 
-                        padding: '0.75rem', 
-                        fontSize: '1rem',
-                        border: '2px solid var(--border-color)',
-                        borderRadius: '6px',
-                        width: '100%'
-                      }}
-                    >
-                      <option value="">🎉 Choose Holiday Preset</option>
-                      {holidayPresets.map(preset => (
-                        <option key={preset.id} value={preset.id}>
-                          {preset.name} ({preset.start_month ? `${preset.start_month}/${preset.start_day} - ${preset.end_month}/${preset.end_day}` : `${preset.month}/${preset.day}`})
-                        </option>
-                      ))}
-                    </select>
-                  </div>
                 </div>
                 
                 <div>
@@ -13399,6 +13414,71 @@ const DashboardTiles = {
             </div>
             
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1.5rem' }}>
+              {/* Priority Slider */}
+              <div>
+                <label style={{ display: 'block', marginBottom: '0.5rem', fontSize: '0.95rem', fontWeight: 600, color: 'var(--text-color)' }}>
+                  Priority (1-10)
+                </label>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+                  <input
+                    type="range"
+                    min="1"
+                    max="10"
+                    value={scheduleForm.priority}
+                    onChange={(e) => setScheduleForm({...scheduleForm, priority: parseInt(e.target.value)})}
+                    style={{ flex: 1 }}
+                  />
+                  <span style={{ 
+                    minWidth: '2rem', 
+                    textAlign: 'center', 
+                    fontWeight: 'bold',
+                    fontSize: '1.1rem',
+                    color: scheduleForm.priority >= 8 ? '#ef4444' : scheduleForm.priority >= 5 ? '#14B8A6' : '#6b7280'
+                  }}>
+                    {scheduleForm.priority}
+                  </span>
+                </div>
+                <p style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', margin: '0.25rem 0 0 0' }}>
+                  Higher priority schedules win when multiple overlap
+                </p>
+              </div>
+
+              {/* Exclusive & Blend */}
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+                <div>
+                  <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '0.95rem', fontWeight: 600, color: 'var(--text-color)', cursor: 'pointer' }}>
+                    <input
+                      type="checkbox"
+                      checked={scheduleForm.exclusive}
+                      onChange={(e) => setScheduleForm({...scheduleForm, exclusive: e.target.checked, blend_enabled: e.target.checked ? false : scheduleForm.blend_enabled})}
+                      style={{ width: 'auto' }}
+                    />
+                    <Lock size={16} style={{ color: '#14B8A6' }} />
+                    Exclusive
+                  </label>
+                  <p style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', margin: '0.25rem 0 0 0' }}>
+                    Wins exclusively — no blending with other schedules
+                  </p>
+                </div>
+                <div>
+                  <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '0.95rem', fontWeight: 600, color: scheduleForm.exclusive ? 'var(--text-secondary)' : 'var(--text-color)', cursor: scheduleForm.exclusive ? 'not-allowed' : 'pointer' }}>
+                    <input
+                      type="checkbox"
+                      checked={scheduleForm.blend_enabled}
+                      onChange={(e) => setScheduleForm({...scheduleForm, blend_enabled: e.target.checked})}
+                      disabled={scheduleForm.exclusive}
+                      style={{ width: 'auto' }}
+                    />
+                    <Shuffle size={16} style={{ color: scheduleForm.exclusive ? '#999' : '#a855f7' }} />
+                    Blend Mode
+                  </label>
+                  <p style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', margin: '0.25rem 0 0 0' }}>
+                    Mix prerolls with other overlapping blend-enabled schedules
+                  </p>
+                </div>
+              </div>
+
+              {/* Fallback Category */}
               <div>
                 <label style={{ display: 'block', marginBottom: '0.5rem', fontSize: '0.95rem', fontWeight: 600, color: 'var(--text-color)' }}>
                   Fallback Category
@@ -13425,6 +13505,7 @@ const DashboardTiles = {
                 </p>
               </div>
               
+              {/* Calendar Color */}
               <div>
                 <label style={{ display: 'block', marginBottom: '0.5rem', fontSize: '0.95rem', fontWeight: 600, color: 'var(--text-color)' }}>
                   Calendar Color
@@ -17485,6 +17566,7 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
           customAudioFilename: data.coming_soon_list_custom_audio_filename || null,
           customLogoFilename: data.coming_soon_list_custom_logo_filename || null,
           logoMode: data.coming_soon_list_logo_mode || 'watermark',
+          language: data.coming_soon_list_language || 'en',
           availableDays: data.coming_soon_available_days || 1,
           maxAvailableNow: data.coming_soon_max_available_now ?? 0
         }));
@@ -17512,6 +17594,7 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
       if (settings.autoRegenLayout !== undefined) params.append('coming_soon_list_auto_regen_layout', settings.autoRegenLayout);
       if (settings.includeAudio !== undefined) params.append('coming_soon_list_include_audio', settings.includeAudio.toString());
       if (settings.logoMode !== undefined) params.append('coming_soon_list_logo_mode', settings.logoMode);
+      if (settings.language !== undefined) params.append('coming_soon_list_language', settings.language);
       if (settings.availableDays !== undefined) params.append('coming_soon_available_days', settings.availableDays.toString());
       if (settings.maxAvailableNow !== undefined) params.append('coming_soon_max_available_now', settings.maxAvailableNow.toString());
       
@@ -17532,6 +17615,20 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
     return () => clearTimeout(timer);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [comingSoonListSettings]);
+
+  // Auto-save Dynamic Preroll language when it changes (with debounce)
+  React.useEffect(() => {
+    if (!dynamicPrerollSettingsLoadedRef.current) return;
+    
+    const timer = setTimeout(() => {
+      const params = new URLSearchParams();
+      params.append('dynamic_preroll_language', dynamicPrerollSettings.language);
+      fetch(apiUrl('/nexup/settings?' + params.toString()), { method: 'PUT' });
+    }, 500);
+    
+    return () => clearTimeout(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [dynamicPrerollSettings.language]);
 
   const loadNexupTrailers = async () => {
     try {
@@ -18351,9 +18448,11 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
           server_name: data.server_name || '',
           duration: data.duration || 5,
           theme: data.theme || 'midnight',
+          language: data.language || 'en',
           preroll_path: data.preroll_path,
           customLogoFilename: data.custom_logo_filename || null
         });
+        setTimeout(() => { dynamicPrerollSettingsLoadedRef.current = true; }, 100);
       }
     } catch (err) {
       console.error('Failed to load dynamic preroll settings:', err);
@@ -18372,7 +18471,8 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
         template: dynamicPrerollSettings.template,
         server_name: dynamicPrerollSettings.server_name,
         duration: dynamicPrerollSettings.duration,
-        theme: dynamicPrerollSettings.theme || 'midnight'
+        theme: dynamicPrerollSettings.theme || 'midnight',
+        language: dynamicPrerollSettings.language || 'en'
       });
       
       const res = await fetch(apiUrl(`/nexup/preroll/generate?${params.toString()}`), {
@@ -18561,6 +18661,7 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
       if (comingSoonListSettings.includeAudio) {
         params.append('include_audio', 'true');
       }
+      params.append('language', comingSoonListSettings.language || 'en');
       
       const res = await fetch(apiUrl(`/nexup/preroll/generate-coming-soon-list?${params}`), {
         method: 'POST'
@@ -22054,6 +22155,46 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
                   </div>
                 )}
 
+                {/* Language Selection */}
+                <div style={{ marginBottom: '1.5rem' }}>
+                  <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.75rem', fontWeight: 'bold', fontSize: '0.95rem' }}>
+                    <Globe size={18} /> Text Language
+                  </label>
+                  <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
+                    {[
+                      { id: 'en', label: 'English', flag: '🇬🇧' },
+                      { id: 'fr', label: 'Français', flag: '🇫🇷' },
+                      { id: 'es', label: 'Español', flag: '🇪🇸' },
+                      { id: 'de', label: 'Deutsch', flag: '🇩🇪' }
+                    ].map(lang => (
+                      <button
+                        key={lang.id}
+                        onClick={() => setDynamicPrerollSettings(prev => ({ ...prev, language: lang.id }))}
+                        style={{
+                          padding: '0.5rem 1rem',
+                          borderRadius: '20px',
+                          border: dynamicPrerollSettings.language === lang.id
+                            ? '2px solid #00d4ff'
+                            : '2px solid var(--border-color)',
+                          backgroundColor: dynamicPrerollSettings.language === lang.id
+                            ? 'rgba(0, 212, 255, 0.15)'
+                            : 'var(--card-bg, #1e1e2e)',
+                          color: 'var(--text-color, #fff)',
+                          cursor: 'pointer',
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: '0.5rem'
+                        }}
+                      >
+                        <span>{lang.flag}</span> {lang.label}
+                      </button>
+                    ))}
+                  </div>
+                  <p style={{ fontSize: '0.8rem', color: '#888', marginTop: '0.4rem' }}>
+                    Language for static text like "Coming Soon", "Feature Presentation", "Now Showing"
+                  </p>
+                </div>
+
                 {/* Settings Row */}
                 <div style={{ 
                   display: 'grid', 
@@ -22079,7 +22220,7 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
                       }}
                     />
                     <p style={{ fontSize: '0.8rem', color: '#888', marginTop: '0.25rem' }}>
-                      Displayed as "Coming Soon to [Your Server Name]"
+                      Displayed as "{getPrerollText('coming_soon')} {getPrerollText('to')} [Your Server Name]"
                     </p>
                   </div>
                   
@@ -22236,7 +22377,7 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
                                          0 0 40px ${(colorThemes[dynamicPrerollSettings.theme]?.secondary || '#00d4ff').replace('0x', '#')}40`,
                             animation: 'previewFadeIn 1s ease-out'
                           }}>
-                            COMING SOON
+                            {getPrerollText('coming_soon')}
                           </div>
                           {dynamicPrerollSettings.customLogoFilename ? (
                             <>
@@ -22249,7 +22390,7 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
                                 margin: '0.3rem 0',
                                 animation: 'previewFadeIn 1.2s ease-out 0.3s both'
                               }}>
-                                to
+                                {getPrerollText('to')}
                               </div>
                               {/* Logo replacing server name */}
                               <img 
@@ -22275,7 +22416,7 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
                                 margin: '0.3rem 0',
                                 animation: 'previewFadeIn 1.2s ease-out 0.3s both'
                               }}>
-                                to
+                                {getPrerollText('to')}
                               </div>
                               {/* Server name - accent colored */}
                               <div style={{
@@ -22312,7 +22453,7 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
                             textShadow: `0 0 30px ${(colorThemes[dynamicPrerollSettings.theme]?.primary || '#ffd700').replace('0x', '#')}60`,
                             animation: 'previewFadeIn 1s ease-out'
                           }}>
-                            FEATURE PRESENTATION
+                            {getPrerollText('feature_presentation')}
                           </div>
                           {/* "at [Server Name]" or logo below */}
                           {dynamicPrerollSettings.customLogoFilename ? (
@@ -22337,7 +22478,7 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
                               marginTop: '0.75rem',
                               animation: 'previewFadeIn 1.5s ease-out 0.5s both'
                             }}>
-                              at {dynamicPrerollSettings.server_name}
+                              {getPrerollText('at')} {dynamicPrerollSettings.server_name}
                             </div>
                           )}
                           {/* Bottom decorative line */}
@@ -22362,7 +22503,7 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
                             textShadow: `0 0 20px ${(colorThemes[dynamicPrerollSettings.theme]?.primary || '#ff006e').replace('0x', '#')}80`,
                             animation: 'previewPulse 2s ease-in-out infinite'
                           }}>
-                            NOW SHOWING
+                            {getPrerollText('now_showing')}
                           </div>
                           {/* Decorative underline */}
                           <div style={{
@@ -22394,7 +22535,7 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
                               marginTop: '0.75rem',
                               animation: 'previewFadeIn 1s ease-out 0.5s both'
                             }}>
-                              at {dynamicPrerollSettings.server_name}
+                              {getPrerollText('at')} {dynamicPrerollSettings.server_name}
                             </div>
                           )}
                         </>
@@ -22573,57 +22714,123 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
               <>
                 {/* Layout Selection */}
                 <div style={{ marginBottom: '1rem' }}>
-                  <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.5rem', fontWeight: 'bold', fontSize: '0.95rem' }}>
-                    <LayoutGrid size={16} /> Layout Style
+                  <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.75rem', fontWeight: 'bold', fontSize: '0.95rem' }}>
+                    <LayoutGrid size={18} /> Layout Style
                   </label>
                   <div style={{ display: 'flex', gap: '0.5rem' }}>
                     <button
                       onClick={() => setComingSoonListSettings(prev => ({ ...prev, layout: 'grid' }))}
-                      className="button"
-                      style={{ 
-                        backgroundColor: comingSoonListSettings.layout === 'grid' ? '#00d4ff' : 'var(--card-bg)',
-                        color: comingSoonListSettings.layout === 'grid' ? '#000' : 'var(--text-color)',
-                        border: '1px solid var(--border-color)'
+                      style={{
+                        padding: '0.5rem 1rem',
+                        borderRadius: '20px',
+                        border: comingSoonListSettings.layout === 'grid'
+                          ? '2px solid #00d4ff'
+                          : '2px solid var(--border-color)',
+                        backgroundColor: comingSoonListSettings.layout === 'grid'
+                          ? 'rgba(0, 212, 255, 0.15)'
+                          : 'var(--card-bg, #1e1e2e)',
+                        color: 'var(--text-color, #fff)',
+                        cursor: 'pointer',
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '0.5rem'
                       }}
                     >
-                      <LayoutGrid size={16} style={{ marginRight: '0.25rem' }} /> Grid (Posters)
+                      <LayoutGrid size={16} /> Grid (Posters)
                     </button>
                     <button
                       onClick={() => setComingSoonListSettings(prev => ({ ...prev, layout: 'list' }))}
-                      className="button"
-                      style={{ 
-                        backgroundColor: comingSoonListSettings.layout === 'list' ? '#00d4ff' : 'var(--card-bg)',
-                        color: comingSoonListSettings.layout === 'list' ? '#000' : 'var(--text-color)',
-                        border: '1px solid var(--border-color)'
+                      style={{
+                        padding: '0.5rem 1rem',
+                        borderRadius: '20px',
+                        border: comingSoonListSettings.layout === 'list'
+                          ? '2px solid #00d4ff'
+                          : '2px solid var(--border-color)',
+                        backgroundColor: comingSoonListSettings.layout === 'list'
+                          ? 'rgba(0, 212, 255, 0.15)'
+                          : 'var(--card-bg, #1e1e2e)',
+                        color: 'var(--text-color, #fff)',
+                        cursor: 'pointer',
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '0.5rem'
                       }}
                     >
-                      <List size={16} style={{ marginRight: '0.25rem' }} /> List (Text)
+                      <List size={16} /> List (Text)
                     </button>
                   </div>
                 </div>
 
                 {/* Content Source */}
                 <div style={{ marginBottom: '1rem' }}>
-                  <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.5rem', fontWeight: 'bold', fontSize: '0.95rem' }}>
-                    <Tv size={16} /> Content Source
+                  <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.75rem', fontWeight: 'bold', fontSize: '0.95rem' }}>
+                    <Tv size={18} /> Content Source
                   </label>
                   <div style={{ display: 'flex', gap: '0.5rem' }}>
                     {['movies', 'shows', 'both'].map(source => (
                       <button
                         key={source}
                         onClick={() => setComingSoonListSettings(prev => ({ ...prev, source }))}
-                        className="button"
-                        style={{ 
-                          backgroundColor: comingSoonListSettings.source === source ? '#00d4ff' : 'var(--card-bg)',
-                          color: comingSoonListSettings.source === source ? '#000' : 'var(--text-color)',
-                          border: '1px solid var(--border-color)',
-                          textTransform: 'capitalize'
+                        style={{
+                          padding: '0.5rem 1rem',
+                          borderRadius: '20px',
+                          border: comingSoonListSettings.source === source
+                            ? '2px solid #00d4ff'
+                            : '2px solid var(--border-color)',
+                          backgroundColor: comingSoonListSettings.source === source
+                            ? 'rgba(0, 212, 255, 0.15)'
+                            : 'var(--card-bg, #1e1e2e)',
+                          color: 'var(--text-color, #fff)',
+                          cursor: 'pointer',
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: '0.5rem'
                         }}
                       >
-                        {source === 'both' ? <><Tv size={16} style={{ marginRight: '0.25rem' }} /> Both</> : source === 'movies' ? <><Film size={16} style={{ marginRight: '0.25rem' }} /> Movies</> : <><Tv size={16} style={{ marginRight: '0.25rem' }} /> TV Shows</>}
+                        {source === 'both' ? <><Tv size={16} /> Both</> : source === 'movies' ? <><Film size={16} /> Movies</> : <><Tv size={16} /> TV Shows</>}
                       </button>
                     ))}
                   </div>
+                </div>
+
+                {/* Text Language */}
+                <div style={{ marginBottom: '1rem' }}>
+                  <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.75rem', fontWeight: 'bold', fontSize: '0.95rem' }}>
+                    <Globe size={18} /> Text Language
+                  </label>
+                  <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
+                    {[
+                      { id: 'en', label: 'English', flag: '🇬🇧' },
+                      { id: 'fr', label: 'Français', flag: '🇫🇷' },
+                      { id: 'es', label: 'Español', flag: '🇪🇸' },
+                      { id: 'de', label: 'Deutsch', flag: '🇩🇪' }
+                    ].map(lang => (
+                      <button
+                        key={lang.id}
+                        onClick={() => setComingSoonListSettings(prev => ({ ...prev, language: lang.id }))}
+                        style={{
+                          padding: '0.5rem 1rem',
+                          borderRadius: '20px',
+                          border: comingSoonListSettings.language === lang.id
+                            ? '2px solid #00d4ff'
+                            : '2px solid var(--border-color)',
+                          backgroundColor: comingSoonListSettings.language === lang.id
+                            ? 'rgba(0, 212, 255, 0.15)'
+                            : 'var(--card-bg, #1e1e2e)',
+                          color: 'var(--text-color, #fff)',
+                          cursor: 'pointer',
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: '0.5rem'
+                        }}
+                      >
+                        <span>{lang.flag}</span> {lang.label}
+                      </button>
+                    ))}
+                  </div>
+                  <p style={{ fontSize: '0.8rem', color: '#888', marginTop: '0.4rem' }}>
+                    Language for "Coming Soon to...", "Available Now!" and other static text
+                  </p>
                 </div>
 
                 {/* Settings Row */}
@@ -22668,7 +22875,7 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
                       style={{ width: '80%', padding: '0.75rem', borderRadius: '8px', border: '1px solid var(--border-color)', fontSize: '1rem' }}
                     />
                     <p style={{ fontSize: '0.8rem', color: '#888', marginTop: '0.25rem' }}>
-                      Displayed as "Coming Soon to [Your Server Name]"
+                      Displayed as "{getCSLText('coming_soon')} {getCSLText('to')} [Your Server Name]"
                     </p>
                   </div>
                 </div>
@@ -23093,7 +23300,7 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
                             textShadow: '0 2px 8px rgba(0,0,0,0.6)',
                             whiteSpace: 'nowrap'
                           }}>
-                            COMING SOON TO
+                            {getCSLText('coming_soon_to')}
                           </div>
                           <img
                             src={apiUrl('/nexup/coming-soon-list/logo-image') + '?t=' + Date.now()}
@@ -23114,8 +23321,8 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
                             marginBottom: '0.15em'
                           }}>
                             {comingSoonListSettings.customLogoFilename && comingSoonListSettings.logoMode === 'replace'
-                              ? 'COMING SOON TO'
-                              : 'COMING SOON'}
+                              ? getCSLText('coming_soon_to')
+                              : getCSLText('coming_soon')}
                           </div>
                           {/* Subtitle / Logo below in text layout replace mode */}
                           {comingSoonListSettings.customLogoFilename && comingSoonListSettings.logoMode === 'replace' ? (
@@ -23134,7 +23341,7 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
                               marginBottom: '0.5em',
                               opacity: 0.9
                             }}>
-                              to {comingSoonListSettings.serverName || 'Your Server'}
+                              {getCSLText('to')} {comingSoonListSettings.serverName || 'Your Server'}
                             </div>
                           )}
                         </>
@@ -23182,7 +23389,7 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
                                 Movie Title {i + 1}
                               </span>
                               <span style={{ color: (comingSoonListSettings.accentColor || '#00d4ff') + 'e6', fontSize: '0.85em' }}>
-                                {i === 0 ? 'Available Now!' : `Mar ${10 + i * 3}, 2026`}
+                                {i === 0 ? getCSLText('available_now') : `Mar ${10 + i * 3}, 2026`}
                               </span>
                             </div>
                           ))}

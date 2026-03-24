@@ -1,5 +1,84 @@
 # Changelog
 
+## [1.12.0-beta.3] - 03-23-2026
+
+Major release introducing **Emby server support**, **Conflict Detection Wizard**, **yearly/holiday schedule improvements**, **dashboard overhaul**, **preview playback intelligence**, and **schedule creation form overhaul**.
+
+### Emby Server Support (beta.1)
+- Full Emby integration as a first-class media server alongside Plex and Jellyfin
+- **NeXroll Intros Plugin for Emby** — Implements Emby's `IIntroProvider` interface to inject prerolls via Cinema Mode
+- Connect/disconnect via the **Connect** tab with Emby URL and API key
+- Plugin auto-caches preroll files locally and registers them with Emby's library system
+
+### Plugin Auto-Detection & Remote Configuration (beta.1)
+- **Detect Plugin** button on both Jellyfin and Emby connection pages
+- **Configure Plugin** pushes NeXroll URL, auto-generated API key, and path mappings directly to the plugin
+- Auto-generated API keys are scoped read-only and rotated on each configure
+
+### Conflict Detection Wizard (beta.2)
+- New **Conflict Detection Wizard** analyzes all active schedules for overlapping conflicts over the next 30 days
+- Detects true conflicts only: same-priority exclusive schedules that overlap on the same day/time
+- Each conflict card displays severity badge, side-by-side schedule info, overlapping days count, and suggested fixes
+- **Auto-Resolve All** button selects the recommended fix for every detected conflict in one click
+- Apply button processes all selected fixes asynchronously with progress feedback
+
+### Language Options for NeX-Up Generators (beta.3)
+- Dynamic Preroll and Coming Soon List generators now support 4 languages: English, French, Spanish, German
+- All static video text translated: "Coming Soon", "Feature Presentation", "Now Showing", "Coming Soon To", "Available Now!"
+- Language selector with flag buttons in both generator UIs; live preview updates instantly
+- Language preference saved per generator and persisted across sessions
+- Auto-regeneration respects the saved language setting
+
+### Conflict Panel in All Calendar Views (beta.3)
+- **Schedule Conflicts Detected** summary panel now shown in **all four calendar views** (Day, Week, Month, Year)
+- Previously only displayed in the Month view
+- Day view shows conflicting hour count, Week view shows conflicting day count, Year view shows total conflicting days across the year
+- Each panel includes "Resolve N Conflicts" button to launch the Conflict Detection Wizard
+
+### Schedule Creation Form Overhaul (beta.3)
+- **Priority (1-10)** slider, **Exclusive** checkbox, and **Blend Mode** checkbox now available during schedule creation — previously only in the Edit modal
+- Exclusive and Blend are mutually exclusive: toggling Exclusive on disables Blend
+- **Holiday Preset** moved from Content Configuration to Basic Information — conditionally shown for Holiday/Yearly types
+- **Steps bar** updated to reflect actual 5-step flow: Mode → Basic Info → Recurrence → Content → Settings
+- Category selection cleaned up to full-width single column in Simple mode
+
+### Dashboard — Scheduler Countdown Timer (beta.2)
+- The **Scheduler** dashboard tile now displays a live countdown to the next schedule activation
+- Shows **"Next Up: Schedule Name"** with a ticking D/H/M/S countdown
+- Computes next activation time for all schedule types: daily, weekly, monthly, yearly, and holiday
+
+### Dashboard — Schedules Tile Overhaul (beta.2)
+- Three detailed status rows: **✓ Enabled**, **⊘ Disabled**, **⚠ Conflicts**
+- When conflicts are detected, a **"Resolve Conflicts"** button appears to launch the wizard
+
+### Yearly & Holiday Schedule Improvements (beta.2)
+- **Yearly** is now a fully supported schedule type alongside Daily, Weekly, Monthly, and Holiday
+- Yearly and holiday schedules are year-agnostic — recur across all years by comparing month+day windows
+- **Holiday Auto-Update** — yearly and holiday schedules can optionally auto-update dates via the Holiday API
+
+### Preview Playback Mode Intelligence (beta.2)
+- **Preview** button now respects the playback mode of the currently applied prerolls
+  - Shuffle → plays 1 random video; Sequential → plays all in order; Single → plays just one; Sequence → plays all items in order
+- Backend `/plex/current-preroll-details` now returns a `mode` field
+
+### Plugin Download Links (beta.2)
+- Jellyfin and Emby connection pages now include direct download links for the NeXroll Intros plugin DLLs
+
+### UI Improvements
+- Dashboard Start/Stop Scheduler button matches Preview button styling (indigo background, icons)
+- Increased font/icon sizes in the Schedules tile for better readability
+- Plugin download links replaced emoji icons with Lucide React icons
+
+### Bug Fixes
+- **Scheduler Override Blocking Active Schedules** — Manual sequence overrides no longer block ALL schedule evaluation; active schedules now take priority
+- **Preview Not Respecting Playback Mode** — Preview button now honors the category's playback mode instead of always showing all prerolls
+- **Thumbnail Generation: Cross-Drive Paths** — Fixed `os.path.relpath()` failure on Windows when thumbnail dir and data_dir are on different drives/UNC shares
+- **Thumbnail Generation: Short Videos** — FFmpeg multi-seek fallback (-ss 5 → 1 → 0) for videos shorter than 5 seconds
+- **Community Prerolls Refresh** — Frontend now refreshes data after downloading community prerolls
+- **GitHub Actions Node.js 24** — Updated all CI actions to Node.js 24-compatible pinned versions
+
+---
+
 ## [1.11.12] - 03-09-2026
 
 Hotfix release addressing Coming Soon List generation failures, grid layout clipping, and adding comprehensive database logging.
