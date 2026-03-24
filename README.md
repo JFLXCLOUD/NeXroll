@@ -15,7 +15,7 @@
 
 ---
 
-NeXroll is a preroll manager for Plex and Jellyfin that makes setup effortless. It runs natively on Windows and works in Docker, featuring a clean web interface, optional background service, and lightweight tray app. Everything is self-contained, and a single installer gets you up and running in minutes.
+NeXroll is a preroll manager for Plex, Jellyfin, and Emby that makes setup effortless. It runs natively on Windows and works in Docker, featuring a clean web interface, optional background service, and lightweight tray app. Everything is self-contained, and a single installer gets you up and running in minutes.
 
 ---
 
@@ -43,7 +43,7 @@ NeXroll is a preroll manager for Plex and Jellyfin that makes setup effortless. 
 
 ## Main Features
 
-- **NeX-Up (NEW)** — Automatically download trailers for upcoming movies and TV shows from Radarr & Sonarr, with YouTube integration, dynamic intro generator, and sequence builder presets
+- **NeX-Up** — Automatically download trailers for upcoming movies and TV shows from Radarr & Sonarr, with YouTube integration, dynamic intro generator with multi-language support (EN/FR/ES/DE), Coming Soon List generator, and sequence builder presets
 - **Preroll Management** — Upload videos, auto-generate thumbnails, organize with tags and multi-category assignments
 - **Smart Scheduling** — Daily, weekly, monthly, yearly schedules with recurrence patterns, fallback categories, and visual calendar views
 - **Sequence Builder** — Create ordered preroll sequences with random blocks and fixed selections
@@ -52,7 +52,7 @@ NeXroll is a preroll manager for Plex and Jellyfin that makes setup effortless. 
 - **Holiday Browser** — Search holidays from 100+ countries and create schedules with one click
 - **Holiday Presets** — 32+ built-in holidays with one-click category and schedule creation
 - **Community Prerolls** — Browse and download from 1,300+ community prerolls at prerolls.uk
-- **Media Server Integration** — Connect to Plex or Jellyfin with status monitoring and quick apply actions
+- **Media Server Integration** — Connect to Plex, Jellyfin, or Emby with status monitoring and quick apply actions
 - **Backup & Restore** — Full database and file backups with one-click restore
 - **Windows Native** — One-click installer with optional Windows Service and System Tray app
 
@@ -130,7 +130,7 @@ Tip: if a previous NeXroll instance is still running and occupying port 9393, th
 
 - Windows 10/11 x64
 - FFmpeg for thumbnail generation (you can install it from the installer's optional components, or manually)
-- Network access to your Plex or Jellyfin server
+- Network access to your Plex, Jellyfin, or Emby server
 - No Python required on user machines
 
 ---
@@ -139,7 +139,7 @@ Tip: if a previous NeXroll instance is still running and occupying port 9393, th
 
 1. Open http://localhost:9393
 2. Connect to your media server:
-   - Connect to Plex or Jellyfin using URL and credentials
+   - Connect to Plex, Jellyfin, or Emby using URL and credentials
    - For Plex: Use your Plex URL and token; or run `setup_plex_token.exe` to create a long lived "stable token"
 3. Upload prerolls, create categories, and configure schedules.
 
@@ -211,7 +211,7 @@ Outputs:
 - Tray icon not shown
   - Run "NeXroll Tray" from Start Menu; pin it so it's always visible.
 - Media server connection issues
-  - Verify your Plex or Jellyfin server is reachable from the machine, and credentials are valid (retry `setup_plex_token.exe` for Plex if needed).
+  - Verify your Plex, Jellyfin, or Emby server is reachable from the machine, and credentials are valid (retry `setup_plex_token.exe` for Plex if needed).
 
 ---
 
