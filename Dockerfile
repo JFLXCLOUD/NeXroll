@@ -45,6 +45,8 @@ RUN apt-get update && \
         curl \
         unzip \
         tzdata && \
+    # Remove ncurses binaries (CVE-2025-69720) — not used by NeXroll
+    dpkg --remove --force-depends ncurses-base ncurses-bin 2>/dev/null || true && \
     rm -rf /var/lib/apt/lists/*
 
 # Install Deno (required for yt-dlp YouTube extraction)
