@@ -5121,11 +5121,14 @@ const DashboardTiles = {
               type="button"
               onClick={() => { setShowConflictWizard(true); setConflictResolutions({}); setConflictWizardResults(null); }}
               style={{
-                display: 'flex', alignItems: 'center', gap: '4px',
-                padding: '4px 10px', borderRadius: '20px', fontSize: '0.75rem', fontWeight: 600,
-                background: 'linear-gradient(135deg, rgba(239,68,68,0.12), rgba(245,158,11,0.12))',
-                color: '#ef4444', border: 'none', cursor: 'pointer', marginTop: '0.25rem'
+                display: 'flex', alignItems: 'center', gap: '6px',
+                padding: '6px 16px', borderRadius: '6px', fontSize: '0.8rem', fontWeight: 600,
+                background: 'linear-gradient(135deg, rgba(239,68,68,0.15), rgba(245,158,11,0.15))',
+                color: '#ef4444', border: '1px solid rgba(239,68,68,0.4)', cursor: 'pointer', marginTop: '0.5rem',
+                transition: 'all 0.2s ease', letterSpacing: '0.01em'
               }}
+              onMouseEnter={e => { e.currentTarget.style.background = 'linear-gradient(135deg, rgba(239,68,68,0.25), rgba(245,158,11,0.25))'; e.currentTarget.style.borderColor = 'rgba(239,68,68,0.6)'; }}
+              onMouseLeave={e => { e.currentTarget.style.background = 'linear-gradient(135deg, rgba(239,68,68,0.15), rgba(245,158,11,0.15))'; e.currentTarget.style.borderColor = 'rgba(239,68,68,0.4)'; }}
               title="Open Conflict Resolution Wizard"
             >
               <Wand2 size={12} /> Resolve Conflicts

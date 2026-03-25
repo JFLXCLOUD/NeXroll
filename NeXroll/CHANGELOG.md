@@ -1,6 +1,6 @@
 # Changelog
 
-## [1.12.0-beta.3] - 03-23-2026
+## [1.12.0-beta.3] - 03-25-2026
 
 Major release introducing **Emby server support**, **Conflict Detection Wizard**, **yearly/holiday schedule improvements**, **dashboard overhaul**, **preview playback intelligence**, and **schedule creation form overhaul**.
 
