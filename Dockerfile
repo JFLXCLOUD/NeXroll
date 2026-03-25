@@ -1,6 +1,21 @@
 ﻿# syntax=docker/dockerfile:1
 
-# --- Backend runtime stage ---
+# --- Build stage: compile Python wheels with native deps ---
+FROM python:3.12-slim AS builder
+
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+        build-essential \
+        rustc \
+        cargo \
+        pkg-config && \
+    rm -rf /var/lib/apt/lists/*
+
+WORKDIR /build
+COPY requirements.txt .
+RUN pip wheel --no-cache-dir --wheel-dir /wheels -r requirements.txt
+
+# --- Runtime stage: slim image without build tools ---
 FROM python:3.12-slim
 
 ARG APP_VERSION=dev
@@ -29,11 +44,7 @@ RUN apt-get update && \
         ffmpeg \
         curl \
         unzip \
-        tzdata \
-        build-essential \
-        rustc \
-        cargo \
-        pkg-config && \
+        tzdata && \
     rm -rf /var/lib/apt/lists/*
 
 # Install Deno (required for yt-dlp YouTube extraction)
@@ -42,9 +53,11 @@ RUN curl -fsSL https://deno.land/install.sh | sh && \
 
 WORKDIR /app/NeXroll
 
-# Install Python deps (use root requirements.txt with all dependencies)
+# Install pre-built Python wheels (no compiler needed)
+COPY --from=builder /wheels /wheels
 COPY requirements.txt /app/NeXroll/requirements.txt
-RUN pip install --no-cache-dir -r /app/NeXroll/requirements.txt
+RUN pip install --no-cache-dir --no-index --find-links=/wheels -r /app/NeXroll/requirements.txt && \
+    rm -rf /wheels
 
 # Copy backend
 COPY NeXroll/backend /app/NeXroll/backend
