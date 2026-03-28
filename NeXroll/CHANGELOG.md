@@ -1,5 +1,44 @@
 # Changelog
 
+## [1.12.0-beta.4] - 03-28-2026
+
+### Coming Soon List — Logo Position Options (beta.4)
+- **Custom Logo Overlay** now supports 3 placement options: **Watermark**, **Right of Title**, and **Below Title**
+- Watermark mode renders the logo as a faded centered background element
+- Right of Title places the logo inline beside the "Coming Soon To" header
+- Below Title places the logo beneath the header text
+- Live preview updates in real-time as you switch between positions
+- Legacy "replace" mode automatically migrates to "Below Title"
+
+### NeX-Up Improvements (beta.4)
+- **Max Trailers to Keep** options expanded from 30 to **50** (5, 10, 15, 20, 25, 30, 40, 50)
+- Added **No Limit** option for users with large trailer libraries — removes the trailer count cap entirely
+- When set to No Limit, downloads are still bounded by the Max Storage (GB) setting
+
+### Ignore Conflicts (beta.4)
+- New **Ignore** option on each conflict card in the Conflict Detection Wizard — hides the conflict from future scans
+- Ignored conflicts stored in the database and persist across sessions
+- **Show Ignored** toggle at the bottom of the wizard reveals hidden conflicts with a one-click **Restore** button
+- All ignore/restore actions display success/error toast alerts for clear user feedback
+
+### API Keys — Multi-Select Bulk Delete (beta.4)
+- **Select All** checkbox and per-row checkboxes on the API Keys management list
+- Selected rows highlight with a blue border for visual clarity
+- **Delete Selected (N)** button appears when any keys are selected — bulk deletes in a single operation
+- Clicking a row toggles selection; action buttons (toggle active, single delete) remain independently clickable
+- New backend `POST /api/keys/bulk-delete` endpoint for efficient batch deletion
+
+### Bug Fixes (beta.4)
+- **Conflict Wizard: Method Not Allowed** — Ignore conflict endpoints were defined after the static frontend mount (catch-all), causing 405 errors on POST/DELETE; moved all conflict routes before the static mount
+- **Conflict Wizard: Ignore Button Not Clickable** — Added `e.stopPropagation()` and visible styling (background, border, hover effects) so the Ignore button is discoverable and responsive
+- **Sequence Builder: Random Block Preview** — Preview modal now respects the `count` field on random blocks instead of always picking only 1 preroll; shuffles the pool and takes the correct number
+- **Sequence Builder: Schedule Not Updating** — Fixed scheduler gate check that prevented sequence builder changes from being applied to Plex
+- **Yearly Schedule: False Validation Error** — Fixed yearly schedule validation incorrectly flagging valid schedules as missing date ranges; added early return for yearly type
+- **Schedule Creation: is_active Preservation** — `buildScheduleData()` now preserves the `is_active` field so toggling a schedule on/off is not lost when saving
+- **Grid Layout: Logo Below Title Overlap** — Added +40px vertical offset to the poster grid when logo is placed Below Title, preventing overlap
+- **Log Rotation: Multiple Writers** — Fixed log rotation creating 3 concurrent file writers; consolidated to single rotation handler
+- **Installer: AV False Positive** — Updated EXE `FileDescription` metadata from generic text to "NeXroll" to reduce antivirus false positive triggers
+
 ## [1.12.0-beta.3] - 03-25-2026
 
 Major release introducing **Emby server support**, **Conflict Detection Wizard**, **yearly/holiday schedule improvements**, **dashboard overhaul**, **preview playback intelligence**, and **schedule creation form overhaul**.

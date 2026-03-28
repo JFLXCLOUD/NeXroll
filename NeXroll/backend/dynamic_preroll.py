@@ -781,23 +781,32 @@ class DynamicPrerollGenerator:
         filter_parts.append(f"[0:v]{vignette_filter}[vout]")
         
         if has_logo:
-            if logo_mode == 'replace':
-                # Replace mode: logo below "COMING SOON TO" header, higher opacity
+            if logo_mode == 'right':
+                # Right mode: logo to the right of header, higher opacity
+                logo_w = int(width * 0.25)
+                logo_opacity = 0.85
+                logo_y_pos = 50  # Same height as header text
+                logo_x_expr = '(W/2)+200'  # Right of center
+                _verbose_log(f"Logo RIGHT mode: width={logo_w}, opacity={logo_opacity}")
+            elif logo_mode in ('below', 'replace'):
+                # Below mode: logo below "COMING SOON TO" header, higher opacity
                 logo_w = int(width * 0.25)
                 logo_opacity = 0.85
                 logo_y_pos = 175  # Below the header text
-                _verbose_log(f"Logo REPLACE mode: width={logo_w}, opacity={logo_opacity}, y={logo_y_pos}")
+                logo_x_expr = '(W-w)/2'  # Centered
+                _verbose_log(f"Logo BELOW mode: width={logo_w}, opacity={logo_opacity}, y={logo_y_pos}")
             else:
                 # Watermark mode: faded centered behind text
                 logo_w = int(width * 0.30)
                 logo_opacity = 0.15
                 logo_y_pos = None  # Will use centered overlay
+                logo_x_expr = '(W-w)/2'
             filter_parts.append(
                 f"[{logo_index}:v]scale={logo_w}:-1,format=rgba,"
                 f"colorchannelmixer=aa={logo_opacity}[logo]"
             )
             if logo_y_pos is not None:
-                filter_parts.append(f"[vout][logo]overlay=(W-w)/2:{logo_y_pos}[vcomp]")
+                filter_parts.append(f"[vout][logo]overlay={logo_x_expr}:{logo_y_pos}[vcomp]")
             else:
                 filter_parts.append(f"[vout][logo]overlay=(W-w)/2:(H-h)/2[vcomp]")
             # Apply fade after overlay so logo + video fade together
@@ -1539,9 +1548,9 @@ class DynamicPrerollGenerator:
         filter_parts = []
         
         # Header: "Coming Soon to [Server Name]" or "COMING SOON TO" + logo
-        has_replace_logo = logo_mode == 'replace' and custom_logo_path and os.path.isfile(custom_logo_path)
+        has_replace_logo = logo_mode in ('right', 'below', 'replace') and custom_logo_path and os.path.isfile(custom_logo_path)
         if has_replace_logo:
-            # Replace mode: single-line "COMING SOON TO" header, logo below
+            # Right/Below mode: single-line "COMING SOON TO" header, logo positioned separately
             filter_parts.append(
                 f"drawtext=text='{coming_soon_to_text}':fontsize=80:fontcolor={accent_color}{bold_font_param}:"
                 f"x=(w-text_w)/2:y={header_y}:shadowcolor=black@0.6:shadowx=2:shadowy=2"
@@ -1758,6 +1767,10 @@ class DynamicPrerollGenerator:
                     spacing_x, spacing_y = 42, 12
                     start_y, date_spacing = 190, 30
             
+            # Shift grid down when logo is placed below the header to avoid overlap
+            if logo_mode in ('below', 'replace') and custom_logo_path and os.path.isfile(custom_logo_path):
+                start_y += 40
+            
             grid_width = cols * poster_width + (cols - 1) * spacing_x
             grid_height = rows * poster_height + (rows - 1) * spacing_y
             
@@ -1863,15 +1876,21 @@ class DynamicPrerollGenerator:
                 )
             
             # Add header text - optimized for 2-row layout with start_y=170
-            # Only show "to {server_name}" when logo_mode is NOT 'replace' (or no logo available)
-            has_replace_logo = logo_mode == 'replace' and custom_logo_path and os.path.isfile(custom_logo_path)
+            # Only show "to {server_name}" when logo_mode is watermark (or no logo available)
+            has_replace_logo = logo_mode in ('right', 'below', 'replace') and custom_logo_path and os.path.isfile(custom_logo_path)
             if has_replace_logo:
-                # Replace mode: "COMING SOON TO" shifted left, logo placed to its right
-                # Offset text left by ~80px to leave room for logo on the right
-                header_filter = (
-                    f"drawtext=text='{coming_soon_to_text}':fontsize=55:fontcolor={accent_color}{bold_font_param}:"
-                    f"x=(w-text_w)/2-80:y=50:shadowcolor=black@0.5:shadowx=2:shadowy=2"
-                )
+                if logo_mode == 'right':
+                    # Right mode: "COMING SOON TO" shifted left, logo placed to its right
+                    header_filter = (
+                        f"drawtext=text='{coming_soon_to_text}':fontsize=55:fontcolor={accent_color}{bold_font_param}:"
+                        f"x=(w-text_w)/2-80:y=50:shadowcolor=black@0.5:shadowx=2:shadowy=2"
+                    )
+                else:
+                    # Below mode: "COMING SOON TO" centered, logo placed below
+                    header_filter = (
+                        f"drawtext=text='{coming_soon_to_text}':fontsize=55:fontcolor={accent_color}{bold_font_param}:"
+                        f"x=(w-text_w)/2:y=50:shadowcolor=black@0.5:shadowx=2:shadowy=2"
+                    )
             else:
                 header_filter = (
                     f"drawtext=text='{coming_soon_text}':fontsize=55:fontcolor={accent_color}{bold_font_param}:"
@@ -1893,14 +1912,25 @@ class DynamicPrerollGenerator:
             if custom_logo_path and os.path.isfile(custom_logo_path):
                 logo_input_index = len(poster_paths) + 1  # Next input after posters
                 cmd.extend(['-i', custom_logo_path])
-                if logo_mode == 'replace':
-                    # Replace mode: logo to the right of "COMING SOON TO" header
+                if logo_mode == 'right':
+                    # Right mode: logo to the right of "COMING SOON TO" header
                     logo_h = 120  # Prominent size next to header
                     logo_opacity = 0.85
-                    # Position: right of the shifted header text, vertically centered with header
                     logo_x = f"(W/2)+200"
-                    logo_y = 15  # Vertically center logo with header area
-                    _verbose_log(f"Grid logo REPLACE mode: height={logo_h}, opacity={logo_opacity}, x={logo_x}, y={logo_y}")
+                    logo_y = 15
+                    _verbose_log(f"Grid logo RIGHT mode: height={logo_h}, opacity={logo_opacity}, x={logo_x}, y={logo_y}")
+                    logo_filter = (
+                        f"[{logo_input_index}:v]scale=-2:{logo_h},format=rgba,"
+                        f"colorchannelmixer=aa={logo_opacity}[logo];"
+                    )
+                    logo_filter += f"[out][logo]overlay={logo_x}:{logo_y}[outcomp]"
+                elif logo_mode in ('below', 'replace'):
+                    # Below mode: logo centered below the header
+                    logo_h = 100
+                    logo_opacity = 0.85
+                    logo_x = "(W-w)/2"
+                    logo_y = 115  # Below the header text
+                    _verbose_log(f"Grid logo BELOW mode: height={logo_h}, opacity={logo_opacity}, x={logo_x}, y={logo_y}")
                     logo_filter = (
                         f"[{logo_input_index}:v]scale=-2:{logo_h},format=rgba,"
                         f"colorchannelmixer=aa={logo_opacity}[logo];"

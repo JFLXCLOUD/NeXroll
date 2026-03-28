@@ -64,9 +64,12 @@ const SequencePreviewModal = ({ isOpen, onClose, blocks = [], categories = [], p
       const blockPrerolls = getBlockPrerolls(block);
       
       if (block.type === 'random' && blockPrerolls.length > 0) {
-        // Pick a random preroll from the category
-        const randomPreroll = blockPrerolls[Math.floor(Math.random() * blockPrerolls.length)];
-        newPlaylist.push({ blockIndex, preroll: randomPreroll, blockType: 'random' });
+        // Pick count random prerolls from the category (shuffle + slice)
+        const count = Math.max(1, Math.min(block.count || 1, blockPrerolls.length));
+        const shuffled = [...blockPrerolls].sort(() => Math.random() - 0.5);
+        shuffled.slice(0, count).forEach(preroll => {
+          newPlaylist.push({ blockIndex, preroll, blockType: 'random' });
+        });
       } else if (block.type === 'sequential' && blockPrerolls.length > 0) {
         // Pick the first preroll from the category (simulating sequential)
         newPlaylist.push({ blockIndex, preroll: blockPrerolls[0], blockType: 'sequential' });

@@ -309,7 +309,7 @@ class Setting(Base):
     nexup_coming_soon_list_include_audio = Column(Boolean, default=False)  # Include background music in generated video
     nexup_coming_soon_list_custom_audio_path = Column(String, nullable=True)  # User-uploaded custom audio file path
     nexup_coming_soon_list_custom_logo_path = Column(String, nullable=True)  # User-uploaded custom logo image path
-    nexup_coming_soon_list_logo_mode = Column(String, default='watermark')  # 'watermark' (faded bg) or 'replace' (replaces server name)
+    nexup_coming_soon_list_logo_mode = Column(String, default='watermark')  # 'watermark' (faded bg), 'right' (right of title), or 'below' (below title)
     nexup_coming_soon_list_language = Column(String, default='en')  # Language for generated CSL text: en, fr, es, de
     nexup_coming_soon_available_days = Column(Integer, default=1)  # Days to show "Available Now!" after download before auto-removing
     nexup_coming_soon_max_available_now = Column(Integer, default=0)  # Max "Available Now!" items to show (0 = no limit)
@@ -350,6 +350,9 @@ class Setting(Base):
     
     # Custom preroll storage folder (overrides the auto-resolved default)
     preroll_folder = Column(String, nullable=True)  # User-configured preroll storage path (None = use auto-resolved default)
+
+    # Ignored conflicts (JSON array of pair keys like ["3-7", "1-5"])
+    ignored_conflicts = Column(String, nullable=True)
 
     def get_json_value(self, key):
         """Get a JSON value from a column"""

@@ -492,6 +492,10 @@ def ensure_schema() -> None:
             # Settings: custom preroll storage folder
             if not _sqlite_has_column("settings", "preroll_folder"):
                 _sqlite_add_column("settings", "preroll_folder TEXT")
+            
+            # Settings: ignored conflicts for Conflict Resolution Wizard
+            if not _sqlite_has_column("settings", "ignored_conflicts"):
+                _sqlite_add_column("settings", "ignored_conflicts TEXT")
     except Exception as e:
         print(f"Schema ensure error: {e}")
 
@@ -605,6 +609,8 @@ def ensure_settings_schema_now() -> None:
                 "update_dismissed_version": "TEXT",
                 # Custom preroll storage folder
                 "preroll_folder": "TEXT",
+                # Ignored conflicts
+                "ignored_conflicts": "TEXT",
             }
             for col, ddl in need.items():
                 if col not in cols:
@@ -958,12 +964,41 @@ def _redirect_std_streams():
             return
         log_path = _log_file_path()
         os.makedirs(os.path.dirname(log_path), exist_ok=True)
-        # Open a single append handle for both streams
-        lf = open(log_path, "a", encoding="utf-8", buffering=1)
         class _Tee:
-            def __init__(self, original, fileh):
+            """Tee stream that reopens the log file periodically so rotation works."""
+            _MAX_BYTES = 10 * 1024 * 1024  # 10 MB
+            _REOPEN_INTERVAL = 30  # seconds
+            def __init__(self, original, path):
                 self._orig = original
-                self._fh = fileh
+                self._path = path
+                self._fh = open(path, "a", encoding="utf-8", buffering=1)
+                self._last_reopen = time.time()
+            def _maybe_reopen(self):
+                try:
+                    now = time.time()
+                    if now - self._last_reopen < self._REOPEN_INTERVAL:
+                        return
+                    self._last_reopen = now
+                    # Rotate if needed
+                    if os.path.exists(self._path) and os.path.getsize(self._path) > self._MAX_BYTES:
+                        try:
+                            self._fh.close()
+                        except Exception:
+                            pass
+                        bk = self._path + ".1"
+                        if os.path.exists(bk):
+                            os.remove(bk)
+                        os.rename(self._path, bk)
+                        self._fh = open(self._path, "a", encoding="utf-8", buffering=1)
+                    elif not os.path.exists(self._path):
+                        # File was rotated externally — reopen
+                        try:
+                            self._fh.close()
+                        except Exception:
+                            pass
+                        self._fh = open(self._path, "a", encoding="utf-8", buffering=1)
+                except Exception:
+                    pass
             def write(self, s):
                 try:
                     if self._orig:
@@ -971,8 +1006,8 @@ def _redirect_std_streams():
                 except Exception:
                     pass
                 try:
-                    if self._fh:
-                        self._fh.write(s)
+                    self._maybe_reopen()
+                    self._fh.write(s)
                 except Exception:
                     pass
             def flush(self):
@@ -982,13 +1017,13 @@ def _redirect_std_streams():
                 except Exception:
                     pass
                 try:
-                    if self._fh:
-                        self._fh.flush()
+                    self._fh.flush()
                 except Exception:
                     pass
         try:
-            sys.stdout = _Tee(getattr(sys, "stdout", None), lf)
-            sys.stderr = _Tee(getattr(sys, "stderr", None), lf)
+            tee = _Tee(getattr(sys, "stdout", None), log_path)
+            sys.stdout = tee
+            sys.stderr = _Tee(getattr(sys, "stderr", None), log_path)
         except Exception:
             pass
         _file_log("Stdout/stderr redirection active")
@@ -996,14 +1031,17 @@ def _redirect_std_streams():
         pass
 
 def _setup_python_logging():
-    """Configure Python's logging module to write to the same log file"""
+    """Configure Python's logging module with rotating file handler"""
     try:
         import logging
+        from logging.handlers import RotatingFileHandler
         log_path = _log_file_path()
         os.makedirs(os.path.dirname(log_path), exist_ok=True)
         
-        # Create a file handler for all backend modules
-        file_handler = logging.FileHandler(log_path, encoding='utf-8')
+        # RotatingFileHandler: 10 MB max, keep 1 backup
+        file_handler = RotatingFileHandler(
+            log_path, maxBytes=10*1024*1024, backupCount=1, encoding='utf-8'
+        )
         file_handler.setLevel(logging.INFO)
         
         # Use a format similar to _file_log
@@ -3526,6 +3564,28 @@ def delete_api_key(key_id: int, user: models.User = Depends(require_auth), db: S
     log_event('INFO', 'user', f'API key deleted: {key_name}', source='delete_api_key')
     
     return {"success": True, "message": "API key deleted"}
+
+
+class BulkDeleteKeysRequest(BaseModel):
+    ids: List[int]
+
+
+@app.post("/api/keys/bulk-delete")
+def bulk_delete_api_keys(req: BulkDeleteKeysRequest, user: models.User = Depends(require_auth), db: Session = Depends(get_db)):
+    """Delete multiple API keys at once"""
+    if not req.ids:
+        raise HTTPException(status_code=400, detail="No key IDs provided")
+    keys = db.query(models.APIKey).filter(models.APIKey.id.in_(req.ids)).all()
+    if not keys:
+        raise HTTPException(status_code=404, detail="No matching API keys found")
+    deleted_names = []
+    for key in keys:
+        deleted_names.append(f"{key.name} ({key.key_prefix})")
+        db.delete(key)
+    db.commit()
+    _file_log(f"Bulk deleted {len(deleted_names)} API keys: {', '.join(deleted_names)}")
+    log_event('INFO', 'user', f'Bulk deleted {len(deleted_names)} API keys', source='bulk_delete_api_keys')
+    return {"success": True, "deleted": len(deleted_names), "message": f"Deleted {len(deleted_names)} API key(s)"}
 
 
 def validate_api_key(api_key: str, required_permission: str = "read", db: Session = None) -> Optional[models.APIKey]:
@@ -15306,9 +15366,11 @@ def update_nexup_settings(
         setting.nexup_coming_soon_list_server_name = coming_soon_list_server_name
     if coming_soon_list_include_audio is not None:
         setting.nexup_coming_soon_list_include_audio = coming_soon_list_include_audio
-    # Logo mode: 'watermark' or 'replace'
+    # Logo mode: 'watermark', 'right', 'below' (legacy: 'replace' mapped to 'below')
     if coming_soon_list_logo_mode is not None:
-        if coming_soon_list_logo_mode in ['watermark', 'replace']:
+        if coming_soon_list_logo_mode == 'replace':
+            coming_soon_list_logo_mode = 'below'
+        if coming_soon_list_logo_mode in ['watermark', 'right', 'below']:
             setting.nexup_coming_soon_list_logo_mode = coming_soon_list_logo_mode
     # Language settings
     if coming_soon_list_language is not None:
@@ -16218,10 +16280,12 @@ async def sync_sonarr_trailers(db: Session = Depends(get_db)):
     
     connector = SonarrConnector(setting.nexup_sonarr_url, setting.nexup_sonarr_api_key)
     days_ahead = getattr(setting, 'nexup_days_ahead', 90) or 90
-    max_trailers = getattr(setting, 'nexup_max_trailers', 10) or 10
+    max_trailers = getattr(setting, 'nexup_max_trailers', 10)
+    if max_trailers is None:
+        max_trailers = 10
     download_delay = getattr(setting, 'nexup_download_delay', 5) or 5
     
-    _file_log(f"Sonarr Sync: Config - days_ahead={days_ahead}, max_trailers={max_trailers}, delay={download_delay}s")
+    _file_log(f"Sonarr Sync: Config - days_ahead={days_ahead}, max_trailers={max_trailers} ({'no limit' if max_trailers == 0 else max_trailers}), delay={download_delay}s")
     
     results = {
         "checked": 0,
@@ -16358,7 +16422,7 @@ async def sync_sonarr_trailers(db: Session = Depends(get_db)):
             _nexup_sync_progress["status"] = f"Skipping '{show['title']}' S{show['season_number']} (already have)"
             continue
         
-        if downloads_completed >= max_trailers:
+        if max_trailers > 0 and downloads_completed >= max_trailers:
             _nexup_sync_progress["status"] = f"Reached max trailers limit ({max_trailers})"
             _file_log(f"Sonarr Sync: Reached max trailers limit ({max_trailers})")
             break
@@ -16444,7 +16508,7 @@ async def sync_sonarr_trailers(db: Session = Depends(get_db)):
                 _file_log(f"Sonarr Sync: Downloaded trailer for '{show['title']}' S{show['season_number']} to {result['path']}")
                 
                 # Rate limiting delay
-                if download_delay > 0 and downloads_completed < max_trailers:
+                if download_delay > 0 and (max_trailers == 0 or downloads_completed < max_trailers):
                     _nexup_sync_progress["status"] = f"Rate limiting - waiting {download_delay}s..."
                     await asyncio.sleep(download_delay)
             else:
@@ -17855,12 +17919,14 @@ async def sync_nexup(db: Session = Depends(get_db)):
         _file_log(f"NeX-Up sync: Found {len(upcoming)} upcoming movies")
         
         # Download new trailers (up to limit)
-        max_trailers = getattr(setting, 'nexup_max_trailers', 10) or 10
+        max_trailers = getattr(setting, 'nexup_max_trailers', 10)
+        if max_trailers is None:
+            max_trailers = 10
         current_count = db.query(models.ComingSoonTrailer).count()
         storage_usage = downloader.get_storage_usage()
         max_storage = getattr(setting, 'nexup_max_storage_gb', 5.0) or 5.0
         
-        _file_log(f"NeX-Up sync: max_trailers={max_trailers}, current_count={current_count}, storage={storage_usage['total_size_gb']}GB/{max_storage}GB")
+        _file_log(f"NeX-Up sync: max_trailers={max_trailers} ({'no limit' if max_trailers == 0 else max_trailers}), current_count={current_count}, storage={storage_usage['total_size_gb']}GB/{max_storage}GB")
         
         # Filter to only truly upcoming movies (positive days) with trailers
         eligible_movies = [m for m in upcoming if m.get('trailer_url') and (m.get('days_until_release') or 0) >= -7]
@@ -17882,7 +17948,7 @@ async def sync_nexup(db: Session = Depends(get_db)):
             _nexup_sync_progress["progress"] = progress_pct
             
             # Check limits
-            if current_count >= max_trailers:
+            if max_trailers > 0 and current_count >= max_trailers:
                 _nexup_sync_progress["status"] = f"Reached max trailers limit ({max_trailers})"
                 _file_log(f"NeX-Up sync: Reached max trailers limit ({max_trailers})")
                 break
@@ -24317,6 +24383,72 @@ def plugin_register(request: Request, db: Session = Depends(get_db)):
     log_event("INFO", "plugin", f"Plugin registered: {server_type} '{server_name}' via API key '{key_record.name}'",
               source="plugin_register", db=db)
     return {"registered": True, "message": f"Registered {server_type} plugin '{server_name}'"}
+
+
+# ── Ignored conflicts ──────────────────────────────────────────────────
+
+@app.get("/conflicts/ignored")
+def get_ignored_conflicts(db: Session = Depends(get_db)):
+    """Return the list of ignored conflict pair-keys."""
+    setting = db.query(models.Setting).first()
+    if not setting:
+        return {"ignored": []}
+    raw = getattr(setting, "ignored_conflicts", None)
+    if not raw:
+        return {"ignored": []}
+    try:
+        return {"ignored": json.loads(raw)}
+    except (json.JSONDecodeError, TypeError):
+        return {"ignored": []}
+
+
+class IgnoreConflictRequest(BaseModel):
+    pair_key: str  # e.g. "3-7"
+
+
+@app.post("/conflicts/ignore")
+def ignore_conflict(body: IgnoreConflictRequest, db: Session = Depends(get_db)):
+    """Add a conflict pair-key to the ignored list."""
+    setting = db.query(models.Setting).first()
+    if not setting:
+        setting = models.Setting(plex_url=None, plex_token=None)
+        db.add(setting)
+        db.commit()
+        db.refresh(setting)
+
+    raw = getattr(setting, "ignored_conflicts", None)
+    try:
+        ignored = json.loads(raw) if raw else []
+    except (json.JSONDecodeError, TypeError):
+        ignored = []
+
+    if body.pair_key not in ignored:
+        ignored.append(body.pair_key)
+
+    setting.ignored_conflicts = json.dumps(ignored)
+    setting.updated_at = datetime.datetime.utcnow()
+    db.commit()
+    return {"ignored": ignored}
+
+
+@app.delete("/conflicts/ignore/{pair_key}")
+def unignore_conflict(pair_key: str, db: Session = Depends(get_db)):
+    """Remove a conflict pair-key from the ignored list."""
+    setting = db.query(models.Setting).first()
+    if not setting:
+        return {"ignored": []}
+
+    raw = getattr(setting, "ignored_conflicts", None)
+    try:
+        ignored = json.loads(raw) if raw else []
+    except (json.JSONDecodeError, TypeError):
+        ignored = []
+
+    ignored = [k for k in ignored if k != pair_key]
+    setting.ignored_conflicts = json.dumps(ignored)
+    setting.updated_at = datetime.datetime.utcnow()
+    db.commit()
+    return {"ignored": ignored}
 
 
 # Static frontend mount — MUST be after all API route definitions since

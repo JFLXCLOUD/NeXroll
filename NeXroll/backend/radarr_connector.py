@@ -1294,7 +1294,7 @@ class NexUpManager:
             
             for movie in upcoming:
                 # Check limits
-                if current_count >= self.max_trailers:
+                if self.max_trailers > 0 and current_count >= self.max_trailers:
                     break
                 if storage['total_size_gb'] >= self.max_storage_gb:
                     break

@@ -809,7 +809,7 @@ const [applyingToServer, setApplyingToServer] = useState(false);
     includeAudio: false,  // Include background music in generated video
     customAudioFilename: null,  // User-uploaded custom audio filename
     customLogoFilename: null,  // User-uploaded custom logo filename
-    logoMode: 'watermark',  // 'watermark' = faded bg, 'replace' = replaces server name
+    logoMode: 'watermark',  // 'watermark' = faded bg, 'right' = right of header, 'below' = below header
     language: 'en',  // Text language: en, fr, es, de
     availableDays: 1,  // Days to show "Available Now!" before auto-removal
     maxAvailableNow: 0  // Max "Available Now!" items to show (0 = no limit)
@@ -837,6 +837,7 @@ const [applyingToServer, setApplyingToServer] = useState(false);
   const [newApiKey, setNewApiKey] = useState({ name: '', permissions: 'full', expires_days: null, description: '' });
   const [showNewKeyModal, setShowNewKeyModal] = useState(false);
   const [createdApiKey, setCreatedApiKey] = useState(null); // Stores newly created key (only shown once)
+  const [selectedApiKeyIds, setSelectedApiKeyIds] = useState(new Set());
   
   // Logs Viewer State
   const [logs, setLogs] = useState([]);
@@ -971,6 +972,8 @@ const [showConflictWizard, setShowConflictWizard] = useState(false);
 const [conflictResolutions, setConflictResolutions] = useState({}); // { conflictId: selectedFixId }
 const [conflictWizardApplying, setConflictWizardApplying] = useState(false);
 const [conflictWizardResults, setConflictWizardResults] = useState(null); // { applied: [], failed: [] }
+const [ignoredConflicts, setIgnoredConflicts] = useState([]); // Array of ignored pair-keys like ["3-7"]
+const [showIgnoredConflicts, setShowIgnoredConflicts] = useState(false); // Toggle for ignored section in wizard
 
 // Holiday Browser state
 const [showHolidayBrowser, setShowHolidayBrowser] = useState(false);
@@ -2447,6 +2450,8 @@ const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
       alert('Please select at least one day of the month for monthly schedules');
       return false;
     }
+    // Yearly schedules use start_date/end_date only — no extra recurrence needed
+    if (scheduleForm.type === 'yearly') return true;
     if (scheduleForm.type === 'holiday' && !scheduleForm.holiday_name?.trim()) {
       alert('Please enter a holiday name (e.g., Thanksgiving, Christmas, Easter)');
       return false;
@@ -2468,7 +2473,8 @@ const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
       playlist: scheduleForm.playlist,
       blend_enabled: scheduleForm.blend_enabled,
       priority: scheduleForm.priority,
-      exclusive: scheduleForm.exclusive
+      exclusive: scheduleForm.exclusive,
+      is_active: editingSchedule ? (editingSchedule.is_active ?? true) : true
     };
 
     if (scheduleForm.end_date && scheduleForm.end_date.trim()) {
@@ -3643,6 +3649,63 @@ const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
       }
     }
     setConflictResolutions(auto);
+  };
+
+  // Load ignored conflicts from backend
+  const loadIgnoredConflicts = async () => {
+    try {
+      const res = await fetch(apiUrl('conflicts/ignored'));
+      if (res.ok) {
+        const data = await res.json();
+        setIgnoredConflicts(data.ignored || []);
+      }
+    } catch (e) { /* silent */ }
+  };
+
+  // Ignore a conflict pair
+  const ignoreConflict = async (pairKey) => {
+    try {
+      const res = await fetch(apiUrl('conflicts/ignore'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ pair_key: pairKey })
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setIgnoredConflicts(data.ignored || []);
+        // Remove any selected resolution for this conflict
+        setConflictResolutions(prev => {
+          const next = { ...prev };
+          delete next[pairKey];
+          return next;
+        });
+        showAlert('Conflict ignored — hidden from future scans', 'success');
+      } else {
+        const errData = await safeJson(res);
+        showAlert(errData?.detail || 'Failed to ignore conflict', 'error');
+      }
+    } catch (e) {
+      console.error('ignoreConflict error:', e);
+      showAlert('Failed to ignore conflict', 'error');
+    }
+  };
+
+  // Un-ignore a conflict pair
+  const unignoreConflict = async (pairKey) => {
+    try {
+      const res = await fetch(apiUrl(`conflicts/ignore/${pairKey}`), { method: 'DELETE' });
+      if (res.ok) {
+        const data = await res.json();
+        setIgnoredConflicts(data.ignored || []);
+        showAlert('Conflict restored — will appear in future scans', 'success');
+      } else {
+        const errData = await safeJson(res);
+        showAlert(errData?.detail || 'Failed to restore conflict', 'error');
+      }
+    } catch (e) {
+      console.error('unignoreConflict error:', e);
+      showAlert('Failed to restore conflict', 'error');
+    }
   };
 
   // Bulk selection handlers
@@ -5119,7 +5182,7 @@ const DashboardTiles = {
           {withConflicts.length > 0 && (
             <button
               type="button"
-              onClick={() => { setShowConflictWizard(true); setConflictResolutions({}); setConflictWizardResults(null); }}
+              onClick={() => { setShowConflictWizard(true); setConflictResolutions({}); setConflictWizardResults(null); setShowIgnoredConflicts(false); loadIgnoredConflicts(); }}
               style={{
                 display: 'flex', alignItems: 'center', gap: '6px',
                 padding: '6px 16px', borderRadius: '6px', fontSize: '0.8rem', fontWeight: 600,
@@ -7134,7 +7197,7 @@ const DashboardTiles = {
                   {hasAnyConflicts && (
                     <button
                       type="button"
-                      onClick={() => { setShowConflictWizard(true); setConflictResolutions({}); setConflictWizardResults(null); }}
+                      onClick={() => { setShowConflictWizard(true); setConflictResolutions({}); setConflictWizardResults(null); setShowIgnoredConflicts(false); loadIgnoredConflicts(); }}
                       style={{
                         display: 'flex', alignItems: 'center', gap: '4px',
                         padding: '4px 10px', borderRadius: '20px', fontSize: '0.75rem', fontWeight: 600,
@@ -8880,6 +8943,9 @@ const DashboardTiles = {
   // Conflict Resolution Wizard
   const renderConflictWizard = () => {
     const allConflicts = analyzeAllConflicts();
+    const ignoredSet = new Set(ignoredConflicts);
+    const visibleConflicts = allConflicts.filter(c => !ignoredSet.has(c.id));
+    const hiddenConflicts = allConflicts.filter(c => ignoredSet.has(c.id));
     const selectedCount = Object.keys(conflictResolutions).filter(k => conflictResolutions[k]).length;
     const severityColors = { high: '#ef4444', medium: '#f59e0b', low: '#3b82f6', info: '#6b7280' };
     const severityLabels = { high: 'Conflict', medium: 'Medium', low: 'Low', info: 'Info' };
@@ -8961,7 +9027,7 @@ const DashboardTiles = {
               </button>
             </div>
           </div>
-        ) : allConflicts.length === 0 ? (
+        ) : visibleConflicts.length === 0 ? (
           /* No conflicts state */
           <div style={{
             textAlign: 'center', padding: '2.5rem 1.5rem',
@@ -8978,8 +9044,57 @@ const DashboardTiles = {
               <div style={{ fontWeight: 600, fontSize: '1.1rem', color: 'var(--text-color)', marginBottom: '0.25rem' }}>No Conflicts Detected</div>
               <div style={{ color: 'var(--text-secondary)', fontSize: '0.9rem' }}>
                 All your active schedules are configured without conflicts over the next 30 days.
+                {hiddenConflicts.length > 0 && (
+                  <span style={{ display: 'block', marginTop: '0.5rem', fontSize: '0.85rem' }}>
+                    {hiddenConflicts.length} conflict{hiddenConflicts.length !== 1 ? 's' : ''} currently ignored.{' '}
+                    <button
+                      type="button"
+                      onClick={() => setShowIgnoredConflicts(prev => !prev)}
+                      style={{
+                        background: 'none', border: 'none', color: '#14B8A6', cursor: 'pointer',
+                        textDecoration: 'underline', padding: 0, fontSize: '0.85rem'
+                      }}
+                    >
+                      {showIgnoredConflicts ? 'Hide' : 'Show'}
+                    </button>
+                  </span>
+                )}
               </div>
             </div>
+            {/* Ignored conflicts in no-conflict state */}
+            {showIgnoredConflicts && hiddenConflicts.length > 0 && (
+              <div style={{ width: '100%', textAlign: 'left', marginTop: '0.5rem' }}>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+                  {hiddenConflicts.map(conflict => (
+                    <div key={conflict.id} style={{
+                      display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                      padding: '0.5rem 0.75rem', borderRadius: '8px',
+                      background: 'rgba(107,114,128,0.06)', border: '1px solid var(--border-color)',
+                      fontSize: '0.85rem', color: 'var(--text-secondary)'
+                    }}>
+                      <span style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                        <EyeOff size={14} style={{ opacity: 0.5 }} />
+                        <strong style={{ color: 'var(--text-color)' }}>{conflict.scheduleA.name}</strong>
+                        <span>vs</span>
+                        <strong style={{ color: 'var(--text-color)' }}>{conflict.scheduleB.name}</strong>
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => unignoreConflict(conflict.id)}
+                        style={{
+                          display: 'flex', alignItems: 'center', gap: '4px',
+                          padding: '4px 10px', borderRadius: '6px', fontSize: '0.8rem', fontWeight: 600,
+                          background: 'rgba(20,184,166,0.1)', color: '#14B8A6',
+                          border: '1px solid rgba(20,184,166,0.3)', cursor: 'pointer'
+                        }}
+                      >
+                        <Eye size={12} /> Restore
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
           </div>
         ) : (
           /* Conflict list */
@@ -8993,10 +9108,10 @@ const DashboardTiles = {
             }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: '1rem', flexWrap: 'wrap' }}>
                 <span style={{ fontWeight: 600, color: 'var(--text-color)', fontSize: '0.95rem' }}>
-                  {allConflicts.filter(c => c.severity !== 'info').length} Conflict{allConflicts.filter(c => c.severity !== 'info').length !== 1 ? 's' : ''}{allConflicts.filter(c => c.severity === 'info').length > 0 ? `, ${allConflicts.filter(c => c.severity === 'info').length} Note${allConflicts.filter(c => c.severity === 'info').length !== 1 ? 's' : ''}` : ''}
+                  {visibleConflicts.filter(c => c.severity !== 'info').length} Conflict{visibleConflicts.filter(c => c.severity !== 'info').length !== 1 ? 's' : ''}{visibleConflicts.filter(c => c.severity === 'info').length > 0 ? `, ${visibleConflicts.filter(c => c.severity === 'info').length} Note${visibleConflicts.filter(c => c.severity === 'info').length !== 1 ? 's' : ''}` : ''}
                 </span>
                 {['high', 'medium', 'low', 'info'].map(sev => {
-                  const count = allConflicts.filter(c => c.severity === sev).length;
+                  const count = visibleConflicts.filter(c => c.severity === sev).length;
                   if (count === 0) return null;
                   return (
                     <span key={sev} style={{
@@ -9011,7 +9126,7 @@ const DashboardTiles = {
               <button
                 type="button"
                 className="button"
-                onClick={() => autoResolveConflicts(allConflicts)}
+                onClick={() => autoResolveConflicts(visibleConflicts)}
                 style={{
                   padding: '0.45rem 1rem', fontSize: '0.85rem',
                   display: 'flex', alignItems: 'center', gap: '0.4rem',
@@ -9027,7 +9142,7 @@ const DashboardTiles = {
 
             {/* Individual conflict cards */}
             <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
-              {allConflicts.map((conflict, idx) => {
+              {visibleConflicts.map((conflict, idx) => {
                 const selectedFix = conflictResolutions[conflict.id];
                 const colorA = conflict.scheduleA.color || '#14B8A6';
                 const colorB = conflict.scheduleB.color || '#f59e0b';
@@ -9166,6 +9281,24 @@ const DashboardTiles = {
                           <span style={{ color: '#6b7280', flexShrink: 0, display: 'flex' }}><X size={14} /></span>
                           <span style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>Skip — leave as is</span>
                         </label>
+                        {/* Ignore button */}
+                        <button
+                          type="button"
+                          onClick={(e) => { e.preventDefault(); e.stopPropagation(); ignoreConflict(conflict.id); }}
+                          style={{
+                            display: 'flex', alignItems: 'center', gap: '0.5rem',
+                            padding: '0.5rem 0.75rem', borderRadius: '8px', cursor: 'pointer',
+                            border: '1px solid rgba(107,114,128,0.3)',
+                            background: 'rgba(107,114,128,0.06)', width: '100%', textAlign: 'left',
+                            transition: 'all 0.15s', color: 'var(--text-secondary)'
+                          }}
+                          onMouseEnter={(e) => { e.currentTarget.style.background = 'rgba(107,114,128,0.15)'; e.currentTarget.style.borderColor = 'rgba(107,114,128,0.5)'; }}
+                          onMouseLeave={(e) => { e.currentTarget.style.background = 'rgba(107,114,128,0.06)'; e.currentTarget.style.borderColor = 'rgba(107,114,128,0.3)'; }}
+                          title="Hide this conflict from future scans. You can restore it later."
+                        >
+                          <EyeOff size={14} style={{ color: '#6b7280', flexShrink: 0 }} />
+                          <span style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>Ignore — hide from future scans</span>
+                        </button>
                       </div>
                     </div>
                   </div>
@@ -9173,13 +9306,78 @@ const DashboardTiles = {
               })}
             </div>
 
+            {/* Ignored conflicts section */}
+            {hiddenConflicts.length > 0 && (
+              <div style={{
+                borderRadius: '10px', border: '1px solid var(--border-color)',
+                background: 'var(--card-bg)', overflow: 'hidden'
+              }}>
+                <button
+                  type="button"
+                  onClick={() => setShowIgnoredConflicts(prev => !prev)}
+                  style={{
+                    width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                    padding: '0.6rem 1rem', background: 'rgba(107,114,128,0.06)',
+                    border: 'none', cursor: 'pointer', color: 'var(--text-secondary)', fontSize: '0.85rem'
+                  }}
+                >
+                  <span style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                    <EyeOff size={14} />
+                    {hiddenConflicts.length} Ignored Conflict{hiddenConflicts.length !== 1 ? 's' : ''}
+                  </span>
+                  {showIgnoredConflicts ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+                </button>
+                {showIgnoredConflicts && (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '0.4rem', padding: '0.5rem 0.75rem' }}>
+                    {hiddenConflicts.map(conflict => (
+                      <div key={conflict.id} style={{
+                        display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                        padding: '0.5rem 0.75rem', borderRadius: '8px',
+                        background: 'rgba(107,114,128,0.04)', border: '1px solid var(--border-color)',
+                        fontSize: '0.85rem', color: 'var(--text-secondary)',
+                        gap: '0.75rem'
+                      }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', minWidth: 0, flex: 1 }}>
+                          <span style={{
+                            fontSize: '0.7rem', fontWeight: 700, padding: '0.1rem 0.4rem', borderRadius: '4px',
+                            background: severityColors[conflict.severity], color: '#fff', textTransform: 'uppercase',
+                            flexShrink: 0
+                          }}>
+                            {severityLabels[conflict.severity]}
+                          </span>
+                          <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                            <strong style={{ color: 'var(--text-color)' }}>{conflict.scheduleA.name}</strong>
+                            {' vs '}
+                            <strong style={{ color: 'var(--text-color)' }}>{conflict.scheduleB.name}</strong>
+                          </span>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => unignoreConflict(conflict.id)}
+                          style={{
+                            display: 'flex', alignItems: 'center', gap: '4px',
+                            padding: '4px 10px', borderRadius: '6px', fontSize: '0.8rem', fontWeight: 600,
+                            background: 'rgba(20,184,166,0.1)', color: '#14B8A6',
+                            border: '1px solid rgba(20,184,166,0.3)', cursor: 'pointer',
+                            flexShrink: 0
+                          }}
+                        >
+                          <Eye size={12} /> Restore
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+
             {/* Bottom action bar */}
             <div style={{
               display: 'flex', alignItems: 'center', justifyContent: 'space-between',
               paddingTop: '0.75rem', borderTop: '1px solid var(--border-color)', gap: '0.75rem'
             }}>
               <div style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
-                {selectedCount} of {allConflicts.length} conflicts have a fix selected
+                {selectedCount} of {visibleConflicts.length} conflicts have a fix selected
               </div>
               <div style={{ display: 'flex', gap: '0.5rem' }}>
                 <button
@@ -9202,7 +9400,7 @@ const DashboardTiles = {
                   type="button"
                   className="button"
                   disabled={selectedCount === 0 || conflictWizardApplying}
-                  onClick={() => applyAllConflictResolutions(allConflicts)}
+                  onClick={() => applyAllConflictResolutions(visibleConflicts)}
                   style={{
                     padding: '0.55rem 1.25rem', fontSize: '0.9rem',
                     background: selectedCount > 0 ? 'linear-gradient(135deg, #14B8A6, #10b981)' : '#6b7280',
@@ -9937,7 +10135,7 @@ const DashboardTiles = {
                 <span style={{ flex: 1 }} />
                 <button
                   type="button"
-                  onClick={() => { setShowConflictWizard(true); setConflictResolutions({}); setConflictWizardResults(null); }}
+                  onClick={() => { setShowConflictWizard(true); setConflictResolutions({}); setConflictWizardResults(null); setShowIgnoredConflicts(false); loadIgnoredConflicts(); }}
                   title={actionableCount > 0 ? `${actionableCount} conflict${actionableCount !== 1 ? 's' : ''} detected — click to resolve` : `${infoCount} note${infoCount !== 1 ? 's' : ''} — click to review`}
                   style={{
                     display: 'flex', alignItems: 'center', gap: '0.4rem',
@@ -10409,7 +10607,7 @@ const DashboardTiles = {
                 <span style={{ flex: 1 }} />
                 <button
                   type="button"
-                  onClick={() => { setShowConflictWizard(true); setConflictResolutions({}); setConflictWizardResults(null); }}
+                  onClick={() => { setShowConflictWizard(true); setConflictResolutions({}); setConflictWizardResults(null); setShowIgnoredConflicts(false); loadIgnoredConflicts(); }}
                   title={actionableCount > 0 ? `${actionableCount} conflict${actionableCount !== 1 ? 's' : ''} detected — click to resolve` : `${infoCount} note${infoCount !== 1 ? 's' : ''} — click to review`}
                   style={{
                     display: 'flex', alignItems: 'center', gap: '0.4rem',
@@ -11385,7 +11583,7 @@ const DashboardTiles = {
                 return (
                   <button
                     type="button"
-                    onClick={() => { setShowConflictWizard(true); setConflictResolutions({}); setConflictWizardResults(null); }}
+                    onClick={() => { setShowConflictWizard(true); setConflictResolutions({}); setConflictWizardResults(null); setShowIgnoredConflicts(false); loadIgnoredConflicts(); }}
                     title={actionableCount > 0 ? `${actionableCount} conflict${actionableCount !== 1 ? 's' : ''} detected — click to resolve` : `${infoCount} note${infoCount !== 1 ? 's' : ''} — click to review`}
                     style={{
                       display: 'flex', alignItems: 'center', gap: '0.4rem',
@@ -12114,7 +12312,7 @@ const DashboardTiles = {
                 <span style={{ flex: 1 }} />
                 <button
                   type="button"
-                  onClick={() => { setShowConflictWizard(true); setConflictResolutions({}); setConflictWizardResults(null); }}
+                  onClick={() => { setShowConflictWizard(true); setConflictResolutions({}); setConflictWizardResults(null); setShowIgnoredConflicts(false); loadIgnoredConflicts(); }}
                   title={actionableCount > 0 ? `${actionableCount} conflict${actionableCount !== 1 ? 's' : ''} detected — click to resolve` : `${infoCount} note${infoCount !== 1 ? 's' : ''} — click to review`}
                   style={{
                     display: 'flex', alignItems: 'center', gap: '0.4rem',
@@ -16898,9 +17096,11 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
       const res = await fetch(apiUrl('/api/keys'));
       const data = await safeJson(res);
       setApiKeys(Array.isArray(data?.keys) ? data.keys : []);
+      setSelectedApiKeyIds(new Set());
     } catch (e) {
       console.error('Failed to load API keys:', e);
       setApiKeys([]);
+      setSelectedApiKeyIds(new Set());
     } finally {
       setApiKeysLoading(false);
     }
@@ -16964,6 +17164,46 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
       }
     } catch (e) {
       showAlert('Failed to update API key: ' + (e?.message || e), 'error');
+    }
+  };
+
+  const toggleApiKeySelected = (keyId) => {
+    setSelectedApiKeyIds(prev => {
+      const next = new Set(prev);
+      if (next.has(keyId)) next.delete(keyId); else next.add(keyId);
+      return next;
+    });
+  };
+
+  const toggleSelectAllApiKeys = () => {
+    if (selectedApiKeyIds.size === apiKeys.length) {
+      setSelectedApiKeyIds(new Set());
+    } else {
+      setSelectedApiKeyIds(new Set(apiKeys.map(k => k.id)));
+    }
+  };
+
+  const bulkDeleteApiKeys = async () => {
+    const count = selectedApiKeyIds.size;
+    if (count === 0) return;
+    if (!window.confirm(`Delete ${count} API key${count > 1 ? 's' : ''}? This cannot be undone.`)) return;
+    try {
+      const res = await fetch(apiUrl('/api/keys/bulk-delete'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ids: Array.from(selectedApiKeyIds) })
+      });
+      if (res.ok) {
+        const data = await res.json();
+        showAlert(`Deleted ${data.deleted} API key${data.deleted > 1 ? 's' : ''}`, 'success');
+        setSelectedApiKeyIds(new Set());
+        await loadApiKeys();
+      } else {
+        const data = await safeJson(res);
+        showAlert(data?.detail || 'Failed to delete API keys', 'error');
+      }
+    } catch (e) {
+      showAlert('Failed to delete API keys: ' + (e?.message || e), 'error');
     }
   };
 
@@ -17568,7 +17808,7 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
           includeAudio: data.coming_soon_list_include_audio || false,
           customAudioFilename: data.coming_soon_list_custom_audio_filename || null,
           customLogoFilename: data.coming_soon_list_custom_logo_filename || null,
-          logoMode: data.coming_soon_list_logo_mode || 'watermark',
+          logoMode: (() => { const m = data.coming_soon_list_logo_mode || 'watermark'; return m === 'replace' ? 'below' : m; })(),
           language: data.coming_soon_list_language || 'en',
           availableDays: data.coming_soon_available_days || 1,
           maxAvailableNow: data.coming_soon_max_available_now ?? 0
@@ -21626,13 +21866,14 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
                     Max Trailers to Keep
                   </label>
                   <select
-                    value={nexupSettings.max_trailers || 10}
+                    value={nexupSettings.max_trailers != null ? nexupSettings.max_trailers : 10}
                     onChange={(e) => handleUpdateNexupSettings({ max_trailers: parseInt(e.target.value) })}
                     style={{ width: '100%', padding: '0.5rem', borderRadius: '4px', border: '1px solid var(--border-color)' }}
                   >
-                    {[5, 10, 15, 20, 25, 30].map(n => (
+                    {[5, 10, 15, 20, 25, 30, 40, 50].map(n => (
                       <option key={n} value={n}>{n} trailers</option>
                     ))}
+                    <option value={0}>No Limit</option>
                   </select>
                 </div>
                 
@@ -23022,7 +23263,9 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
                   <div style={{ marginBottom: '0.5rem' }}>
                     <strong style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', fontSize: '0.95rem' }}><Layers size={15} style={{ color: '#00d4ff' }} /> Custom Logo Overlay</strong>
                     <span style={{ fontSize: '0.8rem', color: '#888' }}>
-                      {comingSoonListSettings.logoMode === 'replace' 
+                      {comingSoonListSettings.logoMode === 'right' 
+                        ? 'Logo appears to the right of "Coming Soon To"'
+                        : comingSoonListSettings.logoMode === 'below'
                         ? 'Logo replaces the server name below "Coming Soon To"'
                         : 'Adds a faded, centered watermark logo behind the text'}
                     </span>
@@ -23053,38 +23296,26 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
                       </button>
                     </div>
                     {/* Logo Mode Toggle */}
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginTop: '0.4rem' }}>
-                      <span style={{ fontSize: '0.8rem', color: '#888' }}>Mode:</span>
-                      <button
-                        onClick={() => setComingSoonListSettings(prev => ({ ...prev, logoMode: 'watermark' }))}
-                        style={{
-                          padding: '0.2rem 0.6rem',
-                          fontSize: '0.75rem',
-                          borderRadius: '4px',
-                          border: `1px solid ${comingSoonListSettings.logoMode === 'watermark' ? '#00d4ff' : 'rgba(255,255,255,0.15)'}`,
-                          backgroundColor: comingSoonListSettings.logoMode === 'watermark' ? 'rgba(0,212,255,0.15)' : 'transparent',
-                          color: comingSoonListSettings.logoMode === 'watermark' ? '#00d4ff' : '#888',
-                          cursor: 'pointer',
-                          transition: 'all 0.2s ease'
-                        }}
-                      >
-                        Watermark
-                      </button>
-                      <button
-                        onClick={() => setComingSoonListSettings(prev => ({ ...prev, logoMode: 'replace' }))}
-                        style={{
-                          padding: '0.2rem 0.6rem',
-                          fontSize: '0.75rem',
-                          borderRadius: '4px',
-                          border: `1px solid ${comingSoonListSettings.logoMode === 'replace' ? '#00d4ff' : 'rgba(255,255,255,0.15)'}`,
-                          backgroundColor: comingSoonListSettings.logoMode === 'replace' ? 'rgba(0,212,255,0.15)' : 'transparent',
-                          color: comingSoonListSettings.logoMode === 'replace' ? '#00d4ff' : '#888',
-                          cursor: 'pointer',
-                          transition: 'all 0.2s ease'
-                        }}
-                      >
-                        Replace Server Name
-                      </button>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginTop: '0.4rem', flexWrap: 'wrap' }}>
+                      <span style={{ fontSize: '0.8rem', color: '#888' }}>Position:</span>
+                      {[{ value: 'watermark', label: 'Watermark' }, { value: 'right', label: 'Right of Title' }, { value: 'below', label: 'Below Title' }].map(opt => (
+                        <button
+                          key={opt.value}
+                          onClick={() => setComingSoonListSettings(prev => ({ ...prev, logoMode: opt.value }))}
+                          style={{
+                            padding: '0.2rem 0.6rem',
+                            fontSize: '0.75rem',
+                            borderRadius: '20px',
+                            border: `2px solid ${comingSoonListSettings.logoMode === opt.value ? '#00d4ff' : 'rgba(255,255,255,0.15)'}`,
+                            backgroundColor: comingSoonListSettings.logoMode === opt.value ? 'rgba(0,212,255,0.15)' : 'transparent',
+                            color: comingSoonListSettings.logoMode === opt.value ? '#00d4ff' : '#888',
+                            cursor: 'pointer',
+                            transition: 'all 0.2s ease'
+                          }}
+                        >
+                          {opt.label}
+                        </button>
+                      ))}
                     </div>
                     </>
                   ) : (
@@ -23257,7 +23488,7 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
                       zIndex: 1
                     }} />
                     {/* Watermark logo (behind text) */}
-                    {comingSoonListSettings.customLogoFilename && comingSoonListSettings.logoMode !== 'replace' && (
+                    {comingSoonListSettings.customLogoFilename && comingSoonListSettings.logoMode === 'watermark' && (
                       <div style={{
                         position: 'absolute',
                         inset: 0,
@@ -23285,9 +23516,8 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
                       padding: '8% 5% 5%',
                       zIndex: 2
                     }}>
-                      {/* Header — grid+replace shows logo inline to the right of text */}
-                      {comingSoonListSettings.customLogoFilename && comingSoonListSettings.logoMode === 'replace'
-                        && (comingSoonListSettings.layout === 'grid' || comingSoonListSettings.layout === 'both') ? (
+                      {/* Header — 'right' mode shows logo inline to the right of text */}
+                      {comingSoonListSettings.customLogoFilename && comingSoonListSettings.logoMode === 'right' ? (
                         <div style={{
                           display: 'flex',
                           alignItems: 'center',
@@ -23312,6 +23542,28 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
                             onError={(e) => { e.target.style.display = 'none'; }}
                           />
                         </div>
+                      ) : comingSoonListSettings.customLogoFilename && comingSoonListSettings.logoMode === 'below' ? (
+                        <>
+                          <div style={{
+                            fontSize: 'clamp(1.2rem, 4.5vw, 2rem)',
+                            fontWeight: 'bold',
+                            letterSpacing: '0.08em',
+                            textTransform: 'uppercase',
+                            color: comingSoonListSettings.accentColor || '#00d4ff',
+                            textShadow: '0 2px 8px rgba(0,0,0,0.6)',
+                            marginBottom: '0.15em'
+                          }}>
+                            {getCSLText('coming_soon_to')}
+                          </div>
+                          <div style={{ marginBottom: '0.5em' }}>
+                            <img
+                              src={apiUrl('/nexup/coming-soon-list/logo-image') + '?t=' + Date.now()}
+                              alt="Logo"
+                              style={{ maxWidth: 'clamp(80px, 20vw, 160px)', maxHeight: '48px', objectFit: 'contain', opacity: 0.85 }}
+                              onError={(e) => { e.target.style.display = 'none'; }}
+                            />
+                          </div>
+                        </>
                       ) : (
                         <>
                           <div style={{
@@ -23323,30 +23575,17 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
                             textShadow: '0 2px 8px rgba(0,0,0,0.6)',
                             marginBottom: '0.15em'
                           }}>
-                            {comingSoonListSettings.customLogoFilename && comingSoonListSettings.logoMode === 'replace'
-                              ? getCSLText('coming_soon_to')
-                              : getCSLText('coming_soon')}
+                            {getCSLText('coming_soon')}
                           </div>
-                          {/* Subtitle / Logo below in text layout replace mode */}
-                          {comingSoonListSettings.customLogoFilename && comingSoonListSettings.logoMode === 'replace' ? (
-                            <div style={{ marginBottom: '0.5em' }}>
-                              <img
-                                src={apiUrl('/nexup/coming-soon-list/logo-image') + '?t=' + Date.now()}
-                                alt="Logo"
-                                style={{ maxWidth: 'clamp(80px, 20vw, 160px)', maxHeight: '48px', objectFit: 'contain', opacity: 0.85 }}
-                                onError={(e) => { e.target.style.display = 'none'; }}
-                              />
-                            </div>
-                          ) : (
-                            <div style={{
-                              fontSize: 'clamp(0.75rem, 2.5vw, 1.1rem)',
-                              color: (comingSoonListSettings.textColor || '#ffffff') + 'e6',
-                              marginBottom: '0.5em',
-                              opacity: 0.9
-                            }}>
-                              {getCSLText('to')} {comingSoonListSettings.serverName || 'Your Server'}
-                            </div>
-                          )}
+                          {/* Subtitle — server name */}
+                          <div style={{
+                            fontSize: 'clamp(0.75rem, 2.5vw, 1.1rem)',
+                            color: (comingSoonListSettings.textColor || '#ffffff') + 'e6',
+                            marginBottom: '0.5em',
+                            opacity: 0.9
+                          }}>
+                            {getCSLText('to')} {comingSoonListSettings.serverName || 'Your Server'}
+                          </div>
                         </>
                       )}
                       {/* Divider */}
@@ -24625,7 +24864,37 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
 
       {/* API Keys Management */}
       <div className="card">
-        <div style={{ display: 'flex', justifyContent: 'flex-end', alignItems: 'center', marginBottom: '1rem' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem', flexWrap: 'wrap', gap: '0.5rem' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+            {apiKeys.length > 0 && (
+              <>
+                <label style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', cursor: 'pointer', fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
+                  <input
+                    type="checkbox"
+                    checked={apiKeys.length > 0 && selectedApiKeyIds.size === apiKeys.length}
+                    onChange={toggleSelectAllApiKeys}
+                    style={{ accentColor: '#3b82f6' }}
+                  />
+                  Select All
+                </label>
+                {selectedApiKeyIds.size > 0 && (
+                  <button
+                    className="button"
+                    style={{
+                      backgroundColor: 'rgba(239, 68, 68, 0.1)',
+                      border: '1px solid rgba(239, 68, 68, 0.3)',
+                      color: '#ef4444',
+                      padding: '0.4rem 0.75rem',
+                      fontSize: '0.85rem'
+                    }}
+                    onClick={bulkDeleteApiKeys}
+                  >
+                    <Trash2 size={14} /> Delete Selected ({selectedApiKeyIds.size})
+                  </button>
+                )}
+              </>
+            )}
+          </div>
           <button className="button" onClick={() => setShowNewKeyModal(true)}>
             <Plus size={14} /> Create API Key
           </button>
@@ -24660,16 +24929,25 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
                 key={key.id}
                 style={{
                   display: 'flex',
-                  justifyContent: 'space-between',
                   alignItems: 'center',
+                  gap: '0.75rem',
                   padding: '0.75rem 1rem',
-                  backgroundColor: key.is_active ? 'var(--bg-color)' : 'rgba(239, 68, 68, 0.1)',
+                  backgroundColor: selectedApiKeyIds.has(key.id) ? 'rgba(59, 130, 246, 0.08)' : (key.is_active ? 'var(--bg-color)' : 'rgba(239, 68, 68, 0.1)'),
                   borderRadius: '8px',
-                  border: `1px solid ${key.is_active ? 'var(--border-color)' : 'rgba(239, 68, 68, 0.3)'}`,
-                  opacity: key.is_active ? 1 : 0.7
+                  border: `1px solid ${selectedApiKeyIds.has(key.id) ? 'rgba(59, 130, 246, 0.4)' : (key.is_active ? 'var(--border-color)' : 'rgba(239, 68, 68, 0.3)')}`,
+                  opacity: key.is_active ? 1 : 0.7,
+                  cursor: 'pointer'
                 }}
+                onClick={() => toggleApiKeySelected(key.id)}
               >
-                <div>
+                <input
+                  type="checkbox"
+                  checked={selectedApiKeyIds.has(key.id)}
+                  onChange={() => toggleApiKeySelected(key.id)}
+                  onClick={(e) => e.stopPropagation()}
+                  style={{ accentColor: '#3b82f6', flexShrink: 0 }}
+                />
+                <div style={{ flex: 1, minWidth: 0 }}>
                   <div style={{ fontWeight: 600, display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
                     {key.name}
                     {!key.is_active && (
@@ -24703,7 +24981,7 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
                     {key.last_used_at && <span style={{ marginLeft: '0.5rem' }}>• Last used: {new Date(key.last_used_at).toLocaleDateString()}</span>}
                   </div>
                 </div>
-                <div style={{ display: 'flex', gap: '0.5rem' }}>
+                <div style={{ display: 'flex', gap: '0.5rem', flexShrink: 0 }} onClick={(e) => e.stopPropagation()}>
                   <button
                     className="button"
                     style={{ 

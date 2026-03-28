@@ -27,9 +27,28 @@ def _get_log_path():
     os.makedirs(log_dir, exist_ok=True)
     return os.path.join(log_dir, "app.log")
 
+_scheduler_rotation_cache = {"last_check": 0}
+
+def _scheduler_check_rotation():
+    """Rotate log if over 10 MB (checked at most once per 60s)"""
+    try:
+        now = time.time()
+        if now - _scheduler_rotation_cache["last_check"] < 60:
+            return
+        _scheduler_rotation_cache["last_check"] = now
+        log_path = _get_log_path()
+        if os.path.exists(log_path) and os.path.getsize(log_path) > 10 * 1024 * 1024:
+            bk = log_path + ".1"
+            if os.path.exists(bk):
+                os.remove(bk)
+            os.rename(log_path, bk)
+    except Exception:
+        pass
+
 def _scheduler_log(msg: str, level: str = "INFO"):
     """Log scheduler messages with consistent formatting"""
     try:
+        _scheduler_check_rotation()
         log_path = _get_log_path()
         with open(log_path, "a", encoding="utf-8") as f:
             ts = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -499,7 +518,9 @@ class Scheduler:
         downloader = TrailerDownloader(storage_path, quality, max_duration=max_duration)
         
         days_ahead = getattr(setting, 'nexup_days_ahead', 90) or 90
-        max_trailers = getattr(setting, 'nexup_max_trailers', 10) or 10
+        max_trailers = getattr(setting, 'nexup_max_trailers', 10)
+        if max_trailers is None:
+            max_trailers = 10
         download_delay = getattr(setting, 'nexup_download_delay', 5) or 5
         
         # Get upcoming movies
@@ -527,7 +548,7 @@ class Scheduler:
         downloaded = 0
         
         for movie in upcoming:
-            if current_count >= max_trailers:
+            if max_trailers > 0 and current_count >= max_trailers:
                 break
             if movie['radarr_id'] in existing_ids:
                 continue
@@ -596,7 +617,9 @@ class Scheduler:
         downloader = TrailerDownloader(storage_path, quality, max_duration=max_duration)
         
         days_ahead = getattr(setting, 'nexup_days_ahead', 90) or 90
-        max_trailers = getattr(setting, 'nexup_max_trailers', 10) or 10
+        max_trailers = getattr(setting, 'nexup_max_trailers', 10)
+        if max_trailers is None:
+            max_trailers = 10
         download_delay = getattr(setting, 'nexup_download_delay', 5) or 5
         
         # ========================================
@@ -688,7 +711,7 @@ class Scheduler:
         downloaded = 0
         
         for show in upcoming:
-            if current_count >= max_trailers:
+            if max_trailers > 0 and current_count >= max_trailers:
                 break
             if show['sonarr_id'] in existing_ids:
                 continue
@@ -2079,7 +2102,8 @@ class Scheduler:
           - {"type":"random", "category_id": <int>, "count": <int>}
           - {"type":"fixed", "preroll_id": <int>}
         """
-        if not schedule or not schedule.category_id or not getattr(schedule, "sequence", None):
+        if not schedule or not getattr(schedule, "sequence", None):
+            _scheduler_log(f"Sequence apply skipped: schedule={'missing' if not schedule else schedule.name}, has_sequence={bool(getattr(schedule, 'sequence', None))}", level="WARNING")
             return False
         try:
             seq = schedule.sequence
