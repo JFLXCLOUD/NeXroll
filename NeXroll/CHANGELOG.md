@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.12.0-beta.6] - 03-30-2026
+
+### Bug Fixes (beta.6)
+- **Plugin Configure: Silent Failure** — `JellyfinConnector.set_plugin_configuration()` silently caught all exceptions, returning `False` with zero logging. Now returns detailed diagnostics (HTTP status code, response body, exception message) and the configure endpoint logs the actual failure reason and surfaces it to the user with actionable guidance (#21)
+- **Plugin Configure: Emby Error Detail** — Emby plugin configure endpoint now also logs the response body from Emby on push failure for diagnostic visibility
+- **Plugin Detect: 30-Second Polling** — Jellyfin and Emby plugin detect calls were embedded in `fetchData()` which runs every 30 seconds, generating ~2,700 detect API calls per day. Plugin detection is now triggered only when connection status changes (initial load + connect/disconnect), not on every polling cycle
+- **NeX-Up YouTube Status: Access Denied** — `GET /nexup/youtube/status` crashed with `[WinError 5] Access is denied: 'temp'` because it used a relative `'temp'` path that resolved to `C:\Program Files\NeXroll\temp` (unwritable). Now falls back to `PREROLLS_DIR/nexup_temp` which is in the writable `C:\ProgramData\NeXroll` data directory
+
 ## [1.12.0-beta.5] - 03-29-2026
 
 ### Bug Fixes (beta.5)

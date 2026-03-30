@@ -16572,7 +16572,7 @@ async def download_diagnostics(db: Session = Depends(get_db)):
     from backend.radarr_connector import TrailerDownloader
     
     setting = db.query(models.Setting).first()
-    storage_path = getattr(setting, 'nexup_storage_path', None) or 'temp'
+    storage_path = getattr(setting, 'nexup_storage_path', None) or os.path.join(PREROLLS_DIR, 'nexup_temp')
     quality = getattr(setting, 'nexup_quality', '1080p') or '1080p'
     
     diagnostics = {
@@ -16639,7 +16639,7 @@ async def download_diagnostics(db: Session = Depends(get_db)):
 def get_youtube_status(db: Session = Depends(get_db)):
     """Check if YouTube authentication is set up and working"""
     setting = db.query(models.Setting).first()
-    storage_path = getattr(setting, 'nexup_storage_path', None) or 'temp'
+    storage_path = getattr(setting, 'nexup_storage_path', None) or os.path.join(PREROLLS_DIR, 'nexup_temp')
     
     status = {
         "configured": False,
@@ -21245,13 +21245,20 @@ def configure_jellyfin_plugin(req: JellyfinPluginConfigureRequest, db: Session =
         }
 
         # Push config to Jellyfin
-        success = connector.set_plugin_configuration(plugin_id, plugin_config)
+        result = connector.set_plugin_configuration(plugin_id, plugin_config)
 
-        if not success:
+        if not result.get("success"):
             # Rollback: delete the key we just created since push failed
             db.delete(new_key)
             db.commit()
-            raise HTTPException(status_code=500, detail="Failed to push configuration to Jellyfin plugin")
+            jf_status = result.get('status_code', '?')
+            jf_body = result.get('body', result.get('error', 'unknown'))
+            log_event('WARNING', 'jellyfin',
+                      f'Plugin config push failed — HTTP {jf_status}: {jf_body}',
+                      source='configure_jellyfin_plugin', db=db)
+            raise HTTPException(status_code=500,
+                                detail=f"Failed to push configuration to Jellyfin plugin (HTTP {jf_status}). "
+                                       f"Check that your Jellyfin API key has admin privileges and the plugin supports remote configuration.")
 
         log_event('INFO', 'jellyfin', f'Plugin configured remotely — URL: {req.nexroll_url}', source='configure_jellyfin_plugin')
 
@@ -21608,7 +21615,17 @@ def configure_emby_plugin(req: EmbyPluginConfigureRequest, db: Session = Depends
             # Rollback: delete the key we just created since push failed
             db.delete(new_key)
             db.commit()
-            raise HTTPException(status_code=500, detail=f"Failed to push configuration to Emby plugin (HTTP {push_resp.status_code})")
+            resp_body = ''
+            try:
+                resp_body = push_resp.text[:500]
+            except Exception:
+                pass
+            log_event('WARNING', 'emby',
+                      f'Plugin config push failed — HTTP {push_resp.status_code}: {resp_body}',
+                      source='configure_emby_plugin', db=db)
+            raise HTTPException(status_code=500,
+                                detail=f"Failed to push configuration to Emby plugin (HTTP {push_resp.status_code}). "
+                                       f"Check that your Emby API key has admin privileges and the plugin supports remote configuration.")
 
         log_event('INFO', 'emby', f'Plugin configured remotely — URL: {req.nexroll_url}', source='configure_emby_plugin')
 

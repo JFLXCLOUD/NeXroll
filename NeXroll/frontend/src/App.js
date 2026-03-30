@@ -1786,53 +1786,14 @@ const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
         setPlexServerInfo(plex);
         setJellyfinStatus(jellyfin.connected ? 'Connected' : 'Disconnected');
         setJellyfinServerInfo(jellyfin);
-        // Auto-detect Jellyfin plugin when connected
-        if (jellyfin.connected && jellyfin.connection_type === 'direct') {
-          fetch(apiUrl('jellyfin/plugin/detect'))
-            .then(r => r.json())
-            .then(pluginData => {
-              setJellyfinPluginInfo(pluginData);
-              if (pluginData.detected) {
-                if (pluginData.auto_configured) {
-                  // Plugin was just auto-configured by the backend
-                  console.log('[NeXroll] Jellyfin plugin auto-configured successfully');
-                }
-                if (pluginData.config?.NexrollUrl) {
-                  setJellyfinPluginNexrollUrl(prev => prev || pluginData.config.NexrollUrl);
-                } else if (pluginData.suggested_nexroll_url) {
-                  setJellyfinPluginNexrollUrl(prev => prev || pluginData.suggested_nexroll_url);
-                }
-                setJellyfinPluginPathFrom(prev => prev || pluginData.config?.PathPrefixFrom || '');
-                setJellyfinPluginPathTo(prev => prev || pluginData.config?.PathPrefixTo || '');
-              }
-            })
-            .catch(() => setJellyfinPluginInfo(null));
-        } else {
+        // Plugin detect is handled separately (not on every 30s poll)
+        if (!jellyfin.connected || jellyfin.connection_type !== 'direct') {
           setJellyfinPluginInfo(null);
         }
         setEmbyStatus(emby.connected ? 'Connected' : 'Disconnected');
         setEmbyServerInfo(emby);
-        // Auto-detect Emby plugin when connected
-        if (emby.connected && emby.connection_type === 'direct') {
-          fetch(apiUrl('emby/plugin/detect'))
-            .then(r => r.json())
-            .then(pluginData => {
-              setEmbyPluginInfo(pluginData);
-              if (pluginData.detected) {
-                if (pluginData.auto_configured) {
-                  console.log('[NeXroll] Emby plugin auto-configured successfully');
-                }
-                if (pluginData.config?.NexrollUrl) {
-                  setEmbyPluginNexrollUrl(prev => prev || pluginData.config.NexrollUrl);
-                } else if (pluginData.suggested_nexroll_url) {
-                  setEmbyPluginNexrollUrl(prev => prev || pluginData.suggested_nexroll_url);
-                }
-                setEmbyPluginPathFrom(prev => prev || pluginData.config?.PathPrefixFrom || '');
-                setEmbyPluginPathTo(prev => prev || pluginData.config?.PathPrefixTo || '');
-              }
-            })
-            .catch(() => setEmbyPluginInfo(null));
-        } else {
+        // Plugin detect is handled separately (not on every 30s poll)
+        if (!emby.connected || emby.connection_type !== 'direct') {
           setEmbyPluginInfo(null);
         }
         setPrerolls(Array.isArray(prerolls) ? prerolls : []);
@@ -2078,6 +2039,47 @@ const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
       try { es && es.close(); } catch {}
     };
   }, [fetchData]);
+
+  // Detect plugins once when connection status changes (not on every 30s poll)
+  useEffect(() => {
+    if (jellyfinStatus === 'Connected' && jellyfinServerInfo?.connection_type === 'direct') {
+      fetch(apiUrl('jellyfin/plugin/detect'))
+        .then(r => r.json())
+        .then(pluginData => {
+          setJellyfinPluginInfo(pluginData);
+          if (pluginData.detected) {
+            if (pluginData.config?.NexrollUrl) {
+              setJellyfinPluginNexrollUrl(prev => prev || pluginData.config.NexrollUrl);
+            } else if (pluginData.suggested_nexroll_url) {
+              setJellyfinPluginNexrollUrl(prev => prev || pluginData.suggested_nexroll_url);
+            }
+            setJellyfinPluginPathFrom(prev => prev || pluginData.config?.PathPrefixFrom || '');
+            setJellyfinPluginPathTo(prev => prev || pluginData.config?.PathPrefixTo || '');
+          }
+        })
+        .catch(() => setJellyfinPluginInfo(null));
+    }
+  }, [jellyfinStatus, jellyfinServerInfo?.connection_type]);
+
+  useEffect(() => {
+    if (embyStatus === 'Connected' && embyServerInfo?.connection_type === 'direct') {
+      fetch(apiUrl('emby/plugin/detect'))
+        .then(r => r.json())
+        .then(pluginData => {
+          setEmbyPluginInfo(pluginData);
+          if (pluginData.detected) {
+            if (pluginData.config?.NexrollUrl) {
+              setEmbyPluginNexrollUrl(prev => prev || pluginData.config.NexrollUrl);
+            } else if (pluginData.suggested_nexroll_url) {
+              setEmbyPluginNexrollUrl(prev => prev || pluginData.suggested_nexroll_url);
+            }
+            setEmbyPluginPathFrom(prev => prev || pluginData.config?.PathPrefixFrom || '');
+            setEmbyPluginPathTo(prev => prev || pluginData.config?.PathPrefixTo || '');
+          }
+        })
+        .catch(() => setEmbyPluginInfo(null));
+    }
+  }, [embyStatus, embyServerInfo?.connection_type]);
 
   // Check GitHub for latest release once system version is known
   useEffect(() => {

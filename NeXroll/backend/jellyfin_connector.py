@@ -356,16 +356,24 @@ class JellyfinConnector:
         except Exception:
             return None
 
-    def set_plugin_configuration(self, plugin_id: str, config: dict) -> bool:
+    def set_plugin_configuration(self, plugin_id: str, config: dict) -> dict:
         """
         POST /Plugins/{pluginId}/Configuration
-        Returns True on HTTP 200/202/204.
+        Returns dict with 'success' bool and diagnostic details.
         """
         try:
             r = self._request("POST", f"/Plugins/{plugin_id}/Configuration", json=config, timeout=12)
-            return getattr(r, "status_code", 0) in (200, 202, 204)
-        except Exception:
-            return False
+            status = getattr(r, "status_code", 0)
+            if status in (200, 202, 204):
+                return {"success": True, "status_code": status}
+            body = ""
+            try:
+                body = r.text[:500]
+            except Exception:
+                pass
+            return {"success": False, "status_code": status, "body": body}
+        except Exception as e:
+            return {"success": False, "status_code": 0, "error": str(e)}
 
     def get_item(self, item_id: str) -> Optional[dict]:
         """
