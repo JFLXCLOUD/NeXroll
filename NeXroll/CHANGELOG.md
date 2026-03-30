@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.12.0-beta.5] - 03-29-2026
+
+### Bug Fixes (beta.5)
+- **Critical: Plugin Detect API Key Leak** — `GET /jellyfin/plugin/detect` and `GET /emby/plugin/detect` were auto-creating a new API key on every call when the plugin's NexrollUrl was empty; if the config push failed (common with permissions or version mismatches), the key was orphaned in the database. Repeated calls (e.g. page loads) could generate thousands of orphaned keys. **Fix:** Detect endpoints are now read-only — they report plugin status and return `needs_configuration: true` but never create API keys or push config. API key creation is reserved for the explicit `/configure` endpoints only. (#21)
+- **Plugin Configure Key Accumulation** — `POST /jellyfin/plugin/configure` and `POST /emby/plugin/configure` created a fresh API key on every call, only deactivating (not deleting) old keys. Over multiple configure attempts, inactive keys accumulated in the database. **Fix:** Configure endpoints now delete all inactive auto-generated keys before creating a new one, and roll back (delete) the new key if the config push fails.
+- **Configure Push Failure Rollback** — If the plugin config push fails during configure, the newly created API key is now deleted from the database instead of being left as an orphan.
+
 ## [1.12.0-beta.4] - 03-28-2026
 
 ### Coming Soon List — Logo Position Options (beta.4)

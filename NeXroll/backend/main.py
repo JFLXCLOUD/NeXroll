@@ -21136,66 +21136,10 @@ def detect_jellyfin_plugin(request: Request, db: Session = Depends(get_db)):
         # Suggest NeXroll URL from the current request origin
         suggested_url = str(request.base_url).rstrip("/")
 
-        # --- Auto-configure the plugin if it has no NexrollUrl set ---
-        auto_configured = False
-        if not config.get("NexrollUrl"):
-            try:
-                # Generate an API key for the plugin
-                raw_key = _generate_api_key()
-                key_hash = _hash_api_key(raw_key)
-                key_prefix = _get_key_prefix(raw_key)
-
-                # Deactivate previous auto-generated keys
-                existing_auto_keys = db.query(models.APIKey).filter(
-                    models.APIKey.name == "Jellyfin Plugin (Auto)",
-                    models.APIKey.is_active == True
-                ).all()
-                for k in existing_auto_keys:
-                    k.is_active = False
-                db.flush()
-
-                new_key = models.APIKey(
-                    name="Jellyfin Plugin (Auto)",
-                    key_hash=key_hash,
-                    key_prefix=key_prefix,
-                    permissions="read",
-                    description="Auto-generated for Jellyfin NeXroll Intros plugin",
-                    is_active=True,
-                )
-                db.add(new_key)
-                db.commit()
-
-                plugin_config = {
-                    "NexrollUrl": suggested_url,
-                    "ApiKey": raw_key,
-                    "PathPrefixFrom": "",
-                    "PathPrefixTo": "",
-                    "EnableForMovies": True,
-                    "EnableForEpisodes": True,
-                    "MaxIntros": 0,
-                    "TimeoutSeconds": 5,
-                }
-
-                success = connector.set_plugin_configuration(plugin_id, plugin_config)
-                if success:
-                    auto_configured = True
-                    config = {**plugin_config, "ApiKey": f"{key_prefix}..."}
-                    log_event('INFO', 'jellyfin',
-                              f'Plugin auto-configured — URL: {suggested_url}',
-                              source='detect_jellyfin_plugin', db=db)
-                else:
-                    log_event('WARNING', 'jellyfin',
-                              'Plugin auto-configuration push failed',
-                              source='detect_jellyfin_plugin', db=db)
-            except Exception as auto_err:
-                log_event('WARNING', 'jellyfin',
-                          f'Plugin auto-configuration error: {auto_err}',
-                          source='detect_jellyfin_plugin', db=db)
-
         log_event('INFO', 'jellyfin', f'Plugin detected: {plugin.get("Name")} v{plugin.get("Version")}', source='detect_jellyfin_plugin')
         return {
             "detected": True,
-            "auto_configured": auto_configured,
+            "auto_configured": False,
             "plugin": {
                 "id": plugin_id,
                 "name": plugin.get("Name") or plugin.get("name") or "NeXroll Intros",
@@ -21242,6 +21186,7 @@ def configure_jellyfin_plugin(req: JellyfinPluginConfigureRequest, db: Session =
     if not jf_api_key:
         raise HTTPException(status_code=422, detail="No Jellyfin API key found")
 
+    new_key = None
     try:
         from backend.jellyfin_connector import JellyfinConnector
         connector = JellyfinConnector(jellyfin_url, jf_api_key)
@@ -21253,14 +21198,24 @@ def configure_jellyfin_plugin(req: JellyfinPluginConfigureRequest, db: Session =
 
         plugin_id = plugin.get("Id") or plugin.get("id") or NEXROLL_PLUGIN_ID
 
-        # --- API key rotation: deactivate previous auto-generated key, create fresh one ---
-        existing_auto_keys = db.query(models.APIKey).filter(
+        # --- API key management: reuse existing active key or create new one ---
+        # Delete ALL inactive auto-generated keys to prevent accumulation
+        db.query(models.APIKey).filter(
+            models.APIKey.name == "Jellyfin Plugin (Auto)",
+            models.APIKey.is_active == False
+        ).delete(synchronize_session=False)
+        db.flush()
+
+        # Check for an existing active auto-generated key
+        existing_active = db.query(models.APIKey).filter(
             models.APIKey.name == "Jellyfin Plugin (Auto)",
             models.APIKey.is_active == True
-        ).all()
-        for k in existing_auto_keys:
-            k.is_active = False
-        db.flush()
+        ).first()
+
+        if existing_active:
+            # Deactivate the old key — we need the raw key for the plugin config
+            existing_active.is_active = False
+            db.flush()
 
         raw_key = _generate_api_key()
         key_hash = _hash_api_key(raw_key)
@@ -21293,6 +21248,9 @@ def configure_jellyfin_plugin(req: JellyfinPluginConfigureRequest, db: Session =
         success = connector.set_plugin_configuration(plugin_id, plugin_config)
 
         if not success:
+            # Rollback: delete the key we just created since push failed
+            db.delete(new_key)
+            db.commit()
             raise HTTPException(status_code=500, detail="Failed to push configuration to Jellyfin plugin")
 
         log_event('INFO', 'jellyfin', f'Plugin configured remotely — URL: {req.nexroll_url}', source='configure_jellyfin_plugin')
@@ -21306,6 +21264,13 @@ def configure_jellyfin_plugin(req: JellyfinPluginConfigureRequest, db: Session =
     except HTTPException:
         raise
     except Exception as e:
+        # Rollback key if it was created
+        try:
+            if new_key and new_key.id:
+                db.delete(new_key)
+                db.commit()
+        except Exception:
+            pass
         log_event('WARNING', 'jellyfin', f'Plugin configuration failed: {e}', source='configure_jellyfin_plugin')
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -21522,70 +21487,10 @@ def detect_emby_plugin(request: Request, db: Session = Depends(get_db)):
 
         suggested_url = str(request.base_url).rstrip("/")
 
-        # Auto-configure the plugin if it has no NexrollUrl set
-        auto_configured = False
-        if not config.get("NexrollUrl"):
-            try:
-                raw_key = _generate_api_key()
-                key_hash = _hash_api_key(raw_key)
-                key_prefix = _get_key_prefix(raw_key)
-
-                # Deactivate previous auto-generated keys
-                existing_auto_keys = db.query(models.APIKey).filter(
-                    models.APIKey.name == "Emby Plugin (Auto)",
-                    models.APIKey.is_active == True
-                ).all()
-                for k in existing_auto_keys:
-                    k.is_active = False
-                db.flush()
-
-                new_key = models.APIKey(
-                    name="Emby Plugin (Auto)",
-                    key_hash=key_hash,
-                    key_prefix=key_prefix,
-                    permissions="read",
-                    description="Auto-generated for Emby NeXroll Intros plugin",
-                    is_active=True,
-                )
-                db.add(new_key)
-                db.commit()
-
-                plugin_config = {
-                    "NexrollUrl": suggested_url,
-                    "ApiKey": raw_key,
-                    "PathPrefixFrom": "",
-                    "PathPrefixTo": "",
-                    "EnableForMovies": True,
-                    "EnableForEpisodes": True,
-                    "MaxIntros": 0,
-                    "TimeoutSeconds": 5,
-                }
-
-                push_resp = requests.post(
-                    f"{base}/emby/Plugins/{plugin_id}/Configuration",
-                    headers={**headers, "Content-Type": "application/json"},
-                    json=plugin_config,
-                    timeout=10,
-                )
-                if push_resp.status_code in (200, 204):
-                    auto_configured = True
-                    config = {**plugin_config, "ApiKey": f"{key_prefix}..."}
-                    log_event('INFO', 'emby',
-                              f'Plugin auto-configured — URL: {suggested_url}',
-                              source='detect_emby_plugin', db=db)
-                else:
-                    log_event('WARNING', 'emby',
-                              f'Plugin auto-configuration push failed (HTTP {push_resp.status_code})',
-                              source='detect_emby_plugin', db=db)
-            except Exception as auto_err:
-                log_event('WARNING', 'emby',
-                          f'Plugin auto-configuration error: {auto_err}',
-                          source='detect_emby_plugin', db=db)
-
         log_event('INFO', 'emby', f'Plugin detected: {plugin.get("Name")} v{plugin.get("Version")}', source='detect_emby_plugin')
         return {
             "detected": True,
-            "auto_configured": auto_configured,
+            "auto_configured": False,
             "plugin": {
                 "id": plugin_id,
                 "name": plugin.get("Name") or plugin.get("name") or "NeXroll Intros",
@@ -21625,6 +21530,7 @@ def configure_emby_plugin(req: EmbyPluginConfigureRequest, db: Session = Depends
     base = emby_url.rstrip("/")
     headers = {"X-Emby-Token": emby_api_key}
 
+    new_key = None
     try:
         # Find the plugin on Emby
         resp = requests.get(f"{base}/emby/Plugins", headers=headers, timeout=10)
@@ -21644,14 +21550,24 @@ def configure_emby_plugin(req: EmbyPluginConfigureRequest, db: Session = Depends
 
         plugin_id = plugin.get("Id") or plugin.get("id") or NEXROLL_EMBY_PLUGIN_ID
 
-        # API key rotation: deactivate previous auto-generated key, create fresh one
-        existing_auto_keys = db.query(models.APIKey).filter(
+        # --- API key management: reuse existing active key or create new one ---
+        # Delete ALL inactive auto-generated keys to prevent accumulation
+        db.query(models.APIKey).filter(
+            models.APIKey.name == "Emby Plugin (Auto)",
+            models.APIKey.is_active == False
+        ).delete(synchronize_session=False)
+        db.flush()
+
+        # Check for an existing active auto-generated key
+        existing_active = db.query(models.APIKey).filter(
             models.APIKey.name == "Emby Plugin (Auto)",
             models.APIKey.is_active == True
-        ).all()
-        for k in existing_auto_keys:
-            k.is_active = False
-        db.flush()
+        ).first()
+
+        if existing_active:
+            # Deactivate the old key — we need the raw key for the plugin config
+            existing_active.is_active = False
+            db.flush()
 
         raw_key = _generate_api_key()
         key_hash = _hash_api_key(raw_key)
@@ -21689,6 +21605,9 @@ def configure_emby_plugin(req: EmbyPluginConfigureRequest, db: Session = Depends
         )
 
         if push_resp.status_code not in (200, 204):
+            # Rollback: delete the key we just created since push failed
+            db.delete(new_key)
+            db.commit()
             raise HTTPException(status_code=500, detail=f"Failed to push configuration to Emby plugin (HTTP {push_resp.status_code})")
 
         log_event('INFO', 'emby', f'Plugin configured remotely — URL: {req.nexroll_url}', source='configure_emby_plugin')
@@ -21702,6 +21621,13 @@ def configure_emby_plugin(req: EmbyPluginConfigureRequest, db: Session = Depends
     except HTTPException:
         raise
     except Exception as e:
+        # Rollback key if it was created
+        try:
+            if new_key and new_key.id:
+                db.delete(new_key)
+                db.commit()
+        except Exception:
+            pass
         log_event('WARNING', 'emby', f'Plugin configuration failed: {e}', source='configure_emby_plugin')
         raise HTTPException(status_code=500, detail=str(e))
 
