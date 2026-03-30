@@ -2692,6 +2692,19 @@ def system_paths():
         info["prerolls_dir"] = "PREROLLS_DIR" in globals() and PREROLLS_DIR or None
         info["thumbnails_dir"] = "THUMBNAILS_DIR" in globals() and THUMBNAILS_DIR or None
 
+        # Flag if DB has a custom preroll folder that isn't the active one
+        try:
+            _diag_db = SessionLocal()
+            _diag_s = _diag_db.query(models.Setting).first()
+            _db_custom = getattr(_diag_s, 'preroll_folder', None) if _diag_s else None
+            if _db_custom and _db_custom.strip():
+                info["preroll_folder_db"] = _db_custom.strip()
+                if _db_custom.strip() != PREROLLS_DIR:
+                    info["preroll_folder_mismatch"] = True
+            _diag_db.close()
+        except Exception:
+            pass
+
         try:
             log_dir = _ensure_log_dir()
             info["log_dir"] = log_dir
@@ -13829,6 +13842,8 @@ try:
             PREROLLS_DIR = _custom
             THUMBNAILS_DIR = os.path.join(PREROLLS_DIR, "thumbnails")
             print(f"Using custom preroll folder from settings: {PREROLLS_DIR}")
+        elif _custom:
+            print(f"WARNING: Custom preroll folder '{_custom}' is set in DB but does not exist on disk — using default: {PREROLLS_DIR}")
     _db_tmp.close()
 except Exception as _e:
     print(f"Could not check DB for custom preroll folder: {_e}")
@@ -21253,12 +21268,18 @@ def configure_jellyfin_plugin(req: JellyfinPluginConfigureRequest, db: Session =
             db.commit()
             jf_status = result.get('status_code', '?')
             jf_body = result.get('body', result.get('error', 'unknown'))
-            log_event('WARNING', 'jellyfin',
-                      f'Plugin config push failed — HTTP {jf_status}: {jf_body}',
+            msg = f'Plugin config push failed — HTTP {jf_status}: {jf_body}'
+            logger.warning(f'[Jellyfin] {msg}')
+            log_event('WARNING', 'jellyfin', msg,
                       source='configure_jellyfin_plugin', db=db)
-            raise HTTPException(status_code=500,
-                                detail=f"Failed to push configuration to Jellyfin plugin (HTTP {jf_status}). "
-                                       f"Check that your Jellyfin API key has admin privileges and the plugin supports remote configuration.")
+
+            if jf_status == 404:
+                detail = ("Jellyfin returned 404 for plugin configuration endpoint. "
+                          "The NeXroll plugin may not be loaded — check Jellyfin Dashboard → Plugins and restart Jellyfin if needed.")
+            else:
+                detail = (f"Failed to push configuration to Jellyfin plugin (HTTP {jf_status}). "
+                          f"Check that your Jellyfin API key has admin privileges and the plugin supports remote configuration.")
+            raise HTTPException(status_code=502, detail=detail)
 
         log_event('INFO', 'jellyfin', f'Plugin configured remotely — URL: {req.nexroll_url}', source='configure_jellyfin_plugin')
 
@@ -21279,6 +21300,7 @@ def configure_jellyfin_plugin(req: JellyfinPluginConfigureRequest, db: Session =
         except Exception:
             pass
         log_event('WARNING', 'jellyfin', f'Plugin configuration failed: {e}', source='configure_jellyfin_plugin')
+        logger.warning(f'[Jellyfin] Plugin configuration failed: {e}')
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -21620,10 +21642,10 @@ def configure_emby_plugin(req: EmbyPluginConfigureRequest, db: Session = Depends
                 resp_body = push_resp.text[:500]
             except Exception:
                 pass
-            log_event('WARNING', 'emby',
-                      f'Plugin config push failed — HTTP {push_resp.status_code}: {resp_body}',
-                      source='configure_emby_plugin', db=db)
-            raise HTTPException(status_code=500,
+            msg = f'Plugin config push failed — HTTP {push_resp.status_code}: {resp_body}'
+            logger.warning(f'[Emby] {msg}')
+            log_event('WARNING', 'emby', msg, source='configure_emby_plugin', db=db)
+            raise HTTPException(status_code=502,
                                 detail=f"Failed to push configuration to Emby plugin (HTTP {push_resp.status_code}). "
                                        f"Check that your Emby API key has admin privileges and the plugin supports remote configuration.")
 
@@ -21646,6 +21668,7 @@ def configure_emby_plugin(req: EmbyPluginConfigureRequest, db: Session = Depends
         except Exception:
             pass
         log_event('WARNING', 'emby', f'Plugin configuration failed: {e}', source='configure_emby_plugin')
+        logger.warning(f'[Emby] Plugin configuration failed: {e}')
         raise HTTPException(status_code=500, detail=str(e))
 
 

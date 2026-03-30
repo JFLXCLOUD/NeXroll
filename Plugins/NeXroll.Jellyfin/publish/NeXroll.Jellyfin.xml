@@ -5,11 +5,16 @@
     </assembly>
     <members>
         <member name="T:NeXroll.Jellyfin.NexrollIntroProvider">
-            <summary>
-            Jellyfin intro provider that fetches the currently-active preroll
-            paths from a NeXroll server and returns them as <see cref="T:MediaBrowser.Controller.Library.IntroInfo"/>
-            items for playback injection.
-            </summary>
+             <summary>
+             Jellyfin intro provider that fetches the currently-active preroll
+             paths from a NeXroll server and returns them as <see cref="T:MediaBrowser.Controller.Library.IntroInfo"/>
+             items for playback injection.
+            
+             Jellyfin's <c>ResolveIntro</c> requires intro files to exist in its
+             database as Video items.  This provider downloads preroll files to a
+             local cache, resolves them via <c>ILibraryManager.ResolvePath</c>, and
+             saves them to the database so they can be returned by <c>ItemId</c>.
+             </summary>
         </member>
         <member name="M:NeXroll.Jellyfin.NexrollIntroProvider.BuildRequest(System.Net.Http.HttpMethod,System.String,NeXroll.Jellyfin.PluginConfiguration)">
             <summary>
@@ -17,8 +22,31 @@
             (API key + server identity).
             </summary>
         </member>
-        <member name="M:NeXroll.Jellyfin.NexrollIntroProvider.GetIntros(MediaBrowser.Controller.Entities.BaseItem,Jellyfin.Data.Entities.User)">
+        <member name="M:NeXroll.Jellyfin.NexrollIntroProvider.GetIntros(MediaBrowser.Controller.Entities.BaseItem,Jellyfin.Database.Implementations.Entities.User)">
             <inheritdoc />
+        </member>
+        <member name="M:NeXroll.Jellyfin.NexrollIntroProvider.ResolveIntroInfo(NeXroll.Jellyfin.NexrollIntroProvider.NexrollIntroItem,NeXroll.Jellyfin.PluginConfiguration)">
+            <summary>
+            Resolve a preroll item to an IntroInfo that Jellyfin can actually play.
+            Downloads the file to a local cache if needed, then ensures it exists
+            as a Video item in Jellyfin's database (required by ResolveIntro).
+            Returns IntroInfo with ItemId for direct database lookup.
+            </summary>
+        </member>
+        <member name="M:NeXroll.Jellyfin.NexrollIntroProvider.EnsureLocalFile(NeXroll.Jellyfin.NexrollIntroProvider.NexrollIntroItem,NeXroll.Jellyfin.PluginConfiguration)">
+            <summary>
+            Ensure the intro file exists on the local filesystem. Downloads from
+            the NeXroll streaming endpoint if the file is remote or UNC.
+            </summary>
+        </member>
+        <member name="M:NeXroll.Jellyfin.NexrollIntroProvider.EnsureVideoInDatabase(System.String,System.String)">
+            <summary>
+            Ensure a video file at the given local path is registered in Jellyfin's
+            item database.  Jellyfin's ResolveIntro requires the Video to exist in
+            the DB when looking up by ItemId.  We use ResolvePath to create the
+            Video object (which computes its deterministic GUID), then check if it
+            already exists in the DB.  If not, we save it.
+            </summary>
         </member>
         <member name="M:NeXroll.Jellyfin.NexrollIntroProvider.TranslatePath(System.String,NeXroll.Jellyfin.PluginConfiguration)">
             <summary>

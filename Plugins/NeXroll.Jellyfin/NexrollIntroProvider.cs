@@ -2,7 +2,7 @@ using System.Net.Http.Json;
 using System.Net.Http.Headers;
 using System.Security.Cryptography;
 using System.Text;
-using Jellyfin.Data.Entities;
+using Jellyfin.Database.Implementations.Entities;
 using MediaBrowser.Controller.Entities;
 using MediaBrowser.Controller.Entities.Movies;
 using MediaBrowser.Controller.Entities.TV;

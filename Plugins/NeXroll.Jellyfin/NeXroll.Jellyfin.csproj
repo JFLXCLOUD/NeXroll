@@ -1,7 +1,7 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
-    <TargetFramework>net8.0</TargetFramework>
+    <TargetFramework>net9.0</TargetFramework>
     <RootNamespace>NeXroll.Jellyfin</RootNamespace>
     <AssemblyName>NeXroll.Jellyfin</AssemblyName>
     <GenerateAssemblyInfo>false</GenerateAssemblyInfo>
@@ -11,11 +11,11 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="Jellyfin.Controller" Version="10.10.*" />
-    <PackageReference Include="Jellyfin.Data" Version="10.10.*" />
-    <PackageReference Include="Jellyfin.Model" Version="10.10.*" />
-    <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="8.0.*" />
-    <PackageReference Include="System.Net.Http.Json" Version="8.0.*" />
+    <PackageReference Include="Jellyfin.Controller" Version="10.11.*" />
+    <PackageReference Include="Jellyfin.Data" Version="10.11.*" />
+    <PackageReference Include="Jellyfin.Model" Version="10.11.*" />
+    <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="9.0.*" />
+    <PackageReference Include="System.Net.Http.Json" Version="9.0.*" />
   </ItemGroup>
 
   <ItemGroup>
