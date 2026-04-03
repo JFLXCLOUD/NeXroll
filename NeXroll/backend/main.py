@@ -5375,19 +5375,69 @@ async def update_check_now(
 ):
     """
     Manually trigger an update check and return latest release info.
+    Performs semver-aware comparison including pre-release tags.
     """
     import urllib.request
     import json as json_module
+    import re as re_mod
     from datetime import datetime
     
+    def _parse_semver(v: str):
+        """Parse a version string into (major, minor, patch, pre_tag, pre_num).
+        Examples:
+          '1.12.0'         -> (1, 12, 0, None, 0)
+          'v1.12.0-beta.8' -> (1, 12, 0, 'beta', 8)
+          '1.12.0-rc.2'    -> (1, 12, 0, 'rc', 2)
+        """
+        s = str(v).strip().lstrip('vV')
+        m = re_mod.match(r'(\d+)(?:\.(\d+))?(?:\.(\d+))?(?:[.-]([a-zA-Z]+)[.-]?(\d+))?', s)
+        if not m:
+            return (0, 0, 0, None, 0)
+        major = int(m.group(1))
+        minor = int(m.group(2) or 0)
+        patch = int(m.group(3) or 0)
+        pre_tag = m.group(4).lower() if m.group(4) else None
+        pre_num = int(m.group(5) or 0)
+        return (major, minor, patch, pre_tag, pre_num)
+
+    def _compare_versions(a: str, b: str) -> int:
+        """Compare two version strings. Returns 1 if a > b, -1 if a < b, 0 if equal.
+        Semver rules: pre-release < stable for same base version.
+        """
+        va = _parse_semver(a)
+        vb = _parse_semver(b)
+        # Compare major.minor.patch
+        for i in range(3):
+            if va[i] > vb[i]: return 1
+            if va[i] < vb[i]: return -1
+        # Same base version — compare pre-release
+        a_pre, a_num = va[3], va[4]
+        b_pre, b_num = vb[3], vb[4]
+        if a_pre is None and b_pre is None:
+            return 0  # both stable
+        if a_pre is None:
+            return 1  # a is stable, b is pre-release → a > b
+        if b_pre is None:
+            return -1  # b is stable, a is pre-release → a < b
+        # Both have pre-release tags
+        pre_order = {'alpha': 0, 'beta': 1, 'rc': 2}
+        a_rank = pre_order.get(a_pre, 99)
+        b_rank = pre_order.get(b_pre, 99)
+        if a_rank != b_rank:
+            return 1 if a_rank > b_rank else -1
+        if a_num > b_num: return 1
+        if a_num < b_num: return -1
+        return 0
+
     setting = db.query(models.Setting).first()
     include_prerelease = getattr(setting, 'update_include_prerelease', False) if setting else False
+    current_version = getattr(app, "version", "0.0.0")
     
     try:
         # Determine which API endpoint to use
         if include_prerelease:
-            # Get all releases and find the first one
-            api_url = "https://api.github.com/repos/JFLXCLOUD/NeXroll/releases"
+            # Get all releases and find the first one (sorted newest first by GitHub)
+            api_url = "https://api.github.com/repos/JFLXCLOUD/NeXroll/releases?per_page=5"
         else:
             # Get latest stable release
             api_url = "https://api.github.com/repos/JFLXCLOUD/NeXroll/releases/latest"
@@ -5400,11 +5450,10 @@ async def update_check_now(
         with urllib.request.urlopen(req, timeout=10) as response:
             data = json_module.loads(response.read().decode())
         
-        # If we got a list (prereleases), take the first one
+        # If we got a list (prereleases), take the first non-draft one
         if isinstance(data, list):
-            if len(data) > 0:
-                data = data[0]
-            else:
+            data = next((r for r in data if not r.get('draft', False)), None)
+            if data is None:
                 return {"success": False, "error": "No releases found"}
         
         # Update last check time
@@ -5412,8 +5461,14 @@ async def update_check_now(
             setting.update_last_check = datetime.now()
             db.commit()
         
+        latest_tag = data.get('tag_name', '').lstrip('vV')
+        cmp = _compare_versions(latest_tag, current_version)
+        
         return {
             "success": True,
+            "update_available": cmp > 0,
+            "current_version": current_version,
+            "latest_version": latest_tag,
             "version": data.get('tag_name', ''),
             "name": data.get('name', ''),
             "body": data.get('body', ''),
@@ -6053,14 +6108,13 @@ def get_plex_status(db: Session = Depends(get_db)):
 
 @app.post("/plex/disconnect")
 def disconnect_plex(db: Session = Depends(get_db)):
-    """Disconnect from Plex server by clearing stored credentials"""
+    """Disconnect from Plex server by clearing active connection (preserves stable token)"""
     setting = db.query(models.Setting).first()
 
-    # Clear secure token (best-effort)
-    try:
-        secure_store.delete_plex_token()
-    except Exception:
-        pass
+    # NOTE: We intentionally do NOT delete the stable token from the secure
+    # store here.  The stable token is a separately managed persistent
+    # credential that should survive disconnect/reconnect cycles so the user
+    # can reconnect with one click.
 
     if setting:
         setting.plex_url = None
@@ -12308,11 +12362,14 @@ def get_current_preroll_details(db: Session = Depends(get_db)):
                 mode = "sequential"
             # If only ; present, stays as shuffle
 
-    # Parse the preroll string — Plex uses ; for shuffle and , for playlist
-    if "," in current_preroll:
-        raw_paths = [p.strip() for p in current_preroll.split(",") if p.strip()]
-    elif ";" in current_preroll:
+    # Parse the preroll string — Plex uses ; for shuffle and , for playlist.
+    # Check ; first: semicolons never appear in file paths, but commas can
+    # appear in filenames, so splitting on , when ; is the real delimiter
+    # would produce garbage entries.
+    if ";" in current_preroll:
         raw_paths = [p.strip() for p in current_preroll.split(";") if p.strip()]
+    elif "," in current_preroll:
+        raw_paths = [p.strip() for p in current_preroll.split(",") if p.strip()]
     else:
         raw_paths = [current_preroll.strip()] if current_preroll.strip() else []
 
@@ -12370,13 +12427,18 @@ def get_current_preroll_details(db: Session = Depends(get_db)):
             })
         else:
             fname = os.path.basename(plex_path)
+            # For unmanaged prerolls, try to serve the file directly if accessible
+            fallback_url = None
+            serve_path = local_path if os.path.isfile(local_path) else (plex_path if os.path.isfile(plex_path) else None)
+            if serve_path:
+                fallback_url = f"/preview/file?path={quote(serve_path, safe='')}"
             results.append({
                 "id": None,
                 "filename": fname,
                 "display_name": fname,
                 "category_name": None,
                 "path": plex_path,
-                "preview_url": None
+                "preview_url": fallback_url
             })
 
     # Include applied sequence info
@@ -14093,6 +14155,21 @@ def get_or_create_thumbnail(category: str, thumb_name: str):
             raise HTTPException(status_code=500, detail="Thumbnail generation error")
 
     return FileResponse(thumb_path, media_type="image/jpeg")
+
+@app.get("/preview/file")
+def preview_file_by_path(path: str):
+    """Serve a video file by its absolute path (for previewing unmanaged prerolls)."""
+    decoded = unquote(path)
+    if not os.path.isabs(decoded) or not os.path.isfile(decoded):
+        raise HTTPException(status_code=404, detail="File not found")
+    ext = os.path.splitext(decoded)[1].lower()
+    if ext not in ('.mp4', '.mkv', '.avi', '.mov', '.webm', '.m4v', '.wmv', '.ts'):
+        raise HTTPException(status_code=400, detail="Not a video file")
+    import mimetypes
+    mime_type, _ = mimetypes.guess_type(decoded)
+    if not mime_type or not mime_type.startswith("video/"):
+        mime_type = "video/mp4"
+    return FileResponse(decoded, media_type=mime_type)
 
 @app.get("/static/prerolls/{category}/{filename}")
 def get_preroll_video(category: str, filename: str, db: Session = Depends(get_db)):

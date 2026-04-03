@@ -132,28 +132,44 @@ const normalizeVersionString = (input) => {
     if (!input) return '0.0.0';
     let s = String(input).trim();
     s = s.replace(/^v+/i, '');
-    s = s.replace(/[_-]/g, '.');
-    const m = s.match(/(\d+(?:\.\d+){0,3})/);
-    return m ? m[1] : '0.0.0';
+    return s || '0.0.0';
   } catch {
     return '0.0.0';
   }
 };
+const parseSemver = (v) => {
+  const s = normalizeVersionString(v);
+  const m = s.match(/^(\d+)(?:\.(\d+))?(?:\.(\d+))?(?:[.-]([a-zA-Z]+)[.-]?(\d+))?/);
+  if (!m) return { major: 0, minor: 0, patch: 0, preTag: null, preNum: 0 };
+  return {
+    major: parseInt(m[1], 10) || 0,
+    minor: parseInt(m[2] || '0', 10),
+    patch: parseInt(m[3] || '0', 10),
+    preTag: m[4] ? m[4].toLowerCase() : null,
+    preNum: parseInt(m[5] || '0', 10)
+  };
+};
 const parseVersion = (v) => {
-  const parts = normalizeVersionString(v).split('.').map(n => parseInt(n, 10) || 0);
-  while (parts.length < 3) parts.push(0);
-  return parts.slice(0, 4);
+  const sv = parseSemver(v);
+  return [sv.major, sv.minor, sv.patch];
 };
 const compareVersions = (a, b) => {
-  const pa = parseVersion(a);
-  const pb = parseVersion(b);
-  const len = Math.max(pa.length, pb.length);
-  for (let i = 0; i < len; i++) {
-    const ai = pa[i] || 0;
-    const bi = pb[i] || 0;
-    if (ai > bi) return 1;
-    if (ai < bi) return -1;
-  }
+  const va = parseSemver(a);
+  const vb = parseSemver(b);
+  // Compare major.minor.patch
+  if (va.major !== vb.major) return va.major > vb.major ? 1 : -1;
+  if (va.minor !== vb.minor) return va.minor > vb.minor ? 1 : -1;
+  if (va.patch !== vb.patch) return va.patch > vb.patch ? 1 : -1;
+  // Same base version — compare pre-release
+  if (!va.preTag && !vb.preTag) return 0; // both stable
+  if (!va.preTag) return 1;  // a is stable, b is pre-release
+  if (!vb.preTag) return -1; // b is stable, a is pre-release
+  // Both have pre-release tags
+  const preOrder = { alpha: 0, beta: 1, rc: 2 };
+  const aRank = preOrder[va.preTag] ?? 99;
+  const bRank = preOrder[vb.preTag] ?? 99;
+  if (aRank !== bRank) return aRank > bRank ? 1 : -1;
+  if (va.preNum !== vb.preNum) return va.preNum > vb.preNum ? 1 : -1;
   return 0;
 };
 const extractVersionFromRelease = (data) => {
@@ -540,6 +556,20 @@ function App() {
   const [activeCategory, setActiveCategory] = useState(null);
   const [appliedSequence, setAppliedSequence] = useState(null); // Manually applied sequence info
   const [currentPrerollPreview, setCurrentPrerollPreview] = useState(null); // {prerolls: [...], index: 0} for preview modal
+  const dashboardVideoRef = useRef(null);
+
+  // Load new src into the dashboard preview video when track index changes
+  useEffect(() => {
+    if (!currentPrerollPreview || !dashboardVideoRef.current) return;
+    const current = currentPrerollPreview.prerolls[currentPrerollPreview.index];
+    if (!current || !current.preview_url) return;
+    const url = apiUrl(current.preview_url.replace(/^\//, ''));
+    dashboardVideoRef.current.src = url;
+    dashboardVideoRef.current.load();
+    dashboardVideoRef.current.play().catch(() => {});
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentPrerollPreview?.index]);
+
   const [activeScheduleIds, setActiveScheduleIds] = useState([]);
   
   // Changelog modal state
@@ -967,13 +997,14 @@ const [calendarFilterType, setCalendarFilterType] = useState('all'); // 'all', '
 const [calendarShowConflictsOnly, setCalendarShowConflictsOnly] = useState(false); // Show only days with conflicts
 const [calendarShowInactive, setCalendarShowInactive] = useState(false); // Show inactive schedules too
 
-// Conflict Resolution Wizard state
+// Conflict Resolution state
 const [showConflictWizard, setShowConflictWizard] = useState(false);
 const [conflictResolutions, setConflictResolutions] = useState({}); // { conflictId: selectedFixId }
 const [conflictWizardApplying, setConflictWizardApplying] = useState(false);
 const [conflictWizardResults, setConflictWizardResults] = useState(null); // { applied: [], failed: [] }
 const [ignoredConflicts, setIgnoredConflicts] = useState([]); // Array of ignored pair-keys like ["3-7"]
-const [showIgnoredConflicts, setShowIgnoredConflicts] = useState(false); // Toggle for ignored section in wizard
+const [showIgnoredConflicts, setShowIgnoredConflicts] = useState(false); // Toggle for ignored section
+const [conflictPageTimeframe, setConflictPageTimeframe] = useState('monthly'); // 'weekly', 'monthly', 'yearly'
 
 // Holiday Browser state
 const [showHolidayBrowser, setShowHolidayBrowser] = useState(false);
@@ -1476,16 +1507,19 @@ const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
         });
         if (res.ok) {
           const data = await res.json();
-          if (data.update_available) {
+          if (data.success && data.update_available) {
             latest = {
               version: data.latest_version,
-              url: data.download_url || 'https://github.com/JFLXCLOUD/NeXroll/releases/latest',
-              name: data.release_name || `v${data.latest_version}`,
-              body: data.release_body || '',
+              url: data.html_url || 'https://github.com/JFLXCLOUD/NeXroll/releases/latest',
+              name: data.name || `v${data.latest_version}`,
+              body: data.body || '',
               published_at: data.published_at || null,
               prerelease: data.prerelease || false
             };
             localStorage.setItem('nx_latest_release_info', JSON.stringify(latest));
+          } else {
+            // No update available — clear any stale cached info
+            localStorage.removeItem('nx_latest_release_info');
           }
           localStorage.setItem('nx_update_checked_at', String(now));
         } else {
@@ -1503,13 +1537,16 @@ const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
         const cmp = compareVersions(latest.version, installedVersion);
         setUpdateInfo(latest);
         setShowUpdateBanner(cmp > 0 && dismissed !== normalizeVersionString(latest.version));
+        return { updateAvailable: cmp > 0, latest };
       } else {
         setShowUpdateBanner(false);
+        return { updateAvailable: false, latest: null };
       }
     } catch (e) {
       console.warn('Update check failed:', e);
+      return { updateAvailable: false, latest: null };
     }
-  }, [compareVersions, normalizeVersionString]);
+  }, []);
 
   const handleDismissUpdate = async () => {
     try {
@@ -3288,7 +3325,7 @@ const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
 
   // Analyze ALL schedule conflicts across the entire configuration
   // Returns structured conflict objects with suggested auto-resolutions
-  const analyzeAllConflicts = () => {
+  const analyzeAllConflicts = (lookaheadDays = 30) => {
     const allConflicts = [];
     const seen = new Set(); // Avoid duplicate pairs
     const activeSchedules = schedules.filter(s => s.is_active);
@@ -3317,10 +3354,10 @@ const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
         const timeA = patternA.timeRange || {};
         const timeB = patternB.timeRange || {};
 
-        // Find overlapping days (look ahead 30 days)
+        // Find overlapping days (look ahead configurable)
         const today = new Date();
         const overlappingDays = [];
-        for (let d = 0; d < 30; d++) {
+        for (let d = 0; d < lookaheadDays; d++) {
           const checkDate = new Date(today.getFullYear(), today.getMonth(), today.getDate() + d);
           const dayTime = checkDate.getTime();
           if (isScheduleActiveOnDay(a, dayTime, normalizeDay) && isScheduleActiveOnDay(b, dayTime, normalizeDay)) {
@@ -5184,7 +5221,7 @@ const DashboardTiles = {
           {withConflicts.length > 0 && (
             <button
               type="button"
-              onClick={() => { setShowConflictWizard(true); setConflictResolutions({}); setConflictWizardResults(null); setShowIgnoredConflicts(false); loadIgnoredConflicts(); }}
+              onClick={() => { setActiveTab('schedules/conflicts'); setConflictResolutions({}); setConflictWizardResults(null); setShowIgnoredConflicts(false); loadIgnoredConflicts(); }}
               style={{
                 display: 'flex', alignItems: 'center', gap: '6px',
                 padding: '6px 16px', borderRadius: '6px', fontSize: '0.8rem', fontWeight: 600,
@@ -6655,13 +6692,10 @@ const DashboardTiles = {
                   throw new Error(data.error || 'Update check failed');
                 }
                 
-                const latestVersion = (data.version || '').replace(/^v/, '');
-                const currentVersion = systemVersion?.version || '0.0.0';
+                const latestVersion = (data.latest_version || data.version || '').replace(/^v/, '');
+                const currentVersion = data.current_version || systemVersion?.api_version || '0.0.0';
                 
-                // Simple version comparison
-                const isNewer = latestVersion.localeCompare(currentVersion, undefined, { numeric: true }) > 0;
-                
-                if (isNewer) {
+                if (data.update_available) {
                   const prereleaseLabel = data.prerelease ? ' (Pre-release)' : '';
                   setUpdateCheckProgress({ status: `Update available: v${latestVersion}${prereleaseLabel}`, phase: 'done' });
                   setUpdateInfo({ version: latestVersion, url: data.html_url, name: data.name, prerelease: data.prerelease });
@@ -7199,14 +7233,14 @@ const DashboardTiles = {
                   {hasAnyConflicts && (
                     <button
                       type="button"
-                      onClick={() => { setShowConflictWizard(true); setConflictResolutions({}); setConflictWizardResults(null); setShowIgnoredConflicts(false); loadIgnoredConflicts(); }}
+                      onClick={() => { setActiveTab('schedules/conflicts'); setConflictResolutions({}); setConflictWizardResults(null); setShowIgnoredConflicts(false); loadIgnoredConflicts(); }}
                       style={{
                         display: 'flex', alignItems: 'center', gap: '4px',
                         padding: '4px 10px', borderRadius: '20px', fontSize: '0.75rem', fontWeight: 600,
                         background: 'linear-gradient(135deg, rgba(239,68,68,0.12), rgba(245,158,11,0.12))',
                         color: '#ef4444', border: 'none', cursor: 'pointer'
                       }}
-                      title="Open Conflict Resolution Wizard"
+                      title="Open Conflict Resolution"
                     >
                       <Wand2 size={12} /> Fix
                     </button>
@@ -8808,6 +8842,12 @@ const DashboardTiles = {
         icon: <BookOpen size={16} />, 
         label: 'Saved Sequences', 
         description: 'Your sequence library'
+      },
+      { 
+        id: 'schedules/conflicts', 
+        icon: <GitCompare size={16} />, 
+        label: 'Conflicts', 
+        description: 'Detect and resolve schedule conflicts'
       }
     ];
 
@@ -8818,7 +8858,9 @@ const DashboardTiles = {
           borderBottom: '2px solid var(--border-color)',
           display: 'flex',
           gap: '0.25rem',
-          marginBottom: '0.75rem'
+          marginBottom: '0.75rem',
+          overflowX: 'auto',
+          flexWrap: 'wrap'
         }}>
           {tabs.map(tab => (
             <button
@@ -8934,9 +8976,497 @@ const DashboardTiles = {
                 ← Back to Schedules
               </button>
             )}
+            {activeTab === 'schedules/conflicts' && (
+              <button
+                onClick={() => setActiveTab('schedules/calendar')}
+                className="button"
+                style={{
+                  padding: '0.5rem 1rem',
+                  fontSize: '0.85rem',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '0.5rem'
+                }}
+              >
+                <CalendarDays size={14} /> Calendar View
+              </button>
+            )}
           </div>
         </div>
       </>
+    );
+  };
+
+  // Conflict Resolution Page (full sub-page, not modal)
+  const renderConflictResolutionPage = () => {
+    const timeframeDays = conflictPageTimeframe === 'weekly' ? 7 : conflictPageTimeframe === 'yearly' ? 365 : 30;
+    const timeframeLabel = conflictPageTimeframe === 'weekly' ? '7 days' : conflictPageTimeframe === 'yearly' ? '365 days' : '30 days';
+    const allConflicts = analyzeAllConflicts(timeframeDays);
+    const ignoredSet = new Set(ignoredConflicts);
+    const visibleConflicts = allConflicts.filter(c => !ignoredSet.has(c.id));
+    const hiddenConflicts = allConflicts.filter(c => ignoredSet.has(c.id));
+    const selectedCount = Object.keys(conflictResolutions).filter(k => conflictResolutions[k]).length;
+    const severityColors = { high: '#ef4444', medium: '#f59e0b', low: '#3b82f6', info: '#6b7280' };
+    const severityLabels = { high: 'Conflict', medium: 'Medium', low: 'Low', info: 'Info' };
+    const severityBg = { high: 'rgba(239,68,68,0.12)', medium: 'rgba(245,158,11,0.12)', low: 'rgba(59,130,246,0.12)', info: 'rgba(107,114,128,0.12)' };
+    const fixIconMap = { crown: <Crown size={14} />, shuffle: <Shuffle size={14} />, clock: <Clock size={14} />, lock: <Lock size={14} />, ban: <Ban size={14} /> };
+    const highCount = visibleConflicts.filter(c => c.severity === 'high').length;
+    const infoCount = visibleConflicts.filter(c => c.severity === 'info').length;
+    const actionableCount = visibleConflicts.length - infoCount;
+
+    return (
+      <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
+        {/* Header */}
+        <div>
+          <h1 className="header" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.5rem' }}>
+            <GitCompare size={32} className="header-icon" /> Conflict Resolution
+          </h1>
+          <p style={{ color: 'var(--text-secondary)', fontSize: '0.95rem', margin: 0 }}>
+            Detect overlapping schedules and resolve conflicts to ensure predictable preroll playback.
+          </p>
+        </div>
+
+        {/* Timeframe Selector + Summary Bar */}
+        <div className="card" style={{ padding: '1rem' }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '1rem' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+              <label style={{ fontWeight: 600, fontSize: '0.9rem', color: 'var(--text-color)' }}>Lookahead:</label>
+              <div style={{ display: 'flex', borderRadius: '8px', overflow: 'hidden', border: '1px solid var(--border-color)' }}>
+                {[
+                  { id: 'weekly', label: 'Weekly', desc: '7 days' },
+                  { id: 'monthly', label: 'Monthly', desc: '30 days' },
+                  { id: 'yearly', label: 'Yearly', desc: '365 days' }
+                ].map(tf => (
+                  <button
+                    key={tf.id}
+                    type="button"
+                    onClick={() => { setConflictPageTimeframe(tf.id); setConflictResolutions({}); setConflictWizardResults(null); }}
+                    style={{
+                      padding: '0.5rem 1rem',
+                      border: 'none',
+                      backgroundColor: conflictPageTimeframe === tf.id ? 'var(--button-bg)' : 'var(--bg-color)',
+                      color: conflictPageTimeframe === tf.id ? '#fff' : 'var(--text-color)',
+                      cursor: 'pointer',
+                      fontSize: '0.85rem',
+                      fontWeight: conflictPageTimeframe === tf.id ? 600 : 400,
+                      transition: 'all 0.2s'
+                    }}
+                    title={tf.desc}
+                  >
+                    {tf.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* Severity badges */}
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap' }}>
+              {['high', 'medium', 'low', 'info'].map(sev => {
+                const count = visibleConflicts.filter(c => c.severity === sev).length;
+                if (count === 0) return null;
+                return (
+                  <span key={sev} style={{
+                    fontSize: '0.8rem', padding: '0.25rem 0.6rem', borderRadius: '12px',
+                    background: severityBg[sev], color: severityColors[sev], fontWeight: 600
+                  }}>
+                    {count} {severityLabels[sev]}
+                  </span>
+                );
+              })}
+            </div>
+          </div>
+        </div>
+
+        {/* Results view after applying fixes */}
+        {conflictWizardResults && (
+          <div className="card" style={{ padding: '1.25rem' }}>
+            <div style={{
+              padding: '1rem 1.25rem',
+              borderRadius: '10px',
+              background: conflictWizardResults.failed.length === 0
+                ? 'linear-gradient(135deg, rgba(16,185,129,0.15), rgba(20,184,166,0.1))'
+                : 'linear-gradient(135deg, rgba(245,158,11,0.15), rgba(239,68,68,0.1))',
+              border: `1px solid ${conflictWizardResults.failed.length === 0 ? 'rgba(16,185,129,0.3)' : 'rgba(245,158,11,0.3)'}`,
+              marginBottom: conflictWizardResults.applied.length > 0 ? '1rem' : 0
+            }}>
+              <div style={{ fontWeight: 600, fontSize: '1.05rem', marginBottom: '0.5rem', color: 'var(--text-color)' }}>
+                {conflictWizardResults.failed.length === 0
+                  ? <span style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}><CheckCircle size={18} style={{ color: '#10b981' }} /> All Fixes Applied Successfully</span>
+                  : <span style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}><AlertTriangle size={18} style={{ color: '#f59e0b' }} /> Some Fixes Had Issues</span>
+                }
+              </div>
+              {conflictWizardResults.applied.length > 0 && (
+                <div style={{ fontSize: '0.9rem', color: 'var(--text-secondary)' }}>
+                  {conflictWizardResults.applied.length} conflict{conflictWizardResults.applied.length !== 1 ? 's' : ''} resolved
+                </div>
+              )}
+              {conflictWizardResults.failed.length > 0 && (
+                <div style={{ fontSize: '0.9rem', color: '#ef4444' }}>
+                  {conflictWizardResults.failed.length} fix{conflictWizardResults.failed.length !== 1 ? 'es' : ''} failed — try editing those schedules manually
+                </div>
+              )}
+            </div>
+            {conflictWizardResults.applied.map(({ conflict, fix }) => (
+              <div key={conflict.id} style={{
+                padding: '0.75rem 1rem', borderRadius: '8px',
+                background: 'rgba(16,185,129,0.06)', border: '1px solid rgba(16,185,129,0.15)',
+                display: 'flex', alignItems: 'center', gap: '0.75rem',
+                fontSize: '0.9rem', color: 'var(--text-color)', marginBottom: '0.5rem'
+              }}>
+                <CheckCircle size={16} style={{ color: '#10b981', flexShrink: 0 }} />
+                <span><strong>{conflict.scheduleA.name}</strong> vs <strong>{conflict.scheduleB.name}</strong> — {fix.label}</span>
+              </div>
+            ))}
+            <div style={{ display: 'flex', justifyContent: 'flex-end', paddingTop: '0.5rem' }}>
+              <button type="button" className="button" onClick={() => setConflictWizardResults(null)} style={{ padding: '0.5rem 1.25rem' }}>
+                Dismiss
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* All Clear state */}
+        {visibleConflicts.length === 0 && !conflictWizardResults ? (
+          <div className="card" style={{ padding: '2.5rem 1.5rem', textAlign: 'center' }}>
+            <div style={{
+              display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '1rem'
+            }}>
+              <div style={{
+                width: 64, height: 64, borderRadius: '50%',
+                background: 'linear-gradient(135deg, rgba(16,185,129,0.2), rgba(20,184,166,0.15))',
+                display: 'flex', alignItems: 'center', justifyContent: 'center'
+              }}>
+                <Shield size={32} style={{ color: '#10b981' }} />
+              </div>
+              <div>
+                <div style={{ fontWeight: 700, fontSize: '1.2rem', color: '#10b981', marginBottom: '0.35rem' }}>
+                  All Conflicts Resolved
+                </div>
+                <div style={{ color: 'var(--text-secondary)', fontSize: '0.95rem', lineHeight: 1.5 }}>
+                  No schedule conflicts detected for the next {timeframeLabel}. Your preroll playback is fully predictable.
+                </div>
+              </div>
+              {hiddenConflicts.length > 0 && (
+                <div style={{ marginTop: '0.5rem' }}>
+                  <span style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
+                    {hiddenConflicts.length} conflict{hiddenConflicts.length !== 1 ? 's' : ''} currently ignored.{' '}
+                    <button
+                      type="button"
+                      onClick={() => setShowIgnoredConflicts(prev => !prev)}
+                      style={{
+                        background: 'none', border: 'none', color: '#14B8A6', cursor: 'pointer',
+                        textDecoration: 'underline', padding: 0, fontSize: '0.85rem'
+                      }}
+                    >
+                      {showIgnoredConflicts ? 'Hide' : 'Show'}
+                    </button>
+                  </span>
+                  {showIgnoredConflicts && (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', marginTop: '0.75rem', textAlign: 'left' }}>
+                      {hiddenConflicts.map(conflict => (
+                        <div key={conflict.id} style={{
+                          display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                          padding: '0.5rem 0.75rem', borderRadius: '8px',
+                          background: 'rgba(107,114,128,0.06)', border: '1px solid var(--border-color)',
+                          fontSize: '0.85rem', color: 'var(--text-secondary)'
+                        }}>
+                          <span style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                            <EyeOff size={14} style={{ opacity: 0.5 }} />
+                            <strong style={{ color: 'var(--text-color)' }}>{conflict.scheduleA.name}</strong>
+                            <span>vs</span>
+                            <strong style={{ color: 'var(--text-color)' }}>{conflict.scheduleB.name}</strong>
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => unignoreConflict(conflict.id)}
+                            style={{
+                              display: 'flex', alignItems: 'center', gap: '4px',
+                              padding: '4px 10px', borderRadius: '6px', fontSize: '0.8rem', fontWeight: 600,
+                              background: 'rgba(20,184,166,0.1)', color: '#14B8A6',
+                              border: '1px solid rgba(20,184,166,0.3)', cursor: 'pointer'
+                            }}
+                          >
+                            <Eye size={12} /> Restore
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          </div>
+        ) : visibleConflicts.length > 0 && (
+          /* Conflict List */
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+            {/* Action bar */}
+            <div className="card" style={{ padding: '0.75rem 1rem' }}>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '0.75rem' }}>
+                <div style={{ fontSize: '0.95rem', fontWeight: 600, color: 'var(--text-color)' }}>
+                  {actionableCount} Conflict{actionableCount !== 1 ? 's' : ''}{infoCount > 0 ? `, ${infoCount} Note${infoCount !== 1 ? 's' : ''}` : ''} — next {timeframeLabel}
+                </div>
+                <div style={{ display: 'flex', gap: '0.5rem' }}>
+                  <button
+                    type="button"
+                    className="button"
+                    onClick={() => autoResolveConflicts(visibleConflicts)}
+                    style={{
+                      padding: '0.45rem 1rem', fontSize: '0.85rem',
+                      display: 'flex', alignItems: 'center', gap: '0.4rem',
+                      background: 'linear-gradient(135deg, #14B8A6, #10b981)',
+                      color: '#fff', border: 'none', borderRadius: '8px', fontWeight: 600,
+                      cursor: 'pointer'
+                    }}
+                    title="Auto-select the recommended fix for every conflict"
+                  >
+                    <Wand2 size={14} /> Auto-Resolve All
+                  </button>
+                  <button
+                    type="button"
+                    className="button"
+                    disabled={selectedCount === 0 || conflictWizardApplying}
+                    onClick={() => applyAllConflictResolutions(visibleConflicts)}
+                    style={{
+                      padding: '0.45rem 1rem', fontSize: '0.85rem',
+                      display: 'flex', alignItems: 'center', gap: '0.4rem',
+                      background: selectedCount > 0 ? '#28a745' : '#6b7280',
+                      color: '#fff', border: 'none', borderRadius: '8px', fontWeight: 600,
+                      cursor: selectedCount > 0 ? 'pointer' : 'not-allowed',
+                      opacity: conflictWizardApplying ? 0.7 : 1
+                    }}
+                  >
+                    {conflictWizardApplying ? (
+                      <><Loader2 size={14} style={{ animation: 'spin 1s linear infinite' }} /> Applying...</>
+                    ) : (
+                      <><Check size={14} /> Apply {selectedCount} Fix{selectedCount !== 1 ? 'es' : ''}</>
+                    )}
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            {/* Individual conflict cards */}
+            {visibleConflicts.map((conflict) => {
+              const selectedFix = conflictResolutions[conflict.id];
+              const colorA = conflict.scheduleA.color || '#14B8A6';
+              const colorB = conflict.scheduleB.color || '#f59e0b';
+
+              return (
+                <div key={conflict.id} className="card" style={{
+                  padding: 0, overflow: 'hidden',
+                  borderColor: selectedFix ? 'rgba(16,185,129,0.4)' : undefined,
+                  background: selectedFix ? 'rgba(16,185,129,0.03)' : undefined,
+                  transition: 'border-color 0.2s, background 0.2s'
+                }}>
+                  {/* Conflict header */}
+                  <div style={{
+                    padding: '0.75rem 1rem',
+                    background: severityBg[conflict.severity],
+                    borderBottom: '1px solid var(--border-color)',
+                    display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.75rem',
+                    flexWrap: 'wrap'
+                  }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', flex: 1, minWidth: 0, flexWrap: 'wrap' }}>
+                      <span style={{
+                        fontSize: '0.75rem', fontWeight: 700, padding: '0.15rem 0.5rem', borderRadius: '6px',
+                        background: severityColors[conflict.severity], color: '#fff', textTransform: 'uppercase',
+                        letterSpacing: '0.05em', flexShrink: 0
+                      }}>
+                        {severityLabels[conflict.severity]}
+                      </span>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', fontSize: '0.9rem', fontWeight: 600, color: 'var(--text-color)', minWidth: 0, flexWrap: 'wrap' }}>
+                        <span style={{
+                          width: 10, height: 10, borderRadius: '50%', background: colorA, flexShrink: 0,
+                          border: '2px solid rgba(255,255,255,0.3)', boxShadow: `0 0 4px ${colorA}40`
+                        }} />
+                        <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{conflict.scheduleA.name}</span>
+                        <span style={{ color: 'var(--text-secondary)', fontWeight: 400, flexShrink: 0 }}>vs</span>
+                        <span style={{
+                          width: 10, height: 10, borderRadius: '50%', background: colorB, flexShrink: 0,
+                          border: '2px solid rgba(255,255,255,0.3)', boxShadow: `0 0 4px ${colorB}40`
+                        }} />
+                        <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{conflict.scheduleB.name}</span>
+                      </div>
+                    </div>
+                    {selectedFix && <CheckCircle size={16} style={{ color: '#10b981', flexShrink: 0 }} />}
+                  </div>
+
+                  {/* Conflict body */}
+                  <div style={{ padding: '1rem' }}>
+                    {/* Schedule comparison */}
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem', marginBottom: '0.75rem' }}>
+                      {[conflict.scheduleA, conflict.scheduleB].map((sched, si) => {
+                        const cat = si === 0 ? conflict.categoryA : conflict.categoryB;
+                        const col = si === 0 ? colorA : colorB;
+                        const p = sched.priority ?? 5;
+                        return (
+                          <div key={sched.id} style={{
+                            padding: '0.6rem 0.75rem', borderRadius: '8px',
+                            background: 'var(--bg-color)', border: '1px solid var(--border-color)',
+                            borderLeft: `3px solid ${col}`
+                          }}>
+                            <div style={{ fontSize: '0.85rem', fontWeight: 600, color: 'var(--text-color)', marginBottom: '0.3rem' }}>{sched.name}</div>
+                            <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', display: 'flex', flexDirection: 'column', gap: '0.15rem' }}>
+                              <span>Category: {cat}</span>
+                              <span>Priority: {p} · {sched.exclusive ? '🔒 Exclusive' : sched.blend_enabled ? '🔀 Blend' : 'Standard'}</span>
+                              <span>Type: {sched.type}</span>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+
+                    {/* Description */}
+                    <div style={{
+                      fontSize: '0.85rem', color: 'var(--text-secondary)',
+                      padding: '0.5rem 0.75rem', borderRadius: '6px',
+                      background: severityBg[conflict.severity],
+                      marginBottom: '0.75rem', lineHeight: 1.4
+                    }}>
+                      <AlertTriangle size={13} style={{ color: severityColors[conflict.severity], marginRight: '0.4rem', verticalAlign: 'middle' }} />
+                      {conflict.description}
+                      <span style={{ display: 'block', marginTop: '0.25rem', fontSize: '0.8rem', opacity: 0.8 }}>
+                        Overlapping on {conflict.overlappingDays.length} day{conflict.overlappingDays.length !== 1 ? 's' : ''} in the next {timeframeLabel}
+                      </span>
+                    </div>
+
+                    {/* Fix options */}
+                    <div style={{ fontSize: '0.85rem', fontWeight: 600, color: 'var(--text-color)', marginBottom: '0.4rem' }}>
+                      Suggested Fixes:
+                    </div>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '0.35rem' }}>
+                      {conflict.suggestions.map((fix) => (
+                        <label
+                          key={fix.id}
+                          style={{
+                            display: 'flex', alignItems: 'center', gap: '0.5rem',
+                            padding: '0.5rem 0.75rem', borderRadius: '8px', cursor: 'pointer',
+                            border: `1px solid ${selectedFix === fix.id ? 'rgba(20,184,166,0.5)' : 'var(--border-color)'}`,
+                            background: selectedFix === fix.id ? 'rgba(20,184,166,0.08)' : 'transparent',
+                            transition: 'all 0.15s'
+                          }}
+                        >
+                          <input
+                            type="radio"
+                            name={`conflict-page-${conflict.id}`}
+                            checked={selectedFix === fix.id}
+                            onChange={() => setConflictResolutions(prev => ({ ...prev, [conflict.id]: fix.id }))}
+                            style={{ accentColor: '#14B8A6', flexShrink: 0 }}
+                          />
+                          <span style={{ color: severityColors[conflict.severity], flexShrink: 0, display: 'flex' }}>
+                            {fixIconMap[fix.icon] || <Wand2 size={14} />}
+                          </span>
+                          <span style={{ fontSize: '0.85rem', color: 'var(--text-color)', lineHeight: 1.4, wordBreak: 'break-word' }}>{fix.label}</span>
+                        </label>
+                      ))}
+                      {/* Skip option */}
+                      <label style={{
+                        display: 'flex', alignItems: 'center', gap: '0.5rem',
+                        padding: '0.5rem 0.75rem', borderRadius: '8px', cursor: 'pointer',
+                        border: `1px solid ${selectedFix === 'skip' ? 'rgba(107,114,128,0.4)' : 'var(--border-color)'}`,
+                        background: selectedFix === 'skip' ? 'rgba(107,114,128,0.06)' : 'transparent',
+                        transition: 'all 0.15s'
+                      }}>
+                        <input
+                          type="radio"
+                          name={`conflict-page-${conflict.id}`}
+                          checked={selectedFix === 'skip'}
+                          onChange={() => setConflictResolutions(prev => ({ ...prev, [conflict.id]: 'skip' }))}
+                          style={{ accentColor: '#6b7280', flexShrink: 0 }}
+                        />
+                        <span style={{ color: '#6b7280', flexShrink: 0, display: 'flex' }}><X size={14} /></span>
+                        <span style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>Skip — leave as is</span>
+                      </label>
+                      {/* Ignore button */}
+                      <button
+                        type="button"
+                        onClick={(e) => { e.preventDefault(); e.stopPropagation(); ignoreConflict(conflict.id); }}
+                        style={{
+                          display: 'flex', alignItems: 'center', gap: '0.5rem',
+                          padding: '0.5rem 0.75rem', borderRadius: '8px', cursor: 'pointer',
+                          border: '1px solid rgba(107,114,128,0.3)',
+                          background: 'rgba(107,114,128,0.06)', width: '100%', textAlign: 'left',
+                          transition: 'all 0.15s', color: 'var(--text-secondary)'
+                        }}
+                        onMouseEnter={(e) => { e.currentTarget.style.background = 'rgba(107,114,128,0.15)'; e.currentTarget.style.borderColor = 'rgba(107,114,128,0.5)'; }}
+                        onMouseLeave={(e) => { e.currentTarget.style.background = 'rgba(107,114,128,0.06)'; e.currentTarget.style.borderColor = 'rgba(107,114,128,0.3)'; }}
+                        title="Hide this conflict from future scans"
+                      >
+                        <EyeOff size={14} style={{ color: '#6b7280', flexShrink: 0 }} />
+                        <span style={{ fontSize: '0.85rem' }}>Ignore — hide from future scans</span>
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+
+            {/* Ignored conflicts section */}
+            {hiddenConflicts.length > 0 && (
+              <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
+                <button
+                  type="button"
+                  onClick={() => setShowIgnoredConflicts(prev => !prev)}
+                  style={{
+                    width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                    padding: '0.75rem 1rem', background: 'rgba(107,114,128,0.06)',
+                    border: 'none', cursor: 'pointer', color: 'var(--text-secondary)', fontSize: '0.85rem'
+                  }}
+                >
+                  <span style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                    <EyeOff size={14} />
+                    {hiddenConflicts.length} Ignored Conflict{hiddenConflicts.length !== 1 ? 's' : ''}
+                  </span>
+                  {showIgnoredConflicts ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+                </button>
+                {showIgnoredConflicts && (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '0.4rem', padding: '0.75rem' }}>
+                    {hiddenConflicts.map(conflict => (
+                      <div key={conflict.id} style={{
+                        display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                        padding: '0.5rem 0.75rem', borderRadius: '8px',
+                        background: 'rgba(107,114,128,0.04)', border: '1px solid var(--border-color)',
+                        fontSize: '0.85rem', color: 'var(--text-secondary)', gap: '0.75rem'
+                      }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', minWidth: 0, flex: 1 }}>
+                          <span style={{
+                            fontSize: '0.7rem', fontWeight: 700, padding: '0.1rem 0.4rem', borderRadius: '4px',
+                            background: severityColors[conflict.severity], color: '#fff', textTransform: 'uppercase', flexShrink: 0
+                          }}>
+                            {severityLabels[conflict.severity]}
+                          </span>
+                          <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                            <strong style={{ color: 'var(--text-color)' }}>{conflict.scheduleA.name}</strong>
+                            {' vs '}
+                            <strong style={{ color: 'var(--text-color)' }}>{conflict.scheduleB.name}</strong>
+                          </span>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => unignoreConflict(conflict.id)}
+                          style={{
+                            display: 'flex', alignItems: 'center', gap: '4px',
+                            padding: '4px 10px', borderRadius: '6px', fontSize: '0.8rem', fontWeight: 600,
+                            background: 'rgba(20,184,166,0.1)', color: '#14B8A6',
+                            border: '1px solid rgba(20,184,166,0.3)', cursor: 'pointer', flexShrink: 0
+                          }}
+                        >
+                          <Eye size={12} /> Restore
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Bottom status */}
+            <div style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', textAlign: 'center', padding: '0.5rem' }}>
+              {selectedCount} of {visibleConflicts.length} conflicts have a fix selected
+            </div>
+          </div>
+        )}
+      </div>
     );
   };
 
@@ -10125,7 +10655,8 @@ const DashboardTiles = {
               </div>
               <p style={{ margin: '0 0 0.75rem 0', fontSize: '0.85rem', color: 'var(--text-secondary)', lineHeight: 1.5 }}>
                 <strong>{conflictHourCount} hour{conflictHourCount !== 1 ? 's' : ''}</strong> have overlapping schedules today.
-                The schedule that ends soonest takes priority. Look for the <Crown size={12} style={{ display: 'inline', verticalAlign: 'middle' }} /> crown icon.
+                The schedule that ends soonest takes priority. Look for the <Crown size={12} style={{ display: 'inline', verticalAlign: 'middle' }} /> crown icon.{' '}
+                Visit the <button type="button" onClick={() => setActiveTab('schedules/conflicts')} style={{ background: 'none', border: 'none', color: '#14B8A6', cursor: 'pointer', textDecoration: 'underline', padding: 0, fontSize: 'inherit', fontWeight: 600 }}>Conflicts</button> tab to review and resolve.
               </p>
               <div style={{ display: 'flex', gap: '0.5rem', fontSize: '0.8rem', alignItems: 'center', flexWrap: 'wrap' }}>
                 <span style={{ padding: '0.25rem 0.5rem', borderRadius: '4px', backgroundColor: 'rgba(255, 215, 0, 0.2)', border: '1px solid rgba(255, 215, 0, 0.5)', display: 'flex', alignItems: 'center', gap: '4px' }}>
@@ -10135,26 +10666,36 @@ const DashboardTiles = {
                   Faded = Overridden
                 </span>
                 <span style={{ flex: 1 }} />
-                <button
-                  type="button"
-                  onClick={() => { setShowConflictWizard(true); setConflictResolutions({}); setConflictWizardResults(null); setShowIgnoredConflicts(false); loadIgnoredConflicts(); }}
-                  title={actionableCount > 0 ? `${actionableCount} conflict${actionableCount !== 1 ? 's' : ''} detected — click to resolve` : `${infoCount} note${infoCount !== 1 ? 's' : ''} — click to review`}
-                  style={{
+                {actionableCount > 0 ? (
+                  <button
+                    type="button"
+                    onClick={() => { setActiveTab('schedules/conflicts'); setConflictResolutions({}); setConflictWizardResults(null); setShowIgnoredConflicts(false); loadIgnoredConflicts(); }}
+                    title={`${actionableCount} conflict${actionableCount !== 1 ? 's' : ''} detected — click to resolve`}
+                    style={{
+                      display: 'flex', alignItems: 'center', gap: '0.4rem',
+                      padding: '0.4rem 0.85rem', borderRadius: '8px', fontWeight: 600, fontSize: '0.8rem',
+                      cursor: 'pointer', border: 'none', transition: 'all 0.2s',
+                      background: 'linear-gradient(135deg, rgba(239,68,68,0.15), rgba(245,158,11,0.15))',
+                      color: '#ef4444'
+                    }}
+                  >
+                    <GitCompare size={14} />
+                    Resolve {actionableCount} Conflict{actionableCount !== 1 ? 's' : ''}
+                    {highCount > 0 && (
+                      <span style={{ background: '#ef4444', color: '#fff', fontSize: '0.65rem', padding: '0.1rem 0.35rem', borderRadius: '10px', fontWeight: 700 }}>
+                        {highCount}
+                      </span>
+                    )}
+                  </button>
+                ) : (
+                  <span style={{
                     display: 'flex', alignItems: 'center', gap: '0.4rem',
                     padding: '0.4rem 0.85rem', borderRadius: '8px', fontWeight: 600, fontSize: '0.8rem',
-                    cursor: 'pointer', border: 'none', transition: 'all 0.2s',
-                    background: 'linear-gradient(135deg, rgba(239,68,68,0.15), rgba(245,158,11,0.15))',
-                    color: '#ef4444'
-                  }}
-                >
-                  <GitCompare size={14} />
-                  Resolve {actionableCount} Conflict{actionableCount !== 1 ? 's' : ''}
-                  {highCount > 0 && (
-                    <span style={{ background: '#ef4444', color: '#fff', fontSize: '0.65rem', padding: '0.1rem 0.35rem', borderRadius: '10px', fontWeight: 700 }}>
-                      {highCount}
-                    </span>
-                  )}
-                </button>
+                    color: '#10b981'
+                  }}>
+                    <CheckCircle size={14} /> All Conflicts Resolved
+                  </span>
+                )}
               </div>
             </div>
           );
@@ -10597,7 +11138,8 @@ const DashboardTiles = {
               </div>
               <p style={{ margin: '0 0 0.75rem 0', fontSize: '0.85rem', color: 'var(--text-secondary)', lineHeight: 1.5 }}>
                 <strong>{conflictDayCount} day{conflictDayCount !== 1 ? 's' : ''}</strong> this week have overlapping schedules.
-                The schedule that ends soonest takes priority. Look for the <Crown size={12} style={{ display: 'inline', verticalAlign: 'middle' }} /> crown icon.
+                The schedule that ends soonest takes priority. Look for the <Crown size={12} style={{ display: 'inline', verticalAlign: 'middle' }} /> crown icon.{' '}
+                Visit the <button type="button" onClick={() => setActiveTab('schedules/conflicts')} style={{ background: 'none', border: 'none', color: '#14B8A6', cursor: 'pointer', textDecoration: 'underline', padding: 0, fontSize: 'inherit', fontWeight: 600 }}>Conflicts</button> tab to review and resolve.
               </p>
               <div style={{ display: 'flex', gap: '0.5rem', fontSize: '0.8rem', alignItems: 'center', flexWrap: 'wrap' }}>
                 <span style={{ padding: '0.25rem 0.5rem', borderRadius: '4px', backgroundColor: 'rgba(255, 215, 0, 0.2)', border: '1px solid rgba(255, 215, 0, 0.5)', display: 'flex', alignItems: 'center', gap: '4px' }}>
@@ -10607,26 +11149,36 @@ const DashboardTiles = {
                   Faded = Overridden
                 </span>
                 <span style={{ flex: 1 }} />
-                <button
-                  type="button"
-                  onClick={() => { setShowConflictWizard(true); setConflictResolutions({}); setConflictWizardResults(null); setShowIgnoredConflicts(false); loadIgnoredConflicts(); }}
-                  title={actionableCount > 0 ? `${actionableCount} conflict${actionableCount !== 1 ? 's' : ''} detected — click to resolve` : `${infoCount} note${infoCount !== 1 ? 's' : ''} — click to review`}
-                  style={{
+                {actionableCount > 0 ? (
+                  <button
+                    type="button"
+                    onClick={() => { setActiveTab('schedules/conflicts'); setConflictResolutions({}); setConflictWizardResults(null); setShowIgnoredConflicts(false); loadIgnoredConflicts(); }}
+                    title={`${actionableCount} conflict${actionableCount !== 1 ? 's' : ''} detected — click to resolve`}
+                    style={{
+                      display: 'flex', alignItems: 'center', gap: '0.4rem',
+                      padding: '0.4rem 0.85rem', borderRadius: '8px', fontWeight: 600, fontSize: '0.8rem',
+                      cursor: 'pointer', border: 'none', transition: 'all 0.2s',
+                      background: 'linear-gradient(135deg, rgba(239,68,68,0.15), rgba(245,158,11,0.15))',
+                      color: '#ef4444'
+                    }}
+                  >
+                    <GitCompare size={14} />
+                    Resolve {actionableCount} Conflict{actionableCount !== 1 ? 's' : ''}
+                    {highCount > 0 && (
+                      <span style={{ background: '#ef4444', color: '#fff', fontSize: '0.65rem', padding: '0.1rem 0.35rem', borderRadius: '10px', fontWeight: 700 }}>
+                        {highCount}
+                      </span>
+                    )}
+                  </button>
+                ) : (
+                  <span style={{
                     display: 'flex', alignItems: 'center', gap: '0.4rem',
                     padding: '0.4rem 0.85rem', borderRadius: '8px', fontWeight: 600, fontSize: '0.8rem',
-                    cursor: 'pointer', border: 'none', transition: 'all 0.2s',
-                    background: 'linear-gradient(135deg, rgba(239,68,68,0.15), rgba(245,158,11,0.15))',
-                    color: '#ef4444'
-                  }}
-                >
-                  <GitCompare size={14} />
-                  Resolve {actionableCount} Conflict{actionableCount !== 1 ? 's' : ''}
-                  {highCount > 0 && (
-                    <span style={{ background: '#ef4444', color: '#fff', fontSize: '0.65rem', padding: '0.1rem 0.35rem', borderRadius: '10px', fontWeight: 700 }}>
-                      {highCount}
-                    </span>
-                  )}
-                </button>
+                    color: '#10b981'
+                  }}>
+                    <CheckCircle size={14} /> All Conflicts Resolved
+                  </span>
+                )}
               </div>
             </div>
           );
@@ -11554,7 +12106,8 @@ const DashboardTiles = {
               lineHeight: 1.5
             }}>
               <strong>{totalConflicts} day{totalConflicts !== 1 ? 's' : ''}</strong> have overlapping schedules. 
-              The schedule that ends soonest takes priority. Look for the <Crown size={12} style={{ display: 'inline', verticalAlign: 'middle' }} /> crown icon.
+              The schedule that ends soonest takes priority. Look for the <Crown size={12} style={{ display: 'inline', verticalAlign: 'middle' }} /> crown icon.{' '}
+              Visit the <button type="button" onClick={() => setActiveTab('schedules/conflicts')} style={{ background: 'none', border: 'none', color: '#14B8A6', cursor: 'pointer', textDecoration: 'underline', padding: 0, fontSize: 'inherit', fontWeight: 600 }}>Conflicts</button> tab to review and resolve.
             </p>
             <div style={{ display: 'flex', gap: '0.5rem', fontSize: '0.8rem', alignItems: 'center', flexWrap: 'wrap' }}>
               <span style={{ 
@@ -11582,11 +12135,11 @@ const DashboardTiles = {
                 const highCount = conflicts.filter(c => c.severity === 'high').length;
                 const infoCount = conflicts.filter(c => c.severity === 'info').length;
                 const actionableCount = conflicts.length - infoCount;
-                return (
+                return actionableCount > 0 ? (
                   <button
                     type="button"
-                    onClick={() => { setShowConflictWizard(true); setConflictResolutions({}); setConflictWizardResults(null); setShowIgnoredConflicts(false); loadIgnoredConflicts(); }}
-                    title={actionableCount > 0 ? `${actionableCount} conflict${actionableCount !== 1 ? 's' : ''} detected — click to resolve` : `${infoCount} note${infoCount !== 1 ? 's' : ''} — click to review`}
+                    onClick={() => { setActiveTab('schedules/conflicts'); setConflictResolutions({}); setConflictWizardResults(null); setShowIgnoredConflicts(false); loadIgnoredConflicts(); }}
+                    title={`${actionableCount} conflict${actionableCount !== 1 ? 's' : ''} detected — click to resolve`}
                     style={{
                       display: 'flex', alignItems: 'center', gap: '0.4rem',
                       padding: '0.4rem 0.85rem', borderRadius: '8px', fontWeight: 600, fontSize: '0.8rem',
@@ -11606,6 +12159,14 @@ const DashboardTiles = {
                       </span>
                     )}
                   </button>
+                ) : (
+                  <span style={{
+                    display: 'flex', alignItems: 'center', gap: '0.4rem',
+                    padding: '0.4rem 0.85rem', borderRadius: '8px', fontWeight: 600, fontSize: '0.8rem',
+                    color: '#10b981'
+                  }}>
+                    <CheckCircle size={14} /> All Conflicts Resolved
+                  </span>
                 );
               })()}
             </div>
@@ -12302,7 +12863,8 @@ const DashboardTiles = {
               </div>
               <p style={{ margin: '0 0 0.75rem 0', fontSize: '0.85rem', color: 'var(--text-secondary)', lineHeight: 1.5 }}>
                 <strong>{totalYearConflicts} day{totalYearConflicts !== 1 ? 's' : ''}</strong> across {calendarYear} have overlapping schedules.
-                The schedule that ends soonest takes priority. Look for the <Crown size={12} style={{ display: 'inline', verticalAlign: 'middle' }} /> crown icon.
+                The schedule that ends soonest takes priority. Look for the <Crown size={12} style={{ display: 'inline', verticalAlign: 'middle' }} /> crown icon.{' '}
+                Visit the <button type="button" onClick={() => setActiveTab('schedules/conflicts')} style={{ background: 'none', border: 'none', color: '#14B8A6', cursor: 'pointer', textDecoration: 'underline', padding: 0, fontSize: 'inherit', fontWeight: 600 }}>Conflicts</button> tab to review and resolve.
               </p>
               <div style={{ display: 'flex', gap: '0.5rem', fontSize: '0.8rem', alignItems: 'center', flexWrap: 'wrap' }}>
                 <span style={{ padding: '0.25rem 0.5rem', borderRadius: '4px', backgroundColor: 'rgba(255, 215, 0, 0.2)', border: '1px solid rgba(255, 215, 0, 0.5)', display: 'flex', alignItems: 'center', gap: '4px' }}>
@@ -12312,26 +12874,36 @@ const DashboardTiles = {
                   Faded = Overridden
                 </span>
                 <span style={{ flex: 1 }} />
-                <button
-                  type="button"
-                  onClick={() => { setShowConflictWizard(true); setConflictResolutions({}); setConflictWizardResults(null); setShowIgnoredConflicts(false); loadIgnoredConflicts(); }}
-                  title={actionableCount > 0 ? `${actionableCount} conflict${actionableCount !== 1 ? 's' : ''} detected — click to resolve` : `${infoCount} note${infoCount !== 1 ? 's' : ''} — click to review`}
-                  style={{
+                {actionableCount > 0 ? (
+                  <button
+                    type="button"
+                    onClick={() => { setActiveTab('schedules/conflicts'); setConflictResolutions({}); setConflictWizardResults(null); setShowIgnoredConflicts(false); loadIgnoredConflicts(); }}
+                    title={`${actionableCount} conflict${actionableCount !== 1 ? 's' : ''} detected — click to resolve`}
+                    style={{
+                      display: 'flex', alignItems: 'center', gap: '0.4rem',
+                      padding: '0.4rem 0.85rem', borderRadius: '8px', fontWeight: 600, fontSize: '0.8rem',
+                      cursor: 'pointer', border: 'none', transition: 'all 0.2s',
+                      background: 'linear-gradient(135deg, rgba(239,68,68,0.15), rgba(245,158,11,0.15))',
+                      color: '#ef4444'
+                    }}
+                  >
+                    <GitCompare size={14} />
+                    Resolve {actionableCount} Conflict{actionableCount !== 1 ? 's' : ''}
+                    {highCount > 0 && (
+                      <span style={{ background: '#ef4444', color: '#fff', fontSize: '0.65rem', padding: '0.1rem 0.35rem', borderRadius: '10px', fontWeight: 700 }}>
+                        {highCount}
+                      </span>
+                    )}
+                  </button>
+                ) : (
+                  <span style={{
                     display: 'flex', alignItems: 'center', gap: '0.4rem',
                     padding: '0.4rem 0.85rem', borderRadius: '8px', fontWeight: 600, fontSize: '0.8rem',
-                    cursor: 'pointer', border: 'none', transition: 'all 0.2s',
-                    background: 'linear-gradient(135deg, rgba(239,68,68,0.15), rgba(245,158,11,0.15))',
-                    color: '#ef4444'
-                  }}
-                >
-                  <GitCompare size={14} />
-                  Resolve {actionableCount} Conflict{actionableCount !== 1 ? 's' : ''}
-                  {highCount > 0 && (
-                    <span style={{ background: '#ef4444', color: '#fff', fontSize: '0.65rem', padding: '0.1rem 0.35rem', borderRadius: '10px', fontWeight: 700 }}>
-                      {highCount}
-                    </span>
-                  )}
-                </button>
+                    color: '#10b981'
+                  }}>
+                    <CheckCircle size={14} /> All Conflicts Resolved
+                  </span>
+                )}
               </div>
             </div>
           );
@@ -14763,6 +15335,14 @@ const DashboardTiles = {
       return (
         <div>
           {renderSequenceLibrary()}
+        </div>
+      );
+    }
+
+    if (activeTab === 'schedules/conflicts') {
+      return (
+        <div>
+          {renderConflictResolutionPage()}
         </div>
       );
     }
@@ -26690,7 +27270,7 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
                   await fetch(apiUrl('update/settings'), {
                     method: 'PUT',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ interval: newInterval })
+                    body: JSON.stringify({ check_interval: newInterval })
                   });
                 } catch (err) {
                   console.error('Failed to save check interval:', err);
@@ -26778,15 +27358,15 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
                 const installed = normalizeVersionString(
                   (systemVersion?.registry_version || systemVersion?.api_version || '').toString()
                 );
-                await checkForUpdates(installed, updateSettings.check_interval, true);
+                const result = await checkForUpdates(installed, updateSettings.check_interval, true);
                 // Refresh settings to get new last_check time
                 const res = await fetch(apiUrl('update/settings'));
                 if (res.ok) {
                   const data = await res.json();
                   setUpdateSettings(data);
                 }
-                if (showUpdateBanner && updateInfo) {
-                  setUpdateCheckProgress({ status: `Update available: v${updateInfo.version}`, phase: 'done' });
+                if (result?.updateAvailable && result?.latest) {
+                  setUpdateCheckProgress({ status: `Update available: v${result.latest.version}`, phase: 'done' });
                 } else {
                   setUpdateCheckProgress({ status: `You're up to date! (v${systemVersion?.api_version || 'unknown'})`, phase: 'done' });
                 }
@@ -31065,14 +31645,16 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
            paddingTop: '1rem',
            borderBottom: '2px solid var(--border-color)',
            display: 'flex',
-           gap: '0.25rem'
+           gap: '0.25rem',
+           flexWrap: 'wrap'
          }}>
            {[
              { id: 'schedules', icon: <Calendar size={16} />, label: 'My Schedules' },
              { id: 'schedules/create', icon: <Plus size={16} />, label: 'Create New' },
              { id: 'schedules/calendar', icon: <CalendarDays size={16} />, label: 'Calendar View' },
              { id: 'schedules/builder', icon: <Film size={16} />, label: 'Sequence Builder' },
-             { id: 'schedules/library', icon: <BookOpen size={16} />, label: 'Saved Sequences' }
+             { id: 'schedules/library', icon: <BookOpen size={16} />, label: 'Saved Sequences' },
+             { id: 'schedules/conflicts', icon: <GitCompare size={16} />, label: 'Conflicts' }
            ].map(tab => (
              <button
                key={tab.id}
@@ -32606,7 +33188,7 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
                  </p>
                  {videoUrl ? (
                    <video
-                     key={currentPrerollPreview.index}
+                     ref={dashboardVideoRef}
                      controls
                      autoPlay
                      style={{ width: '100%', maxHeight: '400px', borderRadius: '8px', backgroundColor: '#000' }}
@@ -32616,10 +33198,13 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
                          setCurrentPrerollPreview(prev => ({ ...prev, index: prev.index + 1 }));
                        }
                      }}
-                   >
-                     <source src={videoUrl} type="video/mp4" />
-                     Your browser does not support the video tag.
-                   </video>
+                     onError={() => {
+                       // Skip broken videos (404 / missing file)
+                       if (currentPrerollPreview.mode === 'sequential' && currentPrerollPreview.index < currentPrerollPreview.prerolls.length - 1) {
+                         setCurrentPrerollPreview(prev => ({ ...prev, index: prev.index + 1 }));
+                       }
+                     }}
+                   />
                  ) : (
                    <div style={{ padding: '2rem', textAlign: 'center', color: 'var(--text-secondary, #888)', backgroundColor: 'rgba(0,0,0,0.3)', borderRadius: '8px' }}>
                      <p>Preview unavailable for this file</p>

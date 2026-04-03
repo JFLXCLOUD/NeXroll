@@ -149,6 +149,32 @@ const SequencePreviewModal = ({ isOpen, onClose, blocks = [], categories = [], p
     }
   };
 
+  // Handle video error - skip to next preroll (e.g. 404 / missing file)
+  const handleVideoError = () => {
+    const nextIndex = currentPrerollIndex + 1;
+    if (nextIndex < playlist.length) {
+      setCurrentPrerollIndex(nextIndex);
+      setCurrentBlockIndex(playlist[nextIndex].blockIndex);
+      setPlaybackProgress((nextIndex / playlist.length) * 100);
+    } else {
+      setIsPlaying(false);
+      setCurrentBlockIndex(-1);
+      setPlaybackProgress(100);
+    }
+  };
+
+  // When track index changes, load the new src into the same video element
+  useEffect(() => {
+    if (!isPlaying || !videoRef.current || playlist.length === 0) return;
+    const url = getVideoUrl(playlist[currentPrerollIndex]?.preroll);
+    if (url && videoRef.current.src !== url) {
+      videoRef.current.src = url;
+      videoRef.current.load();
+      videoRef.current.play().catch(() => {});
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentPrerollIndex, isPlaying]);
+
   // Handle video time update
   const handleTimeUpdate = () => {
     if (videoRef.current && playlist.length > 0) {
@@ -379,11 +405,10 @@ const SequencePreviewModal = ({ isOpen, onClose, blocks = [], categories = [], p
             <>
               <video
                 ref={videoRef}
-                key={currentPrerollIndex}
-                src={getVideoUrl(playlist[currentPrerollIndex]?.preroll)}
                 autoPlay
                 controls
                 onEnded={handleVideoEnded}
+                onError={handleVideoError}
                 onTimeUpdate={handleTimeUpdate}
                 style={{
                   width: '100%',

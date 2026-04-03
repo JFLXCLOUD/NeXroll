@@ -58,7 +58,8 @@ WORKDIR /app/NeXroll
 # Install pre-built Python wheels (no compiler needed)
 COPY --from=builder /wheels /wheels
 COPY requirements.txt /app/NeXroll/requirements.txt
-RUN pip install --no-cache-dir --no-index --find-links=/wheels -r /app/NeXroll/requirements.txt && \
+RUN pip install --no-cache-dir --upgrade pip && \
+    pip install --no-cache-dir --no-index --find-links=/wheels -r /app/NeXroll/requirements.txt && \
     rm -rf /wheels
 
 # Copy backend

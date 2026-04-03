@@ -1,5 +1,27 @@
 # Changelog
 
+## [1.12.0-beta.8] - 04-03-2026
+
+### New Features (beta.8)
+- **Conflict Resolution Page** — New dedicated **Conflicts** tab in the Schedules sub-navigation. Full-page conflict resolution with Weekly/Monthly/Yearly timeframe selector, side-by-side schedule comparison cards, suggested fixes with radio buttons, Auto-Resolve All, Apply Fixes with results view, ignored conflicts section, and green "All Conflicts Resolved" state. Replaces the popup wizard modal.
+- **Calendar Conflict UX** — All calendar views (Day, Week, Month, Year) now show green "All Conflicts Resolved" when actionable conflicts reach zero, and include a clickable "Conflicts" link directing users to the resolution page.
+
+### Bug Fixes (beta.8)
+- **Preview Playback Skipping** — Sequence and dashboard preview players showed ~1 second of a video then skipped to the next. Root cause: `key`-based video element remounting caused browsers to fire spurious `onEnded` events during unmount transitions. Both players now reuse a single stable `<video>` element and swap sources via `useEffect` for smooth gapless playback. Broken videos (404s) are automatically skipped.
+- **Preview "Unavailable" for Semicolon-Delimited Prerolls** — Dashboard preview parsed the Plex preroll string by checking for `,` before `;`. A comma in a filename caused the semicolon-delimited string to be split incorrectly, producing the entire raw string as a single entry. Fixed by checking `;` first (semicolons never appear in file paths).
+- **Preview Unavailable for Unmanaged Prerolls** — External/mapped-drive files not in the NeXroll database showed "Preview unavailable". Added `/preview/file` endpoint to serve video files by absolute path with a fallback in preroll details.
+- **Plex Disconnect Deletes Stable Token** — Disconnecting from Plex permanently destroyed the stable token from Windows Credential Manager, preventing reconnection without re-entering the token. Disconnect now only clears DB connection state, preserving the stable token.
+- **Update Checker Not Detecting New Versions** — Five bugs in the update check system fixed: normalizeVersionString stripped pre-release suffixes, auto-check used wrong response fields, check interval sent wrong field name, manual check read nonexistent property, second check button read stale state. Backend now uses proper semver parsing with pre-release ordering.
+- **Docker CVE Remediation** — Upgraded pip in Dockerfile to address CVE-2025-8869 and CVE-2026-1703. Existing `apt-get upgrade` handles libpng1.6 CVEs on rebuild.
+
+## [1.12.0-beta.7] - 03-30-2026
+
+### Bug Fixes (beta.7)
+- **Jellyfin Plugin rebuilt for Jellyfin 10.11.x** — Plugin DLL was compiled against Jellyfin 10.10 (net8.0). Jellyfin 10.11 moved to net9.0 and relocated `User` type, causing `ReflectionTypeLoadException`. Plugin now targets net9.0 with 10.11.x SDK. Requires Jellyfin 10.11+.
+- **Plugin configure errors now logged to app.log** — Push failures to Jellyfin/Emby now appear in app.log for diagnostic exports
+- **Better error messages for plugin configure failures** — 404 from Jellyfin shows specific "plugin not loaded" message; HTTP 500→502 for upstream failures
+- **Custom preroll folder mismatch warning** — Startup warns when DB-configured folder doesn't exist on disk; diagnostic export flags mismatch
+
 ## [1.12.0-beta.6] - 03-30-2026
 
 ### Bug Fixes (beta.6)
