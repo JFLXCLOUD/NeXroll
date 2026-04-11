@@ -33,8 +33,12 @@ public class NexrollIntroProvider : IIntroProvider
         Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
         "NeXroll", "intro_cache");
 
+    /// <inheritdoc />
     public string Name => "NeXroll Intros";
 
+    /// <summary>
+    /// Initializes a new instance of the <see cref="NexrollIntroProvider"/> class.
+    /// </summary>
     public NexrollIntroProvider(
         ILogger<NexrollIntroProvider> logger,
         ILibraryManager libraryManager,

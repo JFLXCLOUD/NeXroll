@@ -1,5 +1,15 @@
 # Changelog
 
+## [1.12.0-beta.9] - 04-11-2026
+
+### New Features (beta.9)
+- **Drag & Drop Upload** — Add Prerolls upload area now supports drag & drop for video files. Drop zone highlights on drag-over, only video files are accepted, multiple drops accumulate. Click-to-browse still works alongside.
+
+### Bug Fixes (beta.9)
+- **Require Login Toggle Enabled Without Users** — The toggle could be enabled before any user accounts existed, locking users out. Now disabled (greyed out) when no users exist, with helper text prompting to create an account first.
+- **Toggle Stays Greyed After Creating User** — After creating the first user, the Require Login toggle remained greyed out because `users_exist` was not refreshed. Both registration and admin user creation now call `checkAuthStatus()` on success.
+- **Undefined `logger` in Plugin Config Endpoints** — Four `logger.warning()` calls in the Jellyfin/Emby plugin configure endpoints referenced an undefined variable. Each was a duplicate of an adjacent `log_event()` call and has been removed.
+
 ## [1.12.0-beta.8] - 04-03-2026
 
 ### New Features (beta.8)

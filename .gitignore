@@ -136,10 +136,5 @@ rebuild_*.bat
 test_*.bat
 replace_*.py
 
-# Discord announcements
-discord_announcement*.txt
-# Personal notes
-NexRollQuestions.txt
-
 # Root package-lock (frontend only)
 /package-lock.json

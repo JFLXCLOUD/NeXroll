@@ -21346,7 +21346,6 @@ def configure_jellyfin_plugin(req: JellyfinPluginConfigureRequest, db: Session =
             jf_status = result.get('status_code', '?')
             jf_body = result.get('body', result.get('error', 'unknown'))
             msg = f'Plugin config push failed — HTTP {jf_status}: {jf_body}'
-            logger.warning(f'[Jellyfin] {msg}')
             log_event('WARNING', 'jellyfin', msg,
                       source='configure_jellyfin_plugin', db=db)
 
@@ -21377,7 +21376,6 @@ def configure_jellyfin_plugin(req: JellyfinPluginConfigureRequest, db: Session =
         except Exception:
             pass
         log_event('WARNING', 'jellyfin', f'Plugin configuration failed: {e}', source='configure_jellyfin_plugin')
-        logger.warning(f'[Jellyfin] Plugin configuration failed: {e}')
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -21720,7 +21718,6 @@ def configure_emby_plugin(req: EmbyPluginConfigureRequest, db: Session = Depends
             except Exception:
                 pass
             msg = f'Plugin config push failed — HTTP {push_resp.status_code}: {resp_body}'
-            logger.warning(f'[Emby] {msg}')
             log_event('WARNING', 'emby', msg, source='configure_emby_plugin', db=db)
             raise HTTPException(status_code=502,
                                 detail=f"Failed to push configuration to Emby plugin (HTTP {push_resp.status_code}). "
@@ -21745,7 +21742,6 @@ def configure_emby_plugin(req: EmbyPluginConfigureRequest, db: Session = Depends
         except Exception:
             pass
         log_event('WARNING', 'emby', f'Plugin configuration failed: {e}', source='configure_emby_plugin')
-        logger.warning(f'[Emby] Plugin configuration failed: {e}')
         raise HTTPException(status_code=500, detail=str(e))
 
 

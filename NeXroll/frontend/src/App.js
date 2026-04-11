@@ -7699,6 +7699,34 @@ const DashboardTiles = {
                 {/* File Drop Zone */}
                 <div 
                   onClick={() => fileInputRef.current?.click()}
+                  onDragOver={(e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    e.currentTarget.style.borderColor = 'var(--accent-color)';
+                    e.currentTarget.style.backgroundColor = 'rgba(0, 212, 255, 0.08)';
+                  }}
+                  onDragEnter={(e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    e.currentTarget.style.borderColor = 'var(--accent-color)';
+                    e.currentTarget.style.backgroundColor = 'rgba(0, 212, 255, 0.08)';
+                  }}
+                  onDragLeave={(e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    e.currentTarget.style.borderColor = 'var(--border-color)';
+                    e.currentTarget.style.backgroundColor = 'var(--bg-color)';
+                  }}
+                  onDrop={(e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    e.currentTarget.style.borderColor = 'var(--border-color)';
+                    e.currentTarget.style.backgroundColor = 'var(--bg-color)';
+                    const droppedFiles = Array.from(e.dataTransfer.files).filter(f => f.type.startsWith('video/'));
+                    if (droppedFiles.length > 0) {
+                      setFiles(prev => [...prev, ...droppedFiles]);
+                    }
+                  }}
                   style={{
                     border: '2px dashed var(--border-color)',
                     borderRadius: '12px',
@@ -7727,7 +7755,7 @@ const DashboardTiles = {
                   />
                   <Upload size={40} style={{ color: 'var(--text-secondary)', marginBottom: '0.75rem' }} />
                   <div style={{ color: 'var(--text-color)', fontWeight: 500, marginBottom: '0.25rem' }}>
-                    Click to select files
+                    Drag & drop video files here, or click to browse
                   </div>
                   <div style={{ color: 'var(--text-secondary)', fontSize: '0.85rem' }}>
                     MP4, MKV, AVI, MOV supported
@@ -17986,10 +18014,7 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
       if (res.ok) {
         setShowRegisterForm(false);
         setRegisterForm({ username: '', password: '', confirm_password: '', display_name: '' });
-        // Auto-login the first user
-        if (data?.auth_enabled) {
-          await checkAuthStatus();
-        }
+        await checkAuthStatus();
         showAlert('Account created! Please log in.', 'success');
       } else {
         showAlert(data?.detail || 'Registration failed', 'error');
@@ -18050,6 +18075,7 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
         setShowCreateUserModal(false);
         setNewUserForm({ username: '', password: '', display_name: '', role: 'user' });
         await loadUsers();
+        await checkAuthStatus();
         showAlert(`User "${newUserForm.username}" created successfully!`, 'success');
       } else {
         showAlert(data?.detail || 'Failed to create user', 'error');
@@ -26297,16 +26323,19 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
           <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
             <Shield size={20} style={{ color: authStatus.auth_enabled ? '#22c55e' : 'var(--text-secondary)' }} />
             <div>
-              <div style={{ fontWeight: 600 }}>Require Login</div>
+              <div style={{ fontWeight: 600, color: !authStatus.users_exist ? 'var(--text-secondary)' : undefined }}>Require Login</div>
               <div style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
-                {authStatus.auth_enabled 
-                  ? 'Users must log in to access NeXroll' 
-                  : 'NeXroll is accessible without login (disabled by default)'}
+                {!authStatus.users_exist
+                  ? 'Create a user account below before enabling login'
+                  : authStatus.auth_enabled 
+                    ? 'Users must log in to access NeXroll' 
+                    : 'NeXroll is accessible without login (disabled by default)'}
               </div>
             </div>
           </div>
           <button
             onClick={toggleAuthEnabled}
+            disabled={!authStatus.users_exist}
             style={{
               position: 'relative',
               width: '50px',
@@ -26314,11 +26343,12 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
               backgroundColor: authStatus.auth_enabled ? '#00d4ff' : 'var(--border-color)',
               borderRadius: '13px',
               border: 'none',
-              cursor: 'pointer',
+              cursor: !authStatus.users_exist ? 'not-allowed' : 'pointer',
               transition: 'background-color 0.2s',
-              padding: 0
+              padding: 0,
+              opacity: !authStatus.users_exist ? 0.4 : 1
             }}
-            title={authStatus.auth_enabled ? 'Disable login requirement' : 'Enable login requirement'}
+            title={!authStatus.users_exist ? 'Create a user account first' : authStatus.auth_enabled ? 'Disable login requirement' : 'Enable login requirement'}
           >
             <div style={{
               position: 'absolute',
