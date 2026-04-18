@@ -888,6 +888,11 @@ const [applyingToServer, setApplyingToServer] = useState(false);
   const [loginLoading, setLoginLoading] = useState(false);
   const [loginError, setLoginError] = useState(null);
   const [showRegisterForm, setShowRegisterForm] = useState(false);
+  const [showResetForm, setShowResetForm] = useState(false);
+  const [resetForm, setResetForm] = useState({ new_password: '', confirm_password: '' });
+  const [resetLoading, setResetLoading] = useState(false);
+  const [resetError, setResetError] = useState(null);
+  const [resetSuccess, setResetSuccess] = useState(null);
   const [registerForm, setRegisterForm] = useState({ username: '', password: '', confirm_password: '', display_name: '' });
   
   // User Management State
@@ -7722,7 +7727,10 @@ const DashboardTiles = {
                     e.stopPropagation();
                     e.currentTarget.style.borderColor = 'var(--border-color)';
                     e.currentTarget.style.backgroundColor = 'var(--bg-color)';
-                    const droppedFiles = Array.from(e.dataTransfer.files).filter(f => f.type.startsWith('video/'));
+                    const videoExts = ['.mp4','.mkv','.avi','.mov','.wmv','.flv','.webm','.m4v','.ts','.mpg','.mpeg'];
+                    const droppedFiles = Array.from(e.dataTransfer.files).filter(f =>
+                      f.type.startsWith('video/') || videoExts.some(ext => f.name.toLowerCase().endsWith(ext))
+                    );
                     if (droppedFiles.length > 0) {
                       setFiles(prev => [...prev, ...droppedFiles]);
                     }
@@ -17924,11 +17932,12 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
         authenticated: data?.authenticated || false,
         user: data?.user || null,
         users_exist: data?.users_exist || false,
-        allow_registration: data?.allow_registration || false
+        allow_registration: data?.allow_registration || false,
+        is_local: data?.is_local || false
       });
     } catch (e) {
       console.error('Failed to check auth status:', e);
-      setAuthStatus({ loading: false, auth_enabled: false, authenticated: false, user: null, users_exist: false });
+      setAuthStatus({ loading: false, auth_enabled: false, authenticated: false, user: null, users_exist: false, is_local: false });
     }
   }, []);
 
@@ -17963,6 +17972,37 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
       setLoginError('Connection error. Please try again.');
     } finally {
       setLoginLoading(false);
+    }
+  };
+
+  const handleResetPassword = async (e) => {
+    e?.preventDefault();
+    setResetLoading(true);
+    setResetError(null);
+    setResetSuccess(null);
+    if (resetForm.new_password !== resetForm.confirm_password) {
+      setResetError('Passwords do not match');
+      setResetLoading(false);
+      return;
+    }
+    try {
+      const res = await fetch(apiUrl('/auth/reset-password'), {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ new_password: resetForm.new_password })
+      });
+      const data = await safeJson(res);
+      if (res.ok && data?.success) {
+        setResetSuccess(`Password reset for "${data.username}". You can now sign in.`);
+        setResetForm({ new_password: '', confirm_password: '' });
+      } else {
+        setResetError(data?.detail || 'Password reset failed');
+      }
+    } catch (e) {
+      setResetError('Connection error. Please try again.');
+    } finally {
+      setResetLoading(false);
     }
   };
 
@@ -31078,7 +31118,8 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
               color: darkMode ? '#aaa' : '#666',
               marginTop: '0.5rem'
             }}>
-              {showRegisterForm ? 'Create your account' : 
+              {showResetForm ? 'Reset admin password' :
+               showRegisterForm ? 'Create your account' : 
                !authStatus.users_exist ? 'Create the first admin account' : 
                'Sign in to continue'}
             </div>
@@ -31341,8 +31382,8 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
               >
                 {loginLoading ? <><Loader2 size={18} className="spin" /> Signing in...</> : 'Sign In'}
               </button>
-              {authStatus.allow_registration && (
-                <div style={{ textAlign: 'center', marginTop: '1rem' }}>
+              <div style={{ textAlign: 'center', marginTop: '1rem', display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+                {authStatus.allow_registration && (
                   <button
                     type="button"
                     onClick={() => setShowRegisterForm(true)}
@@ -31356,9 +31397,134 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
                   >
                     Need an account? Register
                   </button>
+                )}
+                {authStatus.is_local && (
+                  <button
+                    type="button"
+                    onClick={() => { setShowResetForm(true); setResetError(null); setResetSuccess(null); }}
+                    style={{
+                      background: 'none',
+                      border: 'none',
+                      color: darkMode ? '#aaa' : '#888',
+                      cursor: 'pointer',
+                      fontSize: '0.85rem'
+                    }}
+                  >
+                    Forgot password?
+                  </button>
+                )}
+              </div>
+            </form>
+          )}
+
+          {/* Reset Password Form (localhost only) */}
+          {showResetForm && !showRegisterForm && authStatus.users_exist && (
+            <div style={{ marginTop: '1.5rem', borderTop: `1px solid ${darkMode ? '#3a3a5a' : '#e0e0e0'}`, paddingTop: '1.5rem' }}>
+              <div style={{ 
+                fontSize: '0.85rem', 
+                color: darkMode ? '#aaa' : '#666', 
+                marginBottom: '1rem',
+                padding: '0.75rem',
+                backgroundColor: darkMode ? 'rgba(0, 212, 255, 0.08)' : 'rgba(0, 150, 200, 0.06)',
+                borderRadius: '8px',
+                border: `1px solid ${darkMode ? 'rgba(0, 212, 255, 0.2)' : 'rgba(0, 150, 200, 0.15)'}`
+              }}>
+                This will reset the admin account password. Only available from the local machine.
+              </div>
+              {resetError && (
+                <div style={{
+                  padding: '0.75rem',
+                  backgroundColor: 'rgba(239, 68, 68, 0.1)',
+                  border: '1px solid rgba(239, 68, 68, 0.3)',
+                  borderRadius: '8px',
+                  color: '#ef4444',
+                  marginBottom: '1rem',
+                  fontSize: '0.9rem'
+                }}>
+                  {resetError}
                 </div>
               )}
-            </form>
+              {resetSuccess && (
+                <div style={{
+                  padding: '0.75rem',
+                  backgroundColor: 'rgba(34, 197, 94, 0.1)',
+                  border: '1px solid rgba(34, 197, 94, 0.3)',
+                  borderRadius: '8px',
+                  color: '#22c55e',
+                  marginBottom: '1rem',
+                  fontSize: '0.9rem'
+                }}>
+                  {resetSuccess}
+                </div>
+              )}
+              <form onSubmit={handleResetPassword}>
+                <div style={{ marginBottom: '1rem' }}>
+                  <label style={{ display: 'block', marginBottom: '0.5rem', fontWeight: 600, color: darkMode ? '#ddd' : '#333' }}>
+                    New Password
+                  </label>
+                  <input
+                    type="password"
+                    value={resetForm.new_password}
+                    onChange={(e) => setResetForm(prev => ({ ...prev, new_password: e.target.value }))}
+                    required
+                    minLength={8}
+                    style={{
+                      width: '100%', padding: '0.75rem', borderRadius: '8px',
+                      border: `1px solid ${darkMode ? '#3a3a5a' : '#ccc'}`,
+                      backgroundColor: darkMode ? '#1a1a2e' : '#fff',
+                      color: darkMode ? '#fff' : '#333',
+                      fontSize: '1rem', boxSizing: 'border-box'
+                    }}
+                  />
+                </div>
+                <div style={{ marginBottom: '1.5rem' }}>
+                  <label style={{ display: 'block', marginBottom: '0.5rem', fontWeight: 600, color: darkMode ? '#ddd' : '#333' }}>
+                    Confirm New Password
+                  </label>
+                  <input
+                    type="password"
+                    value={resetForm.confirm_password}
+                    onChange={(e) => setResetForm(prev => ({ ...prev, confirm_password: e.target.value }))}
+                    required
+                    minLength={8}
+                    style={{
+                      width: '100%', padding: '0.75rem', borderRadius: '8px',
+                      border: `1px solid ${darkMode ? '#3a3a5a' : '#ccc'}`,
+                      backgroundColor: darkMode ? '#1a1a2e' : '#fff',
+                      color: darkMode ? '#fff' : '#333',
+                      fontSize: '1rem', boxSizing: 'border-box'
+                    }}
+                  />
+                </div>
+                <button
+                  type="submit"
+                  disabled={resetLoading}
+                  style={{
+                    width: '100%', padding: '0.875rem',
+                    backgroundColor: '#f59e0b', color: '#000',
+                    border: 'none', borderRadius: '8px',
+                    fontSize: '1rem', fontWeight: 600,
+                    cursor: resetLoading ? 'not-allowed' : 'pointer',
+                    opacity: resetLoading ? 0.7 : 1,
+                    display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.5rem'
+                  }}
+                >
+                  {resetLoading ? <><Loader2 size={18} className="spin" /> Resetting...</> : 'Reset Admin Password'}
+                </button>
+                <div style={{ textAlign: 'center', marginTop: '1rem' }}>
+                  <button
+                    type="button"
+                    onClick={() => { setShowResetForm(false); setResetError(null); setResetSuccess(null); }}
+                    style={{
+                      background: 'none', border: 'none',
+                      color: '#00d4ff', cursor: 'pointer', fontSize: '0.9rem'
+                    }}
+                  >
+                    Back to Sign In
+                  </button>
+                </div>
+              </form>
+            </div>
           )}
         </div>
       </div>

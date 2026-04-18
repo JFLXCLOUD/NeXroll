@@ -413,7 +413,7 @@ const PatternImport = ({ isOpen, onClose, onImport }) => {
       matchResults: previewData.match_results
     };
     
-    onImport(blocks, metadata);
+    onImport({ blocks, ...metadata });
     
     // Reset and close
     setSelectedFile(null);

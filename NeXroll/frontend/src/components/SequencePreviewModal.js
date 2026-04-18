@@ -25,29 +25,45 @@ const SequencePreviewModal = ({ isOpen, onClose, blocks = [], categories = [], p
   const [expandedBlocks, setExpandedBlocks] = useState(new Set());
   const [playlist, setPlaylist] = useState([]);
   const videoRef = React.useRef(null);
+  const isTransitioningRef = React.useRef(false);
+  const expectedIndexRef = React.useRef(0);
+  // Snapshot props at modal-open time so background refetches don't rebuild the playlist
+  const snapshotRef = React.useRef({ prerolls: [], categories: [], blocks: [] });
+  const [modalOpenCounter, setModalOpenCounter] = useState(0);
 
-  // Get preroll details for a block
-  const getBlockPrerolls = useCallback((block) => {
+  // Get preroll details for a block (uses snapshot to avoid mid-playback changes)
+  const getBlockPrerolls = useCallback((block, snapshotPrerolls) => {
+    const prs = snapshotPrerolls;
     if (block.type === 'preroll') {
-      const preroll = prerolls.find((p) => p.id === block.preroll_id);
+      const preroll = prs.find((p) => p.id === block.preroll_id);
       return preroll ? [preroll] : [];
     } else if (block.type === 'fixed') {
       // Fixed block with specific preroll IDs
       if (!block.preroll_ids || block.preroll_ids.length === 0) return [];
       return block.preroll_ids
-        .map(id => prerolls.find(p => p.id === id))
+        .map(id => prs.find(p => p.id === id))
         .filter(Boolean);
     } else if (block.type === 'random' || block.type === 'sequential') {
-      return prerolls.filter((p) => p.category_id === block.category_id);
+      // Filter to only prerolls with existing files for random/sequential selection
+      return prs.filter((p) => p.category_id === block.category_id && p.file_exists !== false);
     } else if (block.type === 'queue') {
       return []; // Queue items would be dynamic
     } else if (block.type === 'sequence') {
       return []; // Nested sequence
     }
     return [];
-  }, [prerolls]);
+  }, []);
 
-  // Build the playlist when blocks change or modal opens
+  // Snapshot props when modal opens, increment counter to trigger playlist build once
+  useEffect(() => {
+    if (isOpen) {
+      snapshotRef.current = { prerolls: [...prerolls], categories: [...categories], blocks: [...blocks] };
+      setModalOpenCounter(c => c + 1);
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isOpen]);
+
+  // Build the playlist ONCE when the modal opens (keyed off modalOpenCounter)
   useEffect(() => {
     if (!isOpen) {
       setIsPlaying(false);
@@ -58,10 +74,12 @@ const SequencePreviewModal = ({ isOpen, onClose, blocks = [], categories = [], p
       return;
     }
 
+    const snap = snapshotRef.current;
+
     // Build playlist from blocks
     const newPlaylist = [];
-    blocks.forEach((block, blockIndex) => {
-      const blockPrerolls = getBlockPrerolls(block);
+    snap.blocks.forEach((block, blockIndex) => {
+      const blockPrerolls = getBlockPrerolls(block, snap.prerolls);
       
       if (block.type === 'random' && blockPrerolls.length > 0) {
         // Pick count random prerolls from the category (shuffle + slice)
@@ -74,14 +92,14 @@ const SequencePreviewModal = ({ isOpen, onClose, blocks = [], categories = [], p
         // Pick the first preroll from the category (simulating sequential)
         newPlaylist.push({ blockIndex, preroll: blockPrerolls[0], blockType: 'sequential' });
       } else if (block.type === 'preroll') {
-        const preroll = prerolls.find(p => p.id === block.preroll_id);
+        const preroll = snap.prerolls.find(p => p.id === block.preroll_id);
         if (preroll) {
           newPlaylist.push({ blockIndex, preroll, blockType: 'preroll' });
         }
       } else if (block.type === 'fixed' && block.preroll_ids) {
         // Add all fixed prerolls in order
         block.preroll_ids.forEach(prerollId => {
-          const preroll = prerolls.find(p => p.id === prerollId);
+          const preroll = snap.prerolls.find(p => p.id === prerollId);
           if (preroll) {
             newPlaylist.push({ blockIndex, preroll, blockType: 'fixed' });
           }
@@ -90,11 +108,13 @@ const SequencePreviewModal = ({ isOpen, onClose, blocks = [], categories = [], p
     });
 
     setPlaylist(newPlaylist);
-  }, [isOpen, blocks, prerolls, getBlockPrerolls]);
+  }, [isOpen, modalOpenCounter, getBlockPrerolls]);
 
   // Start playback
   const startPlayback = () => {
     if (playlist.length === 0) return;
+    isTransitioningRef.current = false;
+    expectedIndexRef.current = 0;
     setIsPlaying(true);
     setCurrentPrerollIndex(0);
     setCurrentBlockIndex(playlist[0].blockIndex);
@@ -103,6 +123,7 @@ const SequencePreviewModal = ({ isOpen, onClose, blocks = [], categories = [], p
 
   // Stop playback
   const stopPlayback = () => {
+    isTransitioningRef.current = false;
     setIsPlaying(false);
     setCurrentBlockIndex(-1);
     setCurrentPrerollIndex(0);
@@ -119,12 +140,12 @@ const SequencePreviewModal = ({ isOpen, onClose, blocks = [], categories = [], p
       return '';
     }
     
-    // Get category name from preroll's category object or find it in categories
+    // Get category name from preroll's category object or find it in snapshot categories
     let categoryName = 'unknown';
     if (preroll.category && preroll.category.name) {
       categoryName = preroll.category.name;
     } else if (preroll.category_id) {
-      const category = categories.find(c => c.id === preroll.category_id);
+      const category = snapshotRef.current.categories.find(c => c.id === preroll.category_id);
       if (category) {
         categoryName = category.name;
       }
@@ -136,8 +157,11 @@ const SequencePreviewModal = ({ isOpen, onClose, blocks = [], categories = [], p
 
   // Handle video ended - move to next preroll
   const handleVideoEnded = () => {
+    // Ignore if we're in the middle of a source transition
+    if (isTransitioningRef.current) return;
     const nextIndex = currentPrerollIndex + 1;
     if (nextIndex < playlist.length) {
+      expectedIndexRef.current = nextIndex;
       setCurrentPrerollIndex(nextIndex);
       setCurrentBlockIndex(playlist[nextIndex].blockIndex);
       setPlaybackProgress((nextIndex / playlist.length) * 100);
@@ -151,8 +175,14 @@ const SequencePreviewModal = ({ isOpen, onClose, blocks = [], categories = [], p
 
   // Handle video error - skip to next preroll (e.g. 404 / missing file)
   const handleVideoError = () => {
+    // Ignore abort errors that fire during normal source transitions
+    const error = videoRef.current?.error;
+    if (!error || error.code === 1 /* MEDIA_ERR_ABORTED */) return;
+    // Also ignore errors during active source transitions
+    if (isTransitioningRef.current) return;
     const nextIndex = currentPrerollIndex + 1;
     if (nextIndex < playlist.length) {
+      expectedIndexRef.current = nextIndex;
       setCurrentPrerollIndex(nextIndex);
       setCurrentBlockIndex(playlist[nextIndex].blockIndex);
       setPlaybackProgress((nextIndex / playlist.length) * 100);
@@ -163,11 +193,19 @@ const SequencePreviewModal = ({ isOpen, onClose, blocks = [], categories = [], p
     }
   };
 
+  // Handle canplay - source has loaded successfully, transition complete
+  const handleCanPlay = () => {
+    isTransitioningRef.current = false;
+  };
+
   // When track index changes, load the new src into the same video element
   useEffect(() => {
     if (!isPlaying || !videoRef.current || playlist.length === 0) return;
-    const url = getVideoUrl(playlist[currentPrerollIndex]?.preroll);
-    if (url && videoRef.current.src !== url) {
+    const item = playlist[currentPrerollIndex];
+    if (!item) return;
+    const url = getVideoUrl(item.preroll);
+    if (url) {
+      isTransitioningRef.current = true;
       videoRef.current.src = url;
       videoRef.current.load();
       videoRef.current.play().catch(() => {});
@@ -409,6 +447,7 @@ const SequencePreviewModal = ({ isOpen, onClose, blocks = [], categories = [], p
                 controls
                 onEnded={handleVideoEnded}
                 onError={handleVideoError}
+                onCanPlay={handleCanPlay}
                 onTimeUpdate={handleTimeUpdate}
                 style={{
                   width: '100%',

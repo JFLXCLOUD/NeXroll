@@ -47,7 +47,7 @@ if not getattr(sys, "frozen", False):
     sys.path.insert(0, current_dir)
     sys.path.insert(0, parent_dir)
 
-from backend.database import SessionLocal, engine
+from backend.database import SessionLocal, engine, DB_PATH
 import backend.models as models
 from backend.plex_connector import PlexConnector
 from backend.scheduler import scheduler
@@ -915,7 +915,7 @@ def _log_startup_banner():
         _file_log(f"Frozen: {getattr(sys, 'frozen', False)}")
         _file_log(f"Working Directory: {os.getcwd()}")
         _file_log(f"Log Directory: {_ensure_log_dir()}")
-        _file_log(f"Database: {os.path.abspath('nexroll.db')}")
+        _file_log(f"Database: {DB_PATH}")
         
         # Check verbose logging status
         verbose = _is_verbose_logging_enabled()
@@ -4486,6 +4486,10 @@ class ChangePasswordRequest(BaseModel):
     new_password: str
 
 
+class ResetPasswordRequest(BaseModel):
+    new_password: str
+
+
 def _hash_password(password: str) -> str:
     """Hash a password using bcrypt"""
     return bcrypt.hashpw(password.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
@@ -4691,7 +4695,64 @@ async def auth_status(request: Request, db: Session = Depends(get_db)):
             "role": user.role
         } if user else None,
         "users_exist": user_count > 0,
-        "allow_registration": getattr(setting, 'auth_allow_registration', False) if setting else False
+        "allow_registration": getattr(setting, 'auth_allow_registration', False) if setting else False,
+        "is_local": _is_local_request(request)
+    }
+
+
+@app.post("/auth/reset-password")
+async def auth_reset_password(
+    request: Request,
+    reset: ResetPasswordRequest,
+    db: Session = Depends(get_db)
+):
+    """
+    Reset admin password from localhost without authentication.
+    This is the recovery mechanism for locked-out administrators.
+    Only accessible from localhost for security.
+    """
+    # SECURITY: Only allow from localhost
+    if not _is_local_request(request):
+        raise HTTPException(status_code=403, detail="Password reset is only available from the local machine")
+    
+    # Validate new password strength
+    if len(reset.new_password) < 8:
+        raise HTTPException(status_code=422, detail="Password must be at least 8 characters")
+    if reset.new_password.lower() == reset.new_password or reset.new_password.upper() == reset.new_password:
+        raise HTTPException(status_code=422, detail="Password must contain both uppercase and lowercase letters")
+    if not any(c.isdigit() for c in reset.new_password):
+        raise HTTPException(status_code=422, detail="Password must contain at least one number")
+    
+    # Find the admin user (prefer first admin, fall back to first user)
+    admin_user = db.query(models.User).filter(models.User.role == 'admin').order_by(models.User.id).first()
+    if not admin_user:
+        admin_user = db.query(models.User).order_by(models.User.id).first()
+    
+    if not admin_user:
+        raise HTTPException(status_code=404, detail="No user accounts found")
+    
+    # Reset password and unlock account
+    admin_user.password_hash = _hash_password(reset.new_password)
+    admin_user.failed_login_attempts = 0
+    admin_user.locked_until = None
+    
+    # Invalidate all existing sessions for this user
+    db.query(models.Session).filter(
+        models.Session.user_id == admin_user.id
+    ).update({"is_valid": False})
+    
+    db.commit()
+    
+    # Log the reset event
+    ip, user_agent = _get_client_info(request)
+    _log_auth_event(db, 'password_reset', username=admin_user.username, user_id=admin_user.id,
+                   ip_address=ip, user_agent=user_agent,
+                   details='Local password reset - all sessions invalidated')
+    
+    return {
+        "success": True,
+        "username": admin_user.username,
+        "message": f"Password reset successfully for user '{admin_user.username}'. All previous sessions have been invalidated."
     }
 
 
@@ -7575,7 +7636,8 @@ def get_prerolls(db: Session = Depends(get_db), category_id: str = "", tags: str
             "managed": getattr(p, "managed", True),
             "upload_date": p.upload_date,
             "community_preroll_id": getattr(p, "community_preroll_id", None),
-            "exclude_from_matching": getattr(p, "exclude_from_matching", False)
+            "exclude_from_matching": getattr(p, "exclude_from_matching", False),
+            "file_exists": bool(p.path and os.path.exists(p.path))
         })
     return result
 
@@ -9597,6 +9659,8 @@ def apply_sequence_to_server(sequence_id: int, db: Session = Depends(get_db)):
             if not cid:
                 continue
             pool = _prerolls_for_category(cid)
+            # Filter to only prerolls whose files actually exist on disk
+            pool = [p for p in pool if p.path and os.path.exists(p.path)]
             if not pool:
                 continue
             k = min(max(count, 1), len(pool))
@@ -9615,7 +9679,7 @@ def apply_sequence_to_server(sequence_id: int, db: Session = Depends(get_db)):
                     pids = [int(pid)]
             for pid in pids:
                 p = db.query(models.Preroll).filter(models.Preroll.id == pid).first()
-                if p:
+                if p and p.path and os.path.exists(p.path):
                     paths.append(os.path.abspath(p.path))
 
     if not paths:
@@ -17971,6 +18035,13 @@ async def sync_nexup(db: Session = Depends(get_db)):
         for trailer in existing:
             if trailer.local_path and not os.path.exists(trailer.local_path):
                 _file_log(f"NeX-Up sync: Removing orphaned record for '{trailer.title}' - file missing: {trailer.local_path}")
+                # Also clean up corresponding preroll record
+                orphan_preroll = db.query(models.Preroll).filter(
+                    models.Preroll.path == trailer.local_path
+                ).first()
+                if orphan_preroll:
+                    db.delete(orphan_preroll)
+                    _file_log(f"NeX-Up sync: Removed orphaned preroll record for '{trailer.title}'")
                 existing_radarr_ids.discard(trailer.radarr_movie_id)
                 db.delete(trailer)
                 orphaned_count += 1
@@ -17999,6 +18070,13 @@ async def sync_nexup(db: Session = Depends(get_db)):
                             os.remove(trailer.local_path)
                         except:
                             pass
+                    # Also clean up corresponding preroll record
+                    if trailer.local_path:
+                        expired_preroll = db.query(models.Preroll).filter(
+                            models.Preroll.path == trailer.local_path
+                        ).first()
+                        if expired_preroll:
+                            db.delete(expired_preroll)
                     db.delete(trailer)
                     results["expired"] += 1
                     _file_log(f"NeX-Up: Expired trailer for downloaded movie '{trailer.title}' (past {available_days}-day grace period)")

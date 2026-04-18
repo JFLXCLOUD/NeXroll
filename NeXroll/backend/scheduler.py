@@ -71,6 +71,27 @@ def _scheduler_verbose(msg: str):
     except Exception:
         pass
 
+def _has_valid_sequence(schedule) -> bool:
+    """Check if a schedule has a valid, non-empty sequence definition.
+    Returns False for None, empty string, 'null', '[]', or any non-list JSON.
+    """
+    raw = getattr(schedule, "sequence", None) if schedule else None
+    if not raw:
+        return False
+    if isinstance(raw, str):
+        stripped = raw.strip()
+        if not stripped or stripped in ("null", "[]", "''", '""'):
+            return False
+        try:
+            parsed = json.loads(stripped)
+            return isinstance(parsed, list) and len(parsed) > 0
+        except Exception:
+            return False
+    if isinstance(raw, list):
+        return len(raw) > 0
+    return False
+
+
 class Scheduler:
     def __init__(self):
         self.running = False
@@ -196,6 +217,17 @@ class Scheduler:
     def _run_scheduler(self):
         """Main scheduler loop - runs based on SCHEDULER_INTERVAL (default 60s)"""
         _scheduler_log(f"Scheduler started (interval: {self._scheduler_check_interval}s)")
+        # Run an immediate schedule check on startup to correct any stale state
+        # (e.g., after a reboot, the active_category may be from a schedule that's no longer active)
+        try:
+            _scheduler_log("Running startup schedule verification...")
+            self._check_and_execute_schedules()
+            # Force an immediate Plex verification on startup (bypass the 5-min cooldown)
+            self._last_verification_time = None
+            self._verify_and_reapply_if_needed()
+            _scheduler_log("Startup verification complete")
+        except Exception as e:
+            _scheduler_log(f"Startup verification error: {e}", level="ERROR")
         while self.running:
             try:
                 # Auto-apply mapped category from currently playing Plex item (genre-based)
@@ -1440,16 +1472,24 @@ class Scheduler:
                                     _scheduler_log(f"Filler enabled but not configured properly; Plex preroll will remain unchanged")
                                     self._last_logged_state = state_key
                                     self._last_logged_time = now
+                                # Clear stale active_category so dashboard doesn't show an old schedule
+                                if setting.active_category is not None:
+                                    setting.active_category = None
+                                    db.commit()
                         else:
                             state_key = "no_schedules"
                             if self._last_logged_state != state_key:
                                 _scheduler_log(f"No active schedules and no fallback/filler defined; Plex preroll will remain unchanged")
                                 self._last_logged_state = state_key
                                 self._last_logged_time = now
+                            # Clear stale active_category so dashboard doesn't show an old schedule
+                            if setting.active_category is not None:
+                                setting.active_category = None
+                                db.commit()
 
             # Apply category/sequence to Plex
             # First handle sequence-only schedules (no category_id but has sequence)
-            if desired_category_id is None and chosen_schedule and getattr(chosen_schedule, "sequence", None):
+            if desired_category_id is None and chosen_schedule and _has_valid_sequence(chosen_schedule):
                 # Check if this sequence schedule was already applied (avoid re-applying every tick)
                 last_rotation = self._last_rotation_time.get(chosen_schedule.id)
                 needs_apply = False
@@ -1486,7 +1526,7 @@ class Scheduler:
             elif desired_category_id and setting.active_category != desired_category_id:
                 applied_ok = False
                 # If this schedule defines an explicit sequence, honor it; otherwise apply whole category
-                if chosen_schedule and getattr(chosen_schedule, "sequence", None):
+                if chosen_schedule and _has_valid_sequence(chosen_schedule):
                     applied_ok = self._apply_schedule_sequence_to_plex(chosen_schedule, db)
                     # Track rotation time for schedules with sequences
                     if applied_ok and chosen_schedule.id:
@@ -1500,7 +1540,9 @@ class Scheduler:
                         chosen_schedule.last_run = now
                         chosen_schedule.next_run = self._calculate_next_run(chosen_schedule)
                     db.commit()
-            elif desired_category_id is None and not (chosen_schedule and getattr(chosen_schedule, "sequence", None)):
+                else:
+                    _scheduler_log(f"Failed to apply category {desired_category_id} (schedule '{chosen_schedule.name if chosen_schedule else 'N/A'}') to Plex", level="WARNING")
+            elif desired_category_id is None and not (chosen_schedule and _has_valid_sequence(chosen_schedule)):
                 state_key = "no_category_to_apply"
                 if self._last_logged_state != state_key:
                     _scheduler_log(f"No category to apply (desired_category_id is None)")
@@ -1509,7 +1551,7 @@ class Scheduler:
             elif desired_category_id and setting.active_category == desired_category_id:
                 # Check if we need to rotate random blocks in a sequence
                 should_rotate = False
-                if chosen_schedule and getattr(chosen_schedule, "sequence", None):
+                if chosen_schedule and _has_valid_sequence(chosen_schedule):
                     # Check if this schedule has random blocks
                     try:
                         seq = chosen_schedule.sequence
@@ -1598,10 +1640,48 @@ class Scheduler:
             if active_schedules:
                 # Check if any active schedule has a sequence
                 for sched in active_schedules:
-                    if sched.category_id == setting.active_category and getattr(sched, "sequence", None):
+                    if sched.category_id == setting.active_category and _has_valid_sequence(sched):
                         # Active schedule with sequence - skip verification
                         self._last_verification_time = now
                         return
+            
+            # CRITICAL: Check if the stored active_category still corresponds to a
+            # currently active schedule.  If it doesn't, the category is stale (e.g.
+            # "Friday Night Movies" was applied on Friday but today is Saturday).
+            # In that case, do NOT reapply the stale category — let the main scheduler
+            # loop (_check_and_execute_schedules) pick the correct schedule on its
+            # next tick.
+            category_still_scheduled = False
+            if active_schedules:
+                for sched in active_schedules:
+                    if sched.category_id == setting.active_category:
+                        category_still_scheduled = True
+                        break
+            
+            # Also check if it's a fallback or filler that's legitimately holding this category
+            if not category_still_scheduled:
+                stored_fallback = getattr(setting, "last_schedule_fallback", None)
+                filler_active = getattr(setting, "filler_active", None)
+                if stored_fallback == setting.active_category:
+                    category_still_scheduled = True  # Fallback is using this category
+                elif filler_active and filler_active == f"category:{setting.active_category}":
+                    category_still_scheduled = True  # Filler is using this category
+            
+            if not category_still_scheduled:
+                _scheduler_log(
+                    f"VERIFICATION: Category {setting.active_category} is no longer backed by an "
+                    f"active schedule — clearing stale category and forcing re-evaluation"
+                )
+                # Clear the stale category so the main loop can properly transition
+                setting.active_category = None
+                db.commit()
+                self._last_verification_time = now
+                # Force immediate re-evaluation to apply the correct schedule
+                try:
+                    self._check_and_execute_schedules()
+                except Exception as e:
+                    _scheduler_log(f"VERIFICATION: Re-evaluation after stale clear failed: {e}", level="ERROR")
+                return
             
             # Get the expected prerolls for the active category (including many-to-many)
             # Must match the logic in _apply_category_to_plex
@@ -2102,8 +2182,8 @@ class Scheduler:
           - {"type":"random", "category_id": <int>, "count": <int>}
           - {"type":"fixed", "preroll_id": <int>}
         """
-        if not schedule or not getattr(schedule, "sequence", None):
-            _scheduler_log(f"Sequence apply skipped: schedule={'missing' if not schedule else schedule.name}, has_sequence={bool(getattr(schedule, 'sequence', None))}", level="WARNING")
+        if not schedule or not _has_valid_sequence(schedule):
+            _scheduler_log(f"Sequence apply skipped: schedule={'missing' if not schedule else schedule.name}, has_sequence={_has_valid_sequence(schedule)}", level="WARNING")
             return False
         try:
             seq = schedule.sequence
@@ -2140,7 +2220,10 @@ class Scheduler:
                 except Exception:
                     count = 1
                 pool = _prerolls_for_category(cid)
+                # Filter to only prerolls whose files actually exist on disk
+                pool = [p for p in pool if p.path and os.path.exists(p.path)]
                 if not pool:
+                    _scheduler_log(f"Sequence: No prerolls with valid files for category {cid}", level="WARNING")
                     continue
                 k = min(max(count, 1), len(pool))
                 picks = random.sample(pool, k) if len(pool) > k else pool
@@ -2168,7 +2251,7 @@ class Scheduler:
                 # Query and add each preroll in order
                 for pid in pids:
                     p = db.query(models.Preroll).filter(models.Preroll.id == pid).first()
-                    if p:
+                    if p and p.path and os.path.exists(p.path):
                         paths.append(os.path.abspath(p.path))
             else:
                 # ignore unknown step types
@@ -2337,7 +2420,7 @@ class Scheduler:
             paths = []
             
             # If schedule has a sequence, use it
-            if getattr(schedule, "sequence", None):
+            if _has_valid_sequence(schedule):
                 try:
                     seq = schedule.sequence
                     if isinstance(seq, str):
@@ -2516,7 +2599,10 @@ class Scheduler:
                     if not cid:
                         continue
                     pool = _prerolls_for_category(cid)
+                    # Filter to only prerolls whose files actually exist on disk
+                    pool = [p for p in pool if p.path and os.path.exists(p.path)]
                     if not pool:
+                        _scheduler_log(f"FILLER: No prerolls with valid files for category {cid}", level="WARNING")
                         continue
                     k = min(max(count, 1), len(pool))
                     picks = random.sample(pool, k) if len(pool) > k else pool
@@ -2535,7 +2621,7 @@ class Scheduler:
                     
                     for pid in pids:
                         p = db.query(models.Preroll).filter(models.Preroll.id == pid).first()
-                        if p:
+                        if p and p.path and os.path.exists(p.path):
                             paths.append(os.path.abspath(p.path))
             
             if not paths:

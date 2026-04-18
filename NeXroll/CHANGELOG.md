@@ -1,5 +1,22 @@
 # Changelog
 
+## [1.12.0-beta.11] - 04-18-2026
+
+### Bug Fixes (beta.11)
+- **Critical: Scheduler Not Applying Correct Schedule** — Schedules with a `sequence` field stored as the string `"null"` were treated as having a valid sequence, causing the scheduler to silently fail when applying prerolls. Added `_has_valid_sequence()` validation across all 8 sequence checks.
+- **NeX-Up: Sequence Only Playing 1 of 2 Trailers** — Orphan preroll records referencing deleted/expired trailer files caused random block selection to pick missing files, which silently 404'd and were skipped. All three sequence resolution paths (API, scheduler saved-sequence, scheduler schedule-sequence) now filter random pools to only prerolls with existing files via `os.path.exists()`. Frontend preview also filters out missing-file prerolls.
+- **NeX-Up: Preview Tile/Video Mismatch** — Preview would show one trailer's name (e.g. "Hellfire") while playing a different trailer's video, because the first pick was a missing file that 404'd and auto-skipped. Fixed by the same `os.path.exists()` pool filtering.
+- **NeX-Up: Orphan Preroll Records Not Cleaned During Sync** — Radarr sync orphan cleanup and trailer expiry now also delete the corresponding preroll record, preventing stale entries from polluting sequence random pools.
+- **Sequence Preview: Now Playing Label Desyncs from Video** — The preview playlist was rebuilt every 30 seconds when background data polling refreshed the prerolls array, re-shuffling random picks mid-playback. Props are now snapshotted at modal-open time; playlist is built once and immune to background refreshes. Source transition guards also prevent spurious abort errors from advancing the track.
+- **Stale Category Verification** — Verification loop now clears stale `active_category` and forces immediate re-evaluation instead of waiting for the main loop.
+- **Apply Failure Logging** — Added explicit warning when category apply fails.
+- **Database Path Logging** — Startup log now shows the actual resolved database path.
+
+## [1.12.0-beta.10] - 04-16-2026
+
+### New Features (beta.10)
+- **Forgot Password / Local Password Reset** — Login page now shows a "Forgot password?" link when accessed from localhost. Resets the admin password without authentication, clears lockouts, invalidates all sessions. Restricted to local requests only for security. Reset events are logged to the auth audit trail.
+
 ## [1.12.0-beta.9] - 04-11-2026
 
 ### New Features (beta.9)
