@@ -75,39 +75,95 @@ const SequencePreviewModal = ({ isOpen, onClose, blocks = [], categories = [], p
     }
 
     const snap = snapshotRef.current;
+    const newBlockTypes = ['nexup_trailers', 'coming_soon_list', 'dynamic_preroll'];
+    const blocksNeedingResolve = snap.blocks
+      .map((b, i) => ({ ...b, _idx: i }))
+      .filter(b => newBlockTypes.includes(b.type));
 
-    // Build playlist from blocks
-    const newPlaylist = [];
-    snap.blocks.forEach((block, blockIndex) => {
-      const blockPrerolls = getBlockPrerolls(block, snap.prerolls);
-      
-      if (block.type === 'random' && blockPrerolls.length > 0) {
-        // Pick count random prerolls from the category (shuffle + slice)
-        const count = Math.max(1, Math.min(block.count || 1, blockPrerolls.length));
-        const shuffled = [...blockPrerolls].sort(() => Math.random() - 0.5);
-        shuffled.slice(0, count).forEach(preroll => {
-          newPlaylist.push({ blockIndex, preroll, blockType: 'random' });
-        });
-      } else if (block.type === 'sequential' && blockPrerolls.length > 0) {
-        // Pick the first preroll from the category (simulating sequential)
-        newPlaylist.push({ blockIndex, preroll: blockPrerolls[0], blockType: 'sequential' });
-      } else if (block.type === 'preroll') {
-        const preroll = snap.prerolls.find(p => p.id === block.preroll_id);
-        if (preroll) {
-          newPlaylist.push({ blockIndex, preroll, blockType: 'preroll' });
+    // Build local playlist items first (random, fixed, etc.)
+    const buildLocalItems = () => {
+      const items = [];
+      snap.blocks.forEach((block, blockIndex) => {
+        if (newBlockTypes.includes(block.type)) {
+          // Placeholder — will be filled from backend resolve
+          return;
         }
-      } else if (block.type === 'fixed' && block.preroll_ids) {
-        // Add all fixed prerolls in order
-        block.preroll_ids.forEach(prerollId => {
-          const preroll = snap.prerolls.find(p => p.id === prerollId);
+        const blockPrerolls = getBlockPrerolls(block, snap.prerolls);
+        if (block.type === 'random' && blockPrerolls.length > 0) {
+          const count = Math.max(1, Math.min(block.count || 1, blockPrerolls.length));
+          const shuffled = [...blockPrerolls].sort(() => Math.random() - 0.5);
+          shuffled.slice(0, count).forEach(preroll => {
+            items.push({ blockIndex, preroll, blockType: 'random' });
+          });
+        } else if (block.type === 'sequential' && blockPrerolls.length > 0) {
+          items.push({ blockIndex, preroll: blockPrerolls[0], blockType: 'sequential' });
+        } else if (block.type === 'preroll') {
+          const preroll = snap.prerolls.find(p => p.id === block.preroll_id);
           if (preroll) {
-            newPlaylist.push({ blockIndex, preroll, blockType: 'fixed' });
+            items.push({ blockIndex, preroll, blockType: 'preroll' });
           }
-        });
-      }
-    });
+        } else if (block.type === 'fixed' && block.preroll_ids) {
+          block.preroll_ids.forEach(prerollId => {
+            const preroll = snap.prerolls.find(p => p.id === prerollId);
+            if (preroll) {
+              items.push({ blockIndex, preroll, blockType: 'fixed' });
+            }
+          });
+        }
+      });
+      return items;
+    };
 
-    setPlaylist(newPlaylist);
+    if (blocksNeedingResolve.length > 0) {
+      // Resolve new block types via backend
+      fetch('/sequences/resolve-preview-blocks', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(blocksNeedingResolve)
+      })
+        .then(res => res.json())
+        .then(data => {
+          const localItems = buildLocalItems();
+          // Merge resolved items at the correct block positions
+          const resolvedByIdx = {};
+          (data.blocks || []).forEach((result, i) => {
+            const origIdx = blocksNeedingResolve[i]._idx;
+            resolvedByIdx[origIdx] = (result.items || []).map(item => ({
+              blockIndex: origIdx,
+              directUrl: item.url,
+              title: item.title,
+              blockType: snap.blocks[origIdx].type,
+              preroll: null
+            }));
+          });
+          // Build final ordered playlist
+          const finalPlaylist = [];
+          let localPointer = 0;
+          snap.blocks.forEach((block, blockIndex) => {
+            if (resolvedByIdx[blockIndex]) {
+              finalPlaylist.push(...resolvedByIdx[blockIndex]);
+            } else {
+              // Add all local items for this blockIndex
+              while (localPointer < localItems.length && localItems[localPointer].blockIndex === blockIndex) {
+                finalPlaylist.push(localItems[localPointer]);
+                localPointer++;
+              }
+            }
+          });
+          // Append any remaining local items
+          while (localPointer < localItems.length) {
+            finalPlaylist.push(localItems[localPointer]);
+            localPointer++;
+          }
+          setPlaylist(finalPlaylist);
+        })
+        .catch(() => {
+          // Fallback: just use local items
+          setPlaylist(buildLocalItems());
+        });
+    } else {
+      setPlaylist(buildLocalItems());
+    }
   }, [isOpen, modalOpenCounter, getBlockPrerolls]);
 
   // Start playback
@@ -203,7 +259,7 @@ const SequencePreviewModal = ({ isOpen, onClose, blocks = [], categories = [], p
     if (!isPlaying || !videoRef.current || playlist.length === 0) return;
     const item = playlist[currentPrerollIndex];
     if (!item) return;
-    const url = getVideoUrl(item.preroll);
+    const url = item.directUrl || getVideoUrl(item.preroll);
     if (url) {
       isTransitioningRef.current = true;
       videoRef.current.src = url;
@@ -263,6 +319,9 @@ const SequencePreviewModal = ({ isOpen, onClose, blocks = [], categories = [], p
       fixed: '#dc2626',
       random: '#f59e0b',
       sequential: '#10b981',
+      nexup_trailers: '#e11d48',
+      coming_soon_list: '#0891b2',
+      dynamic_preroll: '#16a34a',
       queue: '#ec4899',
       sequence: '#8b5cf6',
       separator: '#6b7280',
@@ -498,9 +557,9 @@ const SequencePreviewModal = ({ isOpen, onClose, blocks = [], categories = [], p
                         textOverflow: 'ellipsis',
                         whiteSpace: 'nowrap'
                       }}
-                      title={playlist[currentPrerollIndex]?.preroll?.display_name || playlist[currentPrerollIndex]?.preroll?.filename}
+                      title={playlist[currentPrerollIndex]?.title || playlist[currentPrerollIndex]?.preroll?.display_name || playlist[currentPrerollIndex]?.preroll?.filename}
                     >
-                      {playlist[currentPrerollIndex]?.preroll?.display_name || playlist[currentPrerollIndex]?.preroll?.filename}
+                      {playlist[currentPrerollIndex]?.title || playlist[currentPrerollIndex]?.preroll?.display_name || playlist[currentPrerollIndex]?.preroll?.filename}
                     </div>
                   </div>
                   <div style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginLeft: '1rem', flexShrink: 0 }}>

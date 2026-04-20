@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Shuffle, Pin, X, ChevronUp, ChevronDown, Search, Tag, Check } from 'lucide-react';
+import { Shuffle, Pin, X, ChevronUp, ChevronDown, Search, Tag, Check, Film, LayoutGrid, Sparkles } from 'lucide-react';
 
 /**
  * BlockEditor - Modal for configuring sequence blocks
@@ -14,6 +14,16 @@ const BlockEditor = ({ block, categories, prerolls, isNew, onSave, onCancel }) =
   const [expandedCategories, setExpandedCategories] = useState({});
   const [label, setLabel] = useState(block.label || '');
   const [initialBlockId, setInitialBlockId] = useState(block.id);
+  // NeX-Up Trailers state
+  const [nexupSource, setNexupSource] = useState(block.source || 'both');
+  const [nexupCount, setNexupCount] = useState(block.count || 2);
+  // Coming Soon List state
+  const [comingSoonLayout, setComingSoonLayout] = useState(block.layout || 'grid');
+  // Dynamic Preroll state
+  const [dpTemplate, setDpTemplate] = useState(block.template || '');
+  const [dpTheme, setDpTheme] = useState(block.theme || '');
+  const [dynamicPrerolls, setDynamicPrerolls] = useState([]);
+  const [dynamicPrerollsLoading, setDynamicPrerollsLoading] = useState(false);
 
   // Only reset state when opening a different block (detected by ID change)
   useEffect(() => {
@@ -24,8 +34,38 @@ const BlockEditor = ({ block, categories, prerolls, isNew, onSave, onCancel }) =
       setSelectedPrerollIds(block.preroll_ids || []);
       setLabel(block.label || '');
       setInitialBlockId(block.id);
+      setNexupSource(block.source || 'both');
+      setNexupCount(block.count || 2);
+      setComingSoonLayout(block.layout || 'grid');
+      setDpTemplate(block.template || '');
+      setDpTheme(block.theme || '');
     }
   }, [block.id, block, categories, initialBlockId]);
+
+  // Fetch dynamic preroll list when that block type is selected
+  useEffect(() => {
+    if (blockType === 'dynamic_preroll' && dynamicPrerolls.length === 0 && !dynamicPrerollsLoading) {
+      setDynamicPrerollsLoading(true);
+      fetch('/nexup/preroll/list')
+        .then(res => res.json())
+        .then(data => {
+          setDynamicPrerolls(data.prerolls || []);
+          // Auto-select first if no template/theme set
+          if (!dpTemplate && data.prerolls && data.prerolls.length > 0) {
+            const first = data.prerolls[0].template_id || '';
+            const parts = first.split('_');
+            if (parts.length >= 2) {
+              const theme = parts[parts.length - 1];
+              const template = parts.slice(0, -1).join('_');
+              setDpTemplate(template);
+              setDpTheme(theme);
+            }
+          }
+        })
+        .catch(() => setDynamicPrerolls([]))
+        .finally(() => setDynamicPrerollsLoading(false));
+    }
+  }, [blockType, dynamicPrerolls.length, dynamicPrerollsLoading, dpTemplate]);
 
   const handleSave = () => {
     const newBlock = {
@@ -37,13 +77,43 @@ const BlockEditor = ({ block, categories, prerolls, isNew, onSave, onCancel }) =
     if (blockType === 'random') {
       newBlock.category_id = categoryId;
       newBlock.count = count;
-      // Remove fixed block properties
       delete newBlock.preroll_ids;
-    } else {
+      delete newBlock.source;
+      delete newBlock.layout;
+      delete newBlock.template;
+      delete newBlock.theme;
+    } else if (blockType === 'fixed') {
       newBlock.preroll_ids = selectedPrerollIds;
-      // Remove random block properties
       delete newBlock.category_id;
       delete newBlock.count;
+      delete newBlock.source;
+      delete newBlock.layout;
+      delete newBlock.template;
+      delete newBlock.theme;
+    } else if (blockType === 'nexup_trailers') {
+      newBlock.source = nexupSource;
+      newBlock.count = nexupCount;
+      delete newBlock.category_id;
+      delete newBlock.preroll_ids;
+      delete newBlock.layout;
+      delete newBlock.template;
+      delete newBlock.theme;
+    } else if (blockType === 'coming_soon_list') {
+      newBlock.layout = comingSoonLayout;
+      delete newBlock.category_id;
+      delete newBlock.count;
+      delete newBlock.preroll_ids;
+      delete newBlock.source;
+      delete newBlock.template;
+      delete newBlock.theme;
+    } else if (blockType === 'dynamic_preroll') {
+      newBlock.template = dpTemplate;
+      newBlock.theme = dpTheme;
+      delete newBlock.category_id;
+      delete newBlock.count;
+      delete newBlock.preroll_ids;
+      delete newBlock.source;
+      delete newBlock.layout;
     }
 
     onSave(newBlock);
@@ -115,7 +185,15 @@ const BlockEditor = ({ block, categories, prerolls, isNew, onSave, onCancel }) =
 
   const canSave = blockType === 'random' 
     ? (categoryId !== null && count > 0)
-    : (selectedPrerollIds.length > 0);
+    : blockType === 'fixed'
+    ? (selectedPrerollIds.length > 0)
+    : blockType === 'nexup_trailers'
+    ? (nexupCount > 0)
+    : blockType === 'coming_soon_list'
+    ? true
+    : blockType === 'dynamic_preroll'
+    ? (dpTemplate && dpTheme)
+    : false;
 
   return (
     <div style={{
@@ -231,73 +309,50 @@ const BlockEditor = ({ block, categories, prerolls, isNew, onSave, onCancel }) =
             }}>Block Type</label>
             <div style={{
               display: 'grid',
-              gridTemplateColumns: '1fr 1fr',
-              gap: '12px'
+              gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))',
+              gap: '10px'
             }}>
-              <button
-                type="button"
-                style={{
-                  display: 'flex',
-                  flexDirection: 'column',
-                  alignItems: 'center',
-                  padding: '16px',
-                  border: blockType === 'random' ? '2px solid var(--accent-color)' : '2px solid var(--border-color)',
-                  borderRadius: '8px',
-                  background: blockType === 'random' ? 'linear-gradient(135deg, rgba(102, 126, 234, 0.1) 0%, rgba(118, 75, 162, 0.1) 100%)' : 'var(--card-bg)',
-                  color: 'var(--text-color)',
-                  cursor: 'pointer',
-                  transition: 'all 0.3s',
-                  boxShadow: blockType === 'random' ? '0 2px 8px rgba(102, 126, 234, 0.2)' : 'none'
-                }}
-                onClick={() => setBlockType('random')}
-              >
-                <div style={{
-                  width: '48px',
-                  height: '48px',
-                  borderRadius: '8px',
-                  background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  marginBottom: '10px'
-                }}>
-                  <Shuffle size={24} color="white" />
-                </div>
-                <span style={{ fontWeight: 'bold', fontSize: '15px', marginBottom: '4px' }}>Random</span>
-                <small style={{ fontSize: '11px', color: 'var(--text-secondary)', textAlign: 'center', lineHeight: '1.3' }}>Random prerolls from category</small>
-              </button>
-              <button
-                type="button"
-                style={{
-                  display: 'flex',
-                  flexDirection: 'column',
-                  alignItems: 'center',
-                  padding: '16px',
-                  border: blockType === 'fixed' ? '2px solid var(--accent-color)' : '2px solid var(--border-color)',
-                  borderRadius: '8px',
-                  background: blockType === 'fixed' ? 'linear-gradient(135deg, rgba(250, 112, 154, 0.1) 0%, rgba(254, 225, 64, 0.1) 100%)' : 'var(--card-bg)',
-                  color: 'var(--text-color)',
-                  cursor: 'pointer',
-                  transition: 'all 0.3s',
-                  boxShadow: blockType === 'fixed' ? '0 2px 8px rgba(250, 112, 154, 0.2)' : 'none'
-                }}
-                onClick={() => setBlockType('fixed')}
-              >
-                <div style={{
-                  width: '48px',
-                  height: '48px',
-                  borderRadius: '8px',
-                  background: 'linear-gradient(135deg, #fa709a 0%, #fee140 100%)',
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  marginBottom: '10px'
-                }}>
-                  <Pin size={24} color="white" />
-                </div>
-                <span style={{ fontWeight: 'bold', fontSize: '15px', marginBottom: '4px' }}>Fixed</span>
-                <small style={{ fontSize: '11px', color: 'var(--text-secondary)', textAlign: 'center', lineHeight: '1.3' }}>Specific prerolls in order</small>
-              </button>
+              {[
+                { key: 'random', label: 'Random', desc: 'Random prerolls from category', icon: Shuffle, gradient: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)', bgActive: 'linear-gradient(135deg, rgba(102, 126, 234, 0.1) 0%, rgba(118, 75, 162, 0.1) 100%)', shadow: 'rgba(102, 126, 234, 0.2)' },
+                { key: 'fixed', label: 'Fixed', desc: 'Specific prerolls in order', icon: Pin, gradient: 'linear-gradient(135deg, #fa709a 0%, #fee140 100%)', bgActive: 'linear-gradient(135deg, rgba(250, 112, 154, 0.1) 0%, rgba(254, 225, 64, 0.1) 100%)', shadow: 'rgba(250, 112, 154, 0.2)' },
+                { key: 'nexup_trailers', label: 'NeX-Up Trailers', desc: 'Coming soon movie/TV trailers', icon: Film, gradient: 'linear-gradient(135deg, #f093fb 0%, #f5576c 100%)', bgActive: 'linear-gradient(135deg, rgba(240, 147, 251, 0.1) 0%, rgba(245, 87, 108, 0.1) 100%)', shadow: 'rgba(240, 147, 251, 0.2)' },
+                { key: 'coming_soon_list', label: 'Coming Soon List', desc: 'Generated coming soon video', icon: LayoutGrid, gradient: 'linear-gradient(135deg, #4facfe 0%, #00f2fe 100%)', bgActive: 'linear-gradient(135deg, rgba(79, 172, 254, 0.1) 0%, rgba(0, 242, 254, 0.1) 100%)', shadow: 'rgba(79, 172, 254, 0.2)' },
+                { key: 'dynamic_preroll', label: 'Dynamic Preroll', desc: 'Themed generated preroll', icon: Sparkles, gradient: 'linear-gradient(135deg, #43e97b 0%, #38f9d7 100%)', bgActive: 'linear-gradient(135deg, rgba(67, 233, 123, 0.1) 0%, rgba(56, 249, 215, 0.1) 100%)', shadow: 'rgba(67, 233, 123, 0.2)' },
+              ].map(({ key, label: typeLabel, desc, icon: Icon, gradient, bgActive, shadow }) => (
+                <button
+                  key={key}
+                  type="button"
+                  style={{
+                    display: 'flex',
+                    flexDirection: 'column',
+                    alignItems: 'center',
+                    padding: '14px 10px',
+                    border: blockType === key ? '2px solid var(--accent-color)' : '2px solid var(--border-color)',
+                    borderRadius: '8px',
+                    background: blockType === key ? bgActive : 'var(--card-bg)',
+                    color: 'var(--text-color)',
+                    cursor: 'pointer',
+                    transition: 'all 0.3s',
+                    boxShadow: blockType === key ? `0 2px 8px ${shadow}` : 'none'
+                  }}
+                  onClick={() => setBlockType(key)}
+                >
+                  <div style={{
+                    width: '40px',
+                    height: '40px',
+                    borderRadius: '8px',
+                    background: gradient,
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    marginBottom: '8px'
+                  }}>
+                    <Icon size={20} color="white" />
+                  </div>
+                  <span style={{ fontWeight: 'bold', fontSize: '13px', marginBottom: '3px' }}>{typeLabel}</span>
+                  <small style={{ fontSize: '10px', color: 'var(--text-secondary)', textAlign: 'center', lineHeight: '1.3' }}>{desc}</small>
+                </button>
+              ))}
             </div>
           </div>
 
@@ -643,6 +698,185 @@ const BlockEditor = ({ block, categories, prerolls, isNew, onSave, onCancel }) =
                 </div>
               </div>
             </>
+          )}
+
+          {/* NeX-Up Trailers Configuration */}
+          {blockType === 'nexup_trailers' && (
+            <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: '12px', marginBottom: '12px' }}>
+              <div>
+                <label style={{
+                  display: 'block',
+                  marginBottom: '6px',
+                  color: 'var(--text-color)',
+                  fontWeight: 600,
+                  fontSize: '13px'
+                }}>Source</label>
+                <select
+                  value={nexupSource}
+                  onChange={(e) => setNexupSource(e.target.value)}
+                  style={{
+                    width: '100%',
+                    padding: '9px 12px',
+                    border: '2px solid var(--border-color)',
+                    borderRadius: '6px',
+                    background: 'var(--input-bg)',
+                    color: 'var(--text-color)',
+                    fontSize: '13px',
+                    cursor: 'pointer'
+                  }}
+                >
+                  <option value="both">Movies &amp; TV</option>
+                  <option value="movies">Movies Only</option>
+                  <option value="tv">TV Shows Only</option>
+                </select>
+                <small style={{ display: 'block', marginTop: '5px', color: 'var(--text-secondary)', fontSize: '11px' }}>
+                  Pull trailers from NeX-Up's downloaded coming soon trailers
+                </small>
+              </div>
+              <div>
+                <label style={{
+                  display: 'block',
+                  marginBottom: '6px',
+                  color: 'var(--text-color)',
+                  fontWeight: 600,
+                  fontSize: '13px'
+                }}>Count</label>
+                <input
+                  type="number"
+                  min="1"
+                  max="20"
+                  value={nexupCount}
+                  onChange={(e) => setNexupCount(Math.max(1, parseInt(e.target.value) || 1))}
+                  style={{
+                    width: '100%',
+                    padding: '9px 12px',
+                    border: '2px solid var(--border-color)',
+                    borderRadius: '6px',
+                    background: 'var(--input-bg)',
+                    color: 'var(--text-color)',
+                    fontSize: '13px',
+                    boxSizing: 'border-box'
+                  }}
+                />
+                <small style={{ display: 'block', marginTop: '5px', color: 'var(--text-secondary)', fontSize: '11px' }}>
+                  Number of trailers to pick
+                </small>
+              </div>
+            </div>
+          )}
+
+          {/* Coming Soon List Configuration */}
+          {blockType === 'coming_soon_list' && (
+            <div style={{ marginBottom: '12px' }}>
+              <label style={{
+                display: 'block',
+                marginBottom: '6px',
+                color: 'var(--text-color)',
+                fontWeight: 600,
+                fontSize: '13px'
+              }}>Layout Style</label>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
+                {['grid', 'list'].map((layout) => (
+                  <button
+                    key={layout}
+                    type="button"
+                    onClick={() => setComingSoonLayout(layout)}
+                    style={{
+                      padding: '14px',
+                      border: comingSoonLayout === layout ? '2px solid var(--accent-color)' : '2px solid var(--border-color)',
+                      borderRadius: '8px',
+                      background: comingSoonLayout === layout ? 'rgba(79, 172, 254, 0.1)' : 'var(--card-bg)',
+                      color: 'var(--text-color)',
+                      cursor: 'pointer',
+                      transition: 'all 0.3s',
+                      textAlign: 'center',
+                      fontWeight: comingSoonLayout === layout ? 'bold' : 'normal',
+                      fontSize: '14px',
+                      textTransform: 'capitalize'
+                    }}
+                  >
+                    {layout === 'grid' ? 'Grid Layout' : 'List Layout'}
+                  </button>
+                ))}
+              </div>
+              <small style={{ display: 'block', marginTop: '8px', color: 'var(--text-secondary)', fontSize: '11px' }}>
+                Plays the auto-generated Coming Soon List video showing upcoming releases
+              </small>
+            </div>
+          )}
+
+          {/* Dynamic Preroll Configuration */}
+          {blockType === 'dynamic_preroll' && (
+            <div style={{ marginBottom: '12px' }}>
+              {dynamicPrerollsLoading ? (
+                <div style={{ textAlign: 'center', padding: '20px', color: 'var(--text-secondary)' }}>
+                  Loading available prerolls...
+                </div>
+              ) : dynamicPrerolls.length === 0 ? (
+                <div style={{
+                  textAlign: 'center',
+                  padding: '20px',
+                  color: 'var(--text-secondary)',
+                  background: 'var(--hover-bg)',
+                  borderRadius: '8px',
+                  border: '1px solid var(--border-color)'
+                }}>
+                  No dynamic prerolls generated yet. Generate them in the NeX-Up settings.
+                </div>
+              ) : (
+                <>
+                  <label style={{
+                    display: 'block',
+                    marginBottom: '8px',
+                    color: 'var(--text-color)',
+                    fontWeight: 600,
+                    fontSize: '13px'
+                  }}>Select Dynamic Preroll</label>
+                  <div style={{
+                    display: 'grid',
+                    gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))',
+                    gap: '8px'
+                  }}>
+                    {dynamicPrerolls.map((dp) => {
+                      const parts = dp.template_id.split('_');
+                      const theme = parts[parts.length - 1];
+                      const template = parts.slice(0, -1).join('_');
+                      const isSelected = dpTemplate === template && dpTheme === theme;
+                      return (
+                        <button
+                          key={dp.filename}
+                          type="button"
+                          onClick={() => { setDpTemplate(template); setDpTheme(theme); }}
+                          style={{
+                            padding: '12px',
+                            border: isSelected ? '2px solid var(--accent-color)' : '2px solid var(--border-color)',
+                            borderRadius: '8px',
+                            background: isSelected ? 'rgba(67, 233, 123, 0.1)' : 'var(--card-bg)',
+                            color: 'var(--text-color)',
+                            cursor: 'pointer',
+                            transition: 'all 0.3s',
+                            textAlign: 'left'
+                          }}
+                        >
+                          <div style={{ fontWeight: 'bold', fontSize: '13px', marginBottom: '4px', textTransform: 'capitalize' }}>
+                            {template.replace(/_/g, ' ')}
+                          </div>
+                          <div style={{ fontSize: '11px', color: 'var(--text-secondary)', textTransform: 'capitalize' }}>
+                            Theme: {theme}
+                          </div>
+                          <div style={{ fontSize: '10px', color: 'var(--text-secondary)', marginTop: '4px' }}>
+                            {(dp.size_bytes / 1024 / 1024).toFixed(1)} MB
+                          </div>
+                        </button>
+                      );
+                    })}
+                  </div>
+                  <small style={{ display: 'block', marginTop: '8px', color: 'var(--text-secondary)', fontSize: '11px' }}>
+                    Select a generated dynamic preroll to include in the sequence
+                  </small>
+                </>
+              )}
+            </div>
           )}
         </div>
 

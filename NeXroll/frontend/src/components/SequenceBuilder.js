@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { DndContext, closestCenter, PointerSensor, useSensor, useSensors } from '@dnd-kit/core';
 import { SortableContext, verticalListSortingStrategy, arrayMove } from '@dnd-kit/sortable';
-import { Download, Upload, Play, Save, Edit, Trash2, X, Film, Shuffle, Pin, LayoutGrid, BarChart3 } from 'lucide-react';
+import { Download, Upload, Play, Save, Edit, Trash2, X, Film, Shuffle, Pin, LayoutGrid, BarChart3, Sparkles } from 'lucide-react';
 import SequenceBlock from './SequenceBlock';
 import BlockEditor from './BlockEditor';
 import SequencePreview from './SequencePreview';
@@ -95,14 +95,17 @@ const SequenceBuilder = ({ blocks: externalBlocks = [], onBlocksChange, initialS
   };
 
   const handleAddBlock = (type) => {
+    const defaults = {
+      random: { category_id: categories[0]?.id || null, count: 1 },
+      fixed: { preroll_ids: [] },
+      nexup_trailers: { source: 'both', count: 2 },
+      coming_soon_list: { layout: 'grid' },
+      dynamic_preroll: { template: '', theme: '' },
+    };
     const newBlock = {
       id: `block-${Date.now()}`,
       type: type,
-      // Defaults
-      ...(type === 'random' 
-        ? { category_id: categories[0]?.id || null, count: 1 }
-        : { preroll_ids: [] }
-      )
+      ...(defaults[type] || {})
     };
     setEditingBlock(newBlock);
     setEditingIndex(null); // null means adding new
@@ -636,8 +639,9 @@ const SequenceBuilder = ({ blocks: externalBlocks = [], onBlocksChange, initialS
 
       <div style={{
         display: 'flex',
-        gap: '15px',
+        gap: '10px',
         justifyContent: 'center',
+        flexWrap: 'wrap',
         marginTop: '20px'
       }}>
         <button 
@@ -665,7 +669,7 @@ const SequenceBuilder = ({ blocks: externalBlocks = [], onBlocksChange, initialS
             e.currentTarget.style.boxShadow = 'none';
           }}
         >
-          <Shuffle size={20} /> Add Random Block
+          <Shuffle size={20} /> Random
         </button>
         <button 
           type="button"
@@ -692,7 +696,88 @@ const SequenceBuilder = ({ blocks: externalBlocks = [], onBlocksChange, initialS
             e.currentTarget.style.boxShadow = 'none';
           }}
         >
-          <Pin size={20} /> Add Fixed Block
+          <Pin size={20} /> Fixed
+        </button>
+        <button 
+          type="button"
+          style={{
+            padding: '15px 30px',
+            fontSize: '16px',
+            display: 'flex',
+            alignItems: 'center',
+            gap: '10px',
+            background: 'linear-gradient(135deg, #f093fb 0%, #f5576c 100%)',
+            border: 'none',
+            color: 'white',
+            borderRadius: '8px',
+            cursor: 'pointer',
+            transition: 'all 0.3s'
+          }}
+          onClick={() => handleAddBlock('nexup_trailers')}
+          onMouseEnter={(e) => {
+            e.currentTarget.style.transform = 'translateY(-2px)';
+            e.currentTarget.style.boxShadow = '0 5px 15px rgba(240, 147, 251, 0.4)';
+          }}
+          onMouseLeave={(e) => {
+            e.currentTarget.style.transform = 'translateY(0)';
+            e.currentTarget.style.boxShadow = 'none';
+          }}
+        >
+          <Film size={20} /> NeX-Up Trailers
+        </button>
+        <button 
+          type="button"
+          style={{
+            padding: '15px 30px',
+            fontSize: '16px',
+            display: 'flex',
+            alignItems: 'center',
+            gap: '10px',
+            background: 'linear-gradient(135deg, #4facfe 0%, #00f2fe 100%)',
+            border: 'none',
+            color: 'white',
+            borderRadius: '8px',
+            cursor: 'pointer',
+            transition: 'all 0.3s'
+          }}
+          onClick={() => handleAddBlock('coming_soon_list')}
+          onMouseEnter={(e) => {
+            e.currentTarget.style.transform = 'translateY(-2px)';
+            e.currentTarget.style.boxShadow = '0 5px 15px rgba(79, 172, 254, 0.4)';
+          }}
+          onMouseLeave={(e) => {
+            e.currentTarget.style.transform = 'translateY(0)';
+            e.currentTarget.style.boxShadow = 'none';
+          }}
+        >
+          <LayoutGrid size={20} /> Coming Soon List
+        </button>
+        <button 
+          type="button"
+          style={{
+            padding: '15px 30px',
+            fontSize: '16px',
+            display: 'flex',
+            alignItems: 'center',
+            gap: '10px',
+            background: 'linear-gradient(135deg, #43e97b 0%, #38f9d7 100%)',
+            border: 'none',
+            color: 'white',
+            borderRadius: '8px',
+            cursor: 'pointer',
+            transition: 'all 0.3s'
+          }}
+          onClick={() => handleAddBlock('dynamic_preroll')}
+          onMouseEnter={(e) => {
+            e.currentTarget.style.transform = 'translateY(-2px)';
+            e.currentTarget.style.boxShadow = '0 5px 15px rgba(67, 233, 123, 0.4)';
+          }}
+          onMouseLeave={(e) => {
+            e.currentTarget.style.transform = 'translateY(0)';
+            e.currentTarget.style.boxShadow = 'none';
+          }}
+        >
+          <Sparkles size={20} /> Dynamic Preroll
         </button>
       </div>
 

@@ -1,5 +1,22 @@
 # Changelog
 
+## [1.12.0-beta.12] - 04-19-2026
+
+### New Features (beta.12)
+- **Sequence Block Types: NeX-Up Trailers, Coming Soon List, Dynamic Preroll** — Three new block types for the Sequence Builder. NeX-Up Trailers pulls downloaded trailers (movies/TV/both) with configurable count. Coming Soon List inserts a generated compilation video (grid or list layout). Dynamic Preroll inserts a generated preroll video (template + theme). Full support across Block Editor, Sequence Block rendering, Validator, Timeline, Statistics, Preview, export/import, scheduler, and Plex apply.
+- **Sequence Editor: 5-Type Block Selector** — Block Editor now shows a 5-type selector grid with distinct colors, icons, and configuration panels. Dynamic Preroll selector fetches available prerolls as selectable cards.
+
+### Bug Fixes (beta.12)
+- **Sequence Preview: New Block Types Not Playing** — Preview modal now resolves new block types via backend into playable video URLs with correct playlist ordering.
+- **Sequence Preview: Dynamic Preroll Fallback** — Blocks saved without template/theme now fall back to the first available dynamic preroll file.
+- **Apply to Server: New Block Types Skipped** — All 5 block types now resolve to Plex paths (previously only random/fixed were sent).
+- **Dashboard Preview: NeX-Up / Dynamic Preroll Videos Not Playing** — Current preroll details endpoint now matches trailer and dynamic preroll paths with proper serving URLs and display names.
+- **Sequence Export: New Block Properties Stripped** — Export now preserves source, count, layout, template, theme for all block types.
+- **Sequence Timeline: New Blocks Show as "Unknown"** — Added colors, labels, icons, category names for new block types.
+- **Sequence Statistics: New Blocks Not Counted** — Added duration estimates, preroll counts, colors, icons, labels for new block types.
+- **Semicolon vs Comma Delimiter** — Sequences now use commas for ordered playlist playback instead of semicolons.
+- **Backend `_resolve_sequence`: New Blocks Ignored** — Internal resolver now handles all 5 block types.
+
 ## [1.12.0-beta.11] - 04-18-2026
 
 ### Bug Fixes (beta.11)

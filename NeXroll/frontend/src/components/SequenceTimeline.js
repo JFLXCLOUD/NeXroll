@@ -1,7 +1,7 @@
 import React from 'react';
 import { 
   Film, Shuffle, ListOrdered, Clock, Play, Layers, 
-  GripVertical, Timer, BarChart3, Clapperboard
+  GripVertical, Timer, BarChart3, Clapperboard, LayoutGrid, Sparkles
 } from 'lucide-react';
 
 /**
@@ -70,6 +70,9 @@ const SequenceTimeline = ({ blocks = [], categories = [], prerolls = [], onBlock
       fixed: { bg: 'linear-gradient(135deg, #f093fb 0%, #f5576c 100%)', solid: '#f5576c' },
       random: { bg: 'linear-gradient(135deg, #f5af19 0%, #f12711 100%)', solid: '#f59e0b' },
       sequential: { bg: 'linear-gradient(135deg, #11998e 0%, #38ef7d 100%)', solid: '#10b981' },
+      nexup_trailers: { bg: 'linear-gradient(135deg, #f093fb 0%, #e11d48 100%)', solid: '#e11d48' },
+      coming_soon_list: { bg: 'linear-gradient(135deg, #22d3ee 0%, #0891b2 100%)', solid: '#0891b2' },
+      dynamic_preroll: { bg: 'linear-gradient(135deg, #4ade80 0%, #16a34a 100%)', solid: '#16a34a' },
       queue: { bg: 'linear-gradient(135deg, #fa709a 0%, #fee140 100%)', solid: '#ec4899' },
       sequence: { bg: 'linear-gradient(135deg, #a18cd1 0%, #fbc2eb 100%)', solid: '#8b5cf6' },
       separator: { bg: '#6b7280', solid: '#6b7280' },
@@ -88,6 +91,13 @@ const SequenceTimeline = ({ blocks = [], categories = [], prerolls = [], onBlock
     } else if (block.type === 'random' || block.type === 'sequential') {
       const category = categories.find((c) => c.id === block.category_id);
       return category?.name || 'Unknown Category';
+    } else if (block.type === 'nexup_trailers') {
+      const src = block.source === 'movies' ? 'Movies' : block.source === 'tv' ? 'TV' : 'Movies & TV';
+      return `${src} (${block.count || 2} trailers)`;
+    } else if (block.type === 'coming_soon_list') {
+      return `Coming Soon (${(block.layout || 'grid').replace('_', ' ')})`;
+    } else if (block.type === 'dynamic_preroll') {
+      return `${(block.template || '').replace('_', ' ')} / ${(block.theme || '').replace('_', ' ')}`;
     } else if (block.type === 'queue') {
       return 'Queue Items';
     } else if (block.type === 'sequence') {
@@ -125,6 +135,9 @@ const SequenceTimeline = ({ blocks = [], categories = [], prerolls = [], onBlock
       fixed: <ListOrdered {...iconProps} />,
       random: <Shuffle {...iconProps} />,
       sequential: <Play {...iconProps} />,
+      nexup_trailers: <Film {...iconProps} />,
+      coming_soon_list: <LayoutGrid {...iconProps} />,
+      dynamic_preroll: <Sparkles {...iconProps} />,
       queue: <Layers {...iconProps} />,
       sequence: <Clapperboard {...iconProps} />,
       separator: <GripVertical {...iconProps} />,
@@ -139,6 +152,9 @@ const SequenceTimeline = ({ blocks = [], categories = [], prerolls = [], onBlock
       fixed: 'Fixed',
       random: 'Random',
       sequential: 'Sequential',
+      nexup_trailers: 'NeX-Up Trailers',
+      coming_soon_list: 'Coming Soon',
+      dynamic_preroll: 'Dynamic Preroll',
       queue: 'Queue',
       sequence: 'Sequence',
       separator: 'Divider',

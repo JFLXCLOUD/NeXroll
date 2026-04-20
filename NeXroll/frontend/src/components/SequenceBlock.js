@@ -1,7 +1,7 @@
 import React from 'react';
 import { useSortable } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
-import { Edit, Copy, Trash2, ChevronUp, ChevronDown, Shuffle, ListOrdered, Film, Pin, Tag, Link } from 'lucide-react';
+import { Edit, Copy, Trash2, ChevronUp, ChevronDown, Shuffle, ListOrdered, Film, Pin, Tag, Link, LayoutGrid, Sparkles } from 'lucide-react';
 
 /**
  * SequenceBlock - Individual block in the sequence (random or fixed)
@@ -288,6 +288,178 @@ const SequenceBlock = ({
                 ))}
               </div>
             )}
+          </div>
+        </>
+      );
+    } else if (blockType === 'nexup_trailers') {
+      const source = block.source || 'both';
+      const count = block.count || 2;
+      const sourceLabel = source === 'both' ? 'Movies & TV' : source === 'movies' ? 'Movies' : 'TV Shows';
+      return (
+        <>
+          <div style={{
+            minWidth: '48px',
+            height: '48px',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            borderRadius: '8px',
+            background: 'linear-gradient(135deg, #f093fb 0%, #f5576c 100%)',
+            boxShadow: '0 2px 8px rgba(240, 147, 251, 0.3)'
+          }}>
+            <Film size={24} color="white" />
+          </div>
+          <div style={{ flex: 1 }}>
+            {block.label && (
+              <div style={{
+                fontSize: '13px',
+                fontWeight: 600,
+                color: 'var(--accent-color)',
+                marginBottom: '8px',
+                padding: '4px 10px',
+                background: 'var(--hover-bg)',
+                borderRadius: '4px',
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '4px',
+                border: '1px solid var(--accent-color)'
+              }}>
+                <Tag size={14} />
+                {block.label}
+              </div>
+            )}
+            <div style={{
+              fontWeight: 'bold',
+              fontSize: '16px',
+              color: 'var(--text-color)',
+              marginBottom: '8px'
+            }}>NeX-Up Trailers</div>
+            <div style={{
+              fontSize: '14px',
+              color: 'var(--text-secondary)',
+              marginBottom: '5px'
+            }}>
+              <strong style={{ color: 'var(--text-color)' }}>Source:</strong> {sourceLabel}
+            </div>
+            <div style={{
+              fontSize: '14px',
+              color: 'var(--text-secondary)',
+              marginBottom: '5px'
+            }}>
+              <strong style={{ color: 'var(--text-color)' }}>Count:</strong> {count} {count === 1 ? 'trailer' : 'trailers'}
+            </div>
+          </div>
+        </>
+      );
+    } else if (blockType === 'coming_soon_list') {
+      const layout = block.layout || 'grid';
+      return (
+        <>
+          <div style={{
+            minWidth: '48px',
+            height: '48px',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            borderRadius: '8px',
+            background: 'linear-gradient(135deg, #4facfe 0%, #00f2fe 100%)',
+            boxShadow: '0 2px 8px rgba(79, 172, 254, 0.3)'
+          }}>
+            <LayoutGrid size={24} color="white" />
+          </div>
+          <div style={{ flex: 1 }}>
+            {block.label && (
+              <div style={{
+                fontSize: '13px',
+                fontWeight: 600,
+                color: 'var(--accent-color)',
+                marginBottom: '8px',
+                padding: '4px 10px',
+                background: 'var(--hover-bg)',
+                borderRadius: '4px',
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '4px',
+                border: '1px solid var(--accent-color)'
+              }}>
+                <Tag size={14} />
+                {block.label}
+              </div>
+            )}
+            <div style={{
+              fontWeight: 'bold',
+              fontSize: '16px',
+              color: 'var(--text-color)',
+              marginBottom: '8px'
+            }}>Coming Soon List</div>
+            <div style={{
+              fontSize: '14px',
+              color: 'var(--text-secondary)',
+              marginBottom: '5px'
+            }}>
+              <strong style={{ color: 'var(--text-color)' }}>Layout:</strong> {layout.charAt(0).toUpperCase() + layout.slice(1)}
+            </div>
+          </div>
+        </>
+      );
+    } else if (blockType === 'dynamic_preroll') {
+      const template = block.template || 'unknown';
+      const theme = block.theme || 'unknown';
+      return (
+        <>
+          <div style={{
+            minWidth: '48px',
+            height: '48px',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            borderRadius: '8px',
+            background: 'linear-gradient(135deg, #43e97b 0%, #38f9d7 100%)',
+            boxShadow: '0 2px 8px rgba(67, 233, 123, 0.3)'
+          }}>
+            <Sparkles size={24} color="white" />
+          </div>
+          <div style={{ flex: 1 }}>
+            {block.label && (
+              <div style={{
+                fontSize: '13px',
+                fontWeight: 600,
+                color: 'var(--accent-color)',
+                marginBottom: '8px',
+                padding: '4px 10px',
+                background: 'var(--hover-bg)',
+                borderRadius: '4px',
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '4px',
+                border: '1px solid var(--accent-color)'
+              }}>
+                <Tag size={14} />
+                {block.label}
+              </div>
+            )}
+            <div style={{
+              fontWeight: 'bold',
+              fontSize: '16px',
+              color: 'var(--text-color)',
+              marginBottom: '8px'
+            }}>Dynamic Preroll</div>
+            <div style={{
+              fontSize: '14px',
+              color: 'var(--text-secondary)',
+              marginBottom: '5px',
+              textTransform: 'capitalize'
+            }}>
+              <strong style={{ color: 'var(--text-color)' }}>Template:</strong> {template.replace(/_/g, ' ')}
+            </div>
+            <div style={{
+              fontSize: '14px',
+              color: 'var(--text-secondary)',
+              marginBottom: '5px',
+              textTransform: 'capitalize'
+            }}>
+              <strong style={{ color: 'var(--text-color)' }}>Theme:</strong> {theme}
+            </div>
           </div>
         </>
       );

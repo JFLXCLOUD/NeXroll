@@ -65,8 +65,8 @@ export const validateBlock = (block, categories = [], prerolls = []) => {
   }
 
   const blockType = String(block.type).toLowerCase();
-  if (!['random', 'fixed', 'sequential'].includes(blockType)) {
-    errors.push(`Invalid block type: ${block.type}. Must be "random", "fixed", or "sequential"`);
+  if (!['random', 'fixed', 'sequential', 'nexup_trailers', 'coming_soon_list', 'dynamic_preroll'].includes(blockType)) {
+    errors.push(`Invalid block type: ${block.type}`);
     return errors;
   }
 
@@ -141,6 +141,41 @@ export const validateBlock = (block, categories = [], prerolls = []) => {
     }
   }
 
+  // Validate nexup_trailers block
+  if (blockType === 'nexup_trailers') {
+    const validSources = ['movies', 'tv', 'both'];
+    if (block.source && !validSources.includes(block.source)) {
+      errors.push(`Invalid source: ${block.source}. Must be "movies", "tv", or "both"`);
+    }
+    if (block.count !== undefined && block.count !== null) {
+      const count = parseInt(block.count);
+      if (isNaN(count) || count < 1) {
+        errors.push('NeX-Up trailers count must be at least 1');
+      }
+      if (count > 20) {
+        errors.push('NeX-Up trailers count cannot exceed 20');
+      }
+    }
+  }
+
+  // Validate coming_soon_list block
+  if (blockType === 'coming_soon_list') {
+    const validLayouts = ['grid', 'list'];
+    if (block.layout && !validLayouts.includes(block.layout)) {
+      errors.push(`Invalid layout: ${block.layout}. Must be "grid" or "list"`);
+    }
+  }
+
+  // Validate dynamic_preroll block
+  if (blockType === 'dynamic_preroll') {
+    if (!block.template) {
+      errors.push('Dynamic preroll requires a template');
+    }
+    if (!block.theme) {
+      errors.push('Dynamic preroll requires a theme');
+    }
+  }
+
   return errors;
 };
 
@@ -163,6 +198,14 @@ export const sanitizeSequence = (sequence) => {
       sanitized.count = block.count;
     } else if (block.type === 'fixed') {
       sanitized.preroll_ids = block.preroll_ids || [];
+    } else if (block.type === 'nexup_trailers') {
+      sanitized.source = block.source || 'both';
+      sanitized.count = block.count || 2;
+    } else if (block.type === 'coming_soon_list') {
+      sanitized.layout = block.layout || 'grid';
+    } else if (block.type === 'dynamic_preroll') {
+      sanitized.template = block.template;
+      sanitized.theme = block.theme;
     }
 
     return sanitized;
@@ -228,6 +271,9 @@ export const getSequenceSummary = (sequence) => {
 
   const randomBlocks = sequence.filter((b) => b.type === 'random').length;
   const fixedBlocks = sequence.filter((b) => b.type === 'fixed').length;
+  const nexupBlocks = sequence.filter((b) => b.type === 'nexup_trailers').length;
+  const comingSoonBlocks = sequence.filter((b) => b.type === 'coming_soon_list').length;
+  const dynamicBlocks = sequence.filter((b) => b.type === 'dynamic_preroll').length;
 
   const parts = [];
   if (randomBlocks > 0) {
@@ -235,6 +281,15 @@ export const getSequenceSummary = (sequence) => {
   }
   if (fixedBlocks > 0) {
     parts.push(`${fixedBlocks} fixed ${fixedBlocks === 1 ? 'block' : 'blocks'}`);
+  }
+  if (nexupBlocks > 0) {
+    parts.push(`${nexupBlocks} NeX-Up ${nexupBlocks === 1 ? 'block' : 'blocks'}`);
+  }
+  if (comingSoonBlocks > 0) {
+    parts.push(`${comingSoonBlocks} coming soon ${comingSoonBlocks === 1 ? 'block' : 'blocks'}`);
+  }
+  if (dynamicBlocks > 0) {
+    parts.push(`${dynamicBlocks} dynamic ${dynamicBlocks === 1 ? 'block' : 'blocks'}`);
   }
 
   return `${sequence.length} ${sequence.length === 1 ? 'block' : 'blocks'} (${parts.join(', ')})`;
@@ -257,6 +312,10 @@ export const estimatePrerollCount = (sequence) => {
       count += block.count || 0;
     } else if (block.type === 'fixed') {
       count += (block.preroll_ids || []).length;
+    } else if (block.type === 'nexup_trailers') {
+      count += block.count || 2;
+    } else if (block.type === 'coming_soon_list' || block.type === 'dynamic_preroll') {
+      count += 1;
     }
   });
 

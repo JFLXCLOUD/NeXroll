@@ -53,6 +53,16 @@ const SequenceStats = ({ blocks = [], categories = [], prerolls = [], compact = 
         stats.totalDuration += categoryPrerolls.reduce((sum, p) => sum + (p.duration || 30), 0);
         stats.estimatedPrerollCount += categoryPrerolls.length;
         stats.categories.add(block.category_id);
+      } else if (block.type === 'nexup_trailers') {
+        const count = block.count || 2;
+        stats.totalDuration += count * 90; // ~90s per trailer
+        stats.estimatedPrerollCount += count;
+      } else if (block.type === 'coming_soon_list') {
+        stats.totalDuration += 30; // ~30s for the list video
+        stats.estimatedPrerollCount += 1;
+      } else if (block.type === 'dynamic_preroll') {
+        stats.totalDuration += 30; // ~30s for dynamic preroll
+        stats.estimatedPrerollCount += 1;
       } else if (block.type === 'queue') {
         stats.totalDuration += 90; // Estimate 3 items at 30s each
         stats.estimatedPrerollCount += 3;
@@ -91,6 +101,9 @@ const SequenceStats = ({ blocks = [], categories = [], prerolls = [], compact = 
       fixed: '#dc2626',
       random: '#f59e0b',
       sequential: '#10b981',
+      nexup_trailers: '#e11d48',
+      coming_soon_list: '#0891b2',
+      dynamic_preroll: '#16a34a',
       queue: '#ec4899',
       sequence: '#8b5cf6',
       separator: '#6b7280',
@@ -106,6 +119,9 @@ const SequenceStats = ({ blocks = [], categories = [], prerolls = [], compact = 
       random: '🎲',
       sequential: '📋',
       queue: '⏭️',
+      nexup_trailers: '🎞️',
+      coming_soon_list: '📅',
+      dynamic_preroll: '✨',
       sequence: '🔗',
       separator: '┃',
     };
@@ -116,8 +132,12 @@ const SequenceStats = ({ blocks = [], categories = [], prerolls = [], compact = 
   const getBlockLabel = (type) => {
     const labels = {
       preroll: 'Single Preroll',
+      fixed: 'Fixed Order',
       random: 'Random Selection',
       sequential: 'Sequential Play',
+      nexup_trailers: 'NeX-Up Trailers',
+      coming_soon_list: 'Coming Soon List',
+      dynamic_preroll: 'Dynamic Preroll',
       queue: 'Queue Items',
       sequence: 'Nested Sequence',
       separator: 'Divider',

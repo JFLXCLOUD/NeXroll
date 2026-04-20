@@ -9136,25 +9136,78 @@ def _apply_schedule_win_lose_logic(db: Session, is_being_enabled: bool, is_being
                     for block in seq:
                         block_type = block.get("type")
                         if block_type == "fixed":
-                            preroll_ids = block.get("prerolls", [])
+                            preroll_ids = block.get("preroll_ids") or block.get("prerolls", [])
                             for pid in preroll_ids:
                                 preroll = db.query(models.Preroll).filter(models.Preroll.id == pid).first()
-                                if preroll:
+                                if preroll and preroll.path and os.path.exists(preroll.path):
                                     preroll_paths.append(os.path.abspath(preroll.path))
                         elif block_type == "random":
-                            preroll_ids = block.get("prerolls", [])
+                            cid = block.get("category_id")
                             count = block.get("count", 1)
-                            available = []
-                            for pid in preroll_ids:
-                                preroll = db.query(models.Preroll).filter(models.Preroll.id == pid).first()
-                                if preroll:
-                                    available.append(os.path.abspath(preroll.path))
-                            if available:
-                                selected = random.sample(available, min(count, len(available)))
-                                preroll_paths.extend(selected)
+                            if cid:
+                                pool = db.query(models.Preroll) \
+                                    .outerjoin(models.preroll_categories, models.Preroll.id == models.preroll_categories.c.preroll_id) \
+                                    .filter(or_(models.Preroll.category_id == cid, models.preroll_categories.c.category_id == cid)) \
+                                    .distinct().all()
+                                pool = [p for p in pool if p.path and os.path.exists(p.path)]
+                                if pool:
+                                    k = min(max(count, 1), len(pool))
+                                    picks = random.sample(pool, k) if len(pool) > k else pool
+                                    for p in picks:
+                                        preroll_paths.append(os.path.abspath(p.path))
+                            else:
+                                preroll_ids = block.get("prerolls", [])
+                                available = []
+                                for pid in preroll_ids:
+                                    preroll = db.query(models.Preroll).filter(models.Preroll.id == pid).first()
+                                    if preroll and preroll.path and os.path.exists(preroll.path):
+                                        available.append(os.path.abspath(preroll.path))
+                                if available:
+                                    selected = random.sample(available, min(count, len(available)))
+                                    preroll_paths.extend(selected)
+                        elif block_type == "nexup_trailers":
+                            source = str(block.get("source", "both")).lower()
+                            count = int(block.get("count") or 2)
+                            now = datetime.datetime.now()
+                            trailer_paths = []
+                            if source in ("movies", "both"):
+                                for t in db.query(models.ComingSoonTrailer).filter(
+                                    models.ComingSoonTrailer.status == 'downloaded',
+                                    models.ComingSoonTrailer.is_enabled == True,
+                                    models.ComingSoonTrailer.release_date >= now
+                                ).all():
+                                    if t.local_path and os.path.exists(t.local_path):
+                                        trailer_paths.append(os.path.abspath(t.local_path))
+                            if source in ("tv", "both"):
+                                for t in db.query(models.ComingSoonTVTrailer).filter(
+                                    models.ComingSoonTVTrailer.status == 'downloaded',
+                                    models.ComingSoonTVTrailer.is_enabled == True,
+                                    models.ComingSoonTVTrailer.release_date >= now
+                                ).all():
+                                    if t.local_path and os.path.exists(t.local_path):
+                                        trailer_paths.append(os.path.abspath(t.local_path))
+                            if trailer_paths:
+                                k = min(max(count, 1), len(trailer_paths))
+                                picks = random.sample(trailer_paths, k) if len(trailer_paths) > k else trailer_paths
+                                preroll_paths.extend(picks)
+                        elif block_type == "coming_soon_list":
+                            layout = str(block.get("layout", "grid")).lower()
+                            storage = getattr(setting, "nexup_storage_path", None)
+                            if storage:
+                                video_file = os.path.join(storage, "dynamic_prerolls", f"coming_soon_{layout}.mp4")
+                                if os.path.exists(video_file):
+                                    preroll_paths.append(os.path.abspath(video_file))
+                        elif block_type == "dynamic_preroll":
+                            template = str(block.get("template", "coming_soon")).lower()
+                            theme = str(block.get("theme", "midnight")).lower()
+                            storage = getattr(setting, "nexup_storage_path", None)
+                            if storage:
+                                video_file = os.path.join(storage, "dynamic_prerolls", f"{template}_{theme}_preroll.mp4")
+                                if os.path.exists(video_file):
+                                    preroll_paths.append(os.path.abspath(video_file))
                     
                     if preroll_paths:
-                        preroll_string = ';'.join(preroll_paths)
+                        preroll_string = ','.join(preroll_paths)
                         plex_connector.set_preroll(preroll_string)
                         print(f"TOGGLE: Applied sequence for schedule '{sched.name}' (ID {sched.id}) with {len(preroll_paths)} prerolls")
                         return True
@@ -9681,6 +9734,49 @@ def apply_sequence_to_server(sequence_id: int, db: Session = Depends(get_db)):
                 p = db.query(models.Preroll).filter(models.Preroll.id == pid).first()
                 if p and p.path and os.path.exists(p.path):
                     paths.append(os.path.abspath(p.path))
+
+        elif block_type == "nexup_trailers":
+            source = str(block.get("source", "both")).lower()
+            count = int(block.get("count") or 2)
+            now = datetime.datetime.now()
+            trailer_paths = []
+            if source in ("movies", "both"):
+                for t in db.query(models.ComingSoonTrailer).filter(
+                    models.ComingSoonTrailer.status == 'downloaded',
+                    models.ComingSoonTrailer.is_enabled == True,
+                    models.ComingSoonTrailer.release_date >= now
+                ).all():
+                    if t.local_path and os.path.exists(t.local_path):
+                        trailer_paths.append(os.path.abspath(t.local_path))
+            if source in ("tv", "both"):
+                for t in db.query(models.ComingSoonTVTrailer).filter(
+                    models.ComingSoonTVTrailer.status == 'downloaded',
+                    models.ComingSoonTVTrailer.is_enabled == True,
+                    models.ComingSoonTVTrailer.release_date >= now
+                ).all():
+                    if t.local_path and os.path.exists(t.local_path):
+                        trailer_paths.append(os.path.abspath(t.local_path))
+            if trailer_paths:
+                k = min(max(count, 1), len(trailer_paths))
+                picks = random.sample(trailer_paths, k) if len(trailer_paths) > k else trailer_paths
+                paths.extend(picks)
+
+        elif block_type == "coming_soon_list":
+            layout = str(block.get("layout", "grid")).lower()
+            storage = getattr(setting, "nexup_storage_path", None)
+            if storage:
+                video_file = os.path.join(storage, "dynamic_prerolls", f"coming_soon_{layout}.mp4")
+                if os.path.exists(video_file):
+                    paths.append(os.path.abspath(video_file))
+
+        elif block_type == "dynamic_preroll":
+            template = str(block.get("template", "coming_soon")).lower()
+            theme = str(block.get("theme", "midnight")).lower()
+            storage = getattr(setting, "nexup_storage_path", None)
+            if storage:
+                video_file = os.path.join(storage, "dynamic_prerolls", f"{template}_{theme}_preroll.mp4")
+                if os.path.exists(video_file):
+                    paths.append(os.path.abspath(video_file))
 
     if not paths:
         raise HTTPException(status_code=400, detail="Sequence produced no valid preroll paths")
@@ -11301,6 +11397,17 @@ def export_sequence_pattern(
                         
                         all_preroll_ids.append(preroll.id)
             
+            elif block_type == 'nexup_trailers':
+                pattern_block['source'] = block.get('source', 'both')
+                pattern_block['count'] = block.get('count', 2)
+            
+            elif block_type == 'coming_soon_list':
+                pattern_block['layout'] = block.get('layout', 'grid')
+            
+            elif block_type == 'dynamic_preroll':
+                pattern_block['template'] = block.get('template', '')
+                pattern_block['theme'] = block.get('theme', '')
+            
             pattern_blocks.append(pattern_block)
         
         # Create pattern data
@@ -12467,6 +12574,16 @@ def get_current_preroll_details(db: Session = Depends(get_db)):
         return plex_path
 
     results = []
+    # Pre-fetch trailer and dynamic preroll data for matching
+    now = datetime.datetime.now()
+    all_movie_trailers = db.query(models.ComingSoonTrailer).filter(
+        models.ComingSoonTrailer.status == 'downloaded'
+    ).all()
+    all_tv_trailers = db.query(models.ComingSoonTVTrailer).filter(
+        models.ComingSoonTVTrailer.status == 'downloaded'
+    ).all()
+    storage_path = getattr(setting, 'nexup_storage_path', None)
+
     for plex_path in raw_paths:
         local_path = _reverse_translate(plex_path)
         norm_local = os.path.normpath(local_path)
@@ -12489,21 +12606,66 @@ def get_current_preroll_details(db: Session = Depends(get_db)):
                 "path": plex_path,
                 "preview_url": f"/static/prerolls/{quote(cat.name if cat else 'Unknown', safe='')}/{quote(preroll.filename, safe='')}"
             })
-        else:
-            fname = os.path.basename(plex_path)
-            # For unmanaged prerolls, try to serve the file directly if accessible
-            fallback_url = None
-            serve_path = local_path if os.path.isfile(local_path) else (plex_path if os.path.isfile(plex_path) else None)
-            if serve_path:
-                fallback_url = f"/preview/file?path={quote(serve_path, safe='')}"
+            continue
+
+        # Try to match to a NeX-Up movie trailer
+        matched_trailer = None
+        for t in all_movie_trailers:
+            if t.local_path and os.path.normpath(t.local_path) == norm_local:
+                matched_trailer = ("movie", t)
+                break
+        # Try TV trailers if no movie match
+        if not matched_trailer:
+            for t in all_tv_trailers:
+                if t.local_path and os.path.normpath(t.local_path) == norm_local:
+                    matched_trailer = ("tv", t)
+                    break
+
+        if matched_trailer:
+            t_type, t = matched_trailer
             results.append({
-                "id": None,
-                "filename": fname,
-                "display_name": fname,
-                "category_name": None,
+                "id": f"trailer_{t_type}_{t.id}",
+                "filename": os.path.basename(t.local_path),
+                "display_name": t.title or os.path.basename(t.local_path),
+                "category_name": f"NeX-Up {'Movie' if t_type == 'movie' else 'TV'} Trailer",
                 "path": plex_path,
-                "preview_url": fallback_url
+                "preview_url": f"/nexup/trailer/video/{t_type}/{t.id}"
             })
+            continue
+
+        # Try to match to a dynamic preroll / coming soon list
+        fname = os.path.basename(norm_local)
+        if storage_path:
+            dp_dir = os.path.join(storage_path, "dynamic_prerolls")
+            dp_path = os.path.join(dp_dir, fname)
+            if os.path.normpath(dp_path) == norm_local or os.path.normpath(os.path.abspath(dp_path)) == os.path.normpath(os.path.abspath(norm_local)):
+                # It's a dynamic preroll or coming soon list
+                nice_name = fname.rsplit('.', 1)[0].replace('_', ' ').title() if fname else fname
+                cat_label = "Coming Soon List" if fname.startswith("coming_soon_") else "Dynamic Preroll"
+                results.append({
+                    "id": f"dp_{fname}",
+                    "filename": fname,
+                    "display_name": nice_name,
+                    "category_name": cat_label,
+                    "path": plex_path,
+                    "preview_url": f"/nexup/preroll/video/{quote(fname, safe='')}"
+                })
+                continue
+
+        # Fallback: unmanaged preroll
+        fname = os.path.basename(plex_path)
+        fallback_url = None
+        serve_path = local_path if os.path.isfile(local_path) else (plex_path if os.path.isfile(plex_path) else None)
+        if serve_path:
+            fallback_url = f"/preview/file?path={quote(serve_path, safe='')}"
+        results.append({
+            "id": None,
+            "filename": fname,
+            "display_name": fname,
+            "category_name": None,
+            "path": plex_path,
+            "preview_url": fallback_url
+        })
 
     # Include applied sequence info
     applied_sequence = None
@@ -19456,6 +19618,95 @@ def delete_specific_preroll(filename: str, db: Session = Depends(get_db)):
     
     return {"success": False, "message": "File not found"}
 
+@app.post("/sequences/resolve-preview-blocks")
+def resolve_preview_blocks(blocks: list = Body(...), db: Session = Depends(get_db)):
+    """Resolve new sequence block types into preview-playable items.
+    Returns a list of items per block with video URLs for the frontend preview modal.
+    Only handles nexup_trailers, coming_soon_list, and dynamic_preroll blocks.
+    """
+    setting = db.query(models.Setting).first()
+    storage_path = getattr(setting, 'nexup_storage_path', None) if setting else None
+    now = datetime.datetime.now()
+    results = []
+    for block in blocks:
+        block_type = str(block.get("type", "")).lower()
+        items = []
+        if block_type == "nexup_trailers":
+            source = str(block.get("source", "both")).lower()
+            count = int(block.get("count") or 2)
+            if source in ("movies", "both"):
+                for t in db.query(models.ComingSoonTrailer).filter(
+                    models.ComingSoonTrailer.status == 'downloaded',
+                    models.ComingSoonTrailer.is_enabled == True,
+                    models.ComingSoonTrailer.release_date >= now
+                ).all():
+                    if t.local_path and os.path.exists(t.local_path):
+                        items.append({
+                            "title": t.title,
+                            "url": f"/nexup/trailer/video/movie/{t.id}",
+                            "type": "movie_trailer"
+                        })
+            if source in ("tv", "both"):
+                for t in db.query(models.ComingSoonTVTrailer).filter(
+                    models.ComingSoonTVTrailer.status == 'downloaded',
+                    models.ComingSoonTVTrailer.is_enabled == True,
+                    models.ComingSoonTVTrailer.release_date >= now
+                ).all():
+                    if t.local_path and os.path.exists(t.local_path):
+                        items.append({
+                            "title": t.title,
+                            "url": f"/nexup/trailer/video/tv/{t.id}",
+                            "type": "tv_trailer"
+                        })
+            if len(items) > count:
+                import random as _rand
+                items = _rand.sample(items, count)
+        elif block_type == "coming_soon_list":
+            layout = str(block.get("layout", "grid")).lower()
+            filename = f"coming_soon_{layout}.mp4"
+            if storage_path:
+                fpath = os.path.join(storage_path, "dynamic_prerolls", filename)
+                if os.path.exists(fpath):
+                    items.append({
+                        "title": f"Coming Soon ({layout.title()})",
+                        "url": f"/nexup/preroll/video/{filename}",
+                        "type": "coming_soon_list"
+                    })
+        elif block_type == "dynamic_preroll":
+            template = str(block.get("template", "")).lower().strip()
+            theme = str(block.get("theme", "")).lower().strip()
+            if storage_path:
+                dp_dir = os.path.join(storage_path, "dynamic_prerolls")
+                if template and theme:
+                    filename = f"{template}_{theme}_preroll.mp4"
+                    fpath = os.path.join(dp_dir, filename)
+                    if os.path.exists(fpath):
+                        items.append({
+                            "title": f"{template.replace('_', ' ').title()} ({theme.title()})",
+                            "url": f"/nexup/preroll/video/{filename}",
+                            "type": "dynamic_preroll"
+                        })
+                # Fallback: if no specific match, pick the first available dynamic preroll
+                if not items and os.path.isdir(dp_dir):
+                    import glob as _glob
+                    for fp in sorted(_glob.glob(os.path.join(dp_dir, "*_preroll.mp4"))):
+                        fname = os.path.basename(fp)
+                        tid = fname.replace("_preroll.mp4", "")
+                        parts = tid.split("_")
+                        if len(parts) >= 2:
+                            fb_theme = parts[-1]
+                            fb_template = "_".join(parts[:-1])
+                        else:
+                            fb_template, fb_theme = tid, ""
+                        items.append({
+                            "title": f"{fb_template.replace('_', ' ').title()} ({fb_theme.title()})" if fb_theme else fb_template.replace('_', ' ').title(),
+                            "url": f"/nexup/preroll/video/{fname}",
+                            "type": "dynamic_preroll"
+                        })
+                        break
+        results.append({"block_type": block_type, "items": items})
+    return {"blocks": results}
+
 @app.get("/nexup/preroll/video/{filename}")
 def serve_dynamic_preroll_video(filename: str, db: Session = Depends(get_db)):
     """Serve a generated dynamic preroll video file for preview"""
@@ -24907,6 +25158,48 @@ def _resolve_current_intros(db: Session) -> dict:
                     p = db.query(models.Preroll).filter(models.Preroll.id == pid).first()
                     if p:
                         paths.append(os.path.abspath(p.path))
+            elif btype == "nexup_trailers":
+                source = str(block.get("source", "both")).lower()
+                count = int(block.get("count") or 2)
+                now = datetime.datetime.now()
+                trailer_paths = []
+                if source in ("movies", "both"):
+                    for t in db.query(models.ComingSoonTrailer).filter(
+                        models.ComingSoonTrailer.status == 'downloaded',
+                        models.ComingSoonTrailer.is_enabled == True,
+                        models.ComingSoonTrailer.release_date >= now
+                    ).all():
+                        if t.local_path and os.path.exists(t.local_path):
+                            trailer_paths.append(os.path.abspath(t.local_path))
+                if source in ("tv", "both"):
+                    for t in db.query(models.ComingSoonTVTrailer).filter(
+                        models.ComingSoonTVTrailer.status == 'downloaded',
+                        models.ComingSoonTVTrailer.is_enabled == True,
+                        models.ComingSoonTVTrailer.release_date >= now
+                    ).all():
+                        if t.local_path and os.path.exists(t.local_path):
+                            trailer_paths.append(os.path.abspath(t.local_path))
+                if trailer_paths:
+                    k = min(max(count, 1), len(trailer_paths))
+                    picks = random.sample(trailer_paths, k) if len(trailer_paths) > k else trailer_paths
+                    paths.extend(picks)
+            elif btype == "coming_soon_list":
+                layout = str(block.get("layout", "grid")).lower()
+                _setting = db.query(models.Setting).first()
+                _storage = getattr(_setting, "nexup_storage_path", None) if _setting else None
+                if _storage:
+                    vf = os.path.join(_storage, "dynamic_prerolls", f"coming_soon_{layout}.mp4")
+                    if os.path.exists(vf):
+                        paths.append(os.path.abspath(vf))
+            elif btype == "dynamic_preroll":
+                template = str(block.get("template", "")).lower()
+                theme = str(block.get("theme", "")).lower()
+                _setting = db.query(models.Setting).first()
+                _storage = getattr(_setting, "nexup_storage_path", None) if _setting else None
+                if _storage and template and theme:
+                    vf = os.path.join(_storage, "dynamic_prerolls", f"{template}_{theme}_preroll.mp4")
+                    if os.path.exists(vf):
+                        paths.append(os.path.abspath(vf))
         return paths
 
     # --- 1. Filler takes priority ---

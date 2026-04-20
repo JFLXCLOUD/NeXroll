@@ -2253,6 +2253,66 @@ class Scheduler:
                     p = db.query(models.Preroll).filter(models.Preroll.id == pid).first()
                     if p and p.path and os.path.exists(p.path):
                         paths.append(os.path.abspath(p.path))
+            elif stype == "nexup_trailers":
+                # NeX-Up trailers from coming_soon_trailers / coming_soon_tv_trailers
+                source = str(step.get("source", "both")).lower()
+                try:
+                    count = int(step.get("count") or 2)
+                except Exception:
+                    count = 2
+                now = datetime.datetime.now()
+                trailer_paths = []
+                if source in ("movies", "both"):
+                    movie_trailers = db.query(models.ComingSoonTrailer).filter(
+                        models.ComingSoonTrailer.status == 'downloaded',
+                        models.ComingSoonTrailer.is_enabled == True,
+                        models.ComingSoonTrailer.release_date >= now
+                    ).all()
+                    for t in movie_trailers:
+                        if t.local_path and os.path.exists(t.local_path):
+                            trailer_paths.append(os.path.abspath(t.local_path))
+                if source in ("tv", "both"):
+                    tv_trailers = db.query(models.ComingSoonTVTrailer).filter(
+                        models.ComingSoonTVTrailer.status == 'downloaded',
+                        models.ComingSoonTVTrailer.is_enabled == True,
+                        models.ComingSoonTVTrailer.release_date >= now
+                    ).all()
+                    for t in tv_trailers:
+                        if t.local_path and os.path.exists(t.local_path):
+                            trailer_paths.append(os.path.abspath(t.local_path))
+                if trailer_paths:
+                    k = min(max(count, 1), len(trailer_paths))
+                    picks = random.sample(trailer_paths, k) if len(trailer_paths) > k else trailer_paths
+                    paths.extend(picks)
+                else:
+                    _scheduler_log(f"Sequence: No NeX-Up trailers available (source={source})", level="WARNING")
+            elif stype == "coming_soon_list":
+                # Coming Soon List dynamic video (grid or list layout)
+                layout = str(step.get("layout", "grid")).lower()
+                setting_obj = db.query(models.Setting).first()
+                storage = getattr(setting_obj, "nexup_storage_path", None) if setting_obj else None
+                if storage:
+                    video_file = os.path.join(storage, "dynamic_prerolls", f"coming_soon_{layout}.mp4")
+                    if os.path.exists(video_file):
+                        paths.append(os.path.abspath(video_file))
+                    else:
+                        _scheduler_log(f"Sequence: Coming Soon List video not found: {video_file}", level="WARNING")
+                else:
+                    _scheduler_log("Sequence: NeX-Up storage path not configured for Coming Soon List", level="WARNING")
+            elif stype == "dynamic_preroll":
+                # Dynamic preroll video (template + theme combination)
+                template = str(step.get("template", "coming_soon")).lower()
+                theme = str(step.get("theme", "midnight")).lower()
+                setting_obj = db.query(models.Setting).first()
+                storage = getattr(setting_obj, "nexup_storage_path", None) if setting_obj else None
+                if storage:
+                    video_file = os.path.join(storage, "dynamic_prerolls", f"{template}_{theme}_preroll.mp4")
+                    if os.path.exists(video_file):
+                        paths.append(os.path.abspath(video_file))
+                    else:
+                        _scheduler_log(f"Sequence: Dynamic preroll not found: {video_file}", level="WARNING")
+                else:
+                    _scheduler_log("Sequence: NeX-Up storage path not configured for dynamic preroll", level="WARNING")
             else:
                 # ignore unknown step types
                 continue
@@ -2623,6 +2683,66 @@ class Scheduler:
                         p = db.query(models.Preroll).filter(models.Preroll.id == pid).first()
                         if p and p.path and os.path.exists(p.path):
                             paths.append(os.path.abspath(p.path))
+                
+                elif block_type == "nexup_trailers":
+                    source = str(block.get("source", "both")).lower()
+                    try:
+                        count = int(block.get("count") or 2)
+                    except Exception:
+                        count = 2
+                    now = datetime.datetime.now()
+                    trailer_paths = []
+                    if source in ("movies", "both"):
+                        movie_trailers = db.query(models.ComingSoonTrailer).filter(
+                            models.ComingSoonTrailer.status == 'downloaded',
+                            models.ComingSoonTrailer.is_enabled == True,
+                            models.ComingSoonTrailer.release_date >= now
+                        ).all()
+                        for t in movie_trailers:
+                            if t.local_path and os.path.exists(t.local_path):
+                                trailer_paths.append(os.path.abspath(t.local_path))
+                    if source in ("tv", "both"):
+                        tv_trailers = db.query(models.ComingSoonTVTrailer).filter(
+                            models.ComingSoonTVTrailer.status == 'downloaded',
+                            models.ComingSoonTVTrailer.is_enabled == True,
+                            models.ComingSoonTVTrailer.release_date >= now
+                        ).all()
+                        for t in tv_trailers:
+                            if t.local_path and os.path.exists(t.local_path):
+                                trailer_paths.append(os.path.abspath(t.local_path))
+                    if trailer_paths:
+                        k = min(max(count, 1), len(trailer_paths))
+                        picks = random.sample(trailer_paths, k) if len(trailer_paths) > k else trailer_paths
+                        paths.extend(picks)
+                    else:
+                        _scheduler_log(f"FILLER: No NeX-Up trailers available (source={source})", level="WARNING")
+                
+                elif block_type == "coming_soon_list":
+                    layout = str(block.get("layout", "grid")).lower()
+                    setting_obj = db.query(models.Setting).first()
+                    storage = getattr(setting_obj, "nexup_storage_path", None) if setting_obj else None
+                    if storage:
+                        video_file = os.path.join(storage, "dynamic_prerolls", f"coming_soon_{layout}.mp4")
+                        if os.path.exists(video_file):
+                            paths.append(os.path.abspath(video_file))
+                        else:
+                            _scheduler_log(f"FILLER: Coming Soon List video not found: {video_file}", level="WARNING")
+                    else:
+                        _scheduler_log("FILLER: NeX-Up storage path not configured for Coming Soon List", level="WARNING")
+                
+                elif block_type == "dynamic_preroll":
+                    template = str(block.get("template", "coming_soon")).lower()
+                    theme = str(block.get("theme", "midnight")).lower()
+                    setting_obj = db.query(models.Setting).first()
+                    storage = getattr(setting_obj, "nexup_storage_path", None) if setting_obj else None
+                    if storage:
+                        video_file = os.path.join(storage, "dynamic_prerolls", f"{template}_{theme}_preroll.mp4")
+                        if os.path.exists(video_file):
+                            paths.append(os.path.abspath(video_file))
+                        else:
+                            _scheduler_log(f"FILLER: Dynamic preroll not found: {video_file}", level="WARNING")
+                    else:
+                        _scheduler_log("FILLER: NeX-Up storage path not configured for dynamic preroll", level="WARNING")
             
             if not paths:
                 _scheduler_log(f"Filler sequence '{saved_seq.name}' produced no preroll paths", level="WARNING")
