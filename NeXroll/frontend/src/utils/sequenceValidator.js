@@ -191,6 +191,7 @@ export const sanitizeSequence = (sequence) => {
   return sequence.map((block) => {
     const sanitized = {
       type: block.type,
+      ...(block.label && block.label.trim() ? { label: block.label.trim() } : {}),
     };
 
     if (block.type === 'random') {

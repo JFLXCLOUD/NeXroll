@@ -36,7 +36,7 @@ class SonarrConnector:
     async def test_connection(self) -> Dict[str, Any]:
         """Test the Sonarr connection and return system status"""
         try:
-            async with httpx.AsyncClient(timeout=self.timeout) as client:
+            async with httpx.AsyncClient(timeout=self.timeout, follow_redirects=True) as client:
                 response = await client.get(
                     f"{self.base_url}/api/v3/system/status",
                     headers=self.headers
@@ -55,6 +55,8 @@ class SonarrConnector:
         except httpx.HTTPStatusError as e:
             if e.response.status_code == 401:
                 return {'success': False, 'message': 'Invalid API key'}
+            if e.response.status_code in (301, 302, 307, 308):
+                return {'success': False, 'message': f'Sonarr redirected the request (HTTP {e.response.status_code}). Check that the URL includes the correct base path (e.g. http://host:8989/sonarr) and does not require HTTPS.'}
             return {'success': False, 'message': f'HTTP error: {e.response.status_code}'}
         except Exception as e:
             return {'success': False, 'message': str(e)}
@@ -62,7 +64,7 @@ class SonarrConnector:
     async def get_all_series(self) -> List[Dict[str, Any]]:
         """Fetch all series from Sonarr"""
         try:
-            async with httpx.AsyncClient(timeout=self.timeout) as client:
+            async with httpx.AsyncClient(timeout=self.timeout, follow_redirects=True) as client:
                 response = await client.get(
                     f"{self.base_url}/api/v3/series",
                     headers=self.headers
@@ -224,7 +226,7 @@ class SonarrConnector:
             if not end_date:
                 end_date = start_date + timedelta(days=90)
             
-            async with httpx.AsyncClient(timeout=self.timeout) as client:
+            async with httpx.AsyncClient(timeout=self.timeout, follow_redirects=True) as client:
                 response = await client.get(
                     f"{self.base_url}/api/v3/calendar",
                     headers=self.headers,

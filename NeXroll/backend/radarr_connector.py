@@ -273,7 +273,7 @@ class RadarrConnector:
     async def test_connection(self) -> Dict[str, Any]:
         """Test the Radarr connection and return system status"""
         try:
-            async with httpx.AsyncClient(timeout=self.timeout) as client:
+            async with httpx.AsyncClient(timeout=self.timeout, follow_redirects=True) as client:
                 response = await client.get(
                     f"{self.base_url}/api/v3/system/status",
                     headers=self.headers
@@ -292,6 +292,8 @@ class RadarrConnector:
         except httpx.HTTPStatusError as e:
             if e.response.status_code == 401:
                 return {'success': False, 'message': 'Invalid API key'}
+            if e.response.status_code in (301, 302, 307, 308):
+                return {'success': False, 'message': f'Radarr redirected the request (HTTP {e.response.status_code}). Check that the URL includes the correct base path (e.g. http://host:7878/radarr) and does not require HTTPS.'}
             return {'success': False, 'message': f'HTTP error: {e.response.status_code}'}
         except Exception as e:
             return {'success': False, 'message': str(e)}
@@ -311,7 +313,7 @@ class RadarrConnector:
         - 'theatrical': Theatrical > Digital > Physical (for theater fans)
         """
         try:
-            async with httpx.AsyncClient(timeout=self.timeout) as client:
+            async with httpx.AsyncClient(timeout=self.timeout, follow_redirects=True) as client:
                 response = await client.get(
                     f"{self.base_url}/api/v3/movie",
                     headers=self.headers
@@ -417,7 +419,7 @@ class RadarrConnector:
         Used for batch checking download status without multiple API calls.
         """
         try:
-            async with httpx.AsyncClient(timeout=self.timeout) as client:
+            async with httpx.AsyncClient(timeout=self.timeout, follow_redirects=True) as client:
                 response = await client.get(
                     f"{self.base_url}/api/v3/movie",
                     headers=self.headers
@@ -516,7 +518,7 @@ class RadarrConnector:
     async def get_movie_by_id(self, radarr_id: int) -> Optional[Dict[str, Any]]:
         """Fetch a specific movie by Radarr ID"""
         try:
-            async with httpx.AsyncClient(timeout=self.timeout) as client:
+            async with httpx.AsyncClient(timeout=self.timeout, follow_redirects=True) as client:
                 response = await client.get(
                     f"{self.base_url}/api/v3/movie/{radarr_id}",
                     headers=self.headers

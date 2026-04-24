@@ -1105,6 +1105,12 @@ const parseNaiveDatetime = (isoOrNaive) => {
   return new Date(year, month - 1, day, hour || 0, minute || 0);
 };
 
+const formatAsNaiveIso = (d) => {
+  if (!d) return '';
+  const pad = (n) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+};
+
 // Helper function to check if a schedule is active on a specific day
 const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
   if (!schedule.start_date) return false;
@@ -1154,10 +1160,15 @@ const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
     try {
       const pattern = JSON.parse(schedule.recurrence_pattern);
       
-      // Monthly: Check if day of month matches
-      if (schedule.type === 'monthly' && pattern.monthDays && pattern.monthDays.length > 0) {
-        const dayOfMonth = dayDate.getDate();
-        return pattern.monthDays.includes(dayOfMonth);
+      // Monthly: Check month of year, then day of month
+      if (schedule.type === 'monthly') {
+        if (pattern.months && pattern.months.length > 0) {
+          if (!pattern.months.includes(dayDate.getMonth() + 1)) return false;
+        }
+        if (pattern.monthDays && pattern.monthDays.length > 0) {
+          if (!pattern.monthDays.includes(dayDate.getDate())) return false;
+        }
+        return true;
       }
       
       // Weekly: Check if day of week matches
@@ -1215,7 +1226,8 @@ const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
 
   // Recurrence pattern state
   const [weekDays, setWeekDays] = useState([]);  // For weekly: ['monday', 'wednesday', 'friday']
-  const [monthDays, setMonthDays] = useState([]); // For monthly: [1, 15, 30]
+  const [selectedMonths, setSelectedMonths] = useState([]); // For monthly: which months are active [1-12]
+  const [monthDays, setMonthDays] = useState([]); // For monthly: which days of the month [1-31]
   const [timeRange, setTimeRange] = useState({ start: '', end: '' }); // For daily time ranges
 
   // Active Schedules display state
@@ -1958,7 +1970,8 @@ const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
 
         const timeRange = pattern?.timeRange;
         const weekDays = pattern?.weekDays;
-        const monthDays = pattern?.monthDays;
+        const months = pattern?.months;
+        const patternMonthDays = pattern?.monthDays;
         const dayNames = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
 
         // Parse time range
@@ -1974,8 +1987,10 @@ const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
         const isActiveNow = (() => {
           // Check weekDay constraint
           if (weekDays?.length > 0 && !weekDays.includes(dayNames[now.getDay()])) return false;
-          // Check monthDay constraint
-          if (monthDays?.length > 0 && !monthDays.includes(now.getDate())) return false;
+          // Check month-of-year constraint
+          if (months?.length > 0 && !months.includes(now.getMonth() + 1)) return false;
+          // Check day-of-month constraint
+          if (patternMonthDays?.length > 0 && !patternMonthDays.includes(now.getDate())) return false;
           // Check time range
           if (hasTimeRange) {
             const endTimeStr = timeRange.end || '23:59';
@@ -2016,8 +2031,10 @@ const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
           // Check weekDay constraint
           if (weekDays?.length > 0 && !weekDays.includes(dayNames[candidate.getDay()])) continue;
 
-          // Check monthDay constraint
-          if (monthDays?.length > 0 && !monthDays.includes(candidate.getDate())) continue;
+          // Check month-of-year constraint
+          if (months?.length > 0 && !months.includes(candidate.getMonth() + 1)) continue;
+          // Check day-of-month constraint
+          if (patternMonthDays?.length > 0 && !patternMonthDays.includes(candidate.getDate())) continue;
 
           return candidate;
         }
@@ -2490,6 +2507,10 @@ const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
       alert('Please select at least one day of the week for weekly schedules');
       return false;
     }
+    if (scheduleForm.type === 'monthly' && selectedMonths.length === 0) {
+      alert('Please select at least one month for monthly schedules');
+      return false;
+    }
     if (scheduleForm.type === 'monthly' && monthDays.length === 0) {
       alert('Please select at least one day of the month for monthly schedules');
       return false;
@@ -2504,15 +2525,46 @@ const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
       alert('Please enter a country code (e.g., US, CA, GB)');
       return false;
     }
+    if (scheduleForm.type === 'holiday' && scheduleForm.start_date && scheduleForm.end_date) {
+      const start = parseNaiveDatetime(scheduleForm.start_date);
+      const end = parseNaiveDatetime(scheduleForm.end_date);
+      if (start && end) {
+        const sameDay = start.getMonth() === end.getMonth() && start.getDate() === end.getDate();
+        if (!sameDay) {
+          alert('Holiday schedules are single-day dynamic events. Use Yearly schedule type for recurring date ranges (e.g., 12/1 to 12/26).');
+          return false;
+        }
+      }
+    }
     return true;
   };
 
   // Build the common schedule data object + recurrence pattern (used by both create and update)
   const buildScheduleData = () => {
+    const normalizeRecurringDate = (value) => {
+      const parsed = parseNaiveDatetime(value);
+      if (!parsed) return value;
+      // Yearly/holiday schedules should recur by month/day+time, not be anchored to a specific year.
+      const normalized = new Date(2000, parsed.getMonth(), parsed.getDate(), parsed.getHours(), parsed.getMinutes(), 0, 0);
+      return formatAsNaiveIso(normalized);
+    };
+
+    const normalizedStartDate = (scheduleForm.type === 'yearly' || scheduleForm.type === 'holiday')
+      ? normalizeRecurringDate(scheduleForm.start_date)
+      : scheduleForm.type === 'monthly'
+        ? '2000-01-01T00:00'  // monthly schedules are controlled by months/monthDays recurrence, not date range
+        : scheduleForm.start_date;
+
+    const normalizedEndDate = (scheduleForm.type === 'yearly' || scheduleForm.type === 'holiday')
+      ? normalizeRecurringDate(scheduleForm.end_date)
+      : scheduleForm.type === 'monthly'
+        ? ''  // no end date — runs indefinitely, recurrence pattern controls active months
+        : scheduleForm.end_date;
+
     const data = {
       name: scheduleForm.name.trim(),
       type: scheduleForm.type,
-      start_date: scheduleForm.start_date,
+      start_date: normalizedStartDate,
       shuffle: scheduleForm.shuffle,
       playlist: scheduleForm.playlist,
       blend_enabled: scheduleForm.blend_enabled,
@@ -2521,15 +2573,15 @@ const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
       is_active: editingSchedule ? (editingSchedule.is_active ?? true) : true
     };
 
-    if (scheduleForm.end_date && scheduleForm.end_date.trim()) {
-      data.end_date = scheduleForm.end_date;
+    if (normalizedEndDate && normalizedEndDate.trim()) {
+      data.end_date = normalizedEndDate;
     }
     if (scheduleForm.color && scheduleForm.color.trim()) {
       data.color = scheduleForm.color;
     }
 
-    // Holiday fields for dynamic date lookup
-    if ((scheduleForm.type === 'holiday' || scheduleForm.type === 'yearly') && scheduleForm.holiday_name) {
+    // Holiday fields for dynamic date lookup (holiday type only)
+    if (scheduleForm.type === 'holiday' && scheduleForm.holiday_name) {
       data.holiday_name = scheduleForm.holiday_name.trim();
       data.holiday_country = (scheduleForm.holiday_country || 'US').trim();
     } else {
@@ -2548,8 +2600,10 @@ const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
         recurrencePattern.timeRange = timeRange;
       }
     }
-    if (scheduleForm.type === 'monthly' && monthDays.length > 0) {
-      recurrencePattern.monthDays = monthDays;
+    if (scheduleForm.type === 'monthly') {
+      if (selectedMonths.length > 0) recurrencePattern.months = selectedMonths;
+      if (monthDays.length > 0) recurrencePattern.monthDays = monthDays;
+      if (timeRange.start) recurrencePattern.timeRange = timeRange;
     }
     if (Object.keys(recurrencePattern).length > 0) {
       data.recurrence_pattern = JSON.stringify(recurrencePattern);
@@ -2572,7 +2626,7 @@ const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
       alert('Schedule name is required');
       return;
     }
-    if (!scheduleForm.start_date) {
+    if (!scheduleForm.start_date && scheduleForm.type !== 'monthly') {
       alert('Start date is required');
       return;
     }
@@ -2677,7 +2731,7 @@ const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
         setScheduleMode('simple');
         setSequenceBlocks([]);
         setWeekDays([]);
-        setMonthDays([]);
+        setSelectedMonths([]); setMonthDays([]);
         setTimeRange({ start: '', end: '' });
         // Add the new schedule to the state immediately with category info
         if (data.category) {
@@ -3227,18 +3281,18 @@ const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
         }
       }
       
-      // Check if both are monthly schedules with overlapping days-of-month
+      // Check if both are monthly schedules with overlapping months
       else if (schedule.type === 'monthly' && other.type === 'monthly') {
-        const thisMonthDays = thisPattern.monthDays || [];
-        const otherMonthDays = otherPattern.monthDays || [];
-        const overlappingMonthDays = thisMonthDays.filter(d => otherMonthDays.includes(d));
-        if (thisMonthDays.length > 0 && otherMonthDays.length > 0 && overlappingMonthDays.length === 0) return;
-        
+        const thisMonths = thisPattern.months || [];
+        const otherMonths = otherPattern.months || [];
+        const overlappingMonths = thisMonths.filter(m => otherMonths.includes(m));
+        if (thisMonths.length > 0 && otherMonths.length > 0 && overlappingMonths.length === 0) return;
+
         const thisStart = schedule.start_date ? new Date(schedule.start_date) : new Date(0);
         const thisEnd = schedule.end_date ? new Date(schedule.end_date) : new Date('2099-12-31');
         const otherStart = other.start_date ? new Date(other.start_date) : new Date(0);
         const otherEnd = other.end_date ? new Date(other.end_date) : new Date('2099-12-31');
-        
+
         if (thisStart <= otherEnd && otherStart <= thisEnd) {
           if (timeRangesOverlap(
             thisTimeRange.start, thisTimeRange.end,
@@ -3246,10 +3300,10 @@ const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
           )) {
             conflicts.push({
               schedule: other,
-              overlappingDays: overlappingMonthDays,
+              overlappingDays: overlappingMonths,
               thisTime: thisTimeRange,
               otherTime: otherTimeRange,
-              note: 'Monthly schedules overlap on same day(s) of month'
+              note: 'Monthly schedules overlap on same month(s)'
             });
           }
         }
@@ -4142,17 +4196,18 @@ const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
         const pattern = JSON.parse(schedule.recurrence_pattern);
         if (pattern.timeRange) setTimeRange(pattern.timeRange);
         if (pattern.weekDays) setWeekDays(pattern.weekDays);
+        if (pattern.months) setSelectedMonths(pattern.months);
         if (pattern.monthDays) setMonthDays(pattern.monthDays);
       } catch (error) {
         console.error('Failed to parse recurrence pattern:', error);
         setTimeRange({ start: '', end: '' });
         setWeekDays([]);
-        setMonthDays([]);
+        setSelectedMonths([]); setMonthDays([]);
       }
     } else {
       setTimeRange({ start: '', end: '' });
       setWeekDays([]);
-      setMonthDays([]);
+      setSelectedMonths([]); setMonthDays([]);
     }
 
     // Check if schedule has a sequence
@@ -4288,7 +4343,7 @@ const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
         setScheduleMode('simple');
         setSequenceBlocks([]);
         setWeekDays([]);
-        setMonthDays([]);
+        setSelectedMonths([]); setMonthDays([]);
         setTimeRange({ start: '', end: '' });
         fetchData();
       })
@@ -10490,20 +10545,60 @@ const DashboardTiles = {
         cat: catMap.get(s.category_id) || { name: (s.sequence ? s.name : (s.category?.name || 'Unknown')), color: s.color || (s.category?.color || '#6c757d') }
       }));
 
-    // Parse time range for a schedule
+    // Parse time range for a schedule (falls back to start/end datetime when no recurrence timeRange exists)
     const getTimeRange = (schedule) => {
-      if (!schedule.recurrence_pattern) return { start: 0, end: 24 }; // All day
       try {
-        const pattern = JSON.parse(schedule.recurrence_pattern);
-        if (pattern.timeRange?.start) {
-          const [startH, startM] = pattern.timeRange.start.split(':').map(Number);
-          const [endH, endM] = (pattern.timeRange.end || '23:59').split(':').map(Number);
-          // Handle overnight ranges (e.g., 22:00 to 03:00)
-          const startDecimal = startH + (startM || 0) / 60;
-          let endDecimal = endH + (endM || 0) / 60;
-          // If end is smaller than start, it wraps to next day - for display, treat as extending to midnight
-          const wrapsOvernight = endDecimal < startDecimal;
-          return { start: startDecimal, end: wrapsOvernight ? 24 : endDecimal, wrapsOvernight, rawEnd: endDecimal };
+        if (schedule.recurrence_pattern) {
+          const pattern = JSON.parse(schedule.recurrence_pattern);
+          if (pattern.timeRange?.start) {
+            const [startH, startM] = pattern.timeRange.start.split(':').map(Number);
+            const [endH, endM] = (pattern.timeRange.end || '23:59').split(':').map(Number);
+            // Handle overnight ranges (e.g., 22:00 to 03:00)
+            const startDecimal = startH + (startM || 0) / 60;
+            let endDecimal = endH + (endM || 0) / 60;
+            // If end is smaller than start, it wraps to next day - for display, treat as extending to midnight
+            const wrapsOvernight = endDecimal < startDecimal;
+            return { start: startDecimal, end: wrapsOvernight ? 24 : endDecimal, wrapsOvernight, rawEnd: endDecimal };
+          }
+        }
+
+        const startDt = parseNaiveDatetime(schedule.start_date);
+        const endDt = schedule.end_date ? parseNaiveDatetime(schedule.end_date) : null;
+        if (!startDt || !endDt) return { start: 0, end: 24 };
+
+        const dayKey = new Date(selectedDay.getFullYear(), selectedDay.getMonth(), selectedDay.getDate()).getTime();
+
+        if (schedule.type === 'yearly' || schedule.type === 'holiday') {
+          const startOnDay = new Date(selectedDay.getFullYear(), startDt.getMonth(), startDt.getDate()).getTime();
+          const endOnDay = new Date(selectedDay.getFullYear(), endDt.getMonth(), endDt.getDate()).getTime();
+
+          if (startOnDay === endOnDay && dayKey === startOnDay) {
+            return {
+              start: startDt.getHours() + startDt.getMinutes() / 60,
+              end: endDt.getHours() + endDt.getMinutes() / 60
+            };
+          }
+          if (dayKey === startOnDay) {
+            return { start: startDt.getHours() + startDt.getMinutes() / 60, end: 24 };
+          }
+          if (dayKey === endOnDay) {
+            return { start: 0, end: endDt.getHours() + endDt.getMinutes() / 60 };
+          }
+        } else {
+          const startDay = new Date(startDt.getFullYear(), startDt.getMonth(), startDt.getDate()).getTime();
+          const endDay = new Date(endDt.getFullYear(), endDt.getMonth(), endDt.getDate()).getTime();
+          if (startDay === endDay && dayKey === startDay) {
+            return {
+              start: startDt.getHours() + startDt.getMinutes() / 60,
+              end: endDt.getHours() + endDt.getMinutes() / 60
+            };
+          }
+          if (dayKey === startDay) {
+            return { start: startDt.getHours() + startDt.getMinutes() / 60, end: 24 };
+          }
+          if (dayKey === endDay) {
+            return { start: 0, end: endDt.getHours() + endDt.getMinutes() / 60 };
+          }
         }
       } catch (e) {}
       return { start: 0, end: 24 }; // All day
@@ -13362,7 +13457,7 @@ const DashboardTiles = {
             }}
           >
             <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
-              <span style={{ fontSize: '2rem' }}>🌍</span>
+              <Globe size={32} style={{ color: '#3b82f6' }} />
               <div>
                 <div style={{ fontSize: '1.1rem', fontWeight: 600, color: 'var(--text-color)', marginBottom: '0.25rem' }}>
                   Quick Start: Browse Holidays
@@ -13450,61 +13545,104 @@ const DashboardTiles = {
                     width: '95%'
                   }}
                 >
-                  <option value="daily">📅 Daily</option>
-                  <option value="weekly">📆 Weekly</option>
-                  <option value="monthly">🗓️ Monthly</option>
-                  <option value="yearly">📋 Yearly</option>
-                  <option value="holiday">🎉 Holiday</option>
+                  <option value="daily">Daily</option>
+                  <option value="weekly">Weekly</option>
+                  <option value="monthly">Monthly</option>
+                  <option value="yearly">Yearly</option>
+                  <option value="holiday">Holiday</option>
                 </select>
               </div>
               
-              <div>
-                <label style={{ display: 'block', marginBottom: '0.5rem', fontSize: '0.95rem', fontWeight: 600, color: 'var(--text-color)' }}>
-                  Start Date & Time <span style={{ color: '#dc3545' }}>*</span>
-                </label>
-                <input
-                  className="nx-input"
-                  type="datetime-local"
-                  value={scheduleForm.start_date}
-                  onChange={(e) => setScheduleForm({...scheduleForm, start_date: e.target.value})}
-                  required
-                  style={{ 
-                    padding: '0.75rem', 
-                    fontSize: '1rem',
-                    border: '2px solid var(--border-color)',
-                    borderRadius: '6px',
-                    width: '90%'
-                  }}
-                />
-              </div>
-              
-              <div>
-                <label style={{ display: 'block', marginBottom: '0.5rem', fontSize: '0.95rem', fontWeight: 600, color: 'var(--text-color)' }}>
-                  End Date & Time <span style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>(Optional)</span>
-                </label>
-                <input
-                  className="nx-input"
-                  type="datetime-local"
-                  value={scheduleForm.end_date}
-                  onChange={(e) => setScheduleForm({...scheduleForm, end_date: e.target.value})}
-                  style={{ 
-                    padding: '0.75rem', 
-                    fontSize: '1rem',
-                    border: '2px solid var(--border-color)',
-                    borderRadius: '6px',
-                    width: '90%'
-                  }}
-                />
-                <p style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', margin: '0.25rem 0 0 0' }}>
-                  Leave blank for indefinite schedule
-                </p>
-              </div>
+              {scheduleForm.type !== 'monthly' && (
+                <div>
+                  <label style={{ display: 'block', marginBottom: '0.5rem', fontSize: '0.95rem', fontWeight: 600, color: 'var(--text-color)' }}>
+                    Start Date & Time <span style={{ color: '#dc3545' }}>*</span>
+                  </label>
+                  <input
+                    className="nx-input"
+                    type="datetime-local"
+                    value={scheduleForm.start_date}
+                    onChange={(e) => setScheduleForm({...scheduleForm, start_date: e.target.value})}
+                    required
+                    style={{ padding: '0.75rem', fontSize: '1rem', border: '2px solid var(--border-color)', borderRadius: '6px', width: '90%' }}
+                  />
+                </div>
+              )}
 
-              {/* Holiday Preset - shown for holiday/yearly types */}
+              {scheduleForm.type !== 'monthly' && (
+                <div>
+                  <label style={{ display: 'block', marginBottom: '0.5rem', fontSize: '0.95rem', fontWeight: 600, color: 'var(--text-color)' }}>
+                    End Date & Time <span style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>(Optional)</span>
+                  </label>
+                  <input
+                    className="nx-input"
+                    type="datetime-local"
+                    value={scheduleForm.end_date}
+                    onChange={(e) => setScheduleForm({...scheduleForm, end_date: e.target.value})}
+                    style={{ padding: '0.75rem', fontSize: '1rem', border: '2px solid var(--border-color)', borderRadius: '6px', width: '90%' }}
+                  />
+                  <p style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', margin: '0.25rem 0 0 0' }}>
+                    Leave blank for indefinite schedule
+                  </p>
+                </div>
+              )}
+
+              {scheduleForm.type === 'monthly' && (
+                <div style={{ gridColumn: '1 / -1' }}>
+                  <label style={{ display: 'block', marginBottom: '0.75rem', fontSize: '0.95rem', fontWeight: 600, color: 'var(--text-color)' }}>
+                    Active Months <span style={{ color: '#dc3545' }}>*</span>
+                  </label>
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '0.5rem' }}>
+                    {['January','February','March','April','May','June','July','August','September','October','November','December'].map((name, i) => {
+                      const monthNum = i + 1;
+                      const isSelected = selectedMonths.includes(monthNum);
+                      return (
+                        <button
+                          key={monthNum}
+                          type="button"
+                          onClick={() => {
+                            if (isSelected) {
+                              setSelectedMonths(selectedMonths.filter(m => m !== monthNum));
+                            } else {
+                              setSelectedMonths([...selectedMonths, monthNum].sort((a, b) => a - b));
+                            }
+                          }}
+                          style={{
+                            padding: '0.75rem',
+                            backgroundColor: isSelected ? 'var(--button-bg)' : 'var(--card-bg)',
+                            color: isSelected ? 'white' : 'var(--text-color)',
+                            border: '2px solid ' + (isSelected ? 'var(--button-bg)' : 'var(--border-color)'),
+                            borderRadius: '6px',
+                            cursor: 'pointer',
+                            fontSize: '0.95rem',
+                            fontWeight: isSelected ? 700 : 500,
+                            transition: 'all 0.2s',
+                            minHeight: '44px'
+                          }}
+                          onMouseEnter={(e) => !isSelected && (e.currentTarget.style.borderColor = 'var(--button-bg)')}
+                          onMouseLeave={(e) => !isSelected && (e.currentTarget.style.borderColor = 'var(--border-color)')}
+                        >
+                          {name.slice(0, 3)}
+                        </button>
+                      );
+                    })}
+                  </div>
+                  {selectedMonths.length === 0 && (
+                    <p style={{ fontSize: '0.85rem', color: '#dc3545', marginTop: '0.5rem' }}>Please select at least one month</p>
+                  )}
+                  {selectedMonths.length > 0 && (
+                    <p style={{ fontSize: '0.85rem', color: '#28a745', marginTop: '0.5rem' }}>
+                      ✓ Active during: {selectedMonths.map(m => ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][m-1]).join(', ')}
+                    </p>
+                  )}
+                </div>
+              )}
+
+              {/* Quick Setup Preset - shown for holiday/yearly types */}
               {(scheduleForm.type === 'holiday' || scheduleForm.type === 'yearly') && (
                 <div style={{ gridColumn: '1 / -1' }}>
                   <label style={{ display: 'block', marginBottom: '0.5rem', fontSize: '0.95rem', fontWeight: 600, color: 'var(--text-color)' }}>
-                    Holiday Preset <span style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>(Optional)</span>
+                    Quick Setup Preset <span style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>(Optional)</span>
                   </label>
                   <select
                     className="nx-select"
@@ -13513,18 +13651,24 @@ const DashboardTiles = {
                       const preset = holidayPresets.find(p => p.id === parseInt(e.target.value));
                       if (preset) {
                         const currentYear = new Date().getFullYear();
-                        let startDate, endDate;
+                        let startDate, endDate, autoType;
                         if (preset.start_month && preset.start_day && preset.end_month && preset.end_day) {
+                          // Multi-day range preset → use Yearly type
                           startDate = new Date(currentYear, preset.start_month - 1, preset.start_day, 0, 0, 0);
-                          endDate = new Date(currentYear, preset.end_month - 1, preset.end_day, 23, 59, 59);
+                          endDate = new Date(currentYear, preset.end_month - 1, preset.end_day, 23, 59, 0);
+                          autoType = 'yearly';
                         } else {
-                          startDate = new Date(currentYear, preset.month - 1, preset.day, 12, 0, 0);
-                          endDate = new Date(currentYear, preset.month - 1, preset.day, 23, 59, 59);
+                          // Single-day preset → use Holiday type
+                          startDate = new Date(currentYear, preset.month - 1, preset.day, 0, 0, 0);
+                          endDate = new Date(currentYear, preset.month - 1, preset.day, 23, 59, 0);
+                          autoType = 'holiday';
                         }
                         setScheduleForm({
                           ...scheduleForm,
                           name: `${preset.name} Schedule`,
-                          type: 'holiday',
+                          type: autoType,
+                          holiday_name: autoType === 'holiday' ? preset.name : '',
+                          holiday_country: autoType === 'holiday' ? (preset.country || 'US') : '',
                           start_date: toLocalInputFromDate(startDate),
                           end_date: toLocalInputFromDate(endDate),
                           category_id: preset.category_id ? preset.category_id.toString() : scheduleForm.category_id
@@ -13539,15 +13683,18 @@ const DashboardTiles = {
                       width: '100%'
                     }}
                   >
-                    <option value="">Select a holiday to auto-fill name, dates & category</option>
-                    {holidayPresets.map(preset => (
-                      <option key={preset.id} value={preset.id}>
-                        {preset.name} ({preset.start_month ? `${preset.start_month}/${preset.start_day} - ${preset.end_month}/${preset.end_day}` : `${preset.month}/${preset.day}`})
-                      </option>
-                    ))}
+                    <option value="">Select a preset to auto-fill — will set type, dates &amp; category</option>
+                    {holidayPresets.map(preset => {
+                      const isRange = preset.start_month && preset.start_day && preset.end_month && preset.end_day;
+                      return (
+                        <option key={preset.id} value={preset.id}>
+                          {preset.name} — {isRange ? `📋 Yearly ${preset.start_month}/${preset.start_day}–${preset.end_month}/${preset.end_day}` : `🎉 Holiday ${preset.month}/${preset.day}`}
+                        </option>
+                      );
+                    })}
                   </select>
                   <p style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', margin: '0.25rem 0 0 0' }}>
-                    Auto-fills schedule name, dates, and category from a holiday preset
+                    📋 Date-range presets automatically switch to <strong>Yearly</strong> type. 🎉 Single-day presets use <strong>Holiday</strong> type.
                   </p>
                 </div>
               )}
@@ -13577,7 +13724,7 @@ const DashboardTiles = {
                   fontWeight: 700,
                   fontSize: '1rem'
                 }}>3</div>
-                <h3 style={{ margin: 0, fontSize: '1.2rem', fontWeight: 600 }}>⏰ Daily Recurrence</h3>
+                <h3 style={{ margin: 0, fontSize: '1.2rem', fontWeight: 600, display: 'flex', alignItems: 'center', gap: '0.5rem' }}><Clock size={20} /> Daily Recurrence</h3>
               </div>
               
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1.25rem' }}>
@@ -13859,10 +14006,10 @@ const DashboardTiles = {
                   </button>
                 </div>
               </div>
-              
-              <div style={{ 
-                display: 'grid', 
-                gridTemplateColumns: 'repeat(7, 1fr)', 
+
+              <div style={{
+                display: 'grid',
+                gridTemplateColumns: 'repeat(7, 1fr)',
                 gap: '0.5rem',
                 padding: '1rem',
                 backgroundColor: 'var(--bg-color)',
@@ -13902,20 +14049,50 @@ const DashboardTiles = {
                   );
                 })}
               </div>
-              
-              <div style={{ 
-                marginTop: '1rem', 
-                padding: '0.75rem 1rem', 
-                backgroundColor: monthDays.length > 0 ? 'rgba(40, 167, 69, 0.1)' : 'rgba(220, 53, 69, 0.1)', 
+
+              <div style={{
+                marginTop: '1rem',
+                padding: '0.75rem 1rem',
+                backgroundColor: monthDays.length > 0 ? 'rgba(40, 167, 69, 0.1)' : 'rgba(220, 53, 69, 0.1)',
                 borderRadius: '6px',
                 border: '1px solid ' + (monthDays.length > 0 ? 'rgba(40, 167, 69, 0.3)' : 'rgba(220, 53, 69, 0.3)')
               }}>
                 <p style={{ fontSize: '0.9rem', color: monthDays.length > 0 ? '#28a745' : '#dc3545', margin: 0, display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
                   <span style={{ fontSize: '1.2rem' }}>{monthDays.length > 0 ? '✓' : '⚠️'}</span>
-                  {monthDays.length > 0 
-                    ? `Schedule will run on day${monthDays.length > 1 ? 's' : ''} ${monthDays.join(', ')} of each month`
+                  {monthDays.length > 0
+                    ? `Schedule will run on day${monthDays.length > 1 ? 's' : ''} ${monthDays.join(', ')} of the selected months`
                     : 'Please select at least one day of the month'}
                 </p>
+              </div>
+
+              {/* Time Range */}
+              <div style={{ marginTop: '1.25rem' }}>
+                <label style={{ display: 'block', marginBottom: '0.75rem', fontSize: '0.95rem', fontWeight: 600, color: 'var(--text-color)' }}>
+                  <Clock size={16} style={{ verticalAlign: 'middle', marginRight: '0.4rem' }} />
+                  Time Window <span style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', fontWeight: 400 }}>(Optional — leave blank to run all day)</span>
+                </label>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
+                  <div>
+                    <label style={{ display: 'block', marginBottom: '0.4rem', fontSize: '0.85rem', color: 'var(--text-secondary)' }}>Start Time</label>
+                    <input
+                      type="time"
+                      className="nx-input"
+                      value={timeRange.start || ''}
+                      onChange={(e) => setTimeRange({...timeRange, start: e.target.value})}
+                      style={{ padding: '0.75rem', fontSize: '1rem', border: '2px solid var(--border-color)', borderRadius: '6px', width: '100%' }}
+                    />
+                  </div>
+                  <div>
+                    <label style={{ display: 'block', marginBottom: '0.4rem', fontSize: '0.85rem', color: 'var(--text-secondary)' }}>End Time</label>
+                    <input
+                      type="time"
+                      className="nx-input"
+                      value={timeRange.end || ''}
+                      onChange={(e) => setTimeRange({...timeRange, end: e.target.value})}
+                      style={{ padding: '0.75rem', fontSize: '1rem', border: '2px solid var(--border-color)', borderRadius: '6px', width: '100%' }}
+                    />
+                  </div>
+                </div>
               </div>
             </div>
           )}
@@ -13947,26 +14124,49 @@ const DashboardTiles = {
               </h3>
             </div>
             
-            {/* Holiday Schedule: Holiday Name & Country */}
-            {(scheduleForm.type === 'holiday' || scheduleForm.type === 'yearly') && (
+            {/* Yearly type: informational recap panel */}
+            {scheduleForm.type === 'yearly' && (
               <div style={{ 
                 marginBottom: '1.5rem', 
                 padding: '1.25rem', 
-                backgroundColor: 'var(--card-bg)', 
+                backgroundColor: 'rgba(16, 185, 129, 0.08)', 
                 borderRadius: '10px', 
-                border: '2px solid var(--border-color)'
+                border: '2px solid #10b981'
               }}>
-                <h4 style={{ margin: '0 0 1rem 0', fontSize: '1rem', fontWeight: 600 }}>
-                  🎉 Holiday Auto-Update (Optional)
+                <h4 style={{ margin: '0 0 0.75rem 0', fontSize: '1rem', fontWeight: 600, color: '#10b981', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                  <ListChecks size={20} /> Yearly (Seasonal) Schedule — How It Works
                 </h4>
-                <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', margin: '0 0 1rem 0' }}>
-                  Set a holiday name and country to automatically update this schedule's date each year via the Holiday API.
-                  Leave blank to use the fixed start/end dates above.
+                <ul style={{ fontSize: '0.875rem', color: 'var(--text-secondary)', margin: 0, paddingLeft: '1.25rem', lineHeight: '1.7' }}>
+                  <li>Recurs <strong>every year</strong> automatically — no manual date updates needed.</li>
+                  <li>The <strong>year</strong> in Start/End dates is ignored; only <strong>month, day, and time</strong> matter.</li>
+                  <li>Great for seasonal windows: <em>Christmas Dec 1–Dec 26</em>, <em>Summer Jun 1–Aug 31</em>, <em>Halloween Oct 1–Oct 31</em>.</li>
+                  <li>Set an end time to control exactly when the season ends on the final day.</li>
+                  <li>If your range spans New Year (e.g., Dec 26 – Jan 5), that works correctly.</li>
+                </ul>
+              </div>
+            )}
+
+            {/* Holiday type: Holiday Name & Country for API auto-update */}
+            {scheduleForm.type === 'holiday' && (
+              <div style={{ 
+                marginBottom: '1.5rem', 
+                padding: '1.25rem', 
+                backgroundColor: 'rgba(245, 158, 11, 0.08)', 
+                borderRadius: '10px', 
+                border: '2px solid #f59e0b'
+              }}>
+                <h4 style={{ margin: '0 0 0.5rem 0', fontSize: '1rem', fontWeight: 600, color: '#f59e0b', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                  <PartyPopper size={20} /> Holiday — API Auto-Update
+                </h4>
+                <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', margin: '0 0 1rem 0', lineHeight: '1.5' }}>
+                  Enter the official holiday name and country so NeXroll can look up the correct date each year automatically.
+                  The start/end dates above are used as a fallback if the API is unavailable.
+                  <br /><strong>Note:</strong> Holiday schedules cover a <strong>single day</strong>. For a multi-day window (e.g., Dec 1–26), switch to the <strong>Yearly</strong> type.
                 </p>
                 <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: '1rem' }}>
                   <div>
                     <label style={{ display: 'block', marginBottom: '0.5rem', fontSize: '0.9rem', fontWeight: 600, color: 'var(--text-color)' }}>
-                      Holiday Name
+                      Holiday Name <span style={{ color: '#dc3545' }}>*</span>
                     </label>
                     <input
                       className="nx-input"
@@ -13985,7 +14185,7 @@ const DashboardTiles = {
                   </div>
                   <div>
                     <label style={{ display: 'block', marginBottom: '0.5rem', fontSize: '0.9rem', fontWeight: 600, color: 'var(--text-color)' }}>
-                      Country
+                      Country <span style={{ color: '#dc3545' }}>*</span>
                     </label>
                     <input
                       className="nx-input"
@@ -14003,9 +14203,38 @@ const DashboardTiles = {
                     />
                   </div>
                 </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    loadHolidayCountries();
+                    loadHolidays(holidaySelectedCountry, holidaySelectedYear);
+                    checkHolidayApiStatus();
+                    setShowHolidayBrowser(true);
+                  }}
+                  style={{
+                    marginTop: '1rem',
+                    padding: '0.75rem 1.25rem',
+                    fontSize: '0.95rem',
+                    fontWeight: 600,
+                    backgroundColor: '#f59e0b',
+                    color: 'white',
+                    border: 'none',
+                    borderRadius: '8px',
+                    cursor: 'pointer',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    gap: '0.5rem',
+                    transition: 'all 0.2s ease'
+                  }}
+                  onMouseEnter={(e) => e.currentTarget.style.backgroundColor = '#d97706'}
+                  onMouseLeave={(e) => e.currentTarget.style.backgroundColor = '#f59e0b'}
+                >
+                  <Globe size={18} />
+                  Browse Holidays
+                </button>
               </div>
             )}
-
             {/* Simple Mode: Category Selection */}
             {scheduleMode === 'simple' && (
               <>
@@ -14128,7 +14357,7 @@ const DashboardTiles = {
                         if (e.target.value) {
                           const selectedSeq = savedSequences.find(s => s.id === parseInt(e.target.value));
                           if (selectedSeq) {
-                            setSequenceBlocks(selectedSeq.blocks || []);
+                            setSequenceBlocks(cloneSequenceWithIds(selectedSeq.blocks || []));
                             setLoadedSavedSequenceId(parseInt(e.target.value));
                             showAlert(`Loaded sequence: ${selectedSeq.name}`, 'success');
                           }
@@ -14393,7 +14622,7 @@ const DashboardTiles = {
                 setScheduleMode('simple');
                 setSequenceBlocks([]);
                 setWeekDays([]);
-                setMonthDays([]);
+                setSelectedMonths([]); setMonthDays([]);
                 setTimeRange({ start: '', end: '' });
               }}
               style={{ 
@@ -14664,11 +14893,11 @@ const DashboardTiles = {
               }}
             >
               <option value="all">All Types</option>
-              <option value="daily">📅 Daily Only</option>
-              <option value="weekly">📆 Weekly Only</option>
-              <option value="monthly">🗓️ Monthly Only</option>
-              <option value="yearly">📋 Yearly Only</option>
-              <option value="holiday">🎉 Holiday Only</option>
+              <option value="daily">Daily Only</option>
+              <option value="weekly">Weekly Only</option>
+              <option value="monthly">Monthly Only</option>
+              <option value="yearly">Yearly Only</option>
+              <option value="holiday">Holiday Only</option>
               <option value="custom">⚙️ Custom Only</option>
             </select>
           </div>
@@ -14754,9 +14983,13 @@ const DashboardTiles = {
                   const days = pattern.weekDays.map(d => d.charAt(0).toUpperCase() + d.slice(1, 3)).join(', ');
                   recurrenceText = `Repeats: ${days}`;
                 }
+                if (pattern.months && pattern.months.length > 0) {
+                  const monthNames = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+                  recurrenceText = `Months: ${pattern.months.map(m => monthNames[m - 1]).join(', ')}`;
+                }
                 if (pattern.monthDays && pattern.monthDays.length > 0) {
-                  const days = pattern.monthDays.join(', ');
-                  recurrenceText = `Days: ${days}`;
+                  const dayStr = `Days: ${pattern.monthDays.join(', ')}`;
+                  recurrenceText = recurrenceText ? `${recurrenceText} · ${dayStr}` : dayStr;
                 }
               } catch (e) {
                 recurrenceText = '';
@@ -15474,17 +15707,6 @@ const DashboardTiles = {
                   value={newCategory.description}
                   onChange={(e) => setNewCategory({...newCategory, description: e.target.value})}
                 />
-              </div>
-              <div className="nx-field nx-span-2">
-                <label className="nx-label">Plex Mode</label>
-                <select
-                  className="nx-select"
-                  value={newCategory.plex_mode || 'shuffle'}
-                  onChange={(e) => setNewCategory({ ...newCategory, plex_mode: e.target.value })}
-                >
-                  <option value="shuffle">Random</option>
-                  <option value="playlist">Sequential</option>
-                </select>
               </div>
             </div>
 
@@ -26150,8 +26372,8 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
                     padding: '0.15rem 0.75rem',
                     fontSize: '0.75rem',
                     lineHeight: '1.6',
-                    whiteSpace: 'nowrap',
-                    overflowX: 'auto',
+                    whiteSpace: 'pre-wrap',
+                    wordBreak: 'break-word',
                     color: '#f8f8f2'
                   }}
                 >
@@ -28759,10 +28981,10 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
       }
       
       const cleanedBlocks = sequenceBlocks.map(block => {
-        const cleaned = {
-          type: block.type,
-          id: block.id
-        };
+        const cleaned = { type: block.type };
+        
+        // Preserve optional label
+        if (block.label && block.label.trim()) cleaned.label = block.label.trim();
         
         // Add type-specific fields
         if (block.type === 'random') {
@@ -28770,6 +28992,14 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
           cleaned.count = block.count || 1;
         } else if (block.type === 'fixed') {
           cleaned.preroll_ids = block.preroll_ids || [];
+        } else if (block.type === 'nexup_trailers') {
+          cleaned.source = block.source || 'both';
+          cleaned.count = block.count || 2;
+        } else if (block.type === 'coming_soon_list') {
+          cleaned.layout = block.layout || 'grid';
+        } else if (block.type === 'dynamic_preroll') {
+          cleaned.template = block.template;
+          cleaned.theme = block.theme;
         }
         
         return cleaned;
@@ -28859,7 +29089,7 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
   };
 
   const loadSequenceIntoBuilder = (sequence) => {
-    setSequenceBlocks(sequence.blocks || []);
+    setSequenceBlocks(cloneSequenceWithIds(sequence.blocks || []));
     setEditingSequenceId(sequence.id); // Track which sequence we're editing
     setEditingSequenceName(sequence.name || ''); // Load sequence name
     setEditingSequenceDescription(sequence.description || ''); // Load sequence description
@@ -28904,8 +29134,8 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
       showAlert(`Warning: ${(sequence.blocks?.length || 0) - cleanedBlocks.length} invalid block(s) were removed from the sequence.`, 'warning');
     }
     
-    // Load the cleaned sequence blocks
-    setSequenceBlocks(cleanedBlocks);
+    // Load the cleaned sequence blocks with UI IDs for drag-and-drop stability
+    setSequenceBlocks(cloneSequenceWithIds(cleanedBlocks));
     // Set schedule mode to advanced since we're using a sequence
     setScheduleMode('advanced');
     // Track which saved sequence is being used (prevents creating duplicate sequence on submit)
@@ -33981,7 +34211,7 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
             setScheduleMode('simple');
             setSequenceBlocks([]);
             setWeekDays([]);
-            setMonthDays([]);
+            setSelectedMonths([]); setMonthDays([]);
             setTimeRange({ start: '', end: '' });
           }}
         >
@@ -34037,32 +34267,88 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
                   value={scheduleForm.type}
                   onChange={(e) => setScheduleForm({...scheduleForm, type: e.target.value})}
                 >
-                  <option value="daily">📅 Daily</option>
-                  <option value="weekly">📆 Weekly</option>
-                  <option value="monthly">🗓️ Monthly</option>
-                  <option value="yearly">📋 Yearly</option>
-                  <option value="holiday">🎉 Holiday</option>
+                  <option value="daily">Daily</option>
+                  <option value="weekly">Weekly</option>
+                  <option value="monthly">Monthly</option>
+                  <option value="yearly">Yearly</option>
+                  <option value="holiday">Holiday</option>
                 </select>
+                {scheduleForm.type === 'yearly' && (
+                  <p style={{ fontSize: '0.8rem', color: '#10b981', margin: '0.3rem 0 0 0', fontWeight: 500 }}>
+                    <strong>Yearly (Seasonal):</strong> Recurs every year on the same month/day range. The year you enter is ignored — only month, day, and time matter.
+                  </p>
+                )}
+                {scheduleForm.type === 'holiday' && (
+                  <p style={{ fontSize: '0.8rem', color: '#f59e0b', margin: '0.3rem 0 0 0', fontWeight: 500 }}>
+                    <strong>Holiday (Single Day / API-driven):</strong> Runs on one specific holiday date looked up via the Holiday API. Use <strong>Yearly</strong> for multi-day seasonal windows.
+                  </p>
+                )}
               </div>
-              <div className="nx-field">
-                <label className="nx-label">Start Date & Time</label>
-                <input
-                  className="nx-input"
-                  type="datetime-local"
-                  value={scheduleForm.start_date}
-                  onChange={(e) => setScheduleForm({...scheduleForm, start_date: e.target.value})}
-                  required
-                />
-              </div>
-              <div className="nx-field">
-                <label className="nx-label">End Date & Time (Optional)</label>
-                <input
-                  className="nx-input"
-                  type="datetime-local"
-                  value={scheduleForm.end_date}
-                  onChange={(e) => setScheduleForm({...scheduleForm, end_date: e.target.value})}
-                />
-              </div>
+              {scheduleForm.type !== 'monthly' && (
+                <div className="nx-field">
+                  <label className="nx-label">Start Date & Time</label>
+                  <input
+                    className="nx-input"
+                    type="datetime-local"
+                    value={scheduleForm.start_date}
+                    onChange={(e) => setScheduleForm({...scheduleForm, start_date: e.target.value})}
+                    required
+                  />
+                </div>
+              )}
+              {scheduleForm.type !== 'monthly' && (
+                <div className="nx-field">
+                  <label className="nx-label">End Date & Time (Optional)</label>
+                  <input
+                    className="nx-input"
+                    type="datetime-local"
+                    value={scheduleForm.end_date}
+                    onChange={(e) => setScheduleForm({...scheduleForm, end_date: e.target.value})}
+                  />
+                </div>
+              )}
+              {scheduleForm.type === 'monthly' && (
+                <div className="nx-field nx-span-2">
+                  <label className="nx-label">Active Months</label>
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '0.5rem', marginTop: '0.25rem' }}>
+                    {['January','February','March','April','May','June','July','August','September','October','November','December'].map((name, i) => {
+                      const monthNum = i + 1;
+                      const isSelected = selectedMonths.includes(monthNum);
+                      return (
+                        <button
+                          key={monthNum}
+                          type="button"
+                          onClick={() => {
+                            if (isSelected) {
+                              setSelectedMonths(selectedMonths.filter(m => m !== monthNum));
+                            } else {
+                              setSelectedMonths([...selectedMonths, monthNum].sort((a, b) => a - b));
+                            }
+                          }}
+                          style={{
+                            padding: '0.5rem',
+                            backgroundColor: isSelected ? 'var(--button-bg)' : 'var(--bg-color)',
+                            color: isSelected ? 'white' : 'var(--text-color)',
+                            border: '2px solid ' + (isSelected ? 'var(--button-bg)' : 'var(--border-color)'),
+                            borderRadius: '0.25rem',
+                            cursor: 'pointer',
+                            fontSize: '0.85rem',
+                            fontWeight: isSelected ? 600 : 400,
+                            transition: 'all 0.2s'
+                          }}
+                        >
+                          {name.slice(0, 3)}
+                        </button>
+                      );
+                    })}
+                  </div>
+                  {selectedMonths.length === 0 && (
+                    <p style={{ fontSize: '0.85rem', color: '#dc3545', marginTop: '0.5rem', marginBottom: 0 }}>
+                      <AlertTriangle size={14} style={{ display: 'inline', marginRight: '0.3rem' }} /> Select at least one month
+                    </p>
+                  )}
+                </div>
+              )}
 
               {/* Daily Schedule: Time Selector */}
               {scheduleForm.type === 'daily' && (
@@ -34095,7 +34381,7 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
                   </p>
                   {!timeRange.start && (
                     <p style={{ fontSize: '0.85rem', color: '#dc3545', marginTop: '0.5rem', marginBottom: 0 }}>
-                      ⚠️ Please select at least a start time
+                      <AlertTriangle size={14} style={{ display: 'inline', marginRight: '0.3rem' }} /> Please select at least a start time
                     </p>
                   )}
                 </div>
@@ -34146,7 +34432,7 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
                     </div>
                     {weekDays.length === 0 && (
                       <p style={{ fontSize: '0.85rem', color: '#dc3545', marginTop: '0.5rem', marginBottom: 0 }}>
-                        ⚠️ Select at least one day
+                        <AlertTriangle size={14} style={{ display: 'inline', marginRight: '0.3rem' }} /> Select at least one day
                       </p>
                     )}
                   </div>
@@ -34263,24 +34549,66 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
                   </div>
                   {monthDays.length === 0 && (
                     <p style={{ fontSize: '0.85rem', color: '#dc3545', marginTop: '0.5rem', marginBottom: 0 }}>
-                      ⚠️ Select at least one day
+                      <AlertTriangle size={14} style={{ display: 'inline', marginRight: '0.3rem' }} /> Select at least one day
                     </p>
                   )}
+                  {/* Time Window */}
+                  <div style={{ marginTop: '1rem', paddingTop: '1rem', borderTop: '1px solid var(--border-color)' }}>
+                    <label className="nx-label" style={{ marginBottom: '0.5rem', display: 'block' }}>
+                      Time Window <span style={{ fontWeight: 400, color: 'var(--text-secondary)', fontSize: '0.8rem' }}>(Optional — leave blank to run all day)</span>
+                    </label>
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem' }}>
+                      <div>
+                        <label style={{ display: 'block', marginBottom: '0.3rem', fontSize: '0.8rem', color: 'var(--text-secondary)' }}>Start Time</label>
+                        <input
+                          type="time"
+                          className="nx-input"
+                          value={timeRange.start || ''}
+                          onChange={(e) => setTimeRange({...timeRange, start: e.target.value})}
+                        />
+                      </div>
+                      <div>
+                        <label style={{ display: 'block', marginBottom: '0.3rem', fontSize: '0.8rem', color: 'var(--text-secondary)' }}>End Time</label>
+                        <input
+                          type="time"
+                          className="nx-input"
+                          value={timeRange.end || ''}
+                          onChange={(e) => setTimeRange({...timeRange, end: e.target.value})}
+                        />
+                      </div>
+                    </div>
+                  </div>
                 </div>
               )}
-              
-              {/* Holiday Schedule: Holiday Name & Country */}
-              {(scheduleForm.type === 'holiday' || scheduleForm.type === 'yearly') && (
-                <div className="nx-field nx-span-2" style={{ padding: '1rem', backgroundColor: 'var(--card-bg)', borderRadius: '0.5rem', border: '1px solid var(--border-color)' }}>
-                  <label className="nx-label" style={{ marginBottom: '0.75rem', fontWeight: 600 }}>
-                    🎉 Holiday Auto-Update (Optional)
+
+              {/* Yearly type: informational recap panel */}
+              {scheduleForm.type === 'yearly' && (
+                <div className="nx-field nx-span-2" style={{ padding: '1rem', backgroundColor: 'rgba(16, 185, 129, 0.08)', borderRadius: '0.5rem', border: '1px solid #10b981' }}>
+                  <label className="nx-label" style={{ marginBottom: '0.5rem', fontWeight: 600, color: '#10b981', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                    <ListChecks size={18} /> Yearly (Seasonal) — How It Works
                   </label>
-                  <p style={{ fontSize: '0.85rem', color: '#666', margin: '0 0 0.75rem 0' }}>
-                    Set a holiday name and country to automatically update this schedule's date each year.
+                  <ul style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', margin: 0, paddingLeft: '1.25rem', lineHeight: '1.7' }}>
+                    <li>Recurs <strong>every year</strong> automatically — no manual date updates needed.</li>
+                    <li>The <strong>year</strong> in Start/End is ignored; only <strong>month, day, and time</strong> matter.</li>
+                    <li>Great for seasons: <em>Christmas Dec 1–26</em>, <em>Summer Jun 1–Aug 31</em>, <em>Halloween Oct 1–31</em>.</li>
+                    <li>For single days whose dates shift yearly (Thanksgiving, Easter), use <strong>Holiday</strong> type instead.</li>
+                  </ul>
+                </div>
+              )}
+
+              {/* Holiday type: API auto-update fields */}
+              {scheduleForm.type === 'holiday' && (
+                <div className="nx-field nx-span-2" style={{ padding: '1rem', backgroundColor: 'rgba(245, 158, 11, 0.08)', borderRadius: '0.5rem', border: '1px solid #f59e0b' }}>
+                  <label className="nx-label" style={{ marginBottom: '0.5rem', fontWeight: 600, color: '#f59e0b', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                    <PartyPopper size={18} /> Holiday — API Auto-Update
+                  </label>
+                  <p style={{ fontSize: '0.85rem', color: '#666', margin: '0 0 0.75rem 0', lineHeight: '1.5' }}>
+                    NeXroll looks up the correct date via the Holiday API each year. Start/end dates above serve as a fallback.
+                    <br /><strong>Single-day only.</strong> For multi-day ranges, switch to the <strong>Yearly</strong> type.
                   </p>
                   <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: '1rem' }}>
                     <div>
-                      <label style={{ display: 'block', marginBottom: '0.5rem', fontSize: '0.9rem', color: '#666' }}>Holiday Name</label>
+                      <label style={{ display: 'block', marginBottom: '0.5rem', fontSize: '0.9rem', color: '#666' }}>Holiday Name <span style={{ color: '#dc3545' }}>*</span></label>
                       <input
                         className="nx-input"
                         type="text"
@@ -34291,7 +34619,7 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
                       />
                     </div>
                     <div>
-                      <label style={{ display: 'block', marginBottom: '0.5rem', fontSize: '0.9rem', color: '#666' }}>Country</label>
+                      <label style={{ display: 'block', marginBottom: '0.5rem', fontSize: '0.9rem', color: '#666' }}>Country <span style={{ color: '#dc3545' }}>*</span></label>
                       <input
                         className="nx-input"
                         type="text"
@@ -34302,6 +34630,36 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
                       />
                     </div>
                   </div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      loadHolidayCountries();
+                      loadHolidays(holidaySelectedCountry, holidaySelectedYear);
+                      checkHolidayApiStatus();
+                      setShowHolidayBrowser(true);
+                    }}
+                    style={{
+                      marginTop: '1rem',
+                      padding: '0.75rem 1.25rem',
+                      fontSize: '0.9rem',
+                      fontWeight: 600,
+                      backgroundColor: '#f59e0b',
+                      color: 'white',
+                      border: 'none',
+                      borderRadius: '0.5rem',
+                      cursor: 'pointer',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      gap: '0.5rem',
+                      transition: 'all 0.2s ease'
+                    }}
+                    onMouseEnter={(e) => e.currentTarget.style.backgroundColor = '#d97706'}
+                    onMouseLeave={(e) => e.currentTarget.style.backgroundColor = '#f59e0b'}
+                  >
+                    <Globe size={18} />
+                    Browse Holidays
+                  </button>
                 </div>
               )}
 
@@ -34483,7 +34841,7 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
                   setScheduleMode('simple');
                   setSequenceBlocks([]);
                   setWeekDays([]);
-                  setMonthDays([]);
+                  setSelectedMonths([]); setMonthDays([]);
                   setTimeRange({ start: '', end: '' });
                 }}
               >
@@ -34530,7 +34888,7 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
               backgroundColor: 'var(--card-bg)'
             }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
-                <span style={{ fontSize: '1.5rem' }}>🌍</span>
+                <Globe size={24} style={{ color: '#3b82f6' }} />
                 <div>
                   <h2 style={{ margin: 0, color: 'var(--text-color)', fontSize: '1.25rem', fontWeight: 700 }}>
                     Holiday Browser
@@ -34651,12 +35009,12 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
             }}>
               {holidaysLoading ? (
                 <div style={{ textAlign: 'center', padding: '3rem', color: 'var(--text-secondary)' }}>
-                  <div style={{ fontSize: '2rem', marginBottom: '1rem' }}>⏳</div>
+                  <Loader2 size={48} style={{ marginBottom: '1rem', animation: 'spin 1s linear infinite' }} />
                   <p>Loading holidays...</p>
                 </div>
               ) : holidays.length === 0 ? (
                 <div style={{ textAlign: 'center', padding: '3rem', color: 'var(--text-secondary)' }}>
-                  <div style={{ fontSize: '2rem', marginBottom: '1rem' }}>📅</div>
+                  <CalendarDays size={48} style={{ marginBottom: '1rem' }} />
                   <p>No holidays found for this country/year</p>
                 </div>
               ) : (
@@ -34716,13 +35074,21 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
                             borderRadius: '8px',
                             backgroundColor: darkMode ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.03)'
                           }}>
-                            <span style={{ fontSize: '1.5rem' }}>📅</span>
+                            <CalendarDays size={20} />
                             <div>
                               <div style={{ fontWeight: 600, color: 'var(--text-color)' }}>
                                 {holidayDate.toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric' })}
                               </div>
-                              <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>
-                                {holiday.fixed ? '📌 Fixed date' : '🔄 Variable date'}
+                              <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', display: 'flex', alignItems: 'center', gap: '0.3rem' }}>
+                                {holiday.fixed ? (
+                                  <>
+                                    <Lock size={12} /> Fixed date
+                                  </>
+                                ) : (
+                                  <>
+                                    <RotateCw size={12} /> Variable date
+                                  </>
+                                )}
                               </div>
                             </div>
                           </div>

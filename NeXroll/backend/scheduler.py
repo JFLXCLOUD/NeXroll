@@ -109,7 +109,7 @@ class Scheduler:
         self._scheduler_check_interval: float = float(os.environ.get('SCHEDULER_INTERVAL', '60.0'))
         # Track last rotation time for random blocks (schedule_id -> last_rotation_time)
         self._last_rotation_time: dict[int, datetime.datetime] = {}
-        self._rotation_interval_seconds: float = 300.0  # 5 minutes for testing (change to 600.0 for 10 min production)
+        self._rotation_interval_seconds: float = 600.0  # 10 minute rotation interval
         # Cache for holiday dates (holiday_name_country_year -> date)
         self._holiday_date_cache: dict[str, Optional[datetime.date]] = {}
         # Track blend mode state for verification
@@ -1895,7 +1895,15 @@ class Scheduler:
                         _scheduler_verbose(f"Schedule '{schedule.name}' not active on {current_day_name} (weekDays: {week_days})")
                         return False
                 
-                # Check monthDays for monthly schedules
+                # Check months (which months of the year) for monthly schedules
+                months = pattern.get("months")
+                if months and isinstance(months, list) and len(months) > 0:
+                    current_month = now.month
+                    if current_month not in months:
+                        _scheduler_verbose(f"Schedule '{schedule.name}' not active in month {current_month} (months: {months})")
+                        return False
+
+                # Check monthDays (which days of the month) for monthly schedules
                 month_days = pattern.get("monthDays")
                 if month_days and isinstance(month_days, list) and len(month_days) > 0:
                     current_day_of_month = now.day

@@ -1,204 +1,50 @@
 # Changelog
 
-## [1.12.0-beta.12] - 04-19-2026
+## [1.12.14] - 04-24-2026
 
-### New Features (beta.12)
-- **Sequence Block Types: NeX-Up Trailers, Coming Soon List, Dynamic Preroll** — Three new block types for the Sequence Builder. NeX-Up Trailers pulls downloaded trailers (movies/TV/both) with configurable count. Coming Soon List inserts a generated compilation video (grid or list layout). Dynamic Preroll inserts a generated preroll video (template + theme). Full support across Block Editor, Sequence Block rendering, Validator, Timeline, Statistics, Preview, export/import, scheduler, and Plex apply.
-- **Sequence Editor: 5-Type Block Selector** — Block Editor now shows a 5-type selector grid with distinct colors, icons, and configuration panels. Dynamic Preroll selector fetches available prerolls as selectable cards.
-
-### Bug Fixes (beta.12)
-- **Sequence Preview: New Block Types Not Playing** — Preview modal now resolves new block types via backend into playable video URLs with correct playlist ordering.
-- **Sequence Preview: Dynamic Preroll Fallback** — Blocks saved without template/theme now fall back to the first available dynamic preroll file.
-- **Apply to Server: New Block Types Skipped** — All 5 block types now resolve to Plex paths (previously only random/fixed were sent).
-- **Dashboard Preview: NeX-Up / Dynamic Preroll Videos Not Playing** — Current preroll details endpoint now matches trailer and dynamic preroll paths with proper serving URLs and display names.
-- **Sequence Export: New Block Properties Stripped** — Export now preserves source, count, layout, template, theme for all block types.
-- **Sequence Timeline: New Blocks Show as "Unknown"** — Added colors, labels, icons, category names for new block types.
-- **Sequence Statistics: New Blocks Not Counted** — Added duration estimates, preroll counts, colors, icons, labels for new block types.
-- **Semicolon vs Comma Delimiter** — Sequences now use commas for ordered playlist playback instead of semicolons.
-- **Backend `_resolve_sequence`: New Blocks Ignored** — Internal resolver now handles all 5 block types.
-
-## [1.12.0-beta.11] - 04-18-2026
-
-### Bug Fixes (beta.11)
-- **Critical: Scheduler Not Applying Correct Schedule** — Schedules with a `sequence` field stored as the string `"null"` were treated as having a valid sequence, causing the scheduler to silently fail when applying prerolls. Added `_has_valid_sequence()` validation across all 8 sequence checks.
-- **NeX-Up: Sequence Only Playing 1 of 2 Trailers** — Orphan preroll records referencing deleted/expired trailer files caused random block selection to pick missing files, which silently 404'd and were skipped. All three sequence resolution paths (API, scheduler saved-sequence, scheduler schedule-sequence) now filter random pools to only prerolls with existing files via `os.path.exists()`. Frontend preview also filters out missing-file prerolls.
-- **NeX-Up: Preview Tile/Video Mismatch** — Preview would show one trailer's name (e.g. "Hellfire") while playing a different trailer's video, because the first pick was a missing file that 404'd and auto-skipped. Fixed by the same `os.path.exists()` pool filtering.
-- **NeX-Up: Orphan Preroll Records Not Cleaned During Sync** — Radarr sync orphan cleanup and trailer expiry now also delete the corresponding preroll record, preventing stale entries from polluting sequence random pools.
-- **Sequence Preview: Now Playing Label Desyncs from Video** — The preview playlist was rebuilt every 30 seconds when background data polling refreshed the prerolls array, re-shuffling random picks mid-playback. Props are now snapshotted at modal-open time; playlist is built once and immune to background refreshes. Source transition guards also prevent spurious abort errors from advancing the track.
-- **Stale Category Verification** — Verification loop now clears stale `active_category` and forces immediate re-evaluation instead of waiting for the main loop.
-- **Apply Failure Logging** — Added explicit warning when category apply fails.
-- **Database Path Logging** — Startup log now shows the actual resolved database path.
-
-## [1.12.0-beta.10] - 04-16-2026
-
-### New Features (beta.10)
-- **Forgot Password / Local Password Reset** — Login page now shows a "Forgot password?" link when accessed from localhost. Resets the admin password without authentication, clears lockouts, invalidates all sessions. Restricted to local requests only for security. Reset events are logged to the auth audit trail.
-
-## [1.12.0-beta.9] - 04-11-2026
-
-### New Features (beta.9)
-- **Drag & Drop Upload** — Add Prerolls upload area now supports drag & drop for video files. Drop zone highlights on drag-over, only video files are accepted, multiple drops accumulate. Click-to-browse still works alongside.
-
-### Bug Fixes (beta.9)
-- **Require Login Toggle Enabled Without Users** — The toggle could be enabled before any user accounts existed, locking users out. Now disabled (greyed out) when no users exist, with helper text prompting to create an account first.
-- **Toggle Stays Greyed After Creating User** — After creating the first user, the Require Login toggle remained greyed out because `users_exist` was not refreshed. Both registration and admin user creation now call `checkAuthStatus()` on success.
-- **Undefined `logger` in Plugin Config Endpoints** — Four `logger.warning()` calls in the Jellyfin/Emby plugin configure endpoints referenced an undefined variable. Each was a duplicate of an adjacent `log_event()` call and has been removed.
-
-## [1.12.0-beta.8] - 04-03-2026
-
-### New Features (beta.8)
-- **Conflict Resolution Page** — New dedicated **Conflicts** tab in the Schedules sub-navigation. Full-page conflict resolution with Weekly/Monthly/Yearly timeframe selector, side-by-side schedule comparison cards, suggested fixes with radio buttons, Auto-Resolve All, Apply Fixes with results view, ignored conflicts section, and green "All Conflicts Resolved" state. Replaces the popup wizard modal.
-- **Calendar Conflict UX** — All calendar views (Day, Week, Month, Year) now show green "All Conflicts Resolved" when actionable conflicts reach zero, and include a clickable "Conflicts" link directing users to the resolution page.
-
-### Bug Fixes (beta.8)
-- **Preview Playback Skipping** — Sequence and dashboard preview players showed ~1 second of a video then skipped to the next. Root cause: `key`-based video element remounting caused browsers to fire spurious `onEnded` events during unmount transitions. Both players now reuse a single stable `<video>` element and swap sources via `useEffect` for smooth gapless playback. Broken videos (404s) are automatically skipped.
-- **Preview "Unavailable" for Semicolon-Delimited Prerolls** — Dashboard preview parsed the Plex preroll string by checking for `,` before `;`. A comma in a filename caused the semicolon-delimited string to be split incorrectly, producing the entire raw string as a single entry. Fixed by checking `;` first (semicolons never appear in file paths).
-- **Preview Unavailable for Unmanaged Prerolls** — External/mapped-drive files not in the NeXroll database showed "Preview unavailable". Added `/preview/file` endpoint to serve video files by absolute path with a fallback in preroll details.
-- **Plex Disconnect Deletes Stable Token** — Disconnecting from Plex permanently destroyed the stable token from Windows Credential Manager, preventing reconnection without re-entering the token. Disconnect now only clears DB connection state, preserving the stable token.
-- **Update Checker Not Detecting New Versions** — Five bugs in the update check system fixed: normalizeVersionString stripped pre-release suffixes, auto-check used wrong response fields, check interval sent wrong field name, manual check read nonexistent property, second check button read stale state. Backend now uses proper semver parsing with pre-release ordering.
-- **Docker CVE Remediation** — Upgraded pip in Dockerfile to address CVE-2025-8869 and CVE-2026-1703. Existing `apt-get upgrade` handles libpng1.6 CVEs on rebuild.
-
-## [1.12.0-beta.7] - 03-30-2026
-
-### Bug Fixes (beta.7)
-- **Jellyfin Plugin rebuilt for Jellyfin 10.11.x** — Plugin DLL was compiled against Jellyfin 10.10 (net8.0). Jellyfin 10.11 moved to net9.0 and relocated `User` type, causing `ReflectionTypeLoadException`. Plugin now targets net9.0 with 10.11.x SDK. Requires Jellyfin 10.11+.
-- **Plugin configure errors now logged to app.log** — Push failures to Jellyfin/Emby now appear in app.log for diagnostic exports
-- **Better error messages for plugin configure failures** — 404 from Jellyfin shows specific "plugin not loaded" message; HTTP 500→502 for upstream failures
-- **Custom preroll folder mismatch warning** — Startup warns when DB-configured folder doesn't exist on disk; diagnostic export flags mismatch
-
-## [1.12.0-beta.6] - 03-30-2026
-
-### Bug Fixes (beta.6)
-- **Plugin Configure: Silent Failure** — `JellyfinConnector.set_plugin_configuration()` silently caught all exceptions, returning `False` with zero logging. Now returns detailed diagnostics (HTTP status code, response body, exception message) and the configure endpoint logs the actual failure reason and surfaces it to the user with actionable guidance (#21)
-- **Plugin Configure: Emby Error Detail** — Emby plugin configure endpoint now also logs the response body from Emby on push failure for diagnostic visibility
-- **Plugin Detect: 30-Second Polling** — Jellyfin and Emby plugin detect calls were embedded in `fetchData()` which runs every 30 seconds, generating ~2,700 detect API calls per day. Plugin detection is now triggered only when connection status changes (initial load + connect/disconnect), not on every polling cycle
-- **NeX-Up YouTube Status: Access Denied** — `GET /nexup/youtube/status` crashed with `[WinError 5] Access is denied: 'temp'` because it used a relative `'temp'` path that resolved to `C:\Program Files\NeXroll\temp` (unwritable). Now falls back to `PREROLLS_DIR/nexup_temp` which is in the writable `C:\ProgramData\NeXroll` data directory
-
-## [1.12.0-beta.5] - 03-29-2026
-
-### Bug Fixes (beta.5)
-- **Critical: Plugin Detect API Key Leak** — `GET /jellyfin/plugin/detect` and `GET /emby/plugin/detect` were auto-creating a new API key on every call when the plugin's NexrollUrl was empty; if the config push failed (common with permissions or version mismatches), the key was orphaned in the database. Repeated calls (e.g. page loads) could generate thousands of orphaned keys. **Fix:** Detect endpoints are now read-only — they report plugin status and return `needs_configuration: true` but never create API keys or push config. API key creation is reserved for the explicit `/configure` endpoints only. (#21)
-- **Plugin Configure Key Accumulation** — `POST /jellyfin/plugin/configure` and `POST /emby/plugin/configure` created a fresh API key on every call, only deactivating (not deleting) old keys. Over multiple configure attempts, inactive keys accumulated in the database. **Fix:** Configure endpoints now delete all inactive auto-generated keys before creating a new one, and roll back (delete) the new key if the config push fails.
-- **Configure Push Failure Rollback** — If the plugin config push fails during configure, the newly created API key is now deleted from the database instead of being left as an orphan.
-
-## [1.12.0-beta.4] - 03-28-2026
-
-### Coming Soon List — Logo Position Options (beta.4)
-- **Custom Logo Overlay** now supports 3 placement options: **Watermark**, **Right of Title**, and **Below Title**
-- Watermark mode renders the logo as a faded centered background element
-- Right of Title places the logo inline beside the "Coming Soon To" header
-- Below Title places the logo beneath the header text
-- Live preview updates in real-time as you switch between positions
-- Legacy "replace" mode automatically migrates to "Below Title"
-
-### NeX-Up Improvements (beta.4)
-- **Max Trailers to Keep** options expanded from 30 to **50** (5, 10, 15, 20, 25, 30, 40, 50)
-- Added **No Limit** option for users with large trailer libraries — removes the trailer count cap entirely
-- When set to No Limit, downloads are still bounded by the Max Storage (GB) setting
-
-### Ignore Conflicts (beta.4)
-- New **Ignore** option on each conflict card in the Conflict Detection Wizard — hides the conflict from future scans
-- Ignored conflicts stored in the database and persist across sessions
-- **Show Ignored** toggle at the bottom of the wizard reveals hidden conflicts with a one-click **Restore** button
-- All ignore/restore actions display success/error toast alerts for clear user feedback
-
-### API Keys — Multi-Select Bulk Delete (beta.4)
-- **Select All** checkbox and per-row checkboxes on the API Keys management list
-- Selected rows highlight with a blue border for visual clarity
-- **Delete Selected (N)** button appears when any keys are selected — bulk deletes in a single operation
-- Clicking a row toggles selection; action buttons (toggle active, single delete) remain independently clickable
-- New backend `POST /api/keys/bulk-delete` endpoint for efficient batch deletion
-
-### Bug Fixes (beta.4)
-- **Conflict Wizard: Method Not Allowed** — Ignore conflict endpoints were defined after the static frontend mount (catch-all), causing 405 errors on POST/DELETE; moved all conflict routes before the static mount
-- **Conflict Wizard: Ignore Button Not Clickable** — Added `e.stopPropagation()` and visible styling (background, border, hover effects) so the Ignore button is discoverable and responsive
-- **Sequence Builder: Random Block Preview** — Preview modal now respects the `count` field on random blocks instead of always picking only 1 preroll; shuffles the pool and takes the correct number
-- **Sequence Builder: Schedule Not Updating** — Fixed scheduler gate check that prevented sequence builder changes from being applied to Plex
-- **Yearly Schedule: False Validation Error** — Fixed yearly schedule validation incorrectly flagging valid schedules as missing date ranges; added early return for yearly type
-- **Schedule Creation: is_active Preservation** — `buildScheduleData()` now preserves the `is_active` field so toggling a schedule on/off is not lost when saving
-- **Grid Layout: Logo Below Title Overlap** — Added +40px vertical offset to the poster grid when logo is placed Below Title, preventing overlap
-- **Log Rotation: Multiple Writers** — Fixed log rotation creating 3 concurrent file writers; consolidated to single rotation handler
-- **Installer: AV False Positive** — Updated EXE `FileDescription` metadata from generic text to "NeXroll" to reduce antivirus false positive triggers
-
-## [1.12.0-beta.3] - 03-25-2026
-
-Major release introducing **Emby server support**, **Conflict Detection Wizard**, **yearly/holiday schedule improvements**, **dashboard overhaul**, **preview playback intelligence**, and **schedule creation form overhaul**.
-
-### Emby Server Support (beta.1)
-- Full Emby integration as a first-class media server alongside Plex and Jellyfin
-- **NeXroll Intros Plugin for Emby** — Implements Emby's `IIntroProvider` interface to inject prerolls via Cinema Mode
-- Connect/disconnect via the **Connect** tab with Emby URL and API key
-- Plugin auto-caches preroll files locally and registers them with Emby's library system
-
-### Plugin Auto-Detection & Remote Configuration (beta.1)
-- **Detect Plugin** button on both Jellyfin and Emby connection pages
-- **Configure Plugin** pushes NeXroll URL, auto-generated API key, and path mappings directly to the plugin
-- Auto-generated API keys are scoped read-only and rotated on each configure
-
-### Conflict Detection Wizard (beta.2)
-- New **Conflict Detection Wizard** analyzes all active schedules for overlapping conflicts over the next 30 days
-- Detects true conflicts only: same-priority exclusive schedules that overlap on the same day/time
-- Each conflict card displays severity badge, side-by-side schedule info, overlapping days count, and suggested fixes
-- **Auto-Resolve All** button selects the recommended fix for every detected conflict in one click
-- Apply button processes all selected fixes asynchronously with progress feedback
-
-### Language Options for NeX-Up Generators (beta.3)
-- Dynamic Preroll and Coming Soon List generators now support 4 languages: English, French, Spanish, German
-- All static video text translated: "Coming Soon", "Feature Presentation", "Now Showing", "Coming Soon To", "Available Now!"
-- Language selector with flag buttons in both generator UIs; live preview updates instantly
-- Language preference saved per generator and persisted across sessions
-- Auto-regeneration respects the saved language setting
-
-### Conflict Panel in All Calendar Views (beta.3)
-- **Schedule Conflicts Detected** summary panel now shown in **all four calendar views** (Day, Week, Month, Year)
-- Previously only displayed in the Month view
-- Day view shows conflicting hour count, Week view shows conflicting day count, Year view shows total conflicting days across the year
-- Each panel includes "Resolve N Conflicts" button to launch the Conflict Detection Wizard
-
-### Schedule Creation Form Overhaul (beta.3)
-- **Priority (1-10)** slider, **Exclusive** checkbox, and **Blend Mode** checkbox now available during schedule creation — previously only in the Edit modal
-- Exclusive and Blend are mutually exclusive: toggling Exclusive on disables Blend
-- **Holiday Preset** moved from Content Configuration to Basic Information — conditionally shown for Holiday/Yearly types
-- **Steps bar** updated to reflect actual 5-step flow: Mode → Basic Info → Recurrence → Content → Settings
-- Category selection cleaned up to full-width single column in Simple mode
-
-### Dashboard — Scheduler Countdown Timer (beta.2)
-- The **Scheduler** dashboard tile now displays a live countdown to the next schedule activation
-- Shows **"Next Up: Schedule Name"** with a ticking D/H/M/S countdown
-- Computes next activation time for all schedule types: daily, weekly, monthly, yearly, and holiday
-
-### Dashboard — Schedules Tile Overhaul (beta.2)
-- Three detailed status rows: **✓ Enabled**, **⊘ Disabled**, **⚠ Conflicts**
-- When conflicts are detected, a **"Resolve Conflicts"** button appears to launch the wizard
-
-### Yearly & Holiday Schedule Improvements (beta.2)
-- **Yearly** is now a fully supported schedule type alongside Daily, Weekly, Monthly, and Holiday
-- Yearly and holiday schedules are year-agnostic — recur across all years by comparing month+day windows
-- **Holiday Auto-Update** — yearly and holiday schedules can optionally auto-update dates via the Holiday API
-
-### Preview Playback Mode Intelligence (beta.2)
-- **Preview** button now respects the playback mode of the currently applied prerolls
-  - Shuffle → plays 1 random video; Sequential → plays all in order; Single → plays just one; Sequence → plays all items in order
-- Backend `/plex/current-preroll-details` now returns a `mode` field
-
-### Plugin Download Links (beta.2)
-- Jellyfin and Emby connection pages now include direct download links for the NeXroll Intros plugin DLLs
-
-### UI Improvements
-- Dashboard Start/Stop Scheduler button matches Preview button styling (indigo background, icons)
-- Increased font/icon sizes in the Schedules tile for better readability
-- Plugin download links replaced emoji icons with Lucide React icons
+### New Features
+- **Sequence Block Types: NeX-Up Trailers, Coming Soon List, Dynamic Preroll** — Three new block types in the Sequence Builder. NeX-Up Trailers pulls downloaded trailers (movies/TV/both) with configurable count. Coming Soon List inserts a generated compilation video (grid or list layout). Dynamic Preroll inserts a generated preroll video with template + theme selection. Full support across block editor, timeline, statistics, preview, export/import, scheduler, and Plex apply.
+- **Emby Server Support** — Full Emby integration as a first-class media server alongside Plex and Jellyfin. Includes the NeXroll Intros Plugin for Emby implementing `IIntroProvider` for Cinema Mode preroll injection.
+- **Plugin Auto-Detection & Remote Configuration** — Detect Plugin and Configure Plugin buttons on Jellyfin and Emby connection pages. Configure pushes NeXroll URL, auto-generated API key, and path mappings directly to the plugin. Keys are scoped read-only and rotated on each configure.
+- **Conflict Resolution Page** — Dedicated Conflicts tab in Schedules sub-navigation with Weekly/Monthly/Yearly timeframe selector, side-by-side schedule comparison cards, suggested fixes, Auto-Resolve All, Apply Fixes with results view, and ignored conflicts management.
+- **Yearly Schedule Type** — Fully supported schedule type alongside Daily, Weekly, Monthly, and Holiday. Year-agnostic recurrence compares month+day windows across all years. Supports optional Holiday API auto-update.
+- **Monthly Schedule: Month Selector** — Monthly schedules now use a Jan-Dec month selector instead of date pickers. Pick which months of the year the schedule is active. Includes optional Start Time / End Time window for the selected days.
+- **Dashboard Scheduler Countdown Timer** — Scheduler tile shows a live D/H/M/S countdown to the next schedule activation with schedule name.
+- **Forgot Password / Local Password Reset** — Forgot password link on the login page when accessed from localhost. Resets admin password, clears lockouts, and invalidates all sessions. Restricted to local requests only.
+- **Drag & Drop Upload** — Prerolls upload area supports drag & drop for video files alongside the existing click-to-browse.
+- **Language Options for NeX-Up Generators** — Dynamic Preroll and Coming Soon List generators support English, French, Spanish, and German. Language preference saved per generator and respected on auto-regeneration.
+- **Coming Soon List: Logo Position Options** — Custom logo overlay supports Watermark, Right of Title, and Below Title placement with live preview.
+- **NeX-Up: Expanded Max Trailers** — Max Trailers to Keep expanded to 50, plus a No Limit option for large libraries (still bounded by Max Storage GB).
+- **Ignore Conflicts** — Ignore option on each conflict card hides it from future scans. Show Ignored toggle reveals them with one-click Restore.
+- **API Keys: Multi-Select Bulk Delete** — Select All and per-row checkboxes on the API Keys list. Delete Selected (N) bulk-deletes in a single operation.
+- **Sequence Random Block Rotation** — Random blocks in sequences now rotate on a 10-minute interval (was 5 minutes).
 
 ### Bug Fixes
-- **Scheduler Override Blocking Active Schedules** — Manual sequence overrides no longer block ALL schedule evaluation; active schedules now take priority
-- **Preview Not Respecting Playback Mode** — Preview button now honors the category's playback mode instead of always showing all prerolls
-- **Thumbnail Generation: Cross-Drive Paths** — Fixed `os.path.relpath()` failure on Windows when thumbnail dir and data_dir are on different drives/UNC shares
-- **Thumbnail Generation: Short Videos** — FFmpeg multi-seek fallback (-ss 5 → 1 → 0) for videos shorter than 5 seconds
-- **Community Prerolls Refresh** — Frontend now refreshes data after downloading community prerolls
-- **GitHub Actions Node.js 24** — Updated all CI actions to Node.js 24-compatible pinned versions
+- **Jellyfin Plugin: Fails to Load on Jellyfin 10.11.x** — Plugin DLL rebuilt against the current 10.11.x SDK (`Jellyfin.Database.Implementations.Entities.User`). Resolves `ReflectionTypeLoadException` / `GetIntros has no implementation` on startup.
+- **NeX-Up: Radarr / Sonarr Connection Fails with HTTP 307** — `httpx` defaulted to not following redirects. In Docker, Radarr/Sonarr commonly issue 307s when a Base URL or reverse proxy is in use. All API client calls now set `follow_redirects=True` with an actionable error message if a redirect still cannot be resolved.
+- **Event Log: Per-Row Horizontal Scrollbars** — Long error messages generated individual horizontal scrollbars per row. Log entries now wrap within the terminal panel.
+- **Scheduler Not Applying Correct Schedule** — Schedules with `sequence` stored as the string `"null"` were treated as having a valid sequence, causing silent apply failures. Added `_has_valid_sequence()` validation across all 8 sequence checks.
+- **NeX-Up: Orphan Preroll Records in Sequence Random Pools** — Deleted/expired trailer files left orphan preroll records that silently 404'd when picked by random blocks. All sequence resolution paths now filter random pools to prerolls with existing files via `os.path.exists()`. Radarr sync and trailer expiry also delete the corresponding preroll record.
+- **Sequence Preview: Now Playing Label Desyncs** — Preview playlist was rebuilt every 30 seconds on background poll, re-shuffling random picks mid-playback. Props are now snapshotted at modal-open; playlist is built once and immune to background refreshes.
+- **Plugin Detect: API Key Leak** — Detect endpoints were auto-creating API keys on every call when NexrollUrl was empty, generating thousands of orphaned keys on repeated page loads. Detect is now read-only; key creation is reserved for explicit `/configure` endpoints only.
+- **Plugin Configure: Silent Failure & Key Accumulation** — Configure endpoints silently swallowed exceptions and created a fresh key on every call without deleting old ones. Now returns detailed diagnostics, deletes inactive auto-generated keys before creating a new one, and rolls back the new key if the config push fails.
+- **Plugin Detect: 30-Second Polling** — Plugin detect calls were embedded in `fetchData()` (runs every 30s), generating ~2,700 API calls per day. Detection now only fires on connection status changes.
+- **Preview Playback Skipping** — Sequence and dashboard preview players skipped after ~1 second due to spurious `onEnded` events from `key`-based video remounting. Both players now reuse a single stable `<video>` element with source swaps via `useEffect`.
+- **Plex Disconnect Deletes Stable Token** — Disconnecting from Plex permanently destroyed the Windows Credential Manager token. Disconnect now only clears DB state, preserving the stored token.
+- **Update Checker Not Detecting New Versions** — Five bugs fixed: version string normalization stripping pre-release suffixes, wrong response fields in auto-check, wrong field name in interval check, stale state in second check button. Backend now uses proper semver parsing with pre-release ordering.
+- **NeX-Up YouTube Status: Access Denied** — `GET /nexup/youtube/status` crashed with `[WinError 5]` using a relative `'temp'` path resolving to the unwritable Program Files directory. Now uses `PREROLLS_DIR/nexup_temp`.
+- **Require Login Toggle Enabled Without Users** — Toggle could lock users out if enabled before any accounts existed. Now greyed out until at least one user exists. Toggle state also refreshes correctly after first user creation.
+- **Sequence Builder: Random Block Preview Count** — Preview modal now respects the `count` field on random blocks instead of always picking 1.
+- **Yearly Schedule: False Validation Error** — Yearly schedule validation was incorrectly flagging valid schedules as missing date ranges.
+- **Schedule Creation: is_active Not Preserved** — `buildScheduleData()` now preserves the `is_active` field so toggling a schedule on/off is not lost when saving.
+- **Log Rotation: Multiple Writers** — Fixed log rotation creating 3 concurrent file writers; consolidated to a single handler.
+- **Docker CVE Remediation** — Upgraded pip in Dockerfile to address CVE-2025-8869 and CVE-2026-1703.
+
+### Build
+- Version bumped to 1.12.14 (stable release, no beta suffix).
+- Windows installer, NeXroll.exe, NeXrollService.exe, NeXrollTray.exe rebuilt.
 
 ---
-
 ## [1.11.12] - 03-09-2026
 
 Hotfix release addressing Coming Soon List generation failures, grid layout clipping, and adding comprehensive database logging.
