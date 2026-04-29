@@ -283,6 +283,24 @@ Your data is preserved in the mounted volumes.
 - For Emby: run **Scheduled Tasks → Refresh Custom Intros** after initial setup
 - Check that NeXroll is reachable from the media server at the configured URL
 
+### NeX-Up Trailers Not Playing ("failed to load trailer. The file may not be accessible.")
+
+This error means the trailer was downloaded but NeXroll cannot serve the file — almost always a missing volume mount.
+
+**Fix:**
+
+1. Add a volume for trailer storage in `docker-compose.yml`:
+   ```yaml
+   volumes:
+     - /path/to/your/trailers:/data/nexup_trailers
+   ```
+2. In **NeX-Up → Settings**, set **Storage Path** to `/data/nexup_trailers` (the container path)
+3. Recreate the container: `docker compose up -d --force-recreate`
+
+Without the volume mount, trailers are written inside the container and lost on restart. The Storage Path in Settings must exactly match the container side of the volume mount.
+
+For a full walkthrough including media server path mappings, see the [NeX-Up Docker Setup](NeX-Up#docker-setup) wiki page.
+
 ### Permission Errors
 ```bash
 # Linux: Fix volume permissions

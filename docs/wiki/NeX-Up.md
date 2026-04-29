@@ -355,6 +355,91 @@ The Dashboard shows a NeX-Up summary:
 - Connection status
 - Quick link to full NeX-Up page
 
+## Docker Setup
+
+Running NeXroll in Docker requires extra configuration for NeX-Up trailers. Without it, trailers download successfully but fail to play with **"failed to load trailer. The file may not be accessible."**
+
+### Why This Happens
+
+When NeX-Up downloads a trailer, it writes the file to the **Storage Path** you configured in NeX-Up Settings. Inside Docker, this path lives inside the container. NeXroll then serves the file back to your browser using that same path.
+
+If the path isn't volume-mounted to the host, one of two things happens:
+- The file disappears on container restart (no persistence)
+- The file exists but NeXroll can't serve it correctly to the browser
+
+### Required Volume Mount
+
+Add a dedicated volume for trailer storage in your `docker-compose.yml`:
+
+```yaml
+volumes:
+  - ./nexroll-data:/data
+  - /path/to/your/prerolls:/data/prerolls
+  - /path/to/your/trailers:/data/nexup_trailers    # Required for NeX-Up
+```
+
+Replace `/path/to/your/trailers` with any host directory you want trailers saved to (e.g., `./nexroll-trailers` or `/mnt/user/media/trailers`).
+
+### Match the Storage Path in Settings
+
+After mounting the volume, open **NeX-Up → Settings** and set the **Storage Path** to match the container path exactly:
+
+```
+/data/nexup_trailers
+```
+
+This must match the right side of your volume mount (the container path). If they don't match, NeXroll writes files to one place and looks for them in another.
+
+### Verify It Works
+
+1. Go to **NeX-Up → Your Trailers**
+2. Download any trailer
+3. Click play — it should load without the "file may not be accessible" error
+4. Restart the container (`docker compose restart nexroll`) and confirm trailers still appear
+
+### Full docker-compose Example with NeX-Up
+
+```yaml
+version: "3.8"
+services:
+  nexroll:
+    image: jbrns/nexroll:latest
+    container_name: nexroll
+    ports:
+      - "9393:9393"
+    environment:
+      - NEXROLL_PORT=9393
+      - NEXROLL_DB_DIR=/data
+      - NEXROLL_PREROLL_PATH=/data/prerolls
+      - NEXROLL_SECRETS_DIR=/data
+      - TZ=America/New_York
+    volumes:
+      - ./nexroll-data:/data
+      - /path/to/your/prerolls:/data/prerolls
+      - /path/to/your/trailers:/data/nexup_trailers
+    restart: unless-stopped
+```
+
+### Path Mappings for Media Servers
+
+If your media server (Plex, Jellyfin, or Emby) needs to access trailers for playback injection, it must also be able to reach the trailer files. Add the same host path as a volume in your media server container:
+
+```yaml
+  plex:
+    volumes:
+      - /path/to/your/trailers:/media/trailers    # Same host path, different container path
+```
+
+Then add a path mapping in **NeXroll → Settings → Path Mappings**:
+
+| NeXroll Path | Plex/Media Server Path |
+|---|---|
+| /data/nexup_trailers | /media/trailers |
+
+For Jellyfin and Emby, path mappings can be configured via the plugin's **Configure Plugin** button, which sets them automatically.
+
+---
+
 ## Troubleshooting
 
 ### Trailers Not Downloading
