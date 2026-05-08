@@ -686,6 +686,15 @@ def _migrate_legacy_api_keys():
 
 _migrate_legacy_api_keys()
 
+def calculate_file_hash(file_path: str) -> str:
+    """Calculate SHA256 hash of a file for duplicate detection"""
+    import hashlib
+    sha256_hash = hashlib.sha256()
+    with open(file_path, "rb") as f:
+        for byte_block in iter(lambda: f.read(4096), b""):
+            sha256_hash.update(byte_block)
+    return sha256_hash.hexdigest()
+
 def migrate_preroll_hashes() -> None:
     """
     Calculate and store file hashes for existing prerolls that don't have one.
@@ -1049,17 +1058,11 @@ def _setup_python_logging():
                                       datefmt='%Y-%m-%d %H:%M:%S')
         file_handler.setFormatter(formatter)
         
-        # Add handler to root logger and specific backend loggers
+        # Add handler to root logger only — adding to child loggers too causes every
+        # message to be written twice (child handler + root propagation).
         root_logger = logging.getLogger()
         root_logger.setLevel(logging.INFO)
         root_logger.addHandler(file_handler)
-        
-        # Also configure specific backend module loggers
-        for module_name in ['backend.radarr_connector', 'backend.scheduler', 
-                           'backend.sonarr_connector', 'backend.main']:
-            module_logger = logging.getLogger(module_name)
-            module_logger.setLevel(logging.INFO)
-            module_logger.addHandler(file_handler)
             
     except Exception as e:
         _file_log(f"Failed to setup Python logging: {e}", level="ERROR")
@@ -2036,6 +2039,41 @@ def startup_event():
     except Exception as e:
         try:
             _file_log(f"Startup normalization error: {e}", level="ERROR")
+        except Exception:
+            pass
+    finally:
+        try:
+            db.close()
+        except Exception:
+            pass
+
+    # Deduplicate ComingSoonTrailer records created by concurrent sync runs
+    try:
+        from sqlalchemy import func as _sqlfunc
+        db = SessionLocal()
+        dup_ids = db.query(models.ComingSoonTrailer.radarr_movie_id).group_by(
+            models.ComingSoonTrailer.radarr_movie_id
+        ).having(_sqlfunc.count() > 1).all()
+        removed = 0
+        for (radarr_id,) in dup_ids:
+            records = db.query(models.ComingSoonTrailer).filter(
+                models.ComingSoonTrailer.radarr_movie_id == radarr_id
+            ).order_by(models.ComingSoonTrailer.id).all()
+            for dup in records[1:]:
+                if dup.local_path:
+                    orphan_preroll = db.query(models.Preroll).filter(
+                        models.Preroll.path == dup.local_path
+                    ).first()
+                    if orphan_preroll:
+                        db.delete(orphan_preroll)
+                db.delete(dup)
+                removed += 1
+        if removed > 0:
+            db.commit()
+            _file_log(f"Startup: Removed {removed} duplicate NeX-Up trailer records")
+    except Exception as e:
+        try:
+            _file_log(f"Startup deduplication error: {e}", level="ERROR")
         except Exception:
             pass
     finally:
@@ -6757,15 +6795,6 @@ def plex_tv_connect(req: PlexTvConnectRequest, db: Session = Depends(get_db)):
         log_event('ERROR', 'plex', f'Failed to complete Plex.tv auth: {e}', source='plex_tv_complete')
         raise HTTPException(status_code=500, detail=f"Failed to complete Plex.tv auth: {str(e)}")
 
-def calculate_file_hash(file_path: str) -> str:
-    """Calculate SHA256 hash of a file for duplicate detection"""
-    import hashlib
-    sha256_hash = hashlib.sha256()
-    with open(file_path, "rb") as f:
-        # Read file in chunks to handle large files
-        for byte_block in iter(lambda: f.read(4096), b""):
-            sha256_hash.update(byte_block)
-    return sha256_hash.hexdigest()
 
 def calculate_content_hash(content: bytes) -> str:
     """Calculate SHA256 hash of file content for duplicate detection"""
@@ -13918,6 +13947,29 @@ else:
     _candidate = os.path.join(resource_root, "frontend", "build")
     frontend_dir = _candidate if os.path.isdir(_candidate) else os.path.join(resource_root, "frontend")
 
+# When running as a frozen onefile, PyInstaller extracts to _MEIPASS — a temp directory
+# that Windows Disk Cleanup / Storage Sense / CCleaner can delete while the service is still
+# running.  The FastAPI process survives but StaticFiles can no longer read from disk, causing
+# every UI request to return {"detail":"Not Found"} until the machine is rebooted.
+# Fix: copy the frontend to ProgramData on every startup so it lives in a location that is
+# never temp-cleaned.  We overwrite on every startup so upgrades are always reflected.
+if getattr(sys, "frozen", False):
+    _meipass = getattr(sys, "_MEIPASS", None)
+    if _meipass and os.path.abspath(frontend_dir).startswith(os.path.abspath(_meipass)):
+        import shutil as _shutil
+        _stable_frontend = os.path.join(
+            os.environ.get("PROGRAMDATA", "C:\\ProgramData"), "NeXroll", "frontend"
+        )
+        try:
+            if os.path.isdir(_stable_frontend):
+                _shutil.rmtree(_stable_frontend)
+            _shutil.copytree(frontend_dir, _stable_frontend)
+            frontend_dir = _stable_frontend
+            print(f"Frontend copied to stable location: {frontend_dir}")
+        except Exception as _fe:
+            print(f"Warning: Could not copy frontend to stable location: {_fe}")
+            # Fall back to _MEIPASS; service may lose UI if temp dir is later cleaned
+
 # Diagnostic logging: record which paths were considered and which was selected.
 try:
     try:
@@ -15404,6 +15456,7 @@ _nexup_sync_progress = {
     "errors": 0
 }
 
+
 @app.get("/nexup/sync-progress")
 async def get_sync_progress():
     """
@@ -16567,7 +16620,10 @@ async def _auto_regenerate_coming_soon_list(db: Session):
 async def sync_sonarr_trailers(db: Session = Depends(get_db)):
     """Sync TV show trailers from Sonarr - download new ones, expire old ones"""
     global _nexup_sync_progress
-    
+
+    if _nexup_sync_progress.get("syncing") and _nexup_sync_progress.get("type") == "sonarr":
+        return {"success": False, "message": "Sonarr sync already in progress", "skipped": True}
+
     _file_log("Sonarr Sync: Starting TV trailer sync")
     log_event('INFO', 'nexup', 'Sonarr TV trailer sync started', source='sync_sonarr_trailers', db=db)
     setting = db.query(models.Setting).first()
@@ -18074,14 +18130,24 @@ def toggle_nexup_trailer(trailer_id: int, db: Session = Depends(get_db)):
     trailer = db.query(models.ComingSoonTrailer).filter(
         models.ComingSoonTrailer.id == trailer_id
     ).first()
-    
+
     if not trailer:
         raise HTTPException(status_code=404, detail="Trailer not found")
-    
+
     trailer.is_enabled = not trailer.is_enabled
     trailer.updated_at = datetime.datetime.utcnow()
+
+    # Keep the associated Preroll record in sync so random category blocks
+    # also respect the enabled state (TV trailer toggle already does this)
+    if trailer.local_path:
+        preroll = db.query(models.Preroll).filter(
+            models.Preroll.path == trailer.local_path
+        ).first()
+        if preroll:
+            preroll.enabled = trailer.is_enabled
+
     db.commit()
-    
+
     status = "enabled" if trailer.is_enabled else "disabled"
     return {"success": True, "message": f"Trailer {status}", "is_enabled": trailer.is_enabled}
 
@@ -18126,7 +18192,10 @@ async def sync_nexup(db: Session = Depends(get_db)):
     Optimized to batch API calls and avoid redundant requests.
     """
     global _nexup_sync_progress
-    
+
+    if _nexup_sync_progress.get("syncing") and _nexup_sync_progress.get("type") == "radarr":
+        return {"success": False, "message": "Sync already in progress", "skipped": True}
+
     setting = db.query(models.Setting).first()
     if not setting or not setting.nexup_radarr_url or not setting.nexup_radarr_api_key:
         raise HTTPException(status_code=400, detail="Radarr not connected")
@@ -18254,10 +18323,10 @@ async def sync_nexup(db: Session = Depends(get_db)):
         max_trailers = getattr(setting, 'nexup_max_trailers', 10)
         if max_trailers is None:
             max_trailers = 10
-        current_count = db.query(models.ComingSoonTrailer).count()
+        current_count = db.query(models.ComingSoonTrailer.radarr_movie_id).distinct().count()
         storage_usage = downloader.get_storage_usage()
         max_storage = getattr(setting, 'nexup_max_storage_gb', 5.0) or 5.0
-        
+
         _file_log(f"NeX-Up sync: max_trailers={max_trailers} ({'no limit' if max_trailers == 0 else max_trailers}), current_count={current_count}, storage={storage_usage['total_size_gb']}GB/{max_storage}GB")
         
         # Filter to only truly upcoming movies (positive days) with trailers

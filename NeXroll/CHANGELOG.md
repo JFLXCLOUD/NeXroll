@@ -1,5 +1,21 @@
 # Changelog
 
+## [1.12.16] - 05-08-2026
+
+### Bug Fixes
+- **UI Returns {"detail":"Not Found"} After Running for a While (Windows)** — On Windows, PyInstaller extracts the bundled frontend into a _MEI* temp folder on startup. Windows Disk Cleanup, Storage Sense, and tools like CCleaner delete temp folders while the service is still running, wiping the static files. The FastAPI backend survives but can no longer serve the UI, returning {"detail":"Not Found"} for every page load until the machine is rebooted. Fixed by copying the frontend from the temp extraction directory to C:\ProgramData\NeXroll\frontend on every startup. ProgramData is never cleaned by temp tools, so the UI remains available even after Windows clears the temp directory.
+
+## [1.12.15] - 04-30-2026
+
+### Bug Fixes
+- **Sequence Schedule Blending** — Sequence schedules with NeX-Up Trailers, Coming Soon List, or Dynamic Preroll blocks were silently contributing zero prerolls when blended, causing them to drop out of the blend. All three block types are now handled in the blend path identically to the normal sequence executor.
+- **Duplicate Trailers in NeX-Up** — Concurrent sync calls (Radarr and Sonarr) could race and insert multiple records for the same movie/show. Sync endpoints now reject a second call while one is already in progress. Startup deduplication removes any existing duplicate records on boot.
+- **Disabled Trailer Still Playing** — Disabling a movie trailer in Your Trailers did not update the linked Preroll record, so random category blocks continued to serve it. The movie trailer toggle now mirrors the TV trailer toggle and keeps both records in sync.
+- **Duplicate Log Lines** — Every log entry was written twice because the same file handler was attached to both the root logger and each child module logger. Removed the redundant per-module handler registrations.
+- **Startup Hash Migration Crash** — `calculate_file_hash` was defined after the background thread that called it was started, causing a `NameError` on first run. Moved the definition above the migration function.
+- **"No Browser Detected" Log Spam** — Browser cookie detection logged an INFO message on every NeX-Up settings request. Downgraded to DEBUG.
+- **Max Trailers Limit Counting Duplicates** — `current_count` was a raw row count, so duplicate records could exhaust the trailer limit before unique movies were reached. Now counts distinct `radarr_movie_id` values.
+
 ## [1.12.14] - 04-24-2026
 
 ### New Features
@@ -20,6 +36,7 @@
 - **Sequence Random Block Rotation** — Random blocks in sequences now rotate on a 10-minute interval (was 5 minutes).
 
 ### Bug Fixes
+- **Sequence Schedule Blending** — Sequence schedules with NeX-Up Trailers, Coming Soon List, or Dynamic Preroll blocks were silently contributing zero prerolls when blended, causing them to drop out of the blend. All three block types are now handled in the blend path identically to the normal sequence executor.
 - **Jellyfin Plugin: Fails to Load on Jellyfin 10.11.x** — Plugin DLL rebuilt against the current 10.11.x SDK (`Jellyfin.Database.Implementations.Entities.User`). Resolves `ReflectionTypeLoadException` / `GetIntros has no implementation` on startup.
 - **NeX-Up: Radarr / Sonarr Connection Fails with HTTP 307** — `httpx` defaulted to not following redirects. In Docker, Radarr/Sonarr commonly issue 307s when a Base URL or reverse proxy is in use. All API client calls now set `follow_redirects=True` with an actionable error message if a redirect still cannot be resolved.
 - **Event Log: Per-Row Horizontal Scrollbars** — Long error messages generated individual horizontal scrollbars per row. Log entries now wrap within the terminal panel.
@@ -50,6 +67,7 @@
 Hotfix release addressing Coming Soon List generation failures, grid layout clipping, and adding comprehensive database logging.
 
 ### Bug Fixes
+- **Sequence Schedule Blending** — Sequence schedules with NeX-Up Trailers, Coming Soon List, or Dynamic Preroll blocks were silently contributing zero prerolls when blended, causing them to drop out of the blend. All three block types are now handled in the blend path identically to the normal sequence executor.
 - **Coming Soon List: Unicode Character Fix** — Fixed `●` (U+25CF) bullet character causing FFmpeg `EINVAL` failure and `UnicodeDecodeError` on Windows (replaced with ASCII `>`)
 - **Coming Soon List: Apostrophe Escaping** — Fixed ASCII apostrophe `'` breaking FFmpeg's `drawtext` option-value delimiter (replaced with typographic `'` U+2019 in text escaping)
 - **Coming Soon List: Auto-Regen Max Items** — Fixed `_auto_regenerate_coming_soon_list()` ignoring the user's max items setting (always defaulting to 8)
@@ -117,6 +135,7 @@ First stable release of the v1.11.x line (consolidates beta.1–beta.9).
 - **Emoji-to-Icon Cleanup** — All emoji characters replaced with Lucide React icons
 
 ### Bug Fixes
+- **Sequence Schedule Blending** — Sequence schedules with NeX-Up Trailers, Coming Soon List, or Dynamic Preroll blocks were silently contributing zero prerolls when blended, causing them to drop out of the blend. All three block types are now handled in the blend path identically to the normal sequence executor.
 - **FFmpeg Detection** — Fixed unterminated docstring in `dynamic_preroll.py`
 - **Coming Soon List Grace Period** — Items past grace period properly excluded
 - **Server Name Input Width** — Adjusted from 100% to 80%
@@ -300,6 +319,7 @@ A global fallback system to fill gaps in your schedule when no schedules are act
 ---
 
 ### Bug Fixes
+- **Sequence Schedule Blending** — Sequence schedules with NeX-Up Trailers, Coming Soon List, or Dynamic Preroll blocks were silently contributing zero prerolls when blended, causing them to drop out of the blend. All three block types are now handled in the blend path identically to the normal sequence executor.
 
 - **Admin Role Fix** - Fixed issue where creating a user with Admin role would save as User instead. The RegisterRequest model was missing the `role` field.
 - **View Full Calendar Navigation** - Fixed "View Full Calendar" button not switching to Calendar View properly

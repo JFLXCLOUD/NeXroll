@@ -2520,6 +2520,51 @@ class Scheduler:
                                     p = db.query(models.Preroll).filter(models.Preroll.id == pid).first()
                                     if p:
                                         paths.append(os.path.abspath(p.path))
+                            elif stype == "nexup_trailers":
+                                source = str(step.get("source", "both")).lower()
+                                try:
+                                    count = int(step.get("count") or 2)
+                                except Exception:
+                                    count = 2
+                                now = datetime.datetime.now()
+                                trailer_paths = []
+                                if source in ("movies", "both"):
+                                    for t in db.query(models.ComingSoonTrailer).filter(
+                                        models.ComingSoonTrailer.status == 'downloaded',
+                                        models.ComingSoonTrailer.is_enabled == True,
+                                        models.ComingSoonTrailer.release_date >= now
+                                    ).all():
+                                        if t.local_path and os.path.exists(t.local_path):
+                                            trailer_paths.append(os.path.abspath(t.local_path))
+                                if source in ("tv", "both"):
+                                    for t in db.query(models.ComingSoonTVTrailer).filter(
+                                        models.ComingSoonTVTrailer.status == 'downloaded',
+                                        models.ComingSoonTVTrailer.is_enabled == True,
+                                        models.ComingSoonTVTrailer.release_date >= now
+                                    ).all():
+                                        if t.local_path and os.path.exists(t.local_path):
+                                            trailer_paths.append(os.path.abspath(t.local_path))
+                                if trailer_paths:
+                                    k = min(max(count, 1), len(trailer_paths))
+                                    picks = random.sample(trailer_paths, k) if len(trailer_paths) > k else trailer_paths
+                                    paths.extend(picks)
+                            elif stype == "coming_soon_list":
+                                layout = str(step.get("layout", "grid")).lower()
+                                blend_setting = db.query(models.Setting).first()
+                                storage = getattr(blend_setting, "nexup_storage_path", None) if blend_setting else None
+                                if storage:
+                                    video_file = os.path.join(storage, "dynamic_prerolls", f"coming_soon_{layout}.mp4")
+                                    if os.path.exists(video_file):
+                                        paths.append(os.path.abspath(video_file))
+                            elif stype == "dynamic_preroll":
+                                template = str(step.get("template", "coming_soon")).lower()
+                                theme = str(step.get("theme", "midnight")).lower()
+                                blend_setting = db.query(models.Setting).first()
+                                storage = getattr(blend_setting, "nexup_storage_path", None) if blend_setting else None
+                                if storage:
+                                    video_file = os.path.join(storage, "dynamic_prerolls", f"{template}_{theme}_preroll.mp4")
+                                    if os.path.exists(video_file):
+                                        paths.append(os.path.abspath(video_file))
                 except Exception as e:
                     _scheduler_log(f"Error parsing sequence for blended schedule '{schedule.name}': {e}", level="WARNING")
             

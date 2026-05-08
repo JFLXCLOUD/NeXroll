@@ -629,7 +629,7 @@ class TrailerDownloader:
                 logger.info(f"Detected browser for cookies: {browser}")
                 return browser
         
-        logger.info("No browser detected for cookie extraction")
+        logger.debug("No browser detected for cookie extraction")
         return None
     
     def get_cookie_browser(self) -> Optional[str]:

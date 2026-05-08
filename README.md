@@ -77,6 +77,109 @@ After install, visit http://localhost:9393 to use the web UI.
 
 ---
 
+## Docker
+
+NeXroll is available as an official Docker image supporting AMD64 and ARM64.
+
+```bash
+docker pull jbrns/nexroll:latest
+```
+
+### docker-compose (Recommended)
+
+```yaml
+version: "3.8"
+services:
+  nexroll:
+    image: jbrns/nexroll:latest
+    container_name: nexroll
+    ports:
+      - "9393:9393"
+    environment:
+      - NEXROLL_PORT=9393
+      - NEXROLL_DB_DIR=/data
+      - NEXROLL_PREROLL_PATH=/data/prerolls
+      - NEXROLL_SECRETS_DIR=/data
+      - TZ=America/New_York
+    volumes:
+      - ./nexroll-data:/data
+      - /path/to/your/prerolls:/data/prerolls
+    restart: unless-stopped
+```
+
+```bash
+mkdir -p ./nexroll-data
+docker compose up -d
+# Access at http://YOUR_HOST:9393
+```
+
+### With NeX-Up Trailer Storage
+
+Add a separate volume so Plex/Jellyfin/Emby can access downloaded trailers:
+
+```yaml
+    volumes:
+      - ./nexroll-data:/data
+      - /path/to/your/prerolls:/data/prerolls
+      - /path/to/trailers:/data/nexup_trailers
+```
+
+Then set **NeX-Up → Settings → Storage Path** to `/data/nexup_trailers`.
+
+### Key Environment Variables
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `NEXROLL_PORT` | Web UI port | `9393` |
+| `NEXROLL_DB_DIR` | Database & config directory | `/data` |
+| `NEXROLL_PREROLL_PATH` | Preroll storage directory | `/data/prerolls` |
+| `NEXROLL_SECRETS_DIR` | Secrets storage directory | `/data` |
+| `TZ` | Timezone — **required for correct scheduling** | `UTC` |
+| `PUID` / `PGID` | File permission user/group IDs | `99` / `100` |
+
+### Path Mappings
+
+Because NeXroll runs inside a container, paths it sees differ from what your media server sees. Configure **Settings → Path Mappings** to translate container paths to media server paths.
+
+| Scenario | NeXroll Path | Media Server Path |
+|----------|--------------|-------------------|
+| Docker → Linux Plex | `/data/prerolls` | `/media/prerolls` |
+| Docker → Windows Plex | `/data/prerolls` | `Z:\Prerolls` |
+| Unraid → Unraid Plex | `/data/prerolls` | `/mnt/user/media/prerolls` |
+
+### Updating
+
+```bash
+docker pull jbrns/nexroll:latest
+docker compose up -d --force-recreate
+```
+
+For full Docker documentation including full-stack examples, Linux host networking, and detailed troubleshooting see the [Docker wiki page](docs/wiki/Docker.md).
+
+---
+
+## Unraid
+
+NeXroll is available in **Unraid Community Applications**.
+
+1. Open **Apps** in Unraid and search for **NeXroll**
+2. Click **Install**
+3. Configure paths:
+
+| Setting | Container Path | Suggested Host Path |
+|---------|---------------|---------------------|
+| WebUI Port | 9393 | 9393 |
+| Application Data | `/data` | `/mnt/user/appdata/nexroll` |
+| Preroll Storage | `/data/prerolls` | `/mnt/user/media/prerolls` |
+| Trailer Storage | `/data/nexup_trailers` | `/mnt/user/media/trailers` |
+| Time Zone | `TZ` | e.g. `America/New_York` |
+
+4. Click **Apply**, then open the WebUI at `http://YOUR_UNRAID_IP:9393`
+
+> **Important:** The Preroll Storage path must be accessible by your media server (Plex/Jellyfin/Emby). If your media server is also running on Unraid, mount the same share to both containers and set a Path Mapping in NeXroll Settings so paths translate correctly.
+
+---
+
 ## What 's Installed
 
 - `NeXroll.exe`   the web application (FastAPI + bundled frontend)
