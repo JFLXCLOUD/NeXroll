@@ -347,7 +347,8 @@ class Setting(Base):
     # Manual sequence apply tracking
     applied_sequence_id = Column(Integer, nullable=True)  # ID of manually applied sequence (set via Apply button, cleared by scheduler)
     applied_sequence_name = Column(String, nullable=True)  # Name of manually applied sequence (cached for display)
-    
+    active_schedule_id = Column(Integer, nullable=True)  # ID of currently-active schedule (written by scheduler each tick, read by /plugin/intros for Emby/Jellyfin)
+
     # Custom preroll storage folder (overrides the auto-resolved default)
     preroll_folder = Column(String, nullable=True)  # User-configured preroll storage path (None = use auto-resolved default)
 

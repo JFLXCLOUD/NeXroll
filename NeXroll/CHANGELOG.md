@@ -1,5 +1,10 @@
 # Changelog
 
+## [1.12.17] - 05-09-2026
+
+### Bug Fixes
+- **Emby/Jellyfin Plugin Ignores Configured Sequence, Plays All Prerolls** — When a schedule with a sequence was active, the `/plugin/intros` endpoint returned all prerolls from the active category instead of the sequence-defined subset. The scheduler correctly applied the sequence to Plex but had no way to communicate the active schedule to the plugin endpoint. Added `active_schedule_id` tracking to the settings table so the scheduler writes which schedule is currently active on every tick. The plugin endpoint now reads `active_schedule_id`, resolves the schedule's sequence blocks, and returns only those paths — in order — instead of the full category pool. Affects sequence-only and category+sequence schedules. Filler and fallback category behavior is unchanged.
+
 ## [1.12.16] - 05-08-2026
 
 ### Bug Fixes

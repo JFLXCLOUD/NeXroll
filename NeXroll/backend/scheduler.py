@@ -1321,6 +1321,7 @@ class Scheduler:
                             chosen_schedule = blend_schedules[0]
                             desired_category_id = chosen_schedule.category_id
                             setting.active_category = desired_category_id
+                            setting.active_schedule_id = None  # Blend uses merged categories, not a single schedule sequence
                             for sched in blend_schedules:
                                 sched.last_run = now
                                 sched.next_run = self._calculate_next_run(sched)
@@ -1389,11 +1390,12 @@ class Scheduler:
                         self._last_logged_state = state_key
                         self._last_logged_time = now
                     # Clear prerolls by setting empty string
-                    if setting.active_category is not None or getattr(setting, "filler_active", None) is not None:
+                    if setting.active_category is not None or getattr(setting, "filler_active", None) is not None or getattr(setting, "active_schedule_id", None) is not None:
                         cleared_ok = self._clear_plex_prerolls(db)
                         if cleared_ok:
                             setting.active_category = None
                             setting.filler_active = None  # Also clear filler state
+                            setting.active_schedule_id = None
                             db.commit()
                 else:
                     # Use fallback from most recently active schedule
@@ -1427,6 +1429,7 @@ class Scheduler:
                                     if applied_ok:
                                         setting.filler_active = f"category:{filler_category_id}"
                                         setting.active_category = None  # Clear normal category tracking
+                                        setting.active_schedule_id = None
                                         db.commit()
                                     filler_applied = True
                                     return  # Filler category applied, exit early
@@ -1445,6 +1448,7 @@ class Scheduler:
                                         # Use filler_active to track filler state
                                         setting.filler_active = f"sequence:{filler_sequence_id}"
                                         setting.active_category = None  # Clear normal category tracking
+                                        setting.active_schedule_id = None
                                         db.commit()
                                     filler_applied = True
                                     return  # Sequence applied, exit early
@@ -1462,6 +1466,7 @@ class Scheduler:
                                     # Use filler_active to track filler state
                                     setting.filler_active = f"coming_soon:{filler_layout}"
                                     setting.active_category = None  # Clear normal category tracking
+                                    setting.active_schedule_id = None
                                     db.commit()
                                 filler_applied = True
                                 return  # Coming soon applied, exit early
@@ -1473,8 +1478,9 @@ class Scheduler:
                                     self._last_logged_state = state_key
                                     self._last_logged_time = now
                                 # Clear stale active_category so dashboard doesn't show an old schedule
-                                if setting.active_category is not None:
+                                if setting.active_category is not None or getattr(setting, "active_schedule_id", None) is not None:
                                     setting.active_category = None
+                                    setting.active_schedule_id = None
                                     db.commit()
                         else:
                             state_key = "no_schedules"
@@ -1483,8 +1489,9 @@ class Scheduler:
                                 self._last_logged_state = state_key
                                 self._last_logged_time = now
                             # Clear stale active_category so dashboard doesn't show an old schedule
-                            if setting.active_category is not None:
+                            if setting.active_category is not None or getattr(setting, "active_schedule_id", None) is not None:
                                 setting.active_category = None
+                                setting.active_schedule_id = None
                                 db.commit()
 
             # Apply category/sequence to Plex
@@ -1509,6 +1516,7 @@ class Scheduler:
                         self._last_rotation_time[chosen_schedule.id] = now
                         setting.active_category = None  # No category to track
                         setting.filler_active = None  # Clear filler state when a schedule is active
+                        setting.active_schedule_id = chosen_schedule.id
                         chosen_schedule.last_run = now
                         chosen_schedule.next_run = self._calculate_next_run(chosen_schedule)
                         db.commit()
@@ -1518,6 +1526,10 @@ class Scheduler:
                             self._last_logged_state = state_key
                             self._last_logged_time = now
                 else:
+                    # Ensure active_schedule_id is set (covers first scheduler tick after upgrade)
+                    if getattr(setting, "active_schedule_id", None) != chosen_schedule.id:
+                        setting.active_schedule_id = chosen_schedule.id
+                        db.commit()
                     state_key = f"sequence_schedule:{chosen_schedule.id}"
                     if self._last_logged_state != state_key:
                         _scheduler_log(f"Sequence schedule '{chosen_schedule.name}' already active")
@@ -1536,6 +1548,7 @@ class Scheduler:
                 if applied_ok:
                     setting.active_category = desired_category_id
                     setting.filler_active = None  # Clear filler state when a schedule is active
+                    setting.active_schedule_id = chosen_schedule.id if chosen_schedule else None
                     if chosen_schedule:
                         chosen_schedule.last_run = now
                         chosen_schedule.next_run = self._calculate_next_run(chosen_schedule)
@@ -1572,9 +1585,14 @@ class Scheduler:
                     applied_ok = self._apply_schedule_sequence_to_plex(chosen_schedule, db)
                     if applied_ok:
                         self._last_rotation_time[chosen_schedule.id] = now
+                        setting.active_schedule_id = chosen_schedule.id
                         _scheduler_log(f"Rotated random blocks for schedule '{chosen_schedule.name}' (ID {chosen_schedule.id})")
                         db.commit()
                 else:
+                    # Ensure active_schedule_id is set (covers first scheduler tick after upgrade)
+                    if chosen_schedule and getattr(setting, "active_schedule_id", None) != chosen_schedule.id:
+                        setting.active_schedule_id = chosen_schedule.id
+                        db.commit()
                     # Only log if state changed OR if we haven't logged this schedule in 5 minutes
                     state_key = f"schedule_active:{chosen_schedule.id if chosen_schedule else 'none'}:{desired_category_id}"
                     if self._last_logged_state != state_key:

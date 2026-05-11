@@ -129,6 +129,7 @@ def ensure_schema() -> None:
                 ("last_schedule_fallback", "last_schedule_fallback INTEGER"),
                 ("applied_sequence_id", "applied_sequence_id INTEGER"),
                 ("applied_sequence_name", "applied_sequence_name TEXT"),
+                ("active_schedule_id", "active_schedule_id INTEGER"),
             ]:
                 if not _sqlite_has_column("settings", col):
                     _sqlite_add_column("settings", ddl)
@@ -25184,18 +25185,8 @@ def _resolve_current_intros(db: Session) -> dict:
             .all()
         )
 
-    # --- Helper: resolve a SavedSequence into ordered paths ---
-    def _resolve_sequence(sequence_id: int) -> list[str]:
-        seq = (
-            db.query(models.SavedSequence)
-            .filter(models.SavedSequence.id == sequence_id)
-            .first()
-        )
-        if not seq:
-            return []
-        blocks = seq.get_blocks()
-        if not blocks:
-            return []
+    # --- Helper: resolve a list of sequence blocks into ordered paths ---
+    def _resolve_blocks(blocks: list) -> list[str]:
         paths: list[str] = []
         for block in blocks:
             try:
@@ -25271,6 +25262,18 @@ def _resolve_current_intros(db: Session) -> dict:
                         paths.append(os.path.abspath(vf))
         return paths
 
+    # --- Helper: resolve a SavedSequence into ordered paths ---
+    def _resolve_sequence(sequence_id: int) -> list[str]:
+        seq = (
+            db.query(models.SavedSequence)
+            .filter(models.SavedSequence.id == sequence_id)
+            .first()
+        )
+        if not seq:
+            return []
+        blocks = seq.get_blocks()
+        return _resolve_blocks(blocks) if blocks else []
+
     # --- 1. Filler takes priority ---
     filler_active = getattr(setting, "filler_active", None)
     if filler_active:
@@ -25311,7 +25314,28 @@ def _resolve_current_intros(db: Session) -> dict:
                 except (ValueError, TypeError):
                     pass
 
-    # --- 2. Normal active category ---
+    # --- 2. Active schedule sequence (Emby/Jellyfin: serve the scheduler's resolved sequence) ---
+    active_sched_id = getattr(setting, "active_schedule_id", None)
+    if active_sched_id:
+        try:
+            sched = (
+                db.query(models.Schedule)
+                .filter(models.Schedule.id == active_sched_id, models.Schedule.is_active == True)
+                .first()
+            )
+            if sched:
+                raw_seq = getattr(sched, "sequence", None)
+                if raw_seq:
+                    if isinstance(raw_seq, str):
+                        raw_seq = json.loads(raw_seq)
+                    if isinstance(raw_seq, list) and raw_seq:
+                        seq_paths = _resolve_blocks(raw_seq)
+                        if seq_paths:
+                            return {"paths": seq_paths, "mode": "sequential"}
+        except Exception:
+            pass
+
+    # --- 3. Normal active category ---
     category_id = getattr(setting, "active_category", None)
     if category_id:
         prerolls = _prerolls_for_category(category_id)
