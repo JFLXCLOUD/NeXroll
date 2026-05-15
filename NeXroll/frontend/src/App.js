@@ -1771,7 +1771,12 @@ const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
         fallback_category_id: schedule.fallback_category_id || null,
         sequence: typeof schedule.sequence === 'object' ? JSON.stringify(schedule.sequence) : (schedule.sequence || ''),
         color: schedule.color || '',
-        is_active: newActiveState
+        is_active: newActiveState,
+        blend_enabled: schedule.blend_enabled || false,
+        priority: schedule.priority != null ? schedule.priority : 5,
+        exclusive: schedule.exclusive || false,
+        holiday_name: schedule.holiday_name || null,
+        holiday_country: schedule.holiday_country || null
       };
       
       console.log(`Toggle request (${viewName}):`, requestData);
@@ -4482,7 +4487,25 @@ const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
         } else {
           alert('Preroll updated successfully!');
         }
-        
+
+        // Patch the prerolls state immediately so reopening the modal before fetchData()
+        // completes still shows the saved values (especially exclude_from_matching).
+        setPrerolls(prev => prev.map(p =>
+          p.id === result.id
+            ? {
+                ...p,
+                display_name: result.display_name ?? p.display_name,
+                filename: result.filename ?? p.filename,
+                category_id: result.category_id ?? p.category_id,
+                categories: result.categories ?? p.categories,
+                thumbnail: result.thumbnail ?? p.thumbnail,
+                description: result.description ?? p.description,
+                tags: result.tags ?? p.tags,
+                exclude_from_matching: result.exclude_from_matching ?? p.exclude_from_matching,
+              }
+            : p
+        ));
+
         setEditingPreroll(null);
         setEditForm({ display_name: '', new_filename: '', tags: '', category_id: '', category_ids: [], description: '', exclude_from_matching: false });
         fetchData();
@@ -5370,32 +5393,55 @@ const DashboardTiles = {
         </div>
       ) : activeCategory ? (
         <div>
-          <p style={{ fontWeight: 'bold', color: 'var(--success-color, #28a745)' }}>
-            {activeCategory.name}
-          </p>
-          <p style={{ fontSize: '0.9rem', color: 'var(--text-secondary, #666)' }}>
-            Mode: {activeCategory.plex_mode === 'playlist' ? 'Sequential' : 
-                   activeCategory.plex_mode === 'single' ? 'Single File' :
-                   activeCategory.plex_mode === 'sequence' ? 'Sequence' : 'Shuffle'}
-          </p>
-          {/* Only show preroll count for regular categories, not filler/sequence/coming_soon */}
-          {!activeCategory.is_filler && activeCategory.plex_mode !== 'single' && activeCategory.plex_mode !== 'sequence' && (
-            <p style={{ fontSize: '0.9rem', color: 'var(--text-secondary, #666)' }}>
-              Prerolls: {(() => {
-                const primaryCount = prerolls.filter(p => p.category_id === activeCategory.id).length;
-                const secondaryCount = prerolls.filter(p => 
-                  p.categories && 
-                  p.categories.some(c => c.id === activeCategory.id) &&
-                  p.category_id !== activeCategory.id
-                ).length;
-                return primaryCount + secondaryCount;
-              })()}
-            </p>
-          )}
-          {activeCategory.is_filler && (
-            <p style={{ fontSize: '0.85rem', color: '#00d4ff', fontStyle: 'italic' }}>
-              Gap filler active
-            </p>
+          {activeCategory.blend_schedules && activeCategory.blend_schedules.length >= 2 ? (
+            <>
+              <p style={{ fontWeight: 'bold', color: 'var(--success-color, #28a745)' }}>
+                Blending
+              </p>
+              <p style={{ fontSize: '0.85rem', color: '#f59e0b', fontStyle: 'italic' }}>
+                {activeCategory.blend_schedules.map(s => s.name).join(' + ')}
+              </p>
+              {activeCategory.active_schedule_name && (
+                <p style={{ fontSize: '0.8rem', color: 'var(--text-secondary, #666)' }}>
+                  Playing: {activeCategory.active_schedule_name}
+                </p>
+              )}
+            </>
+          ) : (
+            <>
+              <p style={{ fontWeight: 'bold', color: 'var(--success-color, #28a745)' }}>
+                {activeCategory.active_schedule_name || activeCategory.name}
+              </p>
+              {activeCategory.active_schedule_name && (
+                <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary, #666)' }}>
+                  Category: {activeCategory.name}
+                </p>
+              )}
+              <p style={{ fontSize: '0.9rem', color: 'var(--text-secondary, #666)' }}>
+                Mode: {activeCategory.plex_mode === 'playlist' ? 'Sequential' :
+                       activeCategory.plex_mode === 'single' ? 'Single File' :
+                       activeCategory.plex_mode === 'sequence' ? 'Sequence' : 'Shuffle'}
+              </p>
+              {/* Only show preroll count for regular categories, not filler/sequence/blend */}
+              {!activeCategory.is_filler && activeCategory.id != null && activeCategory.plex_mode !== 'single' && activeCategory.plex_mode !== 'sequence' && (
+                <p style={{ fontSize: '0.9rem', color: 'var(--text-secondary, #666)' }}>
+                  Prerolls: {(() => {
+                    const primaryCount = prerolls.filter(p => p.category_id === activeCategory.id).length;
+                    const secondaryCount = prerolls.filter(p =>
+                      p.categories &&
+                      p.categories.some(c => c.id === activeCategory.id) &&
+                      p.category_id !== activeCategory.id
+                    ).length;
+                    return primaryCount + secondaryCount;
+                  })()}
+                </p>
+              )}
+              {activeCategory.is_filler && (
+                <p style={{ fontSize: '0.85rem', color: '#00d4ff', fontStyle: 'italic' }}>
+                  Gap filler active
+                </p>
+              )}
+            </>
           )}
         </div>
       ) : (

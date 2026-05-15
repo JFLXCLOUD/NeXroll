@@ -7869,6 +7869,7 @@ def update_preroll(preroll_id: int, payload: PrerollUpdate, db: Session = Depend
         "thumbnail": p.thumbnail,
         "description": p.description,
         "tags": p.tags,
+        "exclude_from_matching": getattr(p, "exclude_from_matching", False),
     }
 
 @app.delete("/prerolls/{preroll_id}")
@@ -9067,6 +9068,55 @@ def get_schedules(db: Session = Depends(get_db)):
     
     return result
 
+def _schedule_in_date_window(sched, now):
+    """Full active-window check: date window + weekDays + months + monthDays + timeRange."""
+    if not getattr(sched, "start_date", None):
+        return False
+    if sched.end_date:
+        if not (sched.start_date <= now <= sched.end_date):
+            return False
+    else:
+        if now < sched.start_date:
+            return False
+    if sched.recurrence_pattern:
+        try:
+            pattern = json.loads(sched.recurrence_pattern)
+            week_days = pattern.get("weekDays")
+            if week_days and isinstance(week_days, list) and len(week_days) > 0:
+                day_map = {0: "monday", 1: "tuesday", 2: "wednesday", 3: "thursday", 4: "friday", 5: "saturday", 6: "sunday"}
+                if day_map.get(now.weekday()) not in week_days:
+                    return False
+            months = pattern.get("months")
+            if months and isinstance(months, list) and len(months) > 0:
+                if now.month not in months:
+                    return False
+            month_days = pattern.get("monthDays")
+            if month_days and isinstance(month_days, list) and len(month_days) > 0:
+                if now.day not in month_days:
+                    return False
+            time_range = pattern.get("timeRange")
+            if time_range and time_range.get("start"):
+                try:
+                    sp = time_range["start"].split(":")
+                    sh, sm = int(sp[0]), int(sp[1]) if len(sp) > 1 else 0
+                    ep = (time_range.get("end") or "").split(":")
+                    eh, em = (int(ep[0]), int(ep[1]) if len(ep) > 1 else 59) if ep[0] else (23, 59)
+                    cur = now.hour * 60 + now.minute
+                    s_val = sh * 60 + sm
+                    e_val = eh * 60 + em
+                    if s_val <= e_val:
+                        if not (s_val <= cur <= e_val):
+                            return False
+                    else:
+                        if not (cur >= s_val or cur <= e_val):
+                            return False
+                except (ValueError, IndexError):
+                    pass
+        except (json.JSONDecodeError, AttributeError):
+            pass
+    return True
+
+
 def _apply_schedule_win_lose_logic(db: Session, is_being_enabled: bool, is_being_disabled: bool, updated_schedule: models.Schedule):
     """
     Apply win/lose logic when a schedule is enabled or disabled.
@@ -9074,12 +9124,12 @@ def _apply_schedule_win_lose_logic(db: Session, is_being_enabled: bool, is_being
     """
     # Use local time for comparisons since schedules are stored as naive local datetimes
     now = datetime.datetime.now()
-    
+
     # Helper function to check if a schedule is currently active (within its time window AND time range)
     def _is_schedule_active(sched: models.Schedule) -> bool:
         if not sched.start_date:
             return False
-        
+
         # First check date window
         date_active = False
         if sched.end_date:
@@ -9088,14 +9138,32 @@ def _apply_schedule_win_lose_logic(db: Session, is_being_enabled: bool, is_being
         else:
             # Indefinite schedule: active from start onward
             date_active = now >= sched.start_date
-        
+
         if not date_active:
             return False
-        
-        # Now check time range for daily schedules with timeRange in recurrence_pattern
+
+        # Check recurrence pattern constraints (weekDays, months, monthDays, timeRange)
         if sched.recurrence_pattern:
             try:
                 pattern = json.loads(sched.recurrence_pattern)
+
+                week_days = pattern.get("weekDays")
+                if week_days and isinstance(week_days, list) and len(week_days) > 0:
+                    day_map = {0: "monday", 1: "tuesday", 2: "wednesday", 3: "thursday", 4: "friday", 5: "saturday", 6: "sunday"}
+                    if day_map.get(now.weekday()) not in week_days:
+                        print(f"TOGGLE: Schedule '{sched.name}' not active on {day_map.get(now.weekday())} (weekDays: {week_days})")
+                        return False
+
+                months = pattern.get("months")
+                if months and isinstance(months, list) and len(months) > 0:
+                    if now.month not in months:
+                        return False
+
+                month_days = pattern.get("monthDays")
+                if month_days and isinstance(month_days, list) and len(month_days) > 0:
+                    if now.day not in month_days:
+                        return False
+
                 time_range = pattern.get("timeRange")
                 if time_range and time_range.get("start"):
                     # This schedule has a time-of-day constraint
@@ -9375,24 +9443,26 @@ def _apply_schedule_win_lose_logic(db: Session, is_being_enabled: bool, is_being
                 if winner.id == updated_schedule.id:
                     # The newly enabled schedule wins - apply it
                     print(f"TOGGLE: Newly enabled schedule '{updated_schedule.name}' (ID {updated_schedule.id}) wins, applying to Plex")
-                    if _apply_schedule_to_plex(updated_schedule):
-                        setting = db.query(models.Setting).first()
-                        if setting:
-                            setting.active_category = updated_schedule.category_id
-                            setting.filler_active = None  # Clear filler state when schedule takes over
-                            db.commit()
+                    _apply_schedule_to_plex(updated_schedule)  # best-effort
+                    setting = db.query(models.Setting).first()
+                    if setting:
+                        setting.active_category = updated_schedule.category_id
+                        setting.active_schedule_id = updated_schedule.id
+                        setting.filler_active = None
+                        db.commit()
                 else:
                     # Another schedule wins
                     print(f"TOGGLE: Newly enabled schedule '{updated_schedule.name}' (ID {updated_schedule.id}) loses to schedule '{winner.name}' (ID {winner.id})")
             else:
                 # No other active schedules, this one wins by default
                 print(f"TOGGLE: Newly enabled schedule '{updated_schedule.name}' (ID {updated_schedule.id}) is the only active schedule, applying to Plex")
-                if _apply_schedule_to_plex(updated_schedule):
-                    setting = db.query(models.Setting).first()
-                    if setting:
-                        setting.active_category = updated_schedule.category_id
-                        setting.filler_active = None  # Clear filler state when schedule takes over
-                        db.commit()
+                _apply_schedule_to_plex(updated_schedule)  # best-effort
+                setting = db.query(models.Setting).first()
+                if setting:
+                    setting.active_category = updated_schedule.category_id
+                    setting.active_schedule_id = updated_schedule.id
+                    setting.filler_active = None
+                    db.commit()
         else:
             print(f"TOGGLE: Newly enabled schedule '{updated_schedule.name}' (ID {updated_schedule.id}) is not yet in its active time window")
     
@@ -9408,15 +9478,23 @@ def _apply_schedule_win_lose_logic(db: Session, is_being_enabled: bool, is_being
             
             current_schedules.sort(key=_sort_key)
             winner = current_schedules[0]
-            
-            # Apply the winning schedule
+
+            # Detect blend mode among remaining schedules
+            exclusive_remaining = [s for s in current_schedules if getattr(s, "exclusive", False)]
+            blend_remaining = [s for s in current_schedules if not getattr(s, "exclusive", False) and getattr(s, "blend_enabled", False)]
+            is_blend_mode = not exclusive_remaining and len(blend_remaining) >= 2
+
+            # Apply the winning schedule; always update state regardless of Plex reachability
             print(f"TOGGLE: Schedule disabled, applying winning schedule '{winner.name}' (ID {winner.id}) to Plex")
-            if _apply_schedule_to_plex(winner):
-                setting = db.query(models.Setting).first()
-                if setting:
-                    setting.active_category = winner.category_id
-                    setting.filler_active = None  # Clear filler state
-                    db.commit()
+            _apply_schedule_to_plex(winner)  # best-effort
+            setting = db.query(models.Setting).first()
+            if setting:
+                setting.active_category = winner.category_id
+                # Blend mode has no single owning schedule — clear active_schedule_id so the
+                # scheduler re-evaluates blend on its next tick
+                setting.active_schedule_id = None if is_blend_mode else winner.id
+                setting.filler_active = None
+                db.commit()
         else:
             # No active schedules remaining - try to apply filler, otherwise clear
             print(f"TOGGLE: Schedule '{updated_schedule.name}' (ID {updated_schedule.id}) disabled and no other active schedules found")
@@ -9430,26 +9508,25 @@ def _apply_schedule_win_lose_logic(db: Session, is_being_enabled: bool, is_being
                     if setting and setting.plex_url and setting.plex_token:
                         plex_connector = PlexConnector(setting.plex_url, setting.plex_token)
                         plex_connector.set_preroll('')
-                        setting.active_category = None
-                        setting.filler_active = None
-                        db.commit()
                         print(f"TOGGLE: Cleared Plex prerolls (clear_when_inactive enabled)")
                 except Exception as clear_error:
                     print(f"TOGGLE: Error clearing Plex prerolls: {clear_error}")
             else:
-                # Try to apply filler
                 if not _apply_filler_to_plex():
-                    # No filler configured or failed - clear prerolls
                     try:
                         if setting and setting.plex_url and setting.plex_token:
                             plex_connector = PlexConnector(setting.plex_url, setting.plex_token)
                             plex_connector.set_preroll('')
-                            setting.active_category = None
-                            setting.filler_active = None
-                            db.commit()
                             print(f"TOGGLE: Cleared Plex prerolls (no filler configured)")
                     except Exception as clear_error:
                         print(f"TOGGLE: Error clearing Plex prerolls: {clear_error}")
+
+            # Always update settings state so dashboard reflects the change
+            if setting:
+                setting.active_category = None
+                setting.active_schedule_id = None
+                setting.filler_active = None
+                db.commit()
 
 @app.put("/schedules/{schedule_id}")
 def update_schedule(schedule_id: int, schedule: ScheduleCreate, db: Session = Depends(get_db)):
@@ -15016,19 +15093,70 @@ def get_active_category(db: Session = Depends(get_db)):
         
         # Normal category lookup
         category_id = getattr(setting, "active_category", None)
+        active_sched_id = getattr(setting, "active_schedule_id", None)
+
+        # Detect blend mode. The scheduler sets last_run on ALL blend partners in the same DB commit
+        # on every tick — sequence blend, category blend, and mixed alike — so last_run is the
+        # single reliable signal for all blend types (avoids _schedule_in_date_window divergence).
+        blend_schedules_info = None
+        try:
+            now = datetime.datetime.now()
+            all_active = db.query(models.Schedule).filter(models.Schedule.is_active == True).all()
+            exclusive_in_window = [
+                s for s in all_active
+                if getattr(s, "exclusive", False) and _schedule_in_date_window(s, now)
+            ]
+            if not exclusive_in_window:
+                recent_cutoff = now - datetime.timedelta(minutes=3)
+                recently_run_blend = [
+                    s for s in all_active
+                    if getattr(s, "blend_enabled", False)
+                    and getattr(s, "last_run", None) is not None
+                    and s.last_run >= recent_cutoff
+                ]
+                if len(recently_run_blend) >= 2:
+                    blend_schedules_info = [{"id": s.id, "name": s.name} for s in recently_run_blend]
+        except Exception:
+            pass
+
         if category_id is None:
+            if blend_schedules_info:
+                blend_obj = {
+                    "id": None,
+                    "name": "Blending",
+                    "plex_mode": "sequence",
+                    "blend_schedules": blend_schedules_info
+                }
+                # Include which sequence was chosen (for sequence blend)
+                active_sched_id = getattr(setting, "active_schedule_id", None)
+                if active_sched_id:
+                    active_sched = db.query(models.Schedule).filter(models.Schedule.id == active_sched_id).first()
+                    if active_sched:
+                        blend_obj["active_schedule_name"] = active_sched.name
+                return {"active_category": blend_obj, "applied_sequence": applied_sequence}
             return {"active_category": None, "applied_sequence": applied_sequence}
-        
+
         category = db.query(models.Category).filter(models.Category.id == category_id).first()
         if not category:
             return {"active_category": None, "applied_sequence": applied_sequence}
 
+        result = {
+            "id": category.id,
+            "name": category.name,
+            "plex_mode": getattr(category, "plex_mode", "shuffle"),
+        }
+        if blend_schedules_info:
+            result["blend_schedules"] = blend_schedules_info
+
+        # Include the active schedule name so the UI can show it instead of the category name
+        active_sched_id = getattr(setting, "active_schedule_id", None)
+        if active_sched_id:
+            active_sched = db.query(models.Schedule).filter(models.Schedule.id == active_sched_id).first()
+            if active_sched:
+                result["active_schedule_name"] = active_sched.name
+
         return {
-            "active_category": {
-                "id": category.id,
-                "name": category.name,
-                "plex_mode": getattr(category, "plex_mode", "shuffle")
-            },
+            "active_category": result,
             "applied_sequence": applied_sequence
         }
     except Exception as e:
@@ -25348,6 +25476,39 @@ def _resolve_current_intros(db: Session) -> dict:
                 "paths": [os.path.abspath(p.path) for p in prerolls],
                 "mode": mode,
             }
+
+    # --- 4. Pure category blend (active_category=None, active_schedule_id=None) ---
+    # Detect via last_run proxy: 2+ blend-enabled schedules stamped within the last 3 minutes.
+    # Applies when all blend partners are plain category schedules (no sequences), since the
+    # sequence/mixed paths always leave active_schedule_id or active_category set.
+    try:
+        now = datetime.datetime.now()
+        recent_cutoff = now - datetime.timedelta(minutes=3)
+        all_active = db.query(models.Schedule).filter(models.Schedule.is_active == True).all()
+        blend_candidates = [
+            s for s in all_active
+            if getattr(s, "blend_enabled", False)
+            and getattr(s, "last_run", None) is not None
+            and s.last_run >= recent_cutoff
+            and s.category_id
+        ]
+        if len(blend_candidates) >= 2:
+            all_paths: list[list[str]] = []
+            for s in blend_candidates:
+                sched_prerolls = _prerolls_for_category(s.category_id)
+                if sched_prerolls:
+                    all_paths.append([os.path.abspath(p.path) for p in sched_prerolls])
+            if all_paths:
+                interleaved: list[str] = []
+                max_len = max(len(pl) for pl in all_paths)
+                for i in range(max_len):
+                    for pl in all_paths:
+                        if i < len(pl):
+                            interleaved.append(pl[i])
+                if interleaved:
+                    return {"paths": interleaved, "mode": "shuffle"}
+    except Exception:
+        pass
 
     return {"paths": [], "mode": "shuffle"}
 

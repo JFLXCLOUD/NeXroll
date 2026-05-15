@@ -1313,28 +1313,93 @@ class Scheduler:
                             cat_name = bs.category.name if bs.category else f"Category {bs.category_id}"
                             priority = getattr(bs, "priority", 5)
                             _scheduler_log(f"  -> '{bs.name}' (Category: {cat_name}, Priority: {priority})")
-                        
-                        # Apply blended schedules
-                        applied_ok = self._apply_blended_schedules_to_plex(blend_schedules, db)
-                        if applied_ok:
-                            # Use the first schedule's category as the "active" one for tracking
-                            chosen_schedule = blend_schedules[0]
-                            desired_category_id = chosen_schedule.category_id
-                            setting.active_category = desired_category_id
-                            setting.active_schedule_id = None  # Blend uses merged categories, not a single schedule sequence
-                            for sched in blend_schedules:
-                                sched.last_run = now
-                                sched.next_run = self._calculate_next_run(sched)
-                            db.commit()
-                            
-                            state_key = f"blend_active:{','.join(str(s.id) for s in blend_schedules)}"
+
+                        any_has_sequence = any(_has_valid_sequence(s) for s in blend_schedules)
+
+                        if any_has_sequence:
+                            # At least one schedule has a sequence — randomly pick one per tick.
+                            # Applies the full sequence or full category depending on what was chosen,
+                            # rather than interleaving individual prerolls (which breaks sequence ordering).
+                            chosen = random.choice(blend_schedules)
+                            last_active_sched_id = getattr(setting, "active_schedule_id", None)
+                            last_active_cat_id = getattr(setting, "active_category", None)
+
+                            if _has_valid_sequence(chosen):
+                                if last_active_sched_id != chosen.id:
+                                    applied_ok = self._apply_schedule_sequence_to_plex(chosen, db)
+                                    if applied_ok:
+                                        setting.active_category = None
+                                        setting.active_schedule_id = chosen.id
+                                        setting.filler_active = None
+                                        for sched in blend_schedules:
+                                            sched.last_run = now
+                                            sched.next_run = self._calculate_next_run(sched)
+                                        db.commit()
+                                        _scheduler_log(f"MIX BLEND: Applied sequence '{chosen.name}' (randomly chosen from {len(blend_schedules)} schedules)")
+                                    else:
+                                        _scheduler_log(f"MIX BLEND: Failed to apply sequence '{chosen.name}'", level="WARNING")
+                                else:
+                                    # Same sequence chosen again — still refresh last_run
+                                    for sched in blend_schedules:
+                                        sched.last_run = now
+                                    db.commit()
+                            else:
+                                if last_active_sched_id != chosen.id:
+                                    applied_ok = self._apply_category_to_plex(chosen.category_id, db, chosen)
+                                    if applied_ok:
+                                        setting.active_category = chosen.category_id
+                                        setting.active_schedule_id = chosen.id
+                                        setting.filler_active = None
+                                        for sched in blend_schedules:
+                                            sched.last_run = now
+                                            sched.next_run = self._calculate_next_run(sched)
+                                        db.commit()
+                                        _scheduler_log(f"MIX BLEND: Applied category '{chosen.name}' (randomly chosen from {len(blend_schedules)} schedules)")
+                                    else:
+                                        _scheduler_log(f"MIX BLEND: Failed to apply category from '{chosen.name}'", level="WARNING")
+                                else:
+                                    # Same category chosen again — still refresh last_run
+                                    for sched in blend_schedules:
+                                        sched.last_run = now
+                                    db.commit()
+
+                            state_key = f"mix_blend_active:{','.join(str(s.id) for s in blend_schedules)}:{chosen.id}"
                             if self._last_logged_state != state_key:
                                 names = ', '.join(f"'{s.name}'" for s in blend_schedules)
-                                _scheduler_log(f"BLEND: Blend mode active: {names}")
+                                _scheduler_log(f"MIX BLEND: Blending schedules: {names}")
                                 self._last_logged_state = state_key
                                 self._last_logged_time = now
                         else:
-                            _scheduler_log(f"BLEND: Blend mode failed to apply prerolls to Plex", level="WARNING")
+                            # Pure category blend: randomly pick one category per tick.
+                            # Consistent with sequence and mixed blend — each tick one schedule
+                            # is chosen and its full category pool applied. Plex randomly selects
+                            # from that pool, and on the next tick it may be a different category.
+                            chosen = random.choice(blend_schedules)
+                            last_active_sched_id = getattr(setting, "active_schedule_id", None)
+                            if last_active_sched_id != chosen.id:
+                                applied_ok = self._apply_category_to_plex(chosen.category_id, db, chosen)
+                                if applied_ok:
+                                    setting.active_category = chosen.category_id
+                                    setting.active_schedule_id = chosen.id
+                                    setting.filler_active = None
+                                    for sched in blend_schedules:
+                                        sched.last_run = now
+                                        sched.next_run = self._calculate_next_run(sched)
+                                    db.commit()
+                                    _scheduler_log(f"CAT BLEND: Applied category '{chosen.name}' (randomly chosen from {len(blend_schedules)} schedules)")
+                                else:
+                                    _scheduler_log(f"CAT BLEND: Failed to apply category from '{chosen.name}'", level="WARNING")
+                            else:
+                                # Same category chosen again — still refresh last_run
+                                for sched in blend_schedules:
+                                    sched.last_run = now
+                                db.commit()
+                            state_key = f"cat_blend_active:{','.join(str(s.id) for s in blend_schedules)}:{chosen.id}"
+                            if self._last_logged_state != state_key:
+                                names = ', '.join(f"'{s.name}'" for s in blend_schedules)
+                                _scheduler_log(f"CAT BLEND: Blending categories: {names}")
+                                self._last_logged_state = state_key
+                                self._last_logged_time = now
                         return  # Skip normal processing when in blend mode
                     
                     # STEP 3: No exclusive, no blend - use normal winner selection
