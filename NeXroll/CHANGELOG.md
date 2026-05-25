@@ -1,5 +1,78 @@
 # Changelog
 
+## [1.13.2] - 05-24-2026
+
+### UI Polish
+- **Preroll Library Filter Bar Redesign** — The Library page's filter row had dated styling (uppercase letter-spaced labels above every field, awkward sizing with a 70 px wide "Per Page" selector next to 140 px filters, emoji prefixes on Status options) and required a manual "Apply" click for filters that were already applying client-side. v1.13.2 reworks it:
+  - **Search is now the dominant top-row element** with a wider input, larger placeholder copy, and the search icon inside the field. The View toggle (Grid/List) sits at the right edge of the same row, visually separated from filtering since it controls display, not what is shown.
+  - **Filters move to a second row** with consistent sizing: Category (220 px min, enough to fit "Christmas/New Years" and "Test External Category"), Status (170 px min), and a per-page selector inline-grouped with its label ("Show 20 per page") pushed to the right.
+  - **Apply button removed.** Filters auto-apply (they already did — the button was an artifact). Pagination automatically resets to page 1 when any filter changes, including Status which was previously not in the reset trigger.
+  - **Active filter chips** render below the bar when filters are set: e.g. `Category: Christmas ×`, `Matched only ×`, `Search: "alien" ×`. Each chip has an inline × to remove just that filter, and a `Clear all` link removes everything.
+  - **Status options lose the ✅ / ⚠️ emoji prefixes** in favor of plain text labels that match the rest of the app's Lucide-icon look.
+  - **Labels gone** — fields are self-describing through placeholders and the pill of the View toggle. Reduces visual noise without losing affordance.
+
+## [1.13.1] - 05-24-2026
+
+### New Features
+- **Import Folder: Optional Category + Subfolder Inference** — Previously the Import Folder workflow forced the user to pick a single category before doing anything, and silently dropped every imported file into that one category (or auto-created and used "Default" if none was selected). v1.13.1 aligns this with the v1.13.0 categories-as-labels model:
+  - **Category is now optional.** The picker shows *"— Auto / leave uncategorized —"* by default. Pick a specific category only if you want every imported file forced into one label.
+  - **Auto-categorize from subfolders** (on by default). Each file's immediate parent folder name is used as its category. A file at `/import/Christmas/intro.mp4` lands in the "Christmas" category if one exists; a file at the root of the import path has no folder hint and lands uncategorized.
+  - **Create missing categories** (off by default, opt-in checkbox). When a subfolder name does not match an existing category, NeXroll creates a new category with that name and tags the file with it. Useful for first-time setup with an already-organized folder tree.
+  - **Files NeXroll cannot resolve a category for are left uncategorized** — no more silent "Default" bucket. They appear in the new Prerolls page Uncategorized filter (v1.13.0) so you can tag them later.
+  - **Per-category preview in dry-run.** The result panel now shows pill-style chips like `Christmas: 12`, `Halloween: 8`, `(uncategorized): 3` so you can see exactly where everything will land before you click Import.
+  - The forced "Please select a category" validation error and the red-bordered category picker are gone.
+
+### API Changes
+- `POST /prerolls/map-root` accepts two new fields:
+  - `auto_categorize_from_folders` (bool, default `true`) — derive category from parent folder
+  - `create_missing_categories` (bool, default `false`) — create new categories on the fly when a folder name does not match an existing one
+- Response now includes a `per_category` array (`{category, to_add}` for dry-runs, `{category, added}` for actual imports). The legacy single `category` field on the response is replaced by `forced_category` (the explicit override, or `null` if none was given).
+
+## [1.13.0] - 05-24-2026
+
+### New Features
+- **Retire User-Visible "Primary Category" Concept (Issue #29, Phase 1)** — The primary/secondary distinction on a preroll's category memberships caused real friction: the "Remove from Category" button was permanently disabled for whichever category was a preroll's "primary", and deleting a category required either manually reassigning every preroll first or going through a multi-step workaround. v1.13.0 changes the user-facing model so categories are simple labels:
+  - **"Remove from Category" is now always enabled.** Any preroll can be removed from any of its categories. The button no longer greys out and no longer shows the misleading "Cannot remove primary here" tooltip. If the removed category happened to be the legacy primary, the backend clears that column too.
+  - **Deleting a category is one step.** Previous behavior required manually reassigning every preroll to a new "primary" first. v1.13.0 simplifies it: deleting a category removes the grouping from every preroll that had it, disables any schedules that targeted it (the user picks a new category before re-enabling), clears schedule fallback references, deletes holiday presets that pointed at it, and clears setting fields — all in one transaction. Prerolls that lose their last category become **uncategorized** and remain in NeXroll; their files on disk are never touched.
+  - **New "Uncategorized" filter** on the Prerolls page (in the Category dropdown) surfaces prerolls with zero categories. Useful for cleaning up after a category delete, or for finding files that the v1.12.21 filesystem scanner picked up but couldn't categorize.
+  - **The category-delete confirmation dialog** now shows what will actually happen ("Remove this category from N prerolls; X of those will become uncategorized") instead of a generic warning.
+- **Startup Migration: Backfill Many-to-Many** — On first launch, every preroll's legacy `category_id` is also added to the `preroll_categories` m2m table if it was not already there. This makes the m2m table the canonical source of category memberships going forward and is a no-op on subsequent launches. The `category_id` column is kept populated for backward compatibility with the rest of the codebase; it will be retired in a future release.
+
+### Deferred to Future Release
+Per Issue #29, the full structural refactor includes additional work that is **not in v1.13.0**:
+- Flat file storage (new uploads still go to per-category subfolders for now)
+- Removal of the `category_id` column from the `prerolls` table
+- Conversion of every remaining backend filter query from `category_id == X` to m2m
+- Removal of the "primary" star picker from the preroll edit modal (the picker still appears but no longer affects the "Remove from Category" UX described above)
+
+These will land in v1.13.x once v1.13.0 has been validated in the field.
+
+## [1.12.21] - 05-24-2026
+
+### New Features
+- **Preroll Filesystem Scanner / Cross-Platform Migration Fix** — Restoring a JSON backup from one platform to another (e.g. Windows -> Docker) used to leave every preroll row pointing at a path that does not exist on the target machine (`C:\Users\...` on a Linux container). Thumbnails 404'd, Plex apply failed, and the user had to manually rebuild everything. NeXroll now ships a filesystem scanner that walks `PREROLLS_DIR`, matches files to existing database rows by category folder + filename, and rewrites the `path` field to the real on-disk location. Missing thumbnails are regenerated. Files that exist on disk but have no corresponding database row are added automatically and assigned to a category when their parent folder name matches an existing category (otherwise they are left uncategorized). The scanner runs:
+  - At startup (set `NEXROLL_SCAN_ON_STARTUP=0` to disable on huge libraries)
+  - Automatically after a successful JSON database restore — the restore response now includes a `rescan` summary that the UI surfaces in its success toast
+  - On demand via the new **Rescan Files** button on the Backup & Restore page, backed by `POST /prerolls/rescan`
+  
+  This means a Windows -> Docker migration is now: install Docker NeXroll, restore the JSON backup, copy your prerolls into the mounted volume, click Rescan. The endpoint also reports counts of paths relinked, thumbnails generated, new files found, and files still missing so users can verify the migration succeeded.
+
+## [1.12.20] - 05-23-2026
+
+### Bug Fixes
+- **Currently Showing Tile Shows Category Name Instead of Schedule Name After Upgrade** — Users upgrading from versions before v1.12.17 had `active_category` populated in their database but no `active_schedule_id` (the column didn't exist on the older version). On first launch of the new version, the dashboard tile briefly displayed the category name (e.g. "Christmas") instead of the schedule name (e.g. "Christmas Schedule") until the next scheduler tick (up to 60 seconds later), or longer if the schedule happened to be out of its active window. The `/settings/active-category` endpoint now adds a fallback: when `active_schedule_id` is unset but `active_category` is populated, it looks up the most recently run active schedule whose primary category matches and uses its name. This eliminates the post-upgrade race window without changing any scheduler behavior.
+
+### New Features
+- **Delete Category Without Manually Clearing Prerolls and Schedules** — Previously, deleting a category required removing or reassigning every preroll and schedule that referenced it first, and the UI just showed "Category must be empty before deleting." The delete flow now handles reassignment automatically:
+  - Prerolls with the category as their PRIMARY category are reassigned to the built-in `Default` category. Video files on disk are NOT touched.
+  - Secondary (many-to-many) category tags pointing at the deleted category are removed.
+  - Schedules that reference the category are DISABLED and reassigned to `Default`, so they don't accidentally apply unintended prerolls when re-enabled.
+  - Schedule fallback references (`fallback_category_id`) are cleared.
+  - Holiday presets that point at the category are removed (the column is NOT NULL on this table).
+  - Setting fields that point at the category (`active_category`, `filler_category_id`, `last_schedule_fallback`, `active_schedule_id`) are cleared.
+  
+  A new `GET /categories/{id}/delete-impact` endpoint returns counts of everything that would be affected, and the delete confirmation dialog now shows a detailed preview ("This will reassign N prerolls to Default and disable M schedules") before the user confirms. System categories (NeX-Up Trailers, NeX-Up TV) and the `Default` category itself remain protected from deletion.
+
 ## [1.12.18] - 05-15-2026
 
 ### Bug Fixes

@@ -679,7 +679,9 @@ function App() {
     recursive: true,
     extensions: 'mp4,mkv,avi,mov',
     generate_thumbnails: true,
-    tags: ''
+    tags: '',
+    auto_categorize_from_folders: true,
+    create_missing_categories: false
   });
   const [mapRootLoading, setMapRootLoading] = useState(false);
   const [mapRootLoadingMsg, setMapRootLoadingMsg] = useState('');
@@ -1441,9 +1443,9 @@ const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
   }, [prerolls, pageSize]);
 
   useEffect(() => {
-    // Reset to first page when filters change
+    // Reset to first page when any filter changes
     setCurrentPage(1);
-  }, [filterCategory, filterTags]);
+  }, [filterCategory, filterTags, filterMatchStatus]);
 
   // Ensure tab title always shows "NeXroll" (guards against cached index.html/manifest)
   useEffect(() => {
@@ -4037,7 +4039,17 @@ const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
           })
           .then(data => {
             setBackupProgress({ active: false, type: '', message: '' });
-            showAlert('Database restored successfully! Refreshing data...', 'success');
+            let msg = 'Database restored successfully!';
+            const rs = data && data.rescan;
+            if (rs) {
+              const parts = [];
+              if (rs.paths_updated) parts.push(`${rs.paths_updated} path${rs.paths_updated === 1 ? '' : 's'} relinked`);
+              if (rs.thumbnails_generated) parts.push(`${rs.thumbnails_generated} thumbnail${rs.thumbnails_generated === 1 ? '' : 's'} generated`);
+              if (rs.new_prerolls) parts.push(`${rs.new_prerolls} new file${rs.new_prerolls === 1 ? '' : 's'} found`);
+              if (rs.missing_files) parts.push(`${rs.missing_files} file${rs.missing_files === 1 ? '' : 's'} still missing`);
+              if (parts.length) msg += ` Scan: ${parts.join(', ')}.`;
+            }
+            showAlert(msg + ' Refreshing data...', 'success');
             setBackupFile(null);
             // Reset file input
             const fileInput = document.querySelector('input[type="file"][accept=".json,.zip"]');
@@ -4055,6 +4067,32 @@ const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
       }
     };
     reader.readAsText(backupFile);
+  };
+
+  const handleRescanPrerolls = async () => {
+    setBackupProgress({ active: true, type: 'rescan', message: 'Scanning preroll folder...' });
+    try {
+      const res = await fetch(apiUrl('prerolls/rescan'), { method: 'POST' });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.detail || `HTTP ${res.status}: Rescan failed`);
+      }
+      const stats = await res.json();
+      setBackupProgress({ active: false, type: '', message: '' });
+      const lines = [
+        `Scanned ${stats.files_on_disk || 0} files on disk.`,
+        `${stats.paths_updated || 0} path${stats.paths_updated === 1 ? '' : 's'} relinked.`,
+        `${stats.thumbnails_generated || 0} thumbnail${stats.thumbnails_generated === 1 ? '' : 's'} generated.`,
+        `${stats.new_prerolls || 0} new file${stats.new_prerolls === 1 ? '' : 's'} added.`,
+        `${stats.missing_files || 0} file${stats.missing_files === 1 ? '' : 's'} still missing.`,
+      ];
+      showAlert(lines.join(' '), 'success');
+      fetchData();
+    } catch (error) {
+      console.error('Rescan error:', error);
+      setBackupProgress({ active: false, type: '', message: '' });
+      showAlert('Rescan failed: ' + error.message, 'error');
+    }
   };
 
   const handleRestoreFiles = () => {
@@ -4636,7 +4674,45 @@ const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
   };
 
   const handleDeleteCategory = async (categoryId) => {
-    if (!await showConfirm('Are you sure you want to delete this category? This may affect associated schedules and prerolls.', { type: 'danger', title: 'Delete Category' })) return;
+    // First, fetch the deletion impact so we can show the user exactly what will happen.
+    let impact = null;
+    try {
+      const impRes = await fetch(apiUrl(`categories/${categoryId}/delete-impact`));
+      if (impRes.ok) {
+        impact = await impRes.json();
+      }
+    } catch (e) {
+      // Non-fatal — fall back to a generic confirmation if the impact endpoint is unavailable
+    }
+
+    let confirmMsg;
+    if (impact) {
+      const prerollN = impact.preroll_count || 0;
+      const uncatN = impact.becoming_uncategorized || 0;
+      const schedN = impact.schedule_count || 0;
+      const fallbackN = impact.schedule_fallback_count || 0;
+      const holidayN = impact.holiday_preset_count || 0;
+      const lines = [`Delete category "${impact.category_name}"?`, ''];
+      if (prerollN === 0 && schedN === 0 && fallbackN === 0 && holidayN === 0) {
+        lines.push('This category is empty. Nothing else will be affected.');
+      } else {
+        lines.push('This will:');
+        if (prerollN > 0) {
+          lines.push(`  • Remove this category from ${prerollN} preroll${prerollN === 1 ? '' : 's'}`);
+          if (uncatN > 0) lines.push(`     (${uncatN} of those will become uncategorized — this is their only category)`);
+        }
+        if (schedN > 0)   lines.push(`  • Disable ${schedN} schedule${schedN === 1 ? '' : 's'} that target this category (they will need a new category before re-enabling)`);
+        if (fallbackN > 0)lines.push(`  • Clear this category from ${fallbackN} schedule fallback${fallbackN === 1 ? '' : 's'}`);
+        if (holidayN > 0) lines.push(`  • Delete ${holidayN} holiday preset${holidayN === 1 ? '' : 's'} that reference this category`);
+        lines.push('');
+        lines.push('Preroll video files on disk will NOT be deleted.');
+      }
+      confirmMsg = lines.join('\n');
+    } else {
+      confirmMsg = 'Are you sure you want to delete this category? Affected prerolls will lose this category tag and affected schedules will be disabled.';
+    }
+
+    if (!await showConfirm(confirmMsg, { type: 'danger', title: 'Delete Category' })) return;
 
     try {
       const res = await fetch(apiUrl(`categories/${categoryId}`), { method: 'DELETE' });
@@ -4644,7 +4720,17 @@ const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
         const errData = await res.json().catch(() => ({}));
         throw new Error(errData.detail || `HTTP error! status: ${res.status}`);
       }
-      alert('Category deleted successfully!');
+      const result = await res.json().catch(() => ({}));
+      const removed = result.removed_m2m || 0;
+      const disabled = result.disabled_schedules || 0;
+      let msg = 'Category deleted successfully!';
+      if (removed > 0 || disabled > 0) {
+        const parts = [];
+        if (removed > 0) parts.push(`removed tag from ${removed} preroll${removed === 1 ? '' : 's'}`);
+        if (disabled > 0) parts.push(`${disabled} schedule${disabled === 1 ? '' : 's'} disabled`);
+        msg += `\n${parts.join(', ')}.`;
+      }
+      alert(msg);
       fetchData();
     } catch (error) {
       console.error('Delete category error:', error);
@@ -4787,10 +4873,6 @@ const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
 
   const handleCategoryRemovePreroll = async (categoryId, preroll) => {
     if (!preroll) return;
-    if (preroll.category_id === categoryId) {
-      showAlert('Cannot remove the primary category here. Use "Edit Preroll" to change the primary category.', 'error');
-      return;
-    }
     if (!await showConfirm(`Remove "${preroll.display_name || preroll.filename}" from this category?`, { type: 'warning', title: 'Remove from Category' })) return;
     try {
       const res = await fetch(apiUrl(`categories/${categoryId}/prerolls/${preroll.id}`), { method: 'DELETE' });
@@ -4869,8 +4951,16 @@ const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
   const filteredPrerolls = React.useMemo(() => {
     let filtered = prerolls;
     
-    // 1. Filter by category
-    if (filterCategory) {
+    // 1. Filter by category. Special string "uncategorized" matches prerolls with
+    //    no categories at all (after v1.13.0 deletes a category, prerolls that had
+    //    only that category land here).
+    if (filterCategory === 'uncategorized') {
+      filtered = filtered.filter(p => {
+        const hasM2m = p.categories && p.categories.length > 0;
+        const hasPrimary = p.category_id != null;
+        return !hasM2m && !hasPrimary;
+      });
+    } else if (filterCategory) {
       const catId = parseInt(filterCategory);
       filtered = filtered.filter(p => {
         if (p.category_id === catId) return true;
@@ -8061,10 +8151,10 @@ const DashboardTiles = {
                 </div>
               </div>
 
-              {/* Category */}
+              {/* Category (optional in v1.13.1) */}
               <div>
                 <label style={{ display: 'block', marginBottom: '0.5rem', fontWeight: 500, color: 'var(--text-color)', fontSize: '0.9rem' }}>
-                  Category
+                  Category <span style={{ color: 'var(--text-secondary)', fontWeight: 400 }}>(optional)</span>
                 </label>
                 <select
                   value={mapRootForm.category_id}
@@ -8075,28 +8165,27 @@ const DashboardTiles = {
                   }}
                   className="input"
                   disabled={mapRootLoading}
-                  style={{ 
-                    width: '100%',
-                    borderColor: mapRootCategoryError ? '#dc3545' : undefined,
-                    boxShadow: mapRootCategoryError ? '0 0 0 2px rgba(220, 53, 69, 0.25)' : undefined
-                  }}
+                  style={{ width: '100%' }}
                 >
-                  <option value="">Select Category</option>
+                  <option value="">— Auto / leave uncategorized —</option>
                   {[...categories].sort((a, b) => a.name.localeCompare(b.name)).map(cat => (
                     <option key={cat.id} value={cat.id}>{cat.name}</option>
                   ))}
                 </select>
-                {mapRootCategoryError && (
-                  <div style={{ color: '#dc3545', fontSize: '0.85rem', marginTop: '0.35rem' }}>
-                    Please select a category
-                  </div>
-                )}
+                <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', marginTop: '0.35rem' }}>
+                  {mapRootForm.category_id
+                    ? 'Every imported file will be tagged with this category.'
+                    : (mapRootForm.auto_categorize_from_folders
+                        ? 'Each file inherits its immediate parent folder name as its category. Files at the root land uncategorized.'
+                        : 'All imported files will land uncategorized — you can tag them later from the Prerolls page.')
+                  }
+                </div>
               </div>
 
               {/* Options */}
-              <div style={{ 
-                display: 'flex', 
-                gap: '1.5rem', 
+              <div style={{
+                display: 'flex',
+                gap: '1.5rem',
                 flexWrap: 'wrap',
                 padding: '0.75rem 1rem',
                 backgroundColor: 'var(--bg-color)',
@@ -8120,6 +8209,44 @@ const DashboardTiles = {
                     disabled={mapRootLoading}
                   />
                   <span>Generate thumbnails</span>
+                </label>
+                <label
+                  style={{
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: '0.5rem',
+                    cursor: mapRootForm.category_id ? 'not-allowed' : 'pointer',
+                    fontSize: '0.9rem',
+                    opacity: mapRootForm.category_id ? 0.5 : 1
+                  }}
+                  title={mapRootForm.category_id ? 'Disabled when a category is selected above' : 'Use each file\'s parent folder name as its category'}
+                >
+                  <input
+                    type="checkbox"
+                    checked={!!mapRootForm.auto_categorize_from_folders}
+                    onChange={(e) => setMapRootForm({ ...mapRootForm, auto_categorize_from_folders: e.target.checked })}
+                    disabled={mapRootLoading || !!mapRootForm.category_id}
+                  />
+                  <span>Auto-categorize from subfolders</span>
+                </label>
+                <label
+                  style={{
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: '0.5rem',
+                    cursor: (mapRootForm.category_id || !mapRootForm.auto_categorize_from_folders) ? 'not-allowed' : 'pointer',
+                    fontSize: '0.9rem',
+                    opacity: (mapRootForm.category_id || !mapRootForm.auto_categorize_from_folders) ? 0.5 : 1
+                  }}
+                  title="When a subfolder name does not match an existing category, create a new category with that name"
+                >
+                  <input
+                    type="checkbox"
+                    checked={!!mapRootForm.create_missing_categories}
+                    onChange={(e) => setMapRootForm({ ...mapRootForm, create_missing_categories: e.target.checked })}
+                    disabled={mapRootLoading || !!mapRootForm.category_id || !mapRootForm.auto_categorize_from_folders}
+                  />
+                  <span>Create missing categories</span>
                 </label>
               </div>
 
@@ -8272,9 +8399,30 @@ const DashboardTiles = {
                       </div>
                     </div>
                   )}
+                  {Array.isArray(mapRootResult.perCategory) && mapRootResult.perCategory.length > 0 && (
+                    <div style={{ marginTop: '0.75rem' }}>
+                      <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: '0.35rem' }}>
+                        {mapRootResult.type === 'dryrun' ? 'Per-category preview' : 'Per-category breakdown'}
+                      </div>
+                      <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.4rem' }}>
+                        {mapRootResult.perCategory.map((row, i) => (
+                          <span key={i} style={{
+                            padding: '0.25rem 0.6rem',
+                            background: row.category === '(uncategorized)' ? 'rgba(245, 158, 11, 0.15)' : 'rgba(99, 102, 241, 0.15)',
+                            color: row.category === '(uncategorized)' ? '#d97706' : '#6366f1',
+                            border: `1px solid ${row.category === '(uncategorized)' ? 'rgba(245, 158, 11, 0.4)' : 'rgba(99, 102, 241, 0.4)'}`,
+                            borderRadius: '999px',
+                            fontSize: '0.85rem'
+                          }}>
+                            {row.category}: {row.to_add ?? row.added ?? 0}
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                  )}
                   {mapRootResult.type === 'dryrun' && mapRootResult.toAdd > 0 && (
                     <div style={{ marginTop: '1rem', textAlign: 'center' }}>
-                      <button 
+                      <button
                         className="button"
                         onClick={() => { setMapRootResult(null); submitMapRoot(true); }}
                         style={{ backgroundColor: '#28a745', padding: '0.6rem 1.5rem' }}
@@ -8372,124 +8520,242 @@ const DashboardTiles = {
 
       {/* Control Bar Card */}
       <div className="card" style={{ padding: '1rem 1.25rem' }}>
-        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '1.25rem', alignItems: 'flex-end' }}>
-          {/* View Toggle */}
-          <div>
-            <label style={{ display: 'block', marginBottom: '0.4rem', fontSize: '0.8rem', fontWeight: 500, color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>View</label>
-            <div style={{ display: 'flex', borderRadius: '6px', overflow: 'hidden', border: '1px solid var(--border-color)' }}>
-              <button
-                type="button"
-                onClick={() => setPrerollView('grid')}
-                style={{
-                  padding: '0.5rem 0.85rem',
-                  border: 'none',
-                  background: prerollView === 'grid' ? 'var(--accent-color)' : 'var(--bg-color)',
-                  color: prerollView === 'grid' ? '#fff' : 'var(--text-secondary)',
-                  cursor: 'pointer',
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: '0.35rem',
-                  fontSize: '0.85rem',
-                  fontWeight: prerollView === 'grid' ? 600 : 400
-                }}
-                title="Grid view"
-              >
-                <LayoutGrid size={14} /> Grid
-              </button>
-              <button
-                type="button"
-                onClick={() => setPrerollView('list')}
-                style={{
-                  padding: '0.5rem 0.85rem',
-                  border: 'none',
-                  borderLeft: '1px solid var(--border-color)',
-                  background: prerollView === 'list' ? 'var(--accent-color)' : 'var(--bg-color)',
-                  color: prerollView === 'list' ? '#fff' : 'var(--text-secondary)',
-                  cursor: 'pointer',
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: '0.35rem',
-                  fontSize: '0.85rem',
-                  fontWeight: prerollView === 'list' ? 600 : 400
-                }}
-                title="List view"
-              >
-                <List size={14} /> List
-              </button>
-            </div>
-          </div>
-
-          {/* Category Filter */}
-          <div>
-            <label style={{ display: 'block', marginBottom: '0.4rem', fontSize: '0.8rem', fontWeight: 500, color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Category</label>
-            <select
-              value={filterCategory}
-              onChange={(e) => setFilterCategory(e.target.value)}
+        {/* Row 1: Search (dominant) + View toggle (separated) */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
+          <div style={{ position: 'relative', flex: 1 }}>
+            <Search
+              size={16}
+              style={{
+                position: 'absolute',
+                left: '0.85rem',
+                top: '50%',
+                transform: 'translateY(-50%)',
+                color: 'var(--text-secondary)',
+                pointerEvents: 'none'
+              }}
+            />
+            <input
+              type="text"
+              placeholder="Search prerolls — tags, filenames, titles"
+              value={inputTagsValue}
+              onChange={(e) => handleTagsChange(e.target.value)}
               className="input"
-              style={{ minWidth: '140px' }}
+              style={{ width: '75%', paddingLeft: '2.5rem', fontSize: '0.95rem' }}
+            />
+          </div>
+          <div
+            role="group"
+            aria-label="View mode"
+            style={{
+              display: 'inline-flex',
+              borderRadius: '8px',
+              overflow: 'hidden',
+              border: '1px solid var(--border-color)',
+              background: 'var(--bg-color)',
+              flexShrink: 0
+            }}
+          >
+            <button
+              type="button"
+              onClick={() => setPrerollView('grid')}
+              aria-pressed={prerollView === 'grid'}
+              style={{
+                padding: '0.5rem 0.85rem',
+                border: 'none',
+                background: prerollView === 'grid' ? 'var(--accent-color)' : 'transparent',
+                color: prerollView === 'grid' ? '#fff' : 'var(--text-secondary)',
+                cursor: 'pointer',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '0.35rem',
+                fontSize: '0.85rem',
+                fontWeight: prerollView === 'grid' ? 600 : 500
+              }}
+              title="Grid view"
             >
-              <option value="">All Categories</option>
-              {[...categories].sort((a, b) => a.name.localeCompare(b.name)).map(cat => (
-                <option key={cat.id} value={cat.id}>{cat.name}</option>
-              ))}
-            </select>
-          </div>
-
-          {/* Match Status Filter */}
-          <div>
-            <label style={{ display: 'block', marginBottom: '0.4rem', fontSize: '0.8rem', fontWeight: 500, color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Status</label>
-            <select
-              value={filterMatchStatus}
-              onChange={(e) => setFilterMatchStatus(e.target.value)}
-              className="input"
-              style={{ minWidth: '140px' }}
-              title="Filter by community match status"
+              <LayoutGrid size={14} /> Grid
+            </button>
+            <button
+              type="button"
+              onClick={() => setPrerollView('list')}
+              aria-pressed={prerollView === 'list'}
+              style={{
+                padding: '0.5rem 0.85rem',
+                border: 'none',
+                borderLeft: '1px solid var(--border-color)',
+                background: prerollView === 'list' ? 'var(--accent-color)' : 'transparent',
+                color: prerollView === 'list' ? '#fff' : 'var(--text-secondary)',
+                cursor: 'pointer',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '0.35rem',
+                fontSize: '0.85rem',
+                fontWeight: prerollView === 'list' ? 600 : 500
+              }}
+              title="List view"
             >
-              <option value="">All Prerolls</option>
-              <option value="matched">✅ Matched Only</option>
-              <option value="unmatched">⚠️ Unmatched Only</option>
-            </select>
+              <List size={14} /> List
+            </button>
           </div>
+        </div>
 
-          {/* Search */}
-          <div style={{ flex: 1, minWidth: '200px' }}>
-            <label style={{ display: 'block', marginBottom: '0.4rem', fontSize: '0.8rem', fontWeight: 500, color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Search</label>
-            <div style={{ position: 'relative' }}>
-              <input
-                type="text"
-                placeholder="Search prerolls (tags, filenames, titles)..."
-                value={inputTagsValue}
-                onChange={(e) => handleTagsChange(e.target.value)}
-                className="input"
-                style={{ width: '100%', paddingLeft: '2.25rem' }}
-              />
-              <Search size={16} style={{ position: 'absolute', left: '0.75rem', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-secondary)' }} />
-            </div>
-          </div>
-
-          {/* Items per page */}
-          <div>
-            <label style={{ display: 'block', marginBottom: '0.4rem', fontSize: '0.8rem', fontWeight: 500, color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Per Page</label>
+        {/* Row 2: Filters (auto-apply, no Apply button) */}
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.75rem', marginTop: '0.85rem', alignItems: 'center' }}>
+          <select
+            value={filterCategory}
+            onChange={(e) => setFilterCategory(e.target.value)}
+            className="input"
+            aria-label="Filter by category"
+            style={{ minWidth: '220px', fontSize: '0.9rem' }}
+          >
+            <option value="">All Categories</option>
+            <option value="uncategorized">Uncategorized</option>
+            {[...categories].sort((a, b) => a.name.localeCompare(b.name)).map(cat => (
+              <option key={cat.id} value={cat.id}>{cat.name}</option>
+            ))}
+          </select>
+          <select
+            value={filterMatchStatus}
+            onChange={(e) => setFilterMatchStatus(e.target.value)}
+            className="input"
+            aria-label="Filter by community match status"
+            title="Filter by community match status"
+            style={{ minWidth: '170px', fontSize: '0.9rem' }}
+          >
+            <option value="">All Statuses</option>
+            <option value="matched">Matched only</option>
+            <option value="unmatched">Unmatched only</option>
+          </select>
+          <div style={{
+            display: 'inline-flex',
+            alignItems: 'center',
+            gap: '0.4rem',
+            fontSize: '0.85rem',
+            color: 'var(--text-secondary)',
+            marginLeft: 'auto'
+          }}>
+            <span>Show</span>
             <select
               value={pageSize}
               onChange={(e) => { const v = parseInt(e.target.value, 10); setPageSize(v); setCurrentPage(1); }}
               className="input"
-              style={{ width: '70px' }}
+              aria-label="Items per page"
+              style={{ width: '72px', fontSize: '0.9rem', padding: '0.4rem 0.5rem' }}
             >
               {[20, 30, 40, 50].map(n => <option key={n} value={n}>{n}</option>)}
             </select>
+            <span>per page</span>
           </div>
-
-          {/* Apply Button */}
-          <button
-            onClick={() => { setCurrentPage(1); fetchData(); }}
-            className="button"
-            style={{ display: 'flex', alignItems: 'center', gap: '0.35rem' }}
-            title="Apply filters"
-          >
-            <Filter size={14} /> Apply
-          </button>
         </div>
+
+        {/* Row 3: Active filter chips (only when something is filtered) */}
+        {(() => {
+          const activeChips = [];
+          if (filterCategory) {
+            let label;
+            if (filterCategory === 'uncategorized') {
+              label = 'Uncategorized';
+            } else {
+              const cat = categories.find(c => String(c.id) === String(filterCategory));
+              label = cat ? cat.name : `Category ${filterCategory}`;
+            }
+            activeChips.push({
+              key: 'cat',
+              label: `Category: ${label}`,
+              clear: () => setFilterCategory('')
+            });
+          }
+          if (filterMatchStatus) {
+            activeChips.push({
+              key: 'status',
+              label: filterMatchStatus === 'matched' ? 'Matched only' : 'Unmatched only',
+              clear: () => setFilterMatchStatus('')
+            });
+          }
+          if (inputTagsValue && inputTagsValue.trim()) {
+            activeChips.push({
+              key: 'search',
+              label: `Search: "${inputTagsValue.trim()}"`,
+              clear: () => handleTagsChange('')
+            });
+          }
+          if (activeChips.length === 0) return null;
+          return (
+            <div style={{
+              display: 'flex',
+              flexWrap: 'wrap',
+              gap: '0.4rem',
+              marginTop: '0.85rem',
+              paddingTop: '0.85rem',
+              borderTop: '1px solid var(--border-color)',
+              alignItems: 'center'
+            }}>
+              <span style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', marginRight: '0.25rem' }}>
+                Filters:
+              </span>
+              {activeChips.map(chip => (
+                <span
+                  key={chip.key}
+                  style={{
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: '0.4rem',
+                    padding: '0.25rem 0.4rem 0.25rem 0.7rem',
+                    background: 'rgba(99, 102, 241, 0.12)',
+                    border: '1px solid rgba(99, 102, 241, 0.35)',
+                    borderRadius: '999px',
+                    fontSize: '0.85rem',
+                    color: 'var(--text-color)'
+                  }}
+                >
+                  {chip.label}
+                  <button
+                    type="button"
+                    onClick={chip.clear}
+                    aria-label={`Clear ${chip.label}`}
+                    title="Remove this filter"
+                    style={{
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      width: '18px',
+                      height: '18px',
+                      borderRadius: '50%',
+                      border: 'none',
+                      background: 'rgba(99, 102, 241, 0.25)',
+                      color: 'inherit',
+                      cursor: 'pointer',
+                      padding: 0,
+                      lineHeight: 1
+                    }}
+                  >
+                    <X size={11} />
+                  </button>
+                </span>
+              ))}
+              <button
+                type="button"
+                onClick={() => {
+                  setFilterCategory('');
+                  setFilterMatchStatus('');
+                  handleTagsChange('');
+                }}
+                style={{
+                  marginLeft: '0.25rem',
+                  background: 'transparent',
+                  border: 'none',
+                  color: 'var(--text-secondary)',
+                  cursor: 'pointer',
+                  fontSize: '0.85rem',
+                  textDecoration: 'underline',
+                  padding: '0.25rem 0.4rem'
+                }}
+              >
+                Clear all
+              </button>
+            </div>
+          );
+        })()}
       </div>
 
       {/* Bulk Actions Card */}
@@ -15801,9 +16067,8 @@ const DashboardTiles = {
                             <button
                               type="button"
                               onClick={() => handleCategoryRemovePreroll(editingCategory.id, p)}
-                              className={`nx-iconbtn ${p.category_id === editingCategory.id ? 'nx-iconbtn--muted' : 'nx-iconbtn--danger'}`}
-                              disabled={p.category_id === editingCategory.id}
-                              title={p.category_id === editingCategory.id ? 'Cannot remove primary here' : 'Remove from this category'}
+                              className="nx-iconbtn nx-iconbtn--danger"
+                              title="Remove from this category"
                             >
                               <Trash size={14} style={{marginRight: '0.35rem'}} /> Remove
                             </button>
@@ -20201,20 +20466,21 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
       setMapRootResult({ type: 'error', message: 'Please enter a root path to import from.' });
       return;
     }
+    // v1.13.1: category is optional. If left blank, the backend derives a category
+    // from each file's subfolder (when auto_categorize_from_folders is on), and
+    // anything it cannot resolve lands uncategorized.
     const cid = parseInt(mapRootForm.category_id, 10);
-    if (!cid || isNaN(cid)) {
-      setMapRootCategoryError(true); // Highlight the category selector
-      setMapRootResult({ type: 'error', message: 'Please select a category before performing a dry run or import.' });
-      return;
-    }
+    const hasForcedCategory = !!(cid && !isNaN(cid));
 
     const payload = {
       root_path: root,
-      category_id: cid,
       recursive: !!mapRootForm.recursive,
       dry_run: !applyNow,
-      generate_thumbnails: !!mapRootForm.generate_thumbnails
+      generate_thumbnails: !!mapRootForm.generate_thumbnails,
+      auto_categorize_from_folders: !!mapRootForm.auto_categorize_from_folders,
+      create_missing_categories: !!mapRootForm.create_missing_categories
     };
+    if (hasForcedCategory) payload.category_id = cid;
     const exts = (mapRootForm.extensions || '')
       .split(/[,\s]+/)
       .map(s => s.trim().replace(/^\./, ''))
@@ -20250,23 +20516,23 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
         const found = Number(data.total_found ?? 0);
         const present = Number(data.already_present ?? 0);
         const toAdd = Number(data.to_add ?? Math.max(0, found - present));
-        // Show dry run results inline instead of alert
         setMapRootResult({
           type: 'dryrun',
           found,
           present,
-          toAdd
+          toAdd,
+          perCategory: Array.isArray(data.per_category) ? data.per_category : []
         });
       } else {
         const added = Number(data.added ?? (Array.isArray(data.added_details) ? data.added_details.length : 0));
         const found = Number(data.total_found ?? 0);
         const present = Number(data.already_present ?? 0);
-        // Show import results inline
         setMapRootResult({
           type: 'import',
           added,
           found,
-          present
+          present,
+          perCategory: Array.isArray(data.per_category) ? data.per_category : []
         });
       }
       if (applyNow) {
@@ -25716,6 +25982,38 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
         }}>
           <strong>⚠️ Warning:</strong> Restoring will overwrite existing data. Make sure you have a current backup before proceeding.
         </div>
+      </div>
+
+      {/* Rescan Preroll Files */}
+      <div style={{
+        marginTop: '1.5rem',
+        padding: '1.5rem',
+        backgroundColor: 'var(--bg-secondary)',
+        border: '1px solid var(--border-color)',
+        borderRadius: '8px'
+      }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.75rem' }}>
+          <RefreshCw size={18} style={{ color: '#22c55e' }} />
+          <h3 style={{ margin: 0, fontSize: '1rem' }}>Rescan Preroll Files</h3>
+        </div>
+        <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginBottom: '0.5rem' }}>
+          Walks the preroll storage folder and reconciles it against the database. Use this after a migration (e.g. Windows to Docker)
+          where the JSON backup brought over database rows with paths that no longer point at real files. The scan rewrites paths
+          to the actual on-disk locations, regenerates missing thumbnails, and creates database rows for any files dropped into
+          category folders outside the upload UI.
+        </p>
+        <p style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', marginBottom: '1rem', fontStyle: 'italic' }}>
+          Files dropped into a folder named after an existing category are assigned to that category. Files in other folders are
+          left uncategorized.
+        </p>
+        <button
+          onClick={handleRescanPrerolls}
+          className="button"
+          disabled={backupProgress.active}
+          style={{ backgroundColor: '#22c55e' }}
+        >
+          <RefreshCw size={14} style={{ marginRight: '0.35rem' }} /> Rescan Files Now
+        </button>
       </div>
     </div>
     </>

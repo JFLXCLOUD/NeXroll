@@ -53,6 +53,7 @@ from backend.plex_connector import PlexConnector
 from backend.scheduler import scheduler
 from backend import secure_store
 from backend.dynamic_preroll import DynamicPrerollGenerator, set_verbose_logger as set_dp_verbose_logger
+from backend import scanner as fs_scanner
 
 models.Base.metadata.create_all(bind=engine)
 
@@ -1408,6 +1409,11 @@ class MapRootRequest(BaseModel):
     dry_run: bool = True
     generate_thumbnails: bool = True
     tags: Optional[list[str]] = None
+    # v1.13.1: if category_id is None, NeXroll can derive a category from each file's
+    # immediate parent folder. Files at the root, or in folders with no matching/created
+    # category, land as uncategorized.
+    auto_categorize_from_folders: bool = True
+    create_missing_categories: bool = False
 
 class PlexConnectRequest(BaseModel):
     url: str
@@ -2141,9 +2147,71 @@ def startup_event():
         except Exception:
             pass
 
+    # v1.13.0 migration: backfill the m2m preroll_categories table from the legacy
+    # Preroll.category_id column. We keep category_id populated to avoid breaking the
+    # ~50 query sites that still filter by it directly — this release retires the
+    # primary-category concept from the user-visible UI without rewriting every
+    # backend query in one shot. After this runs, the m2m table is canonical and
+    # category_id mirrors whichever category was the legacy "primary". Idempotent.
+    try:
+        db = SessionLocal()
+        prerolls_to_migrate = db.query(models.Preroll).filter(models.Preroll.category_id.isnot(None)).all()
+        migrated_count = 0
+        for p in prerolls_to_migrate:
+            target_cat_id = p.category_id
+            existing_ids = {c.id for c in (p.categories or [])}
+            if target_cat_id not in existing_ids:
+                cat = db.query(models.Category).filter(models.Category.id == target_cat_id).first()
+                if cat:
+                    p.categories = (p.categories or []) + [cat]
+                    migrated_count += 1
+        if migrated_count:
+            try:
+                db.commit()
+                _file_log(f"v1.13.0 migration: backfilled m2m for {migrated_count} preroll(s)")
+            except Exception as e:
+                db.rollback()
+                _file_log(f"v1.13.0 migration commit failed: {e}", level="ERROR")
+    except Exception as e:
+        try:
+            _file_log(f"v1.13.0 primary-category migration error: {e}", level="ERROR")
+        except Exception:
+            pass
+    finally:
+        try:
+            db.close()
+        except Exception:
+            pass
+
+    # Filesystem scan: reconcile DB preroll rows against actual files in PREROLLS_DIR.
+    # This is what makes a fresh install on Linux/Docker behave correctly after restoring
+    # a JSON backup from Windows: paths get rewritten to the real locations, missing
+    # thumbnails are regenerated, and any files dropped into category folders externally
+    # are picked up. Disable with NEXROLL_SCAN_ON_STARTUP=0 if it's slow on huge libraries.
+    if os.environ.get("NEXROLL_SCAN_ON_STARTUP", "1").strip().lower() not in ("0", "false", "no"):
+        try:
+            db = SessionLocal()
+            fs_scanner.reconcile_prerolls(
+                db,
+                prerolls_dir=PREROLLS_DIR,
+                data_dir=data_dir,
+                generate_thumbnail_fn=_generate_thumbnail_for_preroll,
+                file_log=_file_log,
+            )
+        except Exception as e:
+            try:
+                _file_log(f"Startup preroll scan error: {e}", level="ERROR")
+            except Exception:
+                pass
+        finally:
+            try:
+                db.close()
+            except Exception:
+                pass
+
     # Log startup banner
     _log_startup_banner()
-    
+
     scheduler.start()
 
 @app.on_event("startup")
@@ -3894,9 +3962,9 @@ async def external_now_showing(
             models.Category.id == setting.active_category
         ).first()
         if category:
-            # Get preroll count for this category
+            # Get preroll count for this category (m2m)
             preroll_count = db.query(models.Preroll).filter(
-                models.Preroll.category_id == category.id
+                models.Preroll.categories.any(models.Category.id == category.id)
             ).count()
             active_category = {
                 "id": category.id,
@@ -3987,7 +4055,7 @@ async def external_categories(
     
     for cat in categories:
         preroll_count = db.query(models.Preroll).filter(
-            models.Preroll.category_id == cat.id
+            models.Preroll.categories.any(models.Category.id == cat.id)
         ).count()
         result.append({
             "id": cat.id,
@@ -4466,8 +4534,10 @@ async def external_apply_category(
     if not setting or not setting.plex_url:
         raise HTTPException(status_code=400, detail="Plex not configured")
     
-    # Get prerolls for this category
-    prerolls = db.query(models.Preroll).filter(models.Preroll.category_id == category_id).all()
+    # Get prerolls for this category (m2m)
+    prerolls = db.query(models.Preroll).filter(
+        models.Preroll.categories.any(models.Category.id == category_id)
+    ).all()
     if not prerolls:
         raise HTTPException(status_code=400, detail="Category has no prerolls")
     
@@ -6945,13 +7015,13 @@ def upload_preroll(
                 log_event('ERROR', 'user', f'Failed to replace duplicate: {e}', source='upload_preroll')
                 raise HTTPException(status_code=500, detail=f"Failed to replace duplicate: {str(e)}")
         elif duplicate_action == "rename":
-            # Auto-rename the new file to avoid conflict
+            # Auto-rename the new file to avoid conflict. v1.13.0: uploads go to a flat
+            # directory so filename uniqueness is global, not per-category.
             base, ext = os.path.splitext(file.filename)
             counter = 1
             new_filename = file.filename
             while db.query(models.Preroll).filter(
-                models.Preroll.filename == new_filename,
-                models.Preroll.category_id == primary_category_id
+                models.Preroll.filename == new_filename
             ).first():
                 new_filename = f"{base}_{counter}{ext}"
                 counter += 1
@@ -7617,20 +7687,19 @@ def get_prerolls(db: Session = Depends(get_db), category_id: str = "", tags: str
     # Base query
     query = db.query(models.Preroll)
 
-    # Handle category filtering (include primary and many-to-many associations)
+    # Handle category filtering (m2m only after v1.13.0). Special value "uncategorized"
+    # returns prerolls with zero categories.
     if category_id and category_id.strip():
-        try:
-            cat_id = int(category_id)
-            query = query.outerjoin(
-                models.preroll_categories, models.Preroll.id == models.preroll_categories.c.preroll_id
-            ).filter(
-                or_(
-                    models.Preroll.category_id == cat_id,
-                    models.preroll_categories.c.category_id == cat_id,
+        if category_id.strip().lower() == "uncategorized":
+            query = query.filter(~models.Preroll.categories.any())
+        else:
+            try:
+                cat_id = int(category_id)
+                query = query.filter(
+                    models.Preroll.categories.any(models.Category.id == cat_id)
                 )
-            )
-        except ValueError:
-            pass  # Invalid category_id, ignore filter
+            except ValueError:
+                pass  # Invalid category_id, ignore filter
 
     # Handle search (searches tags, filename, and display_name)
     search_term = (search or tags).strip()
@@ -8286,51 +8355,156 @@ def get_all_tags(db: Session = Depends(get_db)):
 
     return {"tags": sorted(list(all_tags))}
 
-@app.delete("/categories/{category_id}")
-def delete_category(category_id: int, db: Session = Depends(get_db)):
+@app.get("/categories/{category_id}/delete-impact")
+def get_category_delete_impact(category_id: int, db: Session = Depends(get_db)):
     """
-    Delete a category if it is not referenced by prerolls (primary or many-to-many)
-    or by schedules. Any HolidayPreset rows that reference this category will be
-    removed automatically to prevent foreign-key errors on legacy databases.
+    Return what would be affected if this category were deleted. v1.13.0 removed the
+    primary/secondary distinction — a preroll either belongs to this category or it does
+    not. Prerolls that lose their last category become uncategorized.
     """
     category = db.query(models.Category).filter(models.Category.id == category_id).first()
     if not category:
         raise HTTPException(status_code=404, detail="Category not found")
 
-    # Prevent deletion of system categories (e.g., NeX-Up Trailers)
+    # Prerolls that have this category (m2m). After v1.13.0 the legacy category_id
+    # column is mirrored into m2m by the startup migration, so this single count
+    # covers everything.
+    preroll_count = db.query(models.Preroll).filter(
+        models.Preroll.categories.any(models.Category.id == category_id)
+    ).count()
+
+    # Of those, how many would become uncategorized (this is their only category)?
+    becoming_uncategorized = 0
+    affected = db.query(models.Preroll).filter(
+        models.Preroll.categories.any(models.Category.id == category_id)
+    ).all()
+    for p in affected:
+        if len(p.categories or []) <= 1:
+            becoming_uncategorized += 1
+
+    schedule_count = db.query(models.Schedule).filter(models.Schedule.category_id == category_id).count()
+    schedule_fallback_count = db.query(models.Schedule).filter(models.Schedule.fallback_category_id == category_id).count()
+    holiday_preset_count = db.query(models.HolidayPreset).filter(models.HolidayPreset.category_id == category_id).count()
+
+    setting = db.query(models.Setting).first()
+    is_active_in_setting = bool(setting and getattr(setting, "active_category", None) == category_id)
+    is_filler_in_setting = bool(setting and getattr(setting, "filler_category_id", None) == category_id)
+
+    return {
+        "category_id": category.id,
+        "category_name": category.name,
+        "is_system": bool(getattr(category, "is_system", False)),
+        "preroll_count": preroll_count,
+        "becoming_uncategorized": becoming_uncategorized,
+        "schedule_count": schedule_count,
+        "schedule_fallback_count": schedule_fallback_count,
+        "holiday_preset_count": holiday_preset_count,
+        "is_active_in_setting": is_active_in_setting,
+        "is_filler_in_setting": is_filler_in_setting,
+    }
+
+@app.delete("/categories/{category_id}")
+def delete_category(category_id: int, db: Session = Depends(get_db)):
+    """
+    Delete a category. v1.13.0 simplified: categories are just labels, so deleting
+    one removes the grouping from any preroll it was attached to (via m2m), clears
+    the legacy category_id column on any preroll that pointed at it, disables
+    schedules that referenced it (their category_id becomes NULL — they need to
+    be reconfigured before they can run again), clears schedule fallback references,
+    deletes holiday presets that pointed at this category (column is NOT NULL), and
+    clears setting fields. Prerolls that lose their last category become uncategorized.
+    System categories (NeX-Up Trailers, NeX-Up TV) cannot be deleted.
+    """
+    category = db.query(models.Category).filter(models.Category.id == category_id).first()
+    if not category:
+        raise HTTPException(status_code=404, detail="Category not found")
+
     if getattr(category, 'is_system', False):
         raise HTTPException(status_code=403, detail="Cannot delete system category")
 
-    # Check if category is used by prerolls (primary) or via many-to-many, or by schedules
-    preroll_primary_count = db.query(models.Preroll).filter(models.Preroll.category_id == category_id).count()
-    m2m_count = db.query(models.Preroll).join(
-        models.preroll_categories, models.Preroll.id == models.preroll_categories.c.preroll_id
-    ).filter(models.preroll_categories.c.category_id == category_id).count()
-    schedule_count = db.query(models.Schedule).filter(models.Schedule.category_id == category_id).count()
-
-    if (preroll_primary_count + m2m_count) > 0 or schedule_count > 0:
-        raise HTTPException(status_code=400, detail="Category must be empty before deleting. Remove or reassign prerolls first.")
-
-    # Remove any holiday presets pointing at this category to avoid FK integrity errors
-    try:
-        db.query(models.HolidayPreset).filter(models.HolidayPreset.category_id == category_id).delete(synchronize_session=False)
-    except Exception:
-        # Best-effort; continue with deletion attempt
-        pass
-
     category_name = category.name
-    db.delete(category)
+    removed_m2m = 0
+    cleared_primary = 0
+    disabled_schedules = 0
+    cleared_fallback_schedules = 0
+    removed_holiday_presets = 0
+
     try:
+        # 1. Remove m2m entries for this category. (FK CASCADE would handle this too,
+        #    but doing it explicitly gives us a count for the response.)
+        removed_m2m = db.execute(
+            models.preroll_categories.delete().where(
+                models.preroll_categories.c.category_id == category_id
+            )
+        ).rowcount or 0
+
+        # 2. Clear the legacy category_id column on any preroll that pointed here so
+        #    the FK does not block the delete and old-style queries do not find a
+        #    dangling reference.
+        cleared_primary = db.query(models.Preroll).filter(
+            models.Preroll.category_id == category_id
+        ).update({"category_id": None}, synchronize_session=False)
+
+        # 3. Disable schedules that reference this category. There is no longer a
+        #    Default to reassign to, so we null the FK and turn the schedule off.
+        #    The user can re-enable after picking a new category.
+        disabled_schedules = db.query(models.Schedule).filter(
+            models.Schedule.category_id == category_id
+        ).update(
+            {"category_id": None, "is_active": False},
+            synchronize_session=False
+        )
+
+        # 4. Clear fallback_category_id on schedules pointing here
+        cleared_fallback_schedules = db.query(models.Schedule).filter(
+            models.Schedule.fallback_category_id == category_id
+        ).update({"fallback_category_id": None}, synchronize_session=False)
+
+        # 5. Delete holiday presets referencing this category (column is NOT NULL)
+        removed_holiday_presets = db.query(models.HolidayPreset).filter(
+            models.HolidayPreset.category_id == category_id
+        ).delete(synchronize_session=False)
+
+        # 6. Clear setting fields pointing here
+        setting = db.query(models.Setting).first()
+        if setting:
+            if getattr(setting, "active_category", None) == category_id:
+                setting.active_category = None
+                setting.active_schedule_id = None
+            if getattr(setting, "filler_category_id", None) == category_id:
+                setting.filler_category_id = None
+            if getattr(setting, "last_schedule_fallback", None) == category_id:
+                setting.last_schedule_fallback = None
+
+        # 7. Finally, delete the category itself
+        db.delete(category)
         db.commit()
     except IntegrityError as e:
         db.rollback()
         raise HTTPException(status_code=500, detail=f"Failed to delete category due to integrity constraints: {e}")
-    
-    # Log the action
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"Failed to delete category: {e}")
+
     log_event('INFO', 'user', f"Category '{category_name}' deleted", source='delete_category',
-              details={'category_id': category_id, 'category_name': category_name})
-    
-    return {"message": "Category deleted"}
+              details={
+                  'category_id': category_id,
+                  'category_name': category_name,
+                  'removed_m2m': removed_m2m,
+                  'cleared_primary': cleared_primary,
+                  'disabled_schedules': disabled_schedules,
+                  'cleared_fallback_schedules': cleared_fallback_schedules,
+                  'removed_holiday_presets': removed_holiday_presets,
+              })
+
+    return {
+        "message": "Category deleted",
+        "removed_m2m": removed_m2m,
+        "cleared_primary": cleared_primary,
+        "disabled_schedules": disabled_schedules,
+        "cleared_fallback_schedules": cleared_fallback_schedules,
+        "removed_holiday_presets": removed_holiday_presets,
+    }
 
 # Category endpoints
 @app.post("/categories")
@@ -8654,8 +8828,10 @@ def add_preroll_to_category(category_id: int, preroll_id: int, set_primary: bool
 @app.delete("/categories/{category_id}/prerolls/{preroll_id}")
 def remove_preroll_from_category(category_id: int, preroll_id: int, db: Session = Depends(get_db)):
     """
-    Remove a preroll's membership from a category (many-to-many).
-    Primary category cannot be removed here; change primary on the preroll edit instead.
+    Remove a preroll's membership from a category. v1.13.0: categories are just labels;
+    any category can be removed from any preroll, including the legacy primary. If the
+    removed category was the legacy primary, the column is also cleared. The preroll's
+    file on disk is not moved or deleted.
     """
     cat = db.query(models.Category).filter(models.Category.id == category_id).first()
     if not cat:
@@ -8665,11 +8841,12 @@ def remove_preroll_from_category(category_id: int, preroll_id: int, db: Session 
     if not p:
         raise HTTPException(status_code=404, detail="Preroll not found")
 
-    if p.category_id == category_id:
-        raise HTTPException(status_code=400, detail="Cannot remove primary category here. Edit the preroll to change its primary category.")
-
     try:
+        # Remove the m2m link
         p.categories = [c for c in (p.categories or []) if c.id != category_id]
+        # Clear the legacy primary column too if it pointed at this category
+        if p.category_id == category_id:
+            p.category_id = None
         db.commit()
         db.refresh(p)
     except Exception as e:
@@ -8681,7 +8858,6 @@ def remove_preroll_from_category(category_id: int, preroll_id: int, db: Session 
         "message": "Preroll removed from category",
         "category_id": category_id,
         "preroll_id": p.id,
-        "primary_category_id": p.category_id,
         "categories": [{"id": c.id, "name": c.name} for c in (p.categories or [])],
     }
 
@@ -13094,19 +13270,56 @@ def map_preroll_root(req: MapRootRequest, db: Session = Depends(get_db)):
         hint = "If running in Docker, mount your NAS/host folder into the container and use the container path (e.g., /mnt/prerolls or /data/prerolls). UNC paths like \\\\NAS\\share are not visible inside Linux containers."
         raise HTTPException(status_code=404, detail=f"Root path not found or not a directory: {root_abs}. {hint}")
 
-    # Resolve target category
-    category = None
+    # Resolve target category. v1.13.1: category_id is fully optional. When omitted,
+    # we derive a per-file category from the file's immediate parent folder name
+    # (matching an existing category, or creating one if create_missing_categories=True).
+    # Files we can't resolve a category for land as uncategorized — we no longer
+    # auto-create a "Default" bucket.
+    forced_category: Optional[models.Category] = None
     if req.category_id:
-        category = db.query(models.Category).filter(models.Category.id == int(req.category_id)).first()
-        if not category:
+        forced_category = db.query(models.Category).filter(
+            models.Category.id == int(req.category_id)
+        ).first()
+        if not forced_category:
             raise HTTPException(status_code=404, detail=f"Category id {req.category_id} not found")
-    else:
-        category = db.query(models.Category).filter(models.Category.name == "Default").first()
-        if not category:
-            category = models.Category(name="Default", description="Default category for mapped prerolls")
-            db.add(category)
-            db.commit()
-            db.refresh(category)
+
+    # Cache so we only look up / create each subfolder-derived category once
+    _folder_cat_cache: dict[str, Optional[models.Category]] = {}
+
+    def _resolve_category_for_file(abs_file_path: str) -> Optional[models.Category]:
+        if forced_category is not None:
+            return forced_category
+        if not req.auto_categorize_from_folders:
+            return None
+        try:
+            rel = os.path.relpath(abs_file_path, root_abs)
+        except Exception:
+            return None
+        parts = rel.replace("\\", "/").split("/")
+        # Files in the root itself have no parent-folder hint
+        if len(parts) < 2 or not parts[0]:
+            return None
+        folder_name = parts[0]
+        cache_key = folder_name.lower()
+        if cache_key in _folder_cat_cache:
+            return _folder_cat_cache[cache_key]
+        found = db.query(models.Category).filter(
+            func.lower(models.Category.name) == cache_key
+        ).first()
+        if found is None and req.create_missing_categories:
+            try:
+                found = models.Category(
+                    name=folder_name,
+                    description=f"Auto-created from folder during import of {root_abs}",
+                )
+                db.add(found)
+                db.commit()
+                db.refresh(found)
+            except Exception:
+                db.rollback()
+                found = None
+        _folder_cat_cache[cache_key] = found
+        return found
 
     # Extensions to include
     default_exts = [".mp4", ".mkv", ".mov", ".avi", ".m4v", ".webm"]
@@ -13134,50 +13347,67 @@ def map_preroll_root(req: MapRootRequest, db: Session = Depends(get_db)):
 
     total_found = len(candidate_files)
 
-    # Helper: check existing by case-insensitive path on Windows OR by filename within the same category
-    def _exists_in_db(abs_path: str, filename: str, category_id: int) -> bool:
+    # Helper: dedupe check. Path-based check is global; filename-only check is gated by
+    # the file's resolved category if it has one (no global filename collision check —
+    # different categories can legitimately share filenames in the legacy folder layout).
+    def _exists_in_db(abs_path: str, filename: str, category_id_for_dup_check: Optional[int]) -> bool:
         try:
-            # Check by exact path
             row = db.query(models.Preroll).filter(models.Preroll.path == abs_path).first()
             if row:
                 return True
-            # Check by path case-insensitive on Windows
             if sys.platform.startswith("win"):
                 lp = abs_path.lower()
                 row = db.query(models.Preroll).filter(func.lower(models.Preroll.path) == lp).first()
                 if row:
                     return True
-            # Check by filename within the same category (case-insensitive)
-            fname_lower = filename.lower()
-            row = db.query(models.Preroll).filter(
-                models.Preroll.category_id == category_id,
-                func.lower(models.Preroll.filename) == fname_lower
-            ).first()
-            if row:
-                return True
+            if category_id_for_dup_check is not None:
+                fname_lower = filename.lower()
+                row = db.query(models.Preroll).filter(
+                    models.Preroll.category_id == category_id_for_dup_check,
+                    func.lower(models.Preroll.filename) == fname_lower
+                ).first()
+                if row:
+                    return True
         except Exception:
             pass
         return False
 
+    # Dry-run preview: group by resolved category so the UI can show what will happen
     existing = 0
+    per_category_preview: dict[str, dict] = {}  # category_name (or "(uncategorized)") -> {"id", "to_add"}
+    UNCAT_KEY = "(uncategorized)"
     for pth in candidate_files:
         try:
             ap = os.path.abspath(pth)
         except Exception:
             ap = pth
         fname = os.path.basename(ap)
-        if _exists_in_db(ap, fname, category.id):
+        cat_for_file = _resolve_category_for_file(ap)
+        cat_id_for_dup = cat_for_file.id if cat_for_file else None
+        if _exists_in_db(ap, fname, cat_id_for_dup):
             existing += 1
+            continue
+        if cat_for_file is not None:
+            entry = per_category_preview.setdefault(cat_for_file.name, {"id": cat_for_file.id, "to_add": 0})
+        else:
+            entry = per_category_preview.setdefault(UNCAT_KEY, {"id": None, "to_add": 0})
+        entry["to_add"] += 1
 
     to_add = total_found - existing
     if req.dry_run:
         return {
             "dry_run": True,
             "root": root_abs,
-            "category": {"id": category.id, "name": category.name},
+            "forced_category": ({"id": forced_category.id, "name": forced_category.name} if forced_category else None),
+            "auto_categorize_from_folders": bool(req.auto_categorize_from_folders),
+            "create_missing_categories": bool(req.create_missing_categories),
             "total_found": total_found,
             "already_present": existing,
             "to_add": to_add,
+            "per_category": [
+                {"category": name, "category_id": meta["id"], "to_add": meta["to_add"]}
+                for name, meta in per_category_preview.items()
+            ],
         }
 
     # Normalize tags
@@ -13191,13 +13421,7 @@ def map_preroll_root(req: MapRootRequest, db: Session = Depends(get_db)):
     added_details = []
     added_count = 0
     skipped_count = existing
-
-    # Ensure thumbnail category folder
-    thumb_cat_dir = os.path.join(THUMBNAILS_DIR, category.name)
-    try:
-        os.makedirs(thumb_cat_dir, exist_ok=True)
-    except Exception:
-        pass
+    per_category_added: dict[str, int] = {}
 
     for src in candidate_files:
         try:
@@ -13206,8 +13430,21 @@ def map_preroll_root(req: MapRootRequest, db: Session = Depends(get_db)):
             abs_src = src
 
         filename = os.path.basename(abs_src)
-        if _exists_in_db(abs_src, filename, category.id):
+        cat_for_file = _resolve_category_for_file(abs_src)
+        cat_id_for_dup = cat_for_file.id if cat_for_file else None
+        if _exists_in_db(abs_src, filename, cat_id_for_dup):
             continue
+
+        # Thumbnail folder: organized under the resolved category name, or a generic
+        # "uncategorized" subfolder if there is no category for this file.
+        thumb_cat_dir = os.path.join(
+            THUMBNAILS_DIR,
+            cat_for_file.name if cat_for_file else "_uncategorized"
+        )
+        try:
+            os.makedirs(thumb_cat_dir, exist_ok=True)
+        except Exception:
+            pass
 
         file_size = None
         try:
@@ -13228,22 +13465,29 @@ def map_preroll_root(req: MapRootRequest, db: Session = Depends(get_db)):
         except Exception:
             duration = None
 
-        # Create DB row (managed=False)
+        # Create DB row (managed=False). Category goes via m2m so it works in the
+        # v1.13 model; we also set category_id for backward compat with the queries
+        # that still read it.
         p = models.Preroll(
             filename=filename,
             display_name=None,
             path=abs_src,
             thumbnail=None,
             tags=tags_json,
-            category_id=category.id,
+            category_id=cat_for_file.id if cat_for_file else None,
             description=None,
             duration=duration,
             file_size=file_size,
             managed=False,
         )
+        if cat_for_file is not None:
+            p.categories = [cat_for_file]
         db.add(p)
         db.commit()
         db.refresh(p)
+
+        cat_label = cat_for_file.name if cat_for_file else "(uncategorized)"
+        per_category_added[cat_label] = per_category_added.get(cat_label, 0) + 1
 
         # Generate thumbnail if requested
         thumb_rel = None
@@ -13293,14 +13537,46 @@ def map_preroll_root(req: MapRootRequest, db: Session = Depends(get_db)):
     return {
         "dry_run": False,
         "root": root_abs,
-        "category": {"id": category.id, "name": category.name},
+        "forced_category": ({"id": forced_category.id, "name": forced_category.name} if forced_category else None),
+        "auto_categorize_from_folders": bool(req.auto_categorize_from_folders),
+        "create_missing_categories": bool(req.create_missing_categories),
         "total_found": total_found,
         "already_present": skipped_count,
         "added": added_count,
+        "per_category": [{"category": name, "added": count} for name, count in per_category_added.items()],
         "added_details": added_details[:50],  # limit detail size
     }
 
 # Backup and Restore endpoints
+@app.post("/prerolls/rescan")
+def rescan_prerolls(db: Session = Depends(get_db)):
+    """
+    Walk PREROLLS_DIR, reconcile DB rows against on-disk files, regenerate missing
+    thumbnails, and create rows for files that exist on disk but not in the DB.
+    Useful after a Windows->Docker (or any platform) migration where the stored
+    `path` field no longer points at the real file location.
+    """
+    try:
+        stats = fs_scanner.reconcile_prerolls(
+            db,
+            prerolls_dir=PREROLLS_DIR,
+            data_dir=data_dir,
+            generate_thumbnail_fn=_generate_thumbnail_for_preroll,
+            file_log=_file_log,
+        )
+        log_event(
+            'INFO', 'user',
+            f"Preroll rescan: {stats['paths_updated']} paths updated, "
+            f"{stats['thumbnails_generated']} thumbnails generated, "
+            f"{stats['new_prerolls']} new rows, {stats['missing_files']} missing",
+            source='rescan_prerolls',
+            details=stats,
+        )
+        return stats
+    except Exception as e:
+        log_event('ERROR', 'system', f'Preroll rescan failed: {e}', source='rescan_prerolls')
+        raise HTTPException(status_code=500, detail=f"Rescan failed: {str(e)}")
+
 @app.get("/backup/database")
 def backup_database(db: Session = Depends(get_db)):
     """Export database to JSON"""
@@ -13696,7 +13972,32 @@ def restore_database(backup_data: dict, db: Session = Depends(get_db)):
                 continue
 
         db.commit()
-        return {"message": "Database restored successfully (v1.9.0)", "version": "1.9.0"}
+
+        # Reconcile DB paths against actual on-disk files after restore. This is the
+        # cross-platform migration fix: JSON backups carry absolute paths from the
+        # source machine (e.g. C:\Users\... from Windows), which never resolve in
+        # a Linux container. The scanner walks PREROLLS_DIR, matches files to DB
+        # rows by category folder + filename, and rewrites `path` to the real
+        # location. Failures are logged but do not fail the restore.
+        scan_stats = None
+        try:
+            scan_stats = fs_scanner.reconcile_prerolls(
+                db,
+                prerolls_dir=PREROLLS_DIR,
+                data_dir=data_dir,
+                generate_thumbnail_fn=_generate_thumbnail_for_preroll,
+                file_log=_file_log,
+            )
+            print(f"RESTORE: post-restore scan complete: {scan_stats}")
+        except Exception as scan_err:
+            print(f"RESTORE: post-restore scan failed (non-fatal): {scan_err}")
+            log_event('WARNING', 'system', f'Post-restore scan failed: {scan_err}', source='restore_database')
+
+        return {
+            "message": "Database restored successfully (v1.9.0)",
+            "version": "1.9.0",
+            "rescan": scan_stats,
+        }
     except Exception as e:
         print(f"Critical restore error: {str(e)}")
         import traceback
@@ -15154,6 +15455,17 @@ def get_active_category(db: Session = Depends(get_db)):
             active_sched = db.query(models.Schedule).filter(models.Schedule.id == active_sched_id).first()
             if active_sched:
                 result["active_schedule_name"] = active_sched.name
+        elif category_id:
+            # Fallback for users upgrading from older versions where active_schedule_id was not yet
+            # written to the DB (scheduler hasn't ticked since restart). Find the most recently run
+            # active schedule whose primary category matches, so the tile shows the schedule name
+            # immediately rather than waiting up to 60s for the next scheduler tick.
+            fallback_sched = db.query(models.Schedule).filter(
+                models.Schedule.is_active == True,
+                models.Schedule.category_id == category_id
+            ).order_by(models.Schedule.last_run.desc()).first()
+            if fallback_sched:
+                result["active_schedule_name"] = fallback_sched.name
 
         return {
             "active_category": result,
