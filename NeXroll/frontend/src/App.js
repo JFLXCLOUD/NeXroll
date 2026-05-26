@@ -318,8 +318,11 @@ const CategoryPicker = ({ categories, primaryId, secondaryIds, onChange, onCreat
     setOpen(false);
   };
 
+  // v1.13.13: categories are flat tags — no primary/secondary distinction in the UI.
+  // The component still accepts primaryId + secondaryIds and emits (primary, secondary)
+  // via onChange for backend storage compatibility (the first selected becomes the
+  // legacy primary). User-facing, all chips look identical.
   const selectedItems = items.filter(i => selectedSet.has(i.id));
-  const primaryItem = items.find(i => i.id === normalizedPrimary) || null;
 
   return (
     <div ref={containerRef} className="nx-catpicker">
@@ -333,35 +336,13 @@ const CategoryPicker = ({ categories, primaryId, secondaryIds, onChange, onCreat
         aria-haspopup="listbox"
         aria-controls={listboxId}
       >
-        {primaryItem ? (
-          <span className="nx-chip primary" title="Primary category">
-            <Star size={14} style={{ marginRight: '4px' }} /> {primaryItem.name}
-            <button
-              type="button"
-              className="nx-chip-x"
-              onClick={(e) => { e.stopPropagation(); toggle(primaryItem.id); }}
-              aria-label="Remove primary"
-              title="Remove primary"
-            >
-              ×
-            </button>
-          </span>
-        ) : (
-          <span className="nx-chip ghost">No primary</span>
+        {selectedItems.length === 0 && (
+          <span className="nx-chip ghost">No categories selected</span>
         )}
 
-        {selectedItems.filter(i => i.id !== normalizedPrimary).map(i => (
-          <span key={i.id} className="nx-chip" title="Secondary category">
+        {selectedItems.map(i => (
+          <span key={i.id} className="nx-chip" title="Category tag">
             {i.name}
-            <button
-              type="button"
-              className="nx-chip-star"
-              onClick={(e) => { e.stopPropagation(); makePrimary(i.id); }}
-              aria-label={`Make ${i.name} primary`}
-              title="Make primary"
-            >
-              <Star size={14} />
-            </button>
             <button
               type="button"
               className="nx-chip-x"
@@ -423,7 +404,6 @@ const CategoryPicker = ({ categories, primaryId, secondaryIds, onChange, onCreat
               <div className="nx-catpicker-empty">No categories found</div>
             ) : filtered.map(i => {
               const selected = selectedSet.has(i.id);
-              const isPrimary = normalizedPrimary === i.id;
               return (
                 <div
                   key={i.id}
@@ -434,15 +414,6 @@ const CategoryPicker = ({ categories, primaryId, secondaryIds, onChange, onCreat
                 >
                   <input type="checkbox" checked={selected} readOnly />
                   <span className="nx-catpicker-name">{i.name}</span>
-                  <button
-                    type="button"
-                    className={`nx-catpicker-star ${isPrimary ? 'active' : ''}`}
-                    onClick={(e) => { e.stopPropagation(); makePrimary(i.id); }}
-                    title={isPrimary ? 'Primary' : 'Make primary'}
-                    aria-label={isPrimary ? `${i.name} is primary` : `Make ${i.name} primary`}
-                  >
-                    <Star size={14} />
-                  </button>
                 </div>
               );
             })}
@@ -977,6 +948,7 @@ const [applyingToServer, setApplyingToServer] = useState(false);
   const [categoryPrerollsLoading, setCategoryPrerollsLoading] = useState({});
   const [categoryAddSelection, setCategoryAddSelection] = useState({});
   const [categoryAddSearch, setCategoryAddSearch] = useState('');
+  const [categoryAddFolder, setCategoryAddFolder] = useState(''); // '' = all folders, else parent folder name
   const [categoryAddSelectedIds, setCategoryAddSelectedIds] = useState([]);
 // Calendar view state
 const [showCalendar, setShowCalendar] = useState(false);
@@ -1771,7 +1743,16 @@ const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
         recurrence_pattern: schedule.recurrence_pattern || '',
         preroll_ids: schedule.preroll_ids || '',
         fallback_category_id: schedule.fallback_category_id || null,
-        sequence: typeof schedule.sequence === 'object' ? JSON.stringify(schedule.sequence) : (schedule.sequence || ''),
+        // Normalize sequence so we never send the literal string "null" to the backend.
+        // typeof null === 'object' in JS, so the previous branch was hitting JSON.stringify(null)
+        // which yields "null" — that string is treated as truthy by frontend badge logic on the
+        // next render and (incorrectly) flips a simple schedule to "Sequence (0 blocks)".
+        sequence: (() => {
+          const s = schedule.sequence;
+          if (s === null || s === undefined) return '';
+          if (typeof s === 'object') return JSON.stringify(s);
+          return String(s);
+        })(),
         color: schedule.color || '',
         is_active: newActiveState,
         blend_enabled: schedule.blend_enabled || false,
@@ -4898,13 +4879,14 @@ const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
       alert('Please select at least one preroll to add');
       return;
     }
-    const setPrimary = sel.setPrimary || false;
+    // v1.13.13: categories are flat tags; never send set_primary. Adding a preroll to a
+    // category just attaches the tag — does not move files on disk.
     let successCount = 0;
     let failCount = 0;
     try {
       for (const prerollId of idsToAdd) {
         try {
-          const res = await fetch(apiUrl(`categories/${categoryId}/prerolls/${prerollId}?set_primary=${setPrimary ? 'true' : 'false'}`), { method: 'POST' });
+          const res = await fetch(apiUrl(`categories/${categoryId}/prerolls/${prerollId}`), { method: 'POST' });
           if (res.ok) {
             successCount++;
           } else {
@@ -4914,15 +4896,16 @@ const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
           failCount++;
         }
       }
-      setCategoryAddSelection(prev => ({ ...prev, [categoryId]: { prerollId: '', setPrimary: false } }));
+      setCategoryAddSelection(prev => ({ ...prev, [categoryId]: { prerollId: '' } }));
       setCategoryAddSelectedIds([]);
       setCategoryAddSearch('');
+      setCategoryAddFolder('');
       loadCategoryPrerolls(categoryId);
       fetchData();
       if (failCount === 0) {
-        alert(`${successCount} preroll${successCount !== 1 ? 's' : ''} added to category${setPrimary ? ' and set as primary' : ''}!`);
+        alert(`${successCount} preroll${successCount !== 1 ? 's' : ''} tagged with this category!`);
       } else {
-        alert(`Added ${successCount}, failed ${failCount}`);
+        alert(`Tagged ${successCount}, failed ${failCount}`);
       }
     } catch (e) {
       console.error('Add preroll to category error:', e);
@@ -5018,22 +5001,22 @@ const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
   const clearSelection = () => setSelectedPrerollIds([]);
 
   const handleBulkSetPrimary = async (categoryId) => {
+    // v1.13.13: categories are flat tags now. "Apply to N selected" adds the category
+    // as a tag to each preroll via m2m — no file moves on disk. The function name is
+    // kept for backward compat with existing callers; the behaviour is no longer
+    // "set primary".
     const cid = parseInt(categoryId, 10);
     if (!cid || isNaN(cid)) { showAlert('Select a target category', 'error'); return; }
     if (selectedPrerollIds.length === 0) { showAlert('No prerolls selected', 'error'); return; }
-    if (!await showConfirm(`Change primary category for ${selectedPrerollIds.length} preroll(s)? This will move files on disk.`, { type: 'warning', title: 'Change Category' })) return;
+    if (!await showConfirm(`Tag ${selectedPrerollIds.length} preroll(s) with this category? Files on disk are NOT moved.`, { type: 'warning', title: 'Add Category Tag' })) return;
     let ok = 0, fail = 0;
     for (const id of selectedPrerollIds) {
       try {
-        const res = await fetch(apiUrl(`prerolls/${id}`), {
-          method: 'PUT',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ category_id: cid })
-        });
+        const res = await fetch(apiUrl(`categories/${cid}/prerolls/${id}`), { method: 'POST' });
         if (!res.ok) fail++; else ok++;
       } catch { fail++; }
     }
-    alert(`Primary category updated. Success: ${ok}, Failed: ${fail}`);
+    alert(`Category tag applied. Success: ${ok}, Failed: ${fail}`);
     setSelectedPrerollIds([]);
     setBulkCategoryId('');
     fetchData();
@@ -5419,10 +5402,29 @@ const DashboardTiles = {
       <p style={{ color: schedulerStatus.running ? 'var(--success-color, #28a745)' : 'var(--error-color, #dc3545)' }}>
         {schedulerStatus.running ? 'Running' : 'Stopped'}
       </p>
+      {/* Currently-active line. Lets the user see what's playing right now alongside
+          "what's next" — without this, the countdown's name flip from schedule A to
+          schedule B at the moment A activates looked like A's countdown just expired
+          without applying. */}
+      {schedulerStatus.running && activeCategory && (activeCategory.active_schedule_name || activeCategory.name) && (
+        <p style={{ fontSize: '0.75rem', color: 'var(--text-secondary, #888)', margin: '0 0 0.2rem', fontWeight: 600 }}>
+          Now: <span style={{ color: 'var(--success-color, #28a745)', fontWeight: 'bold' }}>
+            {activeCategory.active_schedule_name || activeCategory.name}
+          </span>
+        </p>
+      )}
       {schedulerStatus.running && nextScheduleCountdown && (
         <div style={{ marginTop: '0.5rem' }}>
           <p style={{ fontSize: '0.75rem', color: 'var(--text-secondary, #888)', margin: '0 0 0.15rem', fontWeight: 600 }}>
-            Next Up: <span style={{ color: '#007bff', fontWeight: 'bold' }}>{nextScheduleCountdown.name}</span>
+            Next: <span style={{ color: '#007bff', fontWeight: 'bold' }}>{nextScheduleCountdown.name}</span>
+            {nextScheduleCountdown.targetTime && (
+              <span style={{ color: 'var(--text-secondary, #888)', fontWeight: 400, marginLeft: '0.35rem' }}>
+                @ {new Date(nextScheduleCountdown.targetTime).toLocaleString([], {
+                  month: 'short', day: 'numeric',
+                  hour: '2-digit', minute: '2-digit'
+                })}
+              </span>
+            )}
           </p>
           <div style={{ display: 'flex', justifyContent: 'center', gap: '0.35rem', marginTop: '0.4rem' }}>
             {[
@@ -8801,7 +8803,7 @@ const DashboardTiles = {
               className="button"
               onClick={() => handleBulkSetPrimary(bulkCategoryId)}
               disabled={!bulkCategoryId || selectedPrerollIds.length === 0}
-              title="Change primary category for selected prerolls"
+              title="Tag selected prerolls with this category (files are not moved)"
               style={{ fontSize: '0.85rem', padding: '0.4rem 0.75rem' }}
             >
               Apply to {selectedPrerollIds.length} Selected
@@ -15257,19 +15259,24 @@ const DashboardTiles = {
             // This ensures accuracy since the server knows exactly which schedules are active
             const isCurrentlyActive = activeScheduleIds.includes(schedule.id);
             
-            const hasSequence = schedule.sequence && schedule.sequence.trim();
-            const scheduleMode = hasSequence ? 'sequence' : 'simple';
-            
-            // Parse sequence to count blocks
+            // Parse the sequence string and derive both block count and "is it a real sequence".
+            // A schedule's sequence field can be: empty/null, the literal "null" string, "[]",
+            // or a JSON array. Only the last case (non-empty array) counts as a sequence schedule.
+            // Mirrors backend `_has_valid_sequence` in scheduler.py.
             let sequenceBlockCount = 0;
-            if (hasSequence) {
-              try {
-                const parsed = JSON.parse(schedule.sequence);
-                sequenceBlockCount = Array.isArray(parsed) ? parsed.length : 0;
-              } catch (e) {
-                sequenceBlockCount = 0;
+            if (schedule.sequence) {
+              const trimmed = String(schedule.sequence).trim();
+              if (trimmed && trimmed !== 'null' && trimmed !== '[]') {
+                try {
+                  const parsed = JSON.parse(trimmed);
+                  if (Array.isArray(parsed)) sequenceBlockCount = parsed.length;
+                } catch (e) {
+                  sequenceBlockCount = 0;
+                }
               }
             }
+            const hasSequence = sequenceBlockCount > 0;
+            const scheduleMode = hasSequence ? 'sequence' : 'simple';
 
             // Parse recurrence pattern for display
             let recurrenceText = '';
@@ -16088,42 +16095,110 @@ const DashboardTiles = {
                       </span>
                     )}
                   </div>
-                  <input
-                    type="text"
-                    className="nx-input"
-                    placeholder="Search prerolls by name..."
-                    value={categoryAddSearch}
-                    onChange={(e) => setCategoryAddSearch(e.target.value)}
-                    style={{ marginBottom: '0.5rem' }}
-                  />
-                  <div style={{ 
-                    maxHeight: '200px', 
-                    overflowY: 'auto', 
-                    border: '1px solid var(--border-color)', 
-                    borderRadius: '8px', 
-                    padding: '0.5rem',
-                    background: 'var(--bg-secondary)'
-                  }}>
-                    {(() => {
-                      const available = availablePrerollsForCategory(editingCategory.id)
-                        .filter(p => {
-                          if (!categoryAddSearch.trim()) return true;
-                          const search = categoryAddSearch.toLowerCase();
-                          return (p.display_name || '').toLowerCase().includes(search) || 
-                                 (p.filename || '').toLowerCase().includes(search);
-                        });
-                      if (available.length === 0) {
-                        return <p style={{ fontSize: '0.85rem', color: '#666', fontStyle: 'italic', margin: '0.5rem 0' }}>No available prerolls{categoryAddSearch ? ' matching search' : ''}</p>;
+
+                  {(() => {
+                    // Compute the folder list once from available prerolls' paths. The picker
+                    // used to be a flat "sea of thumbnails" — user feedback asked for folder
+                    // structure so they can grab a whole folder at once. v1.13.12: pick the
+                    // parent folder name from each preroll's path and let the user filter by it.
+                    const extractFolder = (path) => {
+                      if (!path) return '';
+                      const norm = String(path).replace(/\\/g, '/');
+                      const parts = norm.split('/').filter(Boolean);
+                      // file is last; its parent is parts[length-2]
+                      if (parts.length < 2) return '';
+                      return parts[parts.length - 2];
+                    };
+                    const allAvailable = availablePrerollsForCategory(editingCategory.id);
+                    const folderCounts = {};
+                    for (const p of allAvailable) {
+                      const f = extractFolder(p.path) || '(root)';
+                      folderCounts[f] = (folderCounts[f] || 0) + 1;
+                    }
+                    const folderOptions = Object.keys(folderCounts).sort((a, b) => a.localeCompare(b));
+                    const filtered = allAvailable.filter(p => {
+                      if (categoryAddFolder) {
+                        const f = extractFolder(p.path) || '(root)';
+                        if (f !== categoryAddFolder) return false;
                       }
-                      return (
+                      if (!categoryAddSearch.trim()) return true;
+                      const search = categoryAddSearch.toLowerCase();
+                      return (p.display_name || '').toLowerCase().includes(search) ||
+                             (p.filename || '').toLowerCase().includes(search);
+                    });
+                    const visibleIds = filtered.map(p => p.id);
+                    const allVisibleSelected = visibleIds.length > 0 && visibleIds.every(id => categoryAddSelectedIds.includes(id));
+
+                    return (
+                      <>
+                        <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '0.5rem', flexWrap: 'wrap', alignItems: 'center' }}>
+                          <select
+                            className="nx-input"
+                            value={categoryAddFolder}
+                            onChange={(e) => setCategoryAddFolder(e.target.value)}
+                            style={{ flex: '0 0 200px', fontSize: '0.85rem' }}
+                            aria-label="Filter by source folder"
+                            title="Filter the picker by the file's source folder on disk"
+                          >
+                            <option value="">All folders ({allAvailable.length})</option>
+                            {folderOptions.map(f => (
+                              <option key={f} value={f}>{f} ({folderCounts[f]})</option>
+                            ))}
+                          </select>
+                          <input
+                            type="text"
+                            className="nx-input"
+                            placeholder="Search by name..."
+                            value={categoryAddSearch}
+                            onChange={(e) => setCategoryAddSearch(e.target.value)}
+                            style={{ flex: '1 1 200px', fontSize: '0.85rem' }}
+                          />
+                          <button
+                            type="button"
+                            className="button"
+                            onClick={() => {
+                              if (allVisibleSelected) {
+                                // Deselect everything currently visible
+                                setCategoryAddSelectedIds(prev => prev.filter(id => !visibleIds.includes(id)));
+                              } else {
+                                // Select all currently visible
+                                setCategoryAddSelectedIds(prev => Array.from(new Set([...prev, ...visibleIds])));
+                              }
+                            }}
+                            disabled={visibleIds.length === 0}
+                            style={{ padding: '0.35rem 0.7rem', fontSize: '0.8rem' }}
+                            title={allVisibleSelected ? 'Deselect all currently visible prerolls' : 'Select every preroll matching the current filter'}
+                          >
+                            {allVisibleSelected ? 'Deselect All' : `Select All (${visibleIds.length})`}
+                          </button>
+                        </div>
+                        <div style={{
+                          maxHeight: '240px',
+                          overflowY: 'auto',
+                          border: '1px solid var(--border-color)',
+                          borderRadius: '8px',
+                          padding: '0.5rem',
+                          background: 'var(--bg-secondary)'
+                        }}>
+                          {(() => {
+                            if (filtered.length === 0) {
+                              const reason = categoryAddSearch && categoryAddFolder
+                                ? ` matching search in folder "${categoryAddFolder}"`
+                                : categoryAddSearch ? ' matching search'
+                                : categoryAddFolder ? ` in folder "${categoryAddFolder}"`
+                                : '';
+                              return <p style={{ fontSize: '0.85rem', color: '#666', fontStyle: 'italic', margin: '0.5rem 0' }}>No available prerolls{reason}</p>;
+                            }
+                            return (
                         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(110px, 1fr))', gap: '0.5rem' }}>
-                          {available.map(p => {
+                          {filtered.map(p => {
                             const isSelected = categoryAddSelectedIds.includes(p.id);
+                            const folderName = extractFolder(p.path) || '(root)';
                             return (
                               <div
                                 key={p.id}
                                 onClick={() => {
-                                  setCategoryAddSelectedIds(prev => 
+                                  setCategoryAddSelectedIds(prev =>
                                     prev.includes(p.id) ? prev.filter(id => id !== p.id) : [...prev, p.id]
                                   );
                                 }}
@@ -16187,25 +16262,20 @@ const DashboardTiles = {
                                 <div style={{ fontSize: '0.75rem', lineHeight: 1.2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                                   {p.display_name || p.filename}
                                 </div>
-                                <div style={{ fontSize: '0.65rem', color: '#888', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                                  {categories.find(c => c.id === p.category_id)?.name || 'No category'}
+                                <div style={{ fontSize: '0.65rem', color: '#888', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={`Folder: ${folderName}`}>
+                                  {folderName}
                                 </div>
                               </div>
                             );
                           })}
                         </div>
                       );
-                    })()}
-                  </div>
-                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginTop: '0.75rem', flexWrap: 'wrap', gap: '0.5rem' }}>
-                    <label className="nx-label" style={{ display: 'inline-flex', alignItems: 'center', gap: '0.5rem', margin: 0 }}>
-                      <input
-                        type="checkbox"
-                        checked={Boolean(categoryAddSelection[editingCategory.id]?.setPrimary)}
-                        onChange={(e) => setCategoryAddSelection(prev => ({ ...prev, [editingCategory.id]: { ...(prev[editingCategory.id] || {}), setPrimary: e.target.checked } }))}
-                      />
-                      Set as Primary (moves files)
-                    </label>
+                          })()}
+                        </div>
+                      </>
+                    );
+                  })()}
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', marginTop: '0.75rem', flexWrap: 'wrap', gap: '0.5rem' }}>
                     <div style={{ display: 'flex', gap: '0.5rem' }}>
                       {categoryAddSelectedIds.length > 0 && (
                         <button
@@ -33883,27 +33953,27 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
            <button onClick={() => setPreviewingPreroll(null)} style={{ float: 'right' }}>✕</button>
            <div>
              {(() => {
-               console.log('Rendering simple modal for preroll:', previewingPreroll);
-               console.log('Category info:', previewingPreroll.category);
-               console.log('Category name:', previewingPreroll.category?.name);
-               console.log('Filename:', previewingPreroll.filename);
-               const videoUrl = apiUrl(`static/prerolls/${encodeURIComponent(previewingPreroll.category?.name || 'unknown')}/${encodeURIComponent(previewingPreroll.filename)}`);
-               console.log('Video URL:', videoUrl);
-               return (
+               // v1.13.7: stream by preroll ID instead of reconstructing a category-folder URL.
+               // The old URL pattern was `static/prerolls/{category}/{filename}` which broke for
+               // uncategorized prerolls (fell back to "unknown" and 404'd) and for prerolls
+               // whose on-disk location did not match their category name after a migration.
+               // The /prerolls/{id}/video endpoint trusts the DB's `path` field.
+               const videoUrl = previewingPreroll?.id
+                 ? apiUrl(`prerolls/${previewingPreroll.id}/video`)
+                 : null;
+               return videoUrl ? (
                  <video
                    controls
                    autoPlay
                    muted
                    style={{ width: '100%', maxHeight: '400px' }}
-                   onLoadStart={() => console.log('Video load started')}
-                   onLoadedData={() => console.log('Video loaded data')}
-                   onError={(e) => console.error('Video error:', e)}
-                   onCanPlay={() => console.log('Video can play')}
-                   onCanPlayThrough={() => console.log('Video can play through')}
+                   onError={(e) => console.error('Preroll preview error:', e)}
                  >
                    <source src={videoUrl} type="video/mp4" />
                    Your browser does not support the video tag.
                  </video>
+               ) : (
+                 <p>Preview unavailable.</p>
                );
              })()}
            </div>

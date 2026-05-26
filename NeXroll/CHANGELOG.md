@@ -1,5 +1,415 @@
 # Changelog
 
+## [1.13.17] - 05-26-2026
+
+### UX (post-audit testing fix)
+
+- **Scheduler tile countdown is now unambiguous.** During testing, the user
+  observed the countdown labeled "1135 Test" finish and jump to a new "1h 40min"
+  countdown without 1135 Test ever applying. Root cause: at the moment one
+  schedule's window opens, that schedule becomes "currently active" and gets
+  excluded from the "next up" list, so the tile's label and countdown both
+  switch to the next schedule on the same frame — looking like a reset rather
+  than a transition. The countdown logic itself was correct.
+
+  Two UI clarifications:
+  1. **"Now: <schedule name>"** line shows what's actually playing right now
+     (sourced from `activeCategory.active_schedule_name`).
+  2. **Target timestamp** next to "Next:" shows when the upcoming schedule will
+     fire (e.g. `Next: 1135 Test @ May 26, 08:26`). When the target flips to a
+     different schedule, the timestamp visibly changes too — no ambiguity.
+
+## [1.13.16] - 05-26-2026
+
+### Cleanup (final cross-cutting audit pass for v2.0.0 prep)
+
+- **Deleted ~410-line dead `_apply_schedule_win_lose_logic`.** This function was a
+  parallel reimplementation of the scheduler's logic, used to be called from
+  `update_schedule` until v1.13.5 rerouted that call site to
+  `scheduler.trigger_immediate_check()`. It had zero callers since then but lingered
+  in `main.py` as a future trap. Removed entirely; stale comment in `update_schedule`
+  rewritten.
+- **Consolidated 7 parallel `_prerolls_for_category` implementations** behind a single
+  `prerolls_for_category_query(db, category_id)` helper in `backend/scheduler.py`.
+  This was the audit's most architecturally dangerous finding — when the NeX-Up
+  `enabled` filter needed to be added (v1.13.10), it had to be applied to each of
+  the seven duplicates independently. The manual sequence-apply helper (SEQUENCING-1,
+  v1.13.11) and the Jellyfin/Emby plugin resolver (PLUGIN-2, v1.13.14) were each
+  caught only AFTER user testing surfaced the regression. Future fixes/extensions
+  now land in one place. Replaced call sites:
+  - `scheduler.py`: 5 sites — `_apply_jellyfin_category`, `_apply_category_to_plex`,
+    `_apply_schedule_sequence_to_plex` random helper, `_apply_blended_schedules_to_plex`
+    helper, `_apply_saved_sequence_to_plex` filler helper
+  - `main.py`: 2 sites — `apply_sequence_to_server`, `_resolve_current_intros`
+- **Added `_paths_equal` and `_find_preroll_for_trailer` helpers** for trailer↔preroll
+  linkage lookups (NEXUP-2). Tolerant of case and forward-vs-backslash separator
+  drift on Windows. Applied to the four user-facing trailer linkage sites:
+  movie/TV trailer delete and movie/TV trailer toggle. Without this, a tiny path
+  formatting mismatch (`C:\\NeXroll\\file.mp4` vs `c:/nexroll/file.mp4`) could
+  silently miss the linked Preroll, so the v1.13.10 enabled-field sync would skip
+  it. Sync paths still use exact match — they write the paths they read so drift
+  isn't a risk there.
+
+### Audit complete
+
+11 subsystems audited:
+1. Scheduler (4 fixes)
+2. Dashboard state sync (2 fixes)
+3. Preview/playback (3 fixes)
+4. Categories/m2m surface (3 fixes + primary-UI removal)
+5. NeX-Up (1 fix)
+6. Sequencing (2 fixes)
+7. Import/folder-picker UX (1 improvement)
+8. Backup/restore (1 fix — many fields)
+9. Plex/Jellyfin/Emby plugin endpoints (1 fix)
+10. Settings/config flow (2 fixes)
+11. Auth/sessions (clean)
+
+Plus cross-cutting: dead-code removal, helper consolidation, path-equality helper.
+
+Total: **~20 bug fixes, 1 UX improvement, 1 dead-code removal**, ranging from
+silent data loss (BACKUP-1) to user-visible regressions (multiple). Tracked
+findings remain in `AUDIT.md` with their status (FIXED / OPEN / ACKNOWLEDGED /
+DEFERRED) for v2.0.0 planning.
+
+## [1.13.15] - 05-26-2026
+
+### Bug Fixes (settings/config audit)
+
+- **Removed duplicate `/settings/dashboard-tile-order` registration.** The endpoint
+  was registered twice with different response shapes; FastAPI's first-match
+  routing meant the second pair was unreachable dead code. Removed.
+- **Filler disable transition now triggers an immediate scheduler check.** Disabling
+  filler used to leave the dashboard tile showing the filler state for up to 60
+  seconds. `PUT /settings/filler` now calls `scheduler.trigger_immediate_check()`
+  on the disable path so the next winner (or "nothing") shows up immediately.
+  Resolves DASHBOARD-3 from the v2.0.0 audit.
+
+### Audit Findings (no change needed)
+
+- **AUTH-1** — Full review of `/auth/login`, `_validate_session`, `require_auth`,
+  `get_current_user_optional`: IP rate limiting, account lockout (5 attempts,
+  15-minute lock), session token hashing in DB (raw token only in the cookie),
+  `httponly` + `samesite=lax` + secure-when-https cookie flags, periodic expired-
+  session cleanup, and audit logging are all in good shape. No bugs found.
+- **SETTINGS-3** — Generic `/settings/{key}` JSON store is unused by the frontend
+  but is harmless and could be useful for future integrations. Specific routes
+  win over the catch-all. Left as-is.
+
+## [1.13.14] - 05-25-2026
+
+### Bug Fixes (Plex/Jellyfin/Emby plugin endpoint audit)
+
+- **Disabled NeX-Up trailers still played through the Jellyfin/Emby plugin.**
+  `_resolve_current_intros` — the function the `/plugin/intros` endpoint uses to
+  decide what to serve plugins — has its own `_prerolls_for_category` helper,
+  distinct from the scheduler's five copies and the manual sequence-apply helper
+  fixed earlier. After v1.13.10 (scheduler) and v1.13.11 (manual sequence apply)
+  taught those paths to skip `enabled=False` prerolls, this **third parallel
+  implementation** was still picking disabled trailers, so disabling a trailer
+  worked for Plex but silently failed on Jellyfin/Emby. Same filter added.
+
+### Acknowledged, no change
+- **PLUGIN-1** — `/plugin/intros` accepts unauthenticated requests (optional
+  X-Api-Key for backward compat with old plugins). Anyone on the LAN can list
+  active preroll paths. Documented in code; acceptable for low-sensitivity
+  content.
+- **PLUGIN-3** — `/plex/webhook` signature verification is gated on
+  `NEXROLL_PLEX_WEBHOOK_SECRET` env var. Without it, webhook events can be
+  forged. Impact bounded (transient genre-mapping action); opt-in stricter
+  verification documented.
+
+## [1.13.13] - 05-25-2026
+
+### Bug Fixes — primary-category UI cleanup (CATEGORIES-7)
+
+The v1.13.0 work retired primary category from the Categories page, but four
+primary-flavored UI surfaces remained. All now removed:
+
+- **CategoryPicker** (used in upload + preroll-edit modals) no longer renders a
+  "Primary" chip, a "No primary" placeholder, or a "Make primary" star on each
+  dropdown item. All selected categories render as identical chips with × to
+  remove. The component still emits `onChange(primary, secondary)` for backend
+  storage compatibility — the user just never sees that split.
+- **"Set as Primary (moves files)" checkbox** in the Add-Prerolls-to-Category
+  picker is gone. Adding a preroll to a category just attaches the tag — does
+  not move files on disk.
+- **Bulk "Apply to N Selected" button** in the Prerolls page now POSTs to the
+  m2m endpoint instead of PUT-updating `category_id`. Files are not moved.
+  Confirm dialog text updated to reflect the new behavior.
+- `handleCategoryAddPreroll` no longer sends `?set_primary=true|false`.
+
+### Bug Fixes — backup/restore field gaps (BACKUP-1)
+
+The JSON backup payload was missing most model fields, so a backup/restore
+round-trip silently dropped feature configuration. Now lossless. Restored fields:
+
+- **Categories**: `plex_mode`, `apply_to_plex`, `is_system` (the last protecting
+  NeX-Up system categories from being deleted post-restore).
+- **Prerolls**: `duration`, `file_size`, `enabled` (added in v1.13.10!),
+  `community_preroll_id`, `exclude_from_matching`, `file_hash`. The `enabled`
+  field was the worst regression — disabling a NeX-Up trailer, backing up, and
+  restoring would silently re-enable it.
+- **Schedules**: `fallback_category_id`, `sequence`, `color`, `blend_enabled`,
+  `priority`, `exclusive`, `holiday_name`, `holiday_country`. Sequence schedules
+  came back as plain category schedules; blend/exclusive/priority/holiday-API
+  bindings were all lost.
+- **Holiday presets**: `start_month` / `start_day` / `end_month` / `end_day`
+  (date-range fields), `is_recurring`. Date-range holidays collapsed to a
+  single point.
+
+Backup payload now carries `schema_version: 2` and `exported_by_version` for
+diagnostics. Restore reads every field defensively — older v1 backups still
+restore (missing fields fall back to model defaults).
+
+### Acknowledged, deferred
+- **BACKUP-2** — `Schedule.preroll_ids` (comma-separated preroll-ID string used
+  by some legacy schedule types) doesn't get its IDs remapped during restore.
+  Few schedules use this field; most use inline `sequence` JSON. Flagged for v2.0.0.
+- **BACKUP-3** — The file-bundle ZIP backup (`POST /backup/files`) is unaudited.
+  Same pattern of "make sure every column makes it through" applies; deferred to
+  a future pass.
+
+## [1.13.12] - 05-25-2026
+
+### UX (resolving user feedback)
+
+- **Add-Prerolls-to-Category picker now groups by source folder.** Previous behavior:
+  a flat grid of every available preroll thumbnail. With a large library this was a
+  "sea of thumbnails" — there was no way to grab everything from a specific source
+  folder without clicking each item individually. Picker now has:
+  - **Folder filter dropdown** derived from each preroll's stored `path` on the fly.
+    Each option shows the folder name and item count (e.g. `Christmas (24)`). Picking
+    a folder narrows the grid; "All folders" is the default.
+  - **Select All (N) button** that selects every preroll currently matching the active
+    filter (folder + search). Toggles to "Deselect All" once everything visible is
+    selected. Pick a folder, click once, you've grabbed it all.
+  - Each thumbnail's secondary line now shows the source folder name instead of the
+    legacy "category" name.
+
+  Resolves UX-FEEDBACK-1 from the v2.0.0 audit ("It's just a sea of thumbnails... if
+  it used my windows folder structure i could just add the 'holiday' folder").
+
+## [1.13.11] - 05-25-2026
+
+### Bug Fixes (sequencing subsystem audit)
+
+- **Manual sequence-apply ignored the `enabled` field on prerolls.** `POST /sequences/{id}/apply`
+  has its own random-block helper (separate from the scheduler's). After the v1.13.10
+  fix taught the scheduler to skip `enabled=False` prerolls, this manual-apply path
+  was the lone remaining hole — clicking "Apply Sequence" on a sequence with a random
+  block over the NeX-Up category would still include trailers the user had toggled off.
+  Now uses the same filter as the scheduler.
+- **Deleting a saved sequence left dangling references.** The delete endpoint just
+  removed the row, didn't check whether settings still referenced it:
+  - `Setting.filler_sequence_id` could point at the deleted ID, and filler would
+    silently fail at apply time when filler_type was "sequence".
+  - `Setting.applied_sequence_id` could point at the deleted ID, so the dashboard
+    "applied sequence" tile showed the deleted name for up to 15 minutes.
+  
+  Delete now clears both references, disables filler if it was the sole sequence
+  underpinning a `sequence`-type filler, and triggers an immediate scheduler check
+  so the dashboard re-syncs. Response includes `cleared_filler` and
+  `cleared_applied_override` flags for UI feedback.
+
+## [1.13.10] - 05-25-2026
+
+### Bug Fixes (NeX-Up subsystem audit)
+
+- **Trailer toggle was only half-disabling trailers.** Toggling a NeX-Up trailer off
+  (movie or TV) ran the line `preroll.enabled = trailer.is_enabled` — but the
+  `Preroll` model had **no `enabled` column**. SQLAlchemy silently accepted the
+  assignment as a transient attribute that never persisted. So:
+  - The trailer was correctly excluded from `nexup_trailers`-typed sequence blocks
+    (which filter via `ComingSoonTrailer.is_enabled == True`).
+  - But it was NOT excluded from `random`-typed sequence blocks over the NeX-Up
+    category, from a schedule whose `category_id` is the NeX-Up category, or from
+    `_apply_category_to_plex`. A "disabled" trailer would still play.
+  - The dead `preroll.enabled = ...` line made the bug invisible to anyone reading
+    the code — it looked correct.
+
+  Fixed by adding the `enabled` Boolean column to `Preroll` (default True), an
+  idempotent SQLite migration on startup, and adding
+  `or_(Preroll.enabled == True, Preroll.enabled.is_(None))` to every scheduler
+  preroll-pool builder (5 sites). The toggle endpoints' existing
+  `preroll.enabled = trailer.is_enabled` lines now actually persist.
+
+### Acknowledged, deferred
+
+- **NEXUP-2** — Trailer-to-Preroll linkage uses exact-string path match. Path
+  normalization drift (case on Windows, separators) could silently miss the linked
+  Preroll. Needs a `_paths_equal(a, b)` helper used everywhere. Flagged for the
+  cross-cutting cleanup pass.
+- **NEXUP-3** — Sync in-progress detection uses a module-level dict (TOCTOU). Fine
+  for single-process uvicorn. Multi-worker deploys would need a real lock.
+
+## [1.13.9] - 05-25-2026
+
+### Bug Fixes (categories / m2m surface audit)
+
+- **Diagnostics page double-counted prerolls in every category.** The category stats
+  block in the `/system/diagnostics` payload computed `total_in_cat = primary_count + m2m_count`
+  where `primary_count` counted `category_id == X` and `m2m_count` counted
+  `preroll_categories` rows. After the v1.13.0 migration backfilled m2m from the
+  legacy column without nulling it, every preroll appeared in both counts — so the
+  displayed count for each category was roughly 2x the real number. Replaced with a
+  single distinct `or_(legacy, m2m)` query.
+- **Sequence export bundle missed m2m-tagged prerolls in two places.** The
+  `with_preroll_data` / `full_bundle` metadata block and the random-block
+  category-folder export both filtered by `category_id == X` only. A preroll with
+  the bundle's category as a SECONDARY (m2m) tag wouldn't ship in the bundle, even
+  though the live scheduler would resolve it correctly. Exported community sequences
+  therefore rendered differently on the receiving side. Both converted to the
+  m2m-aware form used by the scheduler.
+
+### Acknowledged, no change
+- NeX-Up trailer counts (movie / TV) intentionally remain legacy-primary-only — they
+  answer "what does NeX-Up manage?", not "what is tagged here", so an `or_()` would
+  inflate the number if a user manually tagged an unrelated preroll into the NeX-Up
+  category.
+
+## [1.13.8] - 05-25-2026
+
+### Bug Fixes (preview/playback subsystem follow-up)
+
+- **Dashboard "Currently Showing" preview showed Plex's stale state instead of the
+  active schedule's actual content.** Surfaced during testing of v1.13.7: clicking
+  the dashboard preview when "Adult Swim Night" was the active schedule returned a
+  Toy Story file from a completely different category, with "Preview unavailable"
+  because the file path (`/data/prerolls/Toy Story_JFLX.mp4`) didn't exist on the
+  local Windows install — it was a leftover Docker container path from a previous
+  setup. The endpoint `GET /plex/current-preroll-details` always queried Plex for
+  the currently-applied preroll string and matched paths to local files; if Plex's
+  state was stale, behind, or pointed at paths from a different host, the preview
+  would not match the user's mental model ("show me what the active schedule plays").
+- **Fix:** new helper resolves the preview list from NeXroll's intent —
+  `setting.active_schedule_id` for sequence schedules walks the sequence blocks,
+  category schedules pull the m2m preroll list. Endpoint only falls back to Plex
+  query when NeXroll has no recorded active schedule (filler mode, manual Plex
+  preroll application, fresh install with no schedules yet).
+- Imports `_has_valid_sequence` from `backend.scheduler` so main.py and scheduler.py
+  share one definition of "is this a real sequence" instead of drifting.
+
+## [1.13.7] - 05-25-2026
+
+### Bug Fixes (continuing v2.0.0 prep audit — preview/playback subsystem)
+
+- **Preview broke for uncategorized prerolls.** The simple-preview modal built its
+  video URL as `static/prerolls/{category.name}/{filename}` and fell back to the literal
+  string `"unknown"` when the preroll had no primary category — a legitimate state after
+  v1.13.0's category retirement. The "unknown" path 404'd on the backend, and the backend's
+  fallback DB lookup used a pure `category_id == X` filter that couldn't find the preroll
+  either. Same bug appeared in the dashboard "Currently Showing" preview URL builder.
+- **New endpoint `GET /prerolls/{id}/video`** streams a preroll's file by ID, looking up
+  the stored `path` directly. No dependency on category folder structure. Works for
+  uncategorized prerolls, post-migration paths, and external/unmanaged prerolls.
+- **Frontend simple-preview modal and backend `currentPrerollPreview` `preview_url` now
+  use the ID endpoint.** Category name is still shown in the modal title (derived from
+  the m2m list now, falling back to "Uncategorized" instead of "Unknown").
+- **Legacy `/static/prerolls/{category}/{filename}` endpoint hardened.** DB fallback now
+  uses `or_(category_id == X, m2m has X)` and a filename-unique fallback, so old URLs
+  still resolve when the category-folder match fails. Noisy `print` debug statements
+  removed.
+
+## [1.13.6] - 05-25-2026
+
+### Bug Fixes (continuing v2.0.0 prep audit — scheduler state sync)
+
+- **Dashboard never updated when the scheduler's Plex apply failed.** All three apply
+  branches in the scheduler (sequence-only, category, and the v1.13.3 re-apply branch
+  for winner changes) only updated `setting.active_category` / `setting.active_schedule_id`
+  / `last_run` if Plex apply returned True. When apply failed — empty category, Plex
+  unreachable, broken paths, invalid sequence blocks — the dashboard kept showing the
+  old (or null) state forever, even though the scheduler had correctly determined the
+  active winner. Reproduced during testing when an exclusive schedule targeted an empty
+  category: scheduler logged "EXCLUSIVE: '1135 Test' wins... -> Category 8", apply
+  failed (no prerolls), state never updated, dashboard reported "no category applied"
+  indefinitely. The v1.12.18 toggle-handler fix already established that state should
+  reflect intent (which schedule is the winner), not Plex apply result; the scheduler
+  itself never got the same treatment until now. All three branches now update state
+  unconditionally on winner selection and log Plex failures as warnings. The 5-minute
+  `_verify_and_reapply_if_needed` pass already retries Plex sync, so the cost is just
+  that the verifier tries again on the next pass — which is the desired behavior.
+
+## [1.13.5] - 05-25-2026
+
+### Bug Fixes (continuing v2.0.0 prep audit — dashboard state sync subsystem)
+
+- **Schedule create/delete now triggers immediate dashboard re-sync.** Both endpoints
+  committed their changes without poking the scheduler, leaving the dashboard tile and
+  Plex up to 60 seconds out of sync with the database. Creating a schedule that should
+  immediately be the winner, or deleting the schedule currently being applied, now
+  calls `scheduler.trigger_immediate_check()` after commit — matching the v1.13.3 fix
+  for `delete_category`.
+- **Schedule update endpoint switched from parallel reimplementation to scheduler call.**
+  `PUT /schedules/{id}` was calling `_apply_schedule_win_lose_logic` — a ~410-line
+  function in main.py that reimplemented `_is_schedule_active`, sequence/category
+  apply, winner selection, blend detection, filler handling, and clear_when_inactive
+  in parallel with the scheduler's own logic. Any fix made to the scheduler (including
+  the v1.13.3 SCHEDULER-1 fix) did NOT propagate to this code path, so toggling a
+  schedule could produce subtly different results than the scheduler's normal tick.
+  The call site now uses `scheduler.trigger_immediate_check()` for one source of truth.
+  The dead 410-line function is left in place this release — flagged in AUDIT.md as
+  MAIN-1 for removal in the cross-cutting cleanup pass.
+
+## [1.13.4] - 05-25-2026
+
+### Bug Fixes (continuing v2.0.0 prep audit)
+
+- **Schedule list badge flipped a "Simple" schedule to "Sequence (0 blocks)" after
+  disable/enable.** The toggle handler was running `typeof schedule.sequence === 'object'`
+  to detect parsed-array vs raw-string sequences. Because `typeof null === 'object'` in
+  JavaScript, a `null` sequence took the `JSON.stringify(null)` branch and the literal
+  string `"null"` (4 chars) was sent to the backend as the schedule's sequence. The
+  backend stored it; the next render saw a non-empty sequence string and the badge
+  flipped from "Simple" to "Sequence (0 blocks)". Backend scheduler behavior was
+  unaffected because `_has_valid_sequence` correctly rejects `"null"`, so this was a
+  pure UI regression. Toggle handler now explicitly normalizes `null`/`undefined` to
+  empty string, and the schedule-card badge now derives `hasSequence` from the parsed
+  block count (mirroring backend semantics) rather than the raw-string truthiness.
+
+### Audit Findings (documented, deferred)
+
+- **SCHEDULER-5 (UX, deferred):** No visible indication of why one schedule is the active
+  winner when multiple schedules target the same category. Winner selection sorts by
+  `(-priority, end_date, start_date, id)`, so a schedule with a defined `end_date` will
+  outrank one with `end_date = null` (treated as `datetime.max`) even at equal priority.
+  This caught a tester off-guard during validation of the v1.13.3 SCHEDULER-1 fix:
+  "Christmas Schedule" with `end=2027-12-31` beat two test schedules that had no
+  `end_date`, so the test scenario for the fix wasn't actually being exercised. Tracked
+  for v2.0.0 — needs a frontend "winner" badge on the Schedules page and a hover/side
+  panel explaining the tiebreaker, plus consideration of whether the "earliest end date
+  wins" default is the right one.
+
+## [1.13.3] - 05-25-2026
+
+### Bug Fixes (first slice of the v2.0.0 prep audit)
+
+- **Scheduler did not re-apply when the winning schedule changed but the category did not.**
+  If two schedules shared a `category_id` and the winner flipped from one to the other
+  (priority change, another schedule toggled off, blend partner dropped out, etc.), the
+  scheduler took the "already active" code path and never sent the new schedule's
+  sequence to Plex. This is the most likely cause of the user-reported "alt year-round
+  schedule applied the category pool instead of its sequence" symptom. The fix detects
+  `active_schedule_id != chosen_schedule.id` and forces a re-apply via the sequence
+  path (or category path) depending on the new schedule's shape.
+
+- **"Currently Showing" dashboard tile briefly showed "No category applied" after
+  deleting a category.** `delete_category` correctly cleared the applied state but the
+  next scheduler tick was up to 60 seconds away, leaving the dashboard empty in the
+  interim and forcing users to manually toggle a schedule to recover. Added a new
+  `scheduler.trigger_immediate_check()` helper that runs one scheduler pass synchronously;
+  `DELETE /categories/{id}` now calls it after committing so the next winner is recomputed
+  before the response returns.
+
+### Internal
+
+- Added `AUDIT.md` at the repo root tracking the in-progress v2.0.0 code audit. Each
+  finding has a severity (BUG / DISCONNECT / DEAD / UX / DOC) and a status (OPEN /
+  FIXED / DEFERRED). Subsystems still pending: categories/m2m surface area, dashboard
+  state sync, preview/playback, import & scanner, backup/restore, Plex/Jellyfin/Emby
+  plugin endpoints, settings flow, auth/sessions, cross-cutting consistency.
+
 ## [1.13.2] - 05-24-2026
 
 ### UI Polish

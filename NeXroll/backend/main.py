@@ -50,7 +50,7 @@ if not getattr(sys, "frozen", False):
 from backend.database import SessionLocal, engine, DB_PATH
 import backend.models as models
 from backend.plex_connector import PlexConnector
-from backend.scheduler import scheduler
+from backend.scheduler import scheduler, _has_valid_sequence, prerolls_for_category_query
 from backend import secure_store
 from backend.dynamic_preroll import DynamicPrerollGenerator, set_verbose_logger as set_dp_verbose_logger
 from backend import scanner as fs_scanner
@@ -150,6 +150,9 @@ def ensure_schema() -> None:
             # Prerolls: ensure file_hash for duplicate detection
             if not _sqlite_has_column("prerolls", "file_hash"):
                 _sqlite_add_column("prerolls", "file_hash TEXT")
+
+            if not _sqlite_has_column("prerolls", "enabled"):
+                _sqlite_add_column("prerolls", "enabled BOOLEAN DEFAULT 1")
 
             # Genre maps: ensure canonical normalized key for robust matching/synonyms
             if not _sqlite_has_column("genre_maps", "genre_norm"):
@@ -1330,6 +1333,50 @@ def _placeholder_bytes_jpeg() -> bytes:
     except Exception:
         # Minimal SOI/EOI as a last resort (may not render everywhere, but prevents crashes)
         return b"\xff\xd8\xff\xd9"
+
+
+def _paths_equal(a: Optional[str], b: Optional[str]) -> bool:
+    """
+    Compare two file paths for equality, tolerant of case differences on Windows
+    and forward-vs-backslash separator drift. Returns False if either side is empty.
+    Used by NeX-Up trailer linkage code so a tiny path-formatting mismatch (e.g.
+    `C:\\NeXroll\\file.mp4` vs `c:/nexroll/file.mp4`) does not silently miss the
+    linked Preroll row.
+    """
+    if not a or not b:
+        return False
+    try:
+        return os.path.normcase(os.path.normpath(a)) == os.path.normcase(os.path.normpath(b))
+    except Exception:
+        return False
+
+
+def _find_preroll_for_trailer(db: Session, trailer_local_path: Optional[str]):
+    """
+    Look up the Preroll record linked to a NeX-Up trailer by its local file path.
+    Robust to case/separator drift via _paths_equal. Returns None if no match.
+
+    Tries an exact-string DB match first (fast path); falls back to filename-keyed
+    Python-side comparison so case/separator differences (Windows in particular)
+    don't break the linkage.
+    """
+    if not trailer_local_path:
+        return None
+    # Fast path: exact path match
+    p = db.query(models.Preroll).filter(models.Preroll.path == trailer_local_path).first()
+    if p:
+        return p
+    # Fallback: filename match + Python-side normalized comparison
+    try:
+        fname = os.path.basename(trailer_local_path)
+        for cand in db.query(models.Preroll).filter(models.Preroll.filename == fname).all():
+            if _paths_equal(cand.path, trailer_local_path):
+                return cand
+    except Exception:
+        pass
+    return None
+
+
 # Pydantic models for API
 class ScheduleCreate(BaseModel):
     name: str
@@ -8486,6 +8533,15 @@ def delete_category(category_id: int, db: Session = Depends(get_db)):
         db.rollback()
         raise HTTPException(status_code=500, detail=f"Failed to delete category: {e}")
 
+    # Trigger an immediate scheduler re-evaluation so the dashboard tile reflects the
+    # new winner without the up-to-60-second wait for the next normal tick. Without
+    # this, the "Currently Showing" tile briefly shows "No category applied" after
+    # a category delete even when other schedules are active and eligible.
+    try:
+        scheduler.trigger_immediate_check()
+    except Exception:
+        pass
+
     log_event('INFO', 'user', f"Category '{category_name}' deleted", source='delete_category',
               details={
                   'category_id': category_id,
@@ -9178,6 +9234,14 @@ def create_schedule(schedule: ScheduleCreate, db: Session = Depends(get_db)):
     db.refresh(db_schedule)
     log_event('INFO', 'scheduler', f"Schedule '{db_schedule.name}' created", details={"schedule_id": db_schedule.id, "type": db_schedule.type})
 
+    # Re-evaluate scheduler so a newly-created active schedule that should win
+    # immediately is reflected on the dashboard and applied to Plex without the
+    # up-to-60-second wait for the next normal tick.
+    try:
+        scheduler.trigger_immediate_check()
+    except Exception:
+        pass
+
     # Load the category relationship for the response
     created_schedule = db.query(models.Schedule).options(joinedload(models.Schedule.category)).filter(models.Schedule.id == db_schedule.id).first()
 
@@ -9293,416 +9357,6 @@ def _schedule_in_date_window(sched, now):
     return True
 
 
-def _apply_schedule_win_lose_logic(db: Session, is_being_enabled: bool, is_being_disabled: bool, updated_schedule: models.Schedule):
-    """
-    Apply win/lose logic when a schedule is enabled or disabled.
-    Immediately updates Plex prerolls based on which schedule should win.
-    """
-    # Use local time for comparisons since schedules are stored as naive local datetimes
-    now = datetime.datetime.now()
-
-    # Helper function to check if a schedule is currently active (within its time window AND time range)
-    def _is_schedule_active(sched: models.Schedule) -> bool:
-        if not sched.start_date:
-            return False
-
-        # First check date window
-        date_active = False
-        if sched.end_date:
-            # Windowed schedules: active between start and end (inclusive)
-            date_active = sched.start_date <= now <= sched.end_date
-        else:
-            # Indefinite schedule: active from start onward
-            date_active = now >= sched.start_date
-
-        if not date_active:
-            return False
-
-        # Check recurrence pattern constraints (weekDays, months, monthDays, timeRange)
-        if sched.recurrence_pattern:
-            try:
-                pattern = json.loads(sched.recurrence_pattern)
-
-                week_days = pattern.get("weekDays")
-                if week_days and isinstance(week_days, list) and len(week_days) > 0:
-                    day_map = {0: "monday", 1: "tuesday", 2: "wednesday", 3: "thursday", 4: "friday", 5: "saturday", 6: "sunday"}
-                    if day_map.get(now.weekday()) not in week_days:
-                        print(f"TOGGLE: Schedule '{sched.name}' not active on {day_map.get(now.weekday())} (weekDays: {week_days})")
-                        return False
-
-                months = pattern.get("months")
-                if months and isinstance(months, list) and len(months) > 0:
-                    if now.month not in months:
-                        return False
-
-                month_days = pattern.get("monthDays")
-                if month_days and isinstance(month_days, list) and len(month_days) > 0:
-                    if now.day not in month_days:
-                        return False
-
-                time_range = pattern.get("timeRange")
-                if time_range and time_range.get("start"):
-                    # This schedule has a time-of-day constraint
-                    start_time_str = time_range.get("start", "")  # e.g., "22:00"
-                    end_time_str = time_range.get("end", "")  # e.g., "03:00"
-                    
-                    if start_time_str:
-                        # Parse time strings (HH:MM format)
-                        try:
-                            start_parts = start_time_str.split(":")
-                            start_hour = int(start_parts[0])
-                            start_minute = int(start_parts[1]) if len(start_parts) > 1 else 0
-                            
-                            end_hour = 23
-                            end_minute = 59
-                            if end_time_str:
-                                end_parts = end_time_str.split(":")
-                                end_hour = int(end_parts[0])
-                                end_minute = int(end_parts[1]) if len(end_parts) > 1 else 59
-                            
-                            # Use local time for comparison (timeRange is stored in local time)
-                            current_hour = now.hour
-                            current_minute = now.minute
-                            current_time_val = current_hour * 60 + current_minute
-                            start_time_val = start_hour * 60 + start_minute
-                            end_time_val = end_hour * 60 + end_minute
-                            
-                            # Handle overnight ranges (e.g., 22:00 to 03:00)
-                            if start_time_val <= end_time_val:
-                                # Normal range (e.g., 09:00 to 17:00)
-                                time_active = start_time_val <= current_time_val <= end_time_val
-                            else:
-                                # Overnight range (e.g., 22:00 to 03:00)
-                                # Active if current time is >= start OR <= end
-                                time_active = current_time_val >= start_time_val or current_time_val <= end_time_val
-                            
-                            if not time_active:
-                                print(f"TOGGLE: Schedule '{sched.name}' outside time range {start_time_str}-{end_time_str} (local: {current_hour:02d}:{current_minute:02d})")
-                                return False
-                            
-                        except (ValueError, IndexError) as e:
-                            print(f"TOGGLE: Error parsing time range for schedule '{sched.name}': {e}")
-                            # If we can't parse the time, fall through to date-only logic
-            except json.JSONDecodeError:
-                pass  # Invalid JSON, ignore time range
-        
-        return True
-    
-    # Helper function to apply a schedule's prerolls to Plex
-    def _apply_schedule_to_plex(sched: models.Schedule) -> bool:
-        """Apply a schedule's prerolls to Plex. Returns True if successful."""
-        try:
-            setting = db.query(models.Setting).first()
-            if not setting or not setting.plex_url or not setting.plex_token:
-                print(f"TOGGLE: No Plex settings configured, cannot apply schedule")
-                return False
-            
-            plex_connector = PlexConnector(setting.plex_url, setting.plex_token)
-            
-            # If schedule has a sequence, apply it
-            if sched.sequence:
-                try:
-                    seq = sched.sequence
-                    if isinstance(seq, str):
-                        seq = json.loads(seq)
-                    
-                    preroll_paths = []
-                    for block in seq:
-                        block_type = block.get("type")
-                        if block_type == "fixed":
-                            preroll_ids = block.get("preroll_ids") or block.get("prerolls", [])
-                            for pid in preroll_ids:
-                                preroll = db.query(models.Preroll).filter(models.Preroll.id == pid).first()
-                                if preroll and preroll.path and os.path.exists(preroll.path):
-                                    preroll_paths.append(os.path.abspath(preroll.path))
-                        elif block_type == "random":
-                            cid = block.get("category_id")
-                            count = block.get("count", 1)
-                            if cid:
-                                pool = db.query(models.Preroll) \
-                                    .outerjoin(models.preroll_categories, models.Preroll.id == models.preroll_categories.c.preroll_id) \
-                                    .filter(or_(models.Preroll.category_id == cid, models.preroll_categories.c.category_id == cid)) \
-                                    .distinct().all()
-                                pool = [p for p in pool if p.path and os.path.exists(p.path)]
-                                if pool:
-                                    k = min(max(count, 1), len(pool))
-                                    picks = random.sample(pool, k) if len(pool) > k else pool
-                                    for p in picks:
-                                        preroll_paths.append(os.path.abspath(p.path))
-                            else:
-                                preroll_ids = block.get("prerolls", [])
-                                available = []
-                                for pid in preroll_ids:
-                                    preroll = db.query(models.Preroll).filter(models.Preroll.id == pid).first()
-                                    if preroll and preroll.path and os.path.exists(preroll.path):
-                                        available.append(os.path.abspath(preroll.path))
-                                if available:
-                                    selected = random.sample(available, min(count, len(available)))
-                                    preroll_paths.extend(selected)
-                        elif block_type == "nexup_trailers":
-                            source = str(block.get("source", "both")).lower()
-                            count = int(block.get("count") or 2)
-                            now = datetime.datetime.now()
-                            trailer_paths = []
-                            if source in ("movies", "both"):
-                                for t in db.query(models.ComingSoonTrailer).filter(
-                                    models.ComingSoonTrailer.status == 'downloaded',
-                                    models.ComingSoonTrailer.is_enabled == True,
-                                    models.ComingSoonTrailer.release_date >= now
-                                ).all():
-                                    if t.local_path and os.path.exists(t.local_path):
-                                        trailer_paths.append(os.path.abspath(t.local_path))
-                            if source in ("tv", "both"):
-                                for t in db.query(models.ComingSoonTVTrailer).filter(
-                                    models.ComingSoonTVTrailer.status == 'downloaded',
-                                    models.ComingSoonTVTrailer.is_enabled == True,
-                                    models.ComingSoonTVTrailer.release_date >= now
-                                ).all():
-                                    if t.local_path and os.path.exists(t.local_path):
-                                        trailer_paths.append(os.path.abspath(t.local_path))
-                            if trailer_paths:
-                                k = min(max(count, 1), len(trailer_paths))
-                                picks = random.sample(trailer_paths, k) if len(trailer_paths) > k else trailer_paths
-                                preroll_paths.extend(picks)
-                        elif block_type == "coming_soon_list":
-                            layout = str(block.get("layout", "grid")).lower()
-                            storage = getattr(setting, "nexup_storage_path", None)
-                            if storage:
-                                video_file = os.path.join(storage, "dynamic_prerolls", f"coming_soon_{layout}.mp4")
-                                if os.path.exists(video_file):
-                                    preroll_paths.append(os.path.abspath(video_file))
-                        elif block_type == "dynamic_preroll":
-                            template = str(block.get("template", "coming_soon")).lower()
-                            theme = str(block.get("theme", "midnight")).lower()
-                            storage = getattr(setting, "nexup_storage_path", None)
-                            if storage:
-                                video_file = os.path.join(storage, "dynamic_prerolls", f"{template}_{theme}_preroll.mp4")
-                                if os.path.exists(video_file):
-                                    preroll_paths.append(os.path.abspath(video_file))
-                    
-                    if preroll_paths:
-                        preroll_string = ','.join(preroll_paths)
-                        plex_connector.set_preroll(preroll_string)
-                        print(f"TOGGLE: Applied sequence for schedule '{sched.name}' (ID {sched.id}) with {len(preroll_paths)} prerolls")
-                        return True
-                except Exception as seq_error:
-                    print(f"TOGGLE: Error applying sequence for schedule {sched.id}: {seq_error}")
-                    return False
-            
-            # Otherwise, apply the category's prerolls
-            elif sched.category_id:
-                prerolls = db.query(models.Preroll) \
-                    .outerjoin(models.preroll_categories, models.Preroll.id == models.preroll_categories.c.preroll_id) \
-                    .filter(or_(models.Preroll.category_id == sched.category_id,
-                                models.preroll_categories.c.category_id == sched.category_id)) \
-                    .distinct().all()
-                
-                if prerolls:
-                    preroll_paths = [os.path.abspath(p.path) for p in prerolls]
-                    preroll_string = ';'.join(preroll_paths)
-                    plex_connector.set_preroll(preroll_string)
-                    print(f"TOGGLE: Applied category {sched.category_id} for schedule '{sched.name}' (ID {sched.id}) with {len(prerolls)} prerolls")
-                    return True
-                else:
-                    print(f"TOGGLE: No prerolls found for category {sched.category_id}")
-                    return False
-            
-            return False
-        except Exception as e:
-            print(f"TOGGLE: Error applying schedule to Plex: {e}")
-            return False
-    
-    # Get all active schedules (is_active=True)
-    active_schedules = db.query(models.Schedule).filter(models.Schedule.is_active == True).all()
-    
-    # Filter to schedules that are currently in their time window
-    current_schedules = [s for s in active_schedules if _is_schedule_active(s)]
-    
-    # Helper: Apply filler content to Plex
-    def _apply_filler_to_plex() -> bool:
-        """Apply filler category/sequence/coming-soon to Plex. Returns True if applied."""
-        setting = db.query(models.Setting).first()
-        if not setting or not setting.plex_url or not setting.plex_token:
-            return False
-        
-        filler_enabled = getattr(setting, "filler_enabled", False)
-        if not filler_enabled:
-            return False
-        
-        filler_type = getattr(setting, "filler_type", "category")
-        plex_connector = PlexConnector(setting.plex_url, setting.plex_token)
-        
-        try:
-            if filler_type == "category":
-                filler_category_id = getattr(setting, "filler_category_id", None)
-                if filler_category_id:
-                    prerolls = db.query(models.Preroll) \
-                        .outerjoin(models.preroll_categories, models.Preroll.id == models.preroll_categories.c.preroll_id) \
-                        .filter(or_(models.Preroll.category_id == filler_category_id,
-                                    models.preroll_categories.c.category_id == filler_category_id)) \
-                        .distinct().all()
-                    if prerolls:
-                        preroll_paths = [os.path.abspath(p.path) for p in prerolls]
-                        preroll_string = ';'.join(preroll_paths)
-                        plex_connector.set_preroll(preroll_string)
-                        setting.filler_active = f"category:{filler_category_id}"
-                        setting.active_category = None
-                        db.commit()
-                        print(f"TOGGLE: Applied FILLER category {filler_category_id} with {len(prerolls)} prerolls")
-                        return True
-                        
-            elif filler_type == "sequence":
-                filler_sequence_id = getattr(setting, "filler_sequence_id", None)
-                if filler_sequence_id:
-                    seq_record = db.query(models.SavedSequence).filter(models.SavedSequence.id == filler_sequence_id).first()
-                    if seq_record:
-                        seq_data = json.loads(seq_record.sequence_data) if isinstance(seq_record.sequence_data, str) else seq_record.sequence_data
-                        preroll_paths = []
-                        for block in seq_data:
-                            block_type = block.get("type")
-                            if block_type == "fixed":
-                                for pid in block.get("prerolls", []):
-                                    preroll = db.query(models.Preroll).filter(models.Preroll.id == pid).first()
-                                    if preroll:
-                                        preroll_paths.append(os.path.abspath(preroll.path))
-                            elif block_type == "random":
-                                available = []
-                                for pid in block.get("prerolls", []):
-                                    preroll = db.query(models.Preroll).filter(models.Preroll.id == pid).first()
-                                    if preroll:
-                                        available.append(os.path.abspath(preroll.path))
-                                if available:
-                                    count = block.get("count", 1)
-                                    selected = random.sample(available, min(count, len(available)))
-                                    preroll_paths.extend(selected)
-                        if preroll_paths:
-                            plex_connector.set_preroll(';'.join(preroll_paths))
-                            setting.filler_active = f"sequence:{filler_sequence_id}"
-                            setting.active_category = None
-                            db.commit()
-                            print(f"TOGGLE: Applied FILLER sequence {filler_sequence_id} with {len(preroll_paths)} prerolls")
-                            return True
-                            
-            elif filler_type == "coming_soon":
-                filler_layout = getattr(setting, "filler_coming_soon_layout", "grid")
-                storage_path = getattr(setting, "nexup_storage_path", None)
-                if storage_path:
-                    from pathlib import Path
-                    video_path = Path(storage_path) / "dynamic_prerolls" / f"coming_soon_{filler_layout}.mp4"
-                    if video_path.exists():
-                        plex_connector.set_preroll(str(video_path))
-                        setting.filler_active = f"coming_soon:{filler_layout}"
-                        setting.active_category = None
-                        db.commit()
-                        print(f"TOGGLE: Applied FILLER Coming Soon List ({filler_layout})")
-                        return True
-        except Exception as e:
-            print(f"TOGGLE: Error applying filler: {e}")
-        
-        return False
-    
-    if is_being_enabled:
-        # Schedule was just enabled - check if it should win
-        if _is_schedule_active(updated_schedule):
-            # This schedule is in its active window
-            if current_schedules:
-                # Win/lose logic: Priority (highest wins), then ends soonest, then earliest start, then lowest id
-                def _sort_key(s):
-                    priority = getattr(s, "priority", 5)
-                    end = s.end_date if s.end_date else datetime.datetime.max
-                    start = s.start_date or datetime.datetime.min
-                    return (-priority, end, start, s.id)  # Negative priority so higher values sort first
-                
-                current_schedules.sort(key=_sort_key)
-                winner = current_schedules[0]
-                
-                if winner.id == updated_schedule.id:
-                    # The newly enabled schedule wins - apply it
-                    print(f"TOGGLE: Newly enabled schedule '{updated_schedule.name}' (ID {updated_schedule.id}) wins, applying to Plex")
-                    _apply_schedule_to_plex(updated_schedule)  # best-effort
-                    setting = db.query(models.Setting).first()
-                    if setting:
-                        setting.active_category = updated_schedule.category_id
-                        setting.active_schedule_id = updated_schedule.id
-                        setting.filler_active = None
-                        db.commit()
-                else:
-                    # Another schedule wins
-                    print(f"TOGGLE: Newly enabled schedule '{updated_schedule.name}' (ID {updated_schedule.id}) loses to schedule '{winner.name}' (ID {winner.id})")
-            else:
-                # No other active schedules, this one wins by default
-                print(f"TOGGLE: Newly enabled schedule '{updated_schedule.name}' (ID {updated_schedule.id}) is the only active schedule, applying to Plex")
-                _apply_schedule_to_plex(updated_schedule)  # best-effort
-                setting = db.query(models.Setting).first()
-                if setting:
-                    setting.active_category = updated_schedule.category_id
-                    setting.active_schedule_id = updated_schedule.id
-                    setting.filler_active = None
-                    db.commit()
-        else:
-            print(f"TOGGLE: Newly enabled schedule '{updated_schedule.name}' (ID {updated_schedule.id}) is not yet in its active time window")
-    
-    elif is_being_disabled:
-        # Schedule was just disabled - check if another schedule should take over
-        if current_schedules:
-            # Win/lose logic: Priority (highest wins), then ends soonest, then earliest start, then lowest id
-            def _sort_key(s):
-                priority = getattr(s, "priority", 5)
-                end = s.end_date if s.end_date else datetime.datetime.max
-                start = s.start_date or datetime.datetime.min
-                return (-priority, end, start, s.id)  # Negative priority so higher values sort first
-            
-            current_schedules.sort(key=_sort_key)
-            winner = current_schedules[0]
-
-            # Detect blend mode among remaining schedules
-            exclusive_remaining = [s for s in current_schedules if getattr(s, "exclusive", False)]
-            blend_remaining = [s for s in current_schedules if not getattr(s, "exclusive", False) and getattr(s, "blend_enabled", False)]
-            is_blend_mode = not exclusive_remaining and len(blend_remaining) >= 2
-
-            # Apply the winning schedule; always update state regardless of Plex reachability
-            print(f"TOGGLE: Schedule disabled, applying winning schedule '{winner.name}' (ID {winner.id}) to Plex")
-            _apply_schedule_to_plex(winner)  # best-effort
-            setting = db.query(models.Setting).first()
-            if setting:
-                setting.active_category = winner.category_id
-                # Blend mode has no single owning schedule — clear active_schedule_id so the
-                # scheduler re-evaluates blend on its next tick
-                setting.active_schedule_id = None if is_blend_mode else winner.id
-                setting.filler_active = None
-                db.commit()
-        else:
-            # No active schedules remaining - try to apply filler, otherwise clear
-            print(f"TOGGLE: Schedule '{updated_schedule.name}' (ID {updated_schedule.id}) disabled and no other active schedules found")
-            setting = db.query(models.Setting).first()
-            
-            # Check if clear_when_inactive is enabled - if so, just clear
-            clear_when_inactive = getattr(setting, "clear_when_inactive", False) if setting else False
-            
-            if clear_when_inactive:
-                try:
-                    if setting and setting.plex_url and setting.plex_token:
-                        plex_connector = PlexConnector(setting.plex_url, setting.plex_token)
-                        plex_connector.set_preroll('')
-                        print(f"TOGGLE: Cleared Plex prerolls (clear_when_inactive enabled)")
-                except Exception as clear_error:
-                    print(f"TOGGLE: Error clearing Plex prerolls: {clear_error}")
-            else:
-                if not _apply_filler_to_plex():
-                    try:
-                        if setting and setting.plex_url and setting.plex_token:
-                            plex_connector = PlexConnector(setting.plex_url, setting.plex_token)
-                            plex_connector.set_preroll('')
-                            print(f"TOGGLE: Cleared Plex prerolls (no filler configured)")
-                    except Exception as clear_error:
-                        print(f"TOGGLE: Error clearing Plex prerolls: {clear_error}")
-
-            # Always update settings state so dashboard reflects the change
-            if setting:
-                setting.active_category = None
-                setting.active_schedule_id = None
-                setting.filler_active = None
-                db.commit()
 
 @app.put("/schedules/{schedule_id}")
 def update_schedule(schedule_id: int, schedule: ScheduleCreate, db: Session = Depends(get_db)):
@@ -9780,11 +9434,14 @@ def update_schedule(schedule_id: int, schedule: ScheduleCreate, db: Session = De
         log_event('ERROR', 'scheduler', f'Schedule update failed: {e}', source='update_schedule', details={'schedule_id': schedule_id})
         raise HTTPException(status_code=500, detail=f"Failed to update schedule: {str(e)}")
     
-    # Apply changes to Plex immediately using win/lose logic
+    # Re-evaluate the scheduler immediately so dashboard + Plex reflect the change without
+    # waiting up to 60 seconds for the next tick. (Pre-v1.13.5 this called a ~410-line
+    # parallel reimplementation of scheduler logic — `_apply_schedule_win_lose_logic` —
+    # which has since been removed; the scheduler is the single source of truth.)
     try:
-        _apply_schedule_win_lose_logic(db, is_being_enabled, is_being_disabled, db_schedule)
+        scheduler.trigger_immediate_check()
     except Exception as apply_error:
-        print(f"SCHEDULER: Warning - Failed to apply schedule changes to Plex: {apply_error}")
+        print(f"SCHEDULER: Warning - immediate check after schedule update failed: {apply_error}")
     
     # Log meaningful action
     if is_being_disabled:
@@ -9817,7 +9474,16 @@ def delete_schedule(schedule_id: int, db: Session = Depends(get_db)):
     
     log_event('INFO', 'scheduler', f"Schedule '{schedule_name}' deleted", source='delete_schedule',
               details={'schedule_id': schedule_id, 'schedule_name': schedule_name})
-    
+
+    # If the deleted schedule was the active winner, re-evaluate immediately so the
+    # dashboard tile picks up the new winner (or "no schedule") before the next 60-second
+    # tick. Without this, deleting the active schedule leaves Plex serving its old
+    # prerolls and the tile showing the deleted schedule's name until the next tick.
+    try:
+        scheduler.trigger_immediate_check()
+    except Exception:
+        pass
+
     return {"message": "Schedule deleted"}
 
 # ============================================================================
@@ -9942,17 +9608,56 @@ def delete_saved_sequence(sequence_id: int, db: Session = Depends(get_db)):
     db_sequence = db.query(models.SavedSequence).filter(models.SavedSequence.id == sequence_id).first()
     if not db_sequence:
         raise HTTPException(status_code=404, detail="Sequence not found")
-    
+
     try:
         sequence_name = db_sequence.name
+
+        # Clear filler references and any "applied sequence" override that would dangle
+        # at a deleted ID. Without this, filler silently fails to apply (sequence not
+        # found at runtime) and the dashboard's applied_sequence_name lingers stale
+        # for up to 15 minutes (override_expires_at).
+        setting = db.query(models.Setting).first()
+        cleared_filler = False
+        cleared_override = False
+        if setting:
+            if getattr(setting, "filler_sequence_id", None) == sequence_id:
+                setting.filler_sequence_id = None
+                # If filler was set to "sequence" type and this was THE sequence, disable
+                # filler entirely — otherwise it sits in a broken state pointing at None.
+                if getattr(setting, "filler_type", None) == "sequence":
+                    setting.filler_enabled = False
+                cleared_filler = True
+            if getattr(setting, "applied_sequence_id", None) == sequence_id:
+                setting.applied_sequence_id = None
+                setting.applied_sequence_name = None
+                setting.override_expires_at = None
+                cleared_override = True
+
         db.delete(db_sequence)
         db.commit()
-        
+
+        # Re-evaluate scheduler if we cleared a live reference so the dashboard reflects
+        # the new state (filler off, no applied-sequence override) immediately.
+        if cleared_filler or cleared_override:
+            try:
+                scheduler.trigger_immediate_check()
+            except Exception:
+                pass
+
         _file_log(f"Deleted sequence: {sequence_name} (ID: {sequence_id})")
-        log_event('INFO', 'nexup', f"NeX-Up sequence '{sequence_name}' deleted", 
-                  source='delete_sequence', details={"sequence_id": sequence_id}, db=db)
-        
-        return {"message": "Sequence deleted successfully"}
+        log_event('INFO', 'nexup', f"NeX-Up sequence '{sequence_name}' deleted",
+                  source='delete_sequence',
+                  details={
+                      "sequence_id": sequence_id,
+                      "cleared_filler": cleared_filler,
+                      "cleared_override": cleared_override,
+                  }, db=db)
+
+        return {
+            "message": "Sequence deleted successfully",
+            "cleared_filler": cleared_filler,
+            "cleared_applied_override": cleared_override,
+        }
     except Exception as e:
         db.rollback()
         _file_log(f"Failed to delete sequence {sequence_id}: {e}")
@@ -9974,12 +9679,10 @@ def apply_sequence_to_server(sequence_id: int, db: Session = Depends(get_db)):
     if not blocks:
         raise HTTPException(status_code=400, detail="Sequence has no blocks")
 
-    # Helper to gather prerolls for a category (primary and many-to-many)
+    # Delegate to the canonical helper imported from scheduler so the m2m + enabled
+    # filter logic lives in one place.
     def _prerolls_for_category(cid: int):
-        return db.query(models.Preroll) \
-            .outerjoin(models.preroll_categories, models.Preroll.id == models.preroll_categories.c.preroll_id) \
-            .filter(or_(models.Preroll.category_id == cid, models.preroll_categories.c.category_id == cid)) \
-            .distinct().all()
+        return prerolls_for_category_query(db, cid).all()
 
     # Resolve blocks into ordered file paths
     paths = []
@@ -11589,11 +11292,16 @@ def export_sequence_pattern(
                     if category:
                         pattern_block['category_name'] = category.name
                         
-                        # For preroll_data mode, include category's prerolls metadata
+                        # For preroll_data mode, include category's prerolls metadata.
+                        # Use m2m so we include prerolls that have this category as a
+                        # secondary tag, not just legacy primary membership.
                         if export_mode in ['with_preroll_data', 'full_bundle']:
                             category_prerolls = db.query(models.Preroll).filter(
-                                models.Preroll.category_id == category_id
-                            ).all()
+                                or_(
+                                    models.Preroll.category_id == category_id,
+                                    models.Preroll.categories.any(models.Category.id == category_id),
+                                )
+                            ).distinct().all()
                             pattern_block['available_prerolls'] = [
                                 {
                                     'name': p.display_name or p.filename,
@@ -11725,14 +11433,18 @@ def export_sequence_pattern(
                         block_type = block.get('type', '')
                         
                         if block_type == 'random':
-                            # For random blocks, export entire category folder
+                            # For random blocks, export entire category folder. Include m2m
+                            # members so secondary-tagged prerolls travel with the bundle.
                             category_id = block.get('category_id') or block.get('categoryId')
                             if category_id and category_id not in categories_exported:
                                 category = db.query(models.Category).filter(models.Category.id == category_id).first()
                                 if category:
                                     category_prerolls = db.query(models.Preroll).filter(
-                                        models.Preroll.category_id == category_id
-                                    ).all()
+                                        or_(
+                                            models.Preroll.category_id == category_id,
+                                            models.Preroll.categories.any(models.Category.id == category_id),
+                                        )
+                                    ).distinct().all()
                                     
                                     # Create category folder in ZIP
                                     category_folder = "".join(c for c in category.name if c.isalnum() or c in (' ', '_', '-'))
@@ -12752,11 +12464,135 @@ def get_current_preroll(db: Session = Depends(get_db)):
         "has_preroll": current_preroll is not None and current_preroll != ""
     }
 
+def _preview_payload_from_intent(setting, db) -> Optional[dict]:
+    """
+    Build the dashboard preview payload from NeXroll's intent (active schedule + its
+    category/sequence) instead of asking Plex. Returns None if NeXroll has no active
+    schedule recorded — caller should fall back to Plex query. Always returns a
+    well-formed payload (possibly with empty prerolls list) when intent is known,
+    so the dashboard reflects NeXroll's decisions even if Plex is stale, unreachable,
+    or pointed at paths from a different host (e.g. a Docker container's /data/prerolls
+    paths when the current NeXroll is Windows).
+    """
+    active_sched_id = getattr(setting, "active_schedule_id", None)
+    active_cat_id = getattr(setting, "active_category", None)
+    if not active_sched_id and not active_cat_id:
+        return None
+
+    schedule = None
+    if active_sched_id:
+        schedule = db.query(models.Schedule).filter(models.Schedule.id == active_sched_id).first()
+
+    def _row_for_preroll(p, cat_label=None):
+        cat_name = cat_label
+        if cat_name is None:
+            try:
+                if p.categories and len(p.categories) > 0:
+                    cat_name = p.categories[0].name
+                elif p.category_id:
+                    c = db.query(models.Category).filter(models.Category.id == p.category_id).first()
+                    if c:
+                        cat_name = c.name
+            except Exception:
+                pass
+        return {
+            "id": p.id,
+            "filename": p.filename,
+            "display_name": p.display_name or p.filename,
+            "category_name": cat_name or "Uncategorized",
+            "path": p.path,
+            "preview_url": f"/prerolls/{p.id}/video",
+        }
+
+    # Sequence-driven schedules: list each block's resolved prerolls in order
+    if schedule and _has_valid_sequence(schedule):
+        try:
+            seq = schedule.sequence
+            if isinstance(seq, str):
+                seq = json.loads(seq)
+            if not isinstance(seq, list):
+                seq = []
+        except Exception:
+            seq = []
+        rows = []
+        for block in seq:
+            try:
+                btype = str(block.get("type", "")).lower()
+            except Exception:
+                btype = ""
+            if btype == "fixed":
+                ids = block.get("preroll_ids") or block.get("prerolls") or []
+                if not ids and block.get("preroll_id"):
+                    ids = [block["preroll_id"]]
+                for pid in ids:
+                    p = db.query(models.Preroll).filter(models.Preroll.id == int(pid)).first()
+                    if p:
+                        rows.append(_row_for_preroll(p))
+            elif btype == "random":
+                cid = block.get("category_id") or schedule.category_id
+                if cid:
+                    pool = db.query(models.Preroll).filter(
+                        or_(
+                            models.Preroll.category_id == cid,
+                            models.Preroll.categories.any(models.Category.id == cid),
+                        )
+                    ).distinct().all()
+                    for p in pool:
+                        rows.append(_row_for_preroll(p))
+            # nexup_trailers / coming_soon_list / dynamic_preroll: skip for preview list — they
+            # are generated content with their own preview endpoints, not regular prerolls.
+        # Sequence preview is sequential
+        return {
+            "prerolls": rows,
+            "applied_sequence": {"id": schedule.id, "name": schedule.name} if schedule else None,
+            "mode": "sequential",
+        }
+
+    # Category-driven schedule (or filler/plain): list every preroll in the active category
+    target_cat_id = (schedule.category_id if schedule else None) or active_cat_id
+    if target_cat_id:
+        cat = db.query(models.Category).filter(models.Category.id == target_cat_id).first()
+        prerolls = db.query(models.Preroll).filter(
+            or_(
+                models.Preroll.category_id == target_cat_id,
+                models.Preroll.categories.any(models.Category.id == target_cat_id),
+            )
+        ).distinct().all()
+        rows = [_row_for_preroll(p, cat_label=cat.name if cat else None) for p in prerolls]
+        # Mode follows category's plex_mode (shuffle / playlist)
+        mode = "shuffle"
+        if cat:
+            cm = getattr(cat, "plex_mode", "shuffle") or "shuffle"
+            mode = "sequential" if cm == "playlist" else "shuffle"
+        return {
+            "prerolls": rows,
+            "applied_sequence": None,
+            "mode": mode,
+        }
+
+    return None
+
+
 @app.get("/plex/current-preroll-details")
 def get_current_preroll_details(db: Session = Depends(get_db)):
-    """Get detailed info about each preroll currently applied to Plex, for preview playback."""
+    """
+    Get detailed info about each preroll the dashboard should preview.
+    v1.13.8: prefers NeXroll's own intent (active schedule + its category/sequence)
+    over what Plex reports as the current preroll string. Plex's string can be stale,
+    pointed at paths from a different host (e.g. a leftover Docker `/data/prerolls/...`
+    on a fresh Windows install), or simply behind the latest scheduler decision.
+    Falls back to querying Plex only when NeXroll has no recorded active schedule.
+    """
     setting = db.query(models.Setting).first()
-    if not setting or not setting.plex_url:
+    if not setting:
+        return {"prerolls": [], "applied_sequence": None, "mode": "shuffle"}
+
+    # Prefer NeXroll's intent: schedules and their prerolls/sequence resolve here.
+    intent_payload = _preview_payload_from_intent(setting, db)
+    if intent_payload is not None:
+        return intent_payload
+
+    if not setting.plex_url:
         return {"prerolls": [], "applied_sequence": None, "mode": "shuffle"}
 
     current_preroll = None
@@ -12880,14 +12716,25 @@ def get_current_preroll_details(db: Session = Depends(get_db)):
                 break
 
         if preroll:
-            cat = db.query(models.Category).filter(models.Category.id == preroll.category_id).first()
+            # Prefer the m2m category list for a display label; fall back to legacy category_id
+            cat = None
+            try:
+                if preroll.categories and len(preroll.categories) > 0:
+                    cat = preroll.categories[0]
+                elif preroll.category_id:
+                    cat = db.query(models.Category).filter(models.Category.id == preroll.category_id).first()
+            except Exception:
+                pass
             results.append({
                 "id": preroll.id,
                 "filename": preroll.filename,
                 "display_name": preroll.display_name or preroll.filename,
-                "category_name": cat.name if cat else "Unknown",
+                "category_name": cat.name if cat else "Uncategorized",
                 "path": plex_path,
-                "preview_url": f"/static/prerolls/{quote(cat.name if cat else 'Unknown', safe='')}/{quote(preroll.filename, safe='')}"
+                # v1.13.7: stream by preroll ID instead of category-folder URL — works for
+                # uncategorized prerolls and for migrated files whose on-disk path no longer
+                # matches their category name.
+                "preview_url": f"/prerolls/{preroll.id}/video"
             })
             continue
 
@@ -13579,10 +13426,18 @@ def rescan_prerolls(db: Session = Depends(get_db)):
 
 @app.get("/backup/database")
 def backup_database(db: Session = Depends(get_db)):
-    """Export database to JSON"""
+    """Export database to JSON.
+
+    v1.13.13: backup payload was previously missing many model fields, so a
+    backup/restore round-trip silently dropped feature configuration (sequence
+    schedule blocks, exclusive/blend/priority flags, plex_mode on categories,
+    the `enabled` field on prerolls, holiday-preset date ranges, etc.).
+    The export now covers every column the model defines so restore is lossless.
+    `schema_version` field allows future restore code to handle older payloads.
+    """
     try:
-        # Export all data
         data = {
+            "schema_version": 2,  # bumped from implicit v1 in v1.13.13
             "prerolls": [
                 {
                     "filename": p.filename,
@@ -13593,14 +13448,24 @@ def backup_database(db: Session = Depends(get_db)):
                     "category_id": p.category_id,
                     "categories": [{"id": c.id, "name": c.name} for c in (p.categories or [])],
                     "description": p.description,
+                    "duration": getattr(p, "duration", None),
+                    "file_size": getattr(p, "file_size", None),
                     "managed": getattr(p, "managed", True),
-                    "upload_date": p.upload_date.isoformat() if p.upload_date else None
+                    "enabled": getattr(p, "enabled", True),
+                    "community_preroll_id": getattr(p, "community_preroll_id", None),
+                    "exclude_from_matching": getattr(p, "exclude_from_matching", False),
+                    "file_hash": getattr(p, "file_hash", None),
+                    "upload_date": p.upload_date.isoformat() if p.upload_date else None,
                 } for p in db.query(models.Preroll).all()
             ],
             "categories": [
                 {
+                    "id": c.id,  # carried for cross-table FK remapping on restore
                     "name": c.name,
-                    "description": c.description
+                    "description": c.description,
+                    "plex_mode": getattr(c, "plex_mode", "shuffle"),
+                    "apply_to_plex": getattr(c, "apply_to_plex", False),
+                    "is_system": getattr(c, "is_system", False),
                 } for c in db.query(models.Category).all()
             ],
             "schedules": [
@@ -13610,11 +13475,19 @@ def backup_database(db: Session = Depends(get_db)):
                     "start_date": s.start_date.isoformat() if s.start_date else None,
                     "end_date": s.end_date.isoformat() if s.end_date else None,
                     "category_id": s.category_id,
+                    "fallback_category_id": getattr(s, "fallback_category_id", None),
                     "shuffle": s.shuffle,
                     "playlist": s.playlist,
                     "is_active": s.is_active,
                     "recurrence_pattern": s.recurrence_pattern,
-                    "preroll_ids": s.preroll_ids
+                    "preroll_ids": s.preroll_ids,
+                    "sequence": getattr(s, "sequence", None),
+                    "color": getattr(s, "color", None),
+                    "blend_enabled": getattr(s, "blend_enabled", False),
+                    "priority": getattr(s, "priority", 5),
+                    "exclusive": getattr(s, "exclusive", False),
+                    "holiday_name": getattr(s, "holiday_name", None),
+                    "holiday_country": getattr(s, "holiday_country", None),
                 } for s in db.query(models.Schedule).all()
             ],
             "holiday_presets": [
@@ -13623,7 +13496,12 @@ def backup_database(db: Session = Depends(get_db)):
                     "description": h.description,
                     "month": h.month,
                     "day": h.day,
-                    "category_id": h.category_id
+                    "start_month": getattr(h, "start_month", None),
+                    "start_day": getattr(h, "start_day", None),
+                    "end_month": getattr(h, "end_month", None),
+                    "end_day": getattr(h, "end_day", None),
+                    "is_recurring": getattr(h, "is_recurring", True),
+                    "category_id": h.category_id,
                 } for h in db.query(models.HolidayPreset).all()
             ],
             "saved_sequences": [
@@ -13635,7 +13513,8 @@ def backup_database(db: Session = Depends(get_db)):
                     "updated_at": seq.updated_at.isoformat() if seq.updated_at else None
                 } for seq in db.query(models.SavedSequence).all()
             ],
-            "exported_at": datetime.datetime.utcnow().isoformat()
+            "exported_at": datetime.datetime.utcnow().isoformat(),
+            "exported_by_version": "1.13.13",
         }
 
         return data
@@ -13805,7 +13684,9 @@ def restore_database(backup_data: dict, db: Session = Depends(get_db)):
         db.commit()
         print("RESTORE: All deletions committed successfully")
 
-        # Restore categories first (needed for foreign keys)
+        # Restore categories first (needed for foreign keys). v1.13.13 schema_version=2
+        # backups include plex_mode / apply_to_plex / is_system; pre-v1.13.13 backups
+        # have just name + description, which we fall back to.
         print("RESTORE: Restoring categories...")
         old_id_to_new_id = {}  # Map old category IDs to new IDs
         for cat_data in backup_data.get("categories", []):
@@ -13813,7 +13694,10 @@ def restore_database(backup_data: dict, db: Session = Depends(get_db)):
                 old_id = cat_data.get("id")
                 category = models.Category(
                     name=cat_data.get("name"),
-                    description=cat_data.get("description")
+                    description=cat_data.get("description"),
+                    plex_mode=cat_data.get("plex_mode") or "shuffle",
+                    apply_to_plex=bool(cat_data.get("apply_to_plex", False)),
+                    is_system=bool(cat_data.get("is_system", False)),
                 )
                 db.add(category)
                 db.flush()  # Get the new ID
@@ -13852,8 +13736,15 @@ def restore_database(backup_data: dict, db: Session = Depends(get_db)):
                     tags=preroll_data.get("tags"),
                     category_id=new_cat_id,
                     description=preroll_data.get("description"),
+                    duration=preroll_data.get("duration"),
+                    file_size=preroll_data.get("file_size"),
                     upload_date=upload_date,
-                    managed=preroll_data.get("managed", True)
+                    managed=preroll_data.get("managed", True),
+                    # v1.13.13: previously-missing fields restored
+                    enabled=bool(preroll_data.get("enabled", True)),
+                    community_preroll_id=preroll_data.get("community_preroll_id"),
+                    exclude_from_matching=bool(preroll_data.get("exclude_from_matching", False)),
+                    file_hash=preroll_data.get("file_hash"),
                 )
                 db.add(p)
                 db.flush()  # get p.id without full commit
@@ -13911,7 +13802,17 @@ def restore_database(backup_data: dict, db: Session = Depends(get_db)):
                     playlist=schedule_data.get("playlist", False),
                     is_active=schedule_data.get("is_active", True),
                     recurrence_pattern=schedule_data.get("recurrence_pattern"),
-                    preroll_ids=schedule_data.get("preroll_ids")
+                    preroll_ids=schedule_data.get("preroll_ids"),
+                    # v1.13.13: previously-missing fields restored. Without these, sequence
+                    # schedules came back as plain category schedules, blend/exclusive/priority
+                    # were lost, and holiday-API auto-update bindings were dropped.
+                    sequence=schedule_data.get("sequence"),
+                    color=schedule_data.get("color"),
+                    blend_enabled=bool(schedule_data.get("blend_enabled", False)),
+                    priority=schedule_data.get("priority") if schedule_data.get("priority") is not None else 5,
+                    exclusive=bool(schedule_data.get("exclusive", False)),
+                    holiday_name=schedule_data.get("holiday_name"),
+                    holiday_country=schedule_data.get("holiday_country"),
                 )
                 db.add(schedule)
             except Exception as schedule_err:
@@ -13931,6 +13832,12 @@ def restore_database(backup_data: dict, db: Session = Depends(get_db)):
                     description=holiday_data.get("description"),
                     month=holiday_data.get("month"),
                     day=holiday_data.get("day"),
+                    # v1.13.13: date-range and is_recurring fields, previously dropped
+                    start_month=holiday_data.get("start_month"),
+                    start_day=holiday_data.get("start_day"),
+                    end_month=holiday_data.get("end_month"),
+                    end_day=holiday_data.get("end_day"),
+                    is_recurring=bool(holiday_data.get("is_recurring", True)),
                     category_id=new_cat_id
                 )
                 db.add(holiday)
@@ -14813,6 +14720,43 @@ def get_or_create_thumbnail(category: str, thumb_name: str):
 
     return FileResponse(thumb_path, media_type="image/jpeg")
 
+@app.get("/prerolls/{preroll_id}/video")
+def get_preroll_video_by_id(preroll_id: int, db: Session = Depends(get_db)):
+    """
+    Serve a preroll's video file by its ID. Looks up the preroll's stored `path` and
+    streams it. Works regardless of category folder structure, uncategorized prerolls,
+    or where the file actually lives on disk — so the frontend preview modal does not
+    have to reconstruct a URL from category + filename (which broke for uncategorized
+    prerolls after v1.13.0). Mirrors v1.12.21 scanner's "trust the DB path" approach.
+    """
+    p = db.query(models.Preroll).filter(models.Preroll.id == preroll_id).first()
+    if not p:
+        raise HTTPException(status_code=404, detail="Preroll not found")
+
+    # Resolve path: absolute as-is, or relative under data_dir
+    if p.path and os.path.isabs(p.path):
+        video_path = p.path
+    elif p.path:
+        video_path = os.path.join(data_dir, p.path)
+    else:
+        raise HTTPException(status_code=404, detail="Preroll has no file path on record")
+
+    if not os.path.exists(video_path):
+        raise HTTPException(
+            status_code=404,
+            detail=f"Preroll file missing on disk: {video_path}. Try the Rescan Files button on the Backup & Restore page."
+        )
+
+    ext = os.path.splitext(video_path)[1].lower()
+    if ext not in ('.mp4', '.mkv', '.avi', '.mov', '.webm', '.m4v', '.wmv', '.ts'):
+        raise HTTPException(status_code=400, detail="Not a video file")
+
+    import mimetypes
+    mime_type, _ = mimetypes.guess_type(video_path)
+    if not mime_type or not mime_type.startswith("video/"):
+        mime_type = "video/mp4"
+    return FileResponse(video_path, media_type=mime_type)
+
 @app.get("/preview/file")
 def preview_file_by_path(path: str):
     """Serve a video file by its absolute path (for previewing unmanaged prerolls)."""
@@ -14873,49 +14817,37 @@ def get_preroll_video(category: str, filename: str, db: Session = Depends(get_db
         except Exception:
             pass
 
-    # If still not found, check for externally managed preroll
+    # Still not on disk under the category folder? Fall back to a DB lookup. Prefer
+    # m2m membership so prerolls tagged with this category as a secondary still resolve;
+    # also accept legacy category_id matches. Finally fall back to filename-only when
+    # uniquely matched (handles uncategorized prerolls and post-migration paths where the
+    # on-disk location does not match category name).
     if not os.path.exists(video_path):
         try:
-            # Find category by name
             cat_obj = db.query(models.Category).filter(models.Category.name == category).first()
-            print(f"[PREROLL DEBUG] Looking up in database:")
-            print(f"  Category: {category}, Found cat_obj: {cat_obj.id if cat_obj else None}")
+            preroll = None
             if cat_obj:
-                # Find preroll by filename and category_id
                 preroll = db.query(models.Preroll).filter(
                     models.Preroll.filename == filename,
-                    models.Preroll.category_id == cat_obj.id
+                    or_(
+                        models.Preroll.category_id == cat_obj.id,
+                        models.Preroll.categories.any(models.Category.id == cat_obj.id),
+                    )
                 ).first()
-                print(f"  Filename: {filename}, Found preroll: {preroll.id if preroll else None}")
-                if preroll:
-                    print(f"  Preroll.path: {preroll.path}")
-                    print(f"  Preroll.managed: {getattr(preroll, 'managed', 'N/A')}")
-                    # Use the preroll's path directly (whether managed or not)
-                    # If it's externally managed (managed=False), path is absolute
-                    # If it's managed (managed=True), path may be relative
-                    if hasattr(preroll, 'managed') and preroll.managed == False:
-                        video_path = preroll.path
-                        print(f"  Using external path: {video_path}")
-                    elif preroll.path and not os.path.isabs(preroll.path):
-                        video_path = os.path.join(data_dir, preroll.path)
-                        print(f"  Using relative path joined with data_dir: {video_path}")
-                    else:
-                        video_path = preroll.path
-                        print(f"  Using absolute path as-is: {video_path}")
+            if not preroll:
+                matches = db.query(models.Preroll).filter(models.Preroll.filename == filename).all()
+                if len(matches) == 1:
+                    preroll = matches[0]
+            if preroll and preroll.path:
+                if os.path.isabs(preroll.path):
+                    video_path = preroll.path
+                else:
+                    video_path = os.path.join(data_dir, preroll.path)
         except Exception as e:
-            print(f"Error checking database for preroll: {e}")
-            import traceback
-            traceback.print_exc()
-            pass
+            _file_log(f"static/prerolls fallback DB lookup failed for {category}/{filename}: {e}", level="WARNING")
 
     if not os.path.exists(video_path):
-        # Log for debugging
-        print(f"Video not found at: {video_path}")
-        print(f"  Category: {category}")
-        print(f"  Filename: {filename}")
-        print(f"  PREROLLS_DIR: {PREROLLS_DIR}")
-        print(f"  Category dir: {cat_dir}")
-        print(f"  Category dir exists: {os.path.isdir(cat_dir)}")
+        _file_log(f"static/prerolls: video not found for category={category} filename={filename} (resolved={video_path})", level="WARNING")
         raise HTTPException(status_code=404, detail="Video not found")
 
     # Detect mime type
@@ -15611,42 +15543,6 @@ def get_genre_settings(db: Session = Depends(get_db)):
         "genre_aggressive_intercept_enabled": getattr(setting, "genre_aggressive_intercept_enabled", False)
     }
 
-@app.get("/settings/dashboard-tile-order")
-def get_dashboard_tile_order(db: Session = Depends(get_db)):
-    """Get the saved dashboard tile order"""
-    setting = db.query(models.Setting).first()
-    if not setting:
-        return {"tile_order": []}
-
-    try:
-        tile_order = getattr(setting, "dashboard_tile_order", None)
-        if tile_order:
-            return {"tile_order": json.loads(tile_order)}
-        else:
-            return {"tile_order": []}
-    except Exception:
-        return {"tile_order": []}
-
-@app.put("/settings/dashboard-tile-order")
-def set_dashboard_tile_order(tile_order: list[str], db: Session = Depends(get_db)):
-    """Save the dashboard tile order"""
-    setting = db.query(models.Setting).first()
-    if not setting:
-        setting = models.Setting(plex_url=None, plex_token=None)
-        db.add(setting)
-        db.commit()
-        db.refresh(setting)
-
-    try:
-        setting.dashboard_tile_order = json.dumps(tile_order)
-        setting.updated_at = datetime.datetime.utcnow()
-        db.commit()
-        return {"saved": True, "tile_order": tile_order}
-    except Exception as e:
-        db.rollback()
-        log_event('ERROR', 'system', f'Failed to save dashboard tile order: {e}', source='save_dashboard_tile_order')
-        raise HTTPException(status_code=500, detail=f"Failed to save dashboard tile order: {str(e)}")
-
 @app.put("/settings/genre")
 def update_genre_settings(
     genre_auto_apply: bool = None,
@@ -15860,7 +15756,11 @@ def update_filler_settings(
               details={"type": setting.filler_type, "enabled": setting.filler_enabled,
                        "category_id": setting.filler_category_id, "sequence_id": setting.filler_sequence_id}, db=db)
     
-    # If filler is enabled, immediately apply it to Plex
+    # If filler is enabled, immediately apply it to Plex.
+    # If it's disabled, run a scheduler tick so the dashboard reflects whichever
+    # schedule (or "nothing") takes over without the up-to-60s wait. Resolves
+    # DASHBOARD-3 — disable transition used to leave the tile stale until the
+    # next normal tick.
     applied = False
     if setting.filler_enabled:
         try:
@@ -15869,7 +15769,12 @@ def update_filler_settings(
             print(f"Error applying filler immediately: {e}")
             _file_log(f"Error applying filler immediately: {e}")
             log_event('ERROR', 'system', f'Filler apply failed: {e}', source='update_filler_settings')
-    
+    else:
+        try:
+            scheduler.trigger_immediate_check()
+        except Exception:
+            pass
+
     return {
         "message": f"Filler category updated" + (" and applied to Plex" if applied else ""),
         "enabled": setting.filler_enabled,
@@ -16787,17 +16692,14 @@ def delete_tv_trailer(trailer_id: int, db: Session = Depends(get_db)):
         except Exception as e:
             _file_log(f"Failed to delete TV trailer file: {e}")
     
-    # Delete associated preroll
-    if trailer.local_path:
-        preroll = db.query(models.Preroll).filter(
-            models.Preroll.path == trailer.local_path
-        ).first()
-        if preroll:
-            db.delete(preroll)
-    
+    # Delete associated preroll (path-tolerant lookup)
+    preroll = _find_preroll_for_trailer(db, trailer.local_path)
+    if preroll:
+        db.delete(preroll)
+
     db.delete(trailer)
     db.commit()
-    
+
     return {"success": True, "message": "TV trailer deleted"}
 
 @app.put("/nexup/trailers/tv/{trailer_id}/toggle")
@@ -16813,16 +16715,14 @@ def toggle_tv_trailer(trailer_id: int, db: Session = Depends(get_db)):
     trailer.is_enabled = not trailer.is_enabled
     trailer.updated_at = datetime.datetime.utcnow()
     
-    # Also toggle the associated preroll
-    if trailer.local_path:
-        preroll = db.query(models.Preroll).filter(
-            models.Preroll.path == trailer.local_path
-        ).first()
-        if preroll:
-            preroll.enabled = trailer.is_enabled
-    
+    # Also toggle the associated preroll (path-tolerant lookup so case/separator
+    # differences don't silently miss it — see NEXUP-2)
+    preroll = _find_preroll_for_trailer(db, trailer.local_path)
+    if preroll:
+        preroll.enabled = trailer.is_enabled
+
     db.commit()
-    
+
     return {"success": True, "is_enabled": trailer.is_enabled}
 
 # Helper function to auto-regenerate Coming Soon List after sync
@@ -18541,13 +18441,10 @@ def delete_nexup_trailer(trailer_id: int, db: Session = Depends(get_db)):
     if not trailer:
         raise HTTPException(status_code=404, detail="Trailer not found")
     
-    # Delete the corresponding Preroll record if it exists
-    if trailer.local_path:
-        preroll_record = db.query(models.Preroll).filter(
-            models.Preroll.path == trailer.local_path
-        ).first()
-        if preroll_record:
-            db.delete(preroll_record)
+    # Delete the corresponding Preroll record if it exists (path-tolerant)
+    preroll_record = _find_preroll_for_trailer(db, trailer.local_path)
+    if preroll_record:
+        db.delete(preroll_record)
     
     # Delete the file
     if trailer.local_path and os.path.exists(trailer.local_path):
@@ -18579,13 +18476,10 @@ def toggle_nexup_trailer(trailer_id: int, db: Session = Depends(get_db)):
     trailer.updated_at = datetime.datetime.utcnow()
 
     # Keep the associated Preroll record in sync so random category blocks
-    # also respect the enabled state (TV trailer toggle already does this)
-    if trailer.local_path:
-        preroll = db.query(models.Preroll).filter(
-            models.Preroll.path == trailer.local_path
-        ).first()
-        if preroll:
-            preroll.enabled = trailer.is_enabled
+    # also respect the enabled state (path-tolerant lookup — see NEXUP-2).
+    preroll = _find_preroll_for_trailer(db, trailer.local_path)
+    if preroll:
+        preroll.enabled = trailer.is_enabled
 
     db.commit()
 
@@ -25452,25 +25346,25 @@ def get_dashboard_stats(db: Session = Depends(get_db)):
                     resolution_breakdown["unknown"] += 1
         
         # --- Category Statistics ---
+        # Counts use the m2m relationship as the single source of truth (the v1.13.0
+        # migration backfilled m2m from the legacy category_id, so every primary is
+        # also in m2m). The old code did `primary_count + m2m_count` which DOUBLE-counted
+        # any preroll where category_id matched and an m2m row existed for the same
+        # category — i.e. every preroll after migration.
         categories = db.query(models.Category).all()
         category_stats = []
         for cat in categories:
-            # Count prerolls in this category (primary + many-to-many)
-            primary_count = db.query(models.Preroll).filter(models.Preroll.category_id == cat.id).count()
-            # Also count many-to-many associations
-            m2m_count = db.query(models.preroll_categories).filter(
-                models.preroll_categories.c.category_id == cat.id
-            ).count()
-            total_in_cat = primary_count + m2m_count
-            
-            # Calculate storage for this category
-            cat_prerolls = db.query(models.Preroll).filter(models.Preroll.category_id == cat.id).all()
+            cat_prerolls = db.query(models.Preroll).filter(
+                or_(
+                    models.Preroll.category_id == cat.id,
+                    models.Preroll.categories.any(models.Category.id == cat.id),
+                )
+            ).distinct().all()
             cat_size = sum((p.file_size or 0) for p in cat_prerolls)
-            
             category_stats.append({
                 "id": cat.id,
                 "name": cat.name,
-                "preroll_count": total_in_cat,
+                "preroll_count": len(cat_prerolls),
                 "storage_bytes": cat_size,
                 "is_system": getattr(cat, "is_system", False)
             })
@@ -25607,23 +25501,11 @@ def _resolve_current_intros(db: Session) -> dict:
     if not setting:
         return {"paths": [], "mode": "shuffle"}
 
-    # --- Helper: query prerolls belonging to a category (primary + M2M) ---
+    # Delegate to the canonical helper from scheduler.py for the m2m + enabled
+    # filter. Single source of truth shared with every scheduler apply path and
+    # the manual sequence-apply endpoint.
     def _prerolls_for_category(cid: int):
-        return (
-            db.query(models.Preroll)
-            .outerjoin(
-                models.preroll_categories,
-                models.Preroll.id == models.preroll_categories.c.preroll_id,
-            )
-            .filter(
-                or_(
-                    models.Preroll.category_id == cid,
-                    models.preroll_categories.c.category_id == cid,
-                )
-            )
-            .distinct()
-            .all()
-        )
+        return prerolls_for_category_query(db, cid).all()
 
     # --- Helper: resolve a list of sequence blocks into ordered paths ---
     def _resolve_blocks(blocks: list) -> list[str]:

@@ -30,6 +30,7 @@ class Preroll(Base):
     community_preroll_id = Column(String, nullable=True, index=True)  # ID from community prerolls library
     exclude_from_matching = Column(Boolean, default=False)  # Exclude from auto-matching to community prerolls
     file_hash = Column(String, nullable=True, index=True)  # SHA256 hash for duplicate detection
+    enabled = Column(Boolean, default=True)  # When False, scheduler skips this preroll in random / category picks. Set by NeX-Up trailer toggle to disable a trailer's preroll record everywhere it could be picked.
 
     category = relationship("Category")
     # Additional categories (many-to-many via preroll_categories)
