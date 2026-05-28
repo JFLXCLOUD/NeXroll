@@ -44,8 +44,16 @@ const SequencePreviewModal = ({ isOpen, onClose, blocks = [], categories = [], p
         .map(id => prs.find(p => p.id === id))
         .filter(Boolean);
     } else if (block.type === 'random' || block.type === 'sequential') {
-      // Filter to only prerolls with existing files for random/sequential selection
-      return prs.filter((p) => p.category_id === block.category_id && p.file_exists !== false);
+      // Match the backend's category-resolution rule: a preroll belongs to a
+      // category via either the legacy category_id column OR the m2m categories
+      // relationship. Pre-v1.13.2 we only checked category_id, so any preroll
+      // imported / re-tagged after the m2m migration was invisible to the
+      // sequence preview (skipped the block entirely).
+      return prs.filter((p) =>
+        p.file_exists !== false &&
+        (p.category_id === block.category_id ||
+         (Array.isArray(p.categories) && p.categories.some(c => c.id === block.category_id)))
+      );
     } else if (block.type === 'queue') {
       return []; // Queue items would be dynamic
     } else if (block.type === 'sequence') {
@@ -190,24 +198,24 @@ const SequencePreviewModal = ({ isOpen, onClose, blocks = [], categories = [], p
     }
   };
 
-  // Helper function to get video URL for a preroll
+  // Helper function to get video URL for a preroll.
+  // v1.13.18: stream by preroll ID instead of reconstructing a category-folder URL.
+  // The old `static/prerolls/{category}/{filename}` pattern fell back to "unknown" for
+  // uncategorized prerolls and 404'd. That's the user-reported "sequence preview
+  // doesn't play the final preroll" — if the last item's category resolution failed,
+  // handleVideoError would silently advance past the end of the playlist. Mirrors
+  // the PREVIEW-1 fix already applied in App.js and main.py.
   const getVideoUrl = (preroll) => {
-    if (!preroll || !apiUrl) {
-      return '';
-    }
-    
-    // Get category name from preroll's category object or find it in snapshot categories
+    if (!preroll || !apiUrl) return '';
+    if (preroll.id) return apiUrl(`prerolls/${preroll.id}/video`);
+    // Last-resort fallback for legacy items without an id — unlikely but safe.
     let categoryName = 'unknown';
     if (preroll.category && preroll.category.name) {
       categoryName = preroll.category.name;
     } else if (preroll.category_id) {
       const category = snapshotRef.current.categories.find(c => c.id === preroll.category_id);
-      if (category) {
-        categoryName = category.name;
-      }
+      if (category) categoryName = category.name;
     }
-    
-    // Build the URL using the same format as regular preview
     return apiUrl(`static/prerolls/${encodeURIComponent(categoryName)}/${encodeURIComponent(preroll.filename)}`);
   };
 

@@ -1,5 +1,128 @@
 # Changelog
 
+## [1.13.18] - 05-27-2026
+
+### Bug Fixes (from 2026-05-27 user diagnostic bundle)
+
+- **Sequence editor now plays the final preroll (PREVIEW-2).** `SequencePreviewModal`
+  was constructing video URLs as `static/prerolls/<category-name>/<filename>` —
+  the same broken pattern fixed for the simple preview modal in PREVIEW-1. When
+  a sequence item's resolved category-folder + filename didn't match the actual
+  on-disk location (uncategorized prerolls, files in folders that don't share
+  the category name, sequence items whose category was renamed), the request
+  404'd and playback silently stopped before reaching the last item. Switched
+  to the canonical `GET /prerolls/{id}/video` endpoint, which streams directly
+  by row id and is independent of the file's folder layout. Legacy items without
+  an `id` still fall back to the static path.
+- **Inflated preroll totals fixable from the UI (SCANNER-1).** When external
+  tooling deletes files from disk or historical sync races create duplicate
+  rows pointing at the same path, the dashboard count drifts off the actual
+  file count. The rescan endpoint already detected these (`missing_files`
+  stat) but couldn't act on them. Added two opt-in cleanup actions:
+  1. `POST /prerolls/rescan?delete_missing=true` — drops DB rows whose `path`
+     no longer resolves to a file on disk. Returns `deleted_missing` count.
+  2. `POST /prerolls/rescan?dedupe=true` — groups remaining rows by normalized
+     path, keeps the lowest-id row, deletes the rest. Carries m2m category tags
+     from the duplicates to the keeper. Returns `deduped_rows` count.
+  Both surfaced as separate buttons in Settings → Backup → Rescan Preroll Files
+  ("Remove Missing Rows", "Dedupe Duplicates") with browser-level confirmation
+  before either runs.
+- **Dashboard banner prompts the user when cleanup is needed (HEALTH-1).** The
+  startup scan now also counts duplicate DB rows (non-destructive) alongside
+  the existing `missing_files` count and caches both in memory. New endpoint
+  `GET /system/health/storage` exposes the snapshot. The dashboard fetches
+  it on load and, when either count is > 0, shows a warning banner naming the
+  exact count and the button to click. A "Take Me There" action deep-links to
+  Settings → Backup, scrolls the Rescan card into view, and briefly highlights
+  the recommended button (red ring for Remove Missing Rows, amber for Dedupe).
+  Banner is dismissible per session so users can defer until they're ready.
+  Counts are recomputed from current DB state after each cleanup pass, so the
+  banner reflects post-cleanup reality immediately — no second rescan needed.
+- **Dashboard "random" sequence block plays ONE preroll, not the whole pool
+  (PREVIEW-3).** When a schedule's sequence contained a `random` block,
+  `_preview_payload_from_intent` was appending every preroll in the source
+  category to the preview list, and `mode='sequential'` then played them all
+  in order. Plex's actual behavior is to pick one at playback time, so the
+  dashboard's preview contradicted what Plex was doing (and what the user
+  expected: "one random from the category"). Now picks one at preview-build
+  time to mirror Plex.
+- **Update check no longer spams red ERROR rows when GitHub is unreachable
+  (LOG-2).** Transient network failures (Windows firewall block / WinError
+  10013, DNS failure, GitHub timeout, no internet) used to log at ERROR every
+  hour for users with hourly update checks — even though there's nothing to
+  fix in NeXroll itself. Now those are classified as WARNING with a "Update
+  check skipped (network unavailable)" message, and only genuine
+  response-parsing or unexpected exceptions still log at ERROR. The endpoint
+  also returns a `network_error: true` flag so the frontend can react.
+- **Update check backs off after consecutive network failures (LOG-3).** The
+  frontend was scheduling a fresh check every hour regardless of whether the
+  previous attempts succeeded, which meant a firewall-blocked install logged a
+  warning 24 times a day. After 3 consecutive network failures the next
+  attempt is deferred 6 hours; after 6, deferred 24 hours. Counter resets on
+  the first successful round-trip with GitHub.
+- **This Week's Schedule header surfaces filler days (UI-1).** When gap-filler
+  was enabled, days with no active schedules just showed "none" in the column
+  header — the user had to scan down to the bottom filler row to see that
+  filler would be playing. The header now reads "Filler" in cyan with a small
+  glowing dot, matching the existing filler-row treatment, so it's clear at a
+  glance which days will run filler content all day.
+- **Rescan buttons show "Rescanning..." instead of "Restoring..." (UI-2).** The
+  progress banner on Settings → Backup hard-coded a two-state label (Creating
+  Backup / Restoring) and defaulted any non-backup action to "Restoring..." —
+  clicking Rescan Files Now / Remove Missing Rows / Dedupe Duplicates therefore
+  looked like a restore was in progress. Banner now picks a label that matches
+  the action type.
+- **Yearly calendar month boxes no longer overflow (UI-3).** Schedule names in
+  the year view used `flex: 1` + `text-overflow: ellipsis` but were missing
+  `min-width: 0` — flex items default to `min-width: auto`, which prevents
+  shrinking below content width, so long names pushed past the right edge of
+  the month card. Added `min-width: 0` on the row + name span and `overflow:
+  hidden` on the card so the rounded border clips anything that still drifts.
+- **Dashboard preview now resolves trailer / Coming Soon / dynamic-preroll
+  blocks (PREVIEW-5).** `_preview_payload_from_intent` was only handling
+  `fixed` and `random` blocks. When a sequence contained `nexup_trailers`,
+  `coming_soon_list`, or `dynamic_preroll` blocks (the modern Coming Soon
+  setup), those segments were silently dropped from the dashboard's
+  "Currently Playing" preview — the user saw the random preroll play and
+  thought "the last block didn't play" because the surrounding context was
+  missing. The sequence editor modal already handled these block types via
+  `/sequences/resolve-preview-blocks`; the dashboard now mirrors that logic
+  inline so the preview matches what plays in Plex.
+- **Sequence builder preview no longer skips preroll blocks for m2m-tagged
+  prerolls (PREVIEW-4).** `SequencePreviewModal.getBlockPrerolls` filtered the
+  pool for `random` / `sequential` blocks by the legacy `category_id` column
+  only. After the v1.13.2 category overhaul, many prerolls live in their
+  category via the m2m `categories` relationship instead — those were
+  invisible to the preview, so the block resolved to an empty list and the
+  preroll segment was silently skipped (user saw Coming Soon + trailers and
+  no preroll). Filter now mirrors the backend rule: matches either
+  `category_id` or any entry in `categories[]`.
+- **Yearly schedule with no `end_date` now means "all year" (SCHEDULER-8).**
+  Previous behavior treated it as a single-day-per-year schedule active only on
+  the exact month/day of `start_date`. A user who created "Omega- Year Round
+  Schedule" without setting `end_date` got a one-day yearly that never applied
+  on any day except the start_date. The frontend's "is this active now?" check
+  didn't share the same single-day limitation, so the Upcoming tile said the
+  schedule was active while the scheduler silently rejected it every tick —
+  the dashboard's Currently Showing box stayed empty. Yearly schedules with
+  `end_date` set keep their existing date-range behavior. Also added support
+  for year-boundary-crossing ranges (e.g. Dec 18 → Jan 3).
+- **`/static/<full-URL>` errors eliminated (LOG-1).** NeX-Up trailers store TMDB
+  poster URLs in their preroll `thumbnail` field. The frontend was building
+  `apiUrl(\`static/${preroll.thumbnail}\`)` which concatenated the full external
+  URL onto the local static path, then the backend tried to serve it as a file
+  and crashed with WinError 123 (the colon in `https:` is invalid in Windows
+  paths). The user's diagnostic log had **2791 such errors**. Fixed in two places:
+  1. New `thumbnailUrl()` frontend helper detects values starting with `http(s)://`
+     and uses them as-is. Replaced 4 preroll-card sites.
+  2. Defensive backend HTTP middleware rejects any `/static/...://...` request
+     with a clean 404 before it reaches the StaticFiles mount. Catches stragglers
+     from old cached frontend bundles.
+- **Long preroll titles readable in the Add-Prerolls picker (IMPORT-2).** The
+  filename label used `whiteSpace: nowrap` + ellipsis, so anything longer than
+  the thumbnail width was unreadable until added. Now wraps to two lines
+  (`-webkit-line-clamp: 2`) with the full title on hover.
+
 ## [1.13.17] - 05-26-2026
 
 ### UX (post-audit testing fix)

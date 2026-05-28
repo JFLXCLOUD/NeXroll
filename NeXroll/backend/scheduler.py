@@ -1974,24 +1974,34 @@ class Scheduler:
                                        f"could not resolve holiday '{h_name}' for {now.year}")
                     return False
             else:
-                # Standard yearly: match month/day from start_date
-                if not (now.month == schedule.start_date.month and now.day == schedule.start_date.day):
-                    # Also check end_date range within the year if set
-                    if getattr(schedule, "end_date", None):
-                        # Build this year's range from the stored month/day
-                        try:
-                            this_year_start = schedule.start_date.replace(year=now.year)
-                            this_year_end = schedule.end_date.replace(year=now.year)
-                            if not (this_year_start <= now <= this_year_end):
-                                _scheduler_verbose(f"Schedule '{schedule.name}' (yearly) not in range "
-                                                   f"{this_year_start} - {this_year_end}")
-                                return False
-                        except ValueError:
-                            return False  # e.g., Feb 29 in non-leap year
-                    else:
-                        _scheduler_verbose(f"Schedule '{schedule.name}' (yearly) not active: "
-                                           f"today {now.month}/{now.day} != {schedule.start_date.month}/{schedule.start_date.day}")
-                        return False
+                # Standard yearly. Behavior depends on whether end_date is set:
+                #  * end_date present → schedule is active within that month/day range
+                #    each year (e.g. Mother's Day: May 1 - May 16, recurs annually).
+                #  * end_date absent  → schedule is active ALL YEAR (year-round).
+                #    Prior behavior treated this as a single-day-per-year schedule,
+                #    which surprised users who created a "Year Round" yearly schedule
+                #    without setting end_date and then watched it never apply.
+                #    A true single-day yearly is now expressed by setting end_date
+                #    to the same day as start_date.
+                end = getattr(schedule, "end_date", None)
+                if end:
+                    try:
+                        this_year_start = schedule.start_date.replace(year=now.year)
+                        this_year_end = end.replace(year=now.year)
+                        # Handle ranges that span the year boundary (e.g. Dec 18 - Jan 3)
+                        if this_year_end < this_year_start:
+                            in_range = (now >= this_year_start) or (now <= this_year_end)
+                        else:
+                            in_range = this_year_start <= now <= this_year_end
+                        if not in_range:
+                            _scheduler_verbose(
+                                f"Schedule '{schedule.name}' (yearly) not in range "
+                                f"{this_year_start} - {this_year_end}"
+                            )
+                            return False
+                    except ValueError:
+                        return False  # e.g., Feb 29 in non-leap year
+                # else: no end_date → active all year, fall through to time range check
             # Yearly passed date check — skip to time range check below
 
         # --- Holiday type: dynamic date lookup ---

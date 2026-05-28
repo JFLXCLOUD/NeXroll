@@ -2050,6 +2050,27 @@ async def _no_cache_index_mw(request, call_next):
         pass
     return response
 
+
+@app.middleware("http")
+async def _reject_url_in_static_path(request, call_next):
+    """
+    Short-circuit `/static/https://...` style requests with a clean 404 before they
+    hit the StaticFiles mount, where they'd otherwise crash with WinError 123 on
+    Windows (the colon in `https:` is an invalid path char). The frontend now uses
+    the thumbnailUrl() helper to avoid generating these URLs at all (NeX-Up trailers
+    store external TMDB poster URLs in p.thumbnail), but this middleware catches
+    any straggler clients running an old bundle and any future regression. Without
+    this, every old-cached browser tab generated ~21 ASGI exceptions per refresh.
+    """
+    try:
+        raw = request.url.path or ""
+        if raw.startswith("/static/") and ("://" in raw or raw.startswith("/static/http")):
+            from fastapi.responses import Response as _Resp
+            return _Resp(status_code=404)
+    except Exception:
+        pass
+    return await call_next(request)
+
 # API routes are defined here (they need to be before static mounts)
 
 # Start scheduler on app startup
@@ -2238,13 +2259,17 @@ def startup_event():
     if os.environ.get("NEXROLL_SCAN_ON_STARTUP", "1").strip().lower() not in ("0", "false", "no"):
         try:
             db = SessionLocal()
-            fs_scanner.reconcile_prerolls(
+            _startup_scan_stats = fs_scanner.reconcile_prerolls(
                 db,
                 prerolls_dir=PREROLLS_DIR,
                 data_dir=data_dir,
                 generate_thumbnail_fn=_generate_thumbnail_for_preroll,
                 file_log=_file_log,
             )
+            try:
+                _set_last_scan_stats(_startup_scan_stats)
+            except Exception:
+                pass
         except Exception as e:
             try:
                 _file_log(f"Startup preroll scan error: {e}", level="ERROR")
@@ -5695,9 +5720,31 @@ async def update_check_now(
             "draft": data.get('draft', False)
         }
     except Exception as e:
-        _file_log(f"/update/check error: {e}", level="ERROR")
-        log_event('ERROR', 'system', f'Update check failed: {e}', source='update_check_now')
-        return {"success": False, "error": str(e)}
+        # Transient network problems (firewall block, DNS failure, no internet,
+        # GitHub flake) are environmental, not a NeXroll fault — log at WARNING
+        # so they stop flooding the logs panel as red ERROR entries. Genuine
+        # bugs in the response-parsing code below the urlopen() call surface as
+        # real exceptions and still get logged at ERROR.
+        from urllib.error import URLError
+        import socket
+        is_network_error = isinstance(e, (URLError, socket.timeout, socket.gaierror, ConnectionError, TimeoutError))
+        # WinError 10013 ("socket access forbidden by permissions") arrives as an
+        # OSError wrapped in URLError above, but bare OSErrors with winerror 10013
+        # can also appear — treat them as network errors too.
+        try:
+            if not is_network_error and getattr(e, "winerror", None) in (10013, 10060, 10061, 11001):
+                is_network_error = True
+        except Exception:
+            pass
+        if is_network_error:
+            level = "WARNING"
+            msg = f"Update check skipped (network unavailable): {e}"
+        else:
+            level = "ERROR"
+            msg = f"Update check failed: {e}"
+        _file_log(msg, level=level)
+        log_event(level, 'system', msg, source='update_check_now')
+        return {"success": False, "error": str(e), "network_error": is_network_error}
 
 
 # ============================================================================
@@ -12529,6 +12576,11 @@ def _preview_payload_from_intent(setting, db) -> Optional[dict]:
                     if p:
                         rows.append(_row_for_preroll(p))
             elif btype == "random":
+                # Plex resolves a "random" block by picking ONE preroll from the pool
+                # at playback time. Mirror that here so the dashboard preview matches
+                # actual playback — previously every preroll in the category was added
+                # to the preview list and played sequentially, contradicting what the
+                # user sees in Plex.
                 cid = block.get("category_id") or schedule.category_id
                 if cid:
                     pool = db.query(models.Preroll).filter(
@@ -12537,10 +12589,103 @@ def _preview_payload_from_intent(setting, db) -> Optional[dict]:
                             models.Preroll.categories.any(models.Category.id == cid),
                         )
                     ).distinct().all()
-                    for p in pool:
-                        rows.append(_row_for_preroll(p))
-            # nexup_trailers / coming_soon_list / dynamic_preroll: skip for preview list — they
-            # are generated content with their own preview endpoints, not regular prerolls.
+                    if pool:
+                        rows.append(_row_for_preroll(random.choice(pool)))
+            elif btype == "nexup_trailers":
+                # Mirror /sequences/resolve-preview-blocks so the dashboard preview
+                # includes trailer blocks instead of silently dropping them.
+                source = str(block.get("source", "both")).lower()
+                count = int(block.get("count") or 2)
+                storage_path = getattr(setting, "nexup_storage_path", None)
+                now = datetime.datetime.now()
+                trailer_items = []
+                if source in ("movies", "both"):
+                    for t in db.query(models.ComingSoonTrailer).filter(
+                        models.ComingSoonTrailer.status == 'downloaded',
+                        models.ComingSoonTrailer.is_enabled == True,
+                        models.ComingSoonTrailer.release_date >= now
+                    ).all():
+                        if t.local_path and os.path.exists(t.local_path):
+                            trailer_items.append({
+                                "id": None,
+                                "filename": (t.title or f"movie_trailer_{t.id}"),
+                                "display_name": t.title or f"Movie Trailer #{t.id}",
+                                "category_name": "Coming Soon",
+                                "path": t.local_path,
+                                "preview_url": f"/nexup/trailer/video/movie/{t.id}",
+                            })
+                if source in ("tv", "both"):
+                    for t in db.query(models.ComingSoonTVTrailer).filter(
+                        models.ComingSoonTVTrailer.status == 'downloaded',
+                        models.ComingSoonTVTrailer.is_enabled == True,
+                        models.ComingSoonTVTrailer.release_date >= now
+                    ).all():
+                        if t.local_path and os.path.exists(t.local_path):
+                            trailer_items.append({
+                                "id": None,
+                                "filename": (t.title or f"tv_trailer_{t.id}"),
+                                "display_name": t.title or f"TV Trailer #{t.id}",
+                                "category_name": "Coming Soon",
+                                "path": t.local_path,
+                                "preview_url": f"/nexup/trailer/video/tv/{t.id}",
+                            })
+                if len(trailer_items) > count:
+                    trailer_items = random.sample(trailer_items, count)
+                rows.extend(trailer_items)
+            elif btype == "coming_soon_list":
+                layout = str(block.get("layout", "grid")).lower()
+                storage_path = getattr(setting, "nexup_storage_path", None)
+                if storage_path:
+                    filename = f"coming_soon_{layout}.mp4"
+                    fpath = os.path.join(storage_path, "dynamic_prerolls", filename)
+                    if os.path.exists(fpath):
+                        rows.append({
+                            "id": None,
+                            "filename": filename,
+                            "display_name": f"Coming Soon ({layout.title()})",
+                            "category_name": "Coming Soon",
+                            "path": fpath,
+                            "preview_url": f"/nexup/preroll/video/{filename}",
+                        })
+            elif btype == "dynamic_preroll":
+                template = str(block.get("template", "")).lower().strip()
+                theme = str(block.get("theme", "")).lower().strip()
+                storage_path = getattr(setting, "nexup_storage_path", None)
+                if storage_path:
+                    dp_dir = os.path.join(storage_path, "dynamic_prerolls")
+                    picked = None
+                    if template and theme:
+                        candidate = f"{template}_{theme}_preroll.mp4"
+                        cpath = os.path.join(dp_dir, candidate)
+                        if os.path.exists(cpath):
+                            picked = (candidate, cpath, f"{template.replace('_', ' ').title()} ({theme.title()})")
+                    if picked is None and os.path.isdir(dp_dir):
+                        import glob as _glob
+                        for fp in sorted(_glob.glob(os.path.join(dp_dir, "*_preroll.mp4"))):
+                            fname = os.path.basename(fp)
+                            tid = fname.replace("_preroll.mp4", "")
+                            parts = tid.split("_")
+                            if len(parts) >= 2:
+                                fb_template = "_".join(parts[:-1])
+                                fb_theme = parts[-1]
+                            else:
+                                fb_template, fb_theme = tid, ""
+                            label = (
+                                f"{fb_template.replace('_', ' ').title()} ({fb_theme.title()})"
+                                if fb_theme else fb_template.replace('_', ' ').title()
+                            )
+                            picked = (fname, fp, label)
+                            break
+                    if picked:
+                        fname, fp, label = picked
+                        rows.append({
+                            "id": None,
+                            "filename": fname,
+                            "display_name": label,
+                            "category_name": "Dynamic Preroll",
+                            "path": fp,
+                            "preview_url": f"/nexup/preroll/video/{fname}",
+                        })
         # Sequence preview is sequential
         return {
             "prerolls": rows,
@@ -13394,14 +13539,62 @@ def map_preroll_root(req: MapRootRequest, db: Session = Depends(get_db)):
         "added_details": added_details[:50],  # limit detail size
     }
 
+# In-memory cache of the most recent scanner output. Populated by the startup
+# scan and by /prerolls/rescan; surfaced through /system/health/storage so the
+# dashboard can recommend the right cleanup button when missing or duplicate
+# rows are detected.
+_LAST_SCAN_STATS: dict = {
+    "missing_files": 0,
+    "duplicate_rows": 0,
+    "files_on_disk": 0,
+    "db_rows_total": 0,
+    "last_scan_at": None,
+}
+
+def _set_last_scan_stats(stats: dict) -> None:
+    """Snapshot a subset of scanner stats with a timestamp."""
+    try:
+        from datetime import datetime as _dt
+        _LAST_SCAN_STATS["missing_files"] = int(stats.get("missing_files", 0) or 0)
+        _LAST_SCAN_STATS["duplicate_rows"] = int(stats.get("duplicate_rows", 0) or 0)
+        _LAST_SCAN_STATS["files_on_disk"] = int(stats.get("files_on_disk", 0) or 0)
+        _LAST_SCAN_STATS["db_rows_total"] = int(stats.get("db_rows_total", 0) or 0)
+        _LAST_SCAN_STATS["last_scan_at"] = _dt.utcnow().isoformat() + "Z"
+    except Exception:
+        pass
+
+
+@app.get("/system/health/storage")
+def system_storage_health():
+    """
+    Storage-health snapshot for the dashboard banner.
+
+    Reports the most recent scan's missing-files and duplicate-rows counts
+    so the frontend can prompt the user to run the right Rescan action
+    without doing a full filesystem walk on every dashboard load. Refreshed
+    by the startup scan and by every POST /prerolls/rescan call.
+    """
+    return dict(_LAST_SCAN_STATS)
+
+
 # Backup and Restore endpoints
 @app.post("/prerolls/rescan")
-def rescan_prerolls(db: Session = Depends(get_db)):
+def rescan_prerolls(
+    delete_missing: bool = False,
+    dedupe: bool = False,
+    db: Session = Depends(get_db),
+):
     """
     Walk PREROLLS_DIR, reconcile DB rows against on-disk files, regenerate missing
     thumbnails, and create rows for files that exist on disk but not in the DB.
-    Useful after a Windows->Docker (or any platform) migration where the stored
-    `path` field no longer points at the real file location.
+
+    Two opt-in cleanup actions (default off — they delete rows):
+      - delete_missing=true: drop DB rows whose `path` no longer resolves to a file
+        on disk. Use after a category cleanup or external file deletions when the
+        preroll count is inflated by stale rows.
+      - dedupe=true: when multiple DB rows point at the same path (sync race /
+        re-import artifact), keep the lowest-id row and delete the rest. Carries
+        over any m2m category tags from duplicates to the keeper.
     """
     try:
         stats = fs_scanner.reconcile_prerolls(
@@ -13410,12 +13603,17 @@ def rescan_prerolls(db: Session = Depends(get_db)):
             data_dir=data_dir,
             generate_thumbnail_fn=_generate_thumbnail_for_preroll,
             file_log=_file_log,
+            delete_missing=delete_missing,
+            dedupe=dedupe,
         )
+        _set_last_scan_stats(stats)
         log_event(
             'INFO', 'user',
             f"Preroll rescan: {stats['paths_updated']} paths updated, "
             f"{stats['thumbnails_generated']} thumbnails generated, "
-            f"{stats['new_prerolls']} new rows, {stats['missing_files']} missing",
+            f"{stats['new_prerolls']} new rows, {stats['missing_files']} missing, "
+            f"{stats.get('duplicate_rows', 0)} duplicates, "
+            f"{stats.get('deleted_missing', 0)} deleted, {stats.get('deduped_rows', 0)} deduped",
             source='rescan_prerolls',
             details=stats,
         )
@@ -13895,6 +14093,7 @@ def restore_database(backup_data: dict, db: Session = Depends(get_db)):
                 generate_thumbnail_fn=_generate_thumbnail_for_preroll,
                 file_log=_file_log,
             )
+            _set_last_scan_stats(scan_stats)
             print(f"RESTORE: post-restore scan complete: {scan_stats}")
         except Exception as scan_err:
             print(f"RESTORE: post-restore scan failed (non-fatal): {scan_err}")

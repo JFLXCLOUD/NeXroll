@@ -73,6 +73,13 @@ tmp/
 *.bak
 *.local.md
 
+# Internal audit doc — kept locally, not published
+AUDIT.md
+
+# User diagnostic bundles
+NeXroll_Diagnostics_*/
+NeXroll_Diagnostics_*.zip
+
 # Secrets
 .env
 .env.local

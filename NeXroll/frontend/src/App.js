@@ -45,6 +45,18 @@ const apiUrl = (path) => {
     return path;
   }
 };
+// Build a thumbnail URL that respects external URLs (NeX-Up trailers store TMDB poster
+// URLs in p.thumbnail directly). Previously every preroll-card site did
+// `apiUrl(\`static/${preroll.thumbnail}\`)`, which would concatenate the full external
+// URL onto the local /static/ path and cause WinError 123 on Windows when the backend
+// tried to serve it as a file. With ~50 trailers and ~20 visits per session that was
+// the source of 99% of the noise in the error log.
+const thumbnailUrl = (thumbnail) => {
+  if (!thumbnail) return '';
+  const t = String(thumbnail);
+  if (/^https?:\/\//i.test(t)) return t;
+  return apiUrl(`static/${t}`);
+};
 // Runtime API base resolver + CORS shield: rewrite hardcoded http://localhost:9393 to same-origin or configured base
 (function setupNeXrollApiBase() {
   try {
@@ -524,6 +536,11 @@ function App() {
   const [updateInfo, setUpdateInfo] = useState(null);
   const [showUpdateBanner, setShowUpdateBanner] = useState(false);
   const [updateSettings, setUpdateSettings] = useState({ check_interval: 'daily', include_prerelease: false, last_check: null, dismissed_version: null });
+  const [storageHealth, setStorageHealth] = useState(null);
+  const [storageHealthDismissed, setStorageHealthDismissed] = useState(() => {
+    try { return sessionStorage.getItem('nx_storage_health_dismissed') === '1'; } catch (_) { return false; }
+  });
+  const [highlightRescanAction, setHighlightRescanAction] = useState(null);
   const [activeCategory, setActiveCategory] = useState(null);
   const [appliedSequence, setAppliedSequence] = useState(null); // Manually applied sequence info
   const [currentPrerollPreview, setCurrentPrerollPreview] = useState(null); // {prerolls: [...], index: 0} for preview modal
@@ -1477,7 +1494,7 @@ const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
 
       const now = Date.now();
       const lastChecked = parseInt(localStorage.getItem('nx_update_checked_at') || '0', 10);
-      
+
       // Calculate interval based on settings
       let intervalMs = 24 * 60 * 60 * 1000; // default: daily
       if (checkInterval === 'startup') {
@@ -1487,7 +1504,16 @@ const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
       } else if (checkInterval === 'weekly') {
         intervalMs = 7 * 24 * 60 * 60 * 1000;
       }
-      
+
+      // Back off after consecutive network failures so a firewall block doesn't
+      // log every hour. Floor is 6h after 3 fails, 24h after 6+. Cleared on first
+      // successful check.
+      const failCount = parseInt(localStorage.getItem('nx_update_fail_count') || '0', 10);
+      if (!forceCheck && failCount >= 3) {
+        const backoffMs = failCount >= 6 ? 24 * 60 * 60 * 1000 : 6 * 60 * 60 * 1000;
+        if (intervalMs < backoffMs) intervalMs = backoffMs;
+      }
+
       let latest = null;
 
       if (forceCheck || !lastChecked || (now - lastChecked) > intervalMs) {
@@ -1498,20 +1524,30 @@ const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
         });
         if (res.ok) {
           const data = await res.json();
-          if (data.success && data.update_available) {
-            latest = {
-              version: data.latest_version,
-              url: data.html_url || 'https://github.com/JFLXCLOUD/NeXroll/releases/latest',
-              name: data.name || `v${data.latest_version}`,
-              body: data.body || '',
-              published_at: data.published_at || null,
-              prerelease: data.prerelease || false
-            };
-            localStorage.setItem('nx_latest_release_info', JSON.stringify(latest));
-          } else {
-            // No update available — clear any stale cached info
-            localStorage.removeItem('nx_latest_release_info');
+          if (data.success) {
+            // Clear failure count on successful round-trip with GitHub
+            localStorage.removeItem('nx_update_fail_count');
+            if (data.update_available) {
+              latest = {
+                version: data.latest_version,
+                url: data.html_url || 'https://github.com/JFLXCLOUD/NeXroll/releases/latest',
+                name: data.name || `v${data.latest_version}`,
+                body: data.body || '',
+                published_at: data.published_at || null,
+                prerelease: data.prerelease || false
+              };
+              localStorage.setItem('nx_latest_release_info', JSON.stringify(latest));
+            } else {
+              // No update available — clear any stale cached info
+              localStorage.removeItem('nx_latest_release_info');
+            }
+          } else if (data.network_error) {
+            // Backend reached, but it couldn't reach GitHub. Increment the
+            // failure count so the next check backs off instead of hammering
+            // every hour.
+            localStorage.setItem('nx_update_fail_count', String(failCount + 1));
           }
+          // Always advance lastChecked so we don't re-fire on the next render.
           localStorage.setItem('nx_update_checked_at', String(now));
         } else {
           // Fallback: use cached data
@@ -1905,6 +1941,25 @@ const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
         setActiveCategory(null);
       });
   }, []);
+
+  // Storage-health snapshot from the startup scan. The backend caches the most
+  // recent scanner output; we just read it to decide whether the dashboard
+  // should prompt the user to run Remove Missing Rows / Dedupe Duplicates.
+  const fetchStorageHealth = React.useCallback(async () => {
+    try {
+      const res = await fetch(apiUrl('system/health/storage'));
+      if (!res.ok) return;
+      const data = await res.json();
+      setStorageHealth(data || null);
+    } catch (_) {
+      // Endpoint missing on older backends — silently skip the banner.
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  useEffect(() => {
+    fetchStorageHealth();
+  }, [fetchStorageHealth]);
 
   // Check for changelog on first load
   useEffect(() => {
@@ -4050,10 +4105,31 @@ const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
     reader.readAsText(backupFile);
   };
 
-  const handleRescanPrerolls = async () => {
-    setBackupProgress({ active: true, type: 'rescan', message: 'Scanning preroll folder...' });
+  const handleRescanPrerolls = async ({ deleteMissing = false, dedupe = false } = {}) => {
+    if (deleteMissing) {
+      const ok = window.confirm(
+        'Remove database rows for prerolls whose files are missing from disk? This cannot be undone.'
+      );
+      if (!ok) return;
+    }
+    if (dedupe) {
+      const ok = window.confirm(
+        'Merge duplicate database rows that point at the same file? Tags will be carried over to the kept row.'
+      );
+      if (!ok) return;
+    }
+    const message = deleteMissing
+      ? 'Scanning and removing missing files...'
+      : dedupe
+        ? 'Scanning and deduping rows...'
+        : 'Scanning preroll folder...';
+    setBackupProgress({ active: true, type: 'rescan', message });
     try {
-      const res = await fetch(apiUrl('prerolls/rescan'), { method: 'POST' });
+      const qs = new URLSearchParams();
+      if (deleteMissing) qs.set('delete_missing', 'true');
+      if (dedupe) qs.set('dedupe', 'true');
+      const url = qs.toString() ? `prerolls/rescan?${qs.toString()}` : 'prerolls/rescan';
+      const res = await fetch(apiUrl(url), { method: 'POST' });
       if (!res.ok) {
         const err = await res.json().catch(() => ({}));
         throw new Error(err.detail || `HTTP ${res.status}: Rescan failed`);
@@ -4067,8 +4143,15 @@ const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
         `${stats.new_prerolls || 0} new file${stats.new_prerolls === 1 ? '' : 's'} added.`,
         `${stats.missing_files || 0} file${stats.missing_files === 1 ? '' : 's'} still missing.`,
       ];
+      if (deleteMissing) {
+        lines.push(`${stats.deleted_missing || 0} missing row${stats.deleted_missing === 1 ? '' : 's'} removed.`);
+      }
+      if (dedupe) {
+        lines.push(`${stats.deduped_rows || 0} duplicate row${stats.deduped_rows === 1 ? '' : 's'} merged.`);
+      }
       showAlert(lines.join(' '), 'success');
       fetchData();
+      fetchStorageHealth();
     } catch (error) {
       console.error('Rescan error:', error);
       setBackupProgress({ active: false, type: '', message: '' });
@@ -6430,7 +6513,7 @@ const DashboardTiles = {
                   }}>
                     {preroll.thumbnail ? (
                       <img
-                        src={apiUrl(`static/${preroll.thumbnail}`)}
+                        src={thumbnailUrl(preroll.thumbnail)}
                         alt=""
                         style={{ width: '100%', height: '100%', objectFit: 'cover' }}
                         onError={(e) => {
@@ -7135,6 +7218,88 @@ const DashboardTiles = {
         </p>
       </div>
 
+      {/* Storage Health Banner — surfaces missing files / duplicate rows
+          from the most recent scanner pass. Dismissible per session. */}
+      {storageHealth && !storageHealthDismissed && (
+        (storageHealth.missing_files > 0 || storageHealth.duplicate_rows > 0) && (
+        <div className="card" style={{
+          marginBottom: '1rem',
+          background: 'linear-gradient(135deg, rgba(239, 68, 68, 0.12) 0%, rgba(245, 158, 11, 0.08) 100%)',
+          border: '1px solid rgba(245, 158, 11, 0.4)',
+        }}>
+          <div style={{
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            flexWrap: 'wrap',
+            gap: '1rem'
+          }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '1rem', flex: 1 }}>
+              <div style={{
+                width: '48px',
+                height: '48px',
+                borderRadius: '12px',
+                backgroundColor: 'rgba(245, 158, 11, 0.2)',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                flexShrink: 0
+              }}>
+                <AlertTriangle size={24} style={{ color: '#f59e0b' }} />
+              </div>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <h3 style={{ margin: 0, marginBottom: '0.25rem' }}>
+                  Library health needs attention
+                </h3>
+                <div style={{ fontSize: '0.9rem', color: 'var(--text-secondary)' }}>
+                  {storageHealth.missing_files > 0 && (
+                    <div>
+                      <strong>{storageHealth.missing_files}</strong> preroll row{storageHealth.missing_files === 1 ? '' : 's'} point at files that no longer exist on disk
+                      &mdash; run <strong>Remove Missing Rows</strong> in Settings &rarr; Backup.
+                    </div>
+                  )}
+                  {storageHealth.duplicate_rows > 0 && (
+                    <div>
+                      <strong>{storageHealth.duplicate_rows}</strong> duplicate row{storageHealth.duplicate_rows === 1 ? '' : 's'} detected (multiple DB entries for the same file)
+                      &mdash; run <strong>Dedupe Duplicates</strong> in Settings &rarr; Backup.
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+            <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
+              <button
+                className="button"
+                style={{ backgroundColor: '#f59e0b' }}
+                onClick={() => {
+                  const action = storageHealth.missing_files > 0 ? 'delete_missing' : 'dedupe';
+                  setHighlightRescanAction(action);
+                  setActiveTab('settings/backup');
+                  setTimeout(() => {
+                    const el = document.getElementById('rescan-preroll-files-card');
+                    if (el && el.scrollIntoView) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                  }, 100);
+                  setTimeout(() => setHighlightRescanAction(null), 4000);
+                }}
+              >
+                Take Me There
+              </button>
+              <button
+                className="button"
+                style={{ backgroundColor: 'transparent', border: '1px solid var(--border-color)', color: 'var(--text-secondary)' }}
+                onClick={() => {
+                  setStorageHealthDismissed(true);
+                  try { sessionStorage.setItem('nx_storage_health_dismissed', '1'); } catch (_) {}
+                }}
+              >
+                Dismiss
+              </button>
+            </div>
+          </div>
+        </div>
+        )
+      )}
+
       {/* Update Available Notification Card */}
       {updateInfo && showUpdateBanner && (
         <div className="card" style={{
@@ -7479,12 +7644,19 @@ const DashboardTiles = {
                 const dExclusiveHasTimeRange = dd?.exclusiveHasTimeRange;
                 const isFullDayExclusive = dHasExclusive && !dExclusiveHasTimeRange;
                 const schedCount = dayScheduleCounts[idx];
+                // Filler plays during any unscheduled gap. If the user enabled
+                // filler and this day has no content schedule on it, the
+                // filler will run the whole day — surface that in the header
+                // rather than just at the bottom of the schedule grid.
+                const hasContentScheds = (dd?.contentScheds?.length || 0) > 0;
+                const fillerAllDay = fillerSettings.enabled && !hasContentScheds;
 
                 let accentColor = isToday ? 'var(--button-bg)' : 'var(--text-muted)';
                 let accentBg = 'transparent';
                 if (isFullDayExclusive) { accentColor = '#ef4444'; accentBg = 'rgba(239,68,68,0.05)'; }
                 else if (dHasBlend) { accentColor = '#8b5cf6'; accentBg = 'rgba(139,92,246,0.05)'; }
                 else if (dHasConflict) { accentColor = '#ff9800'; accentBg = 'rgba(255,152,0,0.05)'; }
+                else if (fillerAllDay) { accentColor = '#00d4ff'; accentBg = 'rgba(0,212,255,0.05)'; }
                 else if (isToday) { accentBg = darkMode ? 'rgba(59,130,246,0.06)' : 'rgba(59,130,246,0.04)'; }
 
                 return (
@@ -7503,6 +7675,13 @@ const DashboardTiles = {
                       {isFullDayExclusive && <Lock size={9} />}
                       {dHasBlend && !dHasExclusive && <Shuffle size={9} />}
                       {dHasConflict && !dHasBlend && !dHasExclusive && <AlertTriangle size={9} />}
+                      {fillerAllDay && !isFullDayExclusive && !dHasBlend && !dHasConflict && (
+                        <span title="Filler will play all day" style={{
+                          display: 'inline-block', width: '6px', height: '6px',
+                          borderRadius: '50%', backgroundColor: '#00d4ff',
+                          boxShadow: '0 0 4px rgba(0,212,255,0.6)',
+                        }} />
+                      )}
                     </div>
                     <div style={{
                       display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
@@ -7516,9 +7695,10 @@ const DashboardTiles = {
                     </div>
                     <div style={{
                       marginTop: '2px', fontSize: '0.6rem', fontWeight: 500,
-                      color: 'var(--text-muted)', opacity: schedCount > 0 ? 1 : 0.5,
+                      color: fillerAllDay ? '#00d4ff' : 'var(--text-muted)',
+                      opacity: (schedCount > 0 || fillerAllDay) ? 1 : 0.5,
                     }}>
-                      {schedCount > 0 ? `${schedCount} active` : 'none'}
+                      {schedCount > 0 ? `${schedCount} active` : (fillerAllDay ? 'Filler' : 'none')}
                     </div>
                   </div>
                 );
@@ -8890,7 +9070,7 @@ const DashboardTiles = {
               </div>
               {preroll.thumbnail && (
                 <img
-                  src={apiUrl(`static/${preroll.thumbnail}`)}
+                  src={thumbnailUrl(preroll.thumbnail)}
                   alt="thumbnail"
                   onError={(e) => {
                     try {
@@ -9043,7 +9223,7 @@ const DashboardTiles = {
            />
            {preroll.thumbnail && (
              <img
-               src={apiUrl(`static/${preroll.thumbnail}`)}
+               src={thumbnailUrl(preroll.thumbnail)}
                alt="thumbnail"
                style={{ width: 120, height: 'auto', borderRadius: 6, flexShrink: 0 }}
                onError={(e) => {
@@ -13363,15 +13543,17 @@ const DashboardTiles = {
             const daysInMonth = new Date(calendarYear, entry.month + 1, 0).getDate();
             
             return (
-              <div key={entry.month} 
-                style={{ 
-                  border: isCurrentMonth ? '2px solid var(--button-bg)' : '1px solid var(--border-color)', 
-                  borderRadius: 8, 
-                  padding: '16px', 
+              <div key={entry.month}
+                style={{
+                  border: isCurrentMonth ? '2px solid var(--button-bg)' : '1px solid var(--border-color)',
+                  borderRadius: 8,
+                  padding: '16px',
                   background: 'var(--card-bg)',
                   transition: 'all 0.2s ease',
                   cursor: 'pointer',
-                  boxShadow: isCurrentMonth ? '0 0 12px rgba(59, 130, 246, 0.3)' : 'none'
+                  boxShadow: isCurrentMonth ? '0 0 12px rgba(59, 130, 246, 0.3)' : 'none',
+                  overflow: 'hidden',
+                  minWidth: 0
                 }}
                 onMouseEnter={(e) => {
                   e.currentTarget.style.transform = 'translateY(-4px)';
@@ -13479,31 +13661,35 @@ const DashboardTiles = {
                           const schedColor = s.color || cat.color;
                           const percentage = Math.round((cnt / daysInMonth) * 100);
                           return (
-                            <div key={s.id} style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-                              <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: '0.875rem' }}>
-                                <span style={{ 
-                                  width: 14, 
-                                  height: 14, 
-                                  backgroundColor: schedColor, 
-                                  display: 'inline-block', 
+                            <div key={s.id} style={{ display: 'flex', flexDirection: 'column', gap: 4, minWidth: 0 }}>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: '0.875rem', minWidth: 0 }}>
+                                <span style={{
+                                  width: 14,
+                                  height: 14,
+                                  backgroundColor: schedColor,
+                                  display: 'inline-block',
                                   borderRadius: 3,
                                   boxShadow: '0 1px 3px rgba(0,0,0,0.3)',
                                   flexShrink: 0
                                 }} />
-                                <span style={{ 
-                                  flex: 1, 
-                                  overflow: 'hidden', 
-                                  textOverflow: 'ellipsis', 
-                                  whiteSpace: 'nowrap',
-                                  fontWeight: 500,
-                                  color: 'var(--text-color)'
-                                }}>{s.name}</span>
-                                <span style={{ 
+                                <span
+                                  title={s.name}
+                                  style={{
+                                    flex: 1,
+                                    minWidth: 0,
+                                    overflow: 'hidden',
+                                    textOverflow: 'ellipsis',
+                                    whiteSpace: 'nowrap',
+                                    fontWeight: 500,
+                                    color: 'var(--text-color)'
+                                  }}>{s.name}</span>
+                                <span style={{
                                   color: 'var(--text-secondary)',
                                   fontSize: '0.8rem',
                                   fontWeight: 600,
                                   minWidth: '45px',
-                                  textAlign: 'right'
+                                  textAlign: 'right',
+                                  flexShrink: 0
                                 }}>{cnt}d ({percentage}%)</span>
                               </div>
                               <div style={{
@@ -16214,7 +16400,7 @@ const DashboardTiles = {
                                 <div style={{ position: 'relative', paddingBottom: '56.25%', marginBottom: '0.35rem' }}>
                                   {p.thumbnail ? (
                                     <img
-                                      src={apiUrl(`static/${p.thumbnail}`)}
+                                      src={thumbnailUrl(p.thumbnail)}
                                       alt=""
                                       style={{
                                         position: 'absolute',
@@ -16259,7 +16445,22 @@ const DashboardTiles = {
                                     </div>
                                   )}
                                 </div>
-                                <div style={{ fontSize: '0.75rem', lineHeight: 1.2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                <div
+                                  style={{
+                                    fontSize: '0.75rem',
+                                    lineHeight: 1.25,
+                                    // Allow up to 2 lines so long filenames stay readable in the
+                                    // picker (previous single-line ellipsis hid most of the title
+                                    // until the preroll was already added). Hover for the full name.
+                                    display: '-webkit-box',
+                                    WebkitLineClamp: 2,
+                                    WebkitBoxOrient: 'vertical',
+                                    overflow: 'hidden',
+                                    wordBreak: 'break-word',
+                                    minHeight: '2.5em'
+                                  }}
+                                  title={p.display_name || p.filename}
+                                >
                                   {p.display_name || p.filename}
                                 </div>
                                 <div style={{ fontSize: '0.65rem', color: '#888', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={`Folder: ${folderName}`}>
@@ -25895,7 +26096,12 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
           }} />
           <div>
             <div style={{ fontWeight: 600, color: '#3b82f6' }}>
-              {backupProgress.type.includes('backup') ? 'Creating Backup...' : 'Restoring...'}
+              {(() => {
+                const t = backupProgress.type || '';
+                if (t.includes('backup')) return 'Creating Backup...';
+                if (t === 'rescan') return 'Rescanning...';
+                return 'Restoring...';
+              })()}
             </div>
             <div style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
               {backupProgress.message}
@@ -26055,12 +26261,14 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
       </div>
 
       {/* Rescan Preroll Files */}
-      <div style={{
+      <div id="rescan-preroll-files-card" style={{
         marginTop: '1.5rem',
         padding: '1.5rem',
         backgroundColor: 'var(--bg-secondary)',
-        border: '1px solid var(--border-color)',
-        borderRadius: '8px'
+        border: highlightRescanAction ? '2px solid #f59e0b' : '1px solid var(--border-color)',
+        borderRadius: '8px',
+        boxShadow: highlightRescanAction ? '0 0 0 4px rgba(245, 158, 11, 0.15)' : 'none',
+        transition: 'border-color 0.3s, box-shadow 0.3s'
       }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.75rem' }}>
           <RefreshCw size={18} style={{ color: '#22c55e' }} />
@@ -26076,14 +26284,47 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
           Files dropped into a folder named after an existing category are assigned to that category. Files in other folders are
           left uncategorized.
         </p>
-        <button
-          onClick={handleRescanPrerolls}
-          className="button"
-          disabled={backupProgress.active}
-          style={{ backgroundColor: '#22c55e' }}
-        >
-          <RefreshCw size={14} style={{ marginRight: '0.35rem' }} /> Rescan Files Now
-        </button>
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem' }}>
+          <button
+            onClick={() => handleRescanPrerolls()}
+            className="button"
+            disabled={backupProgress.active}
+            style={{ backgroundColor: '#22c55e' }}
+          >
+            <RefreshCw size={14} style={{ marginRight: '0.35rem' }} /> Rescan Files Now
+          </button>
+          <button
+            onClick={() => handleRescanPrerolls({ deleteMissing: true })}
+            className="button"
+            disabled={backupProgress.active}
+            style={{
+              backgroundColor: '#ef4444',
+              boxShadow: highlightRescanAction === 'delete_missing' ? '0 0 0 3px rgba(239, 68, 68, 0.5)' : 'none',
+              transition: 'box-shadow 0.3s'
+            }}
+            title="Removes database rows whose files no longer exist on disk."
+          >
+            Remove Missing Rows
+          </button>
+          <button
+            onClick={() => handleRescanPrerolls({ dedupe: true })}
+            className="button"
+            disabled={backupProgress.active}
+            style={{
+              backgroundColor: '#f59e0b',
+              boxShadow: highlightRescanAction === 'dedupe' ? '0 0 0 3px rgba(245, 158, 11, 0.5)' : 'none',
+              transition: 'box-shadow 0.3s'
+            }}
+            title="Merges duplicate database rows that point at the same file."
+          >
+            Dedupe Duplicates
+          </button>
+        </div>
+        <p style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginTop: '0.75rem', marginBottom: 0 }}>
+          <strong>Remove Missing Rows</strong> deletes preroll entries whose files are gone (fixes inflated totals after files
+          were removed outside the app). <strong>Dedupe Duplicates</strong> merges rows that point at the same file
+          (artifact of historical import/sync races).
+        </p>
       </div>
     </div>
     </>

@@ -75,6 +75,8 @@ def reconcile_prerolls(
     data_dir: Optional[str] = None,
     generate_thumbnail_fn: Optional[Callable] = None,
     file_log: Optional[Callable] = None,
+    delete_missing: bool = False,
+    dedupe: bool = False,
 ) -> dict:
     """
     Reconcile DB Preroll rows against on-disk files. See module docstring.
@@ -89,7 +91,10 @@ def reconcile_prerolls(
         "paths_updated": 0,
         "thumbnails_generated": 0,
         "missing_files": 0,
+        "duplicate_rows": 0,
         "new_prerolls": 0,
+        "deleted_missing": 0,
+        "deduped_rows": 0,
         "errors": [],
     }
 
@@ -185,6 +190,80 @@ def reconcile_prerolls(
         except Exception as e:
             stats["errors"].append(f"new preroll creation failed for {abs_path}: {e}")
 
+    # Optional cleanup passes — destructive, opt-in. Skipped on the default
+    # startup scan; the rescan endpoint exposes these as separate buttons.
+    if delete_missing:
+        # Re-query because we may have added new rows above. A row is "missing" when
+        # we didn't match it to a file on disk (its path wasn't recorded in
+        # matched_paths) AND its current path doesn't resolve to a real file.
+        for p in db.query(models.Preroll).all():
+            try:
+                actual_path = os.path.abspath(p.path) if p.path else None
+                if actual_path and actual_path in matched_paths:
+                    continue
+                if p.path and os.path.exists(p.path):
+                    continue
+                db.delete(p)
+                stats["deleted_missing"] += 1
+            except Exception as e:
+                stats["errors"].append(f"delete missing failed for preroll {getattr(p, 'id', '?')}: {e}")
+
+    if dedupe:
+        # Group remaining prerolls by normalized path; keep the lowest-id row and
+        # delete the rest. Multiple DB rows pointing at the same file are an
+        # artifact of historical import/sync races.
+        seen_by_path = {}
+        for p in db.query(models.Preroll).order_by(models.Preroll.id).all():
+            if not p.path:
+                continue
+            try:
+                key = os.path.normcase(os.path.normpath(p.path))
+            except Exception:
+                key = p.path
+            keeper = seen_by_path.get(key)
+            if keeper is None:
+                seen_by_path[key] = p
+                continue
+            try:
+                # Carry over any m2m tags the duplicate had that the keeper lacks
+                keeper_cat_ids = {c.id for c in (keeper.categories or [])}
+                for c in (p.categories or []):
+                    if c.id not in keeper_cat_ids:
+                        keeper.categories = (keeper.categories or []) + [c]
+                        keeper_cat_ids.add(c.id)
+                db.delete(p)
+                stats["deduped_rows"] += 1
+            except Exception as e:
+                stats["errors"].append(f"dedupe failed for preroll {p.id}: {e}")
+
+    # Recount missing + duplicate rows against the current DB state. These
+    # power the dashboard health banner via _set_last_scan_stats(), so they
+    # need to reflect *post-cleanup* reality — otherwise after a successful
+    # delete_missing the banner keeps showing the old count until the next
+    # full rescan. Reconcile-pass counts above are overwritten on purpose.
+    try:
+        current_missing = 0
+        current_duplicates = 0
+        seen_paths = set()
+        for p in db.query(models.Preroll).all():
+            if p.path and not os.path.exists(p.path):
+                current_missing += 1
+                continue
+            if not p.path:
+                continue
+            try:
+                key = os.path.normcase(os.path.normpath(p.path))
+            except Exception:
+                key = p.path
+            if key in seen_paths:
+                current_duplicates += 1
+            else:
+                seen_paths.add(key)
+        stats["missing_files"] = current_missing
+        stats["duplicate_rows"] = current_duplicates
+    except Exception as e:
+        stats["errors"].append(f"post-scan health recount failed: {e}")
+
     try:
         db.commit()
     except Exception as e:
@@ -195,6 +274,8 @@ def reconcile_prerolls(
     log(
         f"Scanner: {stats['files_on_disk']} files on disk, {stats['db_rows_total']} db rows, "
         f"{stats['paths_updated']} paths updated, {stats['thumbnails_generated']} thumbnails generated, "
-        f"{stats['new_prerolls']} new rows, {stats['missing_files']} missing"
+        f"{stats['new_prerolls']} new rows, {stats['missing_files']} missing, "
+        f"{stats['duplicate_rows']} duplicates, "
+        f"{stats['deleted_missing']} deleted missing, {stats['deduped_rows']} deduped"
     )
     return stats
