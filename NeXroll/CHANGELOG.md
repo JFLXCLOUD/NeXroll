@@ -1,5 +1,21 @@
 # Changelog
 
+## [1.13.19] - 05-28-2026
+
+### Bug Fixes
+
+- **JSON restore no longer fails with "FOREIGN KEY constraint failed [DELETE FROM
+  categories]" on Docker (RESTORE-1).** The restore clears category references
+  before deleting categories, but only NULLed `settings.active_category` — it
+  missed the three other category FKs on the settings table:
+  `nexup_category_id`, `nexup_tv_category_id`, and `filler_category_id`. On
+  Windows this went unnoticed because SQLite defaults `foreign_keys=OFF`; Docker
+  enforces them, so any backup with filler or NeX-Up categories configured (and
+  a fresh Docker instance auto-creates a NeX-Up category) aborted the restore.
+  All four are now NULLed (each independently, so schema drift on one column
+  can't abort the restore). These settings columns aren't re-populated by the
+  restore, so they stay empty and are re-selected in the target instance.
+
 ## [1.13.18] - 05-27-2026
 
 ### Bug Fixes (from 2026-05-27 user diagnostic bundle)

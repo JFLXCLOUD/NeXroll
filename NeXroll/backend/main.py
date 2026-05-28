@@ -13854,9 +13854,18 @@ def restore_database(backup_data: dict, db: Session = Depends(get_db)):
         print("RESTORE: Deleting genre maps...")
         db.query(models.GenreMap).delete(synchronize_session=False)
         
-        # 3. Clear active_category from settings (has FK to categories)
-        print("RESTORE: Clearing active_category from settings...")
-        db.execute(text("UPDATE settings SET active_category = NULL"))
+        # 3. Clear every category FK on settings (each has FK to categories).
+        # Missing on Windows restores because SQLite there defaults to
+        # foreign_keys=OFF; Docker enforces them, so a non-NULL nexup_category_id
+        # / nexup_tv_category_id / filler_category_id made "DELETE FROM categories"
+        # fail. NULL each independently so schema drift on one column can't abort
+        # the whole restore.
+        print("RESTORE: Clearing category references from settings...")
+        for _col in ("active_category", "nexup_category_id", "nexup_tv_category_id", "filler_category_id"):
+            try:
+                db.execute(text(f"UPDATE settings SET {_col} = NULL"))
+            except Exception as _col_err:
+                print(f"RESTORE: could not clear settings.{_col}: {_col_err}")
         db.flush()
         
         # 4. Delete schedules (has FK to categories via category_id and fallback_category_id)
