@@ -4,6 +4,17 @@
 
 ### Bug Fixes
 
+- **Duplicate preroll rows no longer regenerate after Dedupe (DEDUPE-1).** The
+  scanner's orphan-file pass created a new DB row for any on-disk file it
+  didn't match to an existing row via the category-folder + filename
+  heuristic. But a row could already point at that exact file and still fail
+  the heuristic (e.g. a filename like `intro.mp4` that exists in several
+  category folders, so the unique-filename fallback gives up) — so the scan
+  created a second row with the same path. Running Dedupe removed the
+  duplicates, but the very next startup scan re-created them, so the dashboard
+  health banner kept reappearing. The orphan pass now skips any path a DB row
+  already owns, so duplicates stop regenerating and Dedupe sticks. (Most common
+  on Docker instances migrated from Windows.)
 - **JSON restore no longer fails with "FOREIGN KEY constraint failed [DELETE FROM
   categories]" on Docker (RESTORE-1).** The restore clears category references
   before deleting categories, but only NULLed `settings.active_category` — it

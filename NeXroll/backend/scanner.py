@@ -122,6 +122,18 @@ def reconcile_prerolls(
     stats["db_rows_total"] = len(all_prerolls)
     matched_paths = set()
 
+    # Every path already claimed by a DB row (normalized). Used in step 4 to
+    # avoid creating an orphan duplicate for a file a row already points at but
+    # that the folder-hint heuristic below failed to match (e.g. a filename that
+    # is not unique across category folders). Without this guard, every scan
+    # re-creates the same duplicate rows, so Dedupe never sticks.
+    def _norm_path(pth):
+        try:
+            return os.path.normcase(os.path.normpath(os.path.abspath(pth)))
+        except Exception:
+            return pth
+    existing_db_paths = {_norm_path(p.path) for p in all_prerolls if p.path}
+
     for p in all_prerolls:
         if not p.filename:
             continue
@@ -166,6 +178,10 @@ def reconcile_prerolls(
     # 4. Create rows for orphan files (on disk but not in DB).
     for (parent_lower, _filename_lower), abs_path in by_parent_filename.items():
         if abs_path in matched_paths:
+            continue
+        # Skip files a DB row already owns even if the heuristic above didn't
+        # match it — prevents re-creating duplicate rows on every scan.
+        if _norm_path(abs_path) in existing_db_paths:
             continue
         try:
             cat = cat_by_name_lower.get(parent_lower) if parent_lower else None
