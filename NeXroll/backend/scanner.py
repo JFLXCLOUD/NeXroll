@@ -77,12 +77,21 @@ def reconcile_prerolls(
     file_log: Optional[Callable] = None,
     delete_missing: bool = False,
     dedupe: bool = False,
+    auto_prune_missing: bool = False,
 ) -> dict:
     """
     Reconcile DB Preroll rows against on-disk files. See module docstring.
 
     `generate_thumbnail_fn(preroll, video_abs_path, category_name) -> Optional[str]`
     is injected to avoid a circular import with main.py.
+
+    delete_missing: force-remove every row whose file is gone (user-initiated,
+        no safety threshold).
+    auto_prune_missing: automatically remove rows whose file is gone, BUT only
+        when it's safe — never when storage looks offline (no files found on
+        disk, or a large fraction of rows suddenly missing). This is what makes
+        deletions in Explorer self-heal without prompting the user, while
+        protecting against wiping the library if a network share blips.
     """
     log = file_log or (lambda *a, **k: None)
     stats = {
@@ -95,6 +104,8 @@ def reconcile_prerolls(
         "new_prerolls": 0,
         "deleted_missing": 0,
         "deduped_rows": 0,
+        "missing_not_pruned": 0,
+        "storage_maybe_offline": False,
         "errors": [],
     }
 
@@ -223,6 +234,51 @@ def reconcile_prerolls(
                 stats["deleted_missing"] += 1
             except Exception as e:
                 stats["errors"].append(f"delete missing failed for preroll {getattr(p, 'id', '?')}: {e}")
+
+    elif auto_prune_missing:
+        # Self-heal: remove rows whose file is genuinely gone (deleted/moved in
+        # Explorer), so the user doesn't have to click "Remove Missing Rows".
+        # BUT guard hard against storage outages — if a network share blips, every
+        # path stops resolving and a naive prune would wipe the whole library.
+        prunable = []
+        for p in db.query(models.Preroll).all():
+            try:
+                if not p.path:
+                    continue
+                actual_path = os.path.abspath(p.path)
+                if actual_path in matched_paths:
+                    continue
+                if os.path.exists(p.path):
+                    continue
+                prunable.append(p)
+            except Exception:
+                continue
+        total_rows = db.query(models.Preroll).count()
+        n = len(prunable)
+        # Safe to auto-remove only when we actually found files on disk (storage
+        # is online) AND the missing set is a small minority (a real deletion,
+        # not an outage). Threshold: up to 25% of rows, or 10 files, whichever is
+        # larger.
+        outage_suspected = (stats["files_on_disk"] == 0) or (
+            n > 0 and n > max(10, int(total_rows * 0.25))
+        )
+        if n > 0 and outage_suspected:
+            stats["missing_not_pruned"] = n
+            stats["storage_maybe_offline"] = True
+            log(
+                f"Scanner: {n} of {total_rows} preroll file(s) not found "
+                f"(files_on_disk={stats['files_on_disk']}). Storage may be offline; "
+                f"NOT auto-removing rows. They will relink automatically when storage returns.",
+                level="WARNING",
+            )
+        elif n > 0:
+            for p in prunable:
+                try:
+                    db.delete(p)
+                    stats["deleted_missing"] += 1
+                except Exception as e:
+                    stats["errors"].append(f"auto-prune failed for preroll {getattr(p, 'id', '?')}: {e}")
+            log(f"Scanner: auto-removed {stats['deleted_missing']} row(s) for files deleted from disk")
 
     if dedupe:
         # Group remaining prerolls by normalized path; keep the lowest-id row and

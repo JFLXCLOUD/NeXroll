@@ -19,9 +19,43 @@ public class NexrollIntroProvider : IIntroProvider
 {
     private readonly ILogger _logger;
     private static readonly HttpClient _httpClient = new();
-    private static readonly string _cacheDir = Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-        "NeXroll", "intro_cache");
+
+    /// <summary>
+    /// Resolve an absolute, writable directory for cached intro downloads.
+    ///
+    /// Previously this used <c>Environment.GetFolderPath(LocalApplicationData)</c>,
+    /// but on Linux/.NET that resolves via <c>$XDG_DATA_HOME</c> or
+    /// <c>$HOME/.local/share</c> and returns an EMPTY string when <c>HOME</c> is
+    /// unset — exactly the case for the media-server service under s6-overlay
+    /// (linuxserver.io Docker on Unraid, etc.). An empty base collapses
+    /// <c>Path.Combine</c> to a RELATIVE path, which <c>Directory.CreateDirectory</c>
+    /// then resolves against the process working directory (the s6 service dir),
+    /// throwing <c>UnauthorizedAccessException</c>. See GitHub issue #30.
+    ///
+    /// We use the plugin's own data folder (absolute and writable, under the
+    /// server config dir) and fall back to the OS temp directory if that is
+    /// unavailable or not rooted, so the path can never collapse to a relative
+    /// one again.
+    /// </summary>
+    private static string GetCacheDir()
+    {
+        string? baseDir = null;
+        try
+        {
+            baseDir = Plugin.Instance?.DataFolderPath;
+        }
+        catch
+        {
+            // Fall through to the temp-dir fallback below.
+        }
+
+        if (string.IsNullOrWhiteSpace(baseDir) || !Path.IsPathRooted(baseDir))
+        {
+            baseDir = Path.Combine(Path.GetTempPath(), "NeXroll");
+        }
+
+        return Path.Combine(baseDir, "intro_cache");
+    }
 
     /// <summary>Lock to avoid concurrent cache syncs.</summary>
     private static readonly SemaphoreSlim _syncLock = new(1, 1);
@@ -173,10 +207,10 @@ public class NexrollIntroProvider : IIntroProvider
             catch { /* swallow — best effort */ }
         });
 
-        if (!Directory.Exists(_cacheDir))
+        if (!Directory.Exists(GetCacheDir()))
             return Enumerable.Empty<string>();
 
-        return Directory.EnumerateFiles(_cacheDir)
+        return Directory.EnumerateFiles(GetCacheDir())
             .Where(f =>
             {
                 var ext = Path.GetExtension(f).ToLowerInvariant();
@@ -218,7 +252,7 @@ public class NexrollIntroProvider : IIntroProvider
                 return;
             }
 
-            Directory.CreateDirectory(_cacheDir);
+            Directory.CreateDirectory(GetCacheDir());
             var downloadCount = 0;
 
             foreach (var intro in response.Items)
@@ -254,7 +288,7 @@ public class NexrollIntroProvider : IIntroProvider
             if (downloadCount > 0)
             {
                 _logger.Info("NeXroll: Cache sync — downloaded {0} new intro(s), {1} total in cache",
-                    downloadCount, Directory.GetFiles(_cacheDir).Length);
+                    downloadCount, Directory.GetFiles(GetCacheDir()).Length);
             }
 
             _lastCacheSync = DateTime.UtcNow;
@@ -279,7 +313,7 @@ public class NexrollIntroProvider : IIntroProvider
         var ext = Path.GetExtension(intro.Path);
         if (string.IsNullOrEmpty(ext)) ext = ".mp4";
         var hash = SHA256Hash(intro.Path);
-        return Path.Combine(_cacheDir, $"{hash}{ext}");
+        return Path.Combine(GetCacheDir(), $"{hash}{ext}");
     }
 
     private static string TranslatePath(string path, PluginConfiguration config)

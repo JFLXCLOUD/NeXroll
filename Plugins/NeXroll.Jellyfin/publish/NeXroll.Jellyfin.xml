@@ -16,6 +16,33 @@
              saves them to the database so they can be returned by <c>ItemId</c>.
              </summary>
         </member>
+        <member name="M:NeXroll.Jellyfin.NexrollIntroProvider.GetCacheDir">
+             <summary>
+             Resolve an absolute, writable directory for cached intro downloads.
+            
+             Previously this used <c>Environment.GetFolderPath(LocalApplicationData)</c>,
+             but on Linux/.NET that resolves via <c>$XDG_DATA_HOME</c> or
+             <c>$HOME/.local/share</c> and returns an EMPTY string when <c>HOME</c> is
+             unset — exactly the case for the Jellyfin service under s6-overlay
+             (linuxserver.io Docker on Unraid, etc.). An empty base collapses
+             <c>Path.Combine</c> to a RELATIVE path, which <c>Directory.CreateDirectory</c>
+             then resolves against the process working directory (the s6 service dir),
+             throwing <c>UnauthorizedAccessException</c>. See GitHub issue #30.
+            
+             We use Jellyfin's own plugin data folder (absolute and writable, under the
+             server config dir) and fall back to the OS temp directory if that is
+             unavailable or not rooted, so the path can never collapse to a relative
+             one again.
+             </summary>
+        </member>
+        <member name="P:NeXroll.Jellyfin.NexrollIntroProvider.Name">
+            <inheritdoc />
+        </member>
+        <member name="M:NeXroll.Jellyfin.NexrollIntroProvider.#ctor(Microsoft.Extensions.Logging.ILogger{NeXroll.Jellyfin.NexrollIntroProvider},MediaBrowser.Controller.Library.ILibraryManager,MediaBrowser.Model.IO.IFileSystem)">
+            <summary>
+            Initializes a new instance of the <see cref="T:NeXroll.Jellyfin.NexrollIntroProvider"/> class.
+            </summary>
+        </member>
         <member name="M:NeXroll.Jellyfin.NexrollIntroProvider.BuildRequest(System.Net.Http.HttpMethod,System.String,NeXroll.Jellyfin.PluginConfiguration)">
             <summary>
             Build an HttpRequestMessage with the standard NeXroll plugin headers

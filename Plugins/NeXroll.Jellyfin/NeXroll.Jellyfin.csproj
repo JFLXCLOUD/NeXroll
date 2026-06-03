@@ -10,16 +10,37 @@
     <ImplicitUsings>enable</ImplicitUsings>
   </PropertyGroup>
 
+  <!--
+    Pin to the FLOOR of the 10.11 series (not 10.11.*). Jellyfin refuses to load a
+    plugin that references a higher MediaBrowser.* assembly version than the host
+    provides ("incompatible version of one of the shared libraries"). Building
+    against 10.11.0 references 10.11.0.0, which loads on ANY 10.11.x server.
+    A floating 10.11.* silently breaks older hosts whenever a new patch ships.
+    Keep this in lockstep with meta.json "targetAbi".
+  -->
   <ItemGroup>
-    <PackageReference Include="Jellyfin.Controller" Version="10.11.*" />
-    <PackageReference Include="Jellyfin.Data" Version="10.11.*" />
-    <PackageReference Include="Jellyfin.Model" Version="10.11.*" />
+    <PackageReference Include="Jellyfin.Controller" Version="[10.11.0]" />
+    <PackageReference Include="Jellyfin.Data" Version="[10.11.0]" />
+    <PackageReference Include="Jellyfin.Model" Version="[10.11.0]" />
+    <!-- Framework libs: assembly version stays 9.0.0.0 across all 9.0.x, so these
+         never cause the load mismatch. Float to satisfy Jellyfin's transitive
+         minimum (10.11.0 needs >= 9.0.10) without forcing a downgrade. -->
     <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="9.0.*" />
     <PackageReference Include="System.Net.Http.Json" Version="9.0.*" />
   </ItemGroup>
 
   <ItemGroup>
     <EmbeddedResource Include="Configuration\configPage.html" />
+  </ItemGroup>
+
+  <!--
+    Jellyfin 10.11 dropped IHasThumbImage; the dashboard thumbnail now comes from
+    meta.json's "imagePath" pointing at an image file inside the installed plugin
+    folder. Ship both alongside the DLL so the icon shows for a manual install.
+  -->
+  <ItemGroup>
+    <None Include="meta.json" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="thumb.png" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
 </Project>

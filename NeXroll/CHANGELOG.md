@@ -1,9 +1,186 @@
 # Changelog
 
-## [1.13.19] - 05-28-2026
+## [1.14.0-beta.1] - 06-02-2026 (beta)
+
+> First public beta of the 1.14.0 line. Rolls up everything developed under the
+> previously-unreleased 1.13.20: automatic folder monitoring, Plex Cinema Trailers
+> controls, the scheduler/auto-scan duplicate-module fix (SCHED-DUP-1), the Cinema
+> Trailers false-rejection fix (PLEX-CT-2), and the Jellyfin/Emby plugin cache-path
+> fix (issue #30) plus dashboard icon. Windows binaries and plugin assemblies are
+> versioned 1.14.0.0.
+
+### Features
+
+- **Automatic preroll folder monitoring (SCAN-1).** Previously NeXroll only
+  scanned the preroll folders on startup, after a JSON restore, or via the
+  manual "Rescan Files Now" button — files dropped into category folders weren't
+  picked up until a restart or manual rescan. NeXroll now re-scans on a
+  configurable interval (default every 15 minutes) so new/removed files are
+  picked up automatically. It's optional — configure or disable it under
+  Settings → Storage ("Automatic Folder Monitoring"); env override
+  `NEXROLL_AUTO_SCAN_MINUTES`. Reuses the idempotent reconcile (no duplicate
+  rows thanks to DEDUPE-1). New endpoints `GET`/`PUT /prerolls/auto-scan`.
+  The scan runs in its own dedicated background thread, fully isolated from the
+  scheduler loop, so a slow or failing scan (it walks the disk and can spawn
+  ffmpeg for thumbnails) can never block or stop scheduling.
+- **Control Plex Cinema Trailers from NeXroll (PLEX-CT-1).** New "Cinema Trailers"
+  card on the Connections → Plex tab (shown when connected) exposes Plex's own
+  trailer settings and writes them straight to the Plex server: choose trailers
+  from all/unwatched movies, include trailers from movies in your library,
+  include new/upcoming in theaters and on Blu-ray (Plex Pass), and always
+  include English-language trailers for movies not in your library. Values are
+  read live from the server's `/:/prefs`, so the card reflects real state and
+  hides Plex Pass-only options the server doesn't advertise. Changes save
+  immediately. New endpoints `GET`/`PUT /plex/cinema-trailers`; PlexConnector
+  gained `get_cinema_trailer_prefs()` and a generic `set_pref()`.
+
+### UI
+
+- **Connections page redesign (CONN-2).** A cohesive, more professional pass over
+  the whole Connections page while keeping the NeXroll aesthetic:
+  - The Plex / Jellyfin / Emby switcher is now a **segmented pill selector** —
+    the active server lifts onto a card surface with its brand-colored accent
+    (Plex coral, Jellyfin violet, Emby green) and a connection **status dot**.
+  - The context banner, form fields, card section headers, inline `code`, and
+    disclosure summaries are unified via shared, theme-aware classes (no more
+    scattered inline styles); fields get consistent padding, radius, and a focus
+    ring instead of bare browser defaults.
+  - Status **badges** are now semantic chip variants (`success`, `info`,
+    `accent`, `recommend`) and the tinted **info panels** (download hints,
+    detection results, "plugin not found") share one `.nx-notice` component, so
+    everything reads as a set in light and dark.
+  - Redundant per-panel headers removed; Plex now has a matching **"Connect to
+    Plex Server"** title like Jellyfin/Emby.
+  - Simpler wording: the Plex connection methods are now plain **"Option 1:
+    Stable Token / Option 2: Manual Token / Option 3: Sign in with Plex."**
+- **Connections → Plex tab decluttered (CONN-1).** The recommended Stable Token
+  method stays front and center; the Docker and remote-server help (previously
+  two always-open blocks) now collapses into a single "Help: Docker & remote
+  servers" section. Manual-token and Plex.tv methods remain collapsible.
+- **Modal polish.** Refreshed the Create User and Add API Key dialogs (and shared
+  modal text-field styling) for a less bland look.
+- **Verbose Logging toggle now also on the Logs page (UX-5).** Previously it lived
+  only on General settings; mirrored it into Settings → Logs alongside the other
+  log controls (same backend toggle).
 
 ### Bug Fixes
 
+- **Plex.tv sign-in failed with "We were unable to complete this request"
+  (PLEX-OAUTH-1).** Connecting via the Plex.tv account method opened an auth
+  window that errored out and never connected. The OAuth URL was being built
+  with `code=None` — Plex had no PIN to link, so it rejected the login. Cause:
+  plexapi 4.17 moved the PIN-code fetch out of `MyPlexPinLogin.__init__` into
+  `run()`, but NeXroll called `oauthUrl()` *before* `run()`, so the code wasn't
+  populated yet. Reordered to call `run()` first (it fetches the PIN
+  synchronously, before starting the poll thread) and added a guard that surfaces
+  a clear error if Plex returns no PIN code. (Stable Token and manual-token
+  methods were unaffected.)
+- **Cinema Trailers toggles showed a false "Plex rejected the change" error
+  (PLEX-CT-2).** Toggling a Cinema Trailers setting applied correctly on the
+  Plex server but still surfaced "Plex rejected the change to X — if this is a
+  Plex Pass-only setting, it requires an active Plex Pass," even with an active
+  Plex Pass. The write succeeded; the post-write verification was wrong: Plex
+  accepts `true`/`false` on the `/:/prefs` PUT but stores booleans as `1`/`0`,
+  and `set_pref` compared the re-read value as a raw string (`'1' == 'true'`),
+  which never matched. The verification now compares booleans semantically
+  (treating `1`/`true`/`on`/`yes` as true), so a successful toggle no longer
+  reports a phantom rejection.
+- **Scheduler tile flashing "stopped" and auto-scan never running — fixed the
+  true root cause: a duplicate `Scheduler` object in the frozen build
+  (SCHED-DUP-1).** This supersedes the earlier SINGLE-1 / SCHED-RESIL-1 theories
+  (the "two `NeXroll.exe`" they chased is just the normal PyInstaller onefile
+  bootloader+child pair — one logical server). Diagnosed live: the scheduler
+  loop was genuinely running, yet `/scheduler/status` reported `running:false`,
+  because the HTTP route handlers and the FastAPI `startup_event` were holding
+  **two different `Scheduler` instances**. Cause: in frozen builds `main.py`
+  runs as `__main__`, but the auto-scan loop and the log-cleanup helper still did
+  `from backend.main import ...`, which loads `main.py` a *second* time as
+  `backend.main` and re-executes the whole module. That re-execution (a) tripped
+  the frozen startup block, whose `sys.exit(0)` raised `SystemExit` — not caught
+  by `except Exception` — and **killed the auto-scan thread on its first run**
+  (so deleted files never dropped from the count), and (b) created the duplicate
+  module/scheduler state behind the false "stopped" indicator. Fixes: (1) the
+  global `scheduler` singleton is now anchored on the `sys` module, so every
+  copy of the module — however it's imported — shares the exact same instance;
+  (2) the auto-scan loop and `_maybe_cleanup_logs` now resolve `main` helpers via
+  `sys.modules` instead of re-importing (matching the existing NeX-Up sync
+  pattern); (3) the auto-scan loop catches `BaseException` so nothing can tear
+  the thread down again; (4) the frozen auto-start block is guarded with
+  `__name__ == "__main__"` so re-importing `main` is completely inert. Verified:
+  `/scheduler/status` holds `running:true` across sustained polling, a deleted
+  file is auto-pruned on the next scan, and `POST /scheduler/start` is now a
+  no-op against the already-running loop.
+- **Deletions in Explorer now self-heal — no more "Remove Missing Rows" prompt
+  for the common case (SCAN-3).** When a preroll file is deleted or moved
+  outside the app, scans (startup, the periodic auto-scan, and Scan Now / Rescan
+  Files Now) now automatically remove the stale DB row instead of showing the
+  "Remove Missing Rows" banner and making the user fix it. Critically, this is
+  guarded against storage outages: if no files are found on disk at all, or a
+  large fraction of rows (>25%, min 10) suddenly go missing in one scan, NeXroll
+  treats it as a likely offline network share / unmounted drive and does NOT
+  delete anything — it leaves the rows so they relink when storage returns, and
+  the dashboard shows a "storage may be offline" notice instead of advising
+  removal. The manual "Remove Missing Rows" button still force-removes without
+  the threshold. (JSON restore is unaffected — it never auto-prunes.)
+- **Scheduler "stops" after an update — fixed the real cause: duplicate
+  instances (SINGLE-1).** Diagnosed from a user's service log: installing an
+  update while the previous NeXroll was still running left two `NeXroll.exe`
+  processes fighting over port 9393. The second failed to bind (WinError 10048)
+  and shut down mid-startup, taking its scheduler with it — so the dashboard
+  showed the scheduler "started then stopped." (The earlier SCHED-RESIL-1 work
+  hardened the status reporting, but the underlying trigger was the port
+  collision, not a scheduler crash.) Two fixes: (1) `NeXroll.exe` is built from
+  `backend/main.py`, which had no single-instance check — the existing mutex
+  guard in `scripts/launcher.py` was never reached. Added a `Global\` named
+  mutex check before the frozen build starts uvicorn, so a second backend exits
+  cleanly instead of half-starting. (2) The NSIS installer now stops the running
+  service and force-kills any `NeXroll.exe` / `NeXrollTray.exe` / service
+  process *before* copying files and starting the new service, so updates no
+  longer overlap with the old instance.
+- **"Failed to update auto-scan setting" fixed (SCAN-2).** The auto-scan interval
+  endpoints were registered at `/prerolls/auto-scan`, but `PUT /prerolls/{preroll_id}`
+  is defined earlier and shadowed it — `PUT /prerolls/auto-scan` matched
+  "auto-scan" as a preroll id and 422'd (the GET worked, so loading the value
+  was fine but saving failed). Moved both endpoints to `/settings/auto-scan`.
+  Also added a **Scan Now** button to the Automatic Folder Monitoring card.
+- **Dashboard no longer falsely shows the scheduler "stopped" (SCHED-RESIL-1).**
+  The batched dashboard poll reset *all* UI state to defaults — including the
+  scheduler tile to "stopped" and empty preroll/category lists — whenever any
+  single request in the batch failed or the backend was briefly busy (e.g.
+  during a folder scan). The scheduler thread was actually fine. Now a transient
+  poll failure keeps the last known state, and the scheduler tile only updates
+  from a valid status response. Backend hardening too: `/scheduler/status`
+  reports liveness from the actual thread (not just a flag) and never throws on
+  the active-schedule count; `scheduler.start()` revives a thread that has
+  genuinely died instead of being a no-op; and the scheduler loop logs loudly
+  if it ever exits unexpectedly.
+- **Log retention is now actually enforced (LOG-5).** `cleanup_old_logs()` existed
+  but was never called anywhere, so the "Log Retention" setting did nothing and
+  the log table grew without bound (a user's DB held thousands of entries dating
+  back months). Retention is now applied on startup and again ~once per day from
+  the scheduler loop, pruning entries older than the configured window. This is
+  what the Log Retention dropdown's "automatically purge logs older than this"
+  description always promised.
+
+- **Can't enable "Require Login" without an admin account (AUTH-2).** Toggling
+  Require Login on with zero user accounts was a lockout risk — `PUT
+  /auth/settings` flipped `auth_enabled` with no guard. The endpoint now rejects
+  enabling auth unless at least one active admin user exists (clear 400
+  otherwise). The frontend toggle was already disabled in this state; this is
+  the authoritative server-side guard. (Recovery was already safe: the login
+  screen shows "Create the first admin account" when no users exist.)
+- **"Clear All Logs" option added; plain "clear" no longer leaves recent entries
+  behind (LOG-4).** The log panel only had "Clear Logs Older Than 30 Days,"
+  which (correctly) keeps anything inside the retention window — so users trying
+  to wipe a backlog of old error spam saw the count only partially drop and
+  assumed clearing was broken. Added an explicit **Clear All Logs** button
+  (with confirmation) backed by a new `clear_all=true` parameter on
+  `DELETE /logs` that bypasses the retention cutoff.
+- **Library-health banner uses plain language (UX-4).** "duplicate rows" /
+  "preroll rows point at..." confused users who don't think in database terms.
+  Reworded to "N prerolls are listed more than once (the same video file has
+  duplicate entries)" and "N preroll entries point to files that no longer
+  exist on disk."
 - **Duplicate preroll rows no longer regenerate after Dedupe (DEDUPE-1).** The
   scanner's orphan-file pass created a new DB row for any on-disk file it
   didn't match to an existing row via the category-folder + filename
@@ -15,6 +192,45 @@
   health banner kept reappearing. The orphan pass now skips any path a DB row
   already owns, so duplicates stop regenerating and Dedupe sticks. (Most common
   on Docker instances migrated from Windows.)
+
+### Plugins (Jellyfin / Emby)
+
+- **Prerolls failed to play in Docker with "Access to the path '…/NeXroll' is
+  denied" (issue #30).** The intro provider cached downloaded prerolls under a
+  folder derived from `Environment.GetFolderPath(LocalApplicationData)`. On
+  Linux/.NET that resolves via `$XDG_DATA_HOME` / `$HOME/.local/share` and
+  returns an **empty string when `HOME` is unset** — which is the case for the
+  Jellyfin/Emby service under s6-overlay (linuxserver.io Docker on Unraid, etc.).
+  An empty base collapsed the cache path to a **relative** one, so
+  `Directory.CreateDirectory` resolved it against the process working directory
+  (the read-only s6 service dir, `/run/s6-rc.../svc-jellyfin/`) and threw
+  `UnauthorizedAccessException` on every intro download. The provider now
+  resolves its cache directory from the plugin's own data folder
+  (`Plugin.Instance.DataFolderPath` — always absolute and writable, under the
+  server config dir) and falls back to the OS temp directory if that is ever
+  empty or not rooted, so the path can never collapse to a relative one again.
+  Affects both the Jellyfin and Emby plugins. (Workaround on older builds: set
+  `HOME=/config` or `XDG_DATA_HOME=/config` on the container.)
+- **Plugin now shows the NeXroll icon in the dashboard.** Emby surfaces it via
+  `IHasThumbImage` (embedded PNG); Jellyfin 10.11 (which dropped
+  `IHasThumbImage`) gets it from a bundled `meta.json` + `thumb.png` in the
+  plugin folder.
+- **Plugin version stamped to 1.14.0** (both Jellyfin and Emby) so the installed
+  version is visible in the dashboard instead of a default `1.0.0.0`.
+- **Jellyfin plugin pinned to the 10.11.0 SDK floor (PLUGIN-ABI-1).** The csproj
+  referenced `Jellyfin.* 10.11.*`, a floating version that resolved to whatever
+  patch was newest on NuGet at build time (e.g. 10.11.10). Jellyfin refuses to
+  load a plugin that references a higher `MediaBrowser.*` assembly version than
+  the host provides ("Failed to load assembly … references an incompatible
+  version of one of the shared libraries"), so a build made against 10.11.10
+  silently broke every server on an earlier 10.11.x. Pinned to `[10.11.0]` so the
+  DLL references `10.11.0.0` and loads on any 10.11.x server. (Kept in lockstep
+  with `meta.json` `targetAbi`.)
+
+## [1.13.19] - 05-28-2026
+
+### Bug Fixes
+
 - **JSON restore no longer fails with "FOREIGN KEY constraint failed [DELETE FROM
   categories]" on Docker (RESTORE-1).** The restore clears category references
   before deleting categories, but only NULLed `settings.active_category` — it

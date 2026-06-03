@@ -335,7 +335,11 @@ class Setting(Base):
     log_request_logging = Column(Boolean, default=True)  # Log all API requests with timing
     log_scheduler_logging = Column(Boolean, default=True)  # Log scheduler activity
     log_api_logging = Column(Boolean, default=True)  # Log external API calls (Plex, Radarr, etc.)
-    
+
+    # Automatic preroll folder monitoring: minutes between background filesystem
+    # rescans that pick up files added/removed outside the app. 0 = disabled.
+    auto_scan_minutes = Column(Integer, default=15)
+
     # Filler Category Settings - Used when no schedules are active (different from per-schedule fallback)
     # The filler kicks in when there are NO active schedules at all, filling the gap globally
     filler_enabled = Column(Boolean, default=False)  # Enable filler category feature

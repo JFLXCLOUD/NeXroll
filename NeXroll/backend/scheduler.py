@@ -152,18 +152,39 @@ class Scheduler:
         self._blend_expected_preroll: Optional[str] = None
         # Track last NeX-Up auto-sync time
         self._last_nexup_sync_time: Optional[datetime.datetime] = None
+        # Track last log-retention cleanup (runs ~once/day from the loop)
+        self._last_log_cleanup_time: Optional[datetime.datetime] = None
+        # Automatic preroll-folder scan runs in its own isolated thread so it can
+        # never block or crash the scheduler loop.
+        self._last_preroll_scan_time: Optional[datetime.datetime] = None
+        self.autoscan_thread = None
+        self._autoscan_running = False
 
     def start(self):
-        """Start the scheduler in a background thread"""
-        if not self.running:
+        """Start the scheduler in a background thread.
+
+        Resilient: if the flag says running but the thread has actually died,
+        restart it. This means hitting Start always revives a stuck scheduler
+        instead of being a no-op."""
+        thread_alive = bool(self.thread and self.thread.is_alive())
+        if not self.running or not thread_alive:
             self.running = True
-            self.thread = threading.Thread(target=self._run_scheduler)
+            self.thread = threading.Thread(target=self._run_scheduler, name="nexroll-scheduler")
             self.thread.daemon = True
             self.thread.start()
+        # Start the isolated auto-scan thread separately so the scheduler's
+        # lifecycle is independent of folder scanning.
+        autoscan_alive = bool(self.autoscan_thread and self.autoscan_thread.is_alive())
+        if not self._autoscan_running or not autoscan_alive:
+            self._autoscan_running = True
+            self.autoscan_thread = threading.Thread(target=self._run_autoscan_loop, name="nexroll-autoscan")
+            self.autoscan_thread.daemon = True
+            self.autoscan_thread.start()
 
     def stop(self):
         """Stop the scheduler"""
         self.running = False
+        self._autoscan_running = False
         if self.thread:
             self.thread.join()
 
@@ -296,8 +317,97 @@ class Scheduler:
                 self._check_nexup_auto_sync()
             except Exception as e:
                 _scheduler_log(f"NeX-Up auto-sync error: {e}", level="ERROR")
+            try:
+                # Enforce log retention ~once per day
+                self._maybe_cleanup_logs()
+            except Exception as e:
+                _scheduler_log(f"Log cleanup error: {e}", level="ERROR")
+            # NOTE: automatic preroll-folder scanning runs in its OWN dedicated
+            # thread (_run_autoscan_loop), NOT here. The scan walks the disk and
+            # may spawn ffmpeg for thumbnails; keeping it off the scheduler loop
+            # ensures a slow or failing scan can never block or stop scheduling.
             # Use configurable interval (default 60s, set via SCHEDULER_INTERVAL env var)
-            time.sleep(self._scheduler_check_interval)
+            try:
+                time.sleep(self._scheduler_check_interval)
+            except Exception:
+                time.sleep(5)
+        # If we ever exit the loop while still "running", something escaped the
+        # per-operation guards above. Log loudly so it's diagnosable rather than
+        # silently leaving a dead thread.
+        if self.running:
+            _scheduler_log("Scheduler loop exited unexpectedly while running=True", level="ERROR")
+
+    def _run_autoscan_loop(self):
+        """
+        Dedicated thread that periodically reconciles the preroll folders so
+        files added/removed outside the app are picked up automatically.
+
+        Runs completely separately from the scheduler loop: it wakes every 30s,
+        checks the configured interval (Settings → auto_scan_minutes; 0 = off),
+        and runs a scan when due. All work is wrapped so a slow or failing scan
+        can never affect the scheduler thread. The scan itself spawns ffmpeg for
+        thumbnails, which is exactly why it must not live on the scheduler loop.
+        """
+        # Seed so the first scan waits a full interval (startup already scanned).
+        self._last_preroll_scan_time = datetime.datetime.utcnow()
+        _scheduler_log("Auto-scan thread started")
+        while self._autoscan_running:
+            try:
+                # Resolve helpers from the ALREADY-LOADED main module via
+                # sys.modules. NEVER do `from backend.main import ...` here: in
+                # frozen builds main runs as __main__, so that import RE-EXECUTES
+                # the whole module (hitting the uvicorn/single-instance block,
+                # which raises SystemExit and silently kills this thread, leaving
+                # auto-scan permanently dead). Same approach as the NeX-Up sync.
+                import sys as _sys
+                _main_mod = _sys.modules.get('backend.main') or _sys.modules.get('__main__')
+                get_auto_scan_minutes = getattr(_main_mod, 'get_auto_scan_minutes', None) if _main_mod else None
+                scan_preroll_library = getattr(_main_mod, 'scan_preroll_library', None) if _main_mod else None
+                if not get_auto_scan_minutes or not scan_preroll_library:
+                    raise RuntimeError("auto-scan helpers not found in loaded main module")
+                minutes = get_auto_scan_minutes()
+                if minutes and minutes > 0:
+                    now = datetime.datetime.utcnow()
+                    last = self._last_preroll_scan_time
+                    if last is None or (now - last).total_seconds() >= minutes * 60:
+                        self._last_preroll_scan_time = now
+                        stats = scan_preroll_library()
+                        try:
+                            added = stats.get("new_prerolls", 0) if stats else 0
+                            if added:
+                                _scheduler_log(f"Auto-scan: picked up {added} new preroll file(s)")
+                        except Exception:
+                            pass
+            except BaseException as e:
+                # Catch BaseException (not just Exception) so a SystemExit raised
+                # by a misbehaving import can never tear this daemon thread down.
+                _scheduler_log(f"Auto-scan error (scheduler unaffected): {e}", level="ERROR")
+            # Poll cadence is fixed at 30s; the configured interval gates actual scans.
+            for _ in range(30):
+                if not self._autoscan_running:
+                    break
+                time.sleep(1)
+
+    def _maybe_cleanup_logs(self):
+        """Prune logs older than the retention window, at most once every 24h."""
+        now = datetime.datetime.utcnow()
+        last = self._last_log_cleanup_time
+        if last is not None and (now - last).total_seconds() < 86400:
+            return
+        self._last_log_cleanup_time = now
+        # Resolve from the ALREADY-LOADED main module via sys.modules. Do NOT use
+        # `from backend.main import ...`: in frozen builds main runs as __main__,
+        # so that import re-executes the module (uvicorn/single-instance block ->
+        # SystemExit). Same approach as the auto-scan loop and NeX-Up sync.
+        import sys as _sys
+        _main_mod = _sys.modules.get('backend.main') or _sys.modules.get('__main__')
+        cleanup_old_logs = getattr(_main_mod, 'cleanup_old_logs', None) if _main_mod else None
+        if not cleanup_old_logs:
+            _scheduler_log("Log retention: cleanup_old_logs not found in loaded modules", level="WARNING")
+            return
+        deleted = cleanup_old_logs()
+        if deleted:
+            _scheduler_log(f"Log retention: pruned {deleted} log entries older than retention window")
 
     def _check_nexup_auto_sync(self):
         """
@@ -3388,5 +3498,22 @@ class Scheduler:
 
         return None
 
-# Global scheduler instance
-scheduler = Scheduler()
+# Global scheduler instance.
+#
+# In PyInstaller frozen builds main.py runs as __main__, but it can also be
+# loaded a SECOND time under the name `backend.main` (e.g. via a stray
+# `from backend.main import ...`), which re-executes this module too and would
+# otherwise construct a SECOND Scheduler(). When that happens the HTTP route
+# handlers and the FastAPI startup_event end up holding different Scheduler
+# objects, so /scheduler/status reads an instance that was never started and
+# reports "stopped" even while a scheduler loop is actively running.
+#
+# Anchor the singleton on the `sys` module, which is guaranteed to exist exactly
+# once per process regardless of how many times this module is imported or under
+# what name. Every copy of this module then shares the identical instance.
+import sys as _sys_singleton
+_SCHEDULER_SINGLETON_KEY = "_nexroll_scheduler_singleton"
+scheduler = getattr(_sys_singleton, _SCHEDULER_SINGLETON_KEY, None)
+if scheduler is None:
+    scheduler = Scheduler()
+    setattr(_sys_singleton, _SCHEDULER_SINGLETON_KEY, scheduler)

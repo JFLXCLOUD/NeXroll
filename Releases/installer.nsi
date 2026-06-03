@@ -22,8 +22,8 @@ ShowInstDetails show
 Icon "NeXroll_ICON\icon_1758297097_64x64.ico"
 UninstallIcon "NeXroll_ICON\icon_1758297097_32x32.ico"
 
-!define APP_VERSION "1.13.19"
-VIProductVersion "1.13.19.0"
+!define APP_VERSION "1.14.0-beta.1"
+VIProductVersion "1.14.0.0"
 VIAddVersionKey /LANG=1033 "ProductName" "NeXroll"
 VIAddVersionKey /LANG=1033 "ProductVersion" "${APP_VERSION}"
 VIAddVersionKey /LANG=1033 "FileVersion" "${APP_VERSION}"
@@ -102,10 +102,29 @@ FunctionEnd
 ; ------------------------------
 Section "!NeXroll Application (Required)" SEC_APP
   SectionIn RO
-  
+
   ; Force 64-bit registry view so our keys are readable by 64-bit apps
   SetRegView 64
-  
+
+  ; ------------------------------------------------------------------
+  ; Stop any running NeXroll BEFORE copying files / starting the new
+  ; service. Without this, updating over a running instance leaves the
+  ; old NeXroll.exe holding port 9393, so the freshly-started service
+  ; fails to bind (WinError 10048) and shuts down mid-startup — which
+  ; made the scheduler look like it "started then stopped." Stop the
+  ; service first (graceful), then force-kill any stragglers, and give
+  ; the OS a moment to release the port and file locks.
+  ; ------------------------------------------------------------------
+  nsExec::ExecToStack 'cmd /c sc stop "NeXrollService"'
+  Pop $0
+  nsExec::ExecToStack 'taskkill /F /IM NeXrollTray.exe /T'
+  Pop $0
+  nsExec::ExecToStack 'taskkill /F /IM NeXroll.exe /T'
+  Pop $0
+  nsExec::ExecToStack 'taskkill /F /IM NeXrollService.exe /T'
+  Pop $0
+  Sleep 1500
+
   SetOutPath "$INSTDIR"
   SetOverwrite on
 

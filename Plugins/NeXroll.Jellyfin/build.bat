@@ -41,13 +41,24 @@ if errorlevel 1 (
 )
 
 echo.
+echo Packaging release zip (plugin DLL + meta.json + thumb.png)...
+powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0package.ps1" -NoPublish
+if errorlevel 1 (
+    echo ERROR: Packaging failed.
+    pause
+    exit /b 1
+)
+
+echo.
 echo ============================================================
 echo   Build complete!
 echo   Output: %~dp0publish\NeXroll.Jellyfin.dll
+echo   Release zip: %~dp0NeXroll.Jellyfin-^<version^>.zip
 echo.
-echo   To install:
-echo     1. Copy the 'publish' folder contents to:
-echo        Jellyfin\plugins\NeXroll Intros\
+echo   To install (folder):
+echo     1. Copy these files into  Jellyfin\plugins\NeXroll Intros\ :
+echo          NeXroll.Jellyfin.dll, meta.json, thumb.png
+echo        (or just extract the release zip there)
 echo     2. Restart Jellyfin
 echo     3. Go to Dashboard ^> Plugins ^> NeXroll Intros
 echo     4. Enter your NeXroll server URL

@@ -1,5 +1,6 @@
 using MediaBrowser.Common.Configuration;
 using MediaBrowser.Common.Plugins;
+using MediaBrowser.Model.Drawing;
 using MediaBrowser.Model.Plugins;
 using MediaBrowser.Model.Serialization;
 
@@ -8,7 +9,7 @@ namespace NeXroll.Emby;
 /// <summary>
 /// Main plugin class for NeXroll Intros (Emby variant).
 /// </summary>
-public class Plugin : BasePlugin<PluginConfiguration>, IHasWebPages
+public class Plugin : BasePlugin<PluginConfiguration>, IHasWebPages, IHasThumbImage
 {
     public override string Name => "NeXroll Intros";
 
@@ -26,6 +27,16 @@ public class Plugin : BasePlugin<PluginConfiguration>, IHasWebPages
     {
         Instance = this;
     }
+
+    /// <summary>Plugin thumbnail shown in the Emby dashboard (embedded PNG resource).</summary>
+    public Stream? GetThumbImage()
+    {
+        var type = GetType();
+        return type.Assembly.GetManifestResourceStream(type.Namespace + ".thumb.png");
+    }
+
+    /// <summary>Format of the thumbnail returned by <see cref="GetThumbImage"/>.</summary>
+    public ImageFormat ThumbImageFormat => ImageFormat.Png;
 
     public IEnumerable<PluginPageInfo> GetPages()
     {

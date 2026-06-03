@@ -1,0 +1,14 @@
+{
+    "guid": "a1b2c3d4-e5f6-7890-abcd-ae0c01100001",
+    "name": "NeXroll Intros",
+    "description": "Injects preroll intros from a NeXroll server before movies and episodes.",
+    "overview": "Preroll intros from NeXroll for Jellyfin Cinema Mode.",
+    "owner": "JFLXCLOUD",
+    "category": "General",
+    "version": "1.14.0.0",
+    "targetAbi": "10.11.0.0",
+    "framework": "net9.0",
+    "imagePath": "thumb.png",
+    "status": "Active",
+    "autoUpdate": false
+}

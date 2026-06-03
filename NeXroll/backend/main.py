@@ -480,6 +480,11 @@ def ensure_schema() -> None:
             # Community Prerolls: ensure community_server_url column
             if not _sqlite_has_column("settings", "community_server_url"):
                 _sqlite_add_column("settings", "community_server_url TEXT")
+
+            # Automatic preroll folder monitoring: minutes between background
+            # rescans (0 = disabled). Default 15.
+            if not _sqlite_has_column("settings", "auto_scan_minutes"):
+                _sqlite_add_column("settings", "auto_scan_minutes INTEGER DEFAULT 15")
             
             # Add filler category settings columns
             filler_columns = [
@@ -2258,28 +2263,25 @@ def startup_event():
     # are picked up. Disable with NEXROLL_SCAN_ON_STARTUP=0 if it's slow on huge libraries.
     if os.environ.get("NEXROLL_SCAN_ON_STARTUP", "1").strip().lower() not in ("0", "false", "no"):
         try:
-            db = SessionLocal()
-            _startup_scan_stats = fs_scanner.reconcile_prerolls(
-                db,
-                prerolls_dir=PREROLLS_DIR,
-                data_dir=data_dir,
-                generate_thumbnail_fn=_generate_thumbnail_for_preroll,
-                file_log=_file_log,
-            )
-            try:
-                _set_last_scan_stats(_startup_scan_stats)
-            except Exception:
-                pass
+            scan_preroll_library()
         except Exception as e:
             try:
                 _file_log(f"Startup preroll scan error: {e}", level="ERROR")
             except Exception:
                 pass
-        finally:
-            try:
-                db.close()
-            except Exception:
-                pass
+
+    # Enforce log retention on startup. cleanup_old_logs() existed but was never
+    # called anywhere, so the retention setting did nothing and the log table grew
+    # unbounded. Prune once at startup; the scheduler also prunes daily (below).
+    try:
+        deleted = cleanup_old_logs()
+        if deleted:
+            _file_log(f"Log retention: pruned {deleted} log entries older than retention window")
+    except Exception as e:
+        try:
+            _file_log(f"Startup log cleanup error: {e}", level="ERROR")
+        except Exception:
+            pass
 
     # Log startup banner
     _log_startup_banner()
@@ -5459,7 +5461,22 @@ async def auth_update_settings(
     
     # Update settings
     if 'auth_enabled' in body:
-        setting.auth_enabled = bool(body['auth_enabled'])
+        want_enabled = bool(body['auth_enabled'])
+        # Guard against locking everyone out: never enable "Require Login" unless
+        # at least one active admin account exists to log in with. The user hit
+        # this by toggling Require Login before creating any account.
+        if want_enabled and not setting.auth_enabled:
+            admin_count = db.query(models.User).filter(
+                models.User.role == 'admin',
+                models.User.is_active == True
+            ).count()
+            if admin_count == 0:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Create an admin user account before enabling Require Login, "
+                           "or you would be locked out."
+                )
+        setting.auth_enabled = want_enabled
     if 'session_timeout_hours' in body:
         setting.auth_session_timeout_hours = max(1, min(720, int(body['session_timeout_hours'])))
     if 'allow_registration' in body:
@@ -6061,43 +6078,53 @@ async def logs_clear(
     db: Session = Depends(get_db),
     older_than_days: Optional[int] = None,
     level: Optional[str] = None,
-    category: Optional[str] = None
+    category: Optional[str] = None,
+    clear_all: bool = False
 ):
     """
     Clear logs with optional filters.
-    
+
     Query params:
+    - clear_all: Delete EVERY log entry, ignoring the retention cutoff. Use this
+      to wipe historical noise (e.g. old pre-fix error spam). Overrides the
+      retention safety below.
     - older_than_days: Delete logs older than X days (if not specified, uses retention setting)
     - level: Only delete logs of this level
     - category: Only delete logs of this category
     """
     user = get_current_user_optional(request, db)
-    
+
     # Allow local requests without auth
     if _check_auth_enabled(db) and not _is_local_request(request):
         if not user or user.role != 'admin':
             raise HTTPException(status_code=403, detail="Admin access required")
-    
+
     query = db.query(models.LogEntry)
-    
-    # Apply filters
-    if older_than_days is not None:
-        cutoff = datetime.datetime.utcnow() - datetime.timedelta(days=older_than_days)
-        query = query.filter(models.LogEntry.timestamp < cutoff)
-    elif level is None and category is None:
-        # If no filters, use retention setting as safety
-        settings = _get_log_settings(db)
-        cutoff = datetime.datetime.utcnow() - datetime.timedelta(days=settings.get("log_retention_days", 30))
-        query = query.filter(models.LogEntry.timestamp < cutoff)
-    
+
+    # Apply filters. clear_all bypasses the retention cutoff entirely so the
+    # user can purge everything; otherwise the no-filter case falls back to the
+    # retention window as a safety (which is why a plain "clear" only removed
+    # entries older than the retention setting and left recent noise behind).
+    if clear_all:
+        pass  # no time/level/category restriction — delete all
+    else:
+        if older_than_days is not None:
+            cutoff = datetime.datetime.utcnow() - datetime.timedelta(days=older_than_days)
+            query = query.filter(models.LogEntry.timestamp < cutoff)
+        elif level is None and category is None:
+            # If no filters, use retention setting as safety
+            settings = _get_log_settings(db)
+            cutoff = datetime.datetime.utcnow() - datetime.timedelta(days=settings.get("log_retention_days", 30))
+            query = query.filter(models.LogEntry.timestamp < cutoff)
+
     if level:
         query = query.filter(models.LogEntry.level == level.upper())
     if category:
         query = query.filter(models.LogEntry.category == category.lower())
-    
+
     deleted = query.delete(synchronize_session=False)
     db.commit()
-    
+
     return {"success": True, "deleted": deleted}
 
 
@@ -6812,9 +6839,15 @@ def plex_tv_start(forward_url: str | None = None):
 
         headers = _build_plex_headers()
         pinlogin = MyPlexPinLogin(headers=headers, oauth=True)
+        # Start the PIN login FIRST. In plexapi 4.17+ the PIN code is fetched by
+        # run() -> _getCode() (synchronously, before the poll thread starts), not
+        # by __init__. Calling oauthUrl() before run() builds the URL with
+        # code=None, so Plex shows "We were unable to complete this request" and
+        # login fails. run() must come first so the code is populated.
+        pinlogin.run(timeout=600)  # 10 minutes window; fetches the PIN code synchronously
         url = pinlogin.oauthUrl(forward_url)
-        # Spawn background thread and return immediately
-        pinlogin.run(timeout=600)  # 10 minutes window
+        if not getattr(pinlogin, "_code", None):
+            raise RuntimeError("Plex did not return a login PIN code")
 
         sid = str(uuid.uuid4())
         OAUTH_SESSIONS[sid] = {
@@ -12268,10 +12301,19 @@ def stop_scheduler():
 
 @app.get("/scheduler/status")
 def get_scheduler_status():
-    return {
-        "running": scheduler.running,
-        "active_schedules": len(scheduler._get_active_schedules()) if hasattr(scheduler, '_get_active_schedules') else 0
-    }
+    # Report liveness from the actual thread, not just the flag, and never let
+    # the (DB-touching) active-schedule count throw — a failure here previously
+    # surfaced as a false "scheduler stopped" in the UI.
+    try:
+        thread_alive = bool(getattr(scheduler, "thread", None) and scheduler.thread.is_alive())
+    except Exception:
+        thread_alive = False
+    running = bool(getattr(scheduler, "running", False)) and thread_alive
+    try:
+        active = len(scheduler._get_active_schedules()) if hasattr(scheduler, '_get_active_schedules') else 0
+    except Exception:
+        active = 0
+    return {"running": running, "active_schedules": active}
 
 @app.get("/scheduler/active-schedule-ids")
 def get_active_schedule_ids():
@@ -12510,6 +12552,105 @@ def get_current_preroll(db: Session = Depends(get_db)):
         "current_preroll": current_preroll,
         "has_preroll": current_preroll is not None and current_preroll != ""
     }
+
+
+# Friendly labels + ordering for the Cinema Trailers settings NeXroll exposes.
+_CINEMA_TRAILER_FIELDS = [
+    {"id": "CinemaTrailersType", "label": "Choose Cinema Trailers from",
+     "help": "Which movies trailers are drawn from.", "plex_pass": False},
+    {"id": "CinemaTrailersFromLibrary", "label": "Include trailers from movies in my library",
+     "help": "Use trailers for movies you already have.", "plex_pass": False},
+    {"id": "CinemaTrailersFromTheater", "label": "Include new and upcoming movies in theaters",
+     "help": "Requires Plex Pass.", "plex_pass": True},
+    {"id": "CinemaTrailersFromBluRay", "label": "Include new and upcoming movies on Blu-ray",
+     "help": "Requires Plex Pass.", "plex_pass": True},
+    {"id": "CinemaTrailersAlwaysIncludeEnglish", "label": "Always include English-language trailers for movies not in my library",
+     "help": "", "plex_pass": False},
+]
+
+
+@app.get("/plex/cinema-trailers")
+def get_plex_cinema_trailers(db: Session = Depends(get_db)):
+    """
+    Read the Plex server's Cinema Trailers preferences so NeXroll can display
+    and control them. Returns each setting the server advertises with its
+    current value, type, and (for enums) the available options. Settings the
+    server does not report (e.g. Plex Pass-only ones on a non-Pass server) are
+    flagged as unavailable.
+    """
+    setting = db.query(models.Setting).first()
+    if not setting or not setting.plex_url:
+        raise HTTPException(status_code=400, detail="Plex not configured")
+
+    connector = PlexConnector(setting.plex_url, setting.plex_token)
+    prefs = connector.get_cinema_trailer_prefs()
+    if prefs is None:
+        raise HTTPException(status_code=502, detail="Could not read preferences from Plex server")
+
+    def _parse_enum(enum_str):
+        # Plex enumValues format: "0:All movies|1:Only unwatched movies"
+        opts = []
+        for part in (enum_str or "").split("|"):
+            if ":" in part:
+                val, _, lbl = part.partition(":")
+                opts.append({"value": val, "label": lbl})
+        return opts
+
+    fields = []
+    for f in _CINEMA_TRAILER_FIELDS:
+        sid = f["id"]
+        server = prefs.get(sid)
+        entry = {
+            "id": sid,
+            "label": f["label"],
+            "help": f["help"],
+            "plex_pass": f["plex_pass"],
+            "available": server is not None,
+        }
+        if server is not None:
+            ptype = server.get("type") or ""
+            entry["type"] = ptype
+            raw = server.get("value", "")
+            if ptype == "bool":
+                entry["value"] = str(raw).lower() in ("1", "true")
+            else:
+                entry["value"] = raw
+            if server.get("enumValues"):
+                entry["options"] = _parse_enum(server.get("enumValues"))
+        fields.append(entry)
+
+    return {"fields": fields}
+
+
+class CinemaTrailerUpdate(BaseModel):
+    key: str
+    value: object  # bool for toggles, str/int for the enum
+
+
+@app.put("/plex/cinema-trailers")
+def update_plex_cinema_trailers(body: CinemaTrailerUpdate, db: Session = Depends(get_db)):
+    """Write a single Cinema Trailers preference back to the Plex server."""
+    setting = db.query(models.Setting).first()
+    if not setting or not setting.plex_url:
+        raise HTTPException(status_code=400, detail="Plex not configured")
+
+    valid_ids = {f["id"] for f in _CINEMA_TRAILER_FIELDS}
+    if body.key not in valid_ids:
+        raise HTTPException(status_code=400, detail=f"Unknown setting: {body.key}")
+
+    connector = PlexConnector(setting.plex_url, setting.plex_token)
+    ok = connector.set_pref(body.key, body.value)
+    if not ok:
+        log_event('WARNING', 'plex', f'Failed to set Cinema Trailers pref {body.key}={body.value}',
+                  source='update_plex_cinema_trailers')
+        raise HTTPException(
+            status_code=502,
+            detail=f"Plex rejected the change to {body.key}. If this is a Plex Pass-only "
+                   f"setting, it requires an active Plex Pass."
+        )
+    log_event('INFO', 'plex', f'Cinema Trailers pref updated: {body.key}={body.value}',
+              source='update_plex_cinema_trailers')
+    return {"success": True, "key": body.key, "value": body.value}
 
 def _preview_payload_from_intent(setting, db) -> Optional[dict]:
     """
@@ -13548,6 +13689,7 @@ _LAST_SCAN_STATS: dict = {
     "duplicate_rows": 0,
     "files_on_disk": 0,
     "db_rows_total": 0,
+    "storage_maybe_offline": False,
     "last_scan_at": None,
 }
 
@@ -13559,9 +13701,77 @@ def _set_last_scan_stats(stats: dict) -> None:
         _LAST_SCAN_STATS["duplicate_rows"] = int(stats.get("duplicate_rows", 0) or 0)
         _LAST_SCAN_STATS["files_on_disk"] = int(stats.get("files_on_disk", 0) or 0)
         _LAST_SCAN_STATS["db_rows_total"] = int(stats.get("db_rows_total", 0) or 0)
+        _LAST_SCAN_STATS["storage_maybe_offline"] = bool(stats.get("storage_maybe_offline", False))
         _LAST_SCAN_STATS["last_scan_at"] = _dt.utcnow().isoformat() + "Z"
     except Exception:
         pass
+
+
+def scan_preroll_library(db: Session = None, delete_missing: bool = False, dedupe: bool = False,
+                         auto_prune_missing: bool = True) -> dict:
+    """
+    Run a filesystem reconcile over PREROLLS_DIR and refresh the cached health
+    stats. Shared by the startup scan, the periodic auto-scan (scheduler), and
+    callable ad hoc. Picks up files added/removed in category folders outside
+    the app. Idempotent — safe to run repeatedly (DEDUPE-1 prevents duplicate
+    row creation).
+
+    auto_prune_missing defaults True so deletions made in Explorer self-heal
+    automatically (with an outage safety guard in the scanner).
+    """
+    close_db = False
+    if db is None:
+        db = SessionLocal()
+        close_db = True
+    try:
+        stats = fs_scanner.reconcile_prerolls(
+            db,
+            prerolls_dir=PREROLLS_DIR,
+            data_dir=data_dir,
+            generate_thumbnail_fn=_generate_thumbnail_for_preroll,
+            file_log=_file_log,
+            delete_missing=delete_missing,
+            dedupe=dedupe,
+            auto_prune_missing=auto_prune_missing,
+        )
+        try:
+            _set_last_scan_stats(stats)
+        except Exception:
+            pass
+        return stats
+    finally:
+        if close_db:
+            try:
+                db.close()
+            except Exception:
+                pass
+
+
+def get_auto_scan_minutes(db: Session = None) -> int:
+    """Configured auto-scan interval in minutes (0 = disabled). Env override:
+    NEXROLL_AUTO_SCAN_MINUTES."""
+    env = os.environ.get("NEXROLL_AUTO_SCAN_MINUTES")
+    if env is not None:
+        try:
+            return max(0, int(env))
+        except Exception:
+            pass
+    close_db = False
+    if db is None:
+        db = SessionLocal()
+        close_db = True
+    try:
+        setting = db.query(models.Setting).first()
+        val = getattr(setting, "auto_scan_minutes", 15) if setting else 15
+        return max(0, int(val if val is not None else 15))
+    except Exception:
+        return 15
+    finally:
+        if close_db:
+            try:
+                db.close()
+            except Exception:
+                pass
 
 
 @app.get("/system/health/storage")
@@ -13577,7 +13787,40 @@ def system_storage_health():
     return dict(_LAST_SCAN_STATS)
 
 
-# Backup and Restore endpoints
+# Auto-scan interval. NOTE: registered under /settings/ (not /prerolls/) on
+# purpose — a PUT /prerolls/{preroll_id} route is defined earlier and would
+# shadow PUT /prerolls/auto-scan (matching "auto-scan" as a preroll id → 422).
+# This is registered before the generic /settings/{key} routes, so the literal
+# path wins.
+@app.get("/settings/auto-scan")
+def get_auto_scan(db: Session = Depends(get_db)):
+    """Current automatic preroll-folder scan interval (minutes; 0 = disabled)."""
+    return {"minutes": get_auto_scan_minutes(db)}
+
+
+@app.put("/settings/auto-scan")
+def set_auto_scan(minutes: int, db: Session = Depends(get_db)):
+    """Set the automatic preroll-folder scan interval (minutes; 0 disables).
+    Clamped to 0 or 5-1440 to avoid hammering the disk."""
+    try:
+        m = int(minutes)
+    except Exception:
+        raise HTTPException(status_code=400, detail="minutes must be an integer")
+    if m < 0:
+        m = 0
+    if 0 < m < 5:
+        m = 5  # floor so we don't walk the disk too aggressively
+    if m > 1440:
+        m = 1440
+    setting = db.query(models.Setting).first()
+    if not setting:
+        setting = models.Setting(plex_url=None, plex_token=None)
+        db.add(setting)
+    setting.auto_scan_minutes = m
+    db.commit()
+    return {"success": True, "minutes": m}
+
+
 @app.post("/prerolls/rescan")
 def rescan_prerolls(
     delete_missing: bool = False,
@@ -13605,6 +13848,10 @@ def rescan_prerolls(
             file_log=_file_log,
             delete_missing=delete_missing,
             dedupe=dedupe,
+            # Plain "Scan Now" / "Rescan Files Now" self-heals deletions
+            # automatically (safely). The explicit "Remove Missing Rows" button
+            # passes delete_missing=true to force-remove without the threshold.
+            auto_prune_missing=(not delete_missing),
         )
         _set_last_scan_stats(stats)
         log_event(
@@ -25915,10 +26162,64 @@ def _resolve_current_intros(db: Session) -> dict:
     return {"paths": [], "mode": "shuffle"}
 
 
+# Hold the single-instance mutex handle for the life of the process.
+_NEXROLL_SINGLE_INSTANCE_HANDLE = None
+
+
+def _enforce_single_instance() -> bool:
+    """
+    Ensure only one NeXroll backend runs at a time. NeXroll.exe is built from
+    this module (not scripts/launcher.py), so the launcher's mutex guard never
+    runs for the packaged build — without this, a second NeXroll.exe (e.g. when
+    an update is installed while the old one is still running, or the service
+    and tray both launch one) starts up, fails to bind port 9393 (WinError
+    10048), and shuts down mid-startup, which made the scheduler look like it
+    "started then stopped."
+
+    Returns True if this is the only instance (proceed), False if another
+    instance already holds the mutex (caller should exit).
+    """
+    global _NEXROLL_SINGLE_INSTANCE_HANDLE
+    if not sys.platform.startswith("win"):
+        return True  # mutex is Windows-only; other platforms rely on port bind
+    try:
+        import ctypes
+        kernel32 = ctypes.windll.kernel32
+        ERROR_ALREADY_EXISTS = 183
+        mutex = kernel32.CreateMutexW(None, True, "Global\\NeXroll_Backend_SingleInstance_Mutex")
+        last_error = kernel32.GetLastError()
+        if last_error == ERROR_ALREADY_EXISTS:
+            if mutex:
+                kernel32.CloseHandle(mutex)
+            return False
+        # Keep the handle alive so the mutex persists for this process's lifetime.
+        _NEXROLL_SINGLE_INSTANCE_HANDLE = mutex
+        return True
+    except Exception as e:
+        # If the check itself fails, don't block startup — fall back to the
+        # port bind as the backstop.
+        try:
+            _file_log(f"Single-instance check error (continuing): {e}", level="WARNING")
+        except Exception:
+            pass
+        return True
+
+
 # Auto-start when running as packaged EXE (PyInstaller onefile)
 # MUST be after ALL function/class/global definitions so they are available
 # when uvicorn starts serving requests.
-if getattr(sys, "frozen", False):
+#
+# The `__name__ == "__main__"` guard is essential: in frozen builds this module
+# is the entry point (__name__ == "__main__"), but it can ALSO be imported a
+# second time as `backend.main` (e.g. a stray `from backend.main import ...`).
+# Without the guard, that re-import would re-run this block in the SAME process —
+# tripping the single-instance check (mutex already held) and calling sys.exit(),
+# which raises SystemExit in whatever thread triggered the import. Gating on
+# __main__ makes re-importing this module completely inert.
+if getattr(sys, "frozen", False) and __name__ == "__main__":
+    if not _enforce_single_instance():
+        _file_log("Another NeXroll backend instance is already running; exiting this one.")
+        sys.exit(0)
     _file_log("Starting FastAPI (frozen build)")
     try:
         import uvicorn

@@ -216,6 +216,69 @@ body.dark select option {
   color: #e0e0e0;
 }
 
+/* ========== Shared form field styling ==========
+   The .input class was referenced throughout the app (modals, settings forms)
+   but never actually defined, so those fields rendered as bare browser
+   defaults. This gives them consistent padding, radius, borders, and a focus
+   ring in both themes. */
+.input,
+select.input,
+textarea.input {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 0.6rem 0.75rem;
+  font-size: 0.95rem;
+  font-family: inherit;
+  color: var(--text-color);
+  background-color: var(--input-bg);
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  outline: none;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease, background-color 0.15s ease;
+  appearance: none;
+}
+
+.input::placeholder,
+textarea.input::placeholder {
+  color: var(--text-muted);
+  opacity: 1;
+}
+
+.input:hover:not(:focus):not(:disabled),
+select.input:hover:not(:focus):not(:disabled),
+textarea.input:hover:not(:focus):not(:disabled) {
+  border-color: var(--button-bg);
+}
+
+.input:focus,
+select.input:focus,
+textarea.input:focus {
+  border-color: var(--button-bg);
+  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.18);
+  background-color: var(--card-bg);
+}
+
+body.dark .input:focus,
+body.dark select.input:focus,
+body.dark textarea.input:focus {
+  box-shadow: 0 0 0 3px rgba(79, 70, 229, 0.3);
+}
+
+.input:disabled,
+select.input:disabled,
+textarea.input:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+/* Custom dropdown caret for select.input (since appearance is removed) */
+select.input {
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%23888' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'%3E%3C/polyline%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 0.7rem center;
+  padding-right: 2rem;
+}
+
 .app-container {
   min-height: 100vh;
   background-color: var(--bg-color);
@@ -3227,3 +3290,240 @@ body.dark .react-grid-item.react-grid-placeholder {
     grid-template-columns: repeat(3, 1fr) !important;
   }
 }
+
+/* ============================================================
+   Connections — segmented media-server selector & chrome
+   Cosmetic only. Keeps NeXroll's dark/cyan aesthetic and uses
+   each server's brand color as an active accent (via inline --brand).
+   ============================================================ */
+.nx-server-seg {
+  display: flex;
+  gap: 0.4rem;
+  padding: 0.35rem;
+  margin-bottom: 1rem;
+  background: var(--hover-bg);
+  border: 1px solid var(--border-color);
+  border-radius: 0.65rem;
+  flex-wrap: wrap;
+}
+
+.nx-seg-btn {
+  flex: 1 1 0;
+  min-width: 110px;
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0.55rem 0.9rem;
+  border: 1px solid transparent;
+  border-radius: 0.45rem;
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 0.95rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background-color .18s ease, color .18s ease,
+              border-color .18s ease, box-shadow .18s ease;
+}
+
+.nx-seg-btn:hover:not(.active) {
+  background: var(--card-bg);
+  color: var(--text-color);
+}
+
+.nx-seg-btn.active {
+  background: var(--card-bg);
+  color: var(--text-color);
+  border-color: var(--border-color);
+  box-shadow: 0 1px 3px var(--shadow);
+}
+
+/* Brand accent under the active pill (color set inline via --brand). */
+.nx-seg-btn.active::after {
+  content: "";
+  position: absolute;
+  left: 0.7rem;
+  right: 0.7rem;
+  bottom: 0.2rem;
+  height: 2px;
+  border-radius: 2px;
+  background: var(--brand, var(--accent-color));
+}
+
+.nx-seg-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+/* Status dot used in the selector and context banner. */
+.nx-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--text-muted);
+  flex: 0 0 auto;
+}
+.nx-dot.ok {
+  background: var(--success-color);
+  box-shadow: 0 0 0 3px rgba(40, 167, 69, 0.22);
+}
+.nx-dot.bad {
+  background: var(--text-muted);
+}
+
+/* Context banner (active server / none / conflict). */
+.nx-conn-banner {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+  padding: 0.7rem 0.9rem;
+  margin-bottom: 1rem;
+  border: 1px solid var(--border-color);
+  border-left-width: 3px;
+  border-radius: 0.5rem;
+  background: var(--card-bg);
+  color: var(--text-secondary);
+  font-size: 0.9rem;
+}
+.nx-conn-banner strong { color: var(--text-color); font-weight: 600; }
+.nx-conn-banner.ok { border-left-color: var(--success-color); }
+.nx-conn-banner.idle { border-left-color: var(--text-muted); }
+.nx-conn-banner.warn {
+  border-color: var(--error-color);
+  border-left-color: var(--error-color);
+  background: rgba(220, 53, 69, 0.06);
+  color: var(--error-color);
+}
+
+/* ---- Connections panel interiors ----
+   Polish every form field, card header, and inline element on the Connections
+   page in one place, so the panels read consistently without churning each
+   input's inline styles. */
+.nx-connect input[type="text"],
+.nx-connect input[type="url"],
+.nx-connect input[type="password"],
+.nx-connect input[type="number"],
+.nx-connect input[type="search"],
+.nx-connect input:not([type]),
+.nx-connect select,
+.nx-connect textarea {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 0.55rem 0.75rem;
+  font-size: 0.95rem;
+  font-family: inherit;
+  color: var(--text-color);
+  background-color: var(--input-bg);
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  outline: none;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease, background-color 0.15s ease;
+}
+.nx-connect input::placeholder,
+.nx-connect textarea::placeholder { color: var(--text-muted); opacity: 1; }
+.nx-connect input:hover:not(:focus):not(:disabled),
+.nx-connect select:hover:not(:focus):not(:disabled),
+.nx-connect textarea:hover:not(:focus):not(:disabled) { border-color: var(--button-bg); }
+.nx-connect input:focus,
+.nx-connect select:focus,
+.nx-connect textarea:focus {
+  border-color: var(--button-bg);
+  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.18);
+}
+body.dark .nx-connect input:focus,
+body.dark .nx-connect select:focus,
+body.dark .nx-connect textarea:focus { box-shadow: 0 0 0 3px rgba(79, 70, 229, 0.3); }
+
+/* Consistent card rhythm + clearer section headers within Connections. */
+.nx-connect .card { margin-bottom: 1rem; }
+.nx-connect .card > h2:first-child {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding-bottom: 0.6rem;
+  margin-bottom: 0.9rem;
+  border-bottom: 1px solid var(--border-color);
+  font-size: 1.1rem;
+}
+
+/* Inline code chips and disclosure summaries read cleaner. */
+.nx-connect code {
+  background: var(--hover-bg);
+  border: 1px solid var(--border-color);
+  border-radius: 4px;
+  padding: 0.05rem 0.35rem;
+  font-size: 0.85em;
+}
+.nx-connect details > summary { cursor: pointer; color: var(--text-secondary); }
+.nx-connect details > summary:hover { color: var(--text-color); }
+
+/* Semantic chip variants (outline-tinted, theme-aware) used for the small
+   status/info badges across the Connections panels. Pair with .nx-chip. */
+.nx-chip.success {
+  background: rgba(40, 167, 69, 0.15);
+  border-color: rgba(40, 167, 69, 0.45);
+  color: #1e7e34;
+}
+body.dark .nx-chip.success {
+  background: rgba(76, 175, 80, 0.22);
+  border-color: rgba(129, 199, 132, 0.55);
+  color: #81c784;
+}
+.nx-chip.info {
+  background: rgba(52, 152, 219, 0.14);
+  border-color: rgba(52, 152, 219, 0.45);
+  color: #2176bd;
+}
+body.dark .nx-chip.info {
+  background: rgba(52, 152, 219, 0.22);
+  border-color: rgba(52, 152, 219, 0.55);
+  color: #5dade2;
+}
+.nx-chip.accent {
+  background: rgba(108, 92, 231, 0.14);
+  border-color: rgba(108, 92, 231, 0.45);
+  color: #5b4bd6;
+}
+body.dark .nx-chip.accent {
+  background: rgba(108, 92, 231, 0.24);
+  border-color: rgba(140, 128, 240, 0.6);
+  color: #a99cf5;
+}
+.nx-chip.warn {
+  background: rgba(230, 126, 34, 0.14);
+  border-color: rgba(230, 126, 34, 0.45);
+  color: #b9651b;
+}
+body.dark .nx-chip.warn {
+  background: rgba(230, 126, 34, 0.22);
+  border-color: rgba(230, 126, 34, 0.55);
+  color: #e8993e;
+}
+/* Solid 'recommended' tag — kept filled so it pops next to a heading. */
+.nx-chip.recommend {
+  background: #14b8a6;
+  border-color: #14b8a6;
+  color: #fff;
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+}
+
+/* Notice / info panels — unified tinted containers used across the Connections
+   panels (plugin states, download hints, detection results). Semantic variants
+   match the chip colors so a box and its badge read as a set. */
+.nx-notice {
+  padding: 0.8rem 1rem;
+  border-radius: 8px;
+  border: 1px solid var(--border-color);
+  background: var(--hover-bg);
+  margin-bottom: 1rem;
+}
+.nx-notice:last-child { margin-bottom: 0; }
+.nx-notice.success { background: rgba(40, 167, 69, 0.08); border-color: rgba(40, 167, 69, 0.28); }
+.nx-notice.info    { background: rgba(52, 152, 219, 0.08); border-color: rgba(52, 152, 219, 0.28); }
+.nx-notice.accent  { background: rgba(108, 92, 231, 0.07); border-color: rgba(108, 92, 231, 0.28); }
+.nx-notice.warn    { background: rgba(230, 126, 34, 0.08); border-color: rgba(230, 126, 34, 0.28); }
+.nx-notice.danger  { background: rgba(231, 76, 60, 0.08); border-color: rgba(231, 76, 60, 0.28); }

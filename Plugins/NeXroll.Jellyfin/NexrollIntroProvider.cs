@@ -29,9 +29,43 @@ public class NexrollIntroProvider : IIntroProvider
     private readonly ILibraryManager _libraryManager;
     private readonly IFileSystem _fileSystem;
     private static readonly HttpClient _httpClient = new();
-    private static readonly string _cacheDir = Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-        "NeXroll", "intro_cache");
+
+    /// <summary>
+    /// Resolve an absolute, writable directory for cached intro downloads.
+    ///
+    /// Previously this used <c>Environment.GetFolderPath(LocalApplicationData)</c>,
+    /// but on Linux/.NET that resolves via <c>$XDG_DATA_HOME</c> or
+    /// <c>$HOME/.local/share</c> and returns an EMPTY string when <c>HOME</c> is
+    /// unset — exactly the case for the Jellyfin service under s6-overlay
+    /// (linuxserver.io Docker on Unraid, etc.). An empty base collapses
+    /// <c>Path.Combine</c> to a RELATIVE path, which <c>Directory.CreateDirectory</c>
+    /// then resolves against the process working directory (the s6 service dir),
+    /// throwing <c>UnauthorizedAccessException</c>. See GitHub issue #30.
+    ///
+    /// We use Jellyfin's own plugin data folder (absolute and writable, under the
+    /// server config dir) and fall back to the OS temp directory if that is
+    /// unavailable or not rooted, so the path can never collapse to a relative
+    /// one again.
+    /// </summary>
+    private static string GetCacheDir()
+    {
+        string? baseDir = null;
+        try
+        {
+            baseDir = Plugin.Instance?.DataFolderPath;
+        }
+        catch
+        {
+            // Fall through to the temp-dir fallback below.
+        }
+
+        if (string.IsNullOrWhiteSpace(baseDir) || !Path.IsPathRooted(baseDir))
+        {
+            baseDir = Path.Combine(Path.GetTempPath(), "NeXroll");
+        }
+
+        return Path.Combine(baseDir, "intro_cache");
+    }
 
     /// <inheritdoc />
     public string Name => "NeXroll Intros";
@@ -217,12 +251,13 @@ public class NexrollIntroProvider : IIntroProvider
 
         try
         {
-            Directory.CreateDirectory(_cacheDir);
+            var cacheDir = GetCacheDir();
+            Directory.CreateDirectory(cacheDir);
 
             var ext = Path.GetExtension(intro.Path);
             if (string.IsNullOrEmpty(ext)) ext = ".mp4";
             var hash = SHA256Hash(intro.Path);
-            var cached = Path.Combine(_cacheDir, $"{hash}{ext}");
+            var cached = Path.Combine(cacheDir, $"{hash}{ext}");
 
             if (File.Exists(cached))
             {

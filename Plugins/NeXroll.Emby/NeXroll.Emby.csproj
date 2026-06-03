@@ -43,6 +43,8 @@
   <ItemGroup>
     <EmbeddedResource Include="Configuration\configPage.html" />
     <EmbeddedResource Include="Configuration\configPage.js" />
+    <!-- Plugin thumbnail surfaced via IHasThumbImage (resource: NeXroll.Emby.thumb.png). -->
+    <EmbeddedResource Include="thumb.png" />
   </ItemGroup>
 
 </Project>

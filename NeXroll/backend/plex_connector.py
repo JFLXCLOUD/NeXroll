@@ -671,6 +671,99 @@ class PlexConnector:
             print(f"Error getting current preroll: {str(e)}")
             return None
 
+    # Plex "Cinema Trailers" server preferences that NeXroll exposes for control.
+    # Values/types are read live from /:/prefs so we reflect the server's real
+    # state (and whatever enum options it advertises) rather than hardcoding.
+    CINEMA_TRAILER_PREF_IDS = (
+        "CinemaTrailersType",                 # enum: choose trailers from (e.g. 0=all, 1=unwatched)
+        "CinemaTrailersFromLibrary",          # bool: include from movies in my library
+        "CinemaTrailersFromTheater",          # bool: new/upcoming in theaters (Plex Pass)
+        "CinemaTrailersFromBluRay",           # bool: new/upcoming on Blu-ray (Plex Pass)
+        "CinemaTrailersAlwaysIncludeEnglish", # bool: always include English trailers for movies not in library
+    )
+
+    def get_cinema_trailer_prefs(self) -> Optional[dict]:
+        """
+        Read the Cinema Trailers preferences from the Plex server's /:/prefs.
+        Returns a dict keyed by setting id with {value, type, enumValues, label,
+        hidden, advanced} for each CinemaTrailers* setting the server reports,
+        or None on failure. Only settings the server actually advertises are
+        included (so non-Plex-Pass servers simply omit the Plex Pass ones).
+        """
+        if not self.url:
+            return None
+        try:
+            import xml.etree.ElementTree as ET
+            prefs_url = f"{self.url}/:/prefs"
+            response = requests.get(prefs_url, headers=self.headers, timeout=10, verify=self._verify)
+            if response.status_code != 200:
+                print(f"get_cinema_trailer_prefs: prefs returned {response.status_code}")
+                return None
+            root = ET.fromstring(response.content)
+            out = {}
+            for setting in root.findall('.//Setting'):
+                sid = setting.get('id', '')
+                if sid in self.CINEMA_TRAILER_PREF_IDS:
+                    out[sid] = {
+                        "value": setting.get('value', ''),
+                        "type": setting.get('type', ''),
+                        "label": setting.get('label', sid),
+                        "enumValues": setting.get('enumValues', ''),
+                        "hidden": setting.get('hidden', '0') in ('1', 'true', 'True'),
+                        "advanced": setting.get('advanced', '0') in ('1', 'true', 'True'),
+                    }
+            return out
+        except Exception as e:
+            print(f"get_cinema_trailer_prefs error: {e}")
+            return None
+
+    def set_pref(self, key: str, value) -> bool:
+        """
+        Set a single Plex server preference via PUT /:/prefs?key=value and verify
+        it took. Booleans are coerced to Plex's lowercase 'true'/'false'.
+        """
+        if not self.url or not key:
+            return False
+        try:
+            if isinstance(value, bool):
+                value_str = "true" if value else "false"
+            else:
+                value_str = str(value)
+            prefs_url = f"{self.url}/:/prefs"
+            encoded = urllib.parse.quote(value_str, safe="")
+            resp = requests.put(
+                f"{prefs_url}?{key}={encoded}",
+                headers=self.headers,
+                timeout=10,
+                verify=self._verify,
+            )
+            if resp.status_code not in (200, 201, 204):
+                print(f"set_pref {key}={value_str} failed: {resp.status_code} {resp.text[:120]}")
+                return False
+            # Verify by re-reading. Plex stores boolean prefs as '1'/'0' in
+            # /:/prefs even though it accepts 'true'/'false' on the PUT, so a raw
+            # string compare ('1' == 'true') would wrongly report failure even
+            # though the change applied. Compare booleans semantically.
+            try:
+                import xml.etree.ElementTree as ET
+                check = requests.get(prefs_url, headers=self.headers, timeout=10, verify=self._verify)
+                if check.status_code == 200:
+                    root = ET.fromstring(check.content)
+                    truthy = {"1", "true", "on", "yes"}
+                    for setting in root.findall('.//Setting'):
+                        if setting.get('id', '') == key:
+                            actual = str(setting.get('value', '')).strip().lower()
+                            if isinstance(value, bool):
+                                return (actual in truthy) == value
+                            return actual == value_str.lower()
+            except Exception:
+                pass
+            # If we couldn't verify, trust the 2xx
+            return True
+        except Exception as e:
+            print(f"set_pref {key} error: {e}")
+            return False
+
     def get_preroll(self) -> str:
         """Get the current preroll setting from Plex"""
         try:

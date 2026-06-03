@@ -100,6 +100,12 @@ NeXroll/__pycache__/
 # .NET build artifacts
 Plugins/**/bin/
 Plugins/**/obj/
+# Generated plugin release zips (artifacts — attach to releases, don't commit)
+Plugins/**/*.zip
+
+# Claude Code local permission allowlist (machine-specific, not for the repo)
+.claude/settings.json
+.claude/settings.local.json
 
 # Emby reference libs and .NET dev files
 emby-libs/

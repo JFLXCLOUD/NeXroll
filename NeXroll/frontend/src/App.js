@@ -438,6 +438,10 @@ const CategoryPicker = ({ categories, primaryId, secondaryIds, onChange, onCreat
 function App() {
   const [plexStatus, setPlexStatus] = useState('Disconnected');
   const [plexServerInfo, setPlexServerInfo] = useState(null);
+  const [autoScanMinutes, setAutoScanMinutes] = useState(15); // preroll folder auto-scan interval (0 = off)
+  const [cinemaTrailers, setCinemaTrailers] = useState(null); // { fields: [...] } from /plex/cinema-trailers
+  const [cinemaTrailersLoading, setCinemaTrailersLoading] = useState(false);
+  const [cinemaTrailersSaving, setCinemaTrailersSaving] = useState(null); // key currently saving
   const [prerolls, setPrerolls] = useState([]);
   const [schedules, setSchedules] = useState([]);
   const [categories, setCategories] = useState([]);
@@ -490,6 +494,14 @@ function App() {
   useEffect(() => {
     try { localStorage.setItem('activeServer', activeServer); } catch {}
   }, [activeServer]);
+
+  // Load Plex Cinema Trailers settings when viewing the connected Plex tab.
+  useEffect(() => {
+    if (activeTab === 'connect' && activeServer === 'plex' && plexStatus === 'Connected') {
+      loadCinemaTrailers();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeTab, activeServer, plexStatus]);
 
   // Jellyfin connection UI state
   const [jellyfinStatus, setJellyfinStatus] = useState('Disconnected');
@@ -1878,7 +1890,14 @@ const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
         setSchedules(Array.isArray(schedules) ? schedules : []);
         setCategories(Array.isArray(categories) ? categories : []);
         setHolidayPresets(Array.isArray(holidays) ? holidays : []);
-        setSchedulerStatus(scheduler || { running: false, active_schedules: 0 });
+        // Only update scheduler status from a valid response. A transient
+        // status-fetch failure (e.g. backend briefly busy during a folder scan)
+        // returns an __error object; flipping the tile to "stopped" then would
+        // be a lie — the scheduler thread is still running. Keep the last known
+        // value in that case.
+        if (scheduler && !scheduler.__error && typeof scheduler.running === 'boolean') {
+          setSchedulerStatus(scheduler);
+        }
         setAvailableTags(Array.isArray(tags?.tags) ? tags.tags : []);
         setCommunityTemplates(Array.isArray(templates) ? templates : []);
         setStableTokenStatus(stableToken || {
@@ -1921,24 +1940,12 @@ const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
           setUpdateSettings(updateSettingsData);
         }
       }).catch(err => {
-        console.error('Fetch error:', err);
-        // Set default values on error
-        setPrerolls([]);
-        setSchedules([]);
-        setCategories([]);
-        setHolidayPresets([]);
-        setSchedulerStatus({ running: false, active_schedules: 0 });
-        setAvailableTags([]);
-        setCommunityTemplates([]);
-        setStableTokenStatus({
-          has_stable_token: false,
-          config_file_exists: false,
-          token_length: 0
-        });
-        setSystemVersion(null);
-        setFfmpegInfo(null);
-        setRecentGenreApplications([]);
-        setActiveCategory(null);
+        // A transient failure of the batched dashboard fetch (e.g. the backend
+        // is briefly busy during a folder scan) must NOT wipe all UI state to
+        // "empty / scheduler stopped" — that caused the dashboard to flicker to
+        // a stopped/blank state and made users think the scheduler had died.
+        // Keep the last known values and just log; the next poll recovers.
+        console.error('Fetch error (keeping last known dashboard state):', err);
       });
   }, []);
 
@@ -4103,6 +4110,35 @@ const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
       }
     };
     reader.readAsText(backupFile);
+  };
+
+  const loadAutoScan = React.useCallback(async () => {
+    try {
+      const res = await fetch(apiUrl('settings/auto-scan'));
+      if (res.ok) {
+        const data = await res.json();
+        if (typeof data.minutes === 'number') setAutoScanMinutes(data.minutes);
+      }
+    } catch (_) { /* ignore */ }
+  }, []);
+
+  const updateAutoScan = async (minutes) => {
+    const prev = autoScanMinutes;
+    setAutoScanMinutes(minutes); // optimistic
+    try {
+      const res = await fetch(apiUrl(`settings/auto-scan?minutes=${minutes}`), { method: 'PUT' });
+      if (res.ok) {
+        const data = await res.json();
+        if (typeof data.minutes === 'number') setAutoScanMinutes(data.minutes);
+        showAlert(data.minutes > 0 ? `Auto-scan every ${data.minutes} min` : 'Auto-scan disabled', 'success');
+      } else {
+        setAutoScanMinutes(prev);
+        showAlert('Failed to update auto-scan setting', 'error');
+      }
+    } catch (e) {
+      setAutoScanMinutes(prev);
+      showAlert('Failed to update auto-scan setting: ' + (e?.message || e), 'error');
+    }
   };
 
   const handleRescanPrerolls = async ({ deleteMissing = false, dedupe = false } = {}) => {
@@ -7252,15 +7288,23 @@ const DashboardTiles = {
                   Library health needs attention
                 </h3>
                 <div style={{ fontSize: '0.9rem', color: 'var(--text-secondary)' }}>
-                  {storageHealth.missing_files > 0 && (
+                  {storageHealth.missing_files > 0 && storageHealth.storage_maybe_offline && (
                     <div>
-                      <strong>{storageHealth.missing_files}</strong> preroll row{storageHealth.missing_files === 1 ? '' : 's'} point at files that no longer exist on disk
+                      <strong>{storageHealth.missing_files}</strong> preroll file{storageHealth.missing_files === 1 ? '' : 's'} could not be found. This usually means your
+                      storage location (e.g. a network share or external drive) is offline.
+                      NeXroll left these entries in place &mdash; they'll relink automatically once storage is back.
+                      Do <strong>not</strong> use "Remove Missing Rows" unless you're sure the files are gone for good.
+                    </div>
+                  )}
+                  {storageHealth.missing_files > 0 && !storageHealth.storage_maybe_offline && (
+                    <div>
+                      <strong>{storageHealth.missing_files}</strong> preroll entr{storageHealth.missing_files === 1 ? 'y' : 'ies'} point to {storageHealth.missing_files === 1 ? 'a file' : 'files'} that no longer exist on disk
                       &mdash; run <strong>Remove Missing Rows</strong> in Settings &rarr; Backup.
                     </div>
                   )}
                   {storageHealth.duplicate_rows > 0 && (
                     <div>
-                      <strong>{storageHealth.duplicate_rows}</strong> duplicate row{storageHealth.duplicate_rows === 1 ? '' : 's'} detected (multiple DB entries for the same file)
+                      <strong>{storageHealth.duplicate_rows}</strong> preroll{storageHealth.duplicate_rows === 1 ? ' is' : 's are'} listed more than once (the same video file has duplicate entries)
                       &mdash; run <strong>Dedupe Duplicates</strong> in Settings &rarr; Backup.
                     </div>
                   )}
@@ -7268,11 +7312,17 @@ const DashboardTiles = {
               </div>
             </div>
             <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
+              {/* Hide the deep-link when the only issue is offline storage —
+                  there's no safe action to take, the message says to wait. */}
+              {!(storageHealth.storage_maybe_offline && storageHealth.duplicate_rows === 0) && (
               <button
                 className="button"
                 style={{ backgroundColor: '#f59e0b' }}
                 onClick={() => {
-                  const action = storageHealth.missing_files > 0 ? 'delete_missing' : 'dedupe';
+                  // Prefer dedupe target during a suspected outage (never push deletion).
+                  const action = (storageHealth.duplicate_rows > 0 || storageHealth.storage_maybe_offline)
+                    ? 'dedupe'
+                    : (storageHealth.missing_files > 0 ? 'delete_missing' : 'dedupe');
                   setHighlightRescanAction(action);
                   setActiveTab('settings/backup');
                   setTimeout(() => {
@@ -7284,6 +7334,7 @@ const DashboardTiles = {
               >
                 Take Me There
               </button>
+              )}
               <button
                 className="button"
                 style={{ backgroundColor: 'transparent', border: '1px solid var(--border-color)', color: 'var(--text-secondary)' }}
@@ -17818,7 +17869,7 @@ const DashboardTiles = {
       const res = await fetch(apiUrl(`plex/stable-token/save?token=${encodeURIComponent(tok)}`), { method: 'POST' });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(data?.detail || data?.message || `HTTP ${res.status}`);
-      alert('Stable token saved. You can now connect using Method 1.');
+      alert('Stable token saved. You can now connect using Option 1 (Stable Token).');
       setStableTokenInput('');
       setShowStableTokenSave(false);
       fetchData();
@@ -17909,9 +17960,13 @@ const DashboardTiles = {
   const renderPlex = () => (
     <div>
       <div className="card nx-plex-card">
+        <h2>Connect to Plex Server</h2>
+        <p style={{ marginTop: 0, marginBottom: '1.25rem', color: 'var(--text-secondary)', fontSize: '0.9rem' }}>
+          Choose an option below — Stable Token is recommended.
+        </p>
         {/* Stable Token Connection */}
         <div className="upload-section nx-plex-method" style={{ marginBottom: '1.5rem' }}>
-          <h3 style={{ marginBottom: '0.5rem', color: 'var(--text-color)' }}><Star size={18} style={{marginRight: '0.5rem', verticalAlign: 'middle', color: '#14B8A6'}} /> Stable Token <span style={{ fontSize: '0.7rem', backgroundColor: '#14B8A6', color: '#fff', padding: '0.15rem 0.4rem', borderRadius: '4px', marginLeft: '0.5rem' }}>RECOMMENDED</span></h3>
+          <h3 style={{ marginBottom: '0.5rem', color: 'var(--text-color)' }}><Star size={18} style={{marginRight: '0.5rem', verticalAlign: 'middle', color: '#14B8A6'}} /> Option 1: Stable Token <span className="nx-chip recommend" style={{ marginLeft: '0.5rem' }}>RECOMMENDED</span></h3>
           <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginBottom: '0.75rem' }}>
             Non-expiring token stored securely. Resilient to password changes.
           </p>
@@ -17981,10 +18036,10 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
           </details>
         </div>
 
-        {/* Method 2: Manual X-Plex-Token */}
+        {/* Option 2: Manual Token */}
         <details className="upload-section nx-plex-method" style={{ marginBottom: '2rem' }}>
           <summary style={{ cursor: 'pointer', fontWeight: 'bold', color: 'var(--text-color)', padding: '0.5rem 0' }}>
-            <Wrench size={18} style={{marginRight: '0.5rem', verticalAlign: 'middle'}} /> Method 2: Manual X-Plex-Token
+            <Wrench size={18} style={{marginRight: '0.5rem', verticalAlign: 'middle'}} /> Option 2: Manual Token
           </summary>
           <p style={{ fontSize: '0.9rem', color: 'var(--text-color)', marginBottom: '1rem', marginTop: '0.5rem' }}>
             Enter your Plex server URL and authentication token manually.
@@ -18041,7 +18096,7 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
         {/* Plex.tv Authentication */}
         <details className="upload-section nx-plex-method" style={{ marginTop: '1rem' }}>
           <summary style={{ cursor: 'pointer', fontWeight: 'bold', color: 'var(--text-color)', padding: '0.5rem 0' }}>
-            Method 3: Plex.tv Authentication
+            Option 3: Sign in with Plex
           </summary>
           <p style={{ fontSize: '0.9rem', color: 'var(--text-color)', marginBottom: '0.75rem', marginTop: '0.5rem' }}>
             Sign in with Plex.tv to auto-discover a reachable server and save credentials securely.
@@ -18122,36 +18177,41 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
           )}
         </details>
 
-        {/* Docker Note (Quick Connect removed in favor of Plex.tv auth) */}
-        <div className="upload-section nx-plex-method" style={{ marginBottom: '2rem' }}>
-          <h3 style={{ marginBottom: '0.5rem', color: 'var(--text-color)' }}>🐳 Docker Note</h3>
-          <p style={{ fontSize: '0.9rem', color: 'var(--text-color)' }}>
-            When running NeXroll in Docker, use <strong>Method 3: Plex.tv Authentication</strong> above to connect.
-            After connecting, configure <em>UNC/Local → Plex Path Mappings</em> in Settings to translate container/local paths
-            (e.g., <code>/data/prerolls</code>) to the path Plex can see on its host
-            (e.g., <code>Z:\Prerolls</code> or <code>\\NAS\share\Prerolls</code> on Windows, or <code>/mnt/prerolls</code> on Linux).
-          </p>
-        </div>
+        {/* Help: Docker & remote servers — collapsed by default to keep the tab tidy */}
+        <details className="upload-section nx-plex-method" style={{ marginTop: '1rem' }}>
+          <summary style={{ cursor: 'pointer', fontWeight: 'bold', color: 'var(--text-color)', padding: '0.5rem 0' }}>
+            <HelpCircle size={16} style={{ marginRight: '0.5rem', verticalAlign: 'middle' }} /> Help: Docker &amp; remote servers
+          </summary>
 
-        {/* Remote Server Setup Guide */}
-        <div style={{ marginTop: '2rem', padding: '1rem', border: '1px solid var(--border-color)', borderRadius: '0.25rem', backgroundColor: 'var(--card-bg)' }}>
-          <h3 style={{ marginBottom: '0.5rem', color: 'var(--text-color)' }}>Connecting to Remote Plex Servers</h3>
-          <p style={{ fontSize: '0.9rem', color: 'var(--text-color)', marginBottom: '1rem' }}>
-            If your Plex server is not on the same machine as NeXroll, you'll need to ensure remote access is configured:
-          </p>
-          <ul style={{ fontSize: '0.9rem', color: 'var(--text-color)', paddingLeft: '1.5rem', marginBottom: '1rem' }}>
-            <li>Enable remote access in your Plex server settings</li>
-            <li>Ensure your router forwards port 32400 to your Plex server</li>
-            <li>Use your external IP address or domain name in the Server URL field</li>
-            <li>If using HTTPS, include 'https://' in the URL</li>
-          </ul>
-          <p style={{ fontSize: '0.9rem', color: 'var(--text-color)' }}>
-            <strong>Example URLs:</strong><br/>
-            Local: http://192.168.1.100:32400<br/>
-            Remote: https://my-plex-server.example.com:32400<br/>
-            Plex Cloud: https://app.plex.tv/desktop (use your server's URL)
-          </p>
-        </div>
+          <div style={{ marginTop: '0.75rem' }}>
+            <h3 style={{ marginBottom: '0.5rem', color: 'var(--text-color)', fontSize: '0.95rem' }}>🐳 Docker</h3>
+            <p style={{ fontSize: '0.9rem', color: 'var(--text-color)' }}>
+              When running NeXroll in Docker, use <strong>Option 3: Sign in with Plex</strong> above to connect.
+              After connecting, configure <em>UNC/Local → Plex Path Mappings</em> in Settings to translate container/local paths
+              (e.g., <code>/data/prerolls</code>) to the path Plex can see on its host
+              (e.g., <code>Z:\Prerolls</code> or <code>\\NAS\share\Prerolls</code> on Windows, or <code>/mnt/prerolls</code> on Linux).
+            </p>
+          </div>
+
+          <div style={{ marginTop: '1rem' }}>
+            <h3 style={{ marginBottom: '0.5rem', color: 'var(--text-color)', fontSize: '0.95rem' }}>Connecting to Remote Plex Servers</h3>
+            <p style={{ fontSize: '0.9rem', color: 'var(--text-color)', marginBottom: '1rem' }}>
+              If your Plex server is not on the same machine as NeXroll, you'll need to ensure remote access is configured:
+            </p>
+            <ul style={{ fontSize: '0.9rem', color: 'var(--text-color)', paddingLeft: '1.5rem', marginBottom: '1rem' }}>
+              <li>Enable remote access in your Plex server settings</li>
+              <li>Ensure your router forwards port 32400 to your Plex server</li>
+              <li>Use your external IP address or domain name in the Server URL field</li>
+              <li>If using HTTPS, include 'https://' in the URL</li>
+            </ul>
+            <p style={{ fontSize: '0.9rem', color: 'var(--text-color)' }}>
+              <strong>Example URLs:</strong><br/>
+              Local: http://192.168.1.100:32400<br/>
+              Remote: https://my-plex-server.example.com:32400<br/>
+              Plex Cloud: https://app.plex.tv/desktop (use your server's URL)
+            </p>
+          </div>
+        </details>
       </div>
 
       <div className="card">
@@ -18195,6 +18255,98 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
           </div>
         )}
       </div>
+
+      {/* Cinema Trailers — Plex server settings controlled from NeXroll */}
+      {plexStatus === 'Connected' && (
+        <div className="card">
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.25rem' }}>
+            <Film size={20} style={{ color: '#f6685e' }} />
+            <h2 style={{ margin: 0 }}>Cinema Trailers</h2>
+          </div>
+          <p style={{ color: 'var(--text-secondary)', fontSize: '0.85rem', marginTop: 0, marginBottom: '1rem' }}>
+            Control how Plex chooses cinema trailers. These write directly to your Plex server's
+            settings and apply to trailers shown before movies.
+          </p>
+
+          {cinemaTrailersLoading && !cinemaTrailers && (
+            <div style={{ color: 'var(--text-secondary)', fontSize: '0.9rem' }}>Loading Plex settings…</div>
+          )}
+
+          {cinemaTrailers && Array.isArray(cinemaTrailers.fields) && (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+              {cinemaTrailers.fields.map(field => {
+                const unavailable = !field.available;
+                const saving = cinemaTrailersSaving === field.id;
+                const isEnum = Array.isArray(field.options) && field.options.length > 0;
+                return (
+                  <div key={field.id} style={{
+                    padding: '0.85rem 1rem',
+                    backgroundColor: 'var(--bg-color)',
+                    border: '1px solid var(--border-color)',
+                    borderRadius: '8px',
+                    opacity: unavailable ? 0.55 : 1
+                  }}>
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '1rem', flexWrap: 'wrap' }}>
+                      <div style={{ minWidth: 0, flex: 1 }}>
+                        <div style={{ fontWeight: 600, display: 'flex', alignItems: 'center', gap: '0.4rem', flexWrap: 'wrap' }}>
+                          {field.label}
+                          {field.plex_pass && (
+                            <span style={{
+                              fontSize: '0.6rem', fontWeight: 700, textTransform: 'uppercase',
+                              padding: '0.1rem 0.35rem', borderRadius: '4px',
+                              backgroundColor: 'rgba(229, 160, 13, 0.18)', color: '#e5a00d'
+                            }}>Plex Pass</span>
+                          )}
+                        </div>
+                        {(field.help || unavailable) && (
+                          <div style={{ fontSize: '0.78rem', color: 'var(--text-secondary)', marginTop: '0.2rem' }}>
+                            {unavailable ? 'Not available on this Plex server.' : field.help}
+                          </div>
+                        )}
+                      </div>
+                      <div style={{ flexShrink: 0 }}>
+                        {isEnum ? (
+                          <select
+                            className="input"
+                            style={{ minWidth: '200px' }}
+                            value={String(field.value)}
+                            disabled={unavailable || saving}
+                            onChange={(e) => saveCinemaTrailer(field.id, e.target.value)}
+                          >
+                            {field.options.map(opt => (
+                              <option key={opt.value} value={opt.value}>{opt.label}</option>
+                            ))}
+                          </select>
+                        ) : (
+                          <label className="nx-rockerswitch" style={{ cursor: unavailable ? 'not-allowed' : 'pointer' }}>
+                            <input
+                              type="checkbox"
+                              checked={!!field.value}
+                              disabled={unavailable || saving}
+                              onChange={(e) => saveCinemaTrailer(field.id, e.target.checked)}
+                            />
+                            <span className="nx-rockerswitch-slider"></span>
+                          </label>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+              <p style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', margin: 0 }}>
+                Changes save to Plex immediately. Plex reads these when movie playback begins.
+              </p>
+            </div>
+          )}
+
+          {!cinemaTrailersLoading && !cinemaTrailers && (
+            <div style={{ color: 'var(--text-secondary)', fontSize: '0.9rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+              Could not read trailer settings from Plex.
+              <button className="button" style={{ fontSize: '0.8rem' }} onClick={loadCinemaTrailers}>Retry</button>
+            </div>
+          )}
+        </div>
+      )}
 
     </div>
   );
@@ -18725,6 +18877,23 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
     }
   };
 
+  const clearAllLogs = async () => {
+    if (!window.confirm('Delete ALL log entries? This wipes the entire log history (including old errors) and cannot be undone.')) return;
+    try {
+      const res = await fetch(apiUrl('/logs?clear_all=true'), { method: 'DELETE' });
+      if (res.ok) {
+        const data = await safeJson(res);
+        showAlert(`Cleared ${data?.deleted || 0} log entries`, 'success');
+        await loadLogs();
+        await loadLogStats();
+      } else {
+        showAlert('Failed to clear logs', 'error');
+      }
+    } catch (e) {
+      showAlert('Failed to clear logs: ' + (e?.message || e), 'error');
+    }
+  };
+
   // === Authentication Functions ===
   const checkAuthStatus = React.useCallback(async () => {
     try {
@@ -19098,6 +19267,50 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
       alert('Failed to update genre settings: ' + (err?.message || err));
     } finally {
       setGenreSettingsLoading(false);
+    }
+  };
+
+  const loadCinemaTrailers = React.useCallback(async () => {
+    setCinemaTrailersLoading(true);
+    try {
+      const res = await fetch(apiUrl('plex/cinema-trailers'));
+      if (res.ok) {
+        const data = await res.json();
+        setCinemaTrailers(data || null);
+      } else {
+        setCinemaTrailers(null);
+      }
+    } catch (e) {
+      setCinemaTrailers(null);
+    } finally {
+      setCinemaTrailersLoading(false);
+    }
+  }, []);
+
+  const saveCinemaTrailer = async (key, value) => {
+    // Optimistic update so the control reflects the change immediately.
+    setCinemaTrailers(prev => prev ? {
+      ...prev,
+      fields: prev.fields.map(f => f.id === key ? { ...f, value } : f)
+    } : prev);
+    setCinemaTrailersSaving(key);
+    try {
+      const res = await fetch(apiUrl('plex/cinema-trailers'), {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ key, value })
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        showAlert(err.detail || 'Failed to update Plex setting', 'error');
+        // Re-read to revert the optimistic change to Plex's real state.
+        loadCinemaTrailers();
+      }
+    } catch (e) {
+      showAlert('Failed to update Plex setting: ' + (e?.message || e), 'error');
+      loadCinemaTrailers();
+    } finally {
+      setCinemaTrailersSaving(null);
     }
   };
 
@@ -20861,8 +21074,15 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
       loadLogs();
       loadLogStats();
       loadLogSettings();
+      loadVerboseLogging();
     }
-  }, [activeTab, loadLogs, loadLogStats, loadLogSettings]);
+  }, [activeTab, loadLogs, loadLogStats, loadLogSettings, loadVerboseLogging]);
+
+  React.useEffect(() => {
+    if (activeTab === 'settings/storage') {
+      loadAutoScan();
+    }
+  }, [activeTab, loadAutoScan]);
 
   // Auto-load users when opening Users tab
   React.useEffect(() => {
@@ -26601,9 +26821,22 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
             }}
             onClick={(e) => e.stopPropagation()}
           >
-            <h2 style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-              <Key size={20} /> Create New API Key
-            </h2>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', marginBottom: '0.25rem' }}>
+              <div style={{
+                width: '40px', height: '40px', borderRadius: '10px', flexShrink: 0,
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                backgroundColor: 'rgba(0, 212, 255, 0.12)', color: '#00d4ff'
+              }}>
+                <Key size={20} />
+              </div>
+              <div>
+                <h2 style={{ margin: 0, fontSize: '1.2rem' }}>Create New API Key</h2>
+                <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>
+                  Grant external tools access to NeXroll
+                </div>
+              </div>
+            </div>
+            <div style={{ height: '1px', backgroundColor: 'var(--border-color)', margin: '1rem 0' }} />
             <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
               <div>
                 <label style={{ display: 'block', marginBottom: '0.5rem', fontWeight: 600 }}>Name *</label>
@@ -27167,8 +27400,47 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
               <span style={{ fontWeight: 500 }}>Log Scheduler Activity</span>
             </label>
           </div>
-          
-          <div style={{ 
+
+          {/* Verbose Logging — mirrored from General settings so it's available
+              alongside the other log controls. Same backend toggle. */}
+          <div style={{
+            marginTop: '1rem',
+            padding: '1rem',
+            backgroundColor: 'var(--bg-color)',
+            borderRadius: '8px',
+            border: '1px solid var(--border-color)'
+          }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.5rem' }}>
+              <Terminal size={16} style={{ color: '#a78bfa' }} />
+              <h3 style={{ margin: 0, fontSize: '1rem' }}>Verbose Logging</h3>
+              <span style={{
+                fontSize: '0.65rem', padding: '0.15rem 0.4rem',
+                backgroundColor: 'rgba(139, 92, 246, 0.2)', color: '#a78bfa',
+                borderRadius: '4px', fontWeight: 600
+              }}>
+                BETA
+              </span>
+            </div>
+            <p style={{ marginBottom: '0.75rem', color: 'var(--text-secondary)', fontSize: '0.85rem' }}>
+              Enable verbose logging to see detailed debug information in the console and logs.
+            </p>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+              <label className="nx-rockerswitch">
+                <input
+                  type="checkbox"
+                  checked={verboseLogging}
+                  onChange={(e) => updateVerboseLogging(e.target.checked)}
+                  disabled={verboseLoggingLoading}
+                />
+                <span className="nx-rockerswitch-slider"></span>
+              </label>
+              <span style={{ fontWeight: 600, color: 'var(--text-color)' }}>
+                {verboseLogging ? 'Verbose Logging Enabled' : 'Verbose Logging Disabled'}
+              </span>
+            </div>
+          </div>
+
+          <div style={{
             marginTop: '1rem',
             paddingTop: '1rem',
             borderTop: '1px solid var(--border-color)',
@@ -27181,18 +27453,33 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
             <span style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
               {logStats?.total || 0} total log entries stored
             </span>
-            <button
-              className="button"
-              style={{ 
-                backgroundColor: 'rgba(239, 68, 68, 0.1)', 
-                border: '1px solid rgba(239, 68, 68, 0.3)', 
-                color: '#ef4444',
-                fontSize: '0.85rem'
-              }}
-              onClick={() => clearOldLogs(30)}
-            >
-              <Trash2 size={14} /> Clear Logs Older Than 30 Days
-            </button>
+            <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
+              <button
+                className="button"
+                style={{
+                  backgroundColor: 'rgba(239, 68, 68, 0.1)',
+                  border: '1px solid rgba(239, 68, 68, 0.3)',
+                  color: '#ef4444',
+                  fontSize: '0.85rem'
+                }}
+                onClick={() => clearOldLogs(30)}
+              >
+                <Trash2 size={14} /> Clear Logs Older Than 30 Days
+              </button>
+              <button
+                className="button"
+                style={{
+                  backgroundColor: 'rgba(239, 68, 68, 0.15)',
+                  border: '1px solid rgba(239, 68, 68, 0.5)',
+                  color: '#ef4444',
+                  fontSize: '0.85rem'
+                }}
+                onClick={clearAllLogs}
+                title="Delete every log entry, including old historical errors"
+              >
+                <Trash2 size={14} /> Clear All Logs
+              </button>
+            </div>
           </div>
         </div>
       )}
@@ -27500,9 +27787,22 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
             }}
             onClick={(e) => e.stopPropagation()}
           >
-            <h2 style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-              <UserPlus size={20} /> Create New User
-            </h2>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', marginBottom: '0.25rem' }}>
+              <div style={{
+                width: '40px', height: '40px', borderRadius: '10px', flexShrink: 0,
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                backgroundColor: 'rgba(0, 212, 255, 0.12)', color: '#00d4ff'
+              }}>
+                <UserPlus size={20} />
+              </div>
+              <div>
+                <h2 style={{ margin: 0, fontSize: '1.2rem' }}>Create New User</h2>
+                <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>
+                  Add a login for someone else to manage NeXroll
+                </div>
+              </div>
+            </div>
+            <div style={{ height: '1px', backgroundColor: 'var(--border-color)', margin: '1rem 0' }} />
             <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
               <div>
                 <label style={{ display: 'block', marginBottom: '0.5rem', fontWeight: 600 }}>Username *</label>
@@ -28583,6 +28883,64 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
         The default location is automatically resolved based on your system configuration (environment variables, registry, or install directory).
       </div>
     </div>
+
+    {/* Automatic Folder Monitoring */}
+    <div className="card">
+      <h2 style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+        <RefreshCw size={20} style={{ color: 'var(--accent-color)' }} /> Automatic Folder Monitoring
+      </h2>
+      <p style={{ color: 'var(--text-secondary)', fontSize: '0.85rem', marginBottom: '1rem' }}>
+        Optional. When enabled, NeXroll periodically re-scans the storage folder so prerolls added or
+        removed outside the app (dropped into category folders, synced by another tool) are picked up
+        automatically — no manual rescan needed. Leave it Off to only scan on startup or when you click
+        "Rescan Files Now."
+      </p>
+      <div style={{
+        padding: '1rem',
+        backgroundColor: 'var(--bg-color)',
+        border: '1px solid var(--border-color)',
+        borderRadius: '8px',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        gap: '1rem',
+        flexWrap: 'wrap'
+      }}>
+        <div style={{ minWidth: 0 }}>
+          <div style={{ fontWeight: 600 }}>Scan interval</div>
+          <div style={{ fontSize: '0.78rem', color: 'var(--text-secondary)', marginTop: '0.2rem' }}>
+            {autoScanMinutes > 0
+              ? `NeXroll checks for changes every ${autoScanMinutes >= 60 ? (autoScanMinutes / 60) + ' hour' + (autoScanMinutes >= 120 ? 's' : '') : autoScanMinutes + ' minutes'}.`
+              : 'Automatic monitoring is off; scans run on startup and on demand only.'}
+          </div>
+        </div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
+          <button
+            className="button"
+            style={{ backgroundColor: '#22c55e', whiteSpace: 'nowrap' }}
+            disabled={backupProgress.active}
+            onClick={() => handleRescanPrerolls()}
+            title="Scan the storage folder right now for added/removed prerolls"
+          >
+            <RefreshCw size={14} style={{ marginRight: '0.35rem' }} /> Scan Now
+          </button>
+          <select
+            className="input"
+            style={{ width: 'auto', minWidth: '170px' }}
+            value={autoScanMinutes}
+            onChange={(e) => updateAutoScan(parseInt(e.target.value, 10))}
+          >
+            <option value={0}>Off (manual only)</option>
+            <option value={5}>Every 5 minutes</option>
+            <option value={15}>Every 15 minutes</option>
+            <option value={30}>Every 30 minutes</option>
+            <option value={60}>Every hour</option>
+            <option value={360}>Every 6 hours</option>
+            <option value={1440}>Once a day</option>
+          </select>
+        </div>
+      </div>
+    </div>
     </>
   );
 
@@ -28615,13 +28973,6 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
 
   const renderJellyfin = () => (
     <div>
-      <h1 className="header" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.5rem' }}>
-        <Tv size={32} className="header-icon" /> Jellyfin Integration
-      </h1>
-      <p style={{ color: 'var(--text-secondary)', fontSize: '0.95rem', margin: 0, marginBottom: '1rem' }}>
-        Connect your Jellyfin server to enable preroll management.
-      </p>
-
       <div className="card">
         <h2>Connect to Jellyfin Server</h2>
         <p style={{ marginBottom: '1rem', color: 'var(--text-color)' }}>
@@ -28675,12 +29026,12 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
         <div style={{ display: 'grid', gap: '0.5rem' }}>
           <div><strong>Connection:</strong> <span className={`nx-chip nx-status ${jellyfinStatus === 'Connected' ? 'ok' : 'bad'}`}>{jellyfinStatus}</span>
             {jellyfinServerInfo?.connection_type === 'plugin' && (
-              <span className="nx-chip" style={{ marginLeft: '0.5rem', backgroundColor: 'rgba(108, 92, 231, 0.15)', color: '#6c5ce7', fontSize: '0.75rem' }}>
+              <span className="nx-chip accent" style={{ marginLeft: '0.5rem' }}>
                 via Plugin (API Key)
               </span>
             )}
             {jellyfinServerInfo?.connection_type === 'direct' && (
-              <span className="nx-chip" style={{ marginLeft: '0.5rem', backgroundColor: 'rgba(39, 174, 96, 0.15)', color: '#27ae60', fontSize: '0.75rem' }}>
+              <span className="nx-chip success" style={{ marginLeft: '0.5rem' }}>
                 Direct Connection
               </span>
             )}
@@ -28692,7 +29043,7 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
             </>
           )}
           {jellyfinServerInfo?.plugin_clients?.length > 0 && (
-            <div style={{ marginTop: '0.5rem', padding: '0.75rem', borderRadius: '6px', backgroundColor: 'rgba(108, 92, 231, 0.06)', border: '1px solid rgba(108, 92, 231, 0.2)' }}>
+            <div className="nx-notice accent" style={{ marginTop: '0.5rem' }}>
               <strong style={{ color: '#6c5ce7' }}><Plug size={14} style={{ verticalAlign: 'middle', marginRight: '0.25rem' }} /> Plugin Clients:</strong>
               {jellyfinServerInfo.plugin_clients.map((client, idx) => (
                 <div key={idx} style={{ marginTop: '0.25rem', fontSize: '0.9rem' }}>
@@ -28722,7 +29073,7 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
 
         {/* Plugin download link — always visible when connected */}
         {jellyfinStatus === 'Connected' && (
-          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '1rem', padding: '0.6rem 1rem', background: 'var(--bg-color, #1a1a2e)', border: '1px solid var(--border-color)', borderRadius: '8px', fontSize: '0.9rem' }}>
+          <div className="nx-notice" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '0.9rem' }}>
             <Download size={16} style={{ color: 'var(--accent-color, #7c4dff)' }} />
             <span>Download Plugin:</span>
             <a href="https://github.com/JFLXCLOUD/NeXroll/raw/main/Plugins/NeXroll.Jellyfin.dll" target="_blank" rel="noopener noreferrer" style={{ color: 'var(--accent-color, #7c4dff)', fontWeight: 600 }}>NeXroll.Jellyfin.dll</a>
@@ -28747,7 +29098,7 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
         {/* State: Plugin NOT found */}
         {jellyfinStatus === 'Connected' && jellyfinPluginInfo && !jellyfinPluginInfo.detected && (
           <>
-            <div style={{ padding: '1rem', borderRadius: '8px', backgroundColor: jellyfinPluginInfo.auth_error ? 'rgba(230, 126, 34, 0.08)' : 'rgba(231, 76, 60, 0.08)', border: `1px solid ${jellyfinPluginInfo.auth_error ? 'rgba(230, 126, 34, 0.2)' : 'rgba(231, 76, 60, 0.2)'}`, marginBottom: '1rem' }}>
+            <div className={`nx-notice ${jellyfinPluginInfo.auth_error ? 'warn' : 'danger'}`}>
               <strong style={{ color: jellyfinPluginInfo.auth_error ? '#e67e22' : '#e74c3c' }}>
                 {jellyfinPluginInfo.auth_error ? 'API Key Issue' : 'Plugin Not Found'}
               </strong>
@@ -28762,7 +29113,7 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
             </div>
 
             {!jellyfinPluginInfo.auth_error && (
-              <div style={{ background: 'var(--bg-color, #1a1a2e)', border: '1px solid var(--border-color)', borderRadius: '8px', padding: '1rem', marginBottom: '1rem' }}>
+              <div className="nx-notice">
                 <h3 style={{ marginTop: 0, marginBottom: '0.75rem', fontSize: '0.95rem' }}>Install the Plugin</h3>
                 <ol style={{ margin: 0, paddingLeft: '1.25rem', lineHeight: '1.7' }}>
                   <li>Download the <strong>NeXroll Intros</strong> plugin DLL: <a href="https://github.com/JFLXCLOUD/NeXroll/raw/main/Plugins/NeXroll.Jellyfin.dll" target="_blank" rel="noopener noreferrer" style={{ color: 'var(--accent-color, #7c4dff)' }}>NeXroll.Jellyfin.dll</a></li>
@@ -28782,7 +29133,7 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
         {jellyfinStatus === 'Connected' && jellyfinPluginInfo?.detected && (
           <>
             {/* Detection badge */}
-            <div style={{ padding: '1rem', borderRadius: '8px', backgroundColor: 'rgba(39, 174, 96, 0.08)', border: '1px solid rgba(39, 174, 96, 0.2)', marginBottom: '1rem' }}>
+            <div className="nx-notice success">
               <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
                 <span className="nx-chip nx-status ok">Detected</span>
                 <strong>{jellyfinPluginInfo.plugin?.name || 'NeXroll Intros'}</strong>
@@ -28794,12 +29145,12 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
                 <div style={{ marginTop: '0.5rem', fontSize: '0.9rem', color: 'var(--text-secondary)' }}>
                   Currently linked to: <code style={{ userSelect: 'all' }}>{jellyfinPluginInfo.config.NexrollUrl}</code>
                   {jellyfinPluginInfo.config?.ApiKey && (
-                    <span className="nx-chip" style={{ marginLeft: '0.5rem', backgroundColor: 'rgba(39, 174, 96, 0.15)', color: '#27ae60', fontSize: '0.7rem' }}>
+                    <span className="nx-chip success" style={{ marginLeft: '0.5rem' }}>
                       API Key Active
                     </span>
                   )}
                   {jellyfinPluginInfo.auto_configured && (
-                    <span className="nx-chip" style={{ marginLeft: '0.5rem', backgroundColor: 'rgba(52, 152, 219, 0.15)', color: '#3498db', fontSize: '0.7rem' }}>
+                    <span className="nx-chip info" style={{ marginLeft: '0.5rem' }}>
                       Auto-Configured
                     </span>
                   )}
@@ -28904,13 +29255,6 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
 
   const renderEmby = () => (
     <div>
-      <h1 className="header" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.5rem' }}>
-        <Tv size={32} className="header-icon" /> Emby Integration
-      </h1>
-      <p style={{ color: 'var(--text-secondary)', fontSize: '0.95rem', margin: 0, marginBottom: '1rem' }}>
-        Connect your Emby server to enable preroll management via the NeXroll Intros plugin.
-      </p>
-
       <div className="card">
         <h2>Connect to Emby Server</h2>
         <p style={{ marginBottom: '1rem', color: 'var(--text-color)' }}>
@@ -28964,12 +29308,12 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
         <div style={{ display: 'grid', gap: '0.5rem' }}>
           <div><strong>Connection:</strong> <span className={`nx-chip nx-status ${embyStatus === 'Connected' ? 'ok' : 'bad'}`}>{embyStatus}</span>
             {embyServerInfo?.connection_type === 'plugin' && (
-              <span className="nx-chip" style={{ marginLeft: '0.5rem', backgroundColor: 'rgba(108, 92, 231, 0.15)', color: '#6c5ce7', fontSize: '0.75rem' }}>
+              <span className="nx-chip accent" style={{ marginLeft: '0.5rem' }}>
                 via Plugin (API Key)
               </span>
             )}
             {embyServerInfo?.connection_type === 'direct' && (
-              <span className="nx-chip" style={{ marginLeft: '0.5rem', backgroundColor: 'rgba(39, 174, 96, 0.15)', color: '#27ae60', fontSize: '0.75rem' }}>
+              <span className="nx-chip success" style={{ marginLeft: '0.5rem' }}>
                 Direct Connection
               </span>
             )}
@@ -28981,7 +29325,7 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
             </>
           )}
           {embyServerInfo?.plugin_clients?.length > 0 && (
-            <div style={{ marginTop: '0.5rem', padding: '0.75rem', borderRadius: '6px', backgroundColor: 'rgba(108, 92, 231, 0.06)', border: '1px solid rgba(108, 92, 231, 0.2)' }}>
+            <div className="nx-notice accent" style={{ marginTop: '0.5rem' }}>
               <strong style={{ color: '#6c5ce7' }}><Plug size={14} style={{ verticalAlign: 'middle', marginRight: '0.25rem' }} /> Plugin Clients:</strong>
               {embyServerInfo.plugin_clients.map((client, idx) => (
                 <div key={idx} style={{ marginTop: '0.25rem', fontSize: '0.9rem' }}>
@@ -29011,7 +29355,7 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
 
         {/* Plugin download link — always visible when connected */}
         {embyStatus === 'Connected' && (
-          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '1rem', padding: '0.6rem 1rem', background: 'var(--bg-color, #1a1a2e)', border: '1px solid var(--border-color)', borderRadius: '8px', fontSize: '0.9rem' }}>
+          <div className="nx-notice" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '0.9rem' }}>
             <Download size={16} style={{ color: 'var(--accent-color, #7c4dff)' }} />
             <span>Download Plugin:</span>
             <a href="https://github.com/JFLXCLOUD/NeXroll/raw/main/Plugins/NeXroll.Emby.dll" target="_blank" rel="noopener noreferrer" style={{ color: 'var(--accent-color, #7c4dff)', fontWeight: 600 }}>NeXroll.Emby.dll</a>
@@ -29036,7 +29380,7 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
         {/* State: Plugin NOT found */}
         {embyStatus === 'Connected' && embyPluginInfo && !embyPluginInfo.detected && (
           <>
-            <div style={{ padding: '1rem', borderRadius: '8px', backgroundColor: embyPluginInfo.auth_error ? 'rgba(230, 126, 34, 0.08)' : 'rgba(231, 76, 60, 0.08)', border: `1px solid ${embyPluginInfo.auth_error ? 'rgba(230, 126, 34, 0.2)' : 'rgba(231, 76, 60, 0.2)'}`, marginBottom: '1rem' }}>
+            <div className={`nx-notice ${embyPluginInfo.auth_error ? 'warn' : 'danger'}`}>
               <strong style={{ color: embyPluginInfo.auth_error ? '#e67e22' : '#e74c3c' }}>
                 {embyPluginInfo.auth_error ? 'API Key Issue' : 'Plugin Not Found'}
               </strong>
@@ -29051,7 +29395,7 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
             </div>
 
             {!embyPluginInfo.auth_error && (
-              <div style={{ background: 'var(--bg-color, #1a1a2e)', border: '1px solid var(--border-color)', borderRadius: '8px', padding: '1rem', marginBottom: '1rem' }}>
+              <div className="nx-notice">
                 <h3 style={{ marginTop: 0, marginBottom: '0.75rem', fontSize: '0.95rem' }}>Install the Plugin</h3>
                 <ol style={{ margin: 0, paddingLeft: '1.25rem', lineHeight: '1.7' }}>
                   <li>Download the <strong>NeXroll Intros</strong> plugin DLL: <a href="https://github.com/JFLXCLOUD/NeXroll/raw/main/Plugins/NeXroll.Emby.dll" target="_blank" rel="noopener noreferrer" style={{ color: 'var(--accent-color, #7c4dff)' }}>NeXroll.Emby.dll</a></li>
@@ -29071,7 +29415,7 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
         {embyStatus === 'Connected' && embyPluginInfo?.detected && (
           <>
             {/* Detection badge */}
-            <div style={{ padding: '1rem', borderRadius: '8px', backgroundColor: 'rgba(39, 174, 96, 0.08)', border: '1px solid rgba(39, 174, 96, 0.2)', marginBottom: '1rem' }}>
+            <div className="nx-notice success">
               <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
                 <span className="nx-chip nx-status ok">Detected</span>
                 <strong>{embyPluginInfo.plugin?.name || 'NeXroll Intros'}</strong>
@@ -29083,12 +29427,12 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
                 <div style={{ marginTop: '0.5rem', fontSize: '0.9rem', color: 'var(--text-secondary)' }}>
                   Currently linked to: <code style={{ userSelect: 'all' }}>{embyPluginInfo.config.NexrollUrl}</code>
                   {embyPluginInfo.config?.ApiKey && (
-                    <span className="nx-chip" style={{ marginLeft: '0.5rem', backgroundColor: 'rgba(39, 174, 96, 0.15)', color: '#27ae60', fontSize: '0.7rem' }}>
+                    <span className="nx-chip success" style={{ marginLeft: '0.5rem' }}>
                       API Key Active
                     </span>
                   )}
                   {embyPluginInfo.auto_configured && (
-                    <span className="nx-chip" style={{ marginLeft: '0.5rem', backgroundColor: 'rgba(52, 152, 219, 0.15)', color: '#3498db', fontSize: '0.7rem' }}>
+                    <span className="nx-chip info" style={{ marginLeft: '0.5rem' }}>
                       Auto-Configured
                     </span>
                   )}
@@ -29200,99 +29544,35 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
         Connect to your Plex, Jellyfin, or Emby media server.
       </p>
 
-      {/* Secondary tabs for media servers */}
-      <div
-        className="nx-tabs"
-        role="tablist"
-        aria-label="Media server"
-        style={{ display: 'flex', gap: '0.5rem', borderBottom: '1px solid var(--border-color)', marginBottom: '1rem' }}
-      >
-        <button
-          type="button"
-          role="tab"
-          id="tab-plex"
-          aria-selected={activeServer === 'plex'}
-          aria-controls="panel-plex"
-          className={`nx-tab ${activeServer === 'plex' ? 'active' : ''}`}
-          onClick={() => setActiveServer('plex')}
-          style={{
-            padding: '0.5rem 0.75rem',
-            border: 'none',
-            borderBottom: activeServer === 'plex' ? '3px solid #f6685e' : '3px solid transparent',
-            background: 'transparent',
-            cursor: 'pointer',
-            color: 'var(--text-color)',
-            display: 'flex',
-            alignItems: 'center',
-            gap: '0.5rem',
-            fontWeight: activeServer === 'plex' ? 'bold' : 'normal'
-          }}
-        >
-          Plex
-          <span
-            className={`nx-chip nx-status ${plexStatus === 'Connected' ? 'ok' : 'bad'}`}
-            style={{ fontSize: '0.75rem' }}
-          >
-            {plexStatus}
-          </span>
-        </button>
-
-        <button
-          type="button"
-          role="tab"
-          id="tab-jellyfin"
-          aria-selected={activeServer === 'jellyfin'}
-          aria-controls="panel-jellyfin"
-          className={`nx-tab ${activeServer === 'jellyfin' ? 'active' : ''}`}
-          onClick={() => setActiveServer('jellyfin')}
-          style={{
-            padding: '0.5rem 0.75rem',
-            border: 'none',
-            borderBottom: activeServer === 'jellyfin' ? '3px solid #6c5ce7' : '3px solid transparent',
-            background: 'transparent',
-            cursor: 'pointer',
-            color: 'var(--text-color)',
-            display: 'flex',
-            alignItems: 'center',
-            gap: '0.5rem',
-            fontWeight: activeServer === 'jellyfin' ? 'bold' : 'normal'
-          }}
-        >
-          Jellyfin
-          <span
-            className={`nx-chip nx-status ${jellyfinStatus === 'Connected' ? 'ok' : 'bad'}`}
-            style={{ fontSize: '0.75rem' }}
-          >
-            {jellyfinStatus}
-          </span>
-        </button>
-        <button
-          id="tab-emby"
-          role="tab"
-          aria-selected={activeServer === 'emby'}
-          aria-controls="panel-emby"
-          onClick={() => setActiveServer('emby')}
-          style={{
-            padding: '0.5rem 0.75rem',
-            border: 'none',
-            borderBottom: activeServer === 'emby' ? '3px solid #52c41a' : '3px solid transparent',
-            background: 'transparent',
-            cursor: 'pointer',
-            color: 'var(--text-color)',
-            display: 'flex',
-            alignItems: 'center',
-            gap: '0.5rem',
-            fontWeight: activeServer === 'emby' ? 'bold' : 'normal'
-          }}
-        >
-          Emby
-          <span
-            className={`nx-chip nx-status ${embyStatus === 'Connected' ? 'ok' : 'bad'}`}
-            style={{ fontSize: '0.75rem' }}
-          >
-            {embyStatus}
-          </span>
-        </button>
+      {/* Segmented media-server selector */}
+      <div className="nx-server-seg" role="tablist" aria-label="Media server">
+        {[
+          { id: 'plex', label: 'Plex', brand: '#f6685e', status: plexStatus },
+          { id: 'jellyfin', label: 'Jellyfin', brand: '#6c5ce7', status: jellyfinStatus },
+          { id: 'emby', label: 'Emby', brand: '#52c41a', status: embyStatus },
+        ].map((srv) => {
+          const active = activeServer === srv.id;
+          const connected = srv.status === 'Connected';
+          return (
+            <button
+              key={srv.id}
+              type="button"
+              role="tab"
+              id={`tab-${srv.id}`}
+              aria-selected={active}
+              aria-controls={`panel-${srv.id}`}
+              className={`nx-seg-btn ${active ? 'active' : ''}`}
+              style={active ? { '--brand': srv.brand } : undefined}
+              onClick={() => setActiveServer(srv.id)}
+              title={`${srv.label}: ${srv.status}`}
+            >
+              <span className="nx-seg-label">
+                <span className={`nx-dot ${connected ? 'ok' : 'bad'}`} aria-hidden="true" />
+                {srv.label}
+              </span>
+            </button>
+          );
+        })}
       </div>
 
       {/* Context banner */}
@@ -29300,53 +29580,23 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
         const s = getActiveConnectedServer();
         if (s === 'conflict') {
           return (
-            <div
-              role="alert"
-              style={{
-                marginBottom: '1rem',
-                padding: '0.75rem',
-                border: '1px solid #dc3545',
-                background: 'rgba(220,53,69,0.08)',
-                color: '#dc3545',
-                borderRadius: '6px'
-              }}
-            >
-              Conflict detected: multiple media servers are connected. Please disconnect all but one before proceeding.
+            <div role="alert" className="nx-conn-banner warn">
+              Multiple media servers are connected. Disconnect all but one before proceeding.
             </div>
           );
         }
         if (s === null) {
           return (
-            <div
-              role="note"
-              style={{
-                marginBottom: '1rem',
-                padding: '0.75rem',
-                border: '1px solid var(--border-color)',
-                background: 'var(--card-bg)',
-                borderRadius: '6px',
-                color: 'var(--text-secondary, #666)'
-              }}
-            >
-              No media server is connected. Choose a tab above and configure your server.
+            <div role="note" className="nx-conn-banner idle">
+              No media server is connected yet. Pick a server above and configure it to get started.
             </div>
           );
         }
+        const label = s === 'plex' ? 'Plex' : s === 'emby' ? 'Emby' : 'Jellyfin';
         return (
-          <div
-            role="status"
-            style={{
-              marginBottom: '1rem',
-              padding: '0.75rem',
-              border: '1px solid var(--border-color)',
-              background: 'var(--card-bg)',
-              borderRadius: '6px',
-              display: 'flex',
-              alignItems: 'center',
-              gap: '0.5rem'
-            }}
-          >
-            <span style={{ fontWeight: 'bold' }}>Active server:</span> {s === 'plex' ? 'Plex' : s === 'emby' ? 'Emby' : 'Jellyfin'}
+          <div role="status" className="nx-conn-banner ok">
+            <span className="nx-dot ok" aria-hidden="true" />
+            <span><strong>Active server:</strong> {label} — connected</span>
           </div>
         );
       })()}
