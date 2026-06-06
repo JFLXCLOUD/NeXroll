@@ -1,5 +1,24 @@
 # Changelog
 
+## [1.14.0-beta.2] - 06-05-2026 (beta)
+
+> Dashboard layout overhaul. Builds on beta.1; no backend or plugin changes.
+
+### Changed
+
+- **Dashboard reworked into a uniform, aligned grid (DASH-UI-1).** The overview
+  now uses a fixed 4-column grid in which every stat tile is the same size and
+  the rows line up. Per-tile S/M/L resizing was removed in favor of fixed sizes
+  by tile type: stat tiles take one cell; **Video Quality** and **Upcoming
+  Schedules** span two columns with extra height for their content; the weekly
+  calendar spans the full width. Tile heights are measured so the grid stays
+  aligned regardless of how much content a tile shows. The dashboard width is
+  capped so the columns stay a comfortable size instead of stretching.
+- **Weekly calendar is now a dashboard tile.** Previously pinned below the
+  overview, it's a full-width, move-only tile you can reorder anywhere in the
+  grid. Tiles can still be dragged to reorder and hidden/re-added — they just
+  can't be resized.
+
 ## [1.14.0-beta.1] - 06-02-2026 (beta)
 
 > First public beta of the 1.14.0 line. Rolls up everything developed under the

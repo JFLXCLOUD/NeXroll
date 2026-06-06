@@ -19,7 +19,7 @@ VSVersionInfo(
          StringStruct('InternalName', 'NeXroll'),
          StringStruct('OriginalFilename', 'NeXroll.exe'),
          StringStruct('ProductName', 'NeXroll'),
-         StringStruct('ProductVersion', '1.14.0-beta.1'),
+         StringStruct('ProductVersion', '1.14.0-beta.2'),
          StringStruct('LegalCopyright', '\u00a9 2026 JFLXCLOUD. All rights reserved.')]
       )
     ]),

@@ -13787,6 +13787,90 @@ def system_storage_health():
     return dict(_LAST_SCAN_STATS)
 
 
+_storage_breakdown_cache = {"data": None, "at": None}
+STORAGE_BREAKDOWN_TTL = 300  # seconds
+
+
+def _dir_size_bytes(path: str) -> int:
+    """Best-effort total size of a directory tree (bytes). Returns 0 on error."""
+    total = 0
+    try:
+        for root, _dirs, files in os.walk(path):
+            for f in files:
+                try:
+                    total += os.path.getsize(os.path.join(root, f))
+                except Exception:
+                    pass
+    except Exception:
+        pass
+    return total
+
+
+@app.get("/system/storage/breakdown")
+def system_storage_breakdown(db: Session = Depends(get_db)):
+    """
+    Per-location storage usage for the dashboard Storage tile: prerolls, NeX-Up
+    trailers, thumbnails, and the database. Prerolls and trailers are summed from
+    the DB (no filesystem walk) so this stays fast even when prerolls live on a
+    slow network share; thumbnails are walked, but the whole result is cached for
+    5 minutes.
+    """
+    now = datetime.datetime.utcnow()
+    c = _storage_breakdown_cache
+    if c["data"] and c["at"] and (now - c["at"]).total_seconds() < STORAGE_BREAKDOWN_TTL:
+        return {**c["data"], "cached": True}
+
+    setting = db.query(models.Setting).first()
+    locations = []
+
+    # Prerolls — sum of tracked file sizes (bytes); no disk walk.
+    try:
+        preroll_bytes = int(db.query(func.coalesce(func.sum(models.Preroll.file_size), 0)).scalar() or 0)
+    except Exception:
+        preroll_bytes = 0
+    locations.append({
+        "key": "prerolls", "label": "Prerolls", "bytes": preroll_bytes,
+        "path": PREROLLS_DIR if "PREROLLS_DIR" in globals() else None,
+    })
+
+    # NeX-Up trailers — file_size_mb in the DB (movies + TV).
+    try:
+        mb = float(db.query(func.coalesce(func.sum(models.ComingSoonTrailer.file_size_mb), 0.0)).scalar() or 0.0)
+        mb += float(db.query(func.coalesce(func.sum(models.ComingSoonTVTrailer.file_size_mb), 0.0)).scalar() or 0.0)
+        nexup_bytes = int(mb * 1024 * 1024)
+    except Exception:
+        nexup_bytes = 0
+    locations.append({
+        "key": "nexup", "label": "NeX-Up Trailers", "bytes": nexup_bytes,
+        "path": getattr(setting, "nexup_storage_path", None),
+    })
+
+    # Thumbnails — walked (cached by the TTL above).
+    thumb_dir = THUMBNAILS_DIR if "THUMBNAILS_DIR" in globals() else None
+    thumb_bytes = _dir_size_bytes(thumb_dir) if (thumb_dir and os.path.isdir(thumb_dir)) else 0
+    locations.append({
+        "key": "thumbnails", "label": "Thumbnails", "bytes": thumb_bytes, "path": thumb_dir,
+    })
+
+    # Database file.
+    try:
+        db_bytes = int(os.path.getsize(DB_PATH)) if (DB_PATH and os.path.exists(DB_PATH)) else 0
+    except Exception:
+        db_bytes = 0
+    locations.append({
+        "key": "database", "label": "Database", "bytes": db_bytes, "path": DB_PATH,
+    })
+
+    data = {
+        "locations": locations,
+        "total_bytes": sum(l["bytes"] for l in locations),
+        "checked_at": now.isoformat() + "Z",
+    }
+    c["data"] = data
+    c["at"] = now
+    return {**data, "cached": False}
+
+
 # Auto-scan interval. NOTE: registered under /settings/ (not /prerolls/) on
 # purpose — a PUT /prerolls/{preroll_id} route is defined earlier and would
 # shadow PUT /prerolls/auto-scan (matching "auto-scan" as a preroll id → 422).

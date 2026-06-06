@@ -290,7 +290,11 @@ select.input {
 }
 
 .dashboard {
-  max-width: 1200px;
+  /* Content width. 1200px was too narrow on modern monitors — at 100% zoom the
+     page felt cramped/oversized because everything was squeezed into 1200px.
+     Scale with the viewport (up to ~1760px) so wide screens get room to breathe
+     while small screens still fit. Inner forms keep their own narrower caps. */
+  max-width: min(1760px, 95vw);
   margin: 0 auto;
 }
 
@@ -1939,6 +1943,75 @@ body.dark .dashboard .grid .card:hover {
 .react-draggable-dragging {
   opacity: 1;
 }
+
+/* ---- NeXroll dashboard grid (fixed 4-column uniform tiles) ---- */
+.nx-dash-grid { position: relative; grid-template-columns: repeat(4, minmax(0, 1fr)); }
+/* Responsive column count (the rest of the grid is set inline). */
+@media (max-width: 1100px) { .nx-dash-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-width: 620px)  { .nx-dash-grid { grid-template-columns: minmax(0, 1fr); } }
+.nx-dash-grid .nx-tile.editing { cursor: grab; }
+.nx-dash-grid .nx-tile.editing:active { cursor: grabbing; }
+.nx-dash-grid .nx-tile.dragging { box-shadow: 0 12px 32px var(--shadow); border-radius: 0.5rem; }
+
+/* When locked, the grid uses a fixed base row height (grid-auto-rows) and tiles
+   span 1 or 2 rows, so cards just fill their cell. border-box keeps the card's
+   padding inside the cell height (and keeps the row-height measurement stable). */
+.nx-dash-grid .nx-tile > .card { box-sizing: border-box; }
+
+/* Size picker (top-left) + hide (top-right) — shown only while editing, sitting
+   on an opaque chip so they stay readable over the tile header. */
+.nx-tile-sizer,
+.nx-tile-hide {
+  position: absolute;
+  top: 6px;
+  z-index: 6;
+  display: none;
+}
+.nx-dash-grid .nx-tile.editing .nx-tile-sizer,
+.nx-dash-grid .nx-tile.editing .nx-tile-hide { display: inline-flex; }
+
+.nx-tile-sizer {
+  left: 6px;
+  align-items: center;
+  gap: 2px;
+  padding: 2px;
+  border-radius: 7px;
+  background: var(--card-bg);
+  border: 1px solid var(--border-color);
+}
+.nx-tile-sizer button {
+  width: 20px;
+  height: 18px;
+  padding: 0;
+  border: none;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 0.66rem;
+  font-weight: 700;
+  line-height: 1;
+  cursor: pointer;
+  transition: background 0.12s ease, color 0.12s ease;
+}
+.nx-tile-sizer button:hover { color: var(--text-color); background: var(--hover-bg); }
+.nx-tile-sizer button.active { background: var(--button-bg); color: #fff; }
+
+.nx-tile-hide {
+  right: 6px;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  cursor: pointer;
+  background: var(--card-bg);
+  color: var(--text-secondary);
+  border: 1px solid var(--border-color);
+  transition: color 0.15s ease, border-color 0.15s ease;
+}
+.nx-tile-hide:hover { color: var(--error-color); border-color: var(--error-color); }
+
 
 .react-grid-item.react-grid-placeholder {
   display: block;

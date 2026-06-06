@@ -24,6 +24,76 @@ import {
     Music, Wand2, GitCompare, Square, Plug
   } from 'lucide-react';
 import { BarChart, Bar, XAxis, YAxis, ResponsiveContainer, Cell, Tooltip } from 'recharts';
+import { Responsive as ResponsiveGrid, WidthProvider } from 'react-grid-layout';
+import 'react-resizable/css/styles.css';
+
+// react-grid-layout that auto-measures its container width (responsive dashboard).
+const DashGrid = WidthProvider(ResponsiveGrid);
+
+// Grid units. A small rowHeight lets a tile's height land close to its measured
+// content height. Tile HEIGHT is always auto-fit to content (so no scrollbars);
+// only WIDTH and POSITION are user-controlled.
+const DASH_ROW_PX = 4;
+const DASH_ROW_MARGIN = 12;
+const measureTileRows = (px) =>
+  Math.max(3, Math.ceil(((px || 0) + DASH_ROW_MARGIN) / (DASH_ROW_PX + DASH_ROW_MARGIN)));
+
+// Curated default layout (12 columns). x/y/w only — heights come from content
+// measurement. This is the organized arrangement that "Reset layout" restores,
+// and it's the fallback position for any tile re-added from the hidden list.
+// y is a row ordinal; vertical compaction collapses the gaps.
+const DASH_PRESET = [
+  { i: 'servers',          x: 0, y: 0,   w: 4 },
+  { i: 'prerolls',         x: 4, y: 0,   w: 4 },
+  { i: 'storage',          x: 8, y: 0,   w: 4 },
+  { i: 'scheduler',        x: 0, y: 100, w: 4 },
+  { i: 'current_category', x: 4, y: 100, w: 4 },
+  { i: 'schedules',        x: 8, y: 100, w: 4 },
+  { i: 'upcoming',         x: 0, y: 200, w: 6 },
+  { i: 'nexup',            x: 6, y: 200, w: 6 },
+  { i: 'community',        x: 0, y: 300, w: 6 },
+  { i: 'resolution_chart', x: 6, y: 300, w: 6 },
+];
+const DASH_PRESET_BY_ID = Object.fromEntries(DASH_PRESET.map(it => [it.i, it]));
+const TILE_DEFAULT_ROWS = 14; // fallback height before the first measurement
+
+// Tidy-grid tile sizes. The grid uses auto-fill columns of a fixed target width
+// plus a measured base row height, so size is expressed as a column/row span:
+//   Small  = 1 col x 1 row   Medium = 2 cols x 1 row   Large = 2 cols x 2 rows
+const SIZE_SPAN = { sm: 1, md: 2, lg: 2 };   // column span
+const SIZE_ROWS = { sm: 1, md: 1, lg: 2 };   // row span (applied in the locked layout)
+const SIZE_LABEL = { sm: 'Small', md: 'Medium', lg: 'Large' };
+const ALL_SIZE_OPTIONS = ['sm', 'md', 'lg'];
+// Tall content tiles (a chart, a schedule list) read poorly at 1 column, so they
+// only offer Medium / Large.
+const FEATURE_TILES = ['upcoming', 'resolution_chart'];
+const FEATURE_SIZE_OPTIONS = ['md', 'lg'];
+// Default arrangement that new installs and "Reset layout" get. Most tiles are
+// Small; the chart/list feature tiles are Large (2x2).
+const DEFAULT_SIZES = {
+  servers: 'sm', prerolls: 'sm', storage: 'sm', schedules: 'sm', scheduler: 'sm',
+  current_category: 'sm', community: 'sm', nexup: 'sm', upcoming: 'lg', resolution_chart: 'lg',
+};
+const DEFAULT_ORDER = ['servers', 'prerolls', 'storage', 'schedules', 'scheduler', 'current_category', 'community', 'nexup', 'upcoming', 'resolution_chart', 'weekly_calendar'];
+const DEFAULT_HIDDEN = [];
+
+// Wraps a tile and reports its natural content height (in grid rows). The card is
+// height:auto here, so the measurement is independent of the cell size — no
+// feedback loop, and the cell can be sized to fit exactly (no scrollbar).
+function MeasuredTile({ tileKey, onMeasure, children }) {
+  const ref = React.useRef(null);
+  React.useEffect(() => {
+    const el = ref.current;
+    if (!el) return undefined;
+    const card = el.firstElementChild || el;
+    const report = () => onMeasure(tileKey, card.offsetHeight || card.scrollHeight);
+    const ro = new ResizeObserver(report);
+    ro.observe(card);
+    report();
+    return () => ro.disconnect();
+  }, [tileKey, onMeasure]);
+  return <div ref={ref}>{children}</div>;
+}
 
 // API helpers that resolve the backend base dynamically (works in Docker and behind proxies)
 const apiBase = () => {
@@ -603,6 +673,8 @@ function App() {
   const [communityNewPrerollName, setCommunityNewPrerollName] = useState('');
   // Index status for local fast search
   const [communityIndexStatus, setCommunityIndexStatus] = useState(null);
+  const [communityHealth, setCommunityHealth] = useState(null);
+  const [storageBreakdown, setStorageBreakdown] = useState(null);
   const [communityIsBuilding, setCommunityIsBuilding] = useState(false);
   // Downloaded community preroll IDs (for marking as "Downloaded")
   const [downloadedCommunityIds, setDownloadedCommunityIds] = useState([]);
@@ -1848,6 +1920,17 @@ const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
 
   // eslint-disable-next-line no-use-before-define
   const fetchData = React.useCallback(() => {
+    // Community site reachability — fetched on its own (NOT in the batch below) so
+    // a slow external check can never delay the dashboard. Backend caches 5 min.
+    fetch(apiUrl('community-prerolls/health'))
+      .then(safeJson)
+      .then(h => { if (h && !h.__error) setCommunityHealth(h); })
+      .catch(() => {});
+    // Per-location storage breakdown — also off-batch; backend caches 5 min.
+    fetch(apiUrl('system/storage/breakdown'))
+      .then(safeJson)
+      .then(s => { if (s && !s.__error) setStorageBreakdown(s); })
+      .catch(() => {});
     // Always fetch all prerolls (no filter) for global state, filter in dashboard UI only
     return Promise.all([
       fetch(apiUrl('plex/status')),
@@ -5185,7 +5268,7 @@ const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
     }
   };
 // === Dashboard Customization (Drag &amp; Drop, 4x2 grid) ===
-const DASH_KEYS = ["servers","prerolls","storage","schedules","scheduler","current_category","upcoming","resolution_chart","nexup","community"];
+const DASH_KEYS = ["servers","prerolls","storage","schedules","scheduler","current_category","upcoming","resolution_chart","nexup","community","weekly_calendar"];
 
 // Tile span configuration - which tiles take multiple columns
 const TILE_SPANS = {
@@ -5197,8 +5280,8 @@ const TILE_SPANS = {
 const [dashLayout, setDashLayout] = useState(() => {
   const defaultLayout = {
     grid: { cols: 4, rows: 2 },
-    order: DASH_KEYS.slice(),
-    hidden: ['community', 'nexup'],  // Community & NeX-Up hidden by default
+    order: DEFAULT_ORDER.slice(),
+    hidden: DEFAULT_HIDDEN.slice(),
     locked: false
   };
   try {
@@ -5216,13 +5299,17 @@ const [dashLayout, setDashLayout] = useState(() => {
           }
         }
         return {
-          grid: { 
+          grid: {
             cols: Math.max(1, Math.min(8, parseInt(data.grid.cols || 4, 10) || 4)),
             rows: Math.max(1, Math.min(8, parseInt(data.grid.rows || 2, 10) || 2))
           },
           order: allKeys,
           hidden: storedHidden.filter(k => DASH_KEYS.includes(k)),
-          locked: !!data.locked
+          locked: !!data.locked,
+          // Restore per-tile S/M/L sizes (and the legacy RGL layouts, if any).
+          // These were being dropped here, so customizations never survived a reload.
+          sizes: (data.sizes && typeof data.sizes === 'object') ? data.sizes : undefined,
+          layouts: (data.layouts && typeof data.layouts === 'object') ? data.layouts : undefined
         };
       }
     }
@@ -5233,12 +5320,61 @@ const [dashLayout, setDashLayout] = useState(() => {
 });
 const [dashSaving, setDashSaving] = useState(false);
 
+// Base grid row height. Each sized tile reports its natural content height; a
+// tile that spans N rows needs (height - (N-1)*gap)/N per row, so the base row
+// height is the tallest single-row requirement. The locked layout then uses this
+// as grid-auto-rows and tiles span 1 row (S/M) or 2 rows (L). The full-width
+// calendar gets its own measured row span (calRows).
+const dashGridRef = useRef(null);
+const [uniformRowH, setUniformRowH] = useState(0);
+const [calRows, setCalRows] = useState(1);
+useEffect(() => {
+  const grid = dashGridRef.current;
+  if (!grid) return undefined;
+  const GAP = 16;
+  let raf = 0;
+  const recompute = () => {
+    cancelAnimationFrame(raf);
+    raf = requestAnimationFrame(() => {
+      let rowH = 0;
+      grid.querySelectorAll('.nx-tile-sized').forEach((t) => {
+        const card = t.querySelector('.card'); if (!card) return;
+        const r = Number(t.dataset.rows) || 1;
+        rowH = Math.max(rowH, (card.offsetHeight - (r - 1) * GAP) / r);
+      });
+      // Tolerance guard: ignore sub-pixel jitter so the measure/apply loop settles.
+      if (rowH > 0) setUniformRowH((prev) => (Math.abs(prev - rowH) > 1 ? rowH : prev));
+      const calCard = grid.querySelector('.nx-tile-cal > .card');
+      if (calCard && rowH > 0) {
+        const span = Math.max(1, Math.ceil((calCard.offsetHeight + GAP) / (rowH + GAP)));
+        setCalRows((prev) => (prev !== span ? span : prev));
+      }
+    });
+  };
+  const ro = new ResizeObserver(recompute);
+  ro.observe(grid);
+  grid.querySelectorAll('.nx-tile .card').forEach((c) => ro.observe(c));
+  recompute();
+  return () => { cancelAnimationFrame(raf); ro.disconnect(); };
+}, [dashLayout]);
+
 const visibleOrder = React.useMemo(
   () => (dashLayout?.order || DASH_KEYS).filter(k => !(dashLayout?.hidden || []).includes(k)),
   [dashLayout]
 );
 
 const dashSensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 5 } }));
+// Bumping this remounts the grid — used by "Reset layout" so RGL actually drops
+// its cached internal layout and rebuilds from the default.
+const [dashGridKey, setDashGridKey] = useState(0);
+// Per-tile content height (in grid rows), measured live. This is the single
+// source of truth for tile HEIGHT — the layout below always uses it — so tiles
+// fit their content exactly and never scroll, independent of RGL's own state.
+const [tileRows, setTileRows] = useState({});
+const setTileRowsFor = useCallback((key, px) => {
+  const rows = measureTileRows(px);
+  setTileRows(prev => (prev[key] === rows ? prev : { ...prev, [key]: rows }));
+}, []);
 
 const loadDashLayout = React.useCallback(async () => {
   // localStorage is already handled in useState initialization
@@ -5267,7 +5403,9 @@ const loadDashLayout = React.useCallback(async () => {
         grid: { cols, rows },
         order: order.slice(0, capacity),
         hidden,
-        locked: !!data.locked
+        locked: !!data.locked,
+        sizes: (data.sizes && typeof data.sizes === 'object') ? data.sizes : undefined,
+        layouts: (data.layouts && typeof data.layouts === 'object') ? data.layouts : undefined
       });
       return;
     }
@@ -5302,7 +5440,9 @@ const persistDashLayout = React.useCallback(async (next) => {
         grid: next.grid,
         order: next.order,
         hidden: next.hidden,
-        locked: next.locked
+        locked: next.locked,
+        sizes: next.sizes,
+        layouts: next.layouts
       })
     });
   } catch (e) {
@@ -5351,43 +5491,38 @@ const toggleDashLock = () => {
   setDashLayout(next);
 };
 
-const SortableTile = ({ id, disabled, span = 1, onHide, children }) => {
+// Fixed-layout tile: size is decided by tile type (no user resizing). Stat tiles
+// are 1x1, feature tiles 2x2, the calendar full-width. Tiles can be dragged to
+// reorder and hidden, but not resized.
+const SortableTile = ({ id, disabled, cols = 1, rows = 1, fullWidth, onHide, children }) => {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id, disabled });
   const style = {
     transform: CSS.Transform.toString(transform),
     transition,
     cursor: disabled ? 'default' : 'grab',
     zIndex: isDragging ? 5 : 1,
-    gridColumn: span > 1 ? `span ${span}` : undefined,
+    gridColumn: fullWidth ? '1 / -1' : `span ${cols}`,
+    gridRow: `span ${rows}`,
     position: 'relative'
   };
   return (
-    <div ref={setNodeRef} style={style} className={`nx-tile ${isDragging ? 'dragging' : ''}`} {...attributes} {...listeners}>
+    <div
+      ref={setNodeRef}
+      style={style}
+      data-rows={rows}
+      className={`nx-tile ${fullWidth ? 'nx-tile-cal' : 'nx-tile-sized'} ${isDragging ? 'dragging' : ''} ${disabled ? '' : 'editing'}`}
+      {...attributes}
+      {...listeners}
+    >
       {!disabled && onHide && (
         <button
+          type="button"
+          className="nx-tile-hide nx-no-drag"
+          title="Hide tile"
+          onPointerDown={(e) => e.stopPropagation()}
           onClick={(e) => { e.stopPropagation(); onHide(id); }}
-          style={{
-            position: 'absolute',
-            top: '4px',
-            right: '4px',
-            width: '20px',
-            height: '20px',
-            borderRadius: '50%',
-            border: 'none',
-            background: 'rgba(220, 53, 69, 0.85)',
-            color: '#fff',
-            cursor: 'pointer',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            fontSize: '12px',
-            fontWeight: 'bold',
-            zIndex: 10,
-            padding: 0
-          }}
-          title={`Hide ${id} tile`}
         >
-          <X size={12} />
+          <X size={13} />
         </button>
       )}
       {children}
@@ -5458,21 +5593,84 @@ const DashboardTiles = {
       </div>
     </div>
   ),
-  prerolls: () => (
-    <div className="card">
-      <h2 style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}><Film size={18} /> Prerolls</h2>
-      <p>{prerolls.length} uploaded</p>
-      <p style={{ fontSize: '0.9rem', color: 'var(--text-secondary, #666)' }}>
-        {categories.filter(cat => prerolls.some(p => p.category_id === cat.id)).length} categories used
-      </p>
-    </div>
-  ),
-  storage: () => (
-    <div className="card">
-      <h2 style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}><HardDrive size={18} /> Storage</h2>
-      <p>{formatBytes(totalStorageBytes)} used</p>
-    </div>
-  ),
+  prerolls: () => {
+    const total = prerolls.length;
+    const totalCats = categories.length;
+    const usedCats = categories.filter(cat => prerolls.some(p => p.category_id === cat.id)).length;
+    const uncategorized = prerolls.filter(p => !p.category_id).length;
+    const sizeBytes = prerolls.reduce((s, p) => s + (p.file_size || 0), 0);
+    return (
+      <div className="card">
+        <h2 style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}><Film size={18} /> Prerolls</h2>
+        <p style={{ fontSize: '1.6rem', fontWeight: 'bold', margin: '0.15rem 0 0.5rem' }}>
+          {total} <span style={{ fontSize: '0.85rem', fontWeight: 'normal', color: 'var(--text-secondary, #666)' }}>preroll{total === 1 ? '' : 's'}</span>
+        </p>
+        <div style={{ display: 'grid', gap: '0.4rem' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '0.9rem' }}>
+            <span style={{ color: 'var(--text-secondary, #666)', display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
+              <Folder size={14} /> Categories
+            </span>
+            <span><strong>{usedCats}</strong> <span style={{ color: 'var(--text-secondary, #888)' }}>of {totalCats} used</span></span>
+          </div>
+          {sizeBytes > 0 && (
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '0.9rem' }}>
+              <span style={{ color: 'var(--text-secondary, #666)', display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
+                <HardDrive size={14} /> Library size
+              </span>
+              <strong>{formatBytes(sizeBytes)}</strong>
+            </div>
+          )}
+          {uncategorized > 0 && (
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '0.9rem' }}>
+              <span style={{ color: '#f59e0b', display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
+                <AlertTriangle size={14} /> Uncategorized
+              </span>
+              <strong style={{ color: '#f59e0b' }}>{uncategorized}</strong>
+            </div>
+          )}
+        </div>
+      </div>
+    );
+  },
+  storage: () => {
+    const colors = { prerolls: '#3b82f6', nexup: '#ffc230', thumbnails: '#8b5cf6', database: '#22c55e' };
+    const locs = storageBreakdown?.locations || [];
+    const totalBytes = storageBreakdown ? storageBreakdown.total_bytes : totalStorageBytes;
+    const shown = locs.filter(l => l.bytes > 0).sort((a, b) => b.bytes - a.bytes);
+    return (
+      <div className="card">
+        <h2 style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}><HardDrive size={18} /> Storage</h2>
+        <p style={{ fontSize: '1.6rem', fontWeight: 'bold', margin: '0.15rem 0 0.5rem' }}>
+          {formatBytes(totalBytes)} <span style={{ fontSize: '0.85rem', fontWeight: 'normal', color: 'var(--text-secondary, #666)' }}>used</span>
+        </p>
+        {!storageBreakdown ? (
+          <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary, #888)' }}>Calculating…</p>
+        ) : shown.length === 0 ? (
+          <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary, #888)' }}>No stored files yet</p>
+        ) : (
+          <div style={{ display: 'grid', gap: '0.45rem' }}>
+            {shown.map(l => {
+              const pct = totalBytes > 0 ? Math.round((l.bytes / totalBytes) * 100) : 0;
+              return (
+                <div key={l.key} title={l.path || ''}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '0.9rem' }}>
+                    <span style={{ color: 'var(--text-secondary, #666)', display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+                      <span style={{ width: 8, height: 8, borderRadius: 2, background: colors[l.key] || 'var(--accent-color, #00d4ff)', flexShrink: 0 }} />
+                      {l.label}
+                    </span>
+                    <strong>{formatBytes(l.bytes)}</strong>
+                  </div>
+                  <div style={{ height: 4, borderRadius: 2, background: 'var(--hover-bg)', marginTop: '0.2rem', overflow: 'hidden' }}>
+                    <div style={{ width: `${pct}%`, height: '100%', background: colors[l.key] || 'var(--accent-color, #00d4ff)' }} />
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
+    );
+  },
   schedules: () => {
     const enabled = schedules.filter(s => s.is_active);
     const disabled = schedules.filter(s => !s.is_active);
@@ -5800,10 +5998,29 @@ const DashboardTiles = {
     const matchedCount = communityMatchedCount || 0;
     const isStale = communityIndexStatus?.is_stale || false;
     const ageDays = communityIndexStatus?.age_days || 0;
-    
+    const online = communityHealth?.online;
+
     return (
       <div className="card">
         <h2 style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}><Users2 size={18} /> Community Prerolls</h2>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.6rem' }}>
+          <span style={{ fontSize: '0.9rem', color: 'var(--text-secondary, #666)', display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
+            <Globe size={14} /> prerolls.uk
+          </span>
+          {online === undefined ? (
+            <span className="nx-chip" style={{ fontSize: '0.75rem' }}>Checking…</span>
+          ) : (
+            <span
+              className={`nx-chip nx-status ${online ? 'ok' : 'bad'}`}
+              style={{ fontSize: '0.75rem' }}
+              title={online
+                ? `Reachable${communityHealth?.response_time_ms ? ` (${communityHealth.response_time_ms} ms)` : ''}`
+                : (communityHealth?.error || 'Unreachable')}
+            >
+              {online ? 'Online' : 'Offline'}
+            </span>
+          )}
+        </div>
         {indexedCount > 0 || matchedCount > 0 ? (
           <div style={{ display: 'grid', gap: '0.5rem' }}>
             {indexedCount > 0 && (
@@ -7243,7 +7460,7 @@ const DashboardTiles = {
 
   // Dashboard Overview Sub-Page (Tiles)
   const renderDashboardOverview = () => (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
+    <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem', maxWidth: '1320px', width: '100%', margin: '0 auto' }}>
       {/* Header */}
       <div>
         <h1 className="header" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.5rem' }}>
@@ -7459,8 +7676,19 @@ const DashboardTiles = {
               className="nx-dash-hint"
               style={{ color: 'var(--text-secondary)', fontSize: '0.78rem', opacity: 0.72 }}
             >
-              Drag to rearrange — lock to save
+              Drag to move • use S / M / L to set tile size • lock to save
             </span>
+          )}
+          {!dashLayout.locked && (
+            <button
+              type="button"
+              className="button button-secondary"
+              style={{ padding: '2px 10px', fontSize: '0.75rem', display: 'inline-flex', alignItems: 'center', gap: '4px' }}
+              onClick={() => setDashLayout(prev => ({ ...prev, order: DEFAULT_ORDER.slice(), sizes: {}, hidden: DEFAULT_HIDDEN.slice() }))}
+              title="Reset tile order and sizes to default"
+            >
+              <RotateCw size={12} /> Reset layout
+            </button>
           )}
           {!dashLayout.locked && (dashLayout?.hidden || []).length > 0 && (
             <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginLeft: '1rem' }}>
@@ -7484,33 +7712,55 @@ const DashboardTiles = {
         </div>
       </div>
 
-      <DndContext sensors={dashSensors} collisionDetection={closestCenter} onDragEnd={handleDashDragEnd}>
-        <SortableContext items={visibleOrder} strategy={rectSortingStrategy}>
-          <div className={`grid nx-dash-grid ${dashLayout.locked ? '' : 'editing'}`} style={{
-            display: 'grid',
-            gridTemplateColumns: `repeat(${dashLayout?.grid?.cols || 4}, 1fr)`,
-            gap: '1rem'
-          }}>
-            {visibleOrder.map((key) => (
-              <SortableTile 
-                key={key} 
-                id={key} 
-                disabled={dashLayout.locked} 
-                span={TILE_SPANS[key] || 1}
-                onHide={(tileId) => {
-                  const newHidden = [...(dashLayout.hidden || []), tileId];
-                  setDashLayout({ ...dashLayout, hidden: newHidden });
+      {(() => {
+        const renderKeys = visibleOrder.filter(k => DashboardTiles[k] || k === 'weekly_calendar');
+        return (
+          <DndContext sensors={dashSensors} collisionDetection={closestCenter} onDragEnd={handleDashDragEnd}>
+            <SortableContext items={renderKeys} strategy={rectSortingStrategy}>
+              <div
+                ref={dashGridRef}
+                className={`nx-dash-grid ${dashLayout.locked ? '' : 'editing'}`}
+                style={{
+                  display: 'grid',
+                  // Fixed 4-column grid (columns defined in CSS so they can go
+                  // responsive). Stat tiles = 1 cell; feature tiles span 2 cols x
+                  // 2 rows; calendar is full-width. The measured base row height
+                  // keeps every tile aligned to the same vertical rhythm.
+                  gridAutoRows: uniformRowH ? `${uniformRowH}px` : 'auto',
+                  gridAutoFlow: dashLayout.locked ? 'row dense' : 'row',
+                  alignItems: 'stretch',
+                  gap: '16px'
                 }}
               >
-                {DashboardTiles[key] ? DashboardTiles[key]() : null}
-              </SortableTile>
-            ))}
-          </div>
-        </SortableContext>
-      </DndContext>
+                {renderKeys.map((key) => {
+                  const isCal = key === 'weekly_calendar';
+                  const isFeature = FEATURE_TILES.includes(key);
+                  return (
+                    <SortableTile
+                      key={key}
+                      id={key}
+                      disabled={dashLayout.locked}
+                      fullWidth={isCal}
+                      cols={isFeature ? 2 : 1}
+                      rows={isCal ? calRows : (isFeature ? 2 : 1)}
+                      onHide={(tileId) => setDashLayout(prev => ({ ...prev, hidden: [...(prev.hidden || []), tileId] }))}
+                    >
+                      {isCal ? renderWeeklyCalendar() : DashboardTiles[key]()}
+                    </SortableTile>
+                  );
+                })}
+              </div>
+            </SortableContext>
+          </DndContext>
+        );
+      })()}
 
-      {/* Dashboard Weekly Calendar Snapshot */}
-      {(() => {
+    </div>
+  );
+
+  // Weekly calendar — relocated out of the dashboard JSX so it can be rendered
+  // as a move-only, full-width tile inside the sortable grid.
+  const renderWeeklyCalendar = () => {
         // Calculate current week (always show current week on dashboard)
         const now = new Date();
         const dayOfWeek = now.getDay();
@@ -7588,7 +7838,7 @@ const DashboardTiles = {
         };
 
         return (
-          <div className="card" style={{ marginTop: '1.5rem', padding: 0, overflow: 'hidden' }}>
+          <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
             {/* Header */}
             <div style={{
               padding: '1rem 1.25rem',
@@ -8054,9 +8304,7 @@ const DashboardTiles = {
             )}
           </div>
         );
-      })()}
-    </div>
-  );
+  };
 
   // Dashboard Add Prerolls Sub-Page
   const renderDashboardAddPrerolls = () => (
