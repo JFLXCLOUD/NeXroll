@@ -1,7 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { DndContext, closestCenter, PointerSensor, useSensor, useSensors } from '@dnd-kit/core';
 import { SortableContext, rectSortingStrategy, useSortable, arrayMove } from '@dnd-kit/sortable';
-import { CSS } from '@dnd-kit/utilities';
 import ReactMarkdown from 'react-markdown';
 import html2canvas from 'html2canvas';
 import RetroProgressBar from './components/RetroProgressBar';
@@ -5497,7 +5496,11 @@ const toggleDashLock = () => {
 const SortableTile = ({ id, disabled, cols = 1, rows = 1, fullWidth, onHide, children }) => {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id, disabled });
   const style = {
-    transform: CSS.Transform.toString(transform),
+    // Translate-only: dnd-kit's rectSortingStrategy bakes scaleX/scaleY into the
+    // transform so a dragged tile is squashed to match whatever cell it's swapping
+    // with. That distorts the 2x2 feature tiles badly. Dropping the scale keeps
+    // every tile at its true size while it slides (the iOS home-screen feel).
+    transform: transform ? `translate3d(${Math.round(transform.x)}px, ${Math.round(transform.y)}px, 0)` : undefined,
     transition,
     cursor: disabled ? 'default' : 'grab',
     zIndex: isDragging ? 5 : 1,
