@@ -429,7 +429,49 @@ def ensure_schema() -> None:
             for col_name, col_def in auth_columns:
                 if not _sqlite_has_column("settings", col_name):
                     _sqlite_add_column("settings", col_def)
-            
+
+            # v2 onboarding wizard completion flag.
+            # When this column is freshly added, the database predates v2. Existing
+            # installs must NOT be forced through the first-run wizard, so backfill
+            # onboarding_complete=1 whenever there are signs of prior configuration
+            # (a configured server, or any prerolls/categories). A genuinely fresh
+            # DB leaves it 0 so the wizard shows.
+            if not _sqlite_has_column("settings", "onboarding_complete"):
+                _sqlite_add_column("settings", "onboarding_complete BOOLEAN DEFAULT 0")
+                try:
+                    with engine.connect() as _conn:
+                        def _scalar(sql):
+                            try:
+                                r = _conn.exec_driver_sql(sql).fetchone()
+                                return r[0] if r else None
+                            except Exception:
+                                return None
+                        has_server = bool(_scalar(
+                            "SELECT 1 FROM settings WHERE "
+                            "COALESCE(plex_token,'')<>'' OR COALESCE(plex_url,'')<>'' OR "
+                            "COALESCE(jellyfin_url,'')<>'' OR COALESCE(emby_url,'')<>'' LIMIT 1"
+                        ))
+                        preroll_count = _scalar("SELECT COUNT(*) FROM prerolls") or 0
+                        category_count = _scalar("SELECT COUNT(*) FROM categories") or 0
+                        if has_server or preroll_count > 0 or category_count > 0:
+                            if not _scalar("SELECT 1 FROM settings LIMIT 1"):
+                                _conn.exec_driver_sql("INSERT INTO settings (onboarding_complete) VALUES (1)")
+                            else:
+                                _conn.exec_driver_sql("UPDATE settings SET onboarding_complete = 1")
+                            try:
+                                _conn.commit()
+                            except Exception:
+                                pass
+                            print(
+                                ">>> ONBOARDING MIGRATION: Existing install detected "
+                                f"(server={has_server}, prerolls={preroll_count}, categories={category_count}); "
+                                "marked onboarding_complete=1 (wizard skipped for upgraders)"
+                            )
+                        else:
+                            print(">>> ONBOARDING MIGRATION: Fresh database; onboarding wizard will be shown")
+                except Exception as _e:
+                    print(f">>> ONBOARDING MIGRATION ERROR: {_e}")
+
             # Add update system settings columns
             update_columns = [
                 ("update_check_interval", "update_check_interval TEXT DEFAULT 'daily'"),
