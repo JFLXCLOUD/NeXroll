@@ -3600,3 +3600,272 @@ body.dark .nx-chip.warn {
 .nx-notice.accent  { background: rgba(108, 92, 231, 0.07); border-color: rgba(108, 92, 231, 0.28); }
 .nx-notice.warn    { background: rgba(230, 126, 34, 0.08); border-color: rgba(230, 126, 34, 0.28); }
 .nx-notice.danger  { background: rgba(231, 76, 60, 0.08); border-color: rgba(231, 76, 60, 0.28); }
+
+/* ============================================================
+   NeXroll v2 — Collapsible sidebar shell
+   ============================================================ */
+:root {
+  --nx-sidebar-w: 256px;
+  --nx-sidebar-w-collapsed: 64px;
+  --nx-topbar-h: 56px;
+}
+
+/* Shell wraps the sidebar + content column side-by-side */
+.nx-shell {
+  display: flex;
+  min-height: 100vh;
+  align-items: stretch;
+}
+
+/* ---- Sidebar ---- */
+.nx-sidebar {
+  flex: 0 0 var(--nx-sidebar-w);
+  width: var(--nx-sidebar-w);
+  background-color: var(--card-bg);
+  border-right: 1px solid var(--border-color);
+  display: flex;
+  flex-direction: column;
+  position: sticky;
+  top: 0;
+  height: 100vh;
+  overflow-y: auto;
+  overflow-x: hidden;
+  z-index: 900;
+  transition: flex-basis 0.18s ease, width 0.18s ease;
+}
+.nx-sidebar.collapsed {
+  flex-basis: var(--nx-sidebar-w-collapsed);
+  width: var(--nx-sidebar-w-collapsed);
+}
+
+.nx-sidebar-head {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.75rem 0.75rem;
+  border-bottom: 1px solid var(--border-color);
+  min-height: var(--nx-topbar-h);
+}
+.nx-sidebar-brand {
+  display: flex;
+  align-items: center;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.nx-sidebar-logo {
+  height: 34px;
+  width: auto;
+  display: block;
+  max-width: 100%;
+}
+.nx-sidebar.collapsed .nx-sidebar-logo { display: none; }
+.nx-sidebar.collapsed .nx-sidebar-brand { display: none; }
+
+.nx-sidebar-collapse {
+  background: transparent;
+  border: 1px solid var(--border-color);
+  color: var(--text-secondary);
+  border-radius: 8px;
+  width: 32px;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  flex: 0 0 auto;
+  transition: background-color 0.15s ease, color 0.15s ease;
+}
+.nx-sidebar-collapse:hover {
+  background: var(--hover-bg);
+  color: var(--text-color);
+}
+.nx-sidebar.collapsed .nx-sidebar-head {
+  justify-content: center;
+  padding: 0.75rem 0;
+}
+
+/* Mobile-only close button (hidden on desktop) */
+.nx-sidebar-mobile-close { display: none; }
+
+/* ---- Nav items ---- */
+.nx-sidebar-nav {
+  flex: 1 1 auto;
+  padding: 0.5rem 0.5rem 1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+}
+.nx-sidebar-section { display: flex; flex-direction: column; }
+
+.nx-sidebar-item {
+  --nx-accent: var(--button-bg);
+  display: flex;
+  align-items: center;
+  gap: 0.7rem;
+  width: 100%;
+  padding: 0.6rem 0.7rem;
+  border: none;
+  background: transparent;
+  color: var(--text-color);
+  border-radius: 8px;
+  cursor: pointer;
+  font-size: 0.9rem;
+  font-weight: 500;
+  text-align: left;
+  position: relative;
+  transition: background-color 0.13s ease, color 0.13s ease;
+}
+.nx-sidebar-item:hover { background: var(--hover-bg); }
+.nx-sidebar-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  color: var(--text-secondary);
+}
+.nx-sidebar-label {
+  flex: 1 1 auto;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.nx-sidebar-caret {
+  display: flex;
+  align-items: center;
+  color: var(--text-muted);
+  flex: 0 0 auto;
+}
+
+/* Active parent: tinted bg + left accent bar */
+.nx-sidebar-parent.active {
+  background: color-mix(in srgb, var(--nx-accent) 14%, transparent);
+  color: var(--nx-accent);
+  font-weight: 600;
+}
+.nx-sidebar-parent.active .nx-sidebar-icon { color: var(--nx-accent); }
+.nx-sidebar-parent.active::before {
+  content: "";
+  position: absolute;
+  left: -0.5rem;
+  top: 6px;
+  bottom: 6px;
+  width: 3px;
+  border-radius: 0 3px 3px 0;
+  background: var(--nx-accent);
+}
+
+/* Children tree */
+.nx-sidebar-children {
+  display: flex;
+  flex-direction: column;
+  gap: 0.05rem;
+  margin: 0.1rem 0 0.25rem 0;
+  padding-left: 0.65rem;
+  border-left: 1px solid var(--border-color);
+  margin-left: 0.85rem;
+}
+.nx-sidebar-child {
+  font-size: 0.85rem;
+  font-weight: 500;
+  padding: 0.45rem 0.6rem;
+}
+.nx-sidebar-child .nx-sidebar-icon { color: var(--text-muted); }
+.nx-sidebar-child.active {
+  color: var(--nx-accent);
+  background: color-mix(in srgb, var(--nx-accent) 10%, transparent);
+  font-weight: 600;
+}
+.nx-sidebar-child.active .nx-sidebar-icon { color: var(--nx-accent); }
+
+/* Collapsed: icon-only, centered, hide labels/carets/children */
+.nx-sidebar.collapsed .nx-sidebar-label,
+.nx-sidebar.collapsed .nx-sidebar-caret,
+.nx-sidebar.collapsed .nx-sidebar-children { display: none; }
+.nx-sidebar.collapsed .nx-sidebar-item {
+  justify-content: center;
+  padding: 0.6rem 0;
+  gap: 0;
+}
+.nx-sidebar.collapsed .nx-sidebar-parent.active::before { left: 0; }
+
+/* ---- Content column ---- */
+.nx-content {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+/* Slim top bar inside content (status, theme, user, logout) */
+.nx-topbar {
+  position: sticky;
+  top: 0;
+  z-index: 850;
+  min-height: var(--nx-topbar-h);
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0 1rem;
+  background-color: var(--bg-color);
+  border-bottom: 1px solid var(--border-color);
+}
+.nx-topbar-spacer { flex: 1 1 auto; }
+.nx-mobile-menu-toggle {
+  display: none;
+  background: transparent;
+  border: 1px solid var(--border-color);
+  color: var(--text-color);
+  border-radius: 8px;
+  width: 36px;
+  height: 36px;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}
+
+.nx-sidebar-backdrop { display: none; }
+
+/* ---- Responsive: sidebar becomes an off-canvas drawer ---- */
+@media (max-width: 900px) {
+  .nx-sidebar {
+    position: fixed;
+    left: 0;
+    top: 0;
+    bottom: 0;
+    height: 100vh;
+    transform: translateX(-100%);
+    transition: transform 0.2s ease;
+    flex-basis: var(--nx-sidebar-w);
+    width: var(--nx-sidebar-w);
+    box-shadow: 2px 0 16px rgba(0, 0, 0, 0.25);
+  }
+  .nx-sidebar.mobile-open { transform: translateX(0); }
+  /* On mobile the collapse toggle is irrelevant; always show full nav */
+  .nx-sidebar.collapsed { flex-basis: var(--nx-sidebar-w); width: var(--nx-sidebar-w); }
+  .nx-sidebar.collapsed .nx-sidebar-label,
+  .nx-sidebar.collapsed .nx-sidebar-caret { display: flex; }
+  .nx-sidebar.collapsed .nx-sidebar-logo,
+  .nx-sidebar.collapsed .nx-sidebar-brand { display: flex; }
+  .nx-sidebar.collapsed .nx-sidebar-item { justify-content: flex-start; padding: 0.6rem 0.7rem; gap: 0.7rem; }
+  .nx-sidebar-collapse { display: none; }
+  .nx-sidebar-mobile-close {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: transparent;
+    border: 1px solid var(--border-color);
+    color: var(--text-secondary);
+    border-radius: 8px;
+    width: 32px;
+    height: 32px;
+    cursor: pointer;
+    margin-left: auto;
+  }
+  .nx-mobile-menu-toggle { display: flex; }
+  .nx-sidebar-backdrop {
+    display: block;
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.5);
+    z-index: 899;
+  }
+}

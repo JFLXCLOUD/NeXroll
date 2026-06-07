@@ -9,6 +9,7 @@ import SequenceBuilder from './components/SequenceBuilder';
 import PatternImport from './components/PatternImport';
 import PatternExport from './components/PatternExport';
 import SequencePreviewModal from './components/SequencePreviewModal';
+import Sidebar from './components/Sidebar';
 import { validateSequence, stringifySequence, parseSequence, cloneSequenceWithIds } from './utils/sequenceValidator';
 import { 
     Calendar, CalendarDays, ChevronLeft, Clock, Play, Edit, Save, Trash, Trash2, Upload, 
@@ -519,6 +520,17 @@ function App() {
   const [uploadProgress, setUploadProgress] = useState({});
   const [activeTab, setActiveTab] = useState('dashboard');
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false); // Mobile navigation menu
+  // v2 sidebar: collapsed (icon-only) state, persisted across sessions
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(() => {
+    try { return localStorage.getItem('nx_sidebar_collapsed') === '1'; } catch { return false; }
+  });
+  const toggleSidebarCollapsed = useCallback(() => {
+    setSidebarCollapsed(prev => {
+      const next = !prev;
+      try { localStorage.setItem('nx_sidebar_collapsed', next ? '1' : '0'); } catch { /* ignore */ }
+      return next;
+    });
+  }, []);
   const [openDropdown, setOpenDropdown] = useState(null); // For dropdown navigation
   const [plexConfig, setPlexConfig] = useState({
     url: '',
@@ -25723,141 +25735,6 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
     </div>
   );
 
-  // Settings Sub-Navigation
-  const renderSettingsSubNav = () => {
-    const tabs = [
-      { 
-        id: 'settings', 
-        icon: <Settings size={16} />, 
-        label: 'General', 
-        description: 'Theme, timezone, notifications, and preferences'
-      },
-      { 
-        id: 'settings/paths', 
-        icon: <ArrowRight size={16} />, 
-        label: 'Path Mappings', 
-        description: 'Configure path translations for Plex'
-      },
-      { 
-        id: 'settings/storage', 
-        icon: <HardDrive size={16} />, 
-        label: 'Storage', 
-        description: 'Configure preroll storage folder'
-      },
-      { 
-        id: 'settings/apikeys', 
-        icon: <Key size={16} />, 
-        label: 'API Keys', 
-        description: 'Manage API keys for external access'
-      },
-      { 
-        id: 'settings/logs', 
-        icon: <FileText size={16} />, 
-        label: 'Logs', 
-        description: 'View and export system logs'
-      },
-      { 
-        id: 'settings/users', 
-        icon: <Users size={16} />, 
-        label: 'Users', 
-        description: 'Manage user accounts and permissions'
-      },
-      { 
-        id: 'settings/backup', 
-        icon: <Download size={16} />, 
-        label: 'Backup & Restore', 
-        description: 'Export and import your NeXroll data'
-      },
-      { 
-        id: 'settings/system', 
-        icon: <Info size={16} />, 
-        label: 'System', 
-        description: 'System information and diagnostics'
-      }
-    ];
-
-    return (
-      <>
-        {/* Main Tab Bar */}
-        <div style={{ 
-          position: 'sticky',
-          top: '50px',
-          zIndex: 800,
-          backgroundColor: 'var(--bg-color)',
-          borderBottom: '2px solid var(--border-color)',
-          display: 'flex',
-          gap: '0.25rem',
-          marginBottom: '0.75rem',
-          paddingTop: '0.5rem'
-        }}>
-          {tabs.map(tab => (
-            <button
-              key={tab.id}
-              onClick={() => setActiveTab(tab.id)}
-              style={{
-                padding: '0.875rem 1.25rem',
-                border: 'none',
-                borderBottom: activeTab === tab.id ? '3px solid var(--button-bg)' : '3px solid transparent',
-                backgroundColor: activeTab === tab.id ? 'var(--bg-color)' : 'transparent',
-                color: activeTab === tab.id ? 'var(--button-bg)' : 'var(--text-color)',
-                cursor: 'pointer',
-                fontSize: '0.9rem',
-                fontWeight: activeTab === tab.id ? 600 : 400,
-                transition: 'all 0.2s',
-                marginBottom: '-2px',
-                display: 'flex',
-                alignItems: 'center',
-                gap: '0.5rem',
-                borderRadius: '8px 8px 0 0'
-              }}
-              onMouseEnter={(e) => {
-                if (activeTab !== tab.id) {
-                  e.currentTarget.style.backgroundColor = 'var(--bg-color)';
-                  e.currentTarget.style.color = 'var(--button-bg)';
-                }
-              }}
-              onMouseLeave={(e) => {
-                if (activeTab !== tab.id) {
-                  e.currentTarget.style.backgroundColor = 'transparent';
-                  e.currentTarget.style.color = 'var(--text-color)';
-                }
-              }}
-              title={tab.description}
-            >
-              <span style={{ display: 'flex', alignItems: 'center' }}>{tab.icon}</span>
-              <span>{tab.label}</span>
-            </button>
-          ))}
-        </div>
-
-        {/* Context Bar */}
-        <div style={{
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'space-between',
-          padding: '0.75rem 1rem',
-          backgroundColor: 'var(--bg-color)',
-          borderRadius: '8px',
-          border: '1px solid var(--border-color)',
-          marginBottom: '1rem'
-        }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
-            <span style={{ display: 'flex', alignItems: 'center' }}>
-              {tabs.find(t => t.id === activeTab)?.icon || <Settings size={20} />}
-            </span>
-            <div>
-              <div style={{ fontSize: '0.95rem', fontWeight: 600, color: 'var(--text-color)' }}>
-                {tabs.find(t => t.id === activeTab)?.label || 'General'}
-              </div>
-              <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', marginTop: '0.15rem' }}>
-                {tabs.find(t => t.id === activeTab)?.description || ''}
-              </div>
-            </div>
-          </div>
-        </div>
-      </>
-    );
-  };
 
   // Settings - NeX-Up Content Settings Tab
   // Settings - General Tab
@@ -32918,68 +32795,28 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
   }
 
   return (
-    <div className="app-container">
-      {/* Tab Navigation with right-aligned logo */}
-      <div
-        className="tab-buttons"
-        style={{ alignItems: 'center', justifyContent: 'space-between', padding: '0 0.5rem' }}
-      >
-        {/* Mobile hamburger menu button */}
-        <button 
-          className="mobile-menu-toggle"
-          onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
-          aria-label="Toggle navigation menu"
-        >
-          {mobileMenuOpen ? <X size={24} /> : <Menu size={24} />}
-        </button>
-        
-        <div className={`tab-group ${mobileMenuOpen ? 'mobile-open' : ''}`}>
+    <div className="nx-shell">
+      <Sidebar
+        activeTab={activeTab}
+        setActiveTab={setActiveTab}
+        collapsed={sidebarCollapsed}
+        onToggleCollapse={toggleSidebarCollapsed}
+        mobileOpen={mobileMenuOpen}
+        onCloseMobile={() => setMobileMenuOpen(false)}
+        darkMode={darkMode}
+      />
+      <div className="nx-content">
+        {/* Slim top bar: mobile menu toggle + status/theme/user cluster */}
+        <div className="nx-topbar">
           <button
-            className={`tab-button ${activeTab === 'dashboard' ? 'active' : ''}`}
-            onClick={() => { setActiveTab('dashboard'); setMobileMenuOpen(false); }}
+            className="nx-mobile-menu-toggle"
+            onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
+            aria-label="Toggle navigation menu"
           >
-            Dashboard
+            <Menu size={20} />
           </button>
-          
-          <button
-            className={`tab-button ${activeTab.startsWith('schedules') ? 'active' : ''}`}
-            onClick={() => { setActiveTab('schedules'); setMobileMenuOpen(false); }}
-          >
-            Schedules
-          </button>
-          
-          <button
-            className={`tab-button ${activeTab === 'categories' ? 'active' : ''}`}
-            onClick={() => { setActiveTab('categories'); setMobileMenuOpen(false); }}
-          >
-            Categories
-          </button>
-          <button
-            className={`tab-button ${activeTab === 'nexup' ? 'active' : ''}`}
-            onClick={() => { setActiveTab('nexup'); setMobileMenuOpen(false); }}
-          >
-            NeX-Up
-          </button>
-          <button
-            className={`tab-button ${activeTab.startsWith('settings') ? 'active' : ''}`}
-            onClick={() => { setActiveTab('settings'); setMobileMenuOpen(false); }}
-          >
-            Settings
-          </button>
-          <button
-            className={`tab-button ${activeTab === 'connect' ? 'active' : ''}`}
-            onClick={() => { setActiveTab('connect'); setMobileMenuOpen(false); }}
-          >
-            Connect
-          </button>
-          <button
-            className={`tab-button ${activeTab === 'community-prerolls' ? 'active' : ''}`}
-            onClick={() => { setActiveTab('community-prerolls'); setMobileMenuOpen(false); }}
-          >
-            Community Prerolls
-          </button>
-        </div>
-        <div className="tabbar-right" style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', paddingRight: '48px' }}>
+          <div className="nx-topbar-spacer" />
+          <div className="tabbar-right" style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
           {/* Service Status Indicator */}
           <span style={{ 
             display: 'inline-flex', 
@@ -33051,15 +32888,6 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
               </button>
             </div>
           )}
-          
-          {/* Logo */}
-          <a href="https://github.com/JFLXCLOUD/NeXroll" target="_blank" rel="noopener noreferrer">
-            <img
-              src={darkMode ? "/NeXroll_Logo_WHT.png" : "/NeXroll_Logo_BLK.png"}
-              alt="NeXroll Logo"
-              style={{ height: '50px', width: 'auto', display: 'block' }}
-            />
-          </a>
         </div>
       </div>
 
@@ -33159,291 +32987,67 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
       )}
 
      <div className="dashboard">
-       {/* Dashboard Sub-Nav Tab Bar */}
-       {activeTab.startsWith('dashboard') && (
-         <div style={{ 
-           position: 'sticky',
-           top: '50px',
-           zIndex: 800,
-           backgroundColor: 'var(--bg-color)',
-           paddingTop: '1rem',
-           borderBottom: '2px solid var(--border-color)',
+       {/* v2: section navigation is handled by the collapsible Sidebar tree. */}
+
+       {/* v2: Schedules section navigation handled by the Sidebar tree. */}
+
+       {/* v2: NeX-Up section navigation handled by the Sidebar tree.
+            The "Create Sequence" action remains, surfaced on the Generator tab. */}
+       {activeTab === 'nexup/generator' && (
+         <div style={{
            display: 'flex',
-           gap: '0.25rem'
+           justifyContent: 'flex-end',
+           paddingTop: '0.5rem',
+           marginBottom: '0.5rem'
          }}>
-           {[
-             { id: 'dashboard', icon: <LayoutDashboard size={16} />, label: 'Overview' },
-             { id: 'dashboard/add', icon: <Upload size={16} />, label: 'Add Prerolls' },
-             { id: 'dashboard/library', icon: <Film size={16} />, label: 'Library' },
-             { id: 'dashboard/scaling', icon: <Video size={16} />, label: 'Video Scaling' },
-             { id: 'dashboard/actions', icon: <Zap size={16} />, label: 'Quick Actions' }
-           ].map(tab => (
-             <button
-               key={tab.id}
-               onClick={() => setActiveTab(tab.id)}
-               style={{
-                 padding: '0.875rem 1.25rem',
-                 border: 'none',
-                 borderBottom: activeTab === tab.id ? '3px solid var(--button-bg)' : '3px solid transparent',
-                 backgroundColor: activeTab === tab.id ? 'var(--bg-color)' : 'transparent',
-                 color: activeTab === tab.id ? 'var(--button-bg)' : 'var(--text-color)',
-                 cursor: 'pointer',
-                 fontSize: '0.9rem',
-                 fontWeight: activeTab === tab.id ? 600 : 400,
-                 transition: 'all 0.2s',
-                 marginBottom: '-2px',
-                 display: 'flex',
-                 alignItems: 'center',
-                 gap: '0.5rem',
-                 borderRadius: '8px 8px 0 0'
-               }}
-               onMouseEnter={(e) => {
-                 if (activeTab !== tab.id) {
-                   e.currentTarget.style.backgroundColor = 'var(--bg-color)';
-                   e.currentTarget.style.color = 'var(--button-bg)';
-                 }
-               }}
-               onMouseLeave={(e) => {
-                 if (activeTab !== tab.id) {
-                   e.currentTarget.style.backgroundColor = 'transparent';
-                   e.currentTarget.style.color = 'var(--text-color)';
-                 }
-               }}
-             >
-               <span style={{ display: 'flex', alignItems: 'center' }}>{tab.icon}</span>
-               <span>{tab.label}</span>
-             </button>
-           ))}
+           <button
+             onClick={() => {
+               loadNexupSequencePresets();
+               setShowNexupSequenceWizard(true);
+             }}
+             disabled={!nexupSettings.storage_path}
+             style={{
+               padding: '0.65rem 1.25rem',
+               border: 'none',
+               background: nexupSettings.storage_path
+                 ? 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)'
+                 : '#555',
+               color: 'white',
+               cursor: nexupSettings.storage_path ? 'pointer' : 'not-allowed',
+               fontSize: '0.9rem',
+               fontWeight: 600,
+               transition: 'all 0.3s',
+               display: 'flex',
+               alignItems: 'center',
+               gap: '0.5rem',
+               borderRadius: '8px',
+               opacity: nexupSettings.storage_path ? 1 : 0.5,
+               boxShadow: nexupSettings.storage_path
+                 ? '0 4px 15px rgba(102, 126, 234, 0.4)'
+                 : 'none'
+             }}
+             onMouseEnter={(e) => {
+               if (nexupSettings.storage_path) {
+                 e.currentTarget.style.transform = 'translateY(-2px)';
+                 e.currentTarget.style.boxShadow = '0 6px 20px rgba(102, 126, 234, 0.5)';
+               }
+             }}
+             onMouseLeave={(e) => {
+               if (nexupSettings.storage_path) {
+                 e.currentTarget.style.transform = 'translateY(0)';
+                 e.currentTarget.style.boxShadow = '0 4px 15px rgba(102, 126, 234, 0.4)';
+               }
+             }}
+             title={nexupSettings.storage_path ? 'Create a NeX-Up sequence for Plex' : 'Configure NeX-Up storage path first'}
+           >
+             <Sparkles size={18} />
+             <span>+ Create Sequence</span>
+           </button>
          </div>
        )}
 
-       {/* Schedule Sub-Nav Tab Bar - Rendered at dashboard level for proper sticky behavior */}
-       {activeTab.startsWith('schedules') && (
-         <div style={{ 
-           position: 'sticky',
-           top: '50px',
-           zIndex: 800,
-           backgroundColor: 'var(--bg-color)',
-           paddingTop: '1rem',
-           borderBottom: '2px solid var(--border-color)',
-           display: 'flex',
-           gap: '0.25rem',
-           flexWrap: 'wrap'
-         }}>
-           {[
-             { id: 'schedules', icon: <Calendar size={16} />, label: 'My Schedules' },
-             { id: 'schedules/create', icon: <Plus size={16} />, label: 'Create New' },
-             { id: 'schedules/calendar', icon: <CalendarDays size={16} />, label: 'Calendar View' },
-             { id: 'schedules/builder', icon: <Film size={16} />, label: 'Sequence Builder' },
-             { id: 'schedules/library', icon: <BookOpen size={16} />, label: 'Saved Sequences' },
-             { id: 'schedules/conflicts', icon: <GitCompare size={16} />, label: 'Conflicts' }
-           ].map(tab => (
-             <button
-               key={tab.id}
-               onClick={() => setActiveTab(tab.id)}
-               style={{
-                 padding: '0.875rem 1.25rem',
-                 border: 'none',
-                 borderBottom: activeTab === tab.id ? '3px solid var(--button-bg)' : '3px solid transparent',
-                 backgroundColor: activeTab === tab.id ? 'var(--bg-color)' : 'transparent',
-                 color: activeTab === tab.id ? 'var(--button-bg)' : 'var(--text-color)',
-                 cursor: 'pointer',
-                 fontSize: '0.9rem',
-                 fontWeight: activeTab === tab.id ? 600 : 400,
-                 transition: 'all 0.2s',
-                 marginBottom: '-2px',
-                 display: 'flex',
-                 alignItems: 'center',
-                 gap: '0.5rem',
-                 borderRadius: '8px 8px 0 0'
-               }}
-               onMouseEnter={(e) => {
-                 if (activeTab !== tab.id) {
-                   e.currentTarget.style.backgroundColor = 'var(--bg-color)';
-                   e.currentTarget.style.color = 'var(--button-bg)';
-                 }
-               }}
-               onMouseLeave={(e) => {
-                 if (activeTab !== tab.id) {
-                   e.currentTarget.style.backgroundColor = 'transparent';
-                   e.currentTarget.style.color = 'var(--text-color)';
-                 }
-               }}
-             >
-               <span style={{ display: 'flex', alignItems: 'center' }}>{tab.icon}</span>
-               <span>{tab.label}</span>
-             </button>
-           ))}
-         </div>
-       )}
-       
-       {/* NeX-Up Sub-Nav Tab Bar */}
-       {activeTab.startsWith('nexup') && (
-         <div style={{ 
-           position: 'sticky',
-           top: '50px',
-           zIndex: 800,
-           backgroundColor: 'var(--bg-color)',
-           paddingTop: '1rem',
-           borderBottom: '2px solid var(--border-color)',
-           display: 'flex',
-           gap: '0.25rem'
-         }}>
-           {[
-             { id: 'nexup', icon: <Link size={16} />, label: 'Connections' },
-             { id: 'nexup/upcoming', icon: <ClipboardList size={16} />, label: 'Upcoming' },
-             { id: 'nexup/trailers', icon: <Film size={16} />, label: 'Your Trailers' },
-             { id: 'nexup/settings', icon: <Settings size={16} />, label: 'Settings' },
-             { id: 'nexup/generator', icon: <Sparkles size={16} />, label: 'Generator' }
-           ].map((tab, index, arr) => (
-             <React.Fragment key={tab.id}>
-               <button
-                 onClick={() => setActiveTab(tab.id)}
-                 style={{
-                   padding: '0.875rem 1.25rem',
-                   border: 'none',
-                   borderBottom: activeTab === tab.id ? '3px solid #ffc230' : '3px solid transparent',
-                   backgroundColor: activeTab === tab.id ? 'var(--bg-color)' : 'transparent',
-                   color: activeTab === tab.id ? '#ffc230' : 'var(--text-color)',
-                   cursor: 'pointer',
-                   fontSize: '0.9rem',
-                   fontWeight: activeTab === tab.id ? 600 : 400,
-                   transition: 'all 0.2s',
-                   marginBottom: '-2px',
-                   display: 'flex',
-                   alignItems: 'center',
-                   gap: '0.5rem',
-                   borderRadius: '8px 8px 0 0'
-                 }}
-                 onMouseEnter={(e) => {
-                   if (activeTab !== tab.id) {
-                     e.currentTarget.style.backgroundColor = 'var(--bg-color)';
-                     e.currentTarget.style.color = '#ffc230';
-                   }
-                 }}
-                 onMouseLeave={(e) => {
-                   if (activeTab !== tab.id) {
-                     e.currentTarget.style.backgroundColor = 'transparent';
-                     e.currentTarget.style.color = 'var(--text-color)';
-                   }
-                 }}
-               >
-                 <span style={{ display: 'flex', alignItems: 'center' }}>{tab.icon}</span>
-                 <span>{tab.label}</span>
-               </button>
-               {/* Create NeX-Up Sequence Button - Right after Generator tab */}
-               {tab.id === 'nexup/generator' && (
-                 <button
-                   onClick={() => {
-                     loadNexupSequencePresets();
-                     setShowNexupSequenceWizard(true);
-                   }}
-                   disabled={!nexupSettings.storage_path}
-                   style={{
-                     padding: '0.65rem 1.25rem',
-                     marginLeft: 'auto',
-                     border: 'none',
-                     background: nexupSettings.storage_path 
-                       ? 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)' 
-                       : '#555',
-                     color: 'white',
-                     cursor: nexupSettings.storage_path ? 'pointer' : 'not-allowed',
-                     fontSize: '0.9rem',
-                     fontWeight: 600,
-                     transition: 'all 0.3s',
-                     display: 'flex',
-                     alignItems: 'center',
-                     gap: '0.5rem',
-                     borderRadius: '8px',
-                     opacity: nexupSettings.storage_path ? 1 : 0.5,
-                     boxShadow: nexupSettings.storage_path 
-                       ? '0 4px 15px rgba(102, 126, 234, 0.4)' 
-                       : 'none'
-                   }}
-                   onMouseEnter={(e) => {
-                     if (nexupSettings.storage_path) {
-                       e.currentTarget.style.transform = 'translateY(-2px)';
-                       e.currentTarget.style.boxShadow = '0 6px 20px rgba(102, 126, 234, 0.5)';
-                     }
-                   }}
-                   onMouseLeave={(e) => {
-                     if (nexupSettings.storage_path) {
-                       e.currentTarget.style.transform = 'translateY(0)';
-                       e.currentTarget.style.boxShadow = '0 4px 15px rgba(102, 126, 234, 0.4)';
-                     }
-                   }}
-                   title={nexupSettings.storage_path ? 'Create a NeX-Up sequence for Plex' : 'Configure NeX-Up storage path first'}
-                 >
-                   <Sparkles size={18} />
-                   <span>+ Create Sequence</span>
-                 </button>
-               )}
-             </React.Fragment>
-           ))}
-         </div>
-       )}
-       
-       {/* Settings Sub-Nav Tab Bar */}
-       {activeTab.startsWith('settings') && (
-         <div style={{ 
-           position: 'sticky',
-           top: '50px',
-           zIndex: 800,
-           backgroundColor: 'var(--bg-color)',
-           paddingTop: '1rem',
-           borderBottom: '2px solid var(--border-color)',
-           display: 'flex',
-           gap: '0.25rem'
-         }}>
-           {[
-             { id: 'settings', icon: <Settings size={16} />, label: 'General' },
-             { id: 'settings/paths', icon: <ArrowRight size={16} />, label: 'Path Mappings' },
-             { id: 'settings/storage', icon: <HardDrive size={16} />, label: 'Storage' },
-             { id: 'settings/apikeys', icon: <Key size={16} />, label: 'API Keys' },
-             { id: 'settings/logs', icon: <FileText size={16} />, label: 'Logs' },
-             { id: 'settings/users', icon: <Users size={16} />, label: 'Users' },
-             { id: 'settings/backup', icon: <Download size={16} />, label: 'Backup & Restore' },
-             { id: 'settings/system', icon: <Info size={16} />, label: 'System' }
-           ].map(tab => (
-             <button
-               key={tab.id}
-               onClick={() => setActiveTab(tab.id)}
-               style={{
-                 padding: '0.875rem 1.25rem',
-                 border: 'none',
-                 borderBottom: activeTab === tab.id ? '3px solid var(--button-bg)' : '3px solid transparent',
-                 backgroundColor: activeTab === tab.id ? 'var(--bg-color)' : 'transparent',
-                 color: activeTab === tab.id ? 'var(--button-bg)' : 'var(--text-color)',
-                 cursor: 'pointer',
-                 fontSize: '0.9rem',
-                 fontWeight: activeTab === tab.id ? 600 : 400,
-                 transition: 'all 0.2s',
-                 marginBottom: '-2px',
-                 display: 'flex',
-                 alignItems: 'center',
-                 gap: '0.5rem',
-                 borderRadius: '8px 8px 0 0'
-               }}
-               onMouseEnter={(e) => {
-                 if (activeTab !== tab.id) {
-                   e.currentTarget.style.backgroundColor = 'var(--bg-color)';
-                   e.currentTarget.style.color = 'var(--button-bg)';
-                 }
-               }}
-               onMouseLeave={(e) => {
-                 if (activeTab !== tab.id) {
-                   e.currentTarget.style.backgroundColor = 'transparent';
-                   e.currentTarget.style.color = 'var(--text-color)';
-                 }
-               }}
-             >
-               <span style={{ display: 'flex', alignItems: 'center' }}>{tab.icon}</span>
-               <span>{tab.label}</span>
-             </button>
-           ))}
-         </div>
-       )}
-       
+       {/* v2: Settings section navigation handled by the Sidebar tree. */}
+
        {activeTab.startsWith('dashboard') && renderDashboard()}
        {activeTab.startsWith('schedules') && renderSchedules()}
        {activeTab === 'categories' && renderCategories()}
@@ -37159,6 +36763,7 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
           </div>
         </div>
       )}
+      </div>
     </div>
   );
 }
