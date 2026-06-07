@@ -6238,7 +6238,7 @@ const DashboardTiles = {
             <button
               className="button button-secondary"
               style={{ fontSize: '0.8rem', padding: '4px 10px' }}
-              onClick={() => setActiveTab('dashboard-video-scaling')}
+              onClick={() => setActiveTab('library/scaling')}
             >
               Load in Video Scaling
             </button>
@@ -6314,27 +6314,30 @@ const DashboardTiles = {
   // ============================================
   // RENDER: Dashboard with Sub-Navigation
   // ============================================
-  const renderDashboard = () => {
-    // Route based on activeTab
-    if (activeTab === 'dashboard/add') {
+  // Dashboard is now standalone (Overview only). Add Prerolls / All Prerolls /
+  // Categories / Video Scaling moved under the Library section; Quick Actions is
+  // its own top-level page. See renderLibrary() and the content router.
+  const renderDashboard = () => (
+    <>
+      {renderDashboardOverview()}
+      {showConflictWizard && renderConflictWizard()}
+    </>
+  );
+
+  // Library section router (v2 reorg). Maps the library/* tabs to the existing
+  // render functions (kept under their original names to minimize churn).
+  const renderLibrary = () => {
+    if (activeTab === 'library/add') {
       return renderDashboardAddPrerolls();
     }
-    if (activeTab === 'dashboard/library') {
-      return renderDashboardLibrary();
+    if (activeTab === 'library/categories') {
+      return renderCategories();
     }
-    if (activeTab === 'dashboard/scaling') {
+    if (activeTab === 'library/scaling') {
       return renderDashboardVideoScaling();
     }
-    if (activeTab === 'dashboard/actions') {
-      return renderDashboardQuickActions();
-    }
-    // Default: Overview (tiles)
-    return (
-      <>
-        {renderDashboardOverview()}
-        {showConflictWizard && renderConflictWizard()}
-      </>
-    );
+    // Default: All Prerolls grid
+    return renderDashboardLibrary();
   };
 
   // ============================================
@@ -6372,7 +6375,7 @@ const DashboardTiles = {
 
   // Auto-load video info when on dashboard or scaling page
   React.useEffect(() => {
-    if ((activeTab === 'dashboard' || activeTab === 'dashboard/scaling') && prerolls.length > 0) {
+    if ((activeTab === 'dashboard' || activeTab === 'library/scaling') && prerolls.length > 0) {
       // Exclude NeX-Up trailers and dynamic prerolls from video info loading
       const nexupCatIds = [nexupSettings.category_id, nexupSettings.tv_category_id].filter(id => id != null);
       const isDynamic = (p) => {
@@ -7074,7 +7077,7 @@ const DashboardTiles = {
             Create, edit, and organize your preroll categories.
           </p>
           <button
-            onClick={() => setActiveTab('categories')}
+            onClick={() => setActiveTab('library/categories')}
             className="button button-secondary"
             style={{ width: '100%' }}
           >
@@ -33080,9 +33083,10 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
 
        {/* v2: Settings section navigation handled by the Sidebar tree. */}
 
-       {activeTab.startsWith('dashboard') && renderDashboard()}
+       {activeTab === 'dashboard' && renderDashboard()}
+       {(activeTab === 'library' || activeTab.startsWith('library/')) && renderLibrary()}
+       {activeTab === 'actions' && renderDashboardQuickActions()}
        {activeTab.startsWith('schedules') && renderSchedules()}
-       {activeTab === 'categories' && renderCategories()}
        {activeTab.startsWith('nexup') && renderNexUp()}
        {activeTab.startsWith('settings') && renderSettings()}
        {activeTab === 'connect' && renderConnect()}

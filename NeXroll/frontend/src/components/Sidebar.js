@@ -3,7 +3,7 @@ import {
   LayoutDashboard, Upload, Film, Video, Zap,
   Calendar, Plus, CalendarDays, BookOpen, GitCompare,
   Library, Sparkles, Link as LinkIcon, ClipboardList, Settings,
-  Globe, ArrowRight, HardDrive, Key, FileText, Users, Download, Info,
+  Globe, ArrowRight, HardDrive, Key, FileText, Users, Download, Info, FolderTree,
   ChevronDown, ChevronRight, PanelLeftClose, PanelLeftOpen, X
 } from 'lucide-react';
 
@@ -33,13 +33,18 @@ const NAV = [
     id: 'dashboard',
     label: 'Dashboard',
     icon: LayoutDashboard,
-    match: (t) => t.startsWith('dashboard'),
+    match: (t) => t === 'dashboard',
+  },
+  {
+    id: 'library',
+    label: 'Library',
+    icon: Library,
+    match: (t) => t === 'library' || t.startsWith('library/'),
     children: [
-      { id: 'dashboard', label: 'Overview', icon: LayoutDashboard },
-      { id: 'dashboard/add', label: 'Add Prerolls', icon: Upload },
-      { id: 'dashboard/library', label: 'Library', icon: Film },
-      { id: 'dashboard/scaling', label: 'Video Scaling', icon: Video },
-      { id: 'dashboard/actions', label: 'Quick Actions', icon: Zap },
+      { id: 'library', label: 'All Prerolls', icon: Film },
+      { id: 'library/add', label: 'Add Prerolls', icon: Upload },
+      { id: 'library/categories', label: 'Categories', icon: FolderTree },
+      { id: 'library/scaling', label: 'Video Scaling', icon: Video },
     ],
   },
   {
@@ -57,12 +62,6 @@ const NAV = [
     ],
   },
   {
-    id: 'categories',
-    label: 'Categories',
-    icon: Library,
-    match: (t) => t === 'categories',
-  },
-  {
     id: 'nexup',
     label: 'NeX-Up',
     icon: Sparkles,
@@ -72,9 +71,15 @@ const NAV = [
       { id: 'nexup', label: 'Connections', icon: LinkIcon },
       { id: 'nexup/upcoming', label: 'Upcoming', icon: ClipboardList },
       { id: 'nexup/trailers', label: 'Your Trailers', icon: Film },
-      { id: 'nexup/settings', label: 'Settings', icon: Settings },
       { id: 'nexup/generator', label: 'Generator', icon: Sparkles },
+      { id: 'nexup/settings', label: 'Settings', icon: Settings },
     ],
+  },
+  {
+    id: 'actions',
+    label: 'Quick Actions',
+    icon: Zap,
+    match: (t) => t === 'actions',
   },
   {
     id: 'connect',
