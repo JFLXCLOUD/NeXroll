@@ -10,6 +10,7 @@ import PatternImport from './components/PatternImport';
 import PatternExport from './components/PatternExport';
 import SequencePreviewModal from './components/SequencePreviewModal';
 import Sidebar from './components/Sidebar';
+import OnboardingWizard from './components/OnboardingWizard';
 import { validateSequence, stringifySequence, parseSequence, cloneSequenceWithIds } from './utils/sequenceValidator';
 import { 
     Calendar, CalendarDays, ChevronLeft, Clock, Play, Edit, Save, Trash, Trash2, Upload, 
@@ -531,6 +532,8 @@ function App() {
       return next;
     });
   }, []);
+  // v2 first-run onboarding wizard gate. null = unknown (still checking).
+  const [needsOnboarding, setNeedsOnboarding] = useState(null);
   const [openDropdown, setOpenDropdown] = useState(null); // For dropdown navigation
   const [plexConfig, setPlexConfig] = useState({
     url: '',
@@ -21308,6 +21311,21 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
     checkAuthStatus();
   }, [checkAuthStatus]);
 
+  // v2: check whether the first-run onboarding wizard should be shown
+  React.useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch(apiUrl('/onboarding/status'), { credentials: 'include' });
+        const data = await safeJson(res);
+        if (!cancelled) setNeedsOnboarding(res.ok ? !!(data && data.needs_onboarding) : false);
+      } catch {
+        if (!cancelled) setNeedsOnboarding(false); // fail open: never block the app
+      }
+    })();
+    return () => { cancelled = true; };
+  }, []);
+
   // Load filler settings and NeX-Up data at startup (needed for calendar and dashboard tiles)
   React.useEffect(() => {
     try { 
@@ -32331,8 +32349,22 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
     return <TestSequenceBuilder />;
   }
 
-  // Show loading while checking auth status
-  if (authStatus.loading) {
+  // v2 first-run onboarding wizard — gated before auth/login. Shown only for a
+  // genuinely fresh install. Upgraders (and anyone who has completed/skipped it)
+  // are reported as not needing onboarding by the backend.
+  if (needsOnboarding === true) {
+    return (
+      <OnboardingWizard
+        apiUrl={apiUrl}
+        darkMode={darkMode}
+        onFinish={() => { setNeedsOnboarding(false); checkAuthStatus(); }}
+        onDeepLink={(tab) => { setNeedsOnboarding(false); setActiveTab(tab); checkAuthStatus(); }}
+      />
+    );
+  }
+
+  // Avoid a flash of the app/login before the onboarding check resolves.
+  if (needsOnboarding === null || authStatus.loading) {
     return (
       <div style={{
         display: 'flex',

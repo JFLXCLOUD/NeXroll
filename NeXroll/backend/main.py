@@ -621,6 +621,8 @@ def ensure_settings_schema_now() -> None:
                 "preroll_folder": "TEXT",
                 # Ignored conflicts
                 "ignored_conflicts": "TEXT",
+                # v2 onboarding wizard completion flag
+                "onboarding_complete": "BOOLEAN",
             }
             for col, ddl in need.items():
                 if col not in cols:
@@ -637,7 +639,52 @@ def ensure_settings_schema_now() -> None:
                             _file_log(f">>> SCHEMA MIGRATION: Skipped settings.{col}: {e}")
                         except Exception:
                             pass
-        
+
+            # v2 onboarding backfill: if onboarding_complete was just added, this is an
+            # upgrade from a pre-v2 database. Existing installs must NOT be forced through
+            # the first-run wizard, so mark onboarding complete when there are any signs of
+            # prior configuration (a server connection, or any prerolls/categories already
+            # present). A genuinely fresh DB leaves it False so the wizard shows.
+            if "onboarding_complete" in added_columns:
+                try:
+                    def _scalar(sql):
+                        try:
+                            r = conn.exec_driver_sql(sql).fetchone()
+                            return r[0] if r else None
+                        except Exception:
+                            return None
+
+                    has_server = bool(_scalar(
+                        "SELECT 1 FROM settings WHERE "
+                        "COALESCE(plex_token,'')<>'' OR COALESCE(plex_url,'')<>'' OR "
+                        "COALESCE(jellyfin_url,'')<>'' OR COALESCE(emby_url,'')<>'' LIMIT 1"
+                    ))
+                    preroll_count = _scalar("SELECT COUNT(*) FROM prerolls") or 0
+                    category_count = _scalar("SELECT COUNT(*) FROM categories") or 0
+
+                    if has_server or preroll_count > 0 or category_count > 0:
+                        # Ensure a settings row exists, then mark complete.
+                        if not _scalar("SELECT 1 FROM settings LIMIT 1"):
+                            conn.exec_driver_sql("INSERT INTO settings (onboarding_complete) VALUES (1)")
+                        else:
+                            conn.exec_driver_sql("UPDATE settings SET onboarding_complete = 1")
+                        try:
+                            conn.commit()
+                        except Exception:
+                            pass
+                        _file_log(
+                            ">>> ONBOARDING MIGRATION: Existing install detected "
+                            f"(server={has_server}, prerolls={preroll_count}, categories={category_count}); "
+                            "marked onboarding_complete=1 (wizard skipped for upgraders)"
+                        )
+                    else:
+                        _file_log(">>> ONBOARDING MIGRATION: Fresh database; onboarding wizard will be shown")
+                except Exception as e:
+                    try:
+                        _file_log(f">>> ONBOARDING MIGRATION ERROR: {e}", level="ERROR")
+                    except Exception:
+                        pass
+
         try:
             if added_columns:
                 _file_log(f">>> SCHEMA MIGRATION COMPLETE: Added {len(added_columns)} column(s): {', '.join(added_columns)}")
@@ -4881,6 +4928,62 @@ async def auth_status(request: Request, db: Session = Depends(get_db)):
         "allow_registration": getattr(setting, 'auth_allow_registration', False) if setting else False,
         "is_local": _is_local_request(request)
     }
+
+
+@app.get("/onboarding/status")
+async def onboarding_status(request: Request, db: Session = Depends(get_db)):
+    """
+    Report whether the first-run onboarding wizard should be shown.
+    Always accessible (the wizard must load before any user/auth exists).
+
+    `needs_onboarding` is True only for a genuinely fresh install: the
+    onboarding flag is unset AND there is no prior configuration. Upgraders are
+    backfilled to complete during schema migration, so they never see the wizard.
+    """
+    setting = db.query(models.Setting).first()
+    complete = bool(getattr(setting, 'onboarding_complete', False)) if setting else False
+
+    # Defensive: even if the migration backfill didn't run (e.g. very old path),
+    # treat an install with existing config as already onboarded.
+    has_server = False
+    if setting:
+        has_server = any([
+            getattr(setting, 'plex_token', None),
+            getattr(setting, 'plex_url', None),
+            getattr(setting, 'jellyfin_url', None),
+            getattr(setting, 'emby_url', None),
+        ])
+    preroll_count = db.query(models.Preroll).count()
+    user_count = db.query(models.User).count()
+
+    has_prior_config = has_server or preroll_count > 0 or user_count > 0
+    needs_onboarding = (not complete) and (not has_prior_config)
+
+    return {
+        "onboarding_complete": complete or has_prior_config,
+        "needs_onboarding": needs_onboarding,
+        "has_server": has_server,
+        "preroll_count": preroll_count,
+        "users_exist": user_count > 0,
+    }
+
+
+@app.post("/onboarding/complete")
+async def onboarding_complete(request: Request, db: Session = Depends(get_db)):
+    """
+    Mark the first-run onboarding wizard as complete (or skipped). Idempotent.
+    """
+    setting = db.query(models.Setting).first()
+    if not setting:
+        setting = models.Setting()
+        db.add(setting)
+    setting.onboarding_complete = True
+    try:
+        setting.updated_at = datetime.datetime.utcnow()
+    except Exception:
+        pass
+    db.commit()
+    return {"success": True, "onboarding_complete": True}
 
 
 @app.post("/auth/reset-password")

@@ -1,3 +1,3 @@
-__version__ = '1.14.0-beta.2'
+__version__ = '2.0.0-beta.1'
 def get_version():
     return __version__

@@ -1,5 +1,40 @@
 # Changelog
 
+## [2.0.0-beta.1] - 06-06-2026 (beta)
+
+> First beta of the NeXroll v2 line — a modern "Arr-style" interface overhaul.
+> Built on top of the 1.14 work. **Upgrade-safe:** existing installs keep all
+> their data and skip the new setup wizard automatically.
+
+### Added
+
+- **Collapsible sidebar navigation (Arr-style).** The top tab bar is replaced by
+  a left sidebar that uses an expanding tree: the active section auto-expands to
+  reveal its sub-pages. A toggle collapses it to an icon-only rail (remembered
+  across sessions via localStorage). On narrow screens it becomes an off-canvas
+  drawer. The online-status indicator, theme toggle, and user/logout move into a
+  slim top bar; the logo moves into the sidebar header.
+- **First-run onboarding wizard.** A fresh install is greeted by a guided setup:
+  connect a media server (Plex / Jellyfin / Emby), optionally connect Radarr and
+  Sonarr for NeX-Up, choose a preroll storage folder, and create an admin
+  account (with the option to require login). Every step is skippable, and the
+  Plex step can hand off to the full sign-in page for OAuth.
+
+### Changed
+
+- Section navigation is now driven entirely by the sidebar tree; the four inline
+  sticky sub-nav bars (dashboard, schedules, NeX-Up, settings) were removed. The
+  NeX-Up "Create Sequence" action is preserved on the Generator page.
+
+### Migration / upgrade notes
+
+- A new `settings.onboarding_complete` column is added automatically on first
+  launch. **Existing databases are detected** (a configured server, or any
+  prerolls/categories already present) and marked complete, so upgraders go
+  straight to the new UI without seeing the wizard. Only genuinely fresh installs
+  see onboarding.
+- New endpoints: `GET /onboarding/status`, `POST /onboarding/complete`.
+
 ## [1.14.0-beta.2] - 06-05-2026 (beta)
 
 > Dashboard layout overhaul. Builds on beta.1; no backend or plugin changes.
