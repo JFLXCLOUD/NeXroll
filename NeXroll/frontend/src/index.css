@@ -4140,3 +4140,37 @@ body.dark .nx-chip.warn {
     max-width: none;
   }
 }
+
+/* ============================================================
+   NeXroll v2 — Reusable empty state
+   ============================================================ */
+.nx-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  gap: 0.6rem;
+  padding: 3.5rem 1.5rem;
+  background: var(--card-bg);
+  border: 1px dashed var(--border-color);
+  border-radius: 12px;
+  color: var(--text-secondary);
+}
+.nx-empty-icon {
+  display: inline-flex;
+  color: var(--text-muted);
+  opacity: 0.7;
+  margin-bottom: 0.25rem;
+}
+.nx-empty-title {
+  margin: 0;
+  font-size: 1.15rem;
+  font-weight: 700;
+  color: var(--text-color);
+}
+.nx-empty-text {
+  margin: 0 0 0.5rem;
+  font-size: 0.92rem;
+  max-width: 420px;
+}

@@ -9369,8 +9369,33 @@ const DashboardTiles = {
         </div>
       )}
 
+      {/* Empty state */}
+      {totalPrerolls === 0 && (
+        <div className="nx-empty">
+          {prerolls.length === 0 ? (
+            <>
+              <span className="nx-empty-icon"><Film size={48} /></span>
+              <h3 className="nx-empty-title">No prerolls yet</h3>
+              <p className="nx-empty-text">Upload your first preroll to start building your library.</p>
+              <button className="button" onClick={() => setActiveTab('library/add')}>
+                <Upload size={16} /> Add Prerolls
+              </button>
+            </>
+          ) : (
+            <>
+              <span className="nx-empty-icon"><Search size={48} /></span>
+              <h3 className="nx-empty-title">No matches</h3>
+              <p className="nx-empty-text">No prerolls match your current filters.</p>
+              <button className="button button-secondary" onClick={() => { setFilterCategory(''); setFilterTags(''); setFilterMatchStatus(''); }}>
+                Clear filters
+              </button>
+            </>
+          )}
+        </div>
+      )}
+
       {/* Preroll Grid */}
-      <div className="preroll-grid" style={{ display: prerollView === 'grid' ? 'grid' : 'none' }}>
+      <div className="preroll-grid" style={{ display: (prerollView === 'grid' && totalPrerolls > 0) ? 'grid' : 'none' }}>
           {visiblePrerolls.map(preroll => (
             <div key={preroll.id} className="preroll-item">
               <div className="preroll-header" style={{ marginBottom: '0.5rem' }}>
@@ -9557,7 +9582,7 @@ const DashboardTiles = {
         )}
 
       {/* List View */}
-      <div className="card" style={{ display: prerollView === 'list' ? 'block' : 'none', padding: '1rem' }}>
+      <div className="card" style={{ display: (prerollView === 'list' && totalPrerolls > 0) ? 'block' : 'none', padding: '1rem' }}>
        {visiblePrerolls.map(preroll => (
          <div key={preroll.id} style={{ display: 'flex', gap: '1rem', alignItems: 'center', padding: '0.75rem 0', borderBottom: '1px solid var(--border-color)' }}>
            <input
