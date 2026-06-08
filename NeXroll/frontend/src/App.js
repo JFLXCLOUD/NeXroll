@@ -11,6 +11,7 @@ import PatternExport from './components/PatternExport';
 import SequencePreviewModal from './components/SequencePreviewModal';
 import Sidebar from './components/Sidebar';
 import OnboardingWizard from './components/OnboardingWizard';
+import ToastHost from './components/Toast';
 import { validateSequence, stringifySequence, parseSequence, cloneSequenceWithIds } from './utils/sequenceValidator';
 import { 
     Calendar, CalendarDays, ChevronLeft, Clock, Play, Edit, Save, Trash, Trash2, Upload, 
@@ -1057,6 +1058,17 @@ const [applyingToServer, setApplyingToServer] = useState(false);
     message: '',
     type: 'info' // 'info' | 'success' | 'warning' | 'error'
   });
+  // v2 toasts: non-blocking success/info feedback (errors/confirms use the dialog)
+  const [toasts, setToasts] = useState([]);
+  const dismissToast = useCallback((id) => {
+    setToasts(prev => prev.filter(t => t.id !== id));
+  }, []);
+  const pushToast = useCallback((message, type = 'info') => {
+    const id = (typeof crypto !== 'undefined' && crypto.randomUUID)
+      ? crypto.randomUUID()
+      : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    setToasts(prev => [...prev.slice(-4), { id, type, message }]); // cap stack at ~5
+  }, []);
   
   // Category preroll management UI state
   const [categoryPrerolls, setCategoryPrerolls] = useState({});
@@ -1496,16 +1508,31 @@ const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
       else if (isError) dialogType = 'error';
     }
     
-    // Always show errors, but respect showNotifications for success/info messages
-    if (isError || showNotifications) {
+    // v2 routing: errors and warnings always use the blocking styled dialog (the
+    // user must acknowledge them). Success/info become non-blocking toasts —
+    // except long/multi-paragraph messages (detailed stat summaries) which read
+    // better in the dialog. The showNotifications setting still gates success/info.
+    const msgStr = typeof message === 'string' ? message : String(message ?? '');
+    const isLongDetailed = msgStr.includes('\n\n') || msgStr.length > 160;
+
+    if (dialogType === 'error' || dialogType === 'warning') {
       setAlertDialog({
         open: true,
-        title: dialogType === 'error' ? 'Error' : 
-               dialogType === 'success' ? 'Success' : 
-               dialogType === 'warning' ? 'Warning' : 'Notice',
+        title: dialogType === 'error' ? 'Error' : 'Warning',
         message: message,
         type: dialogType
       });
+    } else if (showNotifications) {
+      if (isLongDetailed) {
+        setAlertDialog({
+          open: true,
+          title: dialogType === 'success' ? 'Success' : 'Notice',
+          message: message,
+          type: dialogType
+        });
+      } else {
+        pushToast(msgStr, dialogType === 'success' ? 'success' : 'info');
+      }
     }
   };
 
@@ -32829,6 +32856,7 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
   }
 
   return (
+    <>
     <div className="nx-shell">
       <Sidebar
         activeTab={activeTab}
@@ -36738,6 +36766,8 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
       )}
       </div>
     </div>
+    <ToastHost toasts={toasts} onDismiss={dismissToast} />
+    </>
   );
 }
 

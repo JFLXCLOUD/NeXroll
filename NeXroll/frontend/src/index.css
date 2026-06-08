@@ -4032,3 +4032,77 @@ body.dark .nx-chip.warn {
 .nx-content ::-webkit-scrollbar-track {
   background: transparent;
 }
+
+/* ============================================================
+   NeXroll v2 — Toast notifications
+   ============================================================ */
+.nx-toast-host {
+  position: fixed;
+  bottom: 1.25rem;
+  right: 1.25rem;
+  z-index: 2000;
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+  max-width: min(380px, calc(100vw - 2rem));
+  pointer-events: none;
+}
+.nx-toast {
+  pointer-events: auto;
+  display: flex;
+  align-items: flex-start;
+  gap: 0.6rem;
+  padding: 0.7rem 0.8rem;
+  border-radius: 10px;
+  background: var(--card-bg);
+  color: var(--text-color);
+  border: 1px solid var(--border-color);
+  border-left: 3px solid var(--button-bg);
+  box-shadow: 0 6px 24px var(--shadow);
+  font-size: 0.88rem;
+  line-height: 1.35;
+  animation: nx-toast-in 0.18s ease-out;
+}
+.nx-toast-success { border-left-color: var(--success-color); }
+.nx-toast-info { border-left-color: var(--accent-color); }
+.nx-toast-icon {
+  display: flex;
+  align-items: center;
+  flex: 0 0 auto;
+  margin-top: 1px;
+}
+.nx-toast-success .nx-toast-icon { color: var(--success-color); }
+.nx-toast-info .nx-toast-icon { color: var(--accent-color); }
+.nx-toast-msg {
+  flex: 1 1 auto;
+  min-width: 0;
+  white-space: pre-line;     /* honor any single \n in short messages */
+  word-break: break-word;
+}
+.nx-toast-close {
+  flex: 0 0 auto;
+  background: transparent;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  padding: 0;
+  margin-top: 1px;
+  transition: color 0.13s ease;
+}
+.nx-toast-close:hover { color: var(--text-color); }
+
+@keyframes nx-toast-in {
+  from { opacity: 0; transform: translateY(8px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+@media (max-width: 600px) {
+  .nx-toast-host {
+    left: 1rem;
+    right: 1rem;
+    bottom: 1rem;
+    max-width: none;
+  }
+}
