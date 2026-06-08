@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { Check } from 'lucide-react';
 import '../App.css';
 
 const ImportPreviewModal = ({ 
@@ -84,7 +85,7 @@ const ImportPreviewModal = ({
       if (response.ok) {
         const result = await response.json();
         setDownloadProgress(prev => ({ ...prev, [preroll.community_id]: 'success' }));
-        showAlert(`✅ Downloaded: ${preroll.name}`, 'success');
+        showAlert(`Downloaded: ${preroll.name}`, 'success');
         
         // Remove from missing list by marking as downloaded
         const updatedMissing = missingPrerolls.filter(p => p.community_id !== preroll.community_id);
@@ -96,11 +97,11 @@ const ImportPreviewModal = ({
       } else {
         const error = await response.json();
         setDownloadProgress(prev => ({ ...prev, [preroll.community_id]: 'error' }));
-        showAlert(`❌ Download failed: ${error.detail || 'Unknown error'}`, 'error');
+        showAlert(`Download failed: ${error.detail || 'Unknown error'}`, 'error');
       }
     } catch (err) {
       setDownloadProgress(prev => ({ ...prev, [preroll.community_id]: 'error' }));
-      showAlert(`❌ Download error: ${err.message}`, 'error');
+      showAlert(`Download error: ${err.message}`, 'error');
     }
   };
 
@@ -122,7 +123,7 @@ const ImportPreviewModal = ({
 
     setDownloading(false);
     showAlert(
-      `✅ Downloaded ${successCount} prerolls${errorCount > 0 ? `, ${errorCount} failed` : ''}`,
+      `Downloaded ${successCount} prerolls${errorCount > 0 ? `, ${errorCount} failed` : ''}`,
       errorCount > 0 ? 'warning' : 'success'
     );
   };
@@ -136,18 +137,18 @@ const ImportPreviewModal = ({
       });
 
       if (response.ok) {
-        showAlert(`✅ Created category: ${categoryName}`, 'success');
+        showAlert(`Created category: ${categoryName}`, 'success');
         // Remove from missing list
         const updatedMissing = missingCategories.filter(c => c !== categoryName);
         importData.match_results.missing_categories = updatedMissing;
         return true;
       } else {
         const error = await response.json();
-        showAlert(`❌ Failed to create category: ${error.detail}`, 'error');
+        showAlert(`Failed to create category: ${error.detail}`, 'error');
         return false;
       }
     } catch (err) {
-      showAlert(`❌ Error creating category: ${err.message}`, 'error');
+      showAlert(`Error creating category: ${err.message}`, 'error');
       return false;
     }
   };
@@ -164,7 +165,7 @@ const ImportPreviewModal = ({
     }
 
     setCreatingCategories(false);
-    showAlert(`✅ Created ${successCount} categories`, 'success');
+    showAlert(`Created ${successCount} categories`, 'success');
   };
 
   const handleMapPreroll = (missingPrerollName, selectedPrerollId) => {
@@ -208,7 +209,7 @@ const ImportPreviewModal = ({
     <div className="nx-modal-overlay" onClick={(e) => e.target.classList.contains('nx-modal-overlay') && onCancel()}>
       <div className="nx-modal" style={{ maxWidth: '800px', maxHeight: '90vh', overflow: 'auto' }}>
         <div className="nx-modal-header">
-          <h3 className="nx-modal-title">📥 Import Preview: {importData.pattern_name}</h3>
+          <h3 className="nx-modal-title">Import Preview: {importData.pattern_name}</h3>
           <button className="nx-modal-close" onClick={onCancel}>×</button>
         </div>
 
@@ -284,7 +285,7 @@ const ImportPreviewModal = ({
           {activeTab === 'overview' && (
             <div className="overview-tab">
               <div className="import-summary">
-                <h3>📊 Import Summary</h3>
+                <h3>Import Summary</h3>
                 <div style={{ 
                   display: 'grid', 
                   gridTemplateColumns: '1fr 1fr', 
@@ -356,7 +357,7 @@ const ImportPreviewModal = ({
                     border: '1px solid #10b981',
                     color: '#10b981'
                   }}>
-                    ✅ All blocks matched successfully! Ready to import.
+                    All blocks matched successfully! Ready to import.
                   </div>
                 )}
 
@@ -369,7 +370,7 @@ const ImportPreviewModal = ({
                     border: '1px solid #f59e0b',
                     color: '#f59e0b'
                   }}>
-                    ⚠️ Some items need attention before importing. Check the tabs above.
+                    Some items need attention before importing. Check the tabs above.
                   </div>
                 )}
               </div>
@@ -380,14 +381,14 @@ const ImportPreviewModal = ({
           {activeTab === 'downloads' && (
             <div className="downloads-tab">
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
-                <h3>📥 Available for Download</h3>
+                <h3>Available for Download</h3>
                 <button
                   onClick={downloadAllPrerolls}
                   disabled={downloading || downloadablePrerolls.length === 0}
                   className="primary-button"
                   style={{ padding: '8px 16px' }}
                 >
-                  {downloading ? '⏳ Downloading...' : `⬇️ Download All (${downloadablePrerolls.length})`}
+                  {downloading ? '⏳ Downloading...' : `Download All (${downloadablePrerolls.length})`}
                 </button>
               </div>
 
@@ -422,18 +423,18 @@ const ImportPreviewModal = ({
 
                       <div>
                         {progress === 'success' ? (
-                          <span style={{ color: '#10b981', fontWeight: 'bold' }}>✓ Downloaded</span>
+                          <span style={{ color: '#10b981', fontWeight: 'bold' }}>Downloaded</span>
                         ) : progress === 'downloading' ? (
                           <span style={{ color: '#f59e0b' }}>⏳ Downloading...</span>
                         ) : progress === 'error' ? (
-                          <span style={{ color: '#ef4444' }}>✗ Failed</span>
+                          <span style={{ color: '#ef4444' }}>Failed</span>
                         ) : (
                           <button
                             onClick={() => downloadPreroll(preroll)}
                             className="primary-button"
                             style={{ padding: '6px 12px', fontSize: '14px' }}
                           >
-                            ⬇️ Download
+                            Download
                           </button>
                         )}
                       </div>
@@ -447,7 +448,7 @@ const ImportPreviewModal = ({
           {/* Mapping Tab */}
           {activeTab === 'mapping' && (
             <div className="mapping-tab">
-              <h3>🔗 Manual Preroll Mapping</h3>
+              <h3>Manual Preroll Mapping</h3>
               <p style={{ color: 'var(--text-secondary)', marginBottom: '20px' }}>
                 Map unavailable prerolls to existing ones in your library:
               </p>
@@ -493,7 +494,7 @@ const ImportPreviewModal = ({
                         ))}
                       </select>
                       {prerollMappings[preroll.name] && (
-                        <span style={{ color: '#10b981' }}>✓</span>
+                        <span style={{ color: '#10b981', display: 'inline-flex' }}><Check size={16} /></span>
                       )}
                     </div>
                   </div>
@@ -512,14 +513,14 @@ const ImportPreviewModal = ({
           {activeTab === 'categories' && (
             <div className="categories-tab">
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
-                <h3>📁 Missing Categories</h3>
+                <h3>Missing Categories</h3>
                 <button
                   onClick={createAllCategories}
                   disabled={creatingCategories || missingCategories.length === 0}
                   className="primary-button"
                   style={{ padding: '8px 16px' }}
                 >
-                  {creatingCategories ? '⏳ Creating...' : `➕ Create All (${missingCategories.length})`}
+                  {creatingCategories ? '⏳ Creating...' : `Create All (${missingCategories.length})`}
                 </button>
               </div>
 
@@ -545,7 +546,7 @@ const ImportPreviewModal = ({
                       className="primary-button"
                       style={{ padding: '6px 12px', fontSize: '14px' }}
                     >
-                      ➕ Create
+                      Create
                     </button>
                   </div>
                 ))}
@@ -580,12 +581,12 @@ const ImportPreviewModal = ({
             }
           >
             {downloadablePrerolls.length > 0 && canImport
-              ? '⚠️ Import (Prerolls Downloadable)'
+              ? 'Import (Prerolls Downloadable)'
               : canImport 
-                ? '✓ Import Sequence' 
+                ? 'Import Sequence' 
                 : missingCategories.length > 0
-                  ? '❌ Create Categories First'
-                  : '❌ Map Missing Prerolls'}
+                  ? 'Create Categories First'
+                  : 'Map Missing Prerolls'}
           </button>
         </div>
       </div>

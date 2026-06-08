@@ -51,7 +51,7 @@ function TestSequenceBuilder() {
   ];
 
   const handleSave = (newSequence) => {
-    console.log('✅ Sequence saved!');
+    console.log('Sequence saved!');
     console.log('Raw sequence:', newSequence);
     console.log('JSON output:', JSON.stringify(newSequence, null, 2));
     setSequence(newSequence);
@@ -59,7 +59,7 @@ function TestSequenceBuilder() {
   };
 
   const handleCancel = () => {
-    console.log('❌ Cancelled');
+    console.log('Cancelled');
     const confirmed = window.confirm('Cancel sequence editing?');
     if (confirmed) {
       alert('Sequence editing cancelled');
@@ -125,7 +125,7 @@ function TestSequenceBuilder() {
             alignItems: 'center',
             gap: '10px'
           }}>
-            🎬 Sequence Builder Test Page
+            Sequence Builder Test Page
           </h1>
           <p style={{ color: 'rgba(255,255,255,0.9)', margin: 0, fontSize: '16px' }}>
             Test the new Kodi Pre-Show Experience inspired sequence builder
@@ -154,7 +154,7 @@ function TestSequenceBuilder() {
               alignItems: 'center',
               gap: '8px'
             }}>
-              📊 Current Sequence JSON
+              Current Sequence JSON
             </h2>
             <pre style={{ 
               color: '#0f0', 
@@ -185,7 +185,7 @@ function TestSequenceBuilder() {
               marginTop: 0,
               marginBottom: '15px'
             }}>
-              🧪 Test Controls
+              Test Controls
             </h2>
             <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
               <button
@@ -204,7 +204,7 @@ function TestSequenceBuilder() {
                 onMouseOver={(e) => e.target.style.backgroundColor = '#38a169'}
                 onMouseOut={(e) => e.target.style.backgroundColor = '#48bb78'}
               >
-                📥 Load Sample Sequence
+                Load Sample Sequence
               </button>
               <button
                 onClick={handleReset}
@@ -222,7 +222,7 @@ function TestSequenceBuilder() {
                 onMouseOver={(e) => e.target.style.backgroundColor = '#e53e3e'}
                 onMouseOut={(e) => e.target.style.backgroundColor = '#f56565'}
               >
-                🗑️ Reset Sequence
+                Reset Sequence
               </button>
               <div style={{ 
                 marginTop: '10px',
@@ -265,7 +265,7 @@ function TestSequenceBuilder() {
           border: '2px solid #4a5568'
         }}>
           <h2 style={{ color: '#00d4ff', fontSize: '18px', marginTop: 0 }}>
-            📝 Testing Instructions
+            Testing Instructions
           </h2>
           <div style={{ color: '#cbd5e0', fontSize: '14px', lineHeight: '1.8' }}>
             <h3 style={{ color: '#e2e8f0', fontSize: '16px' }}>Quick Tests:</h3>
@@ -282,13 +282,13 @@ function TestSequenceBuilder() {
             
             <h3 style={{ color: '#e2e8f0', fontSize: '16px', marginTop: '20px' }}>What to Check:</h3>
             <ul style={{ paddingLeft: '20px' }}>
-              <li>✅ All buttons work correctly</li>
-              <li>✅ Drag-and-drop is smooth</li>
-              <li>✅ Modals open and close properly</li>
-              <li>✅ Block numbers update when reordering</li>
-              <li>✅ Preview shows accurate information</li>
-              <li>✅ Console shows no errors (F12)</li>
-              <li>✅ JSON output looks correct</li>
+              <li>All buttons work correctly</li>
+              <li>Drag-and-drop is smooth</li>
+              <li>Modals open and close properly</li>
+              <li>Block numbers update when reordering</li>
+              <li>Preview shows accurate information</li>
+              <li>Console shows no errors (F12)</li>
+              <li>JSON output looks correct</li>
             </ul>
 
             <h3 style={{ color: '#e2e8f0', fontSize: '16px', marginTop: '20px' }}>Console Commands:</h3>

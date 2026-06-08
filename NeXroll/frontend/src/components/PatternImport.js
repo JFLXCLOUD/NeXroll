@@ -677,7 +677,7 @@ const PatternImport = ({ isOpen, onClose, onImport }) => {
               }}
             >
               <p style={{ margin: 0, fontSize: '0.9rem', color: 'var(--text-color)', lineHeight: '1.6' }}>
-                <strong>📂 Configure Import Destinations</strong>
+                <strong>Configure Import Destinations</strong>
               </p>
               <p style={{ margin: '0.5rem 0 0 0', fontSize: '0.85rem', color: '#9ca3af', lineHeight: '1.5' }}>
                 Choose where to import each folder and preroll from the bundle. You can select existing categories or create new ones.
@@ -749,7 +749,7 @@ const PatternImport = ({ isOpen, onClose, onImport }) => {
                               minWidth: '200px',
                             }}
                           >
-                            <option value={`new:${cat.name}`}>➕ Create: {cat.name}</option>
+                            <option value={`new:${cat.name}`}>Create: {cat.name}</option>
                             {availableCategories.map(c => (
                               <option key={c.id} value={c.id}>{c.name}</option>
                             ))}
@@ -829,7 +829,7 @@ const PatternImport = ({ isOpen, onClose, onImport }) => {
                               minWidth: '200px',
                             }}
                           >
-                            <option value="new:Imported">➕ Create: Imported</option>
+                            <option value="new:Imported">Create: Imported</option>
                             {availableCategories.map(c => (
                               <option key={c.id} value={c.id}>{c.name}</option>
                             ))}
@@ -954,8 +954,8 @@ const PatternImport = ({ isOpen, onClose, onImport }) => {
                   </div>
                   <div style={{ fontSize: '0.8rem', color: '#9ca3af', marginTop: '0.25rem' }}>
                     {previewPlaylist[currentPreviewIndex]?.type === 'fixed' 
-                      ? '🎯 Fixed Block' 
-                      : `🎲 Random from ${previewPlaylist[currentPreviewIndex]?.category} (${previewPlaylist[currentPreviewIndex]?.totalInCategory || '?'} available)`}
+                      ? 'Fixed Block' 
+                      : `Random from ${previewPlaylist[currentPreviewIndex]?.category} (${previewPlaylist[currentPreviewIndex]?.totalInCategory || '?'} available)`}
                   </div>
                 </div>
 

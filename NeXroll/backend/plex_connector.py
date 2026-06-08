@@ -160,7 +160,7 @@ class PlexConnector:
             if tok:
                 self.token = tok
                 self.headers = {'X-Plex-Token': self.token}
-                print("✓ Loaded Plex token from secure store (Windows Credential Manager)")
+                print("Loaded Plex token from secure store (Windows Credential Manager)")
                 return True
 
             # 2) Legacy fallback and one-time migration from plex_config.json
@@ -200,7 +200,7 @@ class PlexConnector:
             else:
                 print("ℹ No plex_config.json found; token should be in secure store or needs manual entry")
         except Exception as e:
-            print(f"⚠ Error loading Plex token: {e}")
+            print(f"Error loading Plex token: {e}")
 
         return False
 

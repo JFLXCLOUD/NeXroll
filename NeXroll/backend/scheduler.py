@@ -1065,12 +1065,12 @@ class Scheduler:
                     
                     if connector.set_item_intros(item_id, intro_data):
                         applied_count += 1
-                        _scheduler_verbose(f"  ✓ Applied intro to: {item_name}")
+                        _scheduler_verbose(f"  Applied intro to: {item_name}")
                     else:
-                        _scheduler_log(f"  ✗ Failed to apply intro to: {item_name}", level="ERROR")
+                        _scheduler_log(f"  Failed to apply intro to: {item_name}", level="ERROR")
                 
                 except Exception as e:
-                    _scheduler_log(f"  ✗ Error applying to item: {e}", level="ERROR")
+                    _scheduler_log(f"  Error applying to item: {e}", level="ERROR")
                     continue
             
             _scheduler_log(f"Successfully applied prerolls to {applied_count}/{len(search_results)} Jellyfin items.")

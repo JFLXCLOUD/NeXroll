@@ -91,7 +91,7 @@ const ResizableDashboard = ({
           className="edit-toggle-btn"
           onClick={() => onEditModeChange(!isEditMode)}
         >
-          {isEditMode ? '✓ Done Editing' : '✏️ Edit Layout'}
+          {isEditMode ? 'Done Editing' : 'Edit Layout'}
         </button>
         {isEditMode && (
           <button
@@ -134,7 +134,7 @@ const ResizableDashboard = ({
                   onClick={() => console.log(`Open settings for ${tile.id}`)}
                   title="Configure tile content"
                 >
-                  ⚙️
+                  
                 </button>
               )}
               {!isEditMode && <div className="tile-drag-handle">⋮⋮</div>}

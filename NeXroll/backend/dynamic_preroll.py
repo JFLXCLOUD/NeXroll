@@ -46,7 +46,7 @@ class DynamicPrerollGenerator:
     # Available templates with enhanced visual styles
     TEMPLATES = {
         'coming_soon': {
-            'name': '🎬 Coming Soon',
+            'name': 'Coming Soon',
             'description': 'Cinematic intro announcing upcoming content with glow effects and dramatic animations.',
             'duration': 5,
             'variables': ['server_name'],
@@ -54,7 +54,7 @@ class DynamicPrerollGenerator:
             'style': 'cinematic'
         },
         'feature_presentation': {
-            'name': '🎭 Feature Presentation',
+            'name': 'Feature Presentation',
             'description': 'Classic theater-style "Feature Presentation" with elegant text and decorative elements.',
             'duration': 5,
             'variables': ['server_name'],
@@ -62,7 +62,7 @@ class DynamicPrerollGenerator:
             'style': 'classic'
         },
         'now_showing': {
-            'name': '📽️ Now Showing',
+            'name': 'Now Showing',
             'description': 'Retro film-style "Now Showing" with film grain effect. Warm sepia tones.',
             'duration': 4,
             'variables': ['server_name'],

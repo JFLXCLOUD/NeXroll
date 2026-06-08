@@ -60,7 +60,7 @@ const TILE_DEFAULT_ROWS = 14; // fallback height before the first measurement
 
 // Tidy-grid tile sizes. The grid uses auto-fill columns of a fixed target width
 // plus a measured base row height, so size is expressed as a column/row span:
-//   Small  = 1 col x 1 row   Medium = 2 cols x 1 row   Large = 2 cols x 2 rows
+//   Small = 1 col x 1 row   Medium = 2 cols x 1 row   Large = 2 cols x 2 rows
 const SIZE_SPAN = { sm: 1, md: 2, lg: 2 };   // column span
 const SIZE_ROWS = { sm: 1, md: 1, lg: 2 };   // row span (applied in the locked layout)
 const SIZE_LABEL = { sm: 'Small', md: 'Medium', lg: 'Large' };
@@ -245,7 +245,7 @@ const compareVersions = (a, b) => {
   if (va.patch !== vb.patch) return va.patch > vb.patch ? 1 : -1;
   // Same base version — compare pre-release
   if (!va.preTag && !vb.preTag) return 0; // both stable
-  if (!va.preTag) return 1;  // a is stable, b is pre-release
+  if (!va.preTag) return 1; // a is stable, b is pre-release
   if (!vb.preTag) return -1; // b is stable, a is pre-release
   // Both have pre-release tags
   const preOrder = { alpha: 0, beta: 1, rc: 2 };
@@ -281,7 +281,7 @@ const Modal = ({ title, onClose, children, width = 700, zIndex = 1000, allowBack
       <div className="nx-modal" style={{ maxWidth: width, position: 'relative', zIndex: 1, pointerEvents: 'auto' }} onClick={(e) => e.stopPropagation()}>
         <div className="nx-modal-header">
           <h3 className="nx-modal-title">{title}</h3>
-          <button className="nx-modal-close" type="button" onClick={onClose} aria-label="Close">✕</button>
+          <button className="nx-modal-close" type="button" onClick={onClose} aria-label="Close"><X size={18} /></button>
         </div>
         <div className="nx-modal-body">
           {children}
@@ -554,7 +554,7 @@ function App() {
       return false;
     }
   });
-  const [darkModeLoaded, setDarkModeLoaded] = useState(true);  // Mark as loaded since we init from localStorage
+  const [darkModeLoaded, setDarkModeLoaded] = useState(true); // Mark as loaded since we init from localStorage
   const [editingSchedule, setEditingSchedule] = useState(null);
   const [editingPreroll, setEditingPreroll] = useState(null);
   const [editingCategory, setEditingCategory] = useState(null);
@@ -914,30 +914,30 @@ const [applyingToServer, setApplyingToServer] = useState(false);
   
   // Coming Soon List Generator State
   const [comingSoonListSettings, setComingSoonListSettings] = useState({
-    layout: 'grid',  // 'list' or 'grid'
-    source: 'both',  // 'movies', 'shows', or 'both'
+    layout: 'grid', // 'list' or 'grid'
+    source: 'both', // 'movies', 'shows', or 'both'
     duration: 10,
     maxItems: 8,
     bgColor: '#141428',
     textColor: '#ffffff',
     accentColor: '#00d4ff',
     serverName: '',
-    autoRegen: false,  // Auto-regenerate when Radarr/Sonarr syncs
-    autoRegenLayout: 'both',  // Which layout(s) to auto-regenerate: 'grid', 'list', or 'both'
-    includeAudio: false,  // Include background music in generated video
-    customAudioFilename: null,  // User-uploaded custom audio filename
-    customLogoFilename: null,  // User-uploaded custom logo filename
-    logoMode: 'watermark',  // 'watermark' = faded bg, 'right' = right of header, 'below' = below header
-    language: 'en',  // Text language: en, fr, es, de
-    availableDays: 1,  // Days to show "Available Now!" before auto-removal
-    maxAvailableNow: 0  // Max "Available Now!" items to show (0 = no limit)
+    autoRegen: false, // Auto-regenerate when Radarr/Sonarr syncs
+    autoRegenLayout: 'both', // Which layout(s) to auto-regenerate: 'grid', 'list', or 'both'
+    includeAudio: false, // Include background music in generated video
+    customAudioFilename: null, // User-uploaded custom audio filename
+    customLogoFilename: null, // User-uploaded custom logo filename
+    logoMode: 'watermark', // 'watermark' = faded bg, 'right' = right of header, 'below' = below header
+    language: 'en', // Text language: en, fr, es, de
+    availableDays: 1, // Days to show "Available Now!" before auto-removal
+    maxAvailableNow: 0 // Max "Available Now!" items to show (0 = no limit)
   });
   const [comingSoonListGenerating, setComingSoonListGenerating] = useState(false);
   const [generatedComingSoonLists, setGeneratedComingSoonLists] = useState([]);
   const [comingSoonListsCollapsed, setComingSoonListsCollapsed] = useState(false);
   const [previewingComingSoonList, setPreviewingComingSoonList] = useState(null);
-  const comingSoonListSettingsLoadedRef = React.useRef(false);  // Track if initial load done
-  const dynamicPrerollSettingsLoadedRef = React.useRef(false);  // Track if initial load done
+  const comingSoonListSettingsLoadedRef = React.useRef(false); // Track if initial load done
+  const dynamicPrerollSettingsLoadedRef = React.useRef(false); // Track if initial load done
   
   // Translation lookup for live preview text
   const prerollTranslations = {
@@ -1026,7 +1026,7 @@ const [applyingToServer, setApplyingToServer] = useState(false);
     extracting: false,
     testing: false,
     testResult: null,
-    selectedBrowser: 'chrome',  // Browser to sign in to
+    selectedBrowser: 'chrome', // Browser to sign in to
     uploading: false
   });
 
@@ -1229,7 +1229,7 @@ const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
       // Schedule wraps around year end
       return (dayMonth === schedStartMonth && dayDay >= schedStartDay) ||
              (dayMonth === schedEndMonth && dayDay <= schedEndDay) ||
-             (dayMonth > schedStartMonth) ||  // After start month in same year
+             (dayMonth > schedStartMonth) || // After start month in same year
              (dayMonth < schedEndMonth);       // Before end month in next year
     }
     
@@ -1314,7 +1314,7 @@ const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
   const [loadedSavedSequenceId, setLoadedSavedSequenceId] = useState(null); // Track when a saved sequence is loaded in schedule creation
 
   // Recurrence pattern state
-  const [weekDays, setWeekDays] = useState([]);  // For weekly: ['monday', 'wednesday', 'friday']
+  const [weekDays, setWeekDays] = useState([]); // For weekly: ['monday', 'wednesday', 'friday']
   const [selectedMonths, setSelectedMonths] = useState([]); // For monthly: which months are active [1-12]
   const [monthDays, setMonthDays] = useState([]); // For monthly: which days of the month [1-31]
   const [timeRange, setTimeRange] = useState({ start: '', end: '' }); // For daily time ranges
@@ -1824,18 +1824,18 @@ const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
       });
       const data = await safeJson(res);
       if (res.ok) {
-        alert(`✅ Schedule "${holiday.name}" created successfully!`);
+        alert(`Schedule "${holiday.name}" created successfully!`);
         // Refresh schedules
         const schedRes = await fetch(apiUrl('/schedules'));
         const schedData = await safeJson(schedRes);
         if (schedRes.ok) setSchedules(schedData);
         setShowHolidayBrowser(false);
       } else {
-        alert(`❌ Failed to create schedule: ${data?.detail || 'Unknown error'}`);
+        alert(`Failed to create schedule: ${data?.detail || 'Unknown error'}`);
       }
     } catch (e) {
       console.error('Create holiday schedule error:', e);
-      alert(`❌ Error: ${e.message}`);
+      alert(`Error: ${e.message}`);
     }
   };
 
@@ -2533,7 +2533,7 @@ const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
     // If there are duplicates, ask user what to do
     let duplicateAction = 'allow'; // Default: allow duplicates
     if (duplicates.length > 0) {
-      const duplicateNames = duplicates.map(d => `  • ${d.file.name}`).join('\n');
+      const duplicateNames = duplicates.map(d => ` • ${d.file.name}`).join('\n');
       const message = `The following ${duplicates.length} file(s) already exist in your library:\n\n${duplicateNames}\n\nClick OK to SKIP these duplicates\nClick Cancel to UPLOAD them anyway`;
       
       const userChoice = await showConfirm(message, { title: 'Duplicate Files Detected', type: 'warning', confirmText: 'Skip Duplicates', cancelText: 'Upload Anyway' });
@@ -2614,12 +2614,12 @@ const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
 
     let message = '';
     if (failed === 0 && skipped === 0) {
-      message = `✓ All ${totalFiles} files uploaded successfully!`;
+      message = `All ${totalFiles} files uploaded successfully!`;
     } else if (successful === 0 && skipped > 0 && failed === 0) {
-      const skippedNames = skippedResults.map(r => `  • ${r.file}`).join('\n');
+      const skippedNames = skippedResults.map(r => ` • ${r.file}`).join('\n');
       message = `ℹ️ All ${totalFiles} file(s) were skipped (duplicates):\n\n${skippedNames}`;
     } else if (successful === 0 && failed > 0) {
-      message = `❌ Failed to upload any files. Please check the errors.`;
+      message = `Failed to upload any files. Please check the errors.`;
     } else {
       const parts = [];
       if (successful > 0) parts.push(`${successful} uploaded`);
@@ -2699,13 +2699,13 @@ const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
     const normalizedStartDate = (scheduleForm.type === 'yearly' || scheduleForm.type === 'holiday')
       ? normalizeRecurringDate(scheduleForm.start_date)
       : scheduleForm.type === 'monthly'
-        ? '2000-01-01T00:00'  // monthly schedules are controlled by months/monthDays recurrence, not date range
+        ? '2000-01-01T00:00' // monthly schedules are controlled by months/monthDays recurrence, not date range
         : scheduleForm.start_date;
 
     const normalizedEndDate = (scheduleForm.type === 'yearly' || scheduleForm.type === 'holiday')
       ? normalizeRecurringDate(scheduleForm.end_date)
       : scheduleForm.type === 'monthly'
-        ? ''  // no end date — runs indefinitely, recurrence pattern controls active months
+        ? '' // no end date — runs indefinitely, recurrence pattern controls active months
         : scheduleForm.end_date;
 
     const data = {
@@ -2865,7 +2865,7 @@ const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
         
         if (potentialConflicts.length > 0) {
           const conflictNames = potentialConflicts.map(c => c.schedule.name).join(', ');
-          alert(`⚠️ Schedule created, but it conflicts with: ${conflictNames}\n\nBoth schedules have the same priority (${scheduleData.priority || 5}) and are exclusive. NeXroll will randomly choose one during overlap.\n\nTo fix: Edit one schedule to have a different priority.`);
+          alert(`Schedule created, but it conflicts with: ${conflictNames}\n\nBoth schedules have the same priority (${scheduleData.priority || 5}) and are exclusive. NeXroll will randomly choose one during overlap.\n\nTo fix: Edit one schedule to have a different priority.`);
         } else {
           alert('Schedule created successfully!');
         }
@@ -2907,8 +2907,8 @@ const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
       })
       .then(data => {
         const msg = data.categories_created > 0 
-          ? `Holiday categories created successfully!\n\n✓ ${data.categories_created} new categories\n✓ ${data.presets_created} new presets\n✓ ${data.total_categories} total categories available\n\nThe categories should now appear in your list.`
-          : `Holiday categories already exist!\n\n✓ ${data.total_categories} categories available\n\nNo new categories were created.`;
+          ? `Holiday categories created successfully!\n\n${data.categories_created} new categories\n${data.presets_created} new presets\n${data.total_categories} total categories available\n\nThe categories should now appear in your list.`
+          : `Holiday categories already exist!\n\n${data.total_categories} categories available\n\nNo new categories were created.`;
         alert(msg);
         fetchData();
       })
@@ -2929,17 +2929,17 @@ const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
           const updates = data.updated_schedules.map(s => 
             `• ${s.name}: ${s.old_date} → ${s.new_date}`
           ).join('\n');
-          alert(`✅ Holiday dates refreshed for ${data.year}!\n\n${data.updated_count} schedule(s) updated:\n${updates}`);
+          alert(`Holiday dates refreshed for ${data.year}!\n\n${data.updated_count} schedule(s) updated:\n${updates}`);
         } else {
-          alert(`✅ All holiday schedules are up to date for ${data.year}.\n\n${data.total_holiday_schedules} holiday-linked schedule(s) checked.`);
+          alert(`All holiday schedules are up to date for ${data.year}.\n\n${data.total_holiday_schedules} holiday-linked schedule(s) checked.`);
         }
         fetchData();
       } else {
-        alert(`❌ Failed to refresh: ${data?.detail || 'Unknown error'}`);
+        alert(`Failed to refresh: ${data?.detail || 'Unknown error'}`);
       }
     } catch (e) {
       console.error('Refresh holiday dates error:', e);
-      alert(`❌ Error: ${e.message}`);
+      alert(`Error: ${e.message}`);
     }
   };
 
@@ -3122,7 +3122,7 @@ const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
     const associatedPrerolls = prerolls.filter(p => 
       p.categories && 
       p.categories.some(c => c.id === category.id) &&
-      p.category_id !== category.id  // Exclude primary to avoid double counting
+      p.category_id !== category.id // Exclude primary to avoid double counting
     );
     const totalPrerolls = categoryPrerollsList.length + associatedPrerolls.length;
     
@@ -4666,7 +4666,7 @@ const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
         if (result.skipped) {
           alert(`ℹ️ ${result.message}`);
         } else {
-          alert(`✅ Successfully scaled to ${resolution}!\n\nNew size: ${result.new_size_mb} MB`);
+          alert(`Successfully scaled to ${resolution}!\n\nNew size: ${result.new_size_mb} MB`);
           // Refresh video info
           const infoRes = await fetch(apiUrl(`prerolls/${editingPreroll.id}/video-info`));
           const info = await infoRes.json();
@@ -4718,7 +4718,7 @@ const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
         
         // Show warning if present (e.g., for external file renames)
         if (result.warning) {
-          alert('⚠️ ' + result.warning + '\n\nPreroll updated successfully.');
+          alert('' + result.warning + '\n\nPreroll updated successfully.');
         } else {
           alert('Preroll updated successfully!');
         }
@@ -4783,13 +4783,13 @@ const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
       
       if (data.matched) {
         if (data.already_matched) {
-          alert(`✓ This preroll is already matched to the Community Prerolls library!\n\nCommunity ID: ${data.community_preroll_id}`);
+          alert(`This preroll is already matched to the Community Prerolls library!\n\nCommunity ID: ${data.community_preroll_id}`);
         } else {
           const matchInfo = data.match_type === 'exact' 
             ? '(exact match)' 
             : `(fuzzy match - ${data.match_score * 100}% confidence)`;
           
-          alert(`✓ Successfully matched!\n\nMatched to: ${data.matched_title}\n${matchInfo}\n\nThe preroll will now show the community match indicator.`);
+          alert(`Successfully matched!\n\nMatched to: ${data.matched_title}\n${matchInfo}\n\nThe preroll will now show the community match indicator.`);
           
           // Update the editing preroll state to reflect the new match
           setEditingPreroll({
@@ -4812,7 +4812,7 @@ const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
         } else {
           console.log('No similar matches found');
           alert(
-            `✗ No match found\n\n` +
+            `No match found\n\n` +
             `Could not find any matching prerolls in the Community Prerolls library.\n\n` +
             `Suggestions:\n` +
             `• Try adjusting the filename to match the community title\n` +
@@ -4850,7 +4850,7 @@ const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
       const data = await response.json();
       
       if (data.success) {
-        alert(`✓ Successfully linked to: ${title}\n\nThe preroll will now show the community match indicator.`);
+        alert(`Successfully linked to: ${title}\n\nThe preroll will now show the community match indicator.`);
         
         // Update the editing preroll state
         setEditingPreroll({
@@ -4895,12 +4895,12 @@ const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
       } else {
         lines.push('This will:');
         if (prerollN > 0) {
-          lines.push(`  • Remove this category from ${prerollN} preroll${prerollN === 1 ? '' : 's'}`);
+          lines.push(` • Remove this category from ${prerollN} preroll${prerollN === 1 ? '' : 's'}`);
           if (uncatN > 0) lines.push(`     (${uncatN} of those will become uncategorized — this is their only category)`);
         }
-        if (schedN > 0)   lines.push(`  • Disable ${schedN} schedule${schedN === 1 ? '' : 's'} that target this category (they will need a new category before re-enabling)`);
-        if (fallbackN > 0)lines.push(`  • Clear this category from ${fallbackN} schedule fallback${fallbackN === 1 ? '' : 's'}`);
-        if (holidayN > 0) lines.push(`  • Delete ${holidayN} holiday preset${holidayN === 1 ? '' : 's'} that reference this category`);
+        if (schedN > 0)   lines.push(` • Disable ${schedN} schedule${schedN === 1 ? '' : 's'} that target this category (they will need a new category before re-enabling)`);
+        if (fallbackN > 0)lines.push(` • Clear this category from ${fallbackN} schedule fallback${fallbackN === 1 ? '' : 's'}`);
+        if (holidayN > 0) lines.push(` • Delete ${holidayN} holiday preset${holidayN === 1 ? '' : 's'} that reference this category`);
         lines.push('');
         lines.push('Preroll video files on disk will NOT be deleted.');
       }
@@ -5286,8 +5286,8 @@ const DASH_KEYS = ["servers","prerolls","storage","schedules","scheduler","curre
 
 // Tile span configuration - which tiles take multiple columns
 const TILE_SPANS = {
-  upcoming: 2,  // Upcoming Schedules spans 2 columns
-  resolution_chart: 2  // Resolution chart spans 2 columns
+  upcoming: 2, // Upcoming Schedules spans 2 columns
+  resolution_chart: 2 // Resolution chart spans 2 columns
 };
 
 // Initialize dashboard layout from localStorage synchronously to avoid render flash
@@ -5953,7 +5953,7 @@ const DashboardTiles = {
             if (!a.isActiveNow && b.isActiveNow) return 1;
             return a.sortTime - b.sortTime;
           })
-          .slice(0, 5);  // Show up to 5 schedules
+          .slice(0, 5); // Show up to 5 schedules
         
         return allUpcomingSchedules.length > 0 ? (
           <div style={{ display: 'grid', gap: '0.35rem' }}>
@@ -6461,7 +6461,7 @@ const DashboardTiles = {
     if (errors.length > 0) {
       alert(`Scaling complete with ${errors.length} error(s):\n\n${errors.map(e => `• ${e.name}: ${e.error}`).join('\n')}`);
     } else {
-      alert(`✅ Successfully scaled ${toScale.length} preroll${toScale.length !== 1 ? 's' : ''} to ${targetResolution}!`);
+      alert(`Successfully scaled ${toScale.length} preroll${toScale.length !== 1 ? 's' : ''} to ${targetResolution}!`);
     }
   };
 
@@ -6690,7 +6690,7 @@ const DashboardTiles = {
                     fontSize: '0.85rem'
                   }}
                 >
-                  <Star size={14} style={{ marginRight: '0.35rem' }} /> 720p ⭐
+                  <Star size={14} style={{ marginRight: '0.35rem' }} /> 720p 
                 </button>
                 <button
                   onClick={() => handleBulkScale('480p')}
@@ -7154,15 +7154,15 @@ const DashboardTiles = {
               const totalDownloaded = radarrDownloaded + sonarrDownloaded;
               
               // Check for YouTube bot block/cookie errors in the results
-              const radarrCookieError = radarrResult?.errors?.some(e => e.includes('bot detection') || e.includes('⚠️') || e.includes('cookies'));
-              const sonarrCookieError = sonarrResult?.errors?.some(e => e.includes('bot detection') || e.includes('⚠️') || e.includes('cookies'));
+              const radarrCookieError = radarrResult?.errors?.some(e => e.includes('bot detection') || e.includes('') || e.includes('cookies'));
+              const sonarrCookieError = sonarrResult?.errors?.some(e => e.includes('bot detection') || e.includes('') || e.includes('cookies'));
               const hasCookieError = radarrCookieError || sonarrCookieError;
               
               if (radarrError && sonarrError) {
                 setNexupSyncProgress({ status: 'Both syncs failed', phase: 'error' });
               } else if (hasCookieError) {
                 setNexupSyncProgress({ 
-                  status: `⚠️ YouTube blocked - re-export cookies from Incognito (login → robots.txt → export)`, 
+                  status: `YouTube blocked - re-export cookies from Incognito (login → robots.txt → export)`, 
                   phase: 'error',
                   cookieError: true
                 });
@@ -8198,10 +8198,10 @@ const DashboardTiles = {
                         }
 
                         let tooltipText = `${sched.name} — ${activeDayCount} day${activeDayCount !== 1 ? 's' : ''} this week`;
-                        if (spanIsExclusive) tooltipText = `🔒 ${sched.name} — Exclusive${schedTimeRange ? ` (${schedTimeRange})` : ''}`;
-                        else if (spanIsWinner) tooltipText = `👑 ${sched.name} — Active (wins)`;
-                        else if (spanIsInBlend) tooltipText = `🔀 ${sched.name} — Blending`;
-                        else if (spanIsLoser) tooltipText = `⚠️ ${sched.name} — Overridden`;
+                        if (spanIsExclusive) tooltipText = `${sched.name} — Exclusive${schedTimeRange ? ` (${schedTimeRange})` : ''}`;
+                        else if (spanIsWinner) tooltipText = `${sched.name} — Active (wins)`;
+                        else if (spanIsInBlend) tooltipText = `${sched.name} — Blending`;
+                        else if (spanIsLoser) tooltipText = `${sched.name} — Overridden`;
 
                         const barColor = sched.color || sched.cat.color;
 
@@ -9417,7 +9417,7 @@ const DashboardTiles = {
                   fontWeight: '500',
                   marginBottom: '0.5rem'
                 }}>
-                  ✅ Matched to Community
+                  Matched to Community
                 </p>
               )}
               {preroll.exclude_from_matching && (
@@ -9432,7 +9432,7 @@ const DashboardTiles = {
                   marginBottom: '0.5rem',
                   marginLeft: '0.5rem'
                 }}>
-                  🚫 Excluded from Matching
+                  Excluded from Matching
                 </p>
               )}
               {preroll.category && <p style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>Primary: {preroll.category.name}</p>}
@@ -9573,7 +9573,7 @@ const DashboardTiles = {
                  fontWeight: '500',
                  marginBottom: '0.5rem'
                }}>
-                 ✅ Matched to Community
+                 Matched to Community
                </div>
              )}
              {preroll.exclude_from_matching && (
@@ -9588,7 +9588,7 @@ const DashboardTiles = {
                  marginBottom: '0.5rem',
                  marginLeft: '0.5rem'
                }}>
-                 🚫 Excluded from Matching
+                 Excluded from Matching
                </div>
              )}
              {preroll.category && <div style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>Primary: {preroll.category.name}</div>}
@@ -10213,7 +10213,7 @@ const DashboardTiles = {
                             <div style={{ fontSize: '0.85rem', fontWeight: 600, color: 'var(--text-color)', marginBottom: '0.3rem' }}>{sched.name}</div>
                             <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', display: 'flex', flexDirection: 'column', gap: '0.15rem' }}>
                               <span>Category: {cat}</span>
-                              <span>Priority: {p} · {sched.exclusive ? '🔒 Exclusive' : sched.blend_enabled ? '🔀 Blend' : 'Standard'}</span>
+                              <span>Priority: {p} · {sched.exclusive ? 'Exclusive' : sched.blend_enabled ? 'Blend' : 'Standard'}</span>
                               <span>Type: {sched.type}</span>
                             </div>
                           </div>
@@ -10647,7 +10647,7 @@ const DashboardTiles = {
                               <div style={{ fontSize: '0.85rem', fontWeight: 600, color: 'var(--text-color)', marginBottom: '0.3rem' }}>{sched.name}</div>
                               <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', display: 'flex', flexDirection: 'column', gap: '0.15rem' }}>
                                 <span>Category: {cat}</span>
-                                <span>Priority: {p} · {sched.exclusive ? '🔒 Exclusive' : sched.blend_enabled ? '🔀 Blend' : 'Standard'}</span>
+                                <span>Priority: {p} · {sched.exclusive ? 'Exclusive' : sched.blend_enabled ? 'Blend' : 'Standard'}</span>
                                 <span>Type: {sched.type}</span>
                               </div>
                             </div>
@@ -11678,7 +11678,7 @@ const DashboardTiles = {
                     border: hasSamePriorityConflict ? '2px solid #ff9800' : 'none',
                     boxShadow: hasSamePriorityConflict ? '0 0 8px rgba(255, 152, 0, 0.5)' : 'none'
                   }}
-                  title={hasSamePriorityConflict ? `⚠️ Same priority conflict with: ${samePriorityConflicts.map(c => c.schedule.name).join(', ')}\n\nBoth schedules are exclusive with the same priority.\nNeXroll will randomly pick one during overlapping times.\nSet different priorities to have deterministic behavior.` : ''}
+                  title={hasSamePriorityConflict ? `Same priority conflict with: ${samePriorityConflicts.map(c => c.schedule.name).join(', ')}\n\nBoth schedules are exclusive with the same priority.\nNeXroll will randomly pick one during overlapping times.\nSet different priorities to have deterministic behavior.` : ''}
                   >
                     {hasSamePriorityConflict && <AlertTriangle size={12} style={{ color: '#ffeb3b' }} />}
                     {sched.exclusive && !hasSamePriorityConflict && <Lock size={12} />}
@@ -11799,15 +11799,15 @@ const DashboardTiles = {
                     // Build tooltip
                     let tooltipText = `${sched.name}\nCategory: ${categoryName}\nType: ${sched.type}\nPriority: ${sched.priority ?? 5}`;
                     if (hasSamePriorityConflict) {
-                      tooltipText += `\n\n⚠️ SAME PRIORITY CONFLICT\nConflicts with: ${samePriorityConflicts.map(c => c.schedule.name).join(', ')}\n${isWinner ? '👑 Currently selected (random)' : '❌ Not selected (random)'}\nSet different priorities for deterministic behavior.`;
+                      tooltipText += `\n\nSAME PRIORITY CONFLICT\nConflicts with: ${samePriorityConflicts.map(c => c.schedule.name).join(', ')}\n${isWinner ? 'Currently selected (random)' : 'Not selected (random)'}\nSet different priorities for deterministic behavior.`;
                     } else if (isExclusive && isWinner) {
-                      tooltipText += '\n\n🔒 EXCLUSIVE - ACTIVE\nHighest priority exclusive schedule';
+                      tooltipText += '\n\nEXCLUSIVE - ACTIVE\nHighest priority exclusive schedule';
                     } else if (isExclusive && isLoser) {
-                      tooltipText += '\n\n❌ OVERRIDDEN\nAnother exclusive schedule has higher priority';
+                      tooltipText += '\n\nOVERRIDDEN\nAnother exclusive schedule has higher priority';
                     } else if (isBlending) {
-                      tooltipText += '\n🔀 Blending with other schedules';
+                      tooltipText += '\nBlending with other schedules';
                     } else if (isLoser) {
-                      tooltipText += '\n⚠️ Overridden by higher priority schedule';
+                      tooltipText += '\nOverridden by higher priority schedule';
                     }
                     
                     return (
@@ -11892,7 +11892,7 @@ const DashboardTiles = {
               <span>Blending</span>
             </div>
             <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-              <span style={{ opacity: 0.5, textDecoration: 'line-through' }}>⚠️ Overridden</span>
+              <span style={{ opacity: 0.5, textDecoration: 'line-through' }}>Overridden</span>
             </div>
             <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
               <div style={{ 
@@ -12379,7 +12379,7 @@ const DashboardTiles = {
                   borderRight: '1px solid var(--border-color)',
                   overflow: 'hidden',
                 }}
-                title={hasSamePriorityConflict ? `⚠️ Same priority conflict with: ${samePriorityConflicts.map(c => c.schedule.name).join(', ')}\n\nBoth schedules are exclusive with the same priority.\nNeXroll will randomly pick one during overlapping times.\nSet different priorities to have deterministic behavior.` : sched.name}
+                title={hasSamePriorityConflict ? `Same priority conflict with: ${samePriorityConflicts.map(c => c.schedule.name).join(', ')}\n\nBoth schedules are exclusive with the same priority.\nNeXroll will randomly pick one during overlapping times.\nSet different priorities to have deterministic behavior.` : sched.name}
                 >
                   {/* Color dot */}
                   <div style={{
@@ -12493,17 +12493,17 @@ const DashboardTiles = {
                     // Tooltip
                     let tooltipText = `${sched.name} — ${activeDayCount} day${activeDayCount !== 1 ? 's' : ''} this week`;
                     if (spanIsExclusive) {
-                      tooltipText = `🔒 ${sched.name} — EXCLUSIVE${schedTimeRange ? ` (${schedTimeRange})` : ''}\nWins over all other schedules${schedTimeRange ? ' during this time window' : ''}`;
+                      tooltipText = `${sched.name} — EXCLUSIVE${schedTimeRange ? ` (${schedTimeRange})` : ''}\nWins over all other schedules${schedTimeRange ? ' during this time window' : ''}`;
                     } else if (spanIsWinner) {
-                      tooltipText = `👑 ${sched.name} — ACTIVE (wins conflict)\nHighest priority among overlapping schedules`;
+                      tooltipText = `${sched.name} — ACTIVE (wins conflict)\nHighest priority among overlapping schedules`;
                     } else if (spanIsInBlend) {
                       tooltipText = spanHasTimeRestrictedExclusive
-                        ? `🔀 ${sched.name} — BLENDING\nActive outside exclusive schedule's time window`
-                        : `🔀 ${sched.name} — BLENDING\nPlays together with other blend-enabled schedules`;
+                        ? `${sched.name} — BLENDING\nActive outside exclusive schedule's time window`
+                        : `${sched.name} — BLENDING\nPlays together with other blend-enabled schedules`;
                     } else if (spanHasTimeRestrictedExclusive && !spanIsExclusive) {
-                      tooltipText = `✓ ${sched.name} — ACTIVE\nRuns outside exclusive schedule's time window`;
+                      tooltipText = `${sched.name} — ACTIVE\nRuns outside exclusive schedule's time window`;
                     } else if (spanIsLoser) {
-                      tooltipText = `⚠️ ${sched.name} — OVERRIDDEN\nAnother schedule has higher priority`;
+                      tooltipText = `${sched.name} — OVERRIDDEN\nAnother schedule has higher priority`;
                     }
 
                     const barColor = sched.color || sched.cat.color;
@@ -12718,7 +12718,7 @@ const DashboardTiles = {
                   alignItems: 'center',
                   gap: '6px'
                 }}
-                title={hasSamePriorityConflict ? `⚠️ Same priority conflict with: ${samePriorityConflicts.map(c => c.schedule.name).join(', ')}\n\nBoth schedules are exclusive with the same priority.\nNeXroll will randomly pick one during overlapping times.\nSet different priorities to have deterministic behavior.` : ''}
+                title={hasSamePriorityConflict ? `Same priority conflict with: ${samePriorityConflicts.map(c => c.schedule.name).join(', ')}\n\nBoth schedules are exclusive with the same priority.\nNeXroll will randomly pick one during overlapping times.\nSet different priorities to have deterministic behavior.` : ''}
                 >
                   {hasSamePriorityConflict && <AlertTriangle size={14} style={{ color: '#ff9800', flexShrink: 0 }} />}
                   {sched.exclusive && !hasSamePriorityConflict && <Lock size={14} style={{ color: '#14B8A6', flexShrink: 0 }} />}
@@ -13279,8 +13279,8 @@ const DashboardTiles = {
                 {dayData.hasBlend && !dayData.hasConflict && (
                   <div 
                     title={dayData.hasExclusive 
-                      ? `🔀 BLEND + EXCLUSIVE\n\n${dayData.blendScheds.length} blending schedule${dayData.blendScheds.length > 1 ? 's' : ''}:\n${dayData.blendScheds.map((s, i) => `${i + 1}. ${s.name}`).join('\n')}\n\n${dayData.exclusiveScheds?.length || 0} exclusive schedule${(dayData.exclusiveScheds?.length || 0) > 1 ? 's' : ''}:\n${(dayData.exclusiveScheds || []).map((s, i) => `${i + 1}. ${s.name}`).join('\n')}\n\nExclusive runs during its time window.\nBlend schedules mix prerolls outside that window.`
-                      : `🔀 BLEND MODE ACTIVE\n\n${dayData.blendScheds.length} schedules blending:\n${dayData.blendScheds.map((s, i) => `${i + 1}. ${s.name}`).join('\n')}\n\nPrerolls from all blending schedules are mixed together!\nNo conflicts - all schedules contribute.`}
+                      ? `BLEND + EXCLUSIVE\n\n${dayData.blendScheds.length} blending schedule${dayData.blendScheds.length > 1 ? 's' : ''}:\n${dayData.blendScheds.map((s, i) => `${i + 1}. ${s.name}`).join('\n')}\n\n${dayData.exclusiveScheds?.length || 0} exclusive schedule${(dayData.exclusiveScheds?.length || 0) > 1 ? 's' : ''}:\n${(dayData.exclusiveScheds || []).map((s, i) => `${i + 1}. ${s.name}`).join('\n')}\n\nExclusive runs during its time window.\nBlend schedules mix prerolls outside that window.`
+                      : `BLEND MODE ACTIVE\n\n${dayData.blendScheds.length} schedules blending:\n${dayData.blendScheds.map((s, i) => `${i + 1}. ${s.name}`).join('\n')}\n\nPrerolls from all blending schedules are mixed together!\nNo conflicts - all schedules contribute.`}
                     style={{ 
                       position: 'absolute', 
                       top: 6, 
@@ -13305,8 +13305,8 @@ const DashboardTiles = {
                 {dayData.hasExclusive && !dayData.hasBlend && !dayData.hasConflict && (
                   <div 
                     title={dayData.exclusiveHasTimeRange 
-                      ? `🔒 TIME-RESTRICTED EXCLUSIVE\n\n${(dayData.exclusiveScheds || []).map(s => s.name).join(', ')}\n\nExclusive during specific hours only.\nOther schedules may run outside this window.`
-                      : `🔒 EXCLUSIVE MODE\n\n${(dayData.exclusiveScheds || []).map(s => s.name).join(', ')}\n\nThis schedule takes priority all day.\nOther schedules on this day are overridden.`}
+                      ? `TIME-RESTRICTED EXCLUSIVE\n\n${(dayData.exclusiveScheds || []).map(s => s.name).join(', ')}\n\nExclusive during specific hours only.\nOther schedules may run outside this window.`
+                      : `EXCLUSIVE MODE\n\n${(dayData.exclusiveScheds || []).map(s => s.name).join(', ')}\n\nThis schedule takes priority all day.\nOther schedules on this day are overridden.`}
                     style={{ 
                       position: 'absolute', 
                       top: 6, 
@@ -13330,8 +13330,8 @@ const DashboardTiles = {
                 {dayData.hasConflict && (
                   <div 
                     title={dayData.hasExclusive 
-                      ? `⚠️ MULTIPLE EXCLUSIVE SCHEDULES\n\n${dayData.exclusiveScheds?.length || 0} exclusive schedules competing:\n${(dayData.exclusiveScheds || []).map((s, i) => `${i + 1}. ${s.name}`).join('\n')}\n\nOnly one exclusive schedule can be active at a time.`
-                      : `⚠️ SCHEDULE CONFLICT\n\n${schedArray.length} schedules active on this day:\n${schedArray.map((s, i) => `${i + 1}. ${s.name}${s === winningSchedule ? ' ← ACTIVE' : ' (overridden)'}`).join('\n')}\n\nTip: Enable "Blend Mode" on schedules to mix their prerolls together!\n\nPriority Rules:\n1. Higher priority value\n2. Ends soonest\n3. Started earliest\n4. Lowest ID`}
+                      ? `MULTIPLE EXCLUSIVE SCHEDULES\n\n${dayData.exclusiveScheds?.length || 0} exclusive schedules competing:\n${(dayData.exclusiveScheds || []).map((s, i) => `${i + 1}. ${s.name}`).join('\n')}\n\nOnly one exclusive schedule can be active at a time.`
+                      : `SCHEDULE CONFLICT\n\n${schedArray.length} schedules active on this day:\n${schedArray.map((s, i) => `${i + 1}. ${s.name}${s === winningSchedule ? ' ← ACTIVE' : ' (overridden)'}`).join('\n')}\n\nTip: Enable "Blend Mode" on schedules to mix their prerolls together!\n\nPriority Rules:\n1. Higher priority value\n2. Ends soonest\n3. Started earliest\n4. Lowest ID`}
                     style={{ 
                       position: 'absolute', 
                       top: 6, 
@@ -13420,7 +13420,7 @@ const DashboardTiles = {
                     // Add same-priority conflict warning to tooltip
                     if (hasSamePriorityConflict) {
                       const conflictNames = [...new Set(samePriorityConflicts.map(c => c.schedule.name))].join(', ');
-                      tooltipText += `\n\n⚠️ SAME PRIORITY CONFLICT with: ${conflictNames}\nNeXroll will randomly pick one. Set different priorities for deterministic behavior.`;
+                      tooltipText += `\n\nSAME PRIORITY CONFLICT with: ${conflictNames}\nNeXroll will randomly pick one. Set different priorities for deterministic behavior.`;
                     }
                     
                     if (isExclusive) {
@@ -13602,17 +13602,17 @@ const DashboardTiles = {
               <span>Today</span>
             </div>
             <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-              <div style={{ 
-                width: 16, 
-                height: 16, 
+              <div style={{
+                width: 16,
+                height: 16,
                 border: '2px solid #ff9800',
                 borderRadius: 3,
                 display: 'flex',
                 alignItems: 'center',
                 justifyContent: 'center',
-                fontSize: '0.7rem'
-              }}>⚠️</div>
-              <span>Schedule Conflict (👑 = Active)</span>
+                color: '#ff9800'
+              }}><AlertTriangle size={10} /></div>
+              <span style={{ display: 'inline-flex', alignItems: 'center', gap: '4px' }}>Schedule Conflict (<Crown size={12} /> = Active)</span>
             </div>
           </div>
         </div>
@@ -13904,13 +13904,14 @@ const DashboardTiles = {
                   }}>
                     {monthName}
                     {entry.conflictDays > 0 && (
-                      <span 
-                        title={`⚠️ ${entry.conflictDays} day${entry.conflictDays > 1 ? 's' : ''} with schedule conflicts`}
-                        style={{ 
-                          fontSize: '0.9rem',
+                      <span
+                        title={`${entry.conflictDays} day${entry.conflictDays > 1 ? 's' : ''} with schedule conflicts`}
+                        style={{
                           color: '#ff9800',
-                          cursor: 'help'
-                        }}>⚠️</span>
+                          cursor: 'help',
+                          display: 'inline-flex',
+                          alignItems: 'center'
+                        }}><AlertTriangle size={14} /></span>
                     )}
                   </div>
                   {isCurrentMonth && (
@@ -14452,7 +14453,7 @@ const DashboardTiles = {
                   )}
                   {selectedMonths.length > 0 && (
                     <p style={{ fontSize: '0.85rem', color: '#28a745', marginTop: '0.5rem' }}>
-                      ✓ Active during: {selectedMonths.map(m => ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][m-1]).join(', ')}
+                      Active during: {selectedMonths.map(m => ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][m-1]).join(', ')}
                     </p>
                   )}
                 </div>
@@ -14508,13 +14509,13 @@ const DashboardTiles = {
                       const isRange = preset.start_month && preset.start_day && preset.end_month && preset.end_day;
                       return (
                         <option key={preset.id} value={preset.id}>
-                          {preset.name} — {isRange ? `📋 Yearly ${preset.start_month}/${preset.start_day}–${preset.end_month}/${preset.end_day}` : `🎉 Holiday ${preset.month}/${preset.day}`}
+                          {preset.name} — {isRange ? `Yearly ${preset.start_month}/${preset.start_day}–${preset.end_month}/${preset.end_day}` : `Holiday ${preset.month}/${preset.day}`}
                         </option>
                       );
                     })}
                   </select>
                   <p style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', margin: '0.25rem 0 0 0' }}>
-                    📋 Date-range presets automatically switch to <strong>Yearly</strong> type. 🎉 Single-day presets use <strong>Holiday</strong> type.
+                    Date-range presets automatically switch to <strong>Yearly</strong> type. Single-day presets use <strong>Holiday</strong> type.
                   </p>
                 </div>
               )}
@@ -14601,8 +14602,8 @@ const DashboardTiles = {
                 border: '1px solid ' + (timeRange.start ? 'rgba(40, 167, 69, 0.3)' : 'rgba(220, 53, 69, 0.3)')
               }}>
                 <p style={{ fontSize: '0.9rem', color: timeRange.start ? '#28a745' : '#dc3545', margin: 0, display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                  <span style={{ fontSize: '1.2rem' }}>{timeRange.start ? '✓' : '⚠️'}</span>
-                  {timeRange.start 
+                  <span style={{ display: 'flex', alignItems: 'center' }}>{timeRange.start ? <CheckCircle size={18} /> : <AlertTriangle size={18} />}</span>
+                  {timeRange.start
                     ? `Schedule will run daily ${timeRange.end ? `from ${timeRange.start} to ${timeRange.end}` : `at ${timeRange.start}`}`
                     : 'Please select at least a start time to continue'}
                 </p>
@@ -14644,7 +14645,6 @@ const DashboardTiles = {
                 {['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'].map((day, index) => {
                   const dayLower = day.toLowerCase();
                   const isSelected = weekDays.includes(dayLower);
-                  const dayEmojis = ['☀️', '🌙', '💼', '📚', '⚡', '🎉', '🌟'];
                   return (
                     <label
                       key={day}
@@ -14678,8 +14678,7 @@ const DashboardTiles = {
                         }}
                         style={{ position: 'absolute', opacity: 0 }}
                       />
-                      <span style={{ fontSize: '1.5rem', marginBottom: '0.25rem' }}>{dayEmojis[index]}</span>
-                      <span style={{ fontSize: '0.95rem' }}>{day.substring(0, 3)}</span>
+                      <span style={{ fontSize: '1.1rem', fontWeight: 700, letterSpacing: '0.02em' }}>{day.substring(0, 3)}</span>
                     </label>
                   );
                 })}
@@ -14693,8 +14692,8 @@ const DashboardTiles = {
                 border: '1px solid ' + (weekDays.length > 0 ? 'rgba(40, 167, 69, 0.3)' : 'rgba(220, 53, 69, 0.3)')
               }}>
                 <p style={{ fontSize: '0.9rem', color: weekDays.length > 0 ? '#28a745' : '#dc3545', margin: 0, display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                  <span style={{ fontSize: '1.2rem' }}>{weekDays.length > 0 ? '✓' : '⚠️'}</span>
-                  {weekDays.length > 0 
+                  <span style={{ display: 'flex', alignItems: 'center' }}>{weekDays.length > 0 ? <CheckCircle size={18} /> : <AlertTriangle size={18} />}</span>
+                  {weekDays.length > 0
                     ? `Schedule will run every ${weekDays.map(d => d.charAt(0).toUpperCase() + d.slice(1, 3)).join(', ')}`
                     : 'Please select at least one day of the week'}
                 </p>
@@ -14803,7 +14802,7 @@ const DashboardTiles = {
                     onMouseEnter={(e) => e.currentTarget.style.backgroundColor = '#218838'}
                     onMouseLeave={(e) => e.currentTarget.style.backgroundColor = '#28a745'}
                   >
-                    ✓ Select All
+                    Select All
                   </button>
                   <button
                     type="button"
@@ -14822,7 +14821,7 @@ const DashboardTiles = {
                     onMouseEnter={(e) => e.currentTarget.style.backgroundColor = '#5a6268'}
                     onMouseLeave={(e) => e.currentTarget.style.backgroundColor = '#6c757d'}
                   >
-                    ✗ Clear All
+                    Clear All
                   </button>
                 </div>
               </div>
@@ -14878,7 +14877,7 @@ const DashboardTiles = {
                 border: '1px solid ' + (monthDays.length > 0 ? 'rgba(40, 167, 69, 0.3)' : 'rgba(220, 53, 69, 0.3)')
               }}>
                 <p style={{ fontSize: '0.9rem', color: monthDays.length > 0 ? '#28a745' : '#dc3545', margin: 0, display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                  <span style={{ fontSize: '1.2rem' }}>{monthDays.length > 0 ? '✓' : '⚠️'}</span>
+                  <span style={{ display: 'flex', alignItems: 'center' }}>{monthDays.length > 0 ? <CheckCircle size={18} /> : <AlertTriangle size={18} />}</span>
                   {monthDays.length > 0
                     ? `Schedule will run on day${monthDays.length > 1 ? 's' : ''} ${monthDays.join(', ')} of the selected months`
                     : 'Please select at least one day of the month'}
@@ -15677,7 +15676,7 @@ const DashboardTiles = {
           <div>
             <input
               type="text"
-              placeholder="🔍 Search schedules by name..."
+              placeholder="Search schedules by name..."
               value={scheduleSearchQuery}
               onChange={(e) => {
                 setScheduleSearchQuery(e.target.value);
@@ -15718,7 +15717,7 @@ const DashboardTiles = {
               <option value="monthly">Monthly Only</option>
               <option value="yearly">Yearly Only</option>
               <option value="holiday">Holiday Only</option>
-              <option value="custom">⚙️ Custom Only</option>
+              <option value="custom">Custom Only</option>
             </select>
           </div>
         </div>
@@ -15926,7 +15925,7 @@ const DashboardTiles = {
                                   gap: '0.25rem',
                                   cursor: 'help'
                                 }}
-                                title={`⚠️ Conflict with: ${conflicts.map(c => c.schedule.name).join(', ')}\n\nBoth schedules have the same priority (${schedule.priority || 5}) and are exclusive. NeXroll will randomly choose one during overlap.\n\nFix: Set different priorities for these schedules.`}
+                                title={`Conflict with: ${conflicts.map(c => c.schedule.name).join(', ')}\n\nBoth schedules have the same priority (${schedule.priority || 5}) and are exclusive. NeXroll will randomly choose one during overlap.\n\nFix: Set different priorities for these schedules.`}
                               >
                                 <AlertTriangle size={12} /> Conflict
                               </span>
@@ -16182,7 +16181,7 @@ const DashboardTiles = {
                               gap: '0.25rem',
                               cursor: 'help'
                             }}
-                            title={`⚠️ Conflict with: ${conflicts.map(c => c.schedule.name).join(', ')}\n\nBoth schedules have the same priority (${schedule.priority || 5}) and are exclusive. NeXroll will randomly choose one during overlap.\n\nFix: Set different priorities for these schedules.`}
+                            title={`Conflict with: ${conflicts.map(c => c.schedule.name).join(', ')}\n\nBoth schedules have the same priority (${schedule.priority || 5}) and are exclusive. NeXroll will randomly choose one during overlap.\n\nFix: Set different priorities for these schedules.`}
                           >
                             <AlertTriangle size={14} /> Conflict ({conflicts.length})
                           </span>
@@ -16575,7 +16574,7 @@ const DashboardTiles = {
                               style={{ marginRight: '0.25rem' }}
                               title="Edit preroll"
                             >
-                              ✏️
+                              
                             </button>
                             <button
                               type="button"
@@ -16935,7 +16934,7 @@ const DashboardTiles = {
               gap: '0.5rem'
             }}
           >
-            {bulkActionMode ? '✓' : '☑'} {bulkActionMode ? 'Exit' : 'Bulk Select'}
+            {bulkActionMode ? '' : ''} {bulkActionMode ? 'Exit' : 'Bulk Select'}
           </button>
           {bulkActionMode && selectedCategoryIds.length > 0 && (
             <>
@@ -16985,7 +16984,7 @@ const DashboardTiles = {
           {/* Search Bar - 65% width */}
           <input
             type="text"
-            placeholder="🔍 Search categories by name or description..."
+            placeholder="Search categories by name or description..."
             value={categorySearchQuery}
             onChange={(e) => setCategorySearchQuery(e.target.value)}
             style={{
@@ -17030,7 +17029,7 @@ const DashboardTiles = {
                 onClick={() => setCategoryView('grid')}
                 title="Grid view"
               >
-                <span className="view-icon">⊞</span>
+                <span className="view-icon" style={{ display: 'inline-flex' }}><LayoutGrid size={15} /></span>
                 Grid
               </button>
               <button
@@ -17039,7 +17038,7 @@ const DashboardTiles = {
                 onClick={() => setCategoryView('list')}
                 title="List view"
               >
-                <span className="view-icon">☰</span>
+                <span className="view-icon" style={{ display: 'inline-flex' }}><List size={15} /></span>
                 List
               </button>
             </div>
@@ -17238,7 +17237,7 @@ const DashboardTiles = {
                   fontWeight: 'bold',
                   color: isSelected ? 'white' : 'transparent'
                 }}>
-                  ✓
+                  
                 </div>
               )}
               
@@ -17634,7 +17633,7 @@ const DashboardTiles = {
                           style={{ marginLeft: '0.5rem', fontSize: '0.85rem' }}
                           title={`Active Schedules: ${stats.scheduleNames.join(', ')}`}
                         >
-                          📅
+                          
                         </span>
                       )}
                     </td>
@@ -17682,7 +17681,7 @@ const DashboardTiles = {
                         }}
                         title={stats.scheduleNames.join(', ')}
                         >
-                          ✓ {stats.activeSchedules} schedule{stats.activeSchedules !== 1 ? 's' : ''}
+                          {stats.activeSchedules} schedule{stats.activeSchedules !== 1 ? 's' : ''}
                         </span>
                       ) : (
                         <span style={{ color: 'var(--text-secondary)', fontSize: '0.85rem' }}>Inactive</span>
@@ -17714,7 +17713,7 @@ const DashboardTiles = {
                                 title="Edit category"
                                 style={{ fontSize: '0.9rem' }}
                               >
-                                ✏️
+                                
                               </button>
                               <button
                                 onClick={(e) => {
@@ -18453,7 +18452,7 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
           </summary>
 
           <div style={{ marginTop: '0.75rem' }}>
-            <h3 style={{ marginBottom: '0.5rem', color: 'var(--text-color)', fontSize: '0.95rem' }}>🐳 Docker</h3>
+            <h3 style={{ marginBottom: '0.5rem', color: 'var(--text-color)', fontSize: '0.95rem' }}>Docker</h3>
             <p style={{ fontSize: '0.9rem', color: 'var(--text-color)' }}>
               When running NeXroll in Docker, use <strong>Option 3: Sign in with Plex</strong> above to connect.
               After connecting, configure <em>UNC/Local → Plex Path Mappings</em> in Settings to translate container/local paths
@@ -18503,7 +18502,7 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
           )}
           {plexServerInfo?.message && !plexServerInfo.connected && (
             <div style={{ marginTop: '0.5rem', padding: '0.75rem', backgroundColor: 'rgba(255, 193, 7, 0.1)', borderRadius: '8px', border: '1px solid rgba(255, 193, 7, 0.3)' }}>
-              <strong>⚠️ Status:</strong> {plexServerInfo.message}
+              <strong>Status:</strong> {plexServerInfo.message}
             </div>
           )}
           {plexServerInfo?.error && (
@@ -18784,7 +18783,7 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
           `Files transferred: ${data.files_transferred}\n` +
           `Database paths updated: ${data.db_paths_updated}\n` +
           `Size: ${data.total_size_mb} MB` +
-          (data.errors > 0 ? `\n⚠ Errors: ${data.errors}` : '')
+          (data.errors > 0 ? `\nErrors: ${data.errors}` : '')
         );
         await loadPrerollFolder();
       }
@@ -20240,14 +20239,14 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
       }
       
       if (data.errors && data.errors.length > 0) {
-        message += `\n\n⚠️ Errors:\n${data.errors.slice(0, 3).join('\n')}`;
+        message += `\n\nErrors:\n${data.errors.slice(0, 3).join('\n')}`;
         if (data.errors.length > 3) {
           message += `\n...and ${data.errors.length - 3} more`;
         }
       }
       
       if (data.help) {
-        message += `\n\n💡 ${data.help}`;
+        message += `\n\n${data.help}`;
       }
       
       alert(message);
@@ -20408,14 +20407,14 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
       message += `• Expired: ${data.expired} (movies now in library)`;
       
       if (data.errors && data.errors.length > 0) {
-        message += `\n\n⚠️ Errors:\n${data.errors.slice(0, 3).join('\n')}`;
+        message += `\n\nErrors:\n${data.errors.slice(0, 3).join('\n')}`;
         if (data.errors.length > 3) {
           message += `\n...and ${data.errors.length - 3} more`;
         }
       }
       
       if (data.help) {
-        message += `\n\n💡 ${data.help}`;
+        message += `\n\n${data.help}`;
       }
       
       alert(message);
@@ -20469,22 +20468,22 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
       const data = await res.json();
       
       if (data.success) {
-        alert(`✅ Downloaded trailer for "${data.message || movieTitle || 'movie'}" (${data.file_size_mb?.toFixed(1) || '?'} MB)`);
+        alert(`Downloaded trailer for "${data.message || movieTitle || 'movie'}" (${data.file_size_mb?.toFixed(1) || '?'} MB)`);
         loadNexupTrailers();
         loadNexupStorage();
         handleLoadNexupUpcoming(); // Refresh to show downloaded status
       } else {
-        alert('⚠️ Download failed: ' + (data.message || 'Unknown error'));
+        alert('Download failed: ' + (data.message || 'Unknown error'));
       }
     } catch (err) {
       // More descriptive error messages
       let errorMsg = err?.message || String(err);
       if (errorMsg.includes('Failed to download trailer')) {
-        errorMsg = `Could not download trailer for "${movieTitle || 'this movie'}".\n\nPossible reasons:\n• YouTube bot detection (try again later)\n• Trailer video is age-restricted\n• Video is not available in your region\n\n💡 Tip: Export browser cookies to a youtube_cookies.txt file in your NeX-Up storage folder for better reliability.`;
+        errorMsg = `Could not download trailer for "${movieTitle || 'this movie'}".\n\nPossible reasons:\n• YouTube bot detection (try again later)\n• Trailer video is age-restricted\n• Video is not available in your region\n\nTip: Export browser cookies to a youtube_cookies.txt file in your NeX-Up storage folder for better reliability.`;
       } else if (errorMsg.includes('No trailer available')) {
         errorMsg = `No trailer URL found for "${movieTitle || 'this movie'}". The movie may not have a trailer available in Radarr yet.`;
       }
-      alert('❌ Download error:\n\n' + errorMsg);
+      alert('Download error:\n\n' + errorMsg);
     } finally {
       setDownloadingTrailerId(null);
       setDownloadProgress(null);
@@ -20701,7 +20700,7 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
       const canvas = await html2canvas(previewContainerRef.current, {
         scale: scaleFactor,
         useCORS: true,
-        backgroundColor: null,  // Let the CSS background show through
+        backgroundColor: null, // Let the CSS background show through
         logging: false,
         allowTaint: true,
         width: previewEl.offsetWidth,
@@ -20741,7 +20740,7 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
       const data = await res.json();
       
       if (data.success) {
-        alert(`✨ Generated preroll from preview successfully!\n\nThe video is an exact match of what you see in the preview with smooth fade in/out effects.`);
+        alert(`Generated preroll from preview successfully!\n\nThe video is an exact match of what you see in the preview with smooth fade in/out effects.`);
         setDynamicPrerollSettings(prev => ({
           ...prev,
           preroll_path: data.path
@@ -21583,7 +21582,7 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
                               alignItems: 'center',
                               gap: '0.25rem'
                             }}>
-                              🎬 Available Now!
+                              Available Now!
                             </span>
                           ) : movie.days_until_release !== null && (
                             <span style={{ 
@@ -21614,7 +21613,7 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
                           fontSize: '0.85rem',
                           fontWeight: 500
                         }}>
-                          ✓ Trailer Downloaded
+                          Trailer Downloaded
                         </span>
                       ) : movie.trailer_url ? (
                         <button
@@ -21784,7 +21783,7 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
                                 textOverflow: 'ellipsis',
                                 cursor: 'default'
                               }}
-                            >{isMovie ? '🎬' : '📺'} {label}</div>
+                            >{label}</div>
                           );
                         })}
                         {dayItems.length > 3 && (
@@ -21877,7 +21876,7 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
                               alignItems: 'center',
                               gap: '0.25rem'
                             }}>
-                              🎬 Available Now!
+                              Available Now!
                             </span>
                           ) : show.days_until_release !== null && show.days_until_release !== undefined && (
                             <span style={{ 
@@ -21895,7 +21894,7 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
                       )}
                       {show.network && (
                         <p style={{ margin: '0 0 0.25rem 0', fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
-                          📺 {show.network}
+                          {show.network}
                         </p>
                       )}
                     </div>
@@ -21909,7 +21908,7 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
                           fontSize: '0.85rem',
                           fontWeight: 500
                         }}>
-                          ✓ Trailer Downloaded
+                          Trailer Downloaded
                         </span>
                       ) : (
                         <button
@@ -23173,9 +23172,9 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
                 {youtubeSetup.status?.method && (
                   <div style={{ fontSize: '0.8rem', color: '#666', marginTop: '0.25rem' }}>
                     Method: {
-                      youtubeSetup.status.method === 'oauth' ? '🔐 OAuth (Recommended)' :
-                      youtubeSetup.status.method === 'cookies_file' ? '🍪 Exported cookies file' : 
-                      `🌐 ${youtubeSetup.status.browser} browser cookies`
+                      youtubeSetup.status.method === 'oauth' ? 'OAuth (Recommended)' :
+                      youtubeSetup.status.method === 'cookies_file' ? 'Exported cookies file' : 
+                      `${youtubeSetup.status.browser} browser cookies`
                     }
                   </div>
                 )}
@@ -23372,7 +23371,7 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
                             Use extensions like "Get cookies.txt LOCALLY" for Chrome/Edge.
                           </p>
                           <p style={{ margin: '0.5rem 0 0 0', fontSize: '0.85rem', color: '#6c757d', fontStyle: 'italic' }}>
-                            💡 Tip: Use an Incognito/Private browser window when logging into YouTube and exporting cookies for best results.
+                            Tip: Use an Incognito/Private browser window when logging into YouTube and exporting cookies for best results.
                           </p>
                         </div>
                       </div>
@@ -23927,7 +23926,7 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
                   border: '1px solid rgba(255, 193, 7, 0.3)'
                 }}>
                   <p style={{ fontSize: '0.85rem', color: '#ffc107', margin: 0 }}>
-                    <strong>💡 Tip:</strong> If YouTube blocks your downloads, try increasing the delay 
+                    <strong>Tip:</strong> If YouTube blocks your downloads, try increasing the delay 
                     or wait a few hours before trying again. Using authenticated cookies can help prevent blocks.
                   </p>
                 </div>
@@ -23937,7 +23936,7 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
             {/* TMDB API Key Card */}
             <div className="card">
               <h2 style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                🎬 TMDB API Key (Optional)
+                TMDB API Key (Optional)
               </h2>
               <p style={{ marginBottom: '1rem', color: '#888' }}>
                 Provide your own TMDB API key for more reliable trailer fetching. Without this, the built-in key may hit rate limits.
@@ -23970,7 +23969,7 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
                     border: '1px solid rgba(40, 167, 69, 0.3)'
                   }}>
                     <p style={{ fontSize: '0.85rem', color: '#28a745', margin: 0 }}>
-                      ✓ Custom TMDB API key configured
+                      Custom TMDB API key configured
                     </p>
                   </div>
                 )}
@@ -23982,7 +23981,7 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
                   border: '1px solid rgba(255, 193, 7, 0.3)'
                 }}>
                   <p style={{ fontSize: '0.85rem', color: '#ffc107', margin: 0 }}>
-                    <strong>💡 Note:</strong> TMDB is used to find trailer URLs for movies and TV shows. 
+                    <strong>Note:</strong> TMDB is used to find trailer URLs for movies and TV shows. 
                     If trailers aren't being found, try adding your own API key. For TV shows, IMDB is used as a fallback.
                   </p>
                 </div>
@@ -24278,13 +24277,13 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
                         }}
                       >
                         {dynamicPrerollSettings.template === t.id && (
-                          <span style={{ 
-                            position: 'absolute', 
-                            top: '8px', 
+                          <span style={{
+                            position: 'absolute',
+                            top: '8px',
                             right: '8px',
                             color: '#00d4ff',
-                            fontWeight: 'bold'
-                          }}>✓</span>
+                            display: 'inline-flex'
+                          }}><CheckCircle size={16} /></span>
                         )}
                         <div style={{ fontWeight: 'bold', marginBottom: '0.25rem', color: 'var(--text-color, #fff)' }}>
                           {t.name}
@@ -24363,10 +24362,10 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
                   </label>
                   <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
                     {[
-                      { id: 'en', label: 'English', flag: '🇬🇧' },
-                      { id: 'fr', label: 'Français', flag: '🇫🇷' },
-                      { id: 'es', label: 'Español', flag: '🇪🇸' },
-                      { id: 'de', label: 'Deutsch', flag: '🇩🇪' }
+                      { id: 'en', label: 'English' },
+                      { id: 'fr', label: 'Français' },
+                      { id: 'es', label: 'Español' },
+                      { id: 'de', label: 'Deutsch' }
                     ].map(lang => (
                       <button
                         key={lang.id}
@@ -24387,7 +24386,7 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
                           gap: '0.5rem'
                         }}
                       >
-                        <span>{lang.flag}</span> {lang.label}
+                        {lang.label}
                       </button>
                     ))}
                   </div>
@@ -25001,10 +25000,10 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
                   </label>
                   <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
                     {[
-                      { id: 'en', label: 'English', flag: '🇬🇧' },
-                      { id: 'fr', label: 'Français', flag: '🇫🇷' },
-                      { id: 'es', label: 'Español', flag: '🇪🇸' },
-                      { id: 'de', label: 'Deutsch', flag: '🇩🇪' }
+                      { id: 'en', label: 'English' },
+                      { id: 'fr', label: 'Français' },
+                      { id: 'es', label: 'Español' },
+                      { id: 'de', label: 'Deutsch' }
                     ].map(lang => (
                       <button
                         key={lang.id}
@@ -25025,7 +25024,7 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
                           gap: '0.5rem'
                         }}
                       >
-                        <span>{lang.flag}</span> {lang.label}
+                        {lang.label}
                       </button>
                     ))}
                   </div>
@@ -26625,7 +26624,7 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
           fontSize: '0.8rem',
           color: '#d97706'
         }}>
-          <strong>⚠️ Warning:</strong> Restoring will overwrite existing data. Make sure you have a current backup before proceeding.
+          <strong>Warning:</strong> Restoring will overwrite existing data. Make sure you have a current backup before proceeding.
         </div>
       </div>
 
@@ -29983,7 +29982,7 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
             borderRadius: '8px',
             border: '1px solid var(--border-color)'
           }}>
-            <h3 style={{ margin: '0 0 0.5rem 0', fontSize: '1rem', fontWeight: 600 }}>💡 Quick Tips</h3>
+            <h3 style={{ margin: '0 0 0.5rem 0', fontSize: '1rem', fontWeight: 600 }}>Quick Tips</h3>
             <ul style={{ margin: 0, paddingLeft: '1.25rem', fontSize: '0.9rem', opacity: 0.8 }}>
               <li>Use category blocks for randomized prerolls</li>
               <li>Use fixed blocks for specific prerolls in order</li>
@@ -30946,7 +30945,7 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
           await loadDownloadedCommunityIds();
           
           const message = data.matched > 0
-            ? `✓ Successfully rematched ${data.matched} out of ${data.total_scanned} prerolls!\n\n` +
+            ? `Successfully rematched ${data.matched} out of ${data.total_scanned} prerolls!\n\n` +
               (data.failed > 0 ? `${data.failed} prerolls couldn't be matched automatically.` : 'All scanned prerolls were matched!')
             : `No matches found.\n\nScanned ${data.total_scanned} prerolls but couldn't find matching titles in the community library.`;
           
@@ -31009,7 +31008,7 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
           
           // Show success message
           const message = data.matched > 0
-            ? `✓ Successfully matched ${data.matched} out of ${data.total_scanned} prerolls!\n\n` +
+            ? `Successfully matched ${data.matched} out of ${data.total_scanned} prerolls!\n\n` +
               (data.failed > 0 ? `${data.failed} prerolls couldn't be matched automatically.` : 'All scanned prerolls were matched!')
             : `No matches found.\n\nScanned ${data.total_scanned} prerolls but couldn't find matching titles in the community library.`;
           
@@ -31044,12 +31043,12 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
       
       // Clean up common patterns
       cleaned = cleaned
-        .replace(/%2C/g, ',')  // Decode commas
-        .replace(/%20/g, ' ')  // Decode spaces (backup)
+        .replace(/%2C/g, ',') // Decode commas
+        .replace(/%20/g, ' ') // Decode spaces (backup)
         .replace(/,\s*The\s*-\s*AwesomeAustn/gi, '') // Remove "The - AwesomeAustn"
         .replace(/\s*-\s*AwesomeAustn/gi, '') // Remove "- AwesomeAustn"
         .replace(/_/g, ' ')    // Replace underscores with spaces
-        .replace(/\s+/g, ' ')  // Collapse multiple spaces
+        .replace(/\s+/g, ' ') // Collapse multiple spaces
         .trim();
       
       return cleaned;
@@ -31154,10 +31153,10 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
       
       // Clean the community title (remove bug number prefix, normalize separators, remove extensions)
       const communityTitle = communityPreroll.title
-        .replace(/^\d+\s*-\s*/, '')  // Remove bug number prefix
-        .replace(/\.(mp4|mkv|avi|mov|webm)$/i, '')  // Remove extension if present
-        .replace(/[_\-]/g, ' ')  // Normalize underscores and dashes to spaces
-        .replace(/\s+/g, ' ')  // Normalize multiple spaces to single space
+        .replace(/^\d+\s*-\s*/, '') // Remove bug number prefix
+        .replace(/\.(mp4|mkv|avi|mov|webm)$/i, '') // Remove extension if present
+        .replace(/[_\-]/g, ' ') // Normalize underscores and dashes to spaces
+        .replace(/\s+/g, ' ') // Normalize multiple spaces to single space
         .trim()
         .toLowerCase();
       
@@ -31231,8 +31230,8 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
             url: preroll.url || preroll.download_url,
             category_id: communitySelectedCategory || null,
             add_to_category: communityShowAddToCategory[preroll.id] || false,
-            tags: '',  // Always send empty tags - no auto-tagging
-            description: `Community Preroll ID: ${preroll.id}`  // Add bug number to description
+            tags: '', // Always send empty tags - no auto-tagging
+            description: `Community Preroll ID: ${preroll.id}` // Add bug number to description
           })
         });
 
@@ -31247,7 +31246,7 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
         setCommunityIsDownloading(prev => ({ ...prev, [preroll.id]: 'processing' }));
         await new Promise(resolve => setTimeout(resolve, 500)); // Brief pause to show processing
         
-        alert(`✅ Successfully downloaded "${result.display_name || result.filename}"!`);
+        alert(`Successfully downloaded "${result.display_name || result.filename}"!`);
         
         // Refresh downloaded IDs to update the UI
         await loadDownloadedCommunityIds();
@@ -31260,7 +31259,7 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
         setCommunitySelectedCategory(null);
         
       } catch (error) {
-        alert(`❌ Download failed: ${error.message}`);
+        alert(`Download failed: ${error.message}`);
       } finally {
         setCommunityIsDownloading(prev => ({ ...prev, [preroll.id]: false }));
       }
@@ -31376,7 +31375,7 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
                 onClick={() => setActiveTab('dashboard')}
                 style={{ padding: '0.5rem 1rem' }}
               >
-                ✕ Decline
+                Decline
               </button>
             </div>
           </div>
@@ -32984,7 +32983,7 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
           }}
         >
           <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
-            <span style={{ fontSize: '1.5rem' }}>📱</span>
+            <Download size={22} />
             <div>
               <div style={{ fontWeight: 'bold', color: '#1976d2', marginBottom: '0.25rem' }}>
                 Install NeXroll
@@ -33237,7 +33236,7 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
                    >
                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
                        <div>
-                         <strong style={{ fontSize: '1.1rem', color: 'var(--text-color)' }}>🛠️ Custom</strong>
+                         <strong style={{ fontSize: '1.1rem', color: 'var(--text-color)' }}>Custom</strong>
                          <p style={{ margin: '0.5rem 0 0 0', color: 'var(--text-secondary)' }}>
                            Build your own sequence - choose exactly what preroll and how many trailers to include
                          </p>
@@ -33377,7 +33376,7 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
                    <>
                      <div>
                        <label style={{ display: 'block', marginBottom: '0.5rem', fontWeight: 'bold', color: 'var(--text-color)' }}>
-                         🎬 Movie Trailers
+                         Movie Trailers
                        </label>
                        <select
                          value={nexupSequenceWizard.movieTrailerCount}
@@ -33402,7 +33401,7 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
                      </div>
                      <div>
                        <label style={{ display: 'block', marginBottom: '0.5rem', fontWeight: 'bold', color: 'var(--text-color)' }}>
-                         📺 TV Trailers
+                         TV Trailers
                        </label>
                        <select
                          value={nexupSequenceWizard.tvTrailerCount}
@@ -33629,7 +33628,7 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
                    className="button"
                    style={{ backgroundColor: '#28a745' }}
                  >
-                   {nexupSequenceLoading ? 'Creating...' : '✓ Create Sequence'}
+                   {nexupSequenceLoading ? 'Creating...' : 'Create Sequence'}
                  </button>
                </div>
              </div>
@@ -33663,7 +33662,7 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
              }}>
                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.5rem' }}>
                  <span style={{ fontSize: '1.2rem' }}>
-                   {editingPreroll.community_preroll_id ? '✅' : '⚠️'}
+                   {editingPreroll.community_preroll_id ? '' : ''}
                  </span>
                  <strong style={{ color: 'var(--text-color)' }}>
                    {editingPreroll.community_preroll_id 
@@ -33708,7 +33707,7 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
                      }}
                      title="Remove the link to Community Prerolls library"
                    >
-                     <span>❌</span>
+                     <Unlink size={14} />
                      Unmatch
                    </button>
                  </div>
@@ -33741,7 +33740,7 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
                        </>
                      ) : (
                        <>
-                         <span>🔍</span>
+                         <Search size={14} />
                          Auto-Match Now
                        </>
                      )}
@@ -33890,7 +33889,7 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
                            width: '100%'
                          }}
                        >
-                         ✕ Close Suggestions
+                         Close Suggestions
                        </button>
                      </div>
                    )}
@@ -33974,7 +33973,7 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
                    }}
                    title="1280×720 - Recommended for remote streaming"
                  >
-                   {transcodeLoading ? <Loader2 size={12} className="spin" /> : <Star size={12} />} 720p ⭐
+                   {transcodeLoading ? <Loader2 size={12} className="spin" /> : <Star size={12} />} 720p 
                  </button>
                  <button
                    type="button"
@@ -34227,7 +34226,7 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
                                  fontSize: '0.85rem'
                                }}
                              >
-                               {isAdded ? '✓ ' : '+ '}{tag}
+                               {isAdded ? '' : '+ '}{tag}
                              </button>
                            );
                          })}
@@ -34254,7 +34253,7 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
                  )}
                </div>
                <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginTop: '0.4rem' }}>
-                 💡 Separate multiple tags with commas. Click × on badges to remove tags quickly.
+                 Separate multiple tags with commas. Click × on badges to remove tags quickly.
                </div>
              </div>
              <div className="nx-field nx-span-2">
@@ -34332,7 +34331,7 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
            maxHeight: '80%'
          }}>
            <h3>Preview: {previewingPreroll.display_name || previewingPreroll.filename}</h3>
-           <button onClick={() => setPreviewingPreroll(null)} style={{ float: 'right' }}>✕</button>
+           <button onClick={() => setPreviewingPreroll(null)} style={{ float: 'right', background: 'none', border: 'none', color: 'inherit', cursor: 'pointer', display: 'inline-flex' }} aria-label="Close"><X size={18} /></button>
            <div>
              {(() => {
                // v1.13.7: stream by preroll ID instead of reconstructing a category-folder URL.
@@ -34394,7 +34393,7 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
                  </span>
                )}
              </h3>
-             <button onClick={() => setCurrentPrerollPreview(null)} style={{ background: 'none', border: 'none', color: 'var(--text-color, #fff)', cursor: 'pointer', fontSize: '1.2rem' }}>✕</button>
+             <button onClick={() => setCurrentPrerollPreview(null)} style={{ background: 'none', border: 'none', color: 'var(--text-color, #fff)', cursor: 'pointer', display: 'inline-flex' }} aria-label="Close"><X size={18} /></button>
            </div>
            {(() => {
              const current = currentPrerollPreview.prerolls[currentPrerollPreview.index];
@@ -34522,7 +34521,7 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
                }}
                title="Close preview"
              >
-               ✕
+               
              </button>
            </div>
            <div>
@@ -34552,10 +34551,10 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
              flexWrap: 'wrap'
            }}>
              {communityPreviewingPreroll.creator && (
-               <span>👤 Creator: {communityPreviewingPreroll.creator}</span>
+               <span>Creator: {communityPreviewingPreroll.creator}</span>
              )}
              {communityPreviewingPreroll.category && (
-               <span>📁 Category: {communityPreviewingPreroll.category}</span>
+               <span>Category: {communityPreviewingPreroll.category}</span>
              )}
              {communityPreviewingPreroll.duration && (
                <span>⏱️ Duration: {communityPreviewingPreroll.duration}s</span>
@@ -34620,7 +34619,7 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
                }}
                title="Close preview"
              >
-               ✕
+               
              </button>
            </div>
            <div>
@@ -34653,10 +34652,10 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
              alignItems: 'center'
            }}>
              {previewingDynamicPreroll?.size_bytes && (
-               <span>📁 Size: {(previewingDynamicPreroll.size_bytes / (1024 * 1024)).toFixed(1)} MB</span>
+               <span>Size: {(previewingDynamicPreroll.size_bytes / (1024 * 1024)).toFixed(1)} MB</span>
              )}
              {previewingDynamicPreroll?.created_at && (
-               <span>📅 Created: {new Date(previewingDynamicPreroll.created_at * 1000).toLocaleDateString()}</span>
+               <span>Created: {new Date(previewingDynamicPreroll.created_at * 1000).toLocaleDateString()}</span>
              )}
            </div>
          </div>
@@ -34714,7 +34713,7 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
                }}
                title="Close preview"
              >
-               ✕
+               
              </button>
            </div>
            <div>
@@ -34747,7 +34746,7 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
              alignItems: 'center'
            }}>
              {previewingComingSoonList?.size && (
-               <span>📁 Size: {(previewingComingSoonList.size / (1024 * 1024)).toFixed(1)} MB</span>
+               <span>Size: {(previewingComingSoonList.size / (1024 * 1024)).toFixed(1)} MB</span>
              )}
            </div>
          </div>
@@ -34810,7 +34809,7 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
                }}
                title="Close"
              >
-               ✕
+               
              </button>
            </div>
            <div>
@@ -34846,13 +34845,13 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
              alignItems: 'center'
            }}>
              {playingTrailer.trailer?.release_date && (
-               <span>📅 Release: {new Date(playingTrailer.trailer.release_date).toLocaleDateString()}</span>
+               <span>Release: {new Date(playingTrailer.trailer.release_date).toLocaleDateString()}</span>
              )}
              {playingTrailer.trailer?.duration_seconds && (
                <span>⏱️ Duration: {Math.floor(playingTrailer.trailer.duration_seconds / 60)}:{String(playingTrailer.trailer.duration_seconds % 60).padStart(2, '0')}</span>
              )}
              {playingTrailer.trailer?.file_size_mb && (
-               <span>📁 Size: {playingTrailer.trailer.file_size_mb.toFixed(1)} MB</span>
+               <span>Size: {playingTrailer.trailer.file_size_mb.toFixed(1)} MB</span>
              )}
            </div>
          </div>
@@ -35173,7 +35172,7 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
                     </div>
                   </div>
                   <p style={{ fontSize: '0.85rem', color: '#666', marginTop: '0.5rem', marginBottom: 0 }}>
-                    💡 Leave end time empty to run at a specific time, or set both to create a time window
+                    Leave end time empty to run at a specific time, or set both to create a time window
                   </p>
                   {!timeRange.start && (
                     <p style={{ fontSize: '0.85rem', color: '#dc3545', marginTop: '0.5rem', marginBottom: 0 }}>
@@ -35261,11 +35260,11 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
                       </div>
                     </div>
                     <p style={{ fontSize: '0.85rem', color: '#666', marginTop: '0.5rem', marginBottom: 0 }}>
-                      💡 Optionally set a time window for when this schedule is active (e.g., 8:00 AM - 12:00 PM)
+                      Optionally set a time window for when this schedule is active (e.g., 8:00 AM - 12:00 PM)
                     </p>
                     {timeRange.start && timeRange.end && (
                       <p style={{ fontSize: '0.85rem', color: '#10b981', marginTop: '0.5rem', marginBottom: 0, fontWeight: 500 }}>
-                        ✓ Schedule will run from {timeRange.start} to {timeRange.end}
+                        Schedule will run from {timeRange.start} to {timeRange.end}
                       </p>
                     )}
                   </div>
@@ -35499,7 +35498,7 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
                     onChange={(e) => setScheduleForm({...scheduleForm, blend_enabled: e.target.checked})}
                     style={{ width: 'auto' }}
                   />
-                  <span>🔀 Blend Mode</span>
+                  <span>Blend Mode</span>
                 </label>
                 <p style={{ fontSize: '0.85rem', color: '#666', marginTop: '0.25rem' }}>
                   When enabled, this schedule's prerolls will be mixed with other overlapping schedules that also have Blend Mode enabled. 
@@ -35913,8 +35912,8 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
                               setShowHolidayBrowser(false);
                               
                               // Show success message with variable date note
-                              const variableNote = !holiday.fixed ? '\n\n🔄 This is a variable-date holiday - NeXroll will auto-update the date each year!' : '';
-                              showAlert(`✅ Form prefilled with "${holiday.name}" - ${holidayDate.toLocaleDateString()}${variableNote}`, 'success');
+                              const variableNote = !holiday.fixed ? '\n\nThis is a variable-date holiday - NeXroll will auto-update the date each year!' : '';
+                              showAlert(`Form prefilled with "${holiday.name}" - ${holidayDate.toLocaleDateString()}${variableNote}`, 'success');
                             }}
                             style={{
                               width: '100%',
@@ -35974,7 +35973,7 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
               className="button"
               style={{ marginBottom: '1rem' }}
             >
-              {nexupLoading ? 'Loading...' : '🔄 Refresh List'}
+              {nexupLoading ? 'Loading...' : 'Refresh List'}
             </button>
             
             {nexupUpcoming.length === 0 ? (
@@ -36023,7 +36022,7 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
                               alignItems: 'center',
                               gap: '0.25rem'
                             }}>
-                              🎬 Available Now!
+                              Available Now!
                             </span>
                           ) : movie.days_until_release !== null && (
                             <span style={{ 
@@ -36053,7 +36052,7 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
                           fontSize: '0.85rem',
                           fontWeight: 500
                         }}>
-                          ✓ Trailer Downloaded
+                          Trailer Downloaded
                         </span>
                       ) : movie.trailer_url ? (
                         <button
@@ -36072,7 +36071,7 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
                           {downloadingTrailerId === movie.radarr_id ? (
                             <><Loader2 size={16} className="spin" /> Downloading...</>
                           ) : (
-                            <>⬇️ Download Trailer</>
+                            <>Download Trailer</>
                           )}
                         </button>
                       ) : (
@@ -36123,7 +36122,7 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
               className="button"
               style={{ marginBottom: '1rem' }}
             >
-              {nexupLoading ? 'Loading...' : '🔄 Refresh List'}
+              {nexupLoading ? 'Loading...' : 'Refresh List'}
             </button>
             
             {nexupTrailers.length === 0 ? (
@@ -36160,12 +36159,12 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
                       <div style={{ display: 'flex', gap: '1rem', flexWrap: 'wrap', fontSize: '0.85rem', color: '#666' }}>
                         {trailer.release_date && (
                           <span>
-                            📅 {new Date(trailer.release_date).toLocaleDateString()}
+                            {new Date(trailer.release_date).toLocaleDateString()}
                             {trailer.days_until !== null && trailer.days_until > 0 && ` (in ${trailer.days_until} days)`}
                           </span>
                         )}
-                        {trailer.file_size_mb && <span>💾 {trailer.file_size_mb.toFixed(1)} MB</span>}
-                        {trailer.resolution && <span>📺 {trailer.resolution}</span>}
+                        {trailer.file_size_mb && <span>{trailer.file_size_mb.toFixed(1)} MB</span>}
+                        {trailer.resolution && <span>{trailer.resolution}</span>}
                         {trailer.play_count > 0 && <span style={{ display: 'inline-flex', alignItems: 'center', gap: '0.25rem' }}><Play size={14} /> Played {trailer.play_count}x</span>}
                       </div>
                     </div>
@@ -36188,7 +36187,7 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
                         className="button"
                         style={{ backgroundColor: '#dc3545', fontSize: '0.85rem', padding: '0.4rem 0.75rem' }}
                       >
-                        🗑️ Delete
+                        Delete
                       </button>
                     </div>
                   </div>
@@ -36227,7 +36226,7 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
               className="button"
               style={{ marginBottom: '1rem' }}
             >
-              {nexupLoading ? 'Loading...' : '🔄 Refresh List'}
+              {nexupLoading ? 'Loading...' : 'Refresh List'}
             </button>
             
             {nexupUpcomingTV.length === 0 ? (
@@ -36281,7 +36280,7 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
                               alignItems: 'center',
                               gap: '0.25rem'
                             }}>
-                              🎬 Available Now!
+                              Available Now!
                             </span>
                           ) : show.days_until_release !== null && show.days_until_release !== undefined && (
                             <span style={{ 
@@ -36299,7 +36298,7 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
                       )}
                       {show.network && (
                         <p style={{ margin: '0 0 0.25rem 0', fontSize: '0.85rem', color: '#666' }}>
-                          📺 {show.network}
+                          {show.network}
                         </p>
                       )}
                       <p style={{ margin: '0', fontSize: '0.85rem', color: '#666', maxHeight: '40px', overflow: 'hidden' }}>
@@ -36316,7 +36315,7 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
                           fontSize: '0.85rem',
                           fontWeight: 500
                         }}>
-                          ✓ Trailer Downloaded
+                          Trailer Downloaded
                         </span>
                       ) : show.trailer_url ? (
                         <button
@@ -36335,7 +36334,7 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
                           {downloadingTrailerId === `tv_${show.sonarr_series_id}_${show.season_number}` ? (
                             <><Loader2 size={16} className="spin" /> Downloading...</>
                           ) : (
-                            <>⬇️ Download Trailer</>
+                            <>Download Trailer</>
                           )}
                         </button>
                       ) : (
@@ -36386,7 +36385,7 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
               className="button"
               style={{ marginBottom: '1rem' }}
             >
-              {nexupLoading ? 'Loading...' : '🔄 Refresh List'}
+              {nexupLoading ? 'Loading...' : 'Refresh List'}
             </button>
             
             {nexupTVTrailers.length === 0 ? (
@@ -36428,13 +36427,13 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
                       <div style={{ display: 'flex', gap: '1rem', flexWrap: 'wrap', fontSize: '0.85rem', color: '#666' }}>
                         {trailer.release_date && (
                           <span>
-                            📅 {new Date(trailer.release_date).toLocaleDateString()}
+                            {new Date(trailer.release_date).toLocaleDateString()}
                             {trailer.days_until !== null && trailer.days_until > 0 && ` (in ${trailer.days_until} days)`}
                           </span>
                         )}
-                        {trailer.network && <span>📺 {trailer.network}</span>}
-                        {trailer.file_size_mb && <span>💾 {trailer.file_size_mb.toFixed(1)} MB</span>}
-                        {trailer.resolution && <span>🖥️ {trailer.resolution}</span>}
+                        {trailer.network && <span>{trailer.network}</span>}
+                        {trailer.file_size_mb && <span>{trailer.file_size_mb.toFixed(1)} MB</span>}
+                        {trailer.resolution && <span>{trailer.resolution}</span>}
                         {trailer.play_count > 0 && <span style={{ display: 'inline-flex', alignItems: 'center', gap: '0.25rem' }}><Play size={14} /> Played {trailer.play_count}x</span>}
                       </div>
                     </div>
@@ -36457,7 +36456,7 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
                         className="button"
                         style={{ backgroundColor: '#dc3545', fontSize: '0.85rem', padding: '0.4rem 0.75rem' }}
                       >
-                        🗑️ Delete
+                        Delete
                       </button>
                     </div>
                   </div>
@@ -36478,7 +36477,7 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
             style={{ maxWidth: '600px' }}
           >
             <div className="nx-modal-header">
-              <h2 className="nx-modal-title">➕ Add Trailer Manually</h2>
+              <h2 className="nx-modal-title">Add Trailer Manually</h2>
               <button 
                 onClick={() => setShowManualTrailerModal(false)}
                 className="nx-modal-close"
@@ -36535,7 +36534,7 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
                 
                 <div style={{ marginBottom: '1rem' }}>
                   <label style={{ display: 'block', marginBottom: '0.3rem' }}>
-                    🔗 URL (YouTube, Vimeo, etc.)
+                    URL (YouTube, Vimeo, etc.)
                   </label>
                   <input
                     type="text"
@@ -36552,7 +36551,7 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
                 
                 <div>
                   <label style={{ display: 'block', marginBottom: '0.3rem' }}>
-                    📁 Local File Path
+                    Local File Path
                   </label>
                   <input
                     type="text"
@@ -36582,7 +36581,7 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
                   className="button"
                   style={{ backgroundColor: '#28a745' }}
                 >
-                  {nexupLoading ? 'Adding...' : '➕ Add Trailer'}
+                  {nexupLoading ? 'Adding...' : 'Add Trailer'}
                 </button>
               </div>
             </form>
@@ -36723,7 +36722,7 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
                       onMouseLeave={(e) => e.target.style.background = 'var(--card-bg)'}
                     >
                       {item.type === 'drive' ? (
-                        <span style={{ fontSize: '1.1rem' }}>💾</span>
+                        <HardDrive size={16} style={{ color: 'var(--text-secondary)' }} />
                       ) : (
                         <Folder size={16} style={{ color: '#f0c000' }} />
                       )}

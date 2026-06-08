@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { X } from 'lucide-react';
 
 /**
  * WidgetSettingsModal - Allows users to customize what content appears in each tile
@@ -63,7 +64,7 @@ const WidgetSettingsModal = ({
       <div className="widget-settings-modal">
         <div className="modal-header">
           <h2>Configure {tile.title}</h2>
-          <button className="modal-close" onClick={onClose}>✕</button>
+          <button className="modal-close" onClick={onClose} aria-label="Close"><X size={18} /></button>
         </div>
 
         <div className="modal-content">

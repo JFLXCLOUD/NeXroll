@@ -2795,13 +2795,13 @@ def get_changelog(db: Session = Depends(get_db)):
             if os.path.exists(abs_path):
                 with open(abs_path, 'r', encoding='utf-8') as f:
                     changelog_content = f.read()
-                _file_log(f"✓ Found CHANGELOG.md at: {abs_path}")
+                _file_log(f"Found CHANGELOG.md at: {abs_path}")
                 break
             else:
-                _file_log(f"  ✗ Not found: {abs_path}")
+                _file_log(f"  Not found: {abs_path}")
         
         if not changelog_content:
-            _file_log("⚠ CHANGELOG.md not found in any location", level="WARNING")
+            _file_log("CHANGELOG.md not found in any location", level="WARNING")
     except Exception as e:
         _file_log(f"Failed to read CHANGELOG.md: {e}", level="ERROR")
         _file_log(f"Changelog read error: {e}", level="ERROR")
@@ -6387,20 +6387,20 @@ def connect_plex(request: PlexConnectRequest, db: Session = Depends(get_db)):
             try:
                 if secure_store.set_plex_token(token):
                     provider_name = secure_store.provider_info()[1]
-                    _file_log(f"/plex/connect: ✓ Token saved to secure store ({provider_name})")
+                    _file_log(f"/plex/connect: Token saved to secure store ({provider_name})")
                 else:
-                    _file_log(f"/plex/connect: ⚠ Failed to save token to secure store", level="ERROR")
+                    _file_log(f"/plex/connect: Failed to save token to secure store", level="ERROR")
                     log_event('ERROR', 'plex', 'Failed to save Plex token to secure store', source='connect_plex', details={'url': url})
                     raise HTTPException(status_code=500, detail="Failed to save token to secure storage. Please ensure Windows Credential Manager is available.")
             except HTTPException:
                 raise
             except Exception as e:
-                _file_log(f"/plex/connect: ⚠ Exception saving token: {e}", level="ERROR")
+                _file_log(f"/plex/connect: Exception saving token: {e}", level="ERROR")
                 log_event('ERROR', 'plex', f'Plex token save exception: {e}', source='connect_plex')
                 raise HTTPException(status_code=500, detail=f"Failed to save token securely: {str(e)}")
 
             db.commit()
-            _file_log(f"/plex/connect: ✓ Connection successful - URL: {url}, Token storage: {provider_name}")
+            _file_log(f"/plex/connect: Connection successful - URL: {url}, Token storage: {provider_name}")
             log_event('INFO', 'plex', 'Plex server connected successfully', details={"url": url})
             return {
                 "connected": True,
@@ -6408,7 +6408,7 @@ def connect_plex(request: PlexConnectRequest, db: Session = Depends(get_db)):
                 "token_storage": provider_name
             }
         else:
-            _file_log(f"/plex/connect: ✗ Connection test failed for {url}", level="ERROR")
+            _file_log(f"/plex/connect: Connection test failed for {url}", level="ERROR")
             log_event('WARNING', 'plex', f'Plex connection test failed for {url}', source='connect_plex')
             raise HTTPException(status_code=422, detail="Failed to connect to Plex server. Please check your URL and token.")
     except Exception as e:
@@ -19450,7 +19450,7 @@ async def sync_nexup(db: Session = Depends(get_db)):
                     # Check if result contains YouTube bot block error
                     error_code = str(result.get('error', '')) if result and isinstance(result, dict) else ''
                     if 'YOUTUBE_BOT_BLOCK' in error_code or 'STALE_COOKIES' in error_code:
-                        error_msg = "⚠️ YouTube bot detection. Re-export cookies from Incognito: login → youtube.com/robots.txt → export"
+                        error_msg = "YouTube bot detection. Re-export cookies from Incognito: login → youtube.com/robots.txt → export"
                         _nexup_sync_progress["status"] = f"YouTube blocked '{movie['title']}' - try re-exporting cookies"
                         _nexup_sync_progress["cookie_error"] = True  # Flag for UI to show help
                         results["errors"].append(f"{movie['title']}: {error_msg}")
@@ -20928,7 +20928,7 @@ def get_nexup_sequence_presets(db: Session = Depends(get_db)):
     if nexup_category and movie_trailer_count > 0:
         presets.append({
             "id": "coming_soon_trailers",
-            "name": "🎬 Coming Soon + Movie Trailers",
+            "name": "Coming Soon + Movie Trailers",
             "description": f"Plays your Coming Soon intro followed by {trailers_per_playback} random movie trailer(s)",
             "requires_dynamic_preroll": True,
             "has_requirements": has_dynamic_preroll,
@@ -20954,7 +20954,7 @@ def get_nexup_sequence_presets(db: Session = Depends(get_db)):
     if tv_category and tv_trailer_count > 0:
         presets.append({
             "id": "coming_soon_tv_trailers",
-            "name": "📺 Coming Soon + TV Trailers",
+            "name": "Coming Soon + TV Trailers",
             "description": f"Plays your Coming Soon intro followed by {trailers_per_playback} random TV show trailer(s)",
             "requires_dynamic_preroll": True,
             "has_requirements": has_dynamic_preroll,
@@ -20978,7 +20978,7 @@ def get_nexup_sequence_presets(db: Session = Depends(get_db)):
     if nexup_category and tv_category and movie_trailer_count > 0 and tv_trailer_count > 0:
         presets.append({
             "id": "mixed_trailers",
-            "name": "🎭 Mixed: Movies + TV",
+            "name": "Mixed: Movies + TV",
             "description": f"Coming Soon intro, then 1 movie trailer and 1 TV trailer",
             "requires_dynamic_preroll": True,
             "has_requirements": has_dynamic_preroll,
@@ -21008,7 +21008,7 @@ def get_nexup_sequence_presets(db: Session = Depends(get_db)):
     if nexup_category and movie_trailer_count > 0:
         presets.append({
             "id": "movie_trailers_only",
-            "name": "🎞️ Movie Trailers Only",
+            "name": "Movie Trailers Only",
             "description": f"Plays {trailers_per_playback} random movie trailer(s) without an intro",
             "requires_dynamic_preroll": False,
             "has_requirements": True,
@@ -21027,7 +21027,7 @@ def get_nexup_sequence_presets(db: Session = Depends(get_db)):
     if tv_category and tv_trailer_count > 0:
         presets.append({
             "id": "tv_trailers_only",
-            "name": "📺 TV Trailers Only",
+            "name": "TV Trailers Only",
             "description": f"Plays {trailers_per_playback} random TV show trailer(s) without an intro",
             "requires_dynamic_preroll": False,
             "has_requirements": True,
@@ -21046,7 +21046,7 @@ def get_nexup_sequence_presets(db: Session = Depends(get_db)):
     if nexup_category and movie_trailer_count > 0:
         presets.append({
             "id": "theater_experience",
-            "name": "🌟 Theater Experience",
+            "name": "Theater Experience",
             "description": "Full cinema experience with Coming Soon intro and 4 movie trailers",
             "requires_dynamic_preroll": True,
             "has_requirements": has_dynamic_preroll,
@@ -23809,7 +23809,7 @@ def _build_prerolls_index(progress_callback=None, base_url=None) -> dict:
         try:
             response = requests.get(url, headers=headers, timeout=10)
             if response.status_code != 200:
-                _file_log(f"⚠ HTTP {response.status_code} for {url}")
+                _file_log(f"HTTP {response.status_code} for {url}")
                 return
             
             # Caddy can return either HTML or JSON depending on context
@@ -23822,7 +23822,7 @@ def _build_prerolls_index(progress_callback=None, base_url=None) -> dict:
                 json_count += 1
                 try:
                     items = json.loads(response.text)
-                    _file_log(f"  📋 JSON format detected, parsing {len(items)} items")
+                    _file_log(f"  JSON format detected, parsing {len(items)} items")
                     
                     for item in items:
                         name = item.get('name', '')
@@ -23881,9 +23881,9 @@ def _build_prerolls_index(progress_callback=None, base_url=None) -> dict:
                             }
                             
                             prerolls.append(preroll_entry)
-                            _file_log(f"  ✓ Found: {title[:60]}")
+                            _file_log(f"  Found: {title[:60]}")
                 except json.JSONDecodeError as e:
-                    _file_log(f"✗ Failed to parse JSON from {url}: {e}")
+                    _file_log(f"Failed to parse JSON from {url}: {e}")
                     return
             else:
                 # Parse HTML response with BeautifulSoup
@@ -23950,12 +23950,12 @@ def _build_prerolls_index(progress_callback=None, base_url=None) -> dict:
                         }
                         
                         prerolls.append(preroll_entry)
-                        _file_log(f"  ✓ Found: {title[:60]}")
+                        _file_log(f"  Found: {title[:60]}")
         except json.JSONDecodeError as e:
-            _file_log(f"✗ JSON parse error for {url}: {e}")
+            _file_log(f"JSON parse error for {url}: {e}")
         except Exception as e:
             import traceback
-            _file_log(f"✗ Error indexing {url}: {e}")
+            _file_log(f"Error indexing {url}: {e}")
             _file_log(f"  Traceback: {traceback.format_exc()}")
     
     # Build the index by scraping from root to discover all folders
@@ -23981,7 +23981,7 @@ def _build_prerolls_index(progress_callback=None, base_url=None) -> dict:
     update_progress()
     
     _file_log(f"{'='*60}")
-    _file_log(f"✓ Index building complete!")
+    _file_log(f"Index building complete!")
     _file_log(f"  Total prerolls indexed: {len(prerolls)}")
     _file_log(f"  Directories scanned: {len(visited_urls)}")
     _file_log(f"  HTML responses: {html_count}")
@@ -24458,7 +24458,7 @@ def search_community_prerolls(request: Request, query: str = "", category: str =
                                 if not matches:
                                     continue
                                 
-                                _file_log(f"✓ Matched '{query}': {title}")
+                                _file_log(f"Matched '{query}': {title}")
                             
                             # Apply category filter
                             if category:
@@ -25174,7 +25174,7 @@ def get_random_community_preroll(
                     "found": True,
                     "result": random_preroll,
                     "source": "local_index",
-                    "message": "⚡ Instant random selection from local index"
+                    "message": "Instant random selection from local index"
                 }
             else:
                 _file_log(f"No matching prerolls in index for filters")
@@ -25375,7 +25375,7 @@ def get_top5_community_prerolls(
                         "url": full_url,
                         "creator": category_name,
                         "category": category_name,
-                        "thumbnail": "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='200' height='120'%3E%3Crect fill='%23FFD700'/%3E%3Ctext x='100' y='60' text-anchor='middle' fill='%23000' font-size='14'%3E⭐ Top 5%3C/text%3E%3C/svg%3E",
+                        "thumbnail": "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='200' height='120'%3E%3Crect fill='%23FFD700'/%3E%3Ctext x='100' y='60' text-anchor='middle' fill='%23000' font-size='14'%3ETop 5%3C/text%3E%3C/svg%3E",
                         "featured": True
                     })
                     
@@ -25447,7 +25447,7 @@ def _fetch_movie_poster(title: str) -> str:
                     poster_url = image.get("original") or image.get("medium")
                     
                     if poster_url:
-                        _file_log(f"✅ Found TVMaze poster for '{clean_title}': {poster_url}")
+                        _file_log(f"Found TVMaze poster for '{clean_title}': {poster_url}")
                         return poster_url
         except Exception as e:
             _file_log(f"TVMaze search failed for '{clean_title}': {e}")
@@ -25469,12 +25469,12 @@ def _fetch_movie_poster(title: str) -> str:
                         poster_url = image.get("original") or image.get("medium")
                         
                         if poster_url:
-                            _file_log(f"✅ Found TVMaze poster with short title '{short_title}': {poster_url}")
+                            _file_log(f"Found TVMaze poster with short title '{short_title}': {poster_url}")
                             return poster_url
             except Exception as e:
                 _file_log(f"TVMaze short search failed: {e}")
         
-        _file_log(f"❌ No poster found for '{clean_title}'")
+        _file_log(f"No poster found for '{clean_title}'")
         return None
         
     except Exception as e:
@@ -25510,7 +25510,7 @@ def get_latest_community_prerolls(
             return {
                 "found": False,
                 "results": [],
-                "message": "⚠️ Build local index to see latest prerolls",
+                "message": "Build local index to see latest prerolls",
                 "needs_index": True
             }
         
@@ -25574,7 +25574,7 @@ def get_latest_community_prerolls(
                         </linearGradient>
                     </defs>
                     <rect width='300' height='180' fill='url(#grad{idx})'/>
-                    <text x='150' y='80' text-anchor='middle' fill='#fff' font-size='40' font-weight='bold' opacity='0.9'>🎬</text>
+                    <text x='150' y='80' text-anchor='middle' fill='#fff' font-size='40' font-weight='bold' opacity='0.9'></text>
                     <text x='150' y='110' text-anchor='middle' fill='#fff' font-size='16' font-weight='bold' opacity='0.8'>NEW</text>
                     <text x='150' y='130' text-anchor='middle' fill='#fff' font-size='12' opacity='0.7'>Latest Addition</text>
                 </svg>"""
@@ -25589,7 +25589,7 @@ def get_latest_community_prerolls(
             "found": True,
             "results": latest_prerolls,
             "total": len(latest_prerolls),
-            "message": f"✨ Showing {len(latest_prerolls)} latest prerolls",
+            "message": f"Showing {len(latest_prerolls)} latest prerolls",
             "source": "local_index"
         }
     
