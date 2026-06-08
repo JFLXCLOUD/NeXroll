@@ -8,6 +8,10 @@ body {
   margin: 0;
   padding: 0;
   height: 100%;
+  /* Paint the themed background at the root so the whole viewport stays dark in
+     dark mode (the v2 shell no longer relies on .app-container for this). */
+  background-color: var(--bg-color, #1a1a1a);
+  color: var(--text-color, #e0e0e0);
   overflow-x: hidden; /* Only on body, not html - to preserve sticky */
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen',
     'Ubuntu', 'Cantarell', 'Fira Sans', 'Droid Sans', 'Helvetica Neue',
@@ -3615,6 +3619,8 @@ body.dark .nx-chip.warn {
   display: flex;
   min-height: 100vh;
   align-items: stretch;
+  background-color: var(--bg-color);
+  color: var(--text-color);
 }
 
 /* ---- Sidebar ---- */
@@ -3839,6 +3845,7 @@ body.dark .nx-chip.warn {
   min-width: 0;
   display: flex;
   flex-direction: column;
+  background-color: var(--bg-color);
 }
 /* Slim top bar inside content (status, theme, user, logout) */
 .nx-topbar {
