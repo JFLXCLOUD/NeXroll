@@ -985,15 +985,49 @@ body.dark .nx-chip.primary {
   background: var(--header-bg);
 }
 
-/* Button variants */
-.button-success { background-color: #28a745 !important; }
-.button-danger  { background-color: #dc3545 !important; }
-.button-warn    { background-color: #f59e0b !important; }
+/* ============================================================
+   Button system (v2): one consistent shape, semantic color variants.
+   .button is the primary action; add a variant class for intent.
+   All variants share sizing/radius/hover and align icon + label.
+   ============================================================ */
+.button,
+.button-secondary {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.4rem;
+  border-radius: 8px;
+  font-size: 0.9rem;
+  font-weight: 500;
+  line-height: 1.2;
+}
+.button:disabled,
+.button-secondary:disabled,
+.button.button-success:disabled,
+.button.button-danger:disabled,
+.button.button-warn:disabled,
+.button.button-info:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+/* Semantic variants. Use as `className="button button-danger"`. The !important
+   keeps them winning over the base .button background even where older markup
+   adds them alongside inline styles. */
+.button-success { background-color: var(--success-color) !important; color: #fff !important; }
+.button-success:hover:not(:disabled) { filter: brightness(1.08); }
+.button-danger  { background-color: var(--error-color) !important; color: #fff !important; }
+.button-danger:hover:not(:disabled)  { filter: brightness(1.08); }
+.button-warn    { background-color: #f59e0b !important; color: #1a1a1a !important; }
+.button-warn:hover:not(:disabled)    { filter: brightness(1.06); }
+.button-info    { background-color: #17a2b8 !important; color: #fff !important; }
+.button-info:hover:not(:disabled)    { filter: brightness(1.08); }
 .button-outline {
   background: transparent !important;
   color: var(--text-color) !important;
   border: 1px solid var(--border-color) !important;
 }
+.button-outline:hover:not(:disabled) { background: var(--hover-bg) !important; }
 
 /* Status chip */
 /* Status chip */

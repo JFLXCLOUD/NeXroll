@@ -7581,8 +7581,7 @@ const DashboardTiles = {
                   there's no safe action to take, the message says to wait. */}
               {!(storageHealth.storage_maybe_offline && storageHealth.duplicate_rows === 0) && (
               <button
-                className="button"
-                style={{ backgroundColor: '#f59e0b' }}
+                className="button button-warn"
                 onClick={() => {
                   // Prefer dedupe target during a suspected outage (never push deletion).
                   const action = (storageHealth.duplicate_rows > 0 || storageHealth.storage_maybe_offline)
@@ -16854,9 +16853,8 @@ const DashboardTiles = {
               <button type="submit" className="button">Update Category</button>
               <button
                 type="button"
-                className="button"
+                className="button button-success"
                 onClick={handleUpdateCategoryAndApply}
-                style={{ backgroundColor: '#28a745' }}
                 title="Save changes and apply to connected server"
               >
                 Save & Apply to Server
@@ -16880,7 +16878,7 @@ const DashboardTiles = {
         </p>
         <div style={{ display: 'flex', gap: '0.5rem' }}>
           <button onClick={handleInitHolidays} className="button">Initialize Holiday Presets</button>
-          <button onClick={() => setActiveTab('schedules')} className="button" style={{ backgroundColor: '#6c757d' }}>
+          <button onClick={() => setActiveTab('schedules')} className="button button-secondary">
             Go to Schedules
           </button>
         </div>
@@ -18311,7 +18309,7 @@ const DashboardTiles = {
                 onChange={(e) => setStableTokenInput(e.target.value)}
                 style={{ width: '100%', padding: '0.5rem' }}
               />
-              <button type="submit" className="button" style={{ backgroundColor: '#17a2b8' }}>
+              <button type="submit" className="button button-info">
                 Save Stable Token
               </button>
             </form>
@@ -22229,8 +22227,7 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
                 </div>
                 <button
                   onClick={handleDisconnectRadarr}
-                  className="button"
-                  style={{ backgroundColor: '#dc3545' }}
+                  className="button button-danger"
                 >
                   Disconnect
                 </button>
@@ -22371,8 +22368,7 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
               <button
                 onClick={handleConnectSonarr}
                 disabled={nexupLoading || !nexupSonarrUrl || !nexupSonarrApiKey}
-                className="button"
-                style={{ backgroundColor: '#17a2b8' }}
+                className="button button-info"
               >
                 {nexupLoading ? 'Connecting...' : 'Connect to Sonarr'}
               </button>
@@ -22413,8 +22409,7 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
                 </div>
                 <button
                   onClick={handleDisconnectSonarr}
-                  className="button"
-                  style={{ backgroundColor: '#dc3545' }}
+                  className="button button-danger"
                 >
                   Disconnect
                 </button>
@@ -22847,8 +22842,7 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
             <p style={{ color: '#888', marginBottom: '1rem' }}>Connect to Sonarr to download TV trailers</p>
             <button
               onClick={() => setActiveTab('nexup')}
-              className="button"
-              style={{ backgroundColor: '#17a2b8' }}
+              className="button button-info"
             >
               Go to Connections
             </button>
@@ -22866,8 +22860,7 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
             <button
               onClick={handleSyncSonarr}
               disabled={nexupLoading || tvSyncProgress}
-              className="button"
-              style={{ backgroundColor: '#17a2b8' }}
+              className="button button-info"
             >
               {tvSyncProgress ? <><Loader2 size={16} className="spin" style={{ marginRight: '0.5rem' }} />Syncing...</> : 'Download Trailers'}
             </button>
@@ -23521,8 +23514,7 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
                       <div style={{ marginTop: '1.5rem', display: 'flex', gap: '1rem', justifyContent: 'center' }}>
                         <button
                           onClick={() => setYoutubeSetup(prev => ({ ...prev, wizardStep: 1 }))}
-                          className="button"
-                          style={{ backgroundColor: '#6c757d' }}
+                          className="button button-secondary"
                         >
                           ← Back
                         </button>
@@ -23590,8 +23582,7 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
                       <div style={{ display: 'flex', gap: '1rem', justifyContent: 'center' }}>
                         <button
                           onClick={() => setYoutubeSetup(prev => ({ ...prev, wizardStep: 2 }))}
-                          className="button"
-                          style={{ backgroundColor: '#6c757d' }}
+                          className="button button-secondary"
                         >
                           ← Back
                         </button>
@@ -23637,9 +23628,8 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
                       <div style={{ display: 'flex', gap: '1rem', justifyContent: 'center' }}>
                         <button
                           onClick={handleYoutubeTestDownload}
-                          className="button"
+                          className="button button-secondary"
                           disabled={youtubeSetup.testing}
-                          style={{ backgroundColor: '#6c757d' }}
                         >
                           {youtubeSetup.testing 
                             ? <><Loader2 size={16} className="spin" /> Testing...</>
@@ -23647,8 +23637,7 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
                         </button>
                         <button
                           onClick={() => setYoutubeSetup(prev => ({ ...prev, showWizard: false }))}
-                          className="button"
-                          style={{ backgroundColor: '#28a745' }}
+                          className="button button-success"
                         >
                                                     <Check size={16} /> Done
                         </button>
@@ -33289,8 +33278,7 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
                <div style={{ marginTop: '2rem', display: 'flex', justifyContent: 'flex-end', gap: '1rem' }}>
                  <button
                    onClick={() => setShowNexupSequenceWizard(false)}
-                   className="button"
-                   style={{ backgroundColor: '#6c757d' }}
+                   className="button button-secondary"
                  >
                    Cancel
                  </button>
@@ -33527,8 +33515,7 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
                <div style={{ marginTop: '2rem', display: 'flex', justifyContent: 'space-between', gap: '1rem' }}>
                  <button
                    onClick={() => setNexupSequenceWizard(prev => ({ ...prev, step: 1 }))}
-                   className="button"
-                   style={{ backgroundColor: '#6c757d' }}
+                   className="button button-secondary"
                  >
                    ← Back
                  </button>
@@ -33648,16 +33635,14 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
                <div style={{ marginTop: '2rem', display: 'flex', justifyContent: 'space-between', gap: '1rem' }}>
                  <button
                    onClick={() => setNexupSequenceWizard(prev => ({ ...prev, step: 2 }))}
-                   className="button"
-                   style={{ backgroundColor: '#6c757d' }}
+                   className="button button-secondary"
                  >
                    ← Back
                  </button>
                  <button
                    onClick={handleCreateNexupSequence}
                    disabled={nexupSequenceLoading}
-                   className="button"
-                   style={{ backgroundColor: '#28a745' }}
+                   className="button button-success"
                  >
                    {nexupSequenceLoading ? 'Creating...' : 'Create Sequence'}
                  </button>
@@ -36536,16 +36521,14 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
                 <button
                   type="button"
                   onClick={() => setShowManualTrailerModal(false)}
-                  className="button"
-                  style={{ backgroundColor: '#6c757d' }}
+                  className="button button-secondary"
                 >
                   Cancel
                 </button>
                 <button
                   type="submit"
                   disabled={nexupLoading}
-                  className="button"
-                  style={{ backgroundColor: '#28a745' }}
+                  className="button button-success"
                 >
                   {nexupLoading ? 'Adding...' : 'Add Trailer'}
                 </button>
@@ -36723,10 +36706,9 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
                 Cancel
               </button>
               <button 
-                className="button"
+                className="button button-success"
                 onClick={() => selectFolderFromBrowser(folderBrowserPath)}
                 disabled={!folderBrowserPath}
-                style={{ backgroundColor: '#28a745' }}
               >
                 <Check size={14} style={{ marginRight: '0.35rem' }} />
                 Select This Folder
