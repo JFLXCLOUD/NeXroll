@@ -3869,3 +3869,61 @@ body.dark .nx-chip.warn {
     z-index: 899;
   }
 }
+
+/* ============================================================
+   NeXroll v2 — Page styling tuned for the sidebar shell (Phase 3B)
+   ============================================================ */
+
+/* The page content sits in a flex column next to the sidebar. Give it real
+   breathing room and left-align it with a comfortable cap, instead of the old
+   centered-in-a-huge-area behavior the top-bar layout used. */
+.nx-content .dashboard {
+  max-width: 1500px;
+  margin: 0;            /* left-aligned within the content column */
+  padding: 1.5rem 1.75rem 3rem;
+  width: 100%;
+}
+
+/* Page header: more compact than the old 2rem standalone title, with a quiet
+   divider so each page reads as its own section under the sidebar nav. */
+.nx-content .header {
+  font-size: 1.6rem;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  margin: 0 0 0.35rem;
+  line-height: 1.2;
+}
+.nx-content .header .header-icon {
+  color: var(--button-bg);
+}
+/* The intro <p> that follows a .header gets a divider under it to band the head. */
+.nx-content .header + p {
+  padding-bottom: 1rem;
+  border-bottom: 1px solid var(--border-color);
+  margin-bottom: 1.25rem !important;
+}
+
+/* Cards: slightly larger radius + softer, flatter look to match the sidebar. */
+.nx-content .card {
+  border-radius: 12px;
+  box-shadow: 0 1px 2px var(--shadow);
+  border: 1px solid var(--border-color);
+}
+.nx-content .card h2,
+.nx-content .card h3 {
+  letter-spacing: -0.01em;
+}
+
+/* Buttons: subtle modern rounding to echo the sidebar items. */
+.nx-content .button {
+  border-radius: 8px;
+}
+
+@media (max-width: 900px) {
+  .nx-content .dashboard {
+    padding: 1rem 1rem 2.5rem;
+  }
+  .nx-content .header {
+    font-size: 1.35rem;
+  }
+}
