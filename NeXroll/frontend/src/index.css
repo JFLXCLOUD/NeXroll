@@ -3788,6 +3788,51 @@ body.dark .nx-chip.warn {
 }
 .nx-sidebar.collapsed .nx-sidebar-parent.active::before { left: 0; }
 
+/* ---- Sidebar footer: resource links + version ---- */
+.nx-sidebar-footer {
+  margin-top: auto;            /* pin to the bottom of the sidebar column */
+  padding: 0.75rem;
+  border-top: 1px solid var(--border-color);
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+.nx-sidebar-resources {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.25rem;
+  flex-wrap: wrap;
+}
+.nx-sidebar-resource {
+  --nx-resource-accent: var(--button-bg);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  border-radius: 8px;
+  color: var(--text-secondary);
+  text-decoration: none;
+  transition: background-color 0.13s ease, color 0.13s ease, transform 0.13s ease;
+}
+.nx-sidebar-resource:hover {
+  background: var(--hover-bg);
+  color: var(--nx-resource-accent);
+  transform: translateY(-1px);
+}
+.nx-sidebar-version {
+  text-align: center;
+  font-size: 0.72rem;
+  color: var(--text-muted);
+  letter-spacing: 0.02em;
+}
+
+/* Collapsed: stack the resource icons vertically, hide the version label */
+.nx-sidebar.collapsed .nx-sidebar-resources { flex-direction: column; gap: 0.1rem; }
+.nx-sidebar.collapsed .nx-sidebar-version { display: none; }
+.nx-sidebar.collapsed .nx-sidebar-footer { padding: 0.5rem 0; }
+
 /* ---- Content column ---- */
 .nx-content {
   flex: 1 1 auto;
@@ -3926,4 +3971,39 @@ body.dark .nx-chip.warn {
   .nx-content .header {
     font-size: 1.35rem;
   }
+}
+
+/* Consistent vertical rhythm between stacked cards on a page. */
+.nx-content .dashboard > .card {
+  margin-bottom: 1rem;
+}
+.nx-content .dashboard > .card:last-child {
+  margin-bottom: 0;
+}
+
+/* Themed scrollbars so dark mode feels complete (sidebar + content). */
+.nx-sidebar,
+.nx-content,
+.nx-content * {
+  scrollbar-width: thin;
+  scrollbar-color: var(--border-color) transparent;
+}
+.nx-sidebar::-webkit-scrollbar,
+.nx-content ::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+.nx-sidebar::-webkit-scrollbar-thumb,
+.nx-content ::-webkit-scrollbar-thumb {
+  background: var(--border-color);
+  border-radius: 6px;
+  border: 2px solid var(--bg-color);
+}
+.nx-sidebar::-webkit-scrollbar-thumb:hover,
+.nx-content ::-webkit-scrollbar-thumb:hover {
+  background: var(--text-muted);
+}
+.nx-sidebar::-webkit-scrollbar-track,
+.nx-content ::-webkit-scrollbar-track {
+  background: transparent;
 }

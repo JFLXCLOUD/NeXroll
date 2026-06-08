@@ -23677,11 +23677,11 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
                     <span>Storage Used:</span>
                     <strong>{nexupStorage.total_size_gb.toFixed(2)} GB / {nexupStorage.max_gb} GB</strong>
                   </div>
-                  <div style={{ 
-                    height: '10px', 
-                    backgroundColor: '#e0e0e0', 
-                    borderRadius: '5px', 
-                    overflow: 'hidden' 
+                  <div style={{
+                    height: '10px',
+                    backgroundColor: 'var(--hover-bg)',
+                    borderRadius: '5px',
+                    overflow: 'hidden'
                   }}>
                     <div style={{ 
                       height: '100%', 
@@ -32838,6 +32838,7 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
         mobileOpen={mobileMenuOpen}
         onCloseMobile={() => setMobileMenuOpen(false)}
         darkMode={darkMode}
+        version={systemVersion?.api_version}
       />
       <div className="nx-content">
         {/* Slim top bar: mobile menu toggle + status/theme/user cluster */}
@@ -34324,9 +34325,11 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
          zIndex: 9999
        }}>
          <div style={{
-           backgroundColor: 'white',
+           backgroundColor: 'var(--card-bg)',
+           color: 'var(--text-color)',
            padding: '20px',
-           borderRadius: '8px',
+           borderRadius: '12px',
+           border: '1px solid var(--border-color)',
            maxWidth: '80%',
            maxHeight: '80%'
          }}>
@@ -34922,74 +34925,7 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
        </Modal>
      )}
 
-     <footer
-        className="nx-footer"
-        aria-label="Site footer"
-        style={{
-          marginTop: '1rem',
-          padding: '0.75rem 0.5rem',
-          borderTop: '1px solid var(--border-color, #e0e0e0)',
-          color: 'var(--text-secondary, #666)'
-        }}
-      >
-        <div
-          className="nx-footer-inner"
-          style={{
-            maxWidth: '1200px',
-            margin: '0 auto',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'space-between',
-            gap: '0.75rem',
-            flexWrap: 'wrap'
-          }}
-        >
-          <div className="nx-footer-left" style={{ fontSize: '0.85rem', color: 'var(--text-muted, #888)' }}>
-            NeXroll {systemVersion?.api_version ? `v${systemVersion.api_version}` : ''}
-          </div>
-          <div className="nx-footer-links" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-            <a
-              href="https://github.com/JFLXCLOUD/NeXroll"
-              target="_blank"
-              rel="noopener noreferrer"
-              title="GitHub repository"
-              style={{ color: 'var(--text-secondary, #666)', textDecoration: 'none' }}
-            >
-              GitHub
-            </a>
-            <span className="nx-footer-sep" aria-hidden="true" style={{ color: 'var(--text-muted, #999)' }}>•</span>
-            <a
-              href="https://discord.gg/R9eH7TbxEk"
-              target="_blank"
-              rel="noopener noreferrer"
-              title="Join our Discord server"
-              style={{ color: 'var(--text-secondary, #666)', textDecoration: 'none' }}
-            >
-              Discord
-            </a>
-            <span className="nx-footer-sep" aria-hidden="true" style={{ color: 'var(--text-muted, #999)' }}>•</span>
-            <a
-              href="https://ko-fi.com/j_b__"
-              target="_blank"
-              rel="noopener noreferrer"
-              title="Support on Ko‑fi"
-              style={{ color: 'var(--text-secondary, #666)', textDecoration: 'none' }}
-            >
-              Ko‑fi
-            </a>
-            <span className="nx-footer-sep" aria-hidden="true" style={{ color: 'var(--text-muted, #999)' }}>•</span>
-            <a
-              href="https://www.reddit.com/r/NeXroll/"
-              target="_blank"
-              rel="noopener noreferrer"
-              title="Join our subreddit"
-              style={{ color: 'var(--text-secondary, #666)', textDecoration: 'none' }}
-            >
-              Reddit
-            </a>
-          </div>
-        </div>
-      </footer>
+      {/* Page footer removed in v2 — resource links + version now live in the sidebar footer. */}
 
       {/* Edit Schedule Modal - Available Globally */}
       {editingSchedule && (

@@ -4,6 +4,7 @@ import {
   Calendar, Plus, CalendarDays, BookOpen, GitCompare,
   Library, Sparkles, Link as LinkIcon, ClipboardList, Settings,
   Globe, ArrowRight, HardDrive, Key, FileText, Users, Download, Info, FolderTree,
+  Github, Heart,
   ChevronDown, ChevronRight, PanelLeftClose, PanelLeftOpen, X
 } from 'lucide-react';
 
@@ -111,6 +112,26 @@ const NAV = [
   },
 ];
 
+// Brand glyphs lucide doesn't ship. Sized/colored via currentColor to match
+// the lucide icons in the footer row.
+const DiscordIcon = ({ size = 18 }) => (
+  <svg width={size} height={size} viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+    <path d="M20.317 4.369A19.79 19.79 0 0 0 15.885 3c-.196.35-.423.82-.58 1.193a18.27 18.27 0 0 0-5.61 0A12.6 12.6 0 0 0 9.11 3a19.74 19.74 0 0 0-4.432 1.369C1.86 8.59 1.094 12.7 1.476 16.752a19.9 19.9 0 0 0 6.073 3.078c.49-.669.927-1.38 1.302-2.126a12.9 12.9 0 0 1-2.05-.984c.172-.127.34-.26.502-.397a14.2 14.2 0 0 0 12.196 0c.164.14.332.27.502.397-.654.388-1.343.72-2.052.985.375.745.81 1.456 1.3 2.125a19.86 19.86 0 0 0 6.075-3.078c.448-4.694-.766-8.767-3.207-12.383ZM8.02 14.331c-1.183 0-2.157-1.085-2.157-2.42 0-1.334.955-2.42 2.157-2.42 1.21 0 2.176 1.095 2.157 2.42 0 1.335-.955 2.42-2.157 2.42Zm7.96 0c-1.183 0-2.157-1.085-2.157-2.42 0-1.334.955-2.42 2.157-2.42 1.21 0 2.176 1.095 2.157 2.42 0 1.335-.946 2.42-2.157 2.42Z" />
+  </svg>
+);
+const RedditIcon = ({ size = 18 }) => (
+  <svg width={size} height={size} viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+    <path d="M12 0a12 12 0 1 0 0 24 12 12 0 0 0 0-24Zm5.01 12.74c.06.22.09.45.09.68 0 2.32-2.7 4.2-6.03 4.2-3.34 0-6.04-1.88-6.04-4.2 0-.24.03-.47.09-.69a1.32 1.32 0 0 1 .51-2.55c.36 0 .68.14.92.37a6.6 6.6 0 0 1 3.6-1.14l.69-3.23a.27.27 0 0 1 .32-.21l2.27.48a.94.94 0 1 1-.12.5l-2-.42-.62 2.91a6.6 6.6 0 0 1 3.55 1.14c.24-.23.56-.37.92-.37a1.32 1.32 0 0 1 .51 2.55Zm-7.62.96a.94.94 0 1 0 1.32-1.34.94.94 0 0 0-1.32 1.34Zm5.46.55a3.5 3.5 0 0 1-2.85 1c-1.27 0-2.3-.38-2.85-1a.27.27 0 0 0-.38.38c.7.7 1.9 1.13 3.23 1.13 1.33 0 2.53-.43 3.23-1.13a.27.27 0 0 0-.38-.38Zm-.08-1.5a.94.94 0 1 0 1.32 1.34.94.94 0 0 0-1.32-1.34Z" />
+  </svg>
+);
+
+const RESOURCE_LINKS = [
+  { key: 'github', label: 'GitHub', href: 'https://github.com/JFLXCLOUD/NeXroll', Icon: Github },
+  { key: 'discord', label: 'Discord', href: 'https://discord.gg/R9eH7TbxEk', Icon: DiscordIcon },
+  { key: 'reddit', label: 'Reddit', href: 'https://www.reddit.com/r/NeXroll/', Icon: RedditIcon },
+  { key: 'kofi', label: 'Support on Ko-fi', href: 'https://ko-fi.com/j_b__', Icon: Heart, accent: '#ff5e5b' },
+];
+
 function Sidebar({
   activeTab,
   setActiveTab,
@@ -119,6 +140,7 @@ function Sidebar({
   mobileOpen,
   onCloseMobile,
   darkMode,
+  version,
 }) {
   // Which top-level section is currently active (for auto-expanding its tree).
   const activeSectionId = useMemo(() => {
@@ -228,6 +250,31 @@ function Sidebar({
             );
           })}
         </nav>
+
+        {/* Footer: resource links (icon-only) + version */}
+        <div className="nx-sidebar-footer">
+          <div className="nx-sidebar-resources">
+            {RESOURCE_LINKS.map(({ key, label, href, Icon, accent }) => (
+              <a
+                key={key}
+                href={href}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="nx-sidebar-resource"
+                title={label}
+                aria-label={label}
+                style={accent ? { '--nx-resource-accent': accent } : undefined}
+              >
+                <Icon size={18} />
+              </a>
+            ))}
+          </div>
+          {version && (
+            <div className="nx-sidebar-version" title={`NeXroll v${version}`}>
+              v{version}
+            </div>
+          )}
+        </div>
       </aside>
     </>
   );
