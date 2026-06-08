@@ -32843,6 +32843,7 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
       <div className="nx-content">
         {/* Slim top bar: mobile menu toggle + status/theme/user cluster */}
         <div className="nx-topbar">
+          <div className="nx-topbar-inner">
           <button
             className="nx-mobile-menu-toggle"
             onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
@@ -32923,6 +32924,7 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
               </button>
             </div>
           )}
+          </div>
         </div>
       </div>
 

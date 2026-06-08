@@ -3612,6 +3612,10 @@ body.dark .nx-chip.warn {
   --nx-sidebar-w: 256px;
   --nx-sidebar-w-collapsed: 64px;
   --nx-topbar-h: 56px;
+  /* Shared page frame: the topbar inner content and the page body use the same
+     max-width and horizontal padding so everything lines up vertically. */
+  --nx-page-max: 1320px;
+  --nx-page-pad-x: 1.75rem;
 }
 
 /* Shell wraps the sidebar + content column side-by-side */
@@ -3847,18 +3851,28 @@ body.dark .nx-chip.warn {
   flex-direction: column;
   background-color: var(--bg-color);
 }
-/* Slim top bar inside content (status, theme, user, logout) */
+/* Slim top bar inside content (status, theme, user, logout). The bar itself is
+   full-width (so its bottom border spans the column), but its inner content
+   shares the exact same frame as the page content below — same max-width, same
+   side padding, centered — so the right-aligned controls line up with the
+   content's right edge instead of floating out at the viewport edge. */
 .nx-topbar {
   position: sticky;
   top: 0;
   z-index: 850;
   min-height: var(--nx-topbar-h);
   display: flex;
-  align-items: center;
-  gap: 0.75rem;
-  padding: 0 1rem;
   background-color: var(--bg-color);
   border-bottom: 1px solid var(--border-color);
+}
+.nx-topbar-inner {
+  width: 100%;
+  max-width: var(--nx-page-max);
+  margin: 0 auto;
+  padding: 0 var(--nx-page-pad-x);
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
 }
 .nx-topbar-spacer { flex: 1 1 auto; }
 .nx-mobile-menu-toggle {
@@ -3926,13 +3940,13 @@ body.dark .nx-chip.warn {
    NeXroll v2 — Page styling tuned for the sidebar shell (Phase 3B)
    ============================================================ */
 
-/* The page content sits in a flex column next to the sidebar. Give it real
-   breathing room and left-align it with a comfortable cap, instead of the old
-   centered-in-a-huge-area behavior the top-bar layout used. */
+/* The page content shares the same horizontal frame as the topbar (same
+   max-width + side padding), centered within the content column so it reads as
+   a balanced page rather than being jammed against the sidebar. */
 .nx-content .dashboard {
-  max-width: 1500px;
-  margin: 0;            /* left-aligned within the content column */
-  padding: 1.5rem 1.75rem 3rem;
+  max-width: var(--nx-page-max);
+  margin: 0 auto;
+  padding: 1.5rem var(--nx-page-pad-x) 3rem;
   width: 100%;
 }
 
@@ -3972,8 +3986,12 @@ body.dark .nx-chip.warn {
 }
 
 @media (max-width: 900px) {
+  :root {
+    --nx-page-pad-x: 1rem;
+  }
   .nx-content .dashboard {
-    padding: 1rem 1rem 2.5rem;
+    padding-top: 1rem;
+    padding-bottom: 2.5rem;
   }
   .nx-content .header {
     font-size: 1.35rem;
