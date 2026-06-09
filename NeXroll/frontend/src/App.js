@@ -7637,77 +7637,6 @@ const DashboardTiles = {
         )
       )}
 
-      {/* Update Available Notification Card */}
-      {updateInfo && showUpdateBanner && (
-        <div className="card" style={{
-          marginBottom: '1rem',
-          background: 'linear-gradient(135deg, rgba(40, 167, 69, 0.15) 0%, rgba(40, 167, 69, 0.05) 100%)',
-          border: '1px solid rgba(40, 167, 69, 0.4)',
-        }}>
-          <div style={{ 
-            display: 'flex', 
-            alignItems: 'center', 
-            justifyContent: 'space-between',
-            flexWrap: 'wrap',
-            gap: '1rem'
-          }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
-              <div style={{
-                width: '48px',
-                height: '48px',
-                borderRadius: '12px',
-                backgroundColor: 'rgba(40, 167, 69, 0.2)',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center'
-              }}>
-                <Download size={24} style={{ color: '#28a745' }} />
-              </div>
-              <div>
-                <h3 style={{ margin: 0, marginBottom: '0.25rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                  Update Available
-                  {updateInfo.prerelease && (
-                    <span style={{ 
-                      fontSize: '0.7rem', 
-                      padding: '2px 6px', 
-                      borderRadius: '4px', 
-                      backgroundColor: 'rgba(255, 193, 7, 0.2)', 
-                      color: '#ffc107' 
-                    }}>
-                      Pre-release
-                    </span>
-                  )}
-                </h3>
-                <div style={{ fontSize: '0.9rem', color: 'var(--text-secondary)' }}>
-                  <strong>v{updateInfo.version}</strong> is available (current: v{systemVersion?.api_version || 'unknown'})
-                </div>
-                {updateInfo.name && updateInfo.name !== `v${updateInfo.version}` && (
-                  <div style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginTop: '0.25rem' }}>
-                    {updateInfo.name}
-                  </div>
-                )}
-              </div>
-            </div>
-            <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
-              <a 
-                href={updateInfo.url}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="button"
-                style={{ textDecoration: 'none', backgroundColor: '#28a745' }}
-              >
-                <Download size={14} style={{ marginRight: '0.35rem' }} /> View Release
-              </a>
-              <button 
-                onClick={handleDismissUpdate}
-                className="button button-secondary"
-              >
-                <X size={14} style={{ marginRight: '0.35rem' }} /> Dismiss
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
  
       <div className="card nx-dashboard-controls" style={{ marginBottom: '10px' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem', flexWrap: 'wrap' }}>
@@ -31818,6 +31747,7 @@ const DashboardTiles = {
         onCloseMobile={() => setMobileMenuOpen(false)}
         darkMode={darkMode}
         version={systemVersion?.api_version}
+        update={showUpdateBanner && updateInfo ? updateInfo : null}
       />
       <div className="nx-content">
         {/* Slim top bar: mobile menu toggle + status/theme/user cluster */}
@@ -31884,46 +31814,8 @@ const DashboardTiles = {
         </div>
       </div>
 
-      {showUpdateBanner && updateInfo && (
-        <div
-          className="nx-update-banner"
-          style={{
-            backgroundColor: 'var(--card-bg)',
-            border: '1px solid var(--border-color)',
-            padding: '0.5rem 0.75rem',
-            borderRadius: '0.375rem',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'space-between',
-            gap: '0.5rem',
-            margin: '0.5rem 0'
-          }}
-        >
-          <div style={{ fontSize: '0.9rem', color: 'var(--text-color)' }}>
-            New release available: <strong>v{updateInfo.version}</strong>
-            <a
-              href={updateInfo.url}
-              target="_blank"
-              rel="noopener noreferrer"
-              style={{ marginLeft: '0.5rem', textDecoration: 'underline' }}
-              title="View the latest release on GitHub"
-            >
-              View on GitHub
-            </a>
-          </div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-            <button
-              type="button"
-              className="button-secondary"
-              onClick={handleDismissUpdate}
-              style={{ fontSize: '0.8rem' }}
-              title="Dismiss update notice"
-            >
-              Dismiss
-            </button>
-          </div>
-        </div>
-      )}
+      {/* v2: update availability is surfaced by the sidebar footer pill (see Sidebar),
+          so the old top-of-content update banner has been removed. */}
 
       {/* Install banner hidden for now - functionality preserved for future use */}
       {false && showInstallPrompt && !isInstalled && (

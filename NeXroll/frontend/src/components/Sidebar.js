@@ -5,7 +5,7 @@ import {
   Library, Sparkles, Link as LinkIcon, ClipboardList, Settings,
   Globe, ArrowRight, HardDrive, Key, FileText, Users, Download, Info, FolderTree,
   Github, Heart,
-  ChevronDown, ChevronRight, PanelLeftClose, PanelLeftOpen, X, Search, CornerDownLeft
+  ChevronDown, ChevronRight, PanelLeftClose, PanelLeftOpen, X, Search, CornerDownLeft, ArrowUpCircle
 } from 'lucide-react';
 
 /**
@@ -225,6 +225,7 @@ function Sidebar({
   onCloseMobile,
   darkMode,
   version,
+  update,
 }) {
   // Which top-level section is currently active (for auto-expanding its tree).
   const activeSectionId = useMemo(() => {
@@ -428,8 +429,38 @@ function Sidebar({
           })}
         </nav>
 
-        {/* Footer: resource links (icon-only) + version */}
+        {/* Footer: update pill (when available) + resource links + version */}
         <div className="nx-sidebar-footer">
+          {update && update.version && (
+            collapsed ? (
+              <a
+                href={update.url || 'https://github.com/JFLXCLOUD/NeXroll/releases/latest'}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="nx-sidebar-update-icon"
+                title={`Update available: v${update.version}`}
+                aria-label={`Update available: version ${update.version}`}
+              >
+                <ArrowUpCircle size={18} />
+              </a>
+            ) : (
+              <a
+                href={update.url || 'https://github.com/JFLXCLOUD/NeXroll/releases/latest'}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="nx-sidebar-update"
+                title={`A new release is available — v${update.version}. Click to view on GitHub.`}
+              >
+                <ArrowUpCircle size={16} className="nx-sidebar-update-icon-inline" />
+                <span className="nx-sidebar-update-text">
+                  <span className="nx-sidebar-update-lead">Update available</span>
+                  <span className="nx-sidebar-update-ver">
+                    v{update.version}{update.prerelease ? ' (beta)' : ''}
+                  </span>
+                </span>
+              </a>
+            )
+          )}
           <div className="nx-sidebar-resources">
             {RESOURCE_LINKS.map(({ key, label, href, Icon, accent }) => (
               <a

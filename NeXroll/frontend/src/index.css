@@ -4180,6 +4180,53 @@ body.dark .nx-chip.warn {
   letter-spacing: 0.02em;
 }
 
+/* Update-available pill (expanded sidebar) */
+.nx-sidebar-update {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  text-decoration: none;
+  padding: 0.5rem 0.6rem;
+  border-radius: 9px;
+  border: 1px solid color-mix(in srgb, var(--success-color) 45%, transparent);
+  background: color-mix(in srgb, var(--success-color) 12%, transparent);
+  color: var(--success-color);
+  transition: background-color 0.13s ease, transform 0.13s ease;
+}
+.nx-sidebar-update:hover {
+  background: color-mix(in srgb, var(--success-color) 18%, transparent);
+  transform: translateY(-1px);
+}
+.nx-sidebar-update-icon-inline { flex: 0 0 auto; }
+.nx-sidebar-update-text { display: flex; flex-direction: column; line-height: 1.2; min-width: 0; }
+.nx-sidebar-update-lead { font-size: 0.78rem; font-weight: 700; }
+.nx-sidebar-update-ver {
+  font-size: 0.72rem;
+  color: var(--text-secondary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Update icon (collapsed sidebar) */
+.nx-sidebar-update-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  margin: 0 auto;
+  border-radius: 8px;
+  color: var(--success-color);
+  background: color-mix(in srgb, var(--success-color) 14%, transparent);
+  text-decoration: none;
+  animation: nx-update-pulse 2.4s ease-in-out infinite;
+}
+@keyframes nx-update-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--success-color) 45%, transparent); }
+  50% { box-shadow: 0 0 0 4px transparent; }
+}
+
 /* Collapsed: stack the resource icons vertically, hide the version label */
 .nx-sidebar.collapsed .nx-sidebar-resources { flex-direction: column; gap: 0.1rem; }
 .nx-sidebar.collapsed .nx-sidebar-version { display: none; }
