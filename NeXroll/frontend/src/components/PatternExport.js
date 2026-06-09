@@ -332,38 +332,12 @@ const PatternExport = ({ isOpen, onClose, scheduleId, scheduleName }) => {
         )}
 
         {/* Action Buttons */}
-        <div style={{ display: 'flex', gap: '1rem', justifyContent: 'flex-end' }}>
-          <button
-            onClick={onClose}
-            disabled={isExporting}
-            style={{
-              padding: '0.75rem 1.5rem',
-              backgroundColor: 'transparent',
-              color: 'var(--text-color)',
-              border: '2px solid var(--border-color)',
-              borderRadius: '0.5rem',
-              cursor: isExporting ? 'not-allowed' : 'pointer',
-              fontSize: '1rem',
-              opacity: isExporting ? 0.5 : 1,
-            }}
-          >
+        <div style={{ display: 'flex', gap: '0.75rem', justifyContent: 'flex-end' }}>
+          <button onClick={onClose} disabled={isExporting} className="button button-secondary">
             Cancel
           </button>
-          <button
-            onClick={handleExport}
-            disabled={isExporting}
-            style={{
-              padding: '0.75rem 1.5rem',
-              backgroundColor: isExporting ? '#9ca3af' : '#667eea',
-              color: 'white',
-              border: 'none',
-              borderRadius: '0.5rem',
-              cursor: isExporting ? 'not-allowed' : 'pointer',
-              fontSize: '1rem',
-              fontWeight: 'bold',
-            }}
-          >
-                        {isExporting ? <><Loader2 size={16} className="spin" /> Exporting...</> : <><Upload size={16} /> Export Pattern</>}
+          <button onClick={handleExport} disabled={isExporting} className="button">
+            {isExporting ? <><Loader2 size={16} className="spin" /> Exporting…</> : <><Upload size={16} /> Export Pattern</>}
           </button>
         </div>
 
