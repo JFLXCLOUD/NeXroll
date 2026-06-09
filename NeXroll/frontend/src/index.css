@@ -4539,6 +4539,12 @@ body.dark .nx-chip.warn {
   outline: 2px solid var(--accent-color);
   outline-offset: -2px;
 }
+/* Search result rows have their own .active highlight (driven by keyboard
+   navigation), so the focus-visible accent ring is redundant — suppress it. */
+.nx-sidebar-search-item:focus,
+.nx-sidebar-search-item:focus-visible {
+  outline: none;
+}
 
 /* Topbar icon/utility buttons: lighter than primary .button so the bar reads as
    a quiet utility strip. */
