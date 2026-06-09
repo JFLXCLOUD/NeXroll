@@ -25426,18 +25426,12 @@ const DashboardTiles = {
     <>
     <div className="card">
       {/* Theme Settings */}
-      <div style={{ 
-        padding: '1rem', 
-        backgroundColor: 'var(--bg-color)', 
-        borderRadius: '8px',
-        border: '1px solid var(--border-color)',
-        marginBottom: '1rem'
-      }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.5rem' }}>
+      <div className="nx-setting-row">
+        <div className="nx-setting-row-head">
           {darkMode ? <Moon size={16} style={{ color: '#a78bfa' }} /> : <Sun size={16} style={{ color: '#fbbf24' }} />}
-          <h3 style={{ margin: 0, fontSize: '1rem' }}>Theme</h3>
+          <h3>Theme</h3>
         </div>
-        <p style={{ marginBottom: '0.75rem', color: 'var(--text-secondary)', fontSize: '0.85rem' }}>
+        <p className="nx-setting-row-desc">
           Choose between light and dark themes for the interface.
         </p>
         <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
@@ -25456,18 +25450,12 @@ const DashboardTiles = {
       </div>
 
       {/* Timezone Settings */}
-      <div style={{ 
-        padding: '1rem', 
-        backgroundColor: 'var(--bg-color)', 
-        borderRadius: '8px',
-        border: '1px solid var(--border-color)',
-        marginBottom: '1rem'
-      }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.5rem' }}>
+      <div className="nx-setting-row">
+        <div className="nx-setting-row-head">
           <Globe size={16} style={{ color: '#00d4ff' }} />
-          <h3 style={{ margin: 0, fontSize: '1rem' }}>Timezone</h3>
+          <h3>Timezone</h3>
         </div>
-        <p style={{ marginBottom: '0.75rem', color: 'var(--text-secondary)', fontSize: '0.85rem' }}>
+        <p className="nx-setting-row-desc">
           Set your timezone to ensure schedules run at the correct local time.
         </p>
         <div style={{ maxWidth: '400px' }}>
@@ -25500,18 +25488,12 @@ const DashboardTiles = {
       </div>
 
       {/* Confirmation Dialogs */}
-      <div style={{ 
-        padding: '1rem', 
-        backgroundColor: 'var(--bg-color)', 
-        borderRadius: '8px',
-        border: '1px solid var(--border-color)',
-        marginBottom: '1rem'
-      }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.5rem' }}>
+      <div className="nx-setting-row">
+        <div className="nx-setting-row-head">
           <AlertCircle size={16} style={{ color: '#f59e0b' }} />
-          <h3 style={{ margin: 0, fontSize: '1rem' }}>Confirmation Dialogs</h3>
+          <h3>Confirmation Dialogs</h3>
         </div>
-        <p style={{ marginBottom: '0.75rem', color: 'var(--text-secondary)', fontSize: '0.85rem' }}>
+        <p className="nx-setting-row-desc">
           Control whether you see confirmation prompts before deleting items.
         </p>
         <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
@@ -25530,18 +25512,12 @@ const DashboardTiles = {
       </div>
 
       {/* Notification Preferences */}
-      <div style={{ 
-        padding: '1rem', 
-        backgroundColor: 'var(--bg-color)', 
-        borderRadius: '8px',
-        border: '1px solid var(--border-color)',
-        marginBottom: '1rem'
-      }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.5rem' }}>
+      <div className="nx-setting-row">
+        <div className="nx-setting-row-head">
           <Bell size={16} style={{ color: '#22c55e' }} />
-          <h3 style={{ margin: 0, fontSize: '1rem' }}>Notifications</h3>
+          <h3>Notifications</h3>
         </div>
-        <p style={{ marginBottom: '0.75rem', color: 'var(--text-secondary)', fontSize: '0.85rem' }}>
+        <p className="nx-setting-row-desc">
           Control success and informational alert notifications.
         </p>
         <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
@@ -25572,16 +25548,10 @@ const DashboardTiles = {
       </h2>
 
       {/* Verbose Logging */}
-      <div style={{ 
-        padding: '1rem', 
-        backgroundColor: 'var(--bg-color)', 
-        borderRadius: '8px',
-        border: '1px solid var(--border-color)',
-        marginBottom: '1rem'
-      }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.5rem' }}>
+      <div className="nx-setting-row">
+        <div className="nx-setting-row-head">
           <Terminal size={16} style={{ color: '#a78bfa' }} />
-          <h3 style={{ margin: 0, fontSize: '1rem' }}>Verbose Logging</h3>
+          <h3>Verbose Logging</h3>
           <span style={{ 
             fontSize: '0.65rem', 
             padding: '0.15rem 0.4rem', 
@@ -25593,7 +25563,7 @@ const DashboardTiles = {
             BETA
           </span>
         </div>
-        <p style={{ marginBottom: '0.75rem', color: 'var(--text-secondary)', fontSize: '0.85rem' }}>
+        <p className="nx-setting-row-desc">
           Enable verbose logging to see detailed debug information in the console and logs.
         </p>
         <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
@@ -25620,18 +25590,12 @@ const DashboardTiles = {
       </div>
 
       {/* Coexistence Mode (Passive Mode) */}
-      <div style={{ 
-        padding: '1rem', 
-        backgroundColor: 'var(--bg-color)', 
-        borderRadius: '8px',
-        border: '1px solid var(--border-color)',
-        marginBottom: '1rem'
-      }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.5rem' }}>
+      <div className="nx-setting-row">
+        <div className="nx-setting-row-head">
           <Users size={16} style={{ color: '#3b82f6' }} />
-          <h3 style={{ margin: 0, fontSize: '1rem' }}>Coexistence Mode</h3>
+          <h3>Coexistence Mode</h3>
         </div>
-        <p style={{ marginBottom: '0.75rem', color: 'var(--text-secondary)', fontSize: '0.85rem' }}>
+        <p className="nx-setting-row-desc">
           Enable if you use another preroll manager alongside NeXroll. NeXroll will only manage prerolls during active schedules.
         </p>
         <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
@@ -25665,18 +25629,12 @@ const DashboardTiles = {
       </div>
 
       {/* Clear When Inactive */}
-      <div style={{ 
-        padding: '1rem', 
-        backgroundColor: 'var(--bg-color)', 
-        borderRadius: '8px',
-        border: '1px solid var(--border-color)',
-        marginBottom: '1rem'
-      }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.5rem' }}>
+      <div className="nx-setting-row">
+        <div className="nx-setting-row-head">
           <XCircle size={16} style={{ color: '#ef4444' }} />
-          <h3 style={{ margin: 0, fontSize: '1rem' }}>Clear Prerolls When Inactive</h3>
+          <h3>Clear Prerolls When Inactive</h3>
         </div>
-        <p style={{ marginBottom: '0.75rem', color: 'var(--text-secondary)', fontSize: '0.85rem' }}>
+        <p className="nx-setting-row-desc">
           Clear the Plex preroll field when no schedules are active. No prerolls will play outside scheduled times.
         </p>
         <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
@@ -25723,12 +25681,7 @@ const DashboardTiles = {
         When no schedules are active, NeXroll can apply a filler category, sequence, or Coming Soon content to fill gaps in your calendar.
       </p>
 
-      <div style={{ 
-        padding: '1rem', 
-        backgroundColor: 'var(--bg-color)', 
-        borderRadius: '8px',
-        border: '1px solid var(--border-color)'
-      }}>
+      <div className="nx-setting-row">
         <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.75rem' }}>
           <label className="nx-rockerswitch">
             <input
@@ -25892,13 +25845,7 @@ const DashboardTiles = {
       </p>
 
       {/* Mappings List */}
-      <div style={{
-        padding: '1rem',
-        backgroundColor: 'var(--bg-color)',
-        borderRadius: '8px',
-        border: '1px solid var(--border-color)',
-        marginBottom: '1rem'
-      }}>
+      <div className="nx-setting-row">
         <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '1rem' }}>
           <Layers size={16} style={{ color: '#00d4ff' }} />
           <span style={{ fontWeight: 600, color: 'var(--text-color)' }}>Path Translation Rules</span>
@@ -26010,12 +25957,7 @@ const DashboardTiles = {
         Paste one or more local/UNC paths below to preview their translated Plex paths.
       </p>
 
-      <div style={{
-        padding: '1rem',
-        backgroundColor: 'var(--bg-color)',
-        borderRadius: '8px',
-        border: '1px solid var(--border-color)'
-      }}>
+      <div className="nx-setting-row">
         <textarea
           rows="4"
           className="input"
@@ -26130,7 +26072,7 @@ const DashboardTiles = {
         }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.75rem' }}>
             <Database size={18} style={{ color: '#3b82f6' }} />
-            <h3 style={{ margin: 0, fontSize: '1rem' }}>Database Backup</h3>
+            <h3>Database Backup</h3>
           </div>
           <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginBottom: '1rem', flex: 1 }}>
             Export all schedules, categories, preroll metadata, sequences, and settings to a portable JSON file.
@@ -26156,7 +26098,7 @@ const DashboardTiles = {
         }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.75rem' }}>
             <HardDrive size={18} style={{ color: '#22c55e' }} />
-            <h3 style={{ margin: 0, fontSize: '1rem' }}>System & Files Backup</h3>
+            <h3>System & Files Backup</h3>
           </div>
           <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginBottom: '0.5rem' }}>
             Comprehensive backup including:
@@ -26188,7 +26130,7 @@ const DashboardTiles = {
       }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.75rem' }}>
           <RotateCw size={18} style={{ color: '#f59e0b' }} />
-          <h3 style={{ margin: 0, fontSize: '1rem' }}>Restore from Backup</h3>
+          <h3>Restore from Backup</h3>
         </div>
         <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginBottom: '1rem' }}>
           Select a backup file to restore. Use <strong>.json</strong> files for database-only restore, or <strong>.zip</strong> files for full system restore.
@@ -26280,7 +26222,7 @@ const DashboardTiles = {
       }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.75rem' }}>
           <RefreshCw size={18} style={{ color: '#22c55e' }} />
-          <h3 style={{ margin: 0, fontSize: '1rem' }}>Rescan Preroll Files</h3>
+          <h3>Rescan Preroll Files</h3>
         </div>
         <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginBottom: '0.5rem' }}>
           Walks the preroll storage folder and reconciles it against the database. Use this after a migration (e.g. Windows to Docker)
@@ -27063,12 +27005,7 @@ const DashboardTiles = {
           </h2>
           
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '1rem' }}>
-            <div style={{ 
-              padding: '1rem', 
-              backgroundColor: 'var(--bg-color)', 
-              borderRadius: '8px',
-              border: '1px solid var(--border-color)'
-            }}>
+            <div className="nx-setting-row">
               <label style={{ display: 'block', marginBottom: '0.5rem', fontWeight: 600, fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
                 Minimum Log Level
               </label>
@@ -27088,12 +27025,7 @@ const DashboardTiles = {
               </p>
             </div>
             
-            <div style={{ 
-              padding: '1rem', 
-              backgroundColor: 'var(--bg-color)', 
-              borderRadius: '8px',
-              border: '1px solid var(--border-color)'
-            }}>
+            <div className="nx-setting-row">
               <label style={{ display: 'block', marginBottom: '0.5rem', fontWeight: 600, fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
                 Log Retention
               </label>
@@ -27176,9 +27108,9 @@ const DashboardTiles = {
             borderRadius: '8px',
             border: '1px solid var(--border-color)'
           }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.5rem' }}>
+            <div className="nx-setting-row-head">
               <Terminal size={16} style={{ color: '#a78bfa' }} />
-              <h3 style={{ margin: 0, fontSize: '1rem' }}>Verbose Logging</h3>
+              <h3>Verbose Logging</h3>
               <span style={{
                 fontSize: '0.65rem', padding: '0.15rem 0.4rem',
                 backgroundColor: 'rgba(139, 92, 246, 0.2)', color: '#a78bfa',
@@ -27187,7 +27119,7 @@ const DashboardTiles = {
                 BETA
               </span>
             </div>
-            <p style={{ marginBottom: '0.75rem', color: 'var(--text-secondary)', fontSize: '0.85rem' }}>
+            <p className="nx-setting-row-desc">
               Enable verbose logging to see detailed debug information in the console and logs.
             </p>
             <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
@@ -27476,12 +27408,7 @@ const DashboardTiles = {
           gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', 
           gap: '1rem' 
         }}>
-          <div style={{
-            padding: '1rem',
-            backgroundColor: 'var(--bg-color)',
-            borderRadius: '8px',
-            border: '1px solid var(--border-color)'
-          }}>
+          <div className="nx-setting-row">
             <div style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginBottom: '0.25rem' }}>
               Current User
             </div>
@@ -27489,12 +27416,7 @@ const DashboardTiles = {
               {authStatus.user?.display_name || authStatus.user?.username || 'Not logged in'}
             </div>
           </div>
-          <div style={{
-            padding: '1rem',
-            backgroundColor: 'var(--bg-color)',
-            borderRadius: '8px',
-            border: '1px solid var(--border-color)'
-          }}>
+          <div className="nx-setting-row">
             <div style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginBottom: '0.25rem' }}>
               Total Users
             </div>
@@ -27502,12 +27424,7 @@ const DashboardTiles = {
               {users.length}
             </div>
           </div>
-          <div style={{
-            padding: '1rem',
-            backgroundColor: 'var(--bg-color)',
-            borderRadius: '8px',
-            border: '1px solid var(--border-color)'
-          }}>
+          <div className="nx-setting-row">
             <div style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginBottom: '0.25rem' }}>
               Admin Users
             </div>
@@ -28477,7 +28394,7 @@ const DashboardTiles = {
           borderRadius: '8px',
           marginBottom: '1rem'
         }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.5rem' }}>
+          <div className="nx-setting-row-head">
             <FolderOpen size={16} style={{ color: 'var(--accent-color)' }} />
             <span style={{ fontWeight: '500' }}>Current Location</span>
             {prerollFolderInfo.is_custom && (
@@ -28517,11 +28434,11 @@ const DashboardTiles = {
         borderRadius: '8px',
         marginBottom: '1rem'
       }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.5rem' }}>
+        <div className="nx-setting-row-head">
           <FolderOpen size={16} style={{ color: '#f59e0b' }} />
-          <h3 style={{ margin: 0, fontSize: '1rem' }}>Change Storage Folder</h3>
+          <h3>Change Storage Folder</h3>
         </div>
-        <p style={{ marginBottom: '0.75rem', color: 'var(--text-secondary)', fontSize: '0.85rem' }}>
+        <p className="nx-setting-row-desc">
           Enter the full path to a folder where you want to store preroll files. The folder must exist and be writable.
         </p>
         <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '0.75rem' }}>
@@ -28574,11 +28491,11 @@ const DashboardTiles = {
           borderRadius: '8px',
           marginBottom: '1rem'
         }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.5rem' }}>
+          <div className="nx-setting-row-head">
             <ArrowRight size={16} style={{ color: '#22c55e' }} />
-            <h3 style={{ margin: 0, fontSize: '1rem' }}>Transfer Files</h3>
+            <h3>Transfer Files</h3>
           </div>
-          <p style={{ marginBottom: '0.75rem', color: 'var(--text-secondary)', fontSize: '0.85rem' }}>
+          <p className="nx-setting-row-desc">
             Move or copy files from the previous default location to the current custom folder. Database paths will be automatically updated.
           </p>
           {prerollFolderMoving && (
