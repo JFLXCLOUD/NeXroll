@@ -31380,73 +31380,141 @@ const DashboardTiles = {
     }
 
     // Main Community Prerolls interface
+    const activeServerMeta = communityServers.find(s => communityServerUrl === (s.baseUrl || '').replace(/\/+$/, ''));
+    const idxExists = communityIndexStatus?.exists;
+    const idxStale = communityIndexStatus?.is_stale;
     return (
-      <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
-        {/* Server Selector */}
-        <div className="card" style={{ padding: '0.75rem 1rem' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap' }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', fontSize: '0.9rem', fontWeight: 600 }}>
-              <Server size={15} /> Server
-            </div>
-            {/* Server quick-select buttons */}
-            {communityServers.filter(s => s.status === 'active').map(s => (
-              <button
-                key={s.id}
-                onClick={async () => {
-                  setCommunityServerLoading(true);
-                  setCommunityShowCustomUrl(false);
-                  try {
-                    const url = s.baseUrl.replace(/\/+$/, '');
-                    await fetch(apiUrl('community-prerolls/server-url'), {
-                      method: 'PUT',
-                      headers: { 'Content-Type': 'application/json' },
-                      body: JSON.stringify({ url })
-                    });
-                    setCommunityServerUrl(url);
-                    setCommunityServerIsCustom(true);
-                    setCommunityCustomUrlInput('');
-                  } catch (e) { console.error('Failed to set server:', e); }
-                  setCommunityServerLoading(false);
-                }}
-                disabled={communityServerLoading}
-                className={communityServerUrl === s.baseUrl.replace(/\/+$/, '') ? 'button-primary' : 'button-secondary'}
-                style={{ padding: '0.3rem 0.65rem', fontSize: '0.82rem', display: 'flex', alignItems: 'center', gap: '0.35rem' }}
-                title={`${s.name} — ${s.location?.city || ''}, ${s.location?.country || ''}`}
-              >
-                {s.location?.countryCode && (
-                  <img
-                    src={`https://flagcdn.com/16x12/${s.location.countryCode.toLowerCase()}.png`}
-                    alt={s.location.countryCode}
-                    style={{ width: 16, height: 12, borderRadius: 1 }}
-                  />
-                )}
-                {s.name}
-                {communityServerUrl === s.baseUrl.replace(/\/+$/, '') && <Check size={12} />}
-              </button>
-            ))}
-            {/* Custom URL toggle */}
-            <button
-              onClick={() => setCommunityShowCustomUrl(!communityShowCustomUrl)}
-              className={communityShowCustomUrl ? 'button-primary' : 'button-secondary'}
-              style={{ padding: '0.3rem 0.65rem', fontSize: '0.82rem' }}
-              title="Enter a custom server URL"
-            >
-              <Globe size={13} style={{ marginRight: '0.25rem' }} /> Custom
-            </button>
-            {/* Active URL indicator */}
-            <span style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', marginLeft: 'auto' }}>
-              {communityServerUrl || '—'}
-            </span>
+      <div className="nx-community" style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+        {/* Hero: community server + index status + primary actions */}
+        <div className={`nx-conn-hero${idxExists ? ' connected' : ''}`} style={{ '--brand': '#00d4ff' }}>
+          <div className={`nx-conn-hero-badge${idxExists ? '' : ' idle'}`} style={idxExists ? { background: 'var(--accent-color)', boxShadow: '0 4px 12px rgba(0, 212, 255, 0.35)' } : undefined}>
+            <Globe size={24} />
           </div>
-          {/* Custom URL input row */}
-          {communityShowCustomUrl && (
-            <div style={{ display: 'flex', gap: '0.5rem', marginTop: '0.6rem' }}>
+          <div className="nx-conn-hero-body">
+            <h2 className="nx-conn-hero-title">
+              Community Prerolls
+              {communityIndexStatus && (
+                <span className={`nx-conn-hero-state ${idxExists && !idxStale ? 'ok' : 'bad'}`}>
+                  <span className={`nx-dot ${idxExists && !idxStale ? 'ok' : 'bad'}`} aria-hidden="true" />
+                  {idxExists ? (idxStale ? 'Index stale' : 'Fast search ready') : 'No index'}
+                </span>
+              )}
+            </h2>
+            <div className="nx-conn-hero-meta" style={{ alignItems: 'center' }}>
+              <span>{activeServerMeta?.name || communityServerUrl || '—'}</span>
+              {idxExists && communityIndexStatus.total_prerolls > 0 && (
+                <span className="nx-comm-chip ok"><Library size={13} /> {communityIndexStatus.total_prerolls} indexed</span>
+              )}
+              {communityMatchedCount > 0 && (
+                <span className="nx-comm-chip link"><Link size={13} /> {communityMatchedCount} matched</span>
+              )}
+              {idxStale && (
+                <span className="nx-comm-chip stale"><AlertTriangle size={13} /> {Math.round(communityIndexStatus.age_days)}d old</span>
+              )}
+            </div>
+          </div>
+          <div className="nx-conn-hero-actions" style={{ flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+            <button
+              onClick={handleBuildIndex}
+              disabled={communityIsBuilding}
+              className="button"
+              title={idxExists ? 'Refresh index to get latest prerolls' : 'Build index for instant searches'}
+            >
+              {communityIsBuilding
+                ? <><Loader2 size={15} className="spin" /> Building…</>
+                : (idxExists ? <><RefreshCw size={15} /> Refresh Index</> : <><Zap size={15} /> Build Index</>)}
+            </button>
+            <details className="nx-conn-alt" style={{ marginBottom: 0, minWidth: '210px' }}>
+              <summary>More <ChevronRight size={15} className="nx-conn-alt-chev" /></summary>
+              <div className="nx-conn-alt-body" style={{ display: 'flex', flexDirection: 'column', gap: '0.4rem', paddingTop: '0.6rem' }}>
+                <button onClick={() => handleMatchExisting(true)} disabled={communityIsMigrating} className="button button-secondary">
+                  {communityIsMigrating ? <><Loader2 size={14} className="spin" /> Matching…</> : <><Link size={14} /> Match Existing Prerolls</>}
+                </button>
+                {idxExists && (
+                  <button onClick={handleRematchAll} disabled={communityIsMigrating} className="button button-secondary">
+                    {communityIsMigrating ? <><Loader2 size={14} className="spin" /> Rematching…</> : <><RefreshCcw size={14} /> Rematch All</>}
+                  </button>
+                )}
+                <button
+                  onClick={() => setCommunityShowCustomUrl(!communityShowCustomUrl)}
+                  className="button button-secondary"
+                >
+                  <Server size={14} /> Change Server
+                </button>
+                <button
+                  onClick={async () => {
+                    if (!communityPolicyText) {
+                      try {
+                        const policyResponse = await fetch(apiUrl('community-prerolls/fair-use-policy'));
+                        const policyData = await policyResponse.json();
+                        setCommunityPolicyText(policyData.policy);
+                      } catch (error) {
+                        console.error('Failed to fetch policy text:', error);
+                      }
+                    }
+                    setCommunityFairUseStatus({ accepted: false });
+                  }}
+                  className="button button-secondary"
+                  title="View Fair Use Policy"
+                >
+                  <FileText size={14} /> Fair Use Policy
+                </button>
+              </div>
+            </details>
+          </div>
+        </div>
+
+        {/* Server picker (toggled from the hero's "Change Server") */}
+        {communityShowCustomUrl && (
+          <div className="card">
+            <div className="nx-conn-method-lead" style={{ fontSize: '0.95rem' }}><Server size={16} /> Community Server</div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap', marginBottom: '0.75rem' }}>
+              {communityServers.filter(s => s.status === 'active').map(s => {
+                const sUrl = (s.baseUrl || '').replace(/\/+$/, '');
+                const sActive = communityServerUrl === sUrl;
+                return (
+                  <button
+                    key={s.id}
+                    onClick={async () => {
+                      setCommunityServerLoading(true);
+                      try {
+                        await fetch(apiUrl('community-prerolls/server-url'), {
+                          method: 'PUT',
+                          headers: { 'Content-Type': 'application/json' },
+                          body: JSON.stringify({ url: sUrl })
+                        });
+                        setCommunityServerUrl(sUrl);
+                        setCommunityServerIsCustom(true);
+                        setCommunityCustomUrlInput('');
+                      } catch (e) { console.error('Failed to set server:', e); }
+                      setCommunityServerLoading(false);
+                    }}
+                    disabled={communityServerLoading}
+                    className={sActive ? 'button' : 'button button-secondary'}
+                    style={{ display: 'flex', alignItems: 'center', gap: '0.35rem' }}
+                    title={`${s.name} — ${s.location?.city || ''}, ${s.location?.country || ''}`}
+                  >
+                    {s.location?.countryCode && (
+                      <img
+                        src={`https://flagcdn.com/16x12/${s.location.countryCode.toLowerCase()}.png`}
+                        alt={s.location.countryCode}
+                        style={{ width: 16, height: 12, borderRadius: 1 }}
+                      />
+                    )}
+                    {s.name}
+                    {sActive && <Check size={13} />}
+                  </button>
+                );
+              })}
+            </div>
+            <label className="nx-conn-field-label">Custom server URL</label>
+            <div style={{ display: 'flex', gap: '0.5rem' }}>
               <input
                 type="text"
                 value={communityCustomUrlInput}
                 onChange={e => setCommunityCustomUrlInput(e.target.value)}
                 placeholder="https://your-mirror.example.com"
-                style={{ flex: 1, padding: '0.35rem 0.6rem', fontSize: '0.85rem', borderRadius: 4, border: '1px solid var(--border-color)', background: 'var(--bg-secondary)', color: 'var(--text-primary)' }}
+                style={{ flex: 1 }}
               />
               <button
                 onClick={async () => {
@@ -31467,10 +31535,9 @@ const DashboardTiles = {
                   setCommunityServerLoading(false);
                 }}
                 disabled={communityServerLoading}
-                className="button-primary"
-                style={{ padding: '0.35rem 0.8rem', fontSize: '0.85rem' }}
+                className="button"
               >
-                {communityServerLoading ? <Loader2 size={14} className="spin" /> : 'Save'}
+                {communityServerLoading ? <Loader2 size={15} className="spin" /> : 'Save'}
               </button>
               {communityServerIsCustom && (
                 <button
@@ -31491,156 +31558,17 @@ const DashboardTiles = {
                     setCommunityServerLoading(false);
                   }}
                   disabled={communityServerLoading}
-                  className="button-secondary"
-                  style={{ padding: '0.35rem 0.8rem', fontSize: '0.85rem' }}
+                  className="button button-secondary"
                   title="Reset to default server"
                 >
                   Reset
                 </button>
               )}
             </div>
-          )}
-        </div>
+          </div>
+        )}
 
         <div className="card">
-          <div style={{ display: 'flex', justifyContent: 'flex-end', alignItems: 'center', marginBottom: '1rem' }}>
-            <button
-              onClick={async () => {
-                // Re-show Fair Use Policy - fetch policy text if not already loaded
-                if (!communityPolicyText) {
-                  try {
-                    const policyResponse = await fetch(apiUrl('community-prerolls/fair-use-policy'));
-                    const policyData = await policyResponse.json();
-                    setCommunityPolicyText(policyData.policy);
-                  } catch (error) {
-                    console.error('Failed to fetch policy text:', error);
-                  }
-                }
-                setCommunityFairUseStatus({ accepted: false });
-              }}
-              className="button-secondary"
-              style={{ padding: '0.4rem 0.8rem', fontSize: '0.85rem' }}
-              title="View Fair Use Policy"
-            >
-              <FileText size={14} style={{marginRight: '0.35rem'}} /> Fair Use Policy
-            </button>
-          </div>
-          
-          {/* Index Status & Build Button */}
-          {communityIndexStatus && (
-            <div style={{
-              padding: '0.75rem',
-              backgroundColor: communityIndexStatus.exists 
-                ? (communityIndexStatus.is_stale ? 'rgba(20, 184, 166, 0.1)' : 'rgba(34, 197, 94, 0.1)')
-                : 'rgba(239, 68, 68, 0.1)',
-              border: `1px solid ${communityIndexStatus.exists 
-                ? (communityIndexStatus.is_stale ? 'rgba(20, 184, 166, 0.3)' : 'rgba(34, 197, 94, 0.3)')
-                : 'rgba(239, 68, 68, 0.3)'}`,
-              borderRadius: '4px',
-              marginBottom: '1rem',
-              fontSize: '0.9rem',
-              display: 'flex',
-              justifyContent: 'space-between',
-              alignItems: 'center'
-            }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap' }}>
-                {/* Status Message */}
-                <div>
-                  {communityIndexStatus.exists ? (
-                    <>
-                      {communityIndexStatus.is_stale ? (
-                        <span><AlertTriangle size={14} style={{marginRight: '0.35rem', verticalAlign: 'middle', color: '#14B8A6'}} /> <strong>Index is stale</strong> (last updated {Math.round(communityIndexStatus.age_days)} days ago)</span>
-                      ) : (
-                        <span><Sparkles size={14} style={{marginRight: '0.35rem', verticalAlign: 'middle', color: '#10b981'}} /> <strong>Fast search enabled</strong></span>
-                      )}
-                    </>
-                  ) : (
-                    <span><Lightbulb size={14} style={{marginRight: '0.35rem', verticalAlign: 'middle', color: '#14B8A6'}} /> <strong>Build local index for instant searches</strong></span>
-                  )}
-                </div>
-                
-                {/* Indexed Prerolls Badge */}
-                {communityIndexStatus.exists && communityIndexStatus.total_prerolls > 0 && (
-                  <div style={{
-                    padding: '0.3rem 0.6rem',
-                    backgroundColor: 'rgba(34, 197, 94, 0.1)',
-                    border: '1px solid rgba(34, 197, 94, 0.3)',
-                    borderRadius: '4px',
-                    fontSize: '0.85rem',
-                    whiteSpace: 'nowrap',
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: '0.35rem'
-                  }}>
-                    <Library size={14} /> <strong>{communityIndexStatus.total_prerolls}</strong> indexed
-                  </div>
-                )}
-                
-                {/* Matched Prerolls Badge */}
-                {communityMatchedCount > 0 && (
-                  <div style={{
-                    padding: '0.3rem 0.6rem',
-                    backgroundColor: 'rgba(59, 130, 246, 0.1)',
-                    border: '1px solid rgba(59, 130, 246, 0.3)',
-                    borderRadius: '4px',
-                    fontSize: '0.85rem',
-                    whiteSpace: 'nowrap',
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: '0.35rem'
-                  }}>
-                    <Link size={14} /> <strong>{communityMatchedCount}</strong> matched
-                  </div>
-                )}
-              </div>
-              <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
-                <button
-                  onClick={handleBuildIndex}
-                  disabled={communityIsBuilding}
-                  className="button-secondary"
-                  style={{ 
-                    padding: '0.4rem 0.8rem', 
-                    fontSize: '0.85rem',
-                    whiteSpace: 'nowrap'
-                  }}
-                  title={communityIndexStatus.exists ? 'Refresh index to get latest prerolls' : 'Build index for instant searches'}
-                >
-                  {communityIsBuilding ? <><Loader2 size={14} style={{marginRight: '0.35rem'}} className="spin" /> Building...</> : (communityIndexStatus.exists ? <><RefreshCw size={14} style={{marginRight: '0.35rem'}} /> Refresh Index</> : <><Zap size={14} style={{marginRight: '0.35rem'}} /> Build Index</>)}
-                </button>
-                <button
-                  onClick={() => handleMatchExisting(true)}
-                  disabled={communityIsMigrating}
-                  className="button-secondary"
-                  style={{ 
-                    padding: '0.4rem 0.8rem', 
-                    fontSize: '0.85rem',
-                    whiteSpace: 'nowrap'
-                  }}
-                  title="Match your existing prerolls to the community library"
-                >
-                  {communityIsMigrating ? <><Loader2 size={14} style={{marginRight: '0.35rem'}} className="spin" /> Matching...</> : <><Link size={14} style={{marginRight: '0.35rem'}} /> Match Existing Prerolls</>}
-                </button>
-                {communityIndexStatus.exists && (
-                  <button
-                    onClick={handleRematchAll}
-                    disabled={communityIsMigrating}
-                    className="button-secondary"
-                    style={{ 
-                      padding: '0.4rem 0.8rem', 
-                      fontSize: '0.85rem',
-                      whiteSpace: 'nowrap',
-                      backgroundColor: darkMode ? 'rgba(20, 184, 166, 0.1)' : 'rgba(20, 184, 166, 0.15)',
-                      border: darkMode ? '1px solid rgba(20, 184, 166, 0.3)' : '1px solid rgba(20, 184, 166, 0.4)',
-                      color: darkMode ? 'rgba(20, 184, 166, 0.9)' : '#b45309'
-                    }}
-                    title="Clear all existing matches and rematch with improved algorithm"
-                  >
-                    {communityIsMigrating ? <><Loader2 size={14} style={{marginRight: '0.35rem'}} className="spin" /> Rematching...</> : <><RefreshCcw size={14} style={{marginRight: '0.35rem'}} /> Rematch All</>}
-                  </button>
-                )}
-              </div>
-            </div>
-          )}
 
           {/* Retro Progress Bar */}
           {communityBuildProgress && (
@@ -31689,181 +31617,40 @@ const DashboardTiles = {
             </div>
           )}
 
-          {/* Search Controls */}
-          <div style={{ marginBottom: '1.5rem' }}>
-            {/* Search Bar - 60% Width */}
-            <div style={{ marginBottom: '1rem', width: '60%' }}>
-              <div style={{ position: 'relative' }}>
-                <div style={{
-                  position: 'absolute',
-                  left: '14px',
-                  top: '50%',
-                  transform: 'translateY(-50%)',
-                  color: '#888',
-                  pointerEvents: 'none',
-                  zIndex: 1,
-                  display: 'flex',
-                  alignItems: 'center'
-                }}>
-                  <Search size={18} />
-                </div>
-                <input
-                  type="text"
-                  placeholder="Search for prerolls... (e.g., Halloween, Christmas, Scary, Turkey)"
-                  value={communitySearchQuery}
-                  onChange={(e) => setCommunitySearchQuery(e.target.value)}
-                  onKeyPress={(e) => e.key === 'Enter' && !communityIsSearching && handleSearch()}
-                  style={{
-                    width: '100%',
-                    padding: '16px 16px 16px 48px',
-                    border: '2px solid transparent',
-                    borderRadius: '12px',
-                    backgroundColor: 'rgba(255, 255, 255, 0.05)',
-                    color: 'var(--text-color)',
-                    fontSize: '16px',
-                    transition: 'all 0.2s ease',
-                    outline: 'none',
-                    boxShadow: '0 2px 8px rgba(0, 0, 0, 0.1)'
-                  }}
-                  onFocus={(e) => {
-                    e.target.style.borderColor = '#4f46e5';
-                    e.target.style.backgroundColor = 'rgba(255, 255, 255, 0.08)';
-                    e.target.style.boxShadow = '0 4px 12px rgba(79, 70, 229, 0.2)';
-                  }}
-                  onBlur={(e) => {
-                    e.target.style.borderColor = 'transparent';
-                    e.target.style.backgroundColor = 'rgba(255, 255, 255, 0.05)';
-                    e.target.style.boxShadow = '0 2px 8px rgba(0, 0, 0, 0.1)';
-                  }}
-                />
-              </div>
+          {/* Search toolbar */}
+          <div className="nx-comm-toolbar" style={{ marginBottom: '1.25rem' }}>
+            <div className="nx-comm-search">
+              <span className="nx-comm-search-icon"><Search size={18} /></span>
+              <input
+                type="text"
+                placeholder="Search prerolls — e.g. Halloween, Christmas, Scary, Turkey"
+                value={communitySearchQuery}
+                onChange={(e) => setCommunitySearchQuery(e.target.value)}
+                onKeyPress={(e) => e.key === 'Enter' && !communityIsSearching && handleSearch()}
+              />
             </div>
-
-            {/* Filters and Search Button Row */}
-            <div style={{
-              display: 'grid',
-              gridTemplateColumns: '1fr 1fr 200px',
-              gap: '12px',
-              alignItems: 'end'
-            }}>
-              {/* Platform Dropdown */}
-              <div>
-                <label style={{ display: 'block', marginBottom: '8px', fontWeight: '500', fontSize: '13px', color: '#aaa' }}>
-                  Platform
-                </label>
-                <select
-                  value={communitySearchPlatform}
-                  onChange={(e) => setCommunitySearchPlatform(e.target.value)}
-                  style={{
-                    width: '100%',
-                    padding: '14px',
-                    border: '2px solid transparent',
-                    borderRadius: '12px',
-                    backgroundColor: 'rgba(255, 255, 255, 0.05)',
-                    color: 'var(--text-color)',
-                    fontSize: '15px',
-                    cursor: 'pointer',
-                    outline: 'none',
-                    boxShadow: '0 2px 8px rgba(0, 0, 0, 0.1)',
-                    transition: 'all 0.2s ease'
-                  }}
-                  onFocus={(e) => {
-                    e.target.style.borderColor = '#4f46e5';
-                    e.target.style.backgroundColor = 'rgba(255, 255, 255, 0.08)';
-                    e.target.style.boxShadow = '0 4px 12px rgba(79, 70, 229, 0.2)';
-                  }}
-                  onBlur={(e) => {
-                    e.target.style.borderColor = 'transparent';
-                    e.target.style.backgroundColor = 'rgba(255, 255, 255, 0.05)';
-                    e.target.style.boxShadow = '0 2px 8px rgba(0, 0, 0, 0.1)';
-                  }}
-                >
-                  <option value="" style={{ backgroundColor: '#2a2a2a', color: '#ffffff' }}>All Platforms</option>
-                  <option value="plex" style={{ backgroundColor: '#2a2a2a', color: '#ffffff' }}>Plex</option>
-                  <option value="jellyfin" style={{ backgroundColor: '#2a2a2a', color: '#ffffff' }}>Jellyfin</option>
-                  <option value="emby" style={{ backgroundColor: '#2a2a2a', color: '#ffffff' }}>Emby</option>
-                </select>
-              </div>
-
-              {/* Limit Dropdown */}
-              <div>
-                <label style={{ display: 'block', marginBottom: '8px', fontWeight: '500', fontSize: '13px', color: '#aaa' }}>
-                  Results Limit
-                </label>
-                <select
-                  value={communityResultLimit}
-                  onChange={(e) => setCommunityResultLimit(Number(e.target.value))}
-                  style={{
-                    width: '100%',
-                    padding: '14px',
-                    border: '2px solid transparent',
-                    borderRadius: '12px',
-                    backgroundColor: 'rgba(255, 255, 255, 0.05)',
-                    color: 'var(--text-color)',
-                    fontSize: '15px',
-                    cursor: 'pointer',
-                    outline: 'none',
-                    boxShadow: '0 2px 8px rgba(0, 0, 0, 0.1)',
-                    transition: 'all 0.2s ease'
-                  }}
-                  onFocus={(e) => {
-                    e.target.style.borderColor = '#4f46e5';
-                    e.target.style.backgroundColor = 'rgba(255, 255, 255, 0.08)';
-                    e.target.style.boxShadow = '0 4px 12px rgba(79, 70, 229, 0.2)';
-                  }}
-                  onBlur={(e) => {
-                    e.target.style.borderColor = 'transparent';
-                    e.target.style.backgroundColor = 'rgba(255, 255, 255, 0.05)';
-                    e.target.style.boxShadow = '0 2px 8px rgba(0, 0, 0, 0.1)';
-                  }}
-                >
-                  <option value={10} style={{ backgroundColor: '#2a2a2a', color: '#ffffff' }}>10 Results</option>
-                  <option value={20} style={{ backgroundColor: '#2a2a2a', color: '#ffffff' }}>20 Results</option>
-                  <option value={50} style={{ backgroundColor: '#2a2a2a', color: '#ffffff' }}>50 Results</option>
-                  <option value={100} style={{ backgroundColor: '#2a2a2a', color: '#ffffff' }}>100 Results</option>
-                </select>
-              </div>
-
-              {/* Search Button */}
-              <button
-                onClick={handleSearch}
-                disabled={communityIsSearching}
-                style={{
-                  padding: '14px 24px',
-                  border: 'none',
-                  borderRadius: '12px',
-                  backgroundColor: '#4f46e5',
-                  color: '#ffffff',
-                  fontSize: '15px',
-                  fontWeight: '600',
-                  cursor: communityIsSearching ? 'not-allowed' : 'pointer',
-                  outline: 'none',
-                  boxShadow: '0 2px 8px rgba(79, 70, 229, 0.3)',
-                  transition: 'all 0.2s ease',
-                  opacity: communityIsSearching ? 0.6 : 1,
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  gap: '8px',
-                  height: '52px'
-                }}
-                onMouseEnter={(e) => {
-                  if (!communityIsSearching) {
-                    e.target.style.backgroundColor = '#4338ca';
-                    e.target.style.boxShadow = '0 4px 12px rgba(79, 70, 229, 0.4)';
-                    e.target.style.transform = 'translateY(-1px)';
-                  }
-                }}
-                onMouseLeave={(e) => {
-                  e.target.style.backgroundColor = '#4f46e5';
-                  e.target.style.boxShadow = '0 2px 8px rgba(79, 70, 229, 0.3)';
-                  e.target.style.transform = 'translateY(0)';
-                }}
-              >
-                {communityIsSearching ? <Loader2 size={18} className="spin" /> : <Search size={18} />}
-                <span>{communityIsSearching ? 'Searching...' : 'Search'}</span>
-              </button>
+            <div className="nx-comm-filter">
+              <label>Platform</label>
+              <select value={communitySearchPlatform} onChange={(e) => setCommunitySearchPlatform(e.target.value)}>
+                <option value="">All Platforms</option>
+                <option value="plex">Plex</option>
+                <option value="jellyfin">Jellyfin</option>
+                <option value="emby">Emby</option>
+              </select>
             </div>
+            <div className="nx-comm-filter">
+              <label>Results</label>
+              <select value={communityResultLimit} onChange={(e) => setCommunityResultLimit(Number(e.target.value))}>
+                <option value={10}>10</option>
+                <option value={20}>20</option>
+                <option value={50}>50</option>
+                <option value={100}>100</option>
+              </select>
+            </div>
+            <button onClick={handleSearch} disabled={communityIsSearching} className="button" style={{ height: '42px' }}>
+              {communityIsSearching ? <Loader2 size={16} className="spin" /> : <Search size={16} />}
+              <span>{communityIsSearching ? 'Searching…' : 'Search'}</span>
+            </button>
           </div>
 
           {/* Search progress bar */}

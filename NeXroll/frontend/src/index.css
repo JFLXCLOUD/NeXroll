@@ -4449,3 +4449,123 @@ body.dark .nx-chip.warn {
   font-size: 0.8rem;
   color: var(--text-secondary);
 }
+
+/* ============================================================
+   NeXroll v2 — Community Prerolls page
+   Reuses .nx-conn-hero for the status hero. Adds a search toolbar and
+   refined result rows. Wrap the page in .nx-community so form fields pick up
+   the shared themed styling (same rules as .nx-connect).
+   ============================================================ */
+.nx-community { --brand: var(--accent-color); }
+
+/* Themed form fields (mirror the .nx-connect treatment). */
+.nx-community input[type="text"],
+.nx-community input[type="search"],
+.nx-community input:not([type]),
+.nx-community select {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 0.6rem 0.8rem;
+  font-size: 0.95rem;
+  font-family: inherit;
+  color: var(--text-color);
+  background-color: var(--input-bg);
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  outline: none;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+.nx-community input::placeholder { color: var(--text-muted); opacity: 1; }
+.nx-community input:focus,
+.nx-community select:focus {
+  border-color: var(--button-bg);
+  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.18);
+}
+body.dark .nx-community input:focus,
+body.dark .nx-community select:focus { box-shadow: 0 0 0 3px rgba(79, 70, 229, 0.3); }
+
+/* Search toolbar */
+.nx-comm-toolbar {
+  display: flex;
+  gap: 0.6rem;
+  align-items: flex-end;
+  flex-wrap: wrap;
+}
+.nx-comm-search {
+  position: relative;
+  flex: 1 1 320px;
+  min-width: 240px;
+}
+.nx-comm-search > .nx-comm-search-icon {
+  position: absolute;
+  left: 12px; top: 50%;
+  transform: translateY(-50%);
+  color: var(--text-muted);
+  pointer-events: none;
+  display: flex;
+}
+.nx-comm-search input { padding-left: 38px !important; }
+.nx-comm-filter { flex: 0 0 auto; }
+.nx-comm-filter label {
+  display: block;
+  margin-bottom: 0.3rem;
+  font-size: 0.75rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  color: var(--text-muted);
+}
+.nx-comm-filter select { min-width: 130px; }
+
+/* Index/status meta chips inside the hero */
+.nx-comm-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  padding: 0.2rem 0.55rem;
+  border-radius: 999px;
+  font-size: 0.78rem;
+  font-weight: 600;
+  border: 1px solid var(--border-color);
+  background: var(--hover-bg);
+  color: var(--text-secondary);
+}
+.nx-comm-chip.ok    { color: var(--success-color); border-color: color-mix(in srgb, var(--success-color) 40%, transparent); background: color-mix(in srgb, var(--success-color) 12%, transparent); }
+.nx-comm-chip.link  { color: #3b82f6; border-color: rgba(59,130,246,0.4); background: rgba(59,130,246,0.12); }
+.nx-comm-chip.stale { color: #14b8a6; border-color: rgba(20,184,166,0.4); background: rgba(20,184,166,0.12); }
+
+/* Refined result rows */
+.nx-comm-results { display: flex; flex-direction: column; }
+.nx-comm-row {
+  display: flex;
+  align-items: center;
+  gap: 0.9rem;
+  padding: 0.75rem 0.25rem;
+  border-bottom: 1px solid var(--border-color);
+}
+.nx-comm-row:last-child { border-bottom: none; }
+.nx-comm-row-icon {
+  flex: 0 0 auto;
+  width: 38px; height: 38px;
+  border-radius: 8px;
+  display: flex; align-items: center; justify-content: center;
+  background: var(--hover-bg);
+  color: var(--text-secondary);
+}
+.nx-comm-row-body { flex: 1 1 auto; min-width: 0; }
+.nx-comm-row-title {
+  font-weight: 600;
+  color: var(--text-color);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.nx-comm-row-meta {
+  font-size: 0.8rem;
+  color: var(--text-secondary);
+  display: flex;
+  gap: 0.4rem;
+  flex-wrap: wrap;
+  margin-top: 0.1rem;
+}
+.nx-comm-row-actions { flex: 0 0 auto; display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap; justify-content: flex-end; }
