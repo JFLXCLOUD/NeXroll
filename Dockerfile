@@ -44,7 +44,13 @@ RUN apt-get update && \
         ffmpeg \
         curl \
         unzip \
-        tzdata && \
+        tzdata \
+        # DejaVu + Liberation fonts so FFmpeg drawtext can render extended-Latin
+        # glyphs (German umlauts ä/ö/ü, accents, etc.) in generated prerolls /
+        # Coming Soon lists. Without a real fontfile, drawtext falls back to a
+        # built-in font with poor coverage and umlauts render as garbage.
+        fonts-dejavu-core \
+        fonts-liberation && \
     # Remove ncurses binaries (CVE-2025-69720) — not used by NeXroll
     dpkg --remove --force-depends ncurses-base ncurses-bin 2>/dev/null || true && \
     rm -rf /var/lib/apt/lists/*
