@@ -24146,31 +24146,50 @@ def build_community_prerolls_index(request: Request, db: Session = Depends(get_d
             )
     
     community_search_rate_limit[rate_limit_key] = current_time
+
+    # Resolve the base URL on the request thread (needs the db session), then run
+    # the multi-minute scrape on a background thread so this request returns
+    # immediately. The frontend tracks completion via the /build-progress SSE
+    # stream — running the build inline would block the worker for minutes and
+    # make the progress stream/UI appear stuck.
+    base_url = _get_community_base_url(db)
+
+    # Reset progress so the SSE stream reflects a fresh build from the start.
+    _index_build_progress["building"] = True
+    _index_build_progress["progress"] = 0
+    _index_build_progress["current_dir"] = ""
+    _index_build_progress["files_found"] = 0
+    _index_build_progress["dirs_visited"] = 0
+    _index_build_progress["message"] = "Starting index build..."
+
+    def _run_build():
+        global _index_build_lock
+        try:
+            index_data = _build_prerolls_index(base_url=base_url)
+            saved = _save_prerolls_index(index_data)
+            if not saved:
+                _index_build_progress["building"] = False
+                _index_build_progress["message"] = "Failed to save index to disk"
+                _file_log("Community index build: failed to save index to disk")
+        except Exception as e:
+            _index_build_progress["building"] = False
+            _index_build_progress["message"] = f"Build failed: {e}"
+            _file_log(f"Error building prerolls index: {e}")
+            try:
+                log_event('ERROR', 'system', f'Community index build failed: {e}', source='build_community_index')
+            except Exception:
+                pass
+        finally:
+            _index_build_lock = False
+
     _index_build_lock = True
-    
-    try:
-        index_data = _build_prerolls_index(base_url=_get_community_base_url(db))
-        success = _save_prerolls_index(index_data)
-        
-        if success:
-            return {
-                "status": "success",
-                "message": "Prerolls index built successfully",
-                "total_prerolls": index_data.get("total_prerolls", 0),
-                "directories_visited": index_data.get("directories_visited", 0),
-                "created_at": index_data.get("created_at"),
-                "index_path": str(PREROLLS_INDEX_PATH)
-            }
-        else:
-            raise HTTPException(status_code=500, detail="Failed to save index to disk")
-    except HTTPException:
-        raise
-    except Exception as e:
-        _file_log(f"Error building prerolls index: {e}")
-        log_event('ERROR', 'system', f'Community index build failed: {e}', source='build_community_index')
-        raise HTTPException(status_code=500, detail=f"Failed to build index: {str(e)}")
-    finally:
-        _index_build_lock = False
+    threading.Thread(target=_run_build, daemon=True).start()
+
+    return {
+        "status": "started",
+        "message": "Index build started. Track progress via the build-progress stream.",
+        "index_path": str(PREROLLS_INDEX_PATH)
+    }
 
 
 @app.get("/community-prerolls/build-progress")

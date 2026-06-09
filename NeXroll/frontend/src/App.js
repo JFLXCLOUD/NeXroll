@@ -30824,59 +30824,57 @@ const DashboardTiles = {
       // Start listening to progress updates via SSE
       const eventSource = new EventSource(apiUrl('community-prerolls/build-progress'));
       
-      eventSource.onmessage = (event) => {
-        const data = JSON.parse(event.data);
-        setCommunityBuildProgress(data);
-        
-        // Close connection when done and hide progress bar after showing 100%
-        if (!data.building && data.progress === 100) {
-          eventSource.close();
-          // Show 100% briefly, then hide the progress bar
+      let finished = false;
+      const finish = (failedMsg) => {
+        if (finished) return;
+        finished = true;
+        try { eventSource.close(); } catch {}
+        setCommunityIsBuilding(false);
+        if (failedMsg) {
+          showAlert(failedMsg, 'error');
+          setCommunityBuildProgress(null);
+        } else {
+          // Show 100% briefly, then hide and refresh status.
           setTimeout(() => {
             setCommunityBuildProgress(null);
+            loadIndexStatus();
           }, 1000);
+          showAlert('Community index built — searches will now be instant.', 'success');
         }
       };
-      
-      eventSource.onerror = (error) => {
-        console.error('SSE error:', error);
-        eventSource.close();
-        setCommunityBuildProgress(null);
-        setCommunityIsBuilding(false);
+
+      eventSource.onmessage = (event) => {
+        let data;
+        try { data = JSON.parse(event.data); } catch { return; }
+        setCommunityBuildProgress(data);
+
+        // The server flips building=false at the end. progress=100 => success;
+        // building=false with progress<100 => the build errored on the server.
+        if (data.building === false) {
+          if (data.progress === 100) finish(null);
+          else finish(data.message || 'Index build failed on the server.');
+        }
       };
-      
+
+      eventSource.onerror = () => {
+        // The stream can drop after completion; only treat as failure if we
+        // haven't already finished.
+        finish(finished ? null : 'Lost connection to the index build progress stream.');
+      };
+
       try {
-        // Trigger the build (this will run async on the server)
+        // Kick off the build — the server runs it on a background thread and
+        // returns immediately; progress/completion arrive via the SSE stream.
         const response = await fetch(apiUrl('community-prerolls/build-index'));
-        
-        if (response.status === 429) {
-          const error = await response.json();
-          alert(error.detail || 'Please wait before rebuilding the index.');
-          eventSource.close();
-          setCommunityBuildProgress(null);
-          setCommunityIsBuilding(false);
+
+        if (!response.ok) {
+          let detail = `Failed to start index build (HTTP ${response.status}).`;
+          try { const err = await response.json(); if (err?.detail) detail = err.detail; } catch {}
+          finish(detail);
           return;
         }
-        
-        const data = await response.json();
-        
-        // Wait for progress bar to finish displaying, then show alert
-        setTimeout(() => {
-          setCommunityIsBuilding(false);
-          alert(
-            `Index built successfully!\n\n` +
-            `Total prerolls: ${data.total_prerolls}\n` +
-            `Directories scanned: ${data.directories_visited}\n\n` +
-            `Searches will now be instant!`
-          );
-          loadIndexStatus();
-        }, 1500);
-        
       } catch (error) {
-        alert(`Failed to build index: ${error.message}`);
-        setCommunityBuildProgress(null);
-        eventSource.close();
-        setCommunityIsBuilding(false);
+        finish(`Failed to build index: ${error.message}`);
       }
     };
 
