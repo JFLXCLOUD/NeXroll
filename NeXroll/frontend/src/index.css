@@ -3622,6 +3622,178 @@ body.dark .nx-chip.warn {
   text-transform: uppercase;
 }
 
+/* ============================================================
+   NeXroll v2 — Connect page redesign
+   Per-server panels carry a brand accent (--brand, set inline). The hero
+   status header summarizes the connection; the connect section holds the form.
+   ============================================================ */
+.nx-conn-panel {
+  --brand: var(--accent-color);
+}
+
+/* Hero status header — branded summary of the connection state. */
+.nx-conn-hero {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  padding: 1.1rem 1.25rem;
+  border-radius: 14px;
+  border: 1px solid var(--border-color);
+  background:
+    linear-gradient(0deg, var(--card-bg), var(--card-bg)) padding-box,
+    var(--card-bg);
+  position: relative;
+  overflow: hidden;
+  margin-bottom: 1rem;
+}
+/* Brand wash on the left edge of the hero. */
+.nx-conn-hero::before {
+  content: "";
+  position: absolute;
+  left: 0; top: 0; bottom: 0;
+  width: 4px;
+  background: var(--brand);
+}
+.nx-conn-hero.connected {
+  background:
+    linear-gradient(90deg, color-mix(in srgb, var(--brand) 10%, transparent), transparent 45%) border-box,
+    var(--card-bg);
+}
+.nx-conn-hero-badge {
+  flex: 0 0 auto;
+  width: 52px;
+  height: 52px;
+  border-radius: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #fff;
+  background: var(--brand);
+  box-shadow: 0 4px 12px color-mix(in srgb, var(--brand) 40%, transparent);
+}
+.nx-conn-hero-badge.idle {
+  background: var(--hover-bg);
+  color: var(--text-muted);
+  box-shadow: none;
+}
+.nx-conn-hero-body { flex: 1 1 auto; min-width: 0; }
+.nx-conn-hero-title {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 1.15rem;
+  font-weight: 700;
+  color: var(--text-color);
+  margin: 0;
+}
+.nx-conn-hero-state {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  font-size: 0.85rem;
+  font-weight: 600;
+}
+.nx-conn-hero-state.ok  { color: var(--success-color); }
+.nx-conn-hero-state.bad { color: var(--text-muted); }
+.nx-conn-hero-meta {
+  margin: 0.25rem 0 0;
+  font-size: 0.85rem;
+  color: var(--text-secondary);
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.15rem 0.6rem;
+}
+.nx-conn-hero-meta .sep { color: var(--text-muted); }
+.nx-conn-hero-actions { flex: 0 0 auto; display: flex; gap: 0.5rem; align-items: center; }
+
+/* Connect section header (the recommended method block). */
+.nx-conn-method-lead {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+  margin: 0 0 0.25rem;
+  font-size: 1rem;
+  font-weight: 700;
+  color: var(--text-color);
+}
+.nx-conn-method-sub {
+  margin: 0 0 1rem;
+  font-size: 0.85rem;
+  color: var(--text-secondary);
+}
+.nx-conn-field-label {
+  display: block;
+  margin-bottom: 0.4rem;
+  font-weight: 600;
+  font-size: 0.88rem;
+  color: var(--text-color);
+}
+.nx-conn-alts {
+  margin-top: 1.25rem;
+  padding-top: 1rem;
+  border-top: 1px solid var(--border-color);
+}
+.nx-conn-alts > .nx-conn-alts-title {
+  font-size: 0.8rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-muted);
+  margin: 0 0 0.6rem;
+}
+/* A tidy disclosure row for an alternative connect method. */
+.nx-conn-alt {
+  border: 1px solid var(--border-color);
+  border-radius: 10px;
+  margin-bottom: 0.5rem;
+  background: var(--bg-color);
+  overflow: hidden;
+}
+.nx-conn-alt > summary {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.7rem 0.9rem;
+  cursor: pointer;
+  font-weight: 600;
+  color: var(--text-color);
+  list-style: none;
+}
+.nx-conn-alt > summary::-webkit-details-marker { display: none; }
+.nx-conn-alt > summary .nx-conn-alt-chev {
+  margin-left: auto;
+  color: var(--text-muted);
+  transition: transform 0.15s ease;
+}
+.nx-conn-alt[open] > summary .nx-conn-alt-chev { transform: rotate(90deg); }
+.nx-conn-alt-body { padding: 0 0.9rem 0.9rem; }
+
+/* Inline "Docker / remote?" hint under the primary method. */
+.nx-conn-hint {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.5rem;
+  margin-top: 0.85rem;
+  padding: 0.6rem 0.75rem;
+  border-radius: 8px;
+  background: var(--hover-bg);
+  border: 1px dashed var(--border-color);
+  font-size: 0.85rem;
+  color: var(--text-secondary);
+}
+.nx-conn-hint .nx-conn-hint-icon { color: var(--brand); flex: 0 0 auto; margin-top: 1px; }
+.nx-conn-hint button {
+  background: none;
+  border: none;
+  color: var(--brand);
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+  padding: 0;
+  text-decoration: underline;
+}
+
 /* Notice / info panels — unified tinted containers used across the Connections
    panels (plugin states, download hints, detection results). Semantic variants
    match the chip colors so a box and its badge read as a set. */

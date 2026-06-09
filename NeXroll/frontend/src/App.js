@@ -20,7 +20,7 @@ import {
     ListOrdered, Palette, Lightbulb, Inbox, FolderOpen, Wrench, FileText, Sliders, FolderSync,
     Bug, Zap, Loader2, Package, FlaskConical, TreePine, Check, XCircle, Video, ChevronRight, ChevronDown,
     Library, Clapperboard, Sparkles, PartyPopper, Users2, Theater, Eye, EyeOff, X, User, RefreshCcw, Menu,
-    Youtube, Globe, Key, Rocket, FileUp, ArrowRight, HardDrive, ListChecks, Unlink, LinkIcon,
+    Youtube, Globe, Key, Rocket, FileUp, ArrowRight, HardDrive, ListChecks, Unlink, LinkIcon, ExternalLink,
     Tv, ClipboardList, Info, RotateCw, LayoutDashboard, BarChart3, PieChart as PieChartIcon, Activity, TrendingUp, Server, Timer,
     Database, Archive, Shield, UserPlus, Users, LayoutGrid, List, Layers, Terminal, AlertCircle, Filter, BarChart2, HelpCircle,
     Music, Wand2, GitCompare, Square, Plug
@@ -626,6 +626,8 @@ function App() {
   // File upload ref for clearing input
   const fileInputRef = React.useRef(null);
   const [stableTokenInput, setStableTokenInput] = useState('');
+  // Which Plex alternative-connect disclosure to auto-open (e.g. 'oauth' from the Docker hint)
+  const [plexAltOpen, setPlexAltOpen] = useState(null);
   const [systemVersion, setSystemVersion] = useState(null);
   const [ffmpegInfo, setFfmpegInfo] = useState(null);
   const [systemDependencies, setSystemDependencies] = useState(null);
@@ -18245,236 +18247,253 @@ const DashboardTiles = {
     return () => { clearOAuthPoll(); };
   }, []);
 
-  const renderPlex = () => (
-    <div>
-      <div className="card nx-plex-card">
-        <h2>Connect to Plex Server</h2>
-        <p style={{ marginTop: 0, marginBottom: '1.25rem', color: 'var(--text-secondary)', fontSize: '0.9rem' }}>
-          Choose an option below — Stable Token is recommended.
-        </p>
-        {/* Stable Token Connection */}
-        <div className="upload-section nx-plex-method" style={{ marginBottom: '1.5rem' }}>
-          <h3 style={{ marginBottom: '0.5rem', color: 'var(--text-color)' }}><Star size={18} style={{marginRight: '0.5rem', verticalAlign: 'middle', color: '#14B8A6'}} /> Option 1: Stable Token <span className="nx-chip recommend" style={{ marginLeft: '0.5rem' }}>RECOMMENDED</span></h3>
-          <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginBottom: '0.75rem' }}>
-            Non-expiring token stored securely. Resilient to password changes.
-          </p>
-          <div style={{ marginBottom: '0.75rem', fontSize: '0.85rem' }}>
-            <strong>Status:</strong> <span style={{ color: stableTokenStatus.has_stable_token ? '#22c55e' : '#f59e0b' }}>{stableTokenStatus.has_stable_token ? 'Configured' : 'Not Configured'}</span>
-            {stableTokenStatus.provider && <span style={{ marginLeft: '1rem' }}><strong>Storage:</strong> {stableTokenStatus.provider}</span>}
+  const renderPlex = () => {
+    const connected = plexStatus === 'Connected';
+    return (
+    <div className="nx-conn-panel" style={{ '--brand': '#f6685e' }}>
+      {/* Hero status header */}
+      <div className={`nx-conn-hero${connected ? ' connected' : ''}`}>
+        <div className={`nx-conn-hero-badge${connected ? '' : ' idle'}`}>
+          <Server size={24} />
+        </div>
+        <div className="nx-conn-hero-body">
+          <h2 className="nx-conn-hero-title">
+            Plex
+            <span className={`nx-conn-hero-state ${connected ? 'ok' : 'bad'}`}>
+              <span className={`nx-dot ${connected ? 'ok' : 'bad'}`} aria-hidden="true" />
+              {connected ? 'Connected' : 'Not connected'}
+            </span>
+          </h2>
+          <div className="nx-conn-hero-meta">
+            {connected ? (
+              <>
+                {plexServerInfo?.friendlyName && <span>{plexServerInfo.friendlyName}</span>}
+                {plexServerInfo?.version && <><span className="sep">·</span><span>v{plexServerInfo.version}</span></>}
+                {plexServerInfo?.url && <><span className="sep">·</span><span>{plexServerInfo.url}</span></>}
+                {plexServerInfo?.token_source && (
+                  <><span className="sep">·</span><span>{plexServerInfo.token_source === 'secure_store' ? 'Secure token' : plexServerInfo.token_source === 'database' ? 'DB token' : plexServerInfo.token_source}</span></>
+                )}
+              </>
+            ) : (
+              <span>Connect with a Stable Token (recommended) or another method below.</span>
+            )}
           </div>
+        </div>
+        {connected && (
+          <div className="nx-conn-hero-actions">
+            <button onClick={handleDisconnectPlex} className="button button-danger">
+              <Unlink size={15} /> Disconnect
+            </button>
+          </div>
+        )}
+      </div>
 
-          <form onSubmit={handleConnectPlexStableToken}>
-            <div style={{ display: 'grid', gap: '1rem', marginBottom: '1rem' }}>
-              <div>
-                <label style={{ display: 'block', marginBottom: '0.5rem', fontWeight: 'bold' }}>
-                  Plex Server URL
-                </label>
-                <input
-                  type="url"
-                  placeholder="http://192.168.1.100:32400"
-                  value={plexConfig.url}
-                  onChange={(e) => setPlexConfig({...plexConfig, url: e.target.value})}
-                  required
-                  style={{ width: '100%', padding: '0.5rem' }}
-                />
-              </div>
-            </div>
+      {/* Connection-problem notices (shown even when "connected" flag is off but info exists) */}
+      {plexServerInfo?.message && !plexServerInfo.connected && (
+        <div className="nx-notice warn" style={{ marginBottom: '1rem' }}>
+          <strong>Status:</strong> {plexServerInfo.message}
+        </div>
+      )}
+      {plexServerInfo?.error && (
+        <div className="nx-notice danger" style={{ marginBottom: '1rem' }}>
+          <strong>Error:</strong> {plexServerInfo.error}{plexServerInfo.message ? ` — ${plexServerInfo.message}` : ''}
+        </div>
+      )}
 
-            <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
-              <button
-                type="submit"
-                className="button button-success"
-              >
-                Connect
-              </button>
-              
-            </div>
-          </form>
+      {/* Connect methods — only when not connected */}
+      {!connected && (
+      <div className="card nx-plex-card">
+        {/* Primary: Stable Token */}
+        <div className="nx-conn-method-lead">
+          <Star size={18} style={{ color: '#14B8A6' }} /> Stable Token
+          <span className="nx-chip recommend">Recommended</span>
+        </div>
+        <p className="nx-conn-method-sub">
+          A non-expiring token stored securely — resilient to password changes. Best for local and Windows installs.
+          {' '}Current status:{' '}
+          <strong style={{ color: stableTokenStatus.has_stable_token ? 'var(--success-color)' : '#f59e0b' }}>
+            {stableTokenStatus.has_stable_token ? 'Configured' : 'Not configured'}
+          </strong>
+          {stableTokenStatus.provider ? ` (${stableTokenStatus.provider})` : ''}
+        </p>
 
-          {/* Advanced: Save/Update stable token locally */}
-          <details style={{ marginTop: '0.75rem' }}>
-            <summary style={{ cursor: 'pointer', fontSize: '0.85rem', color: 'var(--text-color)' }}>
-              Advanced: Save/Update Stable Token
-            </summary>
-            <form onSubmit={handleSaveStableToken} style={{ marginTop: '0.5rem', display: 'grid', gap: '0.5rem' }}>
-              <input
-                type="password"
-                placeholder="Paste your stable token"
-                value={stableTokenInput}
-                onChange={(e) => setStableTokenInput(e.target.value)}
-                style={{ width: '100%', padding: '0.5rem' }}
-              />
-              <button type="submit" className="button button-info">
-                Save Stable Token
-              </button>
-            </form>
-          </details>
-          <details className="nx-plex-help" style={{ marginTop: '0.75rem' }}>
-            <summary>Docker/Remote: save token headlessly</summary>
-            <div style={{ fontSize: '0.9rem', color: '#666', marginTop: '0.25rem' }}>
-              If NeXroll runs in Docker or on a different host than Plex, you can paste your Plex token via “Advanced: Save/Update Stable Token” above,
-              or run this from any machine that can reach NeXroll:
-            </div>
-            <pre className="nx-code" style={{ whiteSpace: 'pre-wrap', marginTop: '0.5rem' }}>
-curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN"
-            </pre>
-            <div style={{ fontSize: '0.9rem', color: '#666' }}>
-              Then click “Connect” and enter your Plex Server URL (e.g., http://192.168.1.100:32400). Make sure your Plex server is claimed and Remote Access is enabled if it’s off-LAN.
-            </div>
-          </details>
+        <form onSubmit={handleConnectPlexStableToken}>
+          <div style={{ marginBottom: '1rem' }}>
+            <label className="nx-conn-field-label">Plex Server URL</label>
+            <input
+              type="url"
+              placeholder="http://192.168.1.100:32400"
+              value={plexConfig.url}
+              onChange={(e) => setPlexConfig({...plexConfig, url: e.target.value})}
+              required
+            />
+          </div>
+          <button type="submit" className="button button-success">
+            <Plug size={15} /> Connect
+          </button>
+        </form>
+
+        {/* Docker / remote hint */}
+        <div className="nx-conn-hint">
+          <Info size={15} className="nx-conn-hint-icon" />
+          <span>
+            Running NeXroll in <strong>Docker</strong> or on a different host than Plex?
+            {' '}<button type="button" onClick={() => { setPlexAltOpen('oauth'); }}>Use “Sign in with Plex”</button>{' '}
+            below — it auto-discovers a reachable server.
+          </span>
         </div>
 
-        {/* Option 2: Manual Token */}
-        <details className="upload-section nx-plex-method" style={{ marginBottom: '2rem' }}>
-          <summary style={{ cursor: 'pointer', fontWeight: 'bold', color: 'var(--text-color)', padding: '0.5rem 0' }}>
-            <Wrench size={18} style={{marginRight: '0.5rem', verticalAlign: 'middle'}} /> Option 2: Manual Token
-          </summary>
-          <p style={{ fontSize: '0.9rem', color: 'var(--text-color)', marginBottom: '1rem', marginTop: '0.5rem' }}>
-            Enter your Plex server URL and authentication token manually.
-          </p>
+        {/* Other ways to connect */}
+        <div className="nx-conn-alts">
+          <div className="nx-conn-alts-title">Other ways to connect</div>
 
-          <form onSubmit={handleConnectPlex}>
-            <div style={{ display: 'grid', gap: '1rem', marginBottom: '1rem' }}>
-              <div>
-                <label style={{ display: 'block', marginBottom: '0.5rem', fontWeight: 'bold' }}>
-                  Plex Server URL
-                </label>
-                <input
-                  type="url"
-                  placeholder="http://192.168.1.100:32400"
-                  value={plexConfig.url}
-                  onChange={(e) => setPlexConfig({ ...plexConfig, url: e.target.value })}
-                  required
-                  style={{ width: '100%', padding: '0.5rem' }}
-                />
-              </div>
-
-              <div>
-                <label style={{ display: 'block', marginBottom: '0.5rem', fontWeight: 'bold' }}>
-                  X-Plex-Token
-                </label>
+          {/* Advanced: save stable token directly */}
+          <details className="nx-conn-alt">
+            <summary><Key size={16} /> Paste a Stable Token <ChevronRight size={15} className="nx-conn-alt-chev" /></summary>
+            <div className="nx-conn-alt-body">
+              <p className="nx-conn-method-sub" style={{ marginTop: 0 }}>
+                Already have a Plex token? Save it directly (useful for Docker/headless — or run
+                {' '}<code>curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN"</code>).
+              </p>
+              <form onSubmit={handleSaveStableToken} style={{ display: 'grid', gap: '0.5rem' }}>
                 <input
                   type="password"
-                  placeholder="Enter your X-Plex-Token"
-                  value={plexConfig.token}
-                  onChange={(e) => setPlexConfig({ ...plexConfig, token: e.target.value })}
-                  required
-                  style={{ width: '100%', padding: '0.5rem' }}
+                  placeholder="Paste your stable token"
+                  value={stableTokenInput}
+                  onChange={(e) => setStableTokenInput(e.target.value)}
                 />
-                <details className="nx-plex-help">
-                  <summary>How to get your X-Plex-Token</summary>
-                  <ol style={{ marginTop: '0.5rem' }}>
-                    <li>Open Plex Web at your server's URL (e.g., http://your-plex-server:32400/web)</li>
-                    <li>Sign in to your Plex account</li>
-                    <li>Go to Settings → General → Advanced</li>
-                    <li>Enable "Show Advanced" if needed</li>
-                    <li>Copy the "Authentication Token" (X-Plex-Token)</li>
-                  </ol>
-                  <p style={{ fontSize: '0.85rem', color: '#666' }}>
-                    Note: For remote servers, ensure you can access the Plex Web interface from your current location.
-                  </p>
-                </details>
-              </div>
+                <div>
+                  <button type="submit" className="button button-info"><Key size={15} /> Save Stable Token</button>
+                </div>
+              </form>
             </div>
+          </details>
 
-            <button type="submit" className="button">Connect with Manual Token</button>
-          </form>
-        </details>
-
-        {/* Plex.tv Authentication */}
-        <details className="upload-section nx-plex-method" style={{ marginTop: '1rem' }}>
-          <summary style={{ cursor: 'pointer', fontWeight: 'bold', color: 'var(--text-color)', padding: '0.5rem 0' }}>
-            Option 3: Sign in with Plex
-          </summary>
-          <p style={{ fontSize: '0.9rem', color: 'var(--text-color)', marginBottom: '0.75rem', marginTop: '0.5rem' }}>
-            Sign in with Plex.tv to auto-discover a reachable server and save credentials securely.
-          </p>
-
-          {(plexOAuth.status === 'idle' || plexOAuth.status === 'error') && (
-            <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
-              <button
-                type="button"
-                className="button button-warn"
-                onClick={startPlexOAuth}
-                title="Start Plex.tv device login"
-              >
-                Start Plex.tv Login
-              </button>
-              {plexOAuth.status === 'error' && (
-                <span style={{ color: '#dc3545', fontSize: '0.85rem' }}>{plexOAuth.error}</span>
-              )}
+          {/* Manual token */}
+          <details className="nx-conn-alt">
+            <summary><Wrench size={16} /> Manual Token <ChevronRight size={15} className="nx-conn-alt-chev" /></summary>
+            <div className="nx-conn-alt-body">
+              <p className="nx-conn-method-sub" style={{ marginTop: 0 }}>
+                Enter your Plex server URL and X-Plex-Token manually.
+              </p>
+              <form onSubmit={handleConnectPlex}>
+                <div style={{ display: 'grid', gap: '1rem', marginBottom: '1rem' }}>
+                  <div>
+                    <label className="nx-conn-field-label">Plex Server URL</label>
+                    <input
+                      type="url"
+                      placeholder="http://192.168.1.100:32400"
+                      value={plexConfig.url}
+                      onChange={(e) => setPlexConfig({ ...plexConfig, url: e.target.value })}
+                      required
+                    />
+                  </div>
+                  <div>
+                    <label className="nx-conn-field-label">X-Plex-Token</label>
+                    <input
+                      type="password"
+                      placeholder="Enter your X-Plex-Token"
+                      value={plexConfig.token}
+                      onChange={(e) => setPlexConfig({ ...plexConfig, token: e.target.value })}
+                      required
+                    />
+                    <details className="nx-plex-help">
+                      <summary>How to get your X-Plex-Token</summary>
+                      <ol style={{ marginTop: '0.5rem' }}>
+                        <li>Open Plex Web at your server's URL (e.g., http://your-plex-server:32400/web)</li>
+                        <li>Sign in to your Plex account</li>
+                        <li>Go to Settings → General → Advanced</li>
+                        <li>Enable "Show Advanced" if needed</li>
+                        <li>Copy the "Authentication Token" (X-Plex-Token)</li>
+                      </ol>
+                      <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
+                        Note: For remote servers, ensure you can access the Plex Web interface from your current location.
+                      </p>
+                    </details>
+                  </div>
+                </div>
+                <button type="submit" className="button">Connect with Manual Token</button>
+              </form>
             </div>
-          )}
+          </details>
 
-          {(plexOAuth.status === 'starting' || plexOAuth.status === 'pending') && (
-            <div style={{ display: 'grid', gap: '0.5rem' }}>
-              <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
-                {plexOAuth.url && (
-                  <a
-                    href={plexOAuth.url}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="button"
-                    style={{ backgroundColor: '#0ea5e9' }}
+          {/* Sign in with Plex (OAuth) */}
+          <details className="nx-conn-alt" open={plexAltOpen === 'oauth'}>
+            <summary><ExternalLink size={16} /> Sign in with Plex <ChevronRight size={15} className="nx-conn-alt-chev" /></summary>
+            <div className="nx-conn-alt-body">
+              <p className="nx-conn-method-sub" style={{ marginTop: 0 }}>
+                Sign in with Plex.tv to auto-discover a reachable server and save credentials securely.
+                {' '}<strong>Recommended for Docker and remote setups.</strong>
+              </p>
+
+              {(plexOAuth.status === 'idle' || plexOAuth.status === 'error') && (
+                <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+                  <button
+                    type="button"
+                    className="button button-warn"
+                    onClick={startPlexOAuth}
+                    title="Start Plex.tv device login"
                   >
-                    Open Login
-                  </a>
-                )}
-                <button type="button" className="button-secondary" onClick={cancelPlexOAuth}>
-                  Cancel
-                </button>
-              </div>
-              <div style={{ fontSize: '0.9rem', color: '#666' }}>
-                Waiting for authorization from Plex.tv…
-              </div>
-            </div>
-          )}
+                    Start Plex.tv Login
+                  </button>
+                  {plexOAuth.status === 'error' && (
+                    <span style={{ color: 'var(--error-color)', fontSize: '0.85rem' }}>{plexOAuth.error}</span>
+                  )}
+                </div>
+              )}
 
-          {plexOAuth.status === 'authorized' && (
-            <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
-              <button
-                type="button"
-                className="button button-success"
-                onClick={() => finishPlexOAuth(plexOAuth.id)}
-              >
-                Connect Now
-              </button>
-              {plexOAuth.url && (
-                <a
-                  href={plexOAuth.url}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="button-secondary"
-                >
-                  Open Login
-                </a>
+              {(plexOAuth.status === 'starting' || plexOAuth.status === 'pending') && (
+                <div style={{ display: 'grid', gap: '0.5rem' }}>
+                  <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+                    {plexOAuth.url && (
+                      <a href={plexOAuth.url} target="_blank" rel="noopener noreferrer" className="button button-info">
+                        <ExternalLink size={15} /> Open Login
+                      </a>
+                    )}
+                    <button type="button" className="button-secondary" onClick={cancelPlexOAuth}>
+                      Cancel
+                    </button>
+                  </div>
+                  <div style={{ fontSize: '0.9rem', color: 'var(--text-secondary)', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                    <Loader2 size={15} className="spin" /> Waiting for authorization from Plex.tv…
+                  </div>
+                </div>
+              )}
+
+              {plexOAuth.status === 'authorized' && (
+                <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+                  <button type="button" className="button button-success" onClick={() => finishPlexOAuth(plexOAuth.id)}>
+                    <Plug size={15} /> Connect Now
+                  </button>
+                  {plexOAuth.url && (
+                    <a href={plexOAuth.url} target="_blank" rel="noopener noreferrer" className="button-secondary">
+                      Open Login
+                    </a>
+                  )}
+                </div>
+              )}
+
+              {plexOAuth.status === 'connecting' && (
+                <div style={{ fontSize: '0.9rem', color: 'var(--text-secondary)', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                  <Loader2 size={15} className="spin" /> Connecting to your Plex server…
+                </div>
+              )}
+
+              {plexOAuth.status === 'connected' && (
+                <div style={{ fontSize: '0.9rem', color: 'var(--success-color)', fontWeight: 'bold' }}>
+                  Connected via Plex.tv!
+                </div>
               )}
             </div>
-          )}
+          </details>
 
-          {plexOAuth.status === 'connecting' && (
-            <div style={{ fontSize: '0.9rem', color: '#666' }}>
-              Connecting to your Plex server…
-            </div>
-          )}
-
-          {plexOAuth.status === 'connected' && (
-            <div style={{ fontSize: '0.9rem', color: 'green', fontWeight: 'bold' }}>
-              Connected via Plex.tv!
-            </div>
-          )}
-        </details>
-
-        {/* Help: Docker & remote servers — collapsed by default to keep the tab tidy */}
-        <details className="upload-section nx-plex-method" style={{ marginTop: '1rem' }}>
-          <summary style={{ cursor: 'pointer', fontWeight: 'bold', color: 'var(--text-color)', padding: '0.5rem 0' }}>
-            <HelpCircle size={16} style={{ marginRight: '0.5rem', verticalAlign: 'middle' }} /> Help: Docker &amp; remote servers
-          </summary>
-
-          <div style={{ marginTop: '0.75rem' }}>
+          {/* Help: Docker & remote */}
+          <details className="nx-conn-alt">
+            <summary><HelpCircle size={16} /> Help: Docker &amp; remote servers <ChevronRight size={15} className="nx-conn-alt-chev" /></summary>
+            <div className="nx-conn-alt-body">
             <h3 style={{ marginBottom: '0.5rem', color: 'var(--text-color)', fontSize: '0.95rem' }}>Docker</h3>
-            <p style={{ fontSize: '0.9rem', color: 'var(--text-color)' }}>
-              When running NeXroll in Docker, use <strong>Option 3: Sign in with Plex</strong> above to connect.
+            <p style={{ fontSize: '0.9rem', color: 'var(--text-secondary)' }}>
+              When running NeXroll in Docker, use <strong>Sign in with Plex</strong> above to connect.
               After connecting, configure <em>UNC/Local → Plex Path Mappings</em> in Settings to translate container/local paths
               (e.g., <code>/data/prerolls</code>) to the path Plex can see on its host
               (e.g., <code>Z:\Prerolls</code> or <code>\\NAS\share\Prerolls</code> on Windows, or <code>/mnt/prerolls</code> on Linux).
@@ -18498,51 +18517,11 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
               Remote: https://my-plex-server.example.com:32400<br/>
               Plex Cloud: https://app.plex.tv/desktop (use your server's URL)
             </p>
-          </div>
-        </details>
-      </div>
-
-      <div className="card">
-        <h2>Plex Status</h2>
-        <div style={{ display: 'grid', gap: '0.5rem' }}>
-          <div><strong>Connection:</strong> <span className={`nx-chip nx-status ${plexStatus === 'Connected' ? 'ok' : 'bad'}`}>{plexStatus}</span></div>
-          <div><strong>Server URL:</strong> {plexServerInfo?.url || 'Not configured'}</div>
-          <div><strong>Token:</strong> {plexServerInfo?.has_token ? '••••••••' : 'Not configured'}</div>
-          {plexServerInfo?.token_source && (
-            <div><strong>Token Source:</strong> {plexServerInfo.token_source === 'secure_store' ? 'Secure Store (Windows Credential Manager)' : plexServerInfo.token_source === 'database' ? 'Database' : plexServerInfo.token_source}</div>
-          )}
-          {plexServerInfo?.provider && (
-            <div><strong>Storage Provider:</strong> {plexServerInfo.provider}</div>
-          )}
-          {plexServerInfo?.friendlyName && (
-            <div><strong>Server Name:</strong> {plexServerInfo.friendlyName}</div>
-          )}
-          {plexServerInfo?.version && (
-            <div><strong>Server Version:</strong> {plexServerInfo.version}</div>
-          )}
-          {plexServerInfo?.message && !plexServerInfo.connected && (
-            <div style={{ marginTop: '0.5rem', padding: '0.75rem', backgroundColor: 'rgba(255, 193, 7, 0.1)', borderRadius: '8px', border: '1px solid rgba(255, 193, 7, 0.3)' }}>
-              <strong>Status:</strong> {plexServerInfo.message}
             </div>
-          )}
-          {plexServerInfo?.error && (
-            <div style={{ marginTop: '0.5rem', padding: '0.75rem', backgroundColor: 'rgba(244, 67, 54, 0.1)', borderRadius: '8px', border: '1px solid rgba(244, 67, 54, 0.3)' }}>
-              <strong>Error Type:</strong> {plexServerInfo.error}<br />
-              {plexServerInfo.message && <span>{plexServerInfo.message}</span>}
-            </div>
-          )}
+          </details>
         </div>
-        {plexStatus === 'Connected' && (
-          <div style={{ marginTop: '1rem', paddingTop: '1rem', borderTop: '1px solid var(--border-color)' }}>
-            <button
-              onClick={handleDisconnectPlex}
-              className="button button-danger"
-            >
-              Disconnect from Plex
-            </button>
-          </div>
-        )}
       </div>
+      )}
 
       {/* Cinema Trailers — Plex server settings controlled from NeXroll */}
       {plexStatus === 'Connected' && (
@@ -18637,7 +18616,8 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
       )}
 
     </div>
-  );
+    );
+  };
 
   const handleDownloadDiagnostics = async () => {
     try {
@@ -29117,99 +29097,107 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
     return renderSettingsGeneral();
   };
 
-  const renderJellyfin = () => (
-    <div>
-      <div className="card">
-        <h2>Connect to Jellyfin Server</h2>
-        <p style={{ marginBottom: '1rem', color: 'var(--text-color)' }}>
-          Connect your Jellyfin server to enable preroll management for Jellyfin.
-        </p>
-        <form onSubmit={handleConnectJellyfin}>
-          <div style={{ display: 'grid', gap: '1rem', marginBottom: '1rem' }}>
-            <div>
-              <label style={{ display: 'block', marginBottom: '0.5rem', fontWeight: 'bold' }}>
-                Jellyfin Server URL
-              </label>
-              <input
-                type="url"
-                placeholder="http://127.0.0.1:8096"
-                value={jellyfinConfig.url}
-                onChange={(e) => setJellyfinConfig({ ...jellyfinConfig, url: e.target.value })}
-                required
-                style={{ width: '100%', padding: '0.5rem' }}
-              />
-            </div>
-            <div>
-              <label style={{ display: 'block', marginBottom: '0.5rem', fontWeight: 'bold' }}>
-                API Key
-              </label>
-              <input
-                type="password"
-                placeholder="Enter your Jellyfin API key"
-                value={jellyfinConfig.api_key}
-                onChange={(e) => setJellyfinConfig({ ...jellyfinConfig, api_key: e.target.value })}
-                required
-                style={{ width: '100%', padding: '0.5rem' }}
-              />
-              <details className="nx-plex-help" style={{ marginTop: '0.5rem' }}>
-                <summary>How to create a Jellyfin API key</summary>
-                <ol style={{ marginTop: '0.5rem' }}>
-                  <li>Open Jellyfin Web</li>
-                  <li>Go to Dashboard → Advanced → API Keys</li>
-                  <li>Create a new API key and copy it</li>
-                </ol>
-              </details>
-            </div>
-          </div>
-          <button type="submit" className="button button-success">
-            Connect to Jellyfin
-          </button>
-        </form>
-      </div>
-
-      <div className="card">
-        <h2>Jellyfin Status</h2>
-        <div style={{ display: 'grid', gap: '0.5rem' }}>
-          <div><strong>Connection:</strong> <span className={`nx-chip nx-status ${jellyfinStatus === 'Connected' ? 'ok' : 'bad'}`}>{jellyfinStatus}</span>
-            {jellyfinServerInfo?.connection_type === 'plugin' && (
-              <span className="nx-chip accent" style={{ marginLeft: '0.5rem' }}>
-                via Plugin (API Key)
-              </span>
-            )}
-            {jellyfinServerInfo?.connection_type === 'direct' && (
-              <span className="nx-chip success" style={{ marginLeft: '0.5rem' }}>
-                Direct Connection
-              </span>
-            )}
-          </div>
-          {jellyfinServerInfo && (
-            <>
-              {jellyfinServerInfo.name && <div><strong>Server:</strong> {jellyfinServerInfo.name}</div>}
-              {jellyfinServerInfo.version && <div><strong>Version:</strong> {jellyfinServerInfo.version}</div>}
-            </>
-          )}
-          {jellyfinServerInfo?.plugin_clients?.length > 0 && (
-            <div className="nx-notice accent" style={{ marginTop: '0.5rem' }}>
-              <strong style={{ color: '#6c5ce7' }}><Plug size={14} style={{ verticalAlign: 'middle', marginRight: '0.25rem' }} /> Plugin Clients:</strong>
-              {jellyfinServerInfo.plugin_clients.map((client, idx) => (
-                <div key={idx} style={{ marginTop: '0.25rem', fontSize: '0.9rem' }}>
-                  {client.server_name || 'Jellyfin'} {client.server_version ? `(v${client.server_version})` : ''}
-                  <span style={{ color: 'var(--text-secondary)', marginLeft: '0.5rem', fontSize: '0.8rem' }}>
-                    via key "{client.api_key_name}" — last seen {client.last_seen ? new Date(client.last_seen + 'Z').toLocaleString() : 'N/A'}
-                  </span>
-                </div>
-              ))}
-            </div>
-          )}
+  const renderJellyfin = () => {
+    const connected = jellyfinStatus === 'Connected';
+    return (
+    <div className="nx-conn-panel" style={{ '--brand': '#6c5ce7' }}>
+      {/* Hero status header */}
+      <div className={`nx-conn-hero${connected ? ' connected' : ''}`}>
+        <div className={`nx-conn-hero-badge${connected ? '' : ' idle'}`}>
+          <Server size={24} />
         </div>
-        {jellyfinStatus === 'Connected' && jellyfinServerInfo?.connection_type !== 'plugin' && (
-          <div style={{ marginTop: '1rem', paddingTop: '1rem', borderTop: '1px solid var(--border-color)' }}>
+        <div className="nx-conn-hero-body">
+          <h2 className="nx-conn-hero-title">
+            Jellyfin
+            <span className={`nx-conn-hero-state ${connected ? 'ok' : 'bad'}`}>
+              <span className={`nx-dot ${connected ? 'ok' : 'bad'}`} aria-hidden="true" />
+              {connected ? 'Connected' : 'Not connected'}
+            </span>
+          </h2>
+          <div className="nx-conn-hero-meta">
+            {connected ? (
+              <>
+                {jellyfinServerInfo?.name && <span>{jellyfinServerInfo.name}</span>}
+                {jellyfinServerInfo?.version && <><span className="sep">·</span><span>v{jellyfinServerInfo.version}</span></>}
+                {jellyfinServerInfo?.connection_type === 'plugin'
+                  ? <><span className="sep">·</span><span>via Plugin (API Key)</span></>
+                  : jellyfinServerInfo?.connection_type === 'direct'
+                    ? <><span className="sep">·</span><span>Direct connection</span></>
+                    : null}
+              </>
+            ) : (
+              <span>Enter your server URL and API key below to connect.</span>
+            )}
+          </div>
+        </div>
+        {connected && jellyfinServerInfo?.connection_type !== 'plugin' && (
+          <div className="nx-conn-hero-actions">
             <button onClick={handleDisconnectJellyfin} className="button button-danger">
-              Disconnect from Jellyfin
+              <Unlink size={15} /> Disconnect
             </button>
           </div>
         )}
       </div>
+
+      {/* Plugin clients (when present) */}
+      {jellyfinServerInfo?.plugin_clients?.length > 0 && (
+        <div className="nx-notice accent" style={{ marginBottom: '1rem' }}>
+          <strong style={{ color: '#6c5ce7' }}><Plug size={14} style={{ verticalAlign: 'middle', marginRight: '0.25rem' }} /> Plugin Clients:</strong>
+          {jellyfinServerInfo.plugin_clients.map((client, idx) => (
+            <div key={idx} style={{ marginTop: '0.25rem', fontSize: '0.9rem' }}>
+              {client.server_name || 'Jellyfin'} {client.server_version ? `(v${client.server_version})` : ''}
+              <span style={{ color: 'var(--text-secondary)', marginLeft: '0.5rem', fontSize: '0.8rem' }}>
+                via key "{client.api_key_name}" — last seen {client.last_seen ? new Date(client.last_seen + 'Z').toLocaleString() : 'N/A'}
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* Connect form — only when not connected */}
+      {!connected && (
+        <div className="card">
+          <div className="nx-conn-method-lead">Connect to Jellyfin</div>
+          <p className="nx-conn-method-sub">
+            Connect your Jellyfin server with its URL and an admin API key to enable preroll management.
+          </p>
+          <form onSubmit={handleConnectJellyfin}>
+            <div style={{ display: 'grid', gap: '1rem', marginBottom: '1rem' }}>
+              <div>
+                <label className="nx-conn-field-label">Jellyfin Server URL</label>
+                <input
+                  type="url"
+                  placeholder="http://127.0.0.1:8096"
+                  value={jellyfinConfig.url}
+                  onChange={(e) => setJellyfinConfig({ ...jellyfinConfig, url: e.target.value })}
+                  required
+                />
+              </div>
+              <div>
+                <label className="nx-conn-field-label">API Key</label>
+                <input
+                  type="password"
+                  placeholder="Enter your Jellyfin API key"
+                  value={jellyfinConfig.api_key}
+                  onChange={(e) => setJellyfinConfig({ ...jellyfinConfig, api_key: e.target.value })}
+                  required
+                />
+                <details className="nx-plex-help" style={{ marginTop: '0.5rem' }}>
+                  <summary>How to create a Jellyfin API key</summary>
+                  <ol style={{ marginTop: '0.5rem' }}>
+                    <li>Open Jellyfin Web</li>
+                    <li>Go to Dashboard → Advanced → API Keys</li>
+                    <li>Create a new API key and copy it</li>
+                  </ol>
+                </details>
+              </div>
+            </div>
+            <button type="submit" className="button button-success">
+              <Plug size={15} /> Connect to Jellyfin
+            </button>
+          </form>
+        </div>
+      )}
 
       {/* NeXroll Intros Plugin — Auto-detect & Remote Configure */}
       <div className="card">
@@ -29397,101 +29385,110 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
         )}
       </div>
     </div>
-  );
+    );
+  };
 
-  const renderEmby = () => (
-    <div>
-      <div className="card">
-        <h2>Connect to Emby Server</h2>
-        <p style={{ marginBottom: '1rem', color: 'var(--text-color)' }}>
-          Enter your Emby server URL and API key to establish a connection.
-        </p>
-        <form onSubmit={handleConnectEmby}>
-          <div style={{ display: 'grid', gap: '1rem', marginBottom: '1rem' }}>
-            <div>
-              <label style={{ display: 'block', marginBottom: '0.5rem', fontWeight: 'bold' }}>
-                Emby Server URL
-              </label>
-              <input
-                type="url"
-                placeholder="http://127.0.0.1:8096"
-                value={embyConfig.url}
-                onChange={(e) => setEmbyConfig({ ...embyConfig, url: e.target.value })}
-                required
-                style={{ width: '100%', padding: '0.5rem' }}
-              />
-            </div>
-            <div>
-              <label style={{ display: 'block', marginBottom: '0.5rem', fontWeight: 'bold' }}>
-                API Key
-              </label>
-              <input
-                type="password"
-                placeholder="Enter your Emby API key"
-                value={embyConfig.api_key}
-                onChange={(e) => setEmbyConfig({ ...embyConfig, api_key: e.target.value })}
-                required
-                style={{ width: '100%', padding: '0.5rem' }}
-              />
-              <details className="nx-plex-help" style={{ marginTop: '0.5rem' }}>
-                <summary>How to create an Emby API key</summary>
-                <ol style={{ marginTop: '0.5rem' }}>
-                  <li>Open Emby Web Dashboard</li>
-                  <li>Go to Advanced → API Keys</li>
-                  <li>Create a new API key and copy it</li>
-                </ol>
-              </details>
-            </div>
-          </div>
-          <button type="submit" className="button button-success">
-            Connect to Emby
-          </button>
-        </form>
-      </div>
-
-      <div className="card">
-        <h2>Emby Status</h2>
-        <div style={{ display: 'grid', gap: '0.5rem' }}>
-          <div><strong>Connection:</strong> <span className={`nx-chip nx-status ${embyStatus === 'Connected' ? 'ok' : 'bad'}`}>{embyStatus}</span>
-            {embyServerInfo?.connection_type === 'plugin' && (
-              <span className="nx-chip accent" style={{ marginLeft: '0.5rem' }}>
-                via Plugin (API Key)
-              </span>
-            )}
-            {embyServerInfo?.connection_type === 'direct' && (
-              <span className="nx-chip success" style={{ marginLeft: '0.5rem' }}>
-                Direct Connection
-              </span>
-            )}
-          </div>
-          {embyServerInfo && (
-            <>
-              {embyServerInfo.name && <div><strong>Server:</strong> {embyServerInfo.name}</div>}
-              {embyServerInfo.version && <div><strong>Version:</strong> {embyServerInfo.version}</div>}
-            </>
-          )}
-          {embyServerInfo?.plugin_clients?.length > 0 && (
-            <div className="nx-notice accent" style={{ marginTop: '0.5rem' }}>
-              <strong style={{ color: '#6c5ce7' }}><Plug size={14} style={{ verticalAlign: 'middle', marginRight: '0.25rem' }} /> Plugin Clients:</strong>
-              {embyServerInfo.plugin_clients.map((client, idx) => (
-                <div key={idx} style={{ marginTop: '0.25rem', fontSize: '0.9rem' }}>
-                  {client.server_name || 'Emby'} {client.server_version ? `(v${client.server_version})` : ''}
-                  <span style={{ color: 'var(--text-secondary)', marginLeft: '0.5rem', fontSize: '0.8rem' }}>
-                    via key "{client.api_key_name}" — last seen {client.last_seen ? new Date(client.last_seen + 'Z').toLocaleString() : 'N/A'}
-                  </span>
-                </div>
-              ))}
-            </div>
-          )}
+  const renderEmby = () => {
+    const connected = embyStatus === 'Connected';
+    return (
+    <div className="nx-conn-panel" style={{ '--brand': '#52c41a' }}>
+      {/* Hero status header */}
+      <div className={`nx-conn-hero${connected ? ' connected' : ''}`}>
+        <div className={`nx-conn-hero-badge${connected ? '' : ' idle'}`}>
+          <Server size={24} />
         </div>
-        {embyStatus === 'Connected' && embyServerInfo?.connection_type !== 'plugin' && (
-          <div style={{ marginTop: '1rem', paddingTop: '1rem', borderTop: '1px solid var(--border-color)' }}>
+        <div className="nx-conn-hero-body">
+          <h2 className="nx-conn-hero-title">
+            Emby
+            <span className={`nx-conn-hero-state ${connected ? 'ok' : 'bad'}`}>
+              <span className={`nx-dot ${connected ? 'ok' : 'bad'}`} aria-hidden="true" />
+              {connected ? 'Connected' : 'Not connected'}
+            </span>
+          </h2>
+          <div className="nx-conn-hero-meta">
+            {connected ? (
+              <>
+                {embyServerInfo?.name && <span>{embyServerInfo.name}</span>}
+                {embyServerInfo?.version && <><span className="sep">·</span><span>v{embyServerInfo.version}</span></>}
+                {embyServerInfo?.connection_type === 'plugin'
+                  ? <><span className="sep">·</span><span>via Plugin (API Key)</span></>
+                  : embyServerInfo?.connection_type === 'direct'
+                    ? <><span className="sep">·</span><span>Direct connection</span></>
+                    : null}
+              </>
+            ) : (
+              <span>Enter your server URL and API key below to connect.</span>
+            )}
+          </div>
+        </div>
+        {connected && embyServerInfo?.connection_type !== 'plugin' && (
+          <div className="nx-conn-hero-actions">
             <button onClick={handleDisconnectEmby} className="button button-danger">
-              Disconnect from Emby
+              <Unlink size={15} /> Disconnect
             </button>
           </div>
         )}
       </div>
+
+      {/* Plugin clients (when present) */}
+      {embyServerInfo?.plugin_clients?.length > 0 && (
+        <div className="nx-notice accent" style={{ marginBottom: '1rem' }}>
+          <strong style={{ color: '#6c5ce7' }}><Plug size={14} style={{ verticalAlign: 'middle', marginRight: '0.25rem' }} /> Plugin Clients:</strong>
+          {embyServerInfo.plugin_clients.map((client, idx) => (
+            <div key={idx} style={{ marginTop: '0.25rem', fontSize: '0.9rem' }}>
+              {client.server_name || 'Emby'} {client.server_version ? `(v${client.server_version})` : ''}
+              <span style={{ color: 'var(--text-secondary)', marginLeft: '0.5rem', fontSize: '0.8rem' }}>
+                via key "{client.api_key_name}" — last seen {client.last_seen ? new Date(client.last_seen + 'Z').toLocaleString() : 'N/A'}
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* Connect form — only when not connected */}
+      {!connected && (
+        <div className="card">
+          <div className="nx-conn-method-lead">Connect to Emby</div>
+          <p className="nx-conn-method-sub">
+            Enter your Emby server URL and an admin API key to establish a connection.
+          </p>
+          <form onSubmit={handleConnectEmby}>
+            <div style={{ display: 'grid', gap: '1rem', marginBottom: '1rem' }}>
+              <div>
+                <label className="nx-conn-field-label">Emby Server URL</label>
+                <input
+                  type="url"
+                  placeholder="http://127.0.0.1:8096"
+                  value={embyConfig.url}
+                  onChange={(e) => setEmbyConfig({ ...embyConfig, url: e.target.value })}
+                  required
+                />
+              </div>
+              <div>
+                <label className="nx-conn-field-label">API Key</label>
+                <input
+                  type="password"
+                  placeholder="Enter your Emby API key"
+                  value={embyConfig.api_key}
+                  onChange={(e) => setEmbyConfig({ ...embyConfig, api_key: e.target.value })}
+                  required
+                />
+                <details className="nx-plex-help" style={{ marginTop: '0.5rem' }}>
+                  <summary>How to create an Emby API key</summary>
+                  <ol style={{ marginTop: '0.5rem' }}>
+                    <li>Open Emby Web Dashboard</li>
+                    <li>Go to Advanced → API Keys</li>
+                    <li>Create a new API key and copy it</li>
+                  </ol>
+                </details>
+              </div>
+            </div>
+            <button type="submit" className="button button-success">
+              <Plug size={15} /> Connect to Emby
+            </button>
+          </form>
+        </div>
+      )}
 
       {/* NeXroll Intros Plugin — Auto-detect & Remote Configure */}
       <div className="card">
@@ -29679,7 +29676,8 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
         )}
       </div>
     </div>
-  );
+    );
+  };
 
   const renderConnect = () => (
     <div className="nx-connect">
