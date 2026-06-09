@@ -3683,9 +3683,10 @@ body.dark .nx-chip.warn {
 }
 
 .nx-sidebar-head {
+  position: relative;          /* anchor for the absolutely-placed collapse btn */
   display: flex;
   align-items: center;
-  gap: 0.5rem;
+  justify-content: center;     /* center the logo */
   padding: 0.75rem 0.75rem;
   border-bottom: 1px solid var(--border-color);
   min-height: var(--nx-topbar-h);
@@ -3693,7 +3694,7 @@ body.dark .nx-chip.warn {
 .nx-sidebar-brand {
   display: flex;
   align-items: center;
-  flex: 1 1 auto;
+  justify-content: center;
   min-width: 0;
 }
 .nx-sidebar-logo {
@@ -3706,25 +3707,32 @@ body.dark .nx-chip.warn {
 .nx-sidebar.collapsed .nx-sidebar-brand { display: none; }
 
 .nx-sidebar-collapse {
+  position: absolute;          /* out of flow so the logo stays centered */
+  right: 0.6rem;
+  top: 50%;
+  transform: translateY(-50%);
   background: transparent;
   border: 1px solid var(--border-color);
   color: var(--text-secondary);
   border-radius: 8px;
-  width: 32px;
-  height: 32px;
+  width: 30px;
+  height: 30px;
   display: flex;
   align-items: center;
   justify-content: center;
   cursor: pointer;
-  flex: 0 0 auto;
   transition: background-color 0.15s ease, color 0.15s ease;
 }
 .nx-sidebar-collapse:hover {
   background: var(--hover-bg);
   color: var(--text-color);
 }
+/* When collapsed there's no logo; center the (now sole) collapse button. */
+.nx-sidebar.collapsed .nx-sidebar-collapse {
+  position: static;
+  transform: none;
+}
 .nx-sidebar.collapsed .nx-sidebar-head {
-  justify-content: center;
   padding: 0.75rem 0;
 }
 
@@ -3984,8 +3992,8 @@ body.dark .nx-chip.warn {
   width: 100%;
 }
 
-/* Page header: more compact than the old 2rem standalone title, with a quiet
-   divider so each page reads as its own section under the sidebar nav. */
+/* Legacy in-page page titles (still used by full-screen views like the calendar
+   and a few modals). Kept compact; not sticky. */
 .nx-content .header {
   font-size: 1.6rem;
   font-weight: 700;
@@ -3996,11 +4004,44 @@ body.dark .nx-chip.warn {
 .nx-content .header .header-icon {
   color: var(--button-bg);
 }
-/* The intro <p> that follows a .header gets a divider under it to band the head. */
 .nx-content .header + p {
   padding-bottom: 1rem;
   border-bottom: 1px solid var(--border-color);
   margin-bottom: 1.25rem !important;
+}
+
+/* v2 sticky page header band: a single header rendered at the top of the
+   content column (a direct child of .nx-content), so it reliably stays pinned
+   just under the topbar while the whole page scrolls beneath it. */
+.nx-page-header {
+  position: sticky;
+  top: var(--nx-topbar-h);
+  z-index: 700;
+  background-color: var(--bg-color);
+  border-bottom: 1px solid var(--border-color);
+  padding: 0.85rem var(--nx-page-pad-x);
+}
+.nx-page-header-inner {
+  max-width: var(--nx-page-max);
+  margin: 0 auto;
+  width: 100%;
+}
+.nx-page-header-title {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin: 0;
+  font-size: 1.5rem;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  line-height: 1.2;
+  color: var(--text-color);
+}
+.nx-page-header-title .header-icon { color: var(--button-bg); }
+.nx-page-header-desc {
+  margin: 0.2rem 0 0;
+  font-size: 0.9rem;
+  color: var(--text-secondary);
 }
 
 /* Cards: slightly larger radius + softer, flatter look to match the sidebar. */

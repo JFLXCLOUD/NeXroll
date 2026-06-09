@@ -6367,6 +6367,36 @@ const DashboardTiles = {
     return renderDashboardLibrary();
   };
 
+  // v2 sticky page header. A single header band rendered at the top of the
+  // content column (direct child of .nx-content) so it stays pinned under the
+  // topbar while the page scrolls. Keyed by activeTab; falls back to the
+  // section default. Deep sub-views not listed here keep their in-page header.
+  const PAGE_HEADERS = {
+    'dashboard':        { icon: LayoutDashboard, title: 'Dashboard',       desc: 'Overview of your prerolls, schedules, and server status.' },
+    'library':          { icon: Library,         title: 'Preroll Library', desc: 'Browse, search, and manage your preroll collection.' },
+    'library/add':      { icon: Upload,          title: 'Add Prerolls',    desc: 'Upload videos or import prerolls into your library.' },
+    'library/categories': { icon: Folder,        title: 'Categories',      desc: 'Organize your prerolls into categories.' },
+    'library/scaling':  { icon: Video,           title: 'Video Scaling',   desc: 'Review and rescale preroll resolutions.' },
+    'actions':          { icon: Zap,             title: 'Quick Actions',   desc: 'Common operations and maintenance tasks.' },
+    'connect':          { icon: Link2,           title: 'Connections',     desc: 'Connect to your Plex, Jellyfin, or Emby media server.' },
+    'community-prerolls': { icon: Globe,         title: 'Community Prerolls', desc: 'Discover and import community-made prerolls.' },
+  };
+  const renderPageHeader = () => {
+    const cfg = PAGE_HEADERS[activeTab];
+    if (!cfg) return null;
+    const Icon = cfg.icon;
+    return (
+      <div className="nx-page-header">
+        <div className="nx-page-header-inner">
+          <h1 className="nx-page-header-title">
+            <Icon size={24} className="header-icon" /> {cfg.title}
+          </h1>
+          {cfg.desc && <p className="nx-page-header-desc">{cfg.desc}</p>}
+        </div>
+      </div>
+    );
+  };
+
   // ============================================
   // Dashboard Video Scaling Sub-Page
   // ============================================
@@ -6565,16 +6595,6 @@ const DashboardTiles = {
     
     return (
       <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
-        {/* Header */}
-        <div>
-          <h1 className="header" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.5rem' }}>
-            <Video size={32} className="header-icon" /> Video Scaling
-          </h1>
-          <p style={{ color: 'var(--text-secondary)', fontSize: '0.95rem', margin: 0 }}>
-            Scale prerolls to optimize for remote streaming. Lower resolutions reduce buffering.
-          </p>
-        </div>
-        
         {/* Info Banner */}
         <div className="card" style={{ 
           backgroundColor: 'rgba(99, 102, 241, 0.08)', 
@@ -6970,15 +6990,6 @@ const DashboardTiles = {
   // Dashboard Quick Actions Sub-Page
   const renderDashboardQuickActions = () => (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
-      {/* Header */}
-      <div>
-        <h1 className="header" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.5rem' }}>
-          <Zap size={32} className="header-icon" /> Quick Actions
-        </h1>
-        <p style={{ color: 'var(--text-secondary)', fontSize: '0.95rem', margin: 0 }}>
-          Common operations and maintenance tasks for your preroll library.
-        </p>
-      </div>
 
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: '1rem' }}>
         {/* Apply to Plex/Jellyfin */}
@@ -7519,15 +7530,6 @@ const DashboardTiles = {
   // Dashboard Overview Sub-Page (Tiles)
   const renderDashboardOverview = () => (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem', maxWidth: '1320px', width: '100%', margin: '0 auto' }}>
-      {/* Header */}
-      <div>
-        <h1 className="header" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.5rem' }}>
-          <LayoutDashboard size={32} className="header-icon" /> Dashboard
-        </h1>
-        <p style={{ color: 'var(--text-secondary)', fontSize: '0.95rem', margin: 0 }}>
-          Overview of your NeXroll preroll library and system status.
-        </p>
-      </div>
 
       {/* Storage Health Banner — surfaces missing files / duplicate rows
           from the most recent scanner pass. Dismissible per session. */}
@@ -8366,16 +8368,6 @@ const DashboardTiles = {
   // Dashboard Add Prerolls Sub-Page
   const renderDashboardAddPrerolls = () => (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
-      {/* Header */}
-      <div>
-        <h1 className="header" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.5rem' }}>
-          <Upload size={32} className="header-icon" /> Add Prerolls
-        </h1>
-        <p style={{ color: 'var(--text-secondary)', fontSize: '0.95rem', margin: 0 }}>
-          Upload new video files or import from an existing folder on your system.
-        </p>
-      </div>
-
       {/* Method Toggle */}
       <div className="card" style={{ padding: '0' }}>
         <div style={{ display: 'flex', borderBottom: '1px solid var(--border-color)' }}>
@@ -9006,15 +8998,6 @@ const DashboardTiles = {
   // Dashboard Library Sub-Page (Prerolls list/grid)
   const renderDashboardLibrary = () => (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
-      {/* Header */}
-      <div>
-        <h1 className="header" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.5rem' }}>
-          <Library size={32} className="header-icon" /> Preroll Library
-        </h1>
-        <p style={{ color: 'var(--text-secondary)', fontSize: '0.95rem', margin: 0 }}>
-          Browse, search, and manage your preroll collection.
-        </p>
-      </div>
 
       {/* Stats Bar */}
       <div style={{ display: 'flex', gap: '1rem', flexWrap: 'wrap' }}>
@@ -16553,15 +16536,6 @@ const DashboardTiles = {
 
   const renderCategories = () => (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
-      {/* Header */}
-      <div>
-        <h1 className="header" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.5rem' }}>
-          <Folder size={32} className="header-icon" /> Category Management
-        </h1>
-        <p style={{ color: 'var(--text-secondary)', fontSize: '0.95rem', margin: 0 }}>
-          Create and manage categories to organize your prerolls.
-        </p>
-      </div>
 
       {editingCategory && (
         <Modal
@@ -29709,13 +29683,6 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
 
   const renderConnect = () => (
     <div className="nx-connect">
-      <h1 className="header" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.5rem' }}>
-        <Link2 size={32} className="header-icon" /> Connections
-      </h1>
-      <p style={{ color: 'var(--text-secondary)', fontSize: '0.95rem', margin: 0, marginBottom: '1rem' }}>
-        Connect to your Plex, Jellyfin, or Emby media server.
-      </p>
-
       {/* Segmented media-server selector */}
       <div className="nx-server-seg" role="tablist" aria-label="Media server">
         {[
@@ -31419,15 +31386,6 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
     // Main Community Prerolls interface
     return (
       <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
-        <div>
-          <h1 className="header" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.5rem' }}>
-            <Users2 size={32} className="header-icon" /> Community Prerolls
-          </h1>
-          <p style={{ color: 'var(--text-secondary)', fontSize: '0.95rem', margin: 0 }}>
-            Browse and download prerolls from the community library.
-          </p>
-        </div>
-
         {/* Server Selector */}
         <div className="card" style={{ padding: '0.75rem 1rem' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap' }}>
@@ -33047,6 +33005,8 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
           </div>
         </div>
       )}
+
+     {renderPageHeader()}
 
      <div className="dashboard">
        {/* v2: section navigation is handled by the collapsible Sidebar tree. */}
