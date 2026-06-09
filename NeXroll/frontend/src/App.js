@@ -31701,343 +31701,130 @@ const DashboardTiles = {
         {/* Results List */}
         {communitySearchResults.length > 0 && (
           <div className="card">
-            <h3 style={{ marginTop: 0, marginBottom: '1rem' }}>
-              Results ({communitySearchResults.length})
+            <h3 style={{ marginTop: 0, marginBottom: '0.75rem', fontSize: '1rem' }}>
+              Results <span style={{ color: 'var(--text-secondary)', fontWeight: 500 }}>({communitySearchResults.length})</span>
             </h3>
 
-            <div style={{
-              display: 'flex',
-              flexDirection: 'column',
-              gap: '0.75rem'
-            }}>
-              {communitySearchResults.map(preroll => (
-                <div
-                  key={preroll.id}
-                  style={{
-                    backgroundColor: 'var(--card-bg)',
-                    border: '1px solid var(--border-color)',
-                    borderRadius: '6px',
-                    overflow: 'hidden',
-                    display: 'flex',
-                    flexDirection: 'row',
-                    transition: 'transform 0.2s, box-shadow 0.2s',
-                    padding: '0.75rem',
-                    alignItems: 'center',
-                    gap: '1rem'
-                  }}
-                  onMouseEnter={(e) => {
-                    e.currentTarget.style.transform = 'translateX(2px)';
-                    e.currentTarget.style.boxShadow = '0 2px 8px rgba(0,0,0,0.15)';
-                  }}
-                  onMouseLeave={(e) => {
-                    e.currentTarget.style.transform = 'translateX(0)';
-                    e.currentTarget.style.boxShadow = 'none';
-                  }}
-                >
-                  {/* Icon */}
-                  <div style={{
-                    width: '60px',
-                    height: '60px',
-                    flexShrink: 0,
-                    backgroundColor: 'rgba(100,100,100,0.2)',
-                    borderRadius: '6px',
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    color: 'var(--text-secondary)'
-                  }}>
-                    <Film size={28} />
-                  </div>
+            <div className="nx-comm-results">
+              {communitySearchResults.map(preroll => {
+                const downloaded = isPrerollAlreadyDownloaded(preroll);
+                const dlState = communityIsDownloading[preroll.id];
+                const catOpen = communityShowAddToCategory[preroll.id];
+                return (
+                <div key={preroll.id} className="nx-comm-row">
+                  <div className="nx-comm-row-icon"><Film size={20} /></div>
 
-                  {/* Content */}
-                  <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minWidth: 0 }}>
-                    <h4 style={{
-                      margin: '0 0 0.25rem 0',
-                      fontSize: '1rem',
-                      fontWeight: '600',
-                      lineHeight: '1.3',
-                      color: 'var(--text-color)',
-                      overflow: 'hidden',
-                      textOverflow: 'ellipsis',
-                      whiteSpace: 'nowrap'
-                    }}>
-                      {cleanDisplayText(preroll.title)}
-                    </h4>
-
-                    <div style={{ display: 'flex', gap: '1rem', flexWrap: 'wrap', fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
-                      {preroll.creator && (
-                        <span style={{ display: 'flex', alignItems: 'center', gap: '0.25rem' }}><User size={14} /> {cleanDisplayText(preroll.creator)}</span>
-                      )}
-                      {preroll.category && (
-                        <span style={{ display: 'flex', alignItems: 'center', gap: '0.25rem' }}><FolderOpen size={14} /> {cleanDisplayText(preroll.category)}</span>
-                      )}
-                      {preroll.duration && (
-                        <span style={{ display: 'flex', alignItems: 'center', gap: '0.25rem' }}><Clock size={14} /> {preroll.duration}s</span>
-                      )}
-                      {preroll.file_size && preroll.file_size !== 'Unknown' && (
-                        <span><Package size={14} style={{marginRight: '0.35rem', verticalAlign: 'middle'}} /> {preroll.file_size}</span>
-                      )}
+                  <div className="nx-comm-row-body">
+                    <div className="nx-comm-row-title">{cleanDisplayText(preroll.title)}</div>
+                    <div className="nx-comm-row-meta">
+                      {preroll.creator && <span style={{ display: 'inline-flex', alignItems: 'center', gap: '0.25rem' }}><User size={13} /> {cleanDisplayText(preroll.creator)}</span>}
+                      {preroll.category && <span style={{ display: 'inline-flex', alignItems: 'center', gap: '0.25rem' }}><FolderOpen size={13} /> {cleanDisplayText(preroll.category)}</span>}
+                      {preroll.duration && <span style={{ display: 'inline-flex', alignItems: 'center', gap: '0.25rem' }}><Clock size={13} /> {preroll.duration}s</span>}
+                      {preroll.file_size && preroll.file_size !== 'Unknown' && <span style={{ display: 'inline-flex', alignItems: 'center', gap: '0.25rem' }}><Package size={13} /> {preroll.file_size}</span>}
                     </div>
                   </div>
 
-                  {/* Actions column */}
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', minWidth: '200px' }}>
-                    {/* Category selector */}
-                    {communityShowAddToCategory[preroll.id] && (
+                  <div className="nx-comm-row-actions">
+                    {catOpen && (
                       <select
+                        className="nx-community-select"
                         value={communitySelectedCategory || ''}
                         onChange={(e) => setCommunitySelectedCategory(e.target.value || null)}
                         style={{
-                          width: '100%',
-                          padding: '0.4rem',
-                          fontSize: '0.85rem',
-                          border: '1px solid var(--border-color)',
-                          borderRadius: '4px',
-                          backgroundColor: darkMode ? '#2a2a2a' : 'white',
-                          color: darkMode ? '#ffffff' : '#333',
-                          cursor: 'pointer'
+                          padding: '0.4rem 0.6rem', fontSize: '0.85rem',
+                          border: '1px solid var(--border-color)', borderRadius: '8px',
+                          backgroundColor: 'var(--input-bg)', color: 'var(--text-color)', cursor: 'pointer'
                         }}
                       >
-                        <option value="" style={{ backgroundColor: darkMode ? '#2a2a2a' : 'white', color: darkMode ? '#ffffff' : '#333' }}>Select category...</option>
+                        <option value="">Select category…</option>
                         {[...categories].sort((a, b) => a.name.localeCompare(b.name)).map(cat => (
-                          <option key={cat.id} value={cat.id} style={{ backgroundColor: darkMode ? '#2a2a2a' : 'white', color: darkMode ? '#ffffff' : '#333' }}>
-                            {cat.name}
-                          </option>
+                          <option key={cat.id} value={cat.id}>{cat.name}</option>
                         ))}
                       </select>
                     )}
-
-                    {/* Action buttons */}
-                    <div style={{ display: 'flex', gap: '0.5rem' }}>
+                    <button onClick={() => setCommunityPreviewingPreroll(preroll)} className="button button-secondary" title="Preview video">
+                      <Play size={14} /> Preview
+                    </button>
+                    {downloaded ? (
+                      <span className="button button-success" style={{ cursor: 'default', pointerEvents: 'none' }} title="Already in your collection">
+                        <CheckCircle size={14} /> Downloaded
+                      </span>
+                    ) : (
                       <button
-                        onClick={() => setCommunityPreviewingPreroll(preroll)}
-                        className="button-secondary"
-                        style={{
-                          padding: '0.5rem',
-                          fontSize: '0.8rem',
-                          minWidth: '60px'
-                        }}
-                        title="Preview video"
+                        onClick={() => handleDownload(preroll)}
+                        disabled={dlState || (catOpen && !communitySelectedCategory)}
+                        className="button"
                       >
-                        <Play size={14} style={{marginRight: '0.25rem'}} /> Preview
+                        {dlState === 'downloading' ? <><Loader2 size={14} className="spin" /> Downloading…</>
+                          : dlState === 'processing' ? <><Settings size={14} className="spin" /> Processing…</>
+                          : <><Download size={14} /> Download</>}
                       </button>
-                      {isPrerollAlreadyDownloaded(preroll) ? (
-                        <div
-                          className="button"
-                          style={{
-                            flex: 1,
-                            padding: '0.5rem',
-                            fontSize: '0.8rem',
-                            backgroundColor: 'rgba(102, 200, 145, 0.2)',
-                            border: '1px solid rgba(102, 200, 145, 0.4)',
-                            color: '#66c891',
-                            cursor: 'default',
-                            display: 'flex',
-                            alignItems: 'center',
-                            justifyContent: 'center',
-                            gap: '0.3rem'
-                          }}
-                          title="This preroll is already in your collection"
-                        >
-                          <CheckCircle size={14} style={{marginRight: '0.25rem'}} /> Downloaded
-                        </div>
-                      ) : (
-                        <button
-                          onClick={() => handleDownload(preroll)}
-                          disabled={communityIsDownloading[preroll.id] || (communityShowAddToCategory[preroll.id] && !communitySelectedCategory)}
-                          className="button"
-                          style={{
-                            flex: 1,
-                            padding: '0.5rem',
-                            fontSize: '0.8rem',
-                            opacity: communityIsDownloading[preroll.id] ? 0.6 : 1
-                          }}
-                        >
-                          {communityIsDownloading[preroll.id] === 'downloading' ? <><Loader2 size={14} style={{marginRight: '0.35rem'}} /> Downloading...</> : 
-                           communityIsDownloading[preroll.id] === 'processing' ? <><Settings size={14} style={{marginRight: '0.35rem'}} /> Processing...</> : 
-                           <><Download size={14} style={{marginRight: '0.35rem'}} /> Download</>}
-                        </button>
-                      )}
-                      <button
-                        onClick={() => setCommunityShowAddToCategory(prev => ({
-                          ...prev,
-                          [preroll.id]: !prev[preroll.id]
-                        }))}
-                        className="button-secondary"
-                        style={{
-                          padding: '0.5rem',
-                          fontSize: '0.8rem',
-                          minWidth: '80px',
-                          backgroundColor: communityShowAddToCategory[preroll.id] ? 'rgba(102, 200, 145, 0.2)' : undefined,
-                          border: communityShowAddToCategory[preroll.id] ? '1px solid rgba(102, 200, 145, 0.4)' : undefined,
-                          color: communityShowAddToCategory[preroll.id] ? '#66c891' : 'white'
-                        }}
-                      >
-                        {communityShowAddToCategory[preroll.id] ? <><CheckCircle size={14} style={{marginRight: '0.25rem'}} /> Category</> : <><Plus size={14} style={{marginRight: '0.25rem'}} /> Category</>}
-                      </button>
-                    </div>
+                    )}
+                    <button
+                      onClick={() => setCommunityShowAddToCategory(prev => ({ ...prev, [preroll.id]: !prev[preroll.id] }))}
+                      className={catOpen ? 'button button-success' : 'button button-secondary'}
+                      title="Add to a category on download"
+                    >
+                      {catOpen ? <><CheckCircle size={14} /> Category</> : <><Plus size={14} /> Category</>}
+                    </button>
                   </div>
                 </div>
-              ))}
+                );
+              })}
             </div>
           </div>
         )}
 
         {/* Empty state */}
         {communitySearchResults.length === 0 && !communityIsSearching && (
-          <div className="card" style={{
-            textAlign: 'center',
-            padding: '3rem 1rem',
-            backgroundColor: 'var(--input-bg)',
-            borderRadius: '6px'
-          }}>
-            <div style={{ marginBottom: '1rem', color: 'var(--text-secondary)' }}><Film size={48} /></div>
-            <p style={{ margin: '0 0 0.5rem 0', color: 'var(--text-secondary)' }}>
-              {communityTotalResults === 0 && communitySearchQuery ? 
-                `No results found for "${communitySearchQuery}". Try different keywords or browse by category.` :
-                'No results yet. Start searching or browse by category and platform!'}
-            </p>
-            <p style={{ margin: '0.5rem 0 0 0', fontSize: '0.85rem', color: 'var(--text-secondary)', opacity: 0.7, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.35rem' }}>
-              <Lightbulb size={14} /> Tip: Search by theme, holiday, genre, or franchise (e.g., "halloween", "thanksgiving", "christmas", "marvel", "star wars")
+          <div className="nx-empty">
+            <span className="nx-empty-icon"><Film size={48} /></span>
+            <h3 className="nx-empty-title">
+              {communityTotalResults === 0 && communitySearchQuery ? 'No results found' : 'Search the community library'}
+            </h3>
+            <p className="nx-empty-text">
+              {communityTotalResults === 0 && communitySearchQuery
+                ? `Nothing matched "${communitySearchQuery}". Try a different theme, holiday, genre, or franchise.`
+                : 'Search by theme, holiday, genre, or franchise — e.g. "halloween", "thanksgiving", "christmas", "marvel", "star wars".'}
             </p>
           </div>
         )}
 
-        {/* Random Preroll Section - Always Visible */}
+        {/* Random Preroll Section */}
         <div className="card">
-          <h3 style={{ marginTop: 0, marginBottom: '1rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-            <Shuffle size={14} style={{marginRight: '0.35rem'}} /> Random Preroll
+          <h3 style={{ marginTop: 0, marginBottom: '0.85rem', display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '1rem' }}>
+            <Shuffle size={16} /> Random Preroll
           </h3>
-          
-          {/* Random Button */}
-          <div style={{ marginBottom: '1rem', textAlign: 'center' }}>
-            <button
-              onClick={handleRandomPreroll}
-              disabled={communityIsLoadingRandom}
-              className="button"
-              style={{
-                padding: '0.75rem 1.5rem',
-                fontSize: '1rem',
-                backgroundColor: '#9333ea',
-                minWidth: '200px'
-              }}
-            >
-              <span style={{
-                display: 'inline-block',
-                animation: communityIsLoadingRandom ? 'diceRoll 0.8s ease-in-out infinite' : 'none'
-              }}>
-                <Shuffle size={24} />
-              </span>
-              {' '}
-              {communityIsLoadingRandom ? 'Finding...' : 'Random Preroll'}
-            </button>
-          </div>
 
           {/* Dice Roll Animation CSS */}
           <style>{`
             @keyframes diceRoll {
-              0% {
-                transform: rotateX(0deg) rotateY(0deg) rotateZ(0deg);
-              }
-              25% {
-                transform: rotateX(180deg) rotateY(90deg) rotateZ(45deg);
-              }
-              50% {
-                transform: rotateX(360deg) rotateY(180deg) rotateZ(90deg);
-              }
-              75% {
-                transform: rotateX(540deg) rotateY(270deg) rotateZ(135deg);
-              }
-              100% {
-                transform: rotateX(720deg) rotateY(360deg) rotateZ(180deg);
-              }
+              0% { transform: rotateX(0deg) rotateY(0deg) rotateZ(0deg); }
+              25% { transform: rotateX(180deg) rotateY(90deg) rotateZ(45deg); }
+              50% { transform: rotateX(360deg) rotateY(180deg) rotateZ(90deg); }
+              75% { transform: rotateX(540deg) rotateY(270deg) rotateZ(135deg); }
+              100% { transform: rotateX(720deg) rotateY(360deg) rotateZ(180deg); }
             }
           `}</style>
 
-          {/* Show result if exists, placeholder if not */}
           {communityRandomPreroll ? (
-            <div style={{
-              backgroundColor: 'var(--card-bg)',
-              border: '2px solid #9333ea',
-              borderRadius: '8px',
-              padding: '1.5rem',
-              display: 'flex',
-              flexDirection: 'row',
-              gap: '1.5rem',
-              alignItems: 'center'
-            }}>
-              <div style={{
-                width: '80px',
-                height: '80px',
-                flexShrink: 0,
-                backgroundColor: 'rgba(147,51,234,0.2)',
-                borderRadius: '8px',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center'
-              }}>
-                <Film size={36} style={{ color: '#9333ea' }} />
+            <div className="nx-comm-row" style={{ border: '1px solid var(--border-color)', borderRadius: '10px', padding: '1rem', borderBottom: '1px solid var(--border-color)' }}>
+              <div className="nx-comm-row-icon" style={{ width: '52px', height: '52px', background: 'color-mix(in srgb, var(--accent-color) 14%, transparent)', color: 'var(--accent-color)' }}>
+                <Film size={26} />
               </div>
-              
-              <div style={{ flex: 1 }}>
-                <div style={{ fontSize: '1.2rem', fontWeight: '600', marginBottom: '0.5rem', color: 'var(--text-color)' }}>
-                  {cleanDisplayText(communityRandomPreroll.title)}
-                </div>
-                <div style={{ fontSize: '0.9rem', color: 'var(--text-secondary)', marginBottom: '1rem' }}>
-                  {cleanDisplayText(communityRandomPreroll.category)}
-                </div>
-                
-                <div style={{ display: 'flex', gap: '0.75rem' }}>
-                  <button
-                    onClick={() => setCommunityPreviewingPreroll(communityRandomPreroll)}
-                    className="button"
-                    style={{
-                      padding: '0.5rem 1rem',
-                      backgroundColor: '#3b82f6'
-                    }}
-                  >
-                    <Eye size={14} style={{marginRight: '0.35rem'}} /> Preview
-                  </button>
-                  <button
-                    onClick={() => {
-                      setCommunityShowAddToCategory(prev => ({ ...prev, [communityRandomPreroll.id]: true }));
-                    }}
-                    className="button"
-                    style={{
-                      padding: '0.5rem 1rem',
-                      backgroundColor: '#10b981'
-                    }}
-                  >
-                    <Download size={14} style={{marginRight: '0.35rem'}} /> Download
-                  </button>
-                  <button
-                    onClick={() => setCommunityRandomPreroll(null)}
-                    className="button"
-                    style={{
-                      padding: '0.5rem 1rem',
-                      backgroundColor: '#6b7280'
-                    }}
-                  >
-                    <X size={14} style={{marginRight: '0.35rem'}} /> Clear
-                  </button>
-                </div>
-                
-                {/* Download section */}
+              <div className="nx-comm-row-body">
+                <div className="nx-comm-row-title" style={{ fontSize: '1.05rem' }}>{cleanDisplayText(communityRandomPreroll.title)}</div>
+                {communityRandomPreroll.category && (
+                  <div className="nx-comm-row-meta"><span style={{ display: 'inline-flex', alignItems: 'center', gap: '0.25rem' }}><FolderOpen size={13} /> {cleanDisplayText(communityRandomPreroll.category)}</span></div>
+                )}
                 {communityShowAddToCategory[communityRandomPreroll.id] && (
-                  <div style={{ marginTop: '1rem', padding: '1rem', backgroundColor: 'rgba(0,0,0,0.2)', borderRadius: '4px' }}>
+                  <div style={{ marginTop: '0.75rem', display: 'flex', gap: '0.5rem', flexWrap: 'wrap', alignItems: 'center' }}>
                     <select
                       value={communitySelectedCategory || ''}
                       onChange={(e) => setCommunitySelectedCategory(e.target.value ? Number(e.target.value) : null)}
-                      className="form-select"
-                      style={{
-                        width: '100%',
-                        padding: '0.5rem',
-                        marginBottom: '0.75rem',
-                        borderRadius: '4px',
-                        fontSize: '1rem'
-                      }}
+                      style={{ flex: '1 1 180px', padding: '0.45rem 0.6rem', borderRadius: '8px', border: '1px solid var(--border-color)', background: 'var(--input-bg)', color: 'var(--text-color)' }}
                     >
-                      <option value="">Select Category</option>
+                      <option value="">Select category…</option>
                       {[...categories].sort((a, b) => a.name.localeCompare(b.name)).map(cat => (
                         <option key={cat.id} value={cat.id}>{cat.name}</option>
                       ))}
@@ -32045,68 +31832,53 @@ const DashboardTiles = {
                     <button
                       onClick={() => handleDownload(communityRandomPreroll)}
                       disabled={communityIsDownloading[communityRandomPreroll.id]}
-                      className="button"
-                      style={{
-                        width: '100%',
-                        padding: '0.5rem',
-                        backgroundColor: '#10b981',
-                        opacity: communityIsDownloading[communityRandomPreroll.id] ? 0.6 : 1
-                      }}
+                      className="button button-success"
                     >
-                      {communityIsDownloading[communityRandomPreroll.id] === 'downloading' ? <><Loader2 size={14} style={{marginRight: '0.35rem'}} /> Downloading...</> : 
-                       communityIsDownloading[communityRandomPreroll.id] === 'success' ? <><CheckCircle size={14} style={{marginRight: '0.35rem'}} /> Downloaded!</> : 
-                       <><Download size={14} style={{marginRight: '0.35rem'}} /> Confirm Download</>}
+                      {communityIsDownloading[communityRandomPreroll.id] === 'downloading' ? <><Loader2 size={14} className="spin" /> Downloading…</>
+                        : communityIsDownloading[communityRandomPreroll.id] === 'success' ? <><CheckCircle size={14} /> Downloaded!</>
+                        : <><Download size={14} /> Confirm Download</>}
                     </button>
                   </div>
                 )}
               </div>
+              <div className="nx-comm-row-actions">
+                <button onClick={handleRandomPreroll} disabled={communityIsLoadingRandom} className="button button-secondary" title="Roll again">
+                  <span style={{ display: 'inline-flex', animation: communityIsLoadingRandom ? 'diceRoll 0.8s ease-in-out infinite' : 'none' }}><Shuffle size={14} /></span> Reroll
+                </button>
+                <button onClick={() => setCommunityPreviewingPreroll(communityRandomPreroll)} className="button button-secondary">
+                  <Eye size={14} /> Preview
+                </button>
+                {isPrerollAlreadyDownloaded(communityRandomPreroll) ? (
+                  <span className="button button-success" style={{ cursor: 'default', pointerEvents: 'none' }}><CheckCircle size={14} /> Downloaded</span>
+                ) : (
+                  <button onClick={() => setCommunityShowAddToCategory(prev => ({ ...prev, [communityRandomPreroll.id]: true }))} className="button">
+                    <Download size={14} /> Download
+                  </button>
+                )}
+                <button onClick={() => setCommunityRandomPreroll(null)} className="button button-secondary" title="Clear"><X size={14} /></button>
+              </div>
             </div>
           ) : (
-            <div style={{
-              textAlign: 'center',
-              padding: '2rem',
-              color: 'var(--text-secondary)',
-              backgroundColor: 'rgba(147,51,234,0.1)',
-              borderRadius: '8px',
-              border: '1px dashed rgba(147,51,234,0.3)'
-            }}>
-              Click the button above to discover a random preroll from the community library!
+            <div style={{ textAlign: 'center', padding: '1.75rem 1rem', border: '1px dashed var(--border-color)', borderRadius: '10px', background: 'var(--bg-color)' }}>
+              <p style={{ margin: '0 0 1rem', color: 'var(--text-secondary)', fontSize: '0.9rem' }}>
+                Discover a random preroll from the community library.
+              </p>
+              <button onClick={handleRandomPreroll} disabled={communityIsLoadingRandom} className="button" style={{ minWidth: '180px' }}>
+                <span style={{ display: 'inline-flex', animation: communityIsLoadingRandom ? 'diceRoll 0.8s ease-in-out infinite' : 'none' }}><Shuffle size={18} /></span>
+                {communityIsLoadingRandom ? 'Finding…' : 'Surprise Me'}
+              </button>
             </div>
           )}
         </div>
 
-        {/* Attribution Footer */}
-        <div style={{
-          padding: '1rem',
-          backgroundColor: 'var(--card-bg)',
-          border: '1px solid var(--border-color)',
-          borderRadius: '6px',
-          textAlign: 'center',
-          fontSize: '0.85rem',
-          color: 'var(--text-secondary)'
-        }}>
-          <p style={{ margin: '0.25rem 0' }}>
-            Community prerolls powered by{' '}
-            <a
-              href="https://typicalnerds.uk/"
-              target="_blank"
-              rel="noopener noreferrer"
-              style={{
-                color: '#f6685e',
-                textDecoration: 'none',
-                fontWeight: '600',
-                transition: 'opacity 0.2s'
-              }}
-              onMouseEnter={(e) => e.target.style.opacity = '0.8'}
-              onMouseLeave={(e) => e.target.style.opacity = '1'}
-            >
-              Typical Nerds
-            </a>
-          </p>
-          <p style={{ margin: '0.25rem 0', fontSize: '0.8rem' }}>
-            Fair Use Policy applies. See above for details.
-          </p>
-        </div>
+        {/* Attribution */}
+        <p style={{ textAlign: 'center', fontSize: '0.82rem', color: 'var(--text-muted)', margin: '0.25rem 0 0' }}>
+          Community prerolls powered by{' '}
+          <a href="https://typicalnerds.uk/" target="_blank" rel="noopener noreferrer" style={{ color: '#f6685e', textDecoration: 'none', fontWeight: 600 }}>
+            Typical Nerds
+          </a>
+          {' '}· Fair Use Policy applies.
+        </p>
       </div>
     );
   };
