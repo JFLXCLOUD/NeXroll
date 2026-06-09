@@ -4838,3 +4838,67 @@ body.dark .nx-sched-list select:focus { box-shadow: 0 0 0 3px rgba(79, 70, 229, 
   color: var(--text-muted);
   margin: 0.5rem 0 0.25rem;
 }
+
+/* ============================================================
+   NeXroll v2 — Settings pages
+   Themed inputs/selects + a consistent "setting row" block so each settings
+   sub-page reads the same. Page titles come from the sticky page header.
+   ============================================================ */
+.nx-settings input[type="text"],
+.nx-settings input[type="url"],
+.nx-settings input[type="password"],
+.nx-settings input[type="number"],
+.nx-settings input[type="search"],
+.nx-settings input[type="email"],
+.nx-settings input:not([type]),
+.nx-settings select,
+.nx-settings textarea {
+  box-sizing: border-box;
+  padding: 0.6rem 0.75rem;
+  font-size: 0.95rem;
+  font-family: inherit;
+  color: var(--text-color);
+  background-color: var(--input-bg);
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  outline: none;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+.nx-settings input::placeholder,
+.nx-settings textarea::placeholder { color: var(--text-muted); opacity: 1; }
+.nx-settings input:focus,
+.nx-settings select:focus,
+.nx-settings textarea:focus {
+  border-color: var(--button-bg);
+  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.18);
+}
+body.dark .nx-settings input:focus,
+body.dark .nx-settings select:focus,
+body.dark .nx-settings textarea:focus { box-shadow: 0 0 0 3px rgba(79, 70, 229, 0.3); }
+
+/* Hide the now-redundant in-page .header on settings pages (the sticky page
+   header supplies the title). Kept as a safety net in case any sub-page still
+   renders one. */
+.nx-settings > .nx-settings-legacy-header { display: none; }
+
+/* Reusable setting row: icon + title + description + control. */
+.nx-setting-row {
+  padding: 1rem 1.1rem;
+  background: var(--bg-color);
+  border: 1px solid var(--border-color);
+  border-radius: 10px;
+  margin-bottom: 1rem;
+}
+.nx-setting-row:last-child { margin-bottom: 0; }
+.nx-setting-row-head {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-bottom: 0.4rem;
+}
+.nx-setting-row-head h3 { margin: 0; font-size: 1rem; font-weight: 600; }
+.nx-setting-row-desc {
+  margin: 0 0 0.75rem;
+  color: var(--text-secondary);
+  font-size: 0.85rem;
+}

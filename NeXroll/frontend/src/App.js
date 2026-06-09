@@ -6382,6 +6382,14 @@ const DashboardTiles = {
     'actions':          { icon: Zap,             title: 'Quick Actions',   desc: 'Common operations and maintenance tasks.' },
     'connect':          { icon: Link2,           title: 'Connections',     desc: 'Connect to your Plex, Jellyfin, or Emby media server.' },
     'community-prerolls': { icon: Globe,         title: 'Community Prerolls', desc: 'Discover and import community-made prerolls.' },
+    'settings':         { icon: Settings,        title: 'General Settings',  desc: 'Theme, timezone, and general application preferences.' },
+    'settings/paths':   { icon: ArrowRight,      title: 'Path Mappings',     desc: 'Translate NeXroll paths to what your media server sees.' },
+    'settings/storage': { icon: HardDrive,       title: 'Storage',           desc: 'Configure where prerolls are stored and auto-scanned.' },
+    'settings/apikeys': { icon: Key,             title: 'API Keys',          desc: 'Manage API keys for external integrations and automation.' },
+    'settings/logs':    { icon: FileText,        title: 'Logs',              desc: 'View, filter, and export system logs.' },
+    'settings/users':   { icon: Users,           title: 'Users',             desc: 'Manage user accounts and login requirements.' },
+    'settings/backup':  { icon: Download,        title: 'Backup & Restore',  desc: 'Export and import your NeXroll data.' },
+    'settings/system':  { icon: Info,            title: 'System',            desc: 'System information and diagnostics.' },
   };
   const renderPageHeader = () => {
     const cfg = PAGE_HEADERS[activeTab];
@@ -25416,14 +25424,6 @@ const DashboardTiles = {
   // Settings - General Tab
   const renderSettingsGeneral = () => (
     <>
-    <div style={{ marginBottom: '1rem' }}>
-      <h1 className="header" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.5rem' }}>
-        <Settings size={32} className="header-icon" /> General Settings
-      </h1>
-      <p style={{ color: 'var(--text-secondary)', fontSize: '0.95rem', margin: 0 }}>
-        Configure general application preferences and behavior.
-      </p>
-    </div>
     <div className="card">
       {/* Theme Settings */}
       <div style={{ 
@@ -25881,14 +25881,6 @@ const DashboardTiles = {
   // Settings - Path Mappings Tab
   const renderSettingsPaths = () => (
     <>
-    <div style={{ marginBottom: '1rem' }}>
-      <h1 className="header" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.5rem' }}>
-        <FolderSync size={32} className="header-icon" /> Path Mappings
-      </h1>
-      <p style={{ color: 'var(--text-secondary)', fontSize: '0.95rem', margin: 0 }}>
-        Define how local paths should be translated to media server paths.
-      </p>
-    </div>
     {/* Path Mappings Card */}
     <div className="card" style={{ marginBottom: '1.5rem' }}>
       <h2 style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.5rem' }}>
@@ -26089,14 +26081,6 @@ const DashboardTiles = {
   // Settings - Backup & Restore Tab
   const renderSettingsBackup = () => (
     <>
-    <div style={{ marginBottom: '1rem' }}>
-      <h1 className="header" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.5rem' }}>
-        <Archive size={32} className="header-icon" /> Backup & Restore
-      </h1>
-      <p style={{ color: 'var(--text-secondary)', fontSize: '0.95rem', margin: 0 }}>
-        Create backups of your NeXroll data and restore from previous backups.
-      </p>
-    </div>
     <div className="card">
       {/* Progress Indicator */}
       {backupProgress.active && (
@@ -26357,14 +26341,6 @@ const DashboardTiles = {
   // Settings - API Keys Tab
   const renderSettingsApiKeys = () => (
     <>
-    <div style={{ marginBottom: '1rem' }}>
-      <h1 className="header" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.5rem' }}>
-        <Key size={32} className="header-icon" /> API Keys
-      </h1>
-      <p style={{ color: 'var(--text-secondary)', fontSize: '0.95rem', margin: 0 }}>
-        Manage API keys for external integrations and automation.
-      </p>
-    </div>
     <div>
       {/* Created Key Display (only shown once after creation) */}
       {createdApiKey && (
@@ -26730,14 +26706,6 @@ const DashboardTiles = {
   // Settings - Logs Tab
   const renderSettingsLogs = () => (
     <>
-    <div style={{ marginBottom: '1rem' }}>
-      <h1 className="header" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.5rem' }}>
-        <FileText size={32} className="header-icon" /> Event Log
-      </h1>
-      <p style={{ color: 'var(--text-secondary)', fontSize: '0.95rem', margin: 0 }}>
-        View application logs and system events.
-      </p>
-    </div>
     <div>
       {/* Log Stats Overview */}
       {logStats && (
@@ -27288,14 +27256,6 @@ const DashboardTiles = {
   // Settings - Users Tab
   const renderSettingsUsers = () => (
     <>
-    <div style={{ marginBottom: '1rem' }}>
-      <h1 className="header" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.5rem' }}>
-        <Users size={32} className="header-icon" /> User Management
-      </h1>
-      <p style={{ color: 'var(--text-secondary)', fontSize: '0.95rem', margin: 0 }}>
-        Manage user accounts and authentication settings.
-      </p>
-    </div>
     <div>
       {/* User Management */}
       <div className="card">
@@ -27784,14 +27744,6 @@ const DashboardTiles = {
   // Settings - System Tab
   const renderSettingsSystem = () => (
     <>
-    <div style={{ marginBottom: '1rem' }}>
-      <h1 className="header" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.5rem' }}>
-        <Info size={32} className="header-icon" /> System Information
-      </h1>
-      <p style={{ color: 'var(--text-secondary)', fontSize: '0.95rem', margin: 0 }}>
-        View version info, scheduler status, and system diagnostics.
-      </p>
-    </div>
     <div>
       {/* Version & Application Info */}
       <div className="card">
@@ -28508,14 +28460,6 @@ const DashboardTiles = {
 
   const renderSettingsStorage = () => (
     <>
-    <div style={{ marginBottom: '1rem' }}>
-      <h1 className="header" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.5rem' }}>
-        <HardDrive size={32} className="header-icon" /> Storage Settings
-      </h1>
-      <p style={{ color: 'var(--text-secondary)', fontSize: '0.95rem', margin: 0 }}>
-        Configure where NeXroll stores preroll video files and thumbnails.
-      </p>
-    </div>
     <div className="card">
       <h2 style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
         <FolderOpen size={20} style={{ color: 'var(--accent-color)' }} /> Preroll Storage Folder
@@ -28744,29 +28688,16 @@ const DashboardTiles = {
 
   // Main Settings Router
   const renderSettings = () => {
-    if (activeTab === 'settings/paths') {
-      return renderSettingsPaths();
-    }
-    if (activeTab === 'settings/storage') {
-      return renderSettingsStorage();
-    }
-    if (activeTab === 'settings/backup') {
-      return renderSettingsBackup();
-    }
-    if (activeTab === 'settings/apikeys') {
-      return renderSettingsApiKeys();
-    }
-    if (activeTab === 'settings/logs') {
-      return renderSettingsLogs();
-    }
-    if (activeTab === 'settings/users') {
-      return renderSettingsUsers();
-    }
-    if (activeTab === 'settings/system') {
-      return renderSettingsSystem();
-    }
-    // Default: General settings
-    return renderSettingsGeneral();
+    const inner =
+      activeTab === 'settings/paths' ? renderSettingsPaths() :
+      activeTab === 'settings/storage' ? renderSettingsStorage() :
+      activeTab === 'settings/backup' ? renderSettingsBackup() :
+      activeTab === 'settings/apikeys' ? renderSettingsApiKeys() :
+      activeTab === 'settings/logs' ? renderSettingsLogs() :
+      activeTab === 'settings/users' ? renderSettingsUsers() :
+      activeTab === 'settings/system' ? renderSettingsSystem() :
+      renderSettingsGeneral();
+    return <div className="nx-settings">{inner}</div>;
   };
 
   const renderJellyfin = () => {
