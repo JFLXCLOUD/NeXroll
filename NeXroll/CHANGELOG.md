@@ -1,39 +1,69 @@
 # Changelog
 
-## [2.0.0-beta.1] - 06-06-2026 (beta)
+## [2.0.0-beta.1] - 06-09-2026 (beta)
 
-> First beta of the NeXroll v2 line — a modern "Arr-style" interface overhaul.
-> Built on top of the 1.14 work. **Upgrade-safe:** existing installs keep all
-> their data and skip the new setup wizard automatically.
+> First beta of the NeXroll v2 line — a top-to-bottom modern "Arr-style"
+> interface overhaul, built on top of 1.14. **Upgrade-safe:** existing installs
+> keep all their data and skip the new first-run wizard automatically.
 
 ### Added
 
-- **Collapsible sidebar navigation (Arr-style).** The top tab bar is replaced by
-  a left sidebar that uses an expanding tree: the active section auto-expands to
-  reveal its sub-pages. A toggle collapses it to an icon-only rail (remembered
-  across sessions via localStorage). On narrow screens it becomes an off-canvas
-  drawer. The online-status indicator, theme toggle, and user/logout move into a
-  slim top bar; the logo moves into the sidebar header.
-- **First-run onboarding wizard.** A fresh install is greeted by a guided setup:
-  connect a media server (Plex / Jellyfin / Emby), optionally connect Radarr and
-  Sonarr for NeX-Up, choose a preroll storage folder, and create an admin
-  account (with the option to require login). Every step is skippable, and the
-  Plex step can hand off to the full sign-in page for OAuth.
+- **Collapsible Arr-style sidebar** replaces the top tab bar — an expanding tree
+  of sections/sub-pages, collapsible to an icon-only rail (remembered across
+  sessions), off-canvas drawer on narrow screens. Status/theme/user move to a
+  slim top bar; the logo is centered in the sidebar header.
+- **Sidebar footer resource links** as icons (GitHub, Discord, Reddit, Ko-fi as
+  a heart) with the version.
+- **Sticky page headers** that stay pinned under the top bar while scrolling.
+- **First-run onboarding wizard** — guided setup for media server
+  (Plex/Jellyfin/Emby), optional Radarr/Sonarr, storage folder, and admin
+  account; every step skippable, Plex can hand off to full OAuth.
+- **Toasts** for non-blocking success/info feedback (errors/confirms keep the
+  dialog).
+- **Reusable empty-state** pattern across Library, Categories, Video Scaling,
+  NeX-Up Trailers, Logs, Schedules, and Community.
+- **Standardized button system** (primary/secondary/success/danger/info/outline).
 
 ### Changed
 
-- Section navigation is now driven entirely by the sidebar tree; the four inline
-  sticky sub-nav bars (dashboard, schedules, NeX-Up, settings) were removed. The
-  NeX-Up "Create Sequence" action is preserved on the Generator page.
+- **Page reorganization:** Dashboard standalone; new Library section (All
+  Prerolls, Add Prerolls, Categories, Video Scaling); Quick Actions promoted to
+  top-level. Section nav is driven entirely by the sidebar tree.
+- **Connect page redesigned** (Plex/Jellyfin/Emby) with branded status heroes;
+  Plex leads with the recommended Stable Token method plus a Docker/remote hint.
+- **Community Prerolls redesigned** — status hero, unified search toolbar,
+  refined result rows, cleaned-up random section.
+- **Create New Schedule reorganized** into numbered section cards with themed
+  fields and a sticky create bar.
+- **My Schedules / Saved Sequences** refreshed; Edit Schedule and sequence
+  import/export modals brought in line.
+- **All emojis removed** UI-wide (replaced with lucide icons or words); stray
+  Unicode control glyphs swapped for icons.
+- Dark/light theming fixes throughout (whole viewport follows the theme), themed
+  scrollbars, keyboard focus rings, smoother sidebar animation.
+
+### Fixed
+
+- **Community index build no longer hangs** — runs on a background thread and
+  reports real, gradual progress (asymptotic curve) via a smooth animated bar,
+  instead of blocking the request and racing to "done."
 
 ### Migration / upgrade notes
 
 - A new `settings.onboarding_complete` column is added automatically on first
-  launch. **Existing databases are detected** (a configured server, or any
-  prerolls/categories already present) and marked complete, so upgraders go
-  straight to the new UI without seeing the wizard. Only genuinely fresh installs
-  see onboarding.
+  launch. Existing databases are detected (a configured server, or any
+  prerolls/categories present) and marked complete, so upgraders go straight to
+  the new UI. Only genuinely fresh installs see onboarding.
 - New endpoints: `GET /onboarding/status`, `POST /onboarding/complete`.
+
+## [1.14.0] - 06-09-2026 (stable)
+
+> Stable release of the 1.14 line, promoting 1.14.0-beta.1 and 1.14.0-beta.2.
+> No code changes from beta.2 — version bump and stable promotion only.
+
+Rolls up the 1.14 betas: the **Connections UI overhaul** plus scheduler/plugin/
+Plex-OAuth fixes (beta.1), and the **Dashboard layout overhaul** (beta.2). See
+those entries below for full details.
 
 ## [1.14.0-beta.2] - 06-05-2026 (beta)
 
