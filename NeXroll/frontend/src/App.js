@@ -15212,7 +15212,7 @@ const DashboardTiles = {
 
   // Schedule List page (default view)
   const renderScheduleListPage = () => (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
+    <div className="nx-sched-list" style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
       {/* Header */}
       <div>
         <h1 className="header" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.5rem' }}>
@@ -15407,10 +15407,9 @@ const DashboardTiles = {
                 setScheduleCurrentPage(1); // Reset to first page on search
               }}
               style={{
-                width: '70%',
+                width: '100%',
                 padding: '0.75rem 1rem',
                 fontSize: '0.95rem',
-                border: '2px solid var(--border-color)',
                 borderRadius: '0.5rem',
                 backgroundColor: 'var(--bg-color)',
                 color: 'var(--text-color)'
@@ -15428,7 +15427,6 @@ const DashboardTiles = {
                 width: '100%',
                 padding: '0.75rem 1rem',
                 fontSize: '0.95rem',
-                border: '2px solid var(--border-color)',
                 borderRadius: '0.5rem',
                 backgroundColor: 'var(--bg-color)',
                 color: 'var(--text-color)',
@@ -15463,21 +15461,17 @@ const DashboardTiles = {
             // Show message if no schedules found
             if (filteredSchedules.length === 0) {
               return (
-                <div style={{ 
-                  textAlign: 'center', 
-                  padding: '3rem', 
-                  color: 'var(--text-secondary)',
-                  backgroundColor: 'var(--bg-color)',
-                  borderRadius: '0.5rem',
-                  border: '2px dashed var(--border-color)'
-                }}>
-                  <div style={{ fontSize: '3rem', marginBottom: '1rem' }}><Inbox size={48} /></div>
-                  <div style={{ fontSize: '1.1rem', fontWeight: 600, marginBottom: '0.5rem' }}>
-                    No schedules found
-                  </div>
-                  <div style={{ fontSize: '0.9rem' }}>
-                    {scheduleSearchQuery ? `Try adjusting your search or filter` : `Create your first schedule above`}
-                  </div>
+                <div className="nx-empty">
+                  <span className="nx-empty-icon"><Inbox size={48} /></span>
+                  <h3 className="nx-empty-title">No schedules found</h3>
+                  <p className="nx-empty-text">
+                    {scheduleSearchQuery || scheduleFilterType !== 'all' ? 'Try adjusting your search or filter.' : 'Create your first schedule to get started.'}
+                  </p>
+                  {!scheduleSearchQuery && scheduleFilterType === 'all' && (
+                    <button className="button" onClick={() => setActiveTab('schedules/create')}>
+                      <Plus size={16} /> Create Schedule
+                    </button>
+                  )}
                 </div>
               );
             }
@@ -29844,58 +29838,33 @@ const DashboardTiles = {
     
     return (
       <>
-      <div style={{ padding: '1.5rem', maxWidth: '1400px', margin: '0 auto' }}>
+      <div className="nx-sched-list" style={{ maxWidth: '1320px', margin: '0 auto' }}>
         {/* Header */}
-        <div style={{ 
-          display: 'flex',
-          justifyContent: 'space-between',
-          alignItems: 'center',
-          marginBottom: '1.5rem',
-          paddingBottom: '1rem',
-          borderBottom: '2px solid var(--border-color)'
-        }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '1rem', flexWrap: 'wrap', marginBottom: '1.25rem' }}>
           <div>
-            <h1 className="header" style={{ margin: '0 0 0.5rem 0', fontSize: '2rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}><Library size={28} className="header-icon" /> Saved Sequences</h1>
-            <p style={{ color: 'var(--text-secondary)', fontSize: '0.95rem', margin: 0 }}>
-              Reusable custom sequences you can schedule anytime
+            <h1 className="header" style={{ margin: 0, fontSize: '1.6rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}><Library size={28} className="header-icon" /> Saved Sequences</h1>
+            <p style={{ color: 'var(--text-secondary)', fontSize: '0.95rem', margin: '0.35rem 0 0' }}>
+              Reusable custom sequences you can schedule anytime.
             </p>
           </div>
-          <div style={{ display: 'flex', gap: '0.75rem' }}>
-            <button 
-              className="button"
+          <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
+            <button
+              className="button button-secondary"
               onClick={loadSavedSequences}
               disabled={sequencesLoading}
-              style={{ 
-                padding: '0.75rem 1.25rem', 
-                fontSize: '0.95rem',
-                fontWeight: 600,
-                display: 'flex',
-                alignItems: 'center',
-                gap: '0.5rem'
-              }}
             >
-              <RefreshCw size={16} /> {sequencesLoading ? 'Loading...' : 'Refresh'}
+              {sequencesLoading ? <><Loader2 size={16} className="spin" /> Loading…</> : <><RefreshCw size={16} /> Refresh</>}
             </button>
-            
+
             {/* Import Button - Opens PatternImport Modal */}
-            <button 
-              className="button"
+            <button
+              className="button button-info"
               onClick={() => setShowSequenceImportModal(true)}
-              style={{ 
-                padding: '0.75rem 1.25rem', 
-                fontSize: '0.95rem',
-                fontWeight: 600,
-                display: 'flex',
-                alignItems: 'center',
-                gap: '0.5rem',
-                backgroundColor: '#17a2b8',
-                borderColor: '#17a2b8'
-              }}
               title="Import .nexseq or .nexbundle files"
             >
               <Download size={16} /> Import
             </button>
-            
+
             {/* Export All Button */}
             {savedSequences.length > 0 && (
               <button 
@@ -29961,16 +29930,7 @@ const DashboardTiles = {
                   
                   showAlert(`Exported ${savedSequences.length} sequences as bundle`, 'success');
                 }}
-                style={{ 
-                  padding: '0.75rem 1.25rem', 
-                  fontSize: '0.95rem',
-                  fontWeight: 600,
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: '0.5rem',
-                  backgroundColor: '#6c757d',
-                  borderColor: '#6c757d'
-                }}
+                className="button button-secondary"
                 title="Export all sequences as .nexbundle"
               >
                 <Upload size={16} /> Export All ({savedSequences.length})
@@ -34098,7 +34058,7 @@ const DashboardTiles = {
             setTimeRange({ start: '', end: '' });
           }}
         >
-          <form onSubmit={handleUpdateSchedule}>
+          <form onSubmit={handleUpdateSchedule} className="nx-sched">
             {/* Mode Toggle */}
             <div style={{ marginBottom: '1.5rem', padding: '1rem', backgroundColor: 'var(--card-bg)', borderRadius: '0.5rem', border: '1px solid var(--border-color)' }}>
               <label style={{ display: 'block', marginBottom: '0.75rem', fontWeight: 600, fontSize: '1rem' }}>Schedule Mode</label>

@@ -4800,3 +4800,41 @@ body.dark .nx-sched textarea:focus { box-shadow: 0 0 0 3px rgba(79, 70, 229, 0.3
   box-shadow: 0 -2px 12px var(--shadow);
 }
 .nx-sched-bar .nx-sched-bar-info { margin-right: auto; font-size: 0.85rem; color: var(--text-secondary); }
+
+/* My Schedules list: themed search/filter controls so they stop using ad-hoc
+   inline borders/widths and align cleanly. */
+.nx-sched-list input[type="text"],
+.nx-sched-list select {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 0.6rem 0.8rem;
+  font-size: 0.95rem;
+  font-family: inherit;
+  color: var(--text-color);
+  background-color: var(--input-bg);
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  outline: none;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+.nx-sched-list input[type="text"]::placeholder { color: var(--text-muted); opacity: 1; }
+.nx-sched-list input[type="text"]:focus,
+.nx-sched-list select:focus {
+  border-color: var(--button-bg);
+  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.18);
+}
+body.dark .nx-sched-list input[type="text"]:focus,
+body.dark .nx-sched-list select:focus { box-shadow: 0 0 0 3px rgba(79, 70, 229, 0.3); }
+
+/* Group headers (Currently Running / Enabled / Disabled) */
+.nx-sched-group-head {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.78rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-muted);
+  margin: 0.5rem 0 0.25rem;
+}
