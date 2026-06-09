@@ -14116,264 +14116,74 @@ const DashboardTiles = {
 
   // Create Schedule page - separate view  
   const renderCreateSchedulePage = () => (
-    <div>
-      <div className="upload-section" style={{ maxWidth: '1200px', margin: '30px auto' }}>
-        {/* Header with Progress Steps */}
-        <div style={{ marginBottom: '2rem' }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
-            <div>
-              <h1 className="header" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.5rem', margin: 0, fontSize: '1.8rem', fontWeight: 700 }}>
-                <PlusCircle size={32} className="header-icon" /> Create New Schedule
-              </h1>
-              <p style={{ color: 'var(--text-secondary)', fontSize: '0.95rem', margin: 0 }}>
-                Set up a new preroll schedule with step-by-step guidance.
-              </p>
-            </div>
-          </div>
-          
-          {/* Visual Step Progress Indicator */}
-          <div style={{
-            display: 'flex',
-            alignItems: 'center',
-            gap: '1rem',
-            padding: '1rem',
-            backgroundColor: 'var(--bg-color)',
-            borderRadius: '8px',
-            border: '1px solid var(--border-color)'
-          }}>
-            {[
-              { num: 1, label: 'Mode', icon: <Target size={16} /> },
-              { num: 2, label: 'Basic Info', icon: <Edit size={16} /> },
-              { num: 3, label: 'Recurrence', icon: <Calendar size={16} /> },
-              { num: 4, label: scheduleMode === 'simple' ? 'Content' : 'Sequence', icon: scheduleMode === 'simple' ? <Folder size={16} /> : <Film size={16} /> },
-              { num: 5, label: 'Settings', icon: <Settings size={16} /> }
-            ].map((step, index, arr) => (
-              <React.Fragment key={step.num}>
-                <div style={{
-                  flex: 1,
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: '0.5rem'
-                }}>
-                  <div style={{
-                    width: '32px',
-                    height: '32px',
-                    borderRadius: '50%',
-                    backgroundColor: 'var(--button-bg)',
-                    color: 'white',
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    fontWeight: 600,
-                    fontSize: '0.9rem'
-                  }}>
-                    {step.num}
-                  </div>
-                  <div style={{ flex: 1 }}>
-                    <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>Step {step.num}</div>
-                    <div style={{ fontSize: '0.9rem', fontWeight: 600, color: 'var(--text-color)', display: 'flex', alignItems: 'center', gap: '0.25rem' }}>
-                      <span>{step.icon}</span>
-                      {step.label}
-                    </div>
-                  </div>
-                </div>
-                {index < arr.length - 1 && (
-                  <div style={{
-                    width: '40px',
-                    height: '2px',
-                    backgroundColor: 'var(--border-color)'
-                  }} />
-                )}
-              </React.Fragment>
-            ))}
-          </div>
+    <div className="nx-sched">
+      <div>
+        {/* Header */}
+        <div style={{ marginBottom: '1rem' }}>
+          <h1 className="header" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', margin: 0, fontSize: '1.6rem', fontWeight: 700 }}>
+            <PlusCircle size={28} className="header-icon" /> Create New Schedule
+          </h1>
+          <p style={{ color: 'var(--text-secondary)', fontSize: '0.95rem', margin: '0.35rem 0 0' }}>
+            Configure each section below, then create your schedule.
+          </p>
         </div>
-        
+
+        {/* Quick Start: Browse Holidays */}
+        <div
+          onClick={() => {
+            loadHolidayCountries();
+            loadHolidays(holidaySelectedCountry, holidaySelectedYear);
+            checkHolidayApiStatus();
+            setShowHolidayBrowser(true);
+          }}
+          className="nx-conn-hint"
+          style={{ cursor: 'pointer', marginTop: 0, marginBottom: '1rem', alignItems: 'center', justifyContent: 'space-between' }}
+        >
+          <span style={{ display: 'flex', alignItems: 'center', gap: '0.6rem' }}>
+            <Globe size={18} className="nx-conn-hint-icon" />
+            <span><strong style={{ color: 'var(--text-color)' }}>Quick start:</strong> browse 100+ countries' holidays to auto-fill dates.</span>
+          </span>
+          <span style={{ display: 'inline-flex', alignItems: 'center', gap: '0.25rem', color: 'var(--button-bg)', fontWeight: 600 }}>
+            Browse <ChevronRight size={15} />
+          </span>
+        </div>
+
         <form onSubmit={handleCreateSchedule}>
-          {/* Step 1: Mode Selection */}
-          <div style={{ 
-            marginBottom: '2rem', 
-            padding: '1.5rem', 
-            backgroundColor: 'var(--card-bg)', 
-            borderRadius: '12px', 
-            border: '2px solid var(--border-color)',
-            boxShadow: '0 2px 8px rgba(0,0,0,0.08)'
-          }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', marginBottom: '1.25rem' }}>
-              <div style={{ 
-                display: 'flex', 
-                alignItems: 'center', 
-                justifyContent: 'center',
-                width: '32px', 
-                height: '32px', 
-                borderRadius: '50%', 
-                backgroundColor: 'var(--button-bg)',
-                color: 'white',
-                fontWeight: 700,
-                fontSize: '1rem'
-              }}>1</div>
-              <h3 style={{ margin: 0, fontSize: '1.2rem', fontWeight: 600 }}>Schedule Mode</h3>
-            </div>
-            
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem', marginBottom: '1rem' }}>
-              <label style={{ 
-                display: 'flex', 
-                flexDirection: 'column',
-                cursor: 'pointer', 
-                padding: '1.25rem', 
-                backgroundColor: scheduleMode === 'simple' ? 'var(--button-bg)' : 'var(--bg-color)', 
-                color: scheduleMode === 'simple' ? 'white' : 'var(--text-color)', 
-                borderRadius: '8px', 
-                border: '3px solid ' + (scheduleMode === 'simple' ? 'var(--button-bg)' : 'var(--border-color)'), 
-                transition: 'all 0.2s',
-                position: 'relative'
-              }}>
-                <div style={{ display: 'flex', alignItems: 'center', marginBottom: '0.5rem' }}>
-                  <input
-                    type="radio"
-                    value="simple"
-                    checked={scheduleMode === 'simple'}
-                    onChange={(e) => setScheduleMode(e.target.value)}
-                    style={{ marginRight: '0.75rem', width: '18px', height: '18px' }}
-                  />
-                  <span style={{ display: 'flex', alignItems: 'center', marginRight: '0.5rem' }}><Folder size={24} /></span>
-                  <span style={{ fontSize: '1.1rem', fontWeight: 600 }}>Simple Mode</span>
-                </div>
-                <p style={{ margin: '0 0 0 2.25rem', fontSize: '0.9rem', opacity: 0.9 }}>
-                  Select a single category with random or sequential playback. Perfect for basic scheduling needs.
-                </p>
-              </label>
-              
-              <label style={{ 
-                display: 'flex', 
-                flexDirection: 'column',
-                cursor: 'pointer', 
-                padding: '1.25rem', 
-                backgroundColor: scheduleMode === 'advanced' ? 'var(--button-bg)' : 'var(--bg-color)', 
-                color: scheduleMode === 'advanced' ? 'white' : 'var(--text-color)', 
-                borderRadius: '8px', 
-                border: '3px solid ' + (scheduleMode === 'advanced' ? 'var(--button-bg)' : 'var(--border-color)'), 
-                transition: 'all 0.2s',
-                position: 'relative'
-              }}>
-                <div style={{ display: 'flex', alignItems: 'center', marginBottom: '0.5rem' }}>
-                  <input
-                    type="radio"
-                    value="advanced"
-                    checked={scheduleMode === 'advanced'}
-                    onChange={(e) => setScheduleMode(e.target.value)}
-                    style={{ marginRight: '0.75rem', width: '18px', height: '18px' }}
-                  />
-                  <span style={{ display: 'flex', alignItems: 'center', marginRight: '0.5rem' }}><Film size={24} /></span>
-                  <span style={{ fontSize: '1.1rem', fontWeight: 600 }}>Sequence Mode</span>
-                </div>
-                <p style={{ margin: '0 0 0 2.25rem', fontSize: '0.9rem', opacity: 0.9 }}>
-                  Build custom sequences with multiple categories and fixed prerolls. Full creative control.
-                </p>
-              </label>
+          {/* Section 1: Mode */}
+          <div className="nx-sched-section">
+            <div className="nx-sched-section-head">
+              <span className="nx-sched-step">1</span>
+              <h3>Schedule Mode</h3>
             </div>
 
-            {/* Helpful comparison guide */}
-            <div style={{
-              marginTop: '1rem',
-              padding: '1rem',
-              backgroundColor: 'rgba(59, 130, 246, 0.05)',
-              borderRadius: '8px',
-              border: '1px solid rgba(59, 130, 246, 0.2)'
-            }}>
-              <div style={{ display: 'flex', alignItems: 'flex-start', gap: '0.75rem' }}>
-                <span style={{ fontSize: '1.25rem' }}>ℹ️</span>
-                <div style={{ flex: 1 }}>
-                  <strong style={{ fontSize: '0.9rem', color: 'var(--text-color)' }}>When to use each mode:</strong>
-                  <ul style={{ margin: '0.5rem 0 0 0', paddingLeft: '1.25rem', fontSize: '0.85rem', color: 'var(--text-secondary)', lineHeight: '1.6' }}>
-                    <li><strong>Simple Mode:</strong> Quick setup for basic needs - "Play all prerolls from my Holiday category during December"</li>
-                    <li><strong>Sequence Mode:</strong> Advanced control - "Play Studio Logo + Random Trailer + Holiday Message in that exact order"</li>
-                  </ul>
-                </div>
-              </div>
+            <div className="nx-sched-choices">
+              <label className={`nx-sched-choice${scheduleMode === 'simple' ? ' active' : ''}`}>
+                <span className="nx-sched-choice-title">
+                  <input type="radio" value="simple" checked={scheduleMode === 'simple'} onChange={(e) => setScheduleMode(e.target.value)} style={{ width: 16, height: 16 }} />
+                  <Folder size={18} /> Simple Mode
+                  {scheduleMode === 'simple' && <Check size={16} className="nx-sched-choice-check" />}
+                </span>
+                <p className="nx-sched-choice-desc">A single category with random or sequential playback. Best for basic needs.</p>
+              </label>
+
+              <label className={`nx-sched-choice${scheduleMode === 'advanced' ? ' active' : ''}`}>
+                <span className="nx-sched-choice-title">
+                  <input type="radio" value="advanced" checked={scheduleMode === 'advanced'} onChange={(e) => setScheduleMode(e.target.value)} style={{ width: 16, height: 16 }} />
+                  <Film size={18} /> Sequence Mode
+                  {scheduleMode === 'advanced' && <Check size={16} className="nx-sched-choice-check" />}
+                </span>
+                <p className="nx-sched-choice-desc">Build a custom sequence of categories and fixed prerolls in an exact order.</p>
+              </label>
             </div>
           </div>
 
-          {/* Holiday Browser Banner - Between Steps 1 & 2 */}
-          <div 
-            onClick={() => {
-              loadHolidayCountries();
-              loadHolidays(holidaySelectedCountry, holidaySelectedYear);
-              checkHolidayApiStatus();
-              setShowHolidayBrowser(true);
-            }}
-            style={{ 
-              marginBottom: '2rem', 
-              padding: '1rem 1.5rem', 
-              backgroundColor: darkMode ? 'rgba(59, 130, 246, 0.15)' : 'rgba(59, 130, 246, 0.08)', 
-              borderRadius: '12px', 
-              border: '2px dashed rgba(59, 130, 246, 0.4)',
-              cursor: 'pointer',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'space-between',
-              transition: 'all 0.2s ease'
-            }}
-            onMouseEnter={(e) => {
-              e.currentTarget.style.backgroundColor = darkMode ? 'rgba(59, 130, 246, 0.25)' : 'rgba(59, 130, 246, 0.12)';
-              e.currentTarget.style.borderColor = 'rgba(59, 130, 246, 0.6)';
-            }}
-            onMouseLeave={(e) => {
-              e.currentTarget.style.backgroundColor = darkMode ? 'rgba(59, 130, 246, 0.15)' : 'rgba(59, 130, 246, 0.08)';
-              e.currentTarget.style.borderColor = 'rgba(59, 130, 246, 0.4)';
-            }}
-          >
-            <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
-              <Globe size={32} style={{ color: '#3b82f6' }} />
-              <div>
-                <div style={{ fontSize: '1.1rem', fontWeight: 600, color: 'var(--text-color)', marginBottom: '0.25rem' }}>
-                  Quick Start: Browse Holidays
-                </div>
-                <div style={{ fontSize: '0.9rem', color: 'var(--text-secondary)' }}>
-                  Select from 100+ countries to auto-fill your schedule with holiday dates
-                </div>
-              </div>
+          {/* Section 2: Basic Information */}
+          <div className="nx-sched-section">
+            <div className="nx-sched-section-head">
+              <span className="nx-sched-step">2</span>
+              <h3>Basic Information</h3>
             </div>
-            <div style={{ 
-              display: 'flex', 
-              alignItems: 'center', 
-              gap: '0.5rem',
-              padding: '0.5rem 1rem',
-              backgroundColor: 'var(--button-bg)',
-              color: 'white',
-              borderRadius: '6px',
-              fontWeight: 600,
-              fontSize: '0.9rem'
-            }}>
-              Browse <ChevronRight size={16} />
-            </div>
-          </div>
 
-          {/* Step 2: Basic Information */}
-          <div style={{ 
-            marginBottom: '2rem', 
-            padding: '1.5rem', 
-            backgroundColor: 'var(--card-bg)', 
-            borderRadius: '12px', 
-            border: '2px solid var(--border-color)',
-            boxShadow: '0 2px 8px rgba(0,0,0,0.08)'
-          }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', marginBottom: '1.25rem' }}>
-              <div style={{ 
-                display: 'flex', 
-                alignItems: 'center', 
-                justifyContent: 'center',
-                width: '32px', 
-                height: '32px', 
-                borderRadius: '50%', 
-                backgroundColor: 'var(--button-bg)',
-                color: 'white',
-                fontWeight: 700,
-                fontSize: '1rem'
-              }}>2</div>
-              <h3 style={{ margin: 0, fontSize: '1.2rem', fontWeight: 600 }}>Basic Information</h3>
-            </div>
-            
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1.25rem' }}>
               <div>
                 <label style={{ display: 'block', marginBottom: '0.5rem', fontSize: '0.95rem', fontWeight: 600, color: 'var(--text-color)' }}>
@@ -14389,9 +14199,8 @@ const DashboardTiles = {
                   style={{ 
                     padding: '0.75rem', 
                     fontSize: '1rem',
-                    border: '2px solid var(--border-color)',
                     borderRadius: '6px',
-                    width: '90%'
+                    width: '100%'
                   }}
                 />
               </div>
@@ -14407,7 +14216,6 @@ const DashboardTiles = {
                   style={{ 
                     padding: '0.75rem', 
                     fontSize: '1rem',
-                    border: '2px solid var(--border-color)',
                     borderRadius: '6px',
                     width: '95%'
                   }}
@@ -14431,7 +14239,7 @@ const DashboardTiles = {
                     value={scheduleForm.start_date}
                     onChange={(e) => setScheduleForm({...scheduleForm, start_date: e.target.value})}
                     required
-                    style={{ padding: '0.75rem', fontSize: '1rem', border: '2px solid var(--border-color)', borderRadius: '6px', width: '90%' }}
+                    style={{ padding: '0.75rem', fontSize: '1rem', border: '2px solid var(--border-color)', borderRadius: '6px', width: '100%' }}
                   />
                 </div>
               )}
@@ -14446,7 +14254,7 @@ const DashboardTiles = {
                     type="datetime-local"
                     value={scheduleForm.end_date}
                     onChange={(e) => setScheduleForm({...scheduleForm, end_date: e.target.value})}
-                    style={{ padding: '0.75rem', fontSize: '1rem', border: '2px solid var(--border-color)', borderRadius: '6px', width: '90%' }}
+                    style={{ padding: '0.75rem', fontSize: '1rem', border: '2px solid var(--border-color)', borderRadius: '6px', width: '100%' }}
                   />
                   <p style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', margin: '0.25rem 0 0 0' }}>
                     Leave blank for indefinite schedule
@@ -14545,7 +14353,6 @@ const DashboardTiles = {
                     style={{ 
                       padding: '0.75rem', 
                       fontSize: '1rem',
-                      border: '2px solid var(--border-color)',
                       borderRadius: '6px',
                       width: '100%'
                     }}
@@ -14570,27 +14377,9 @@ const DashboardTiles = {
 
           {/* Step 3: Recurrence Pattern - Daily */}
           {scheduleForm.type === 'daily' && (
-            <div style={{ 
-              marginBottom: '2rem', 
-              padding: '1.5rem', 
-              backgroundColor: 'var(--card-bg)', 
-              borderRadius: '12px', 
-              border: '2px solid var(--border-color)',
-              boxShadow: '0 2px 8px rgba(0,0,0,0.08)'
-            }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', marginBottom: '1.25rem' }}>
-                <div style={{ 
-                  display: 'flex', 
-                  alignItems: 'center', 
-                  justifyContent: 'center',
-                  width: '32px', 
-                  height: '32px', 
-                  borderRadius: '50%', 
-                  backgroundColor: 'var(--button-bg)',
-                  color: 'white',
-                  fontWeight: 700,
-                  fontSize: '1rem'
-                }}>3</div>
+            <div className="nx-sched-section">
+              <div className="nx-sched-section-head">
+                <span className="nx-sched-step">3</span>
                 <h3 style={{ margin: 0, fontSize: '1.2rem', fontWeight: 600, display: 'flex', alignItems: 'center', gap: '0.5rem' }}><Clock size={20} /> Daily Recurrence</h3>
               </div>
               
@@ -14607,7 +14396,6 @@ const DashboardTiles = {
                     style={{ 
                       padding: '0.75rem', 
                       fontSize: '1rem',
-                      border: '2px solid var(--border-color)',
                       borderRadius: '6px',
                       width: '100%'
                     }}
@@ -14629,7 +14417,6 @@ const DashboardTiles = {
                     style={{ 
                       padding: '0.75rem', 
                       fontSize: '1rem',
-                      border: '2px solid var(--border-color)',
                       borderRadius: '6px',
                       width: '100%'
                     }}
@@ -14659,27 +14446,9 @@ const DashboardTiles = {
 
           {/* Step 3: Recurrence Pattern - Weekly */}
           {scheduleForm.type === 'weekly' && (
-            <div style={{ 
-              marginBottom: '2rem', 
-              padding: '1.5rem', 
-              backgroundColor: 'var(--card-bg)', 
-              borderRadius: '12px', 
-              border: '2px solid var(--border-color)',
-              boxShadow: '0 2px 8px rgba(0,0,0,0.08)'
-            }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', marginBottom: '1.25rem' }}>
-                <div style={{ 
-                  display: 'flex', 
-                  alignItems: 'center', 
-                  justifyContent: 'center',
-                  width: '32px', 
-                  height: '32px', 
-                  borderRadius: '50%', 
-                  backgroundColor: 'var(--button-bg)',
-                  color: 'white',
-                  fontWeight: 700,
-                  fontSize: '1rem'
-                }}>3</div>
+            <div className="nx-sched-section">
+              <div className="nx-sched-section-head">
+                <span className="nx-sched-step">3</span>
                 <h3 style={{ margin: 0, fontSize: '1.2rem', fontWeight: 600 }}><CalendarDays size={20} style={{marginRight: '0.5rem', verticalAlign: 'middle'}} /> Weekly Recurrence</h3>
               </div>
               
@@ -14766,7 +14535,6 @@ const DashboardTiles = {
                       style={{ 
                         padding: '0.5rem', 
                         borderRadius: '6px', 
-                        border: '2px solid var(--border-color)',
                         width: '100%',
                         fontSize: '0.95rem'
                       }}
@@ -14783,7 +14551,6 @@ const DashboardTiles = {
                       style={{ 
                         padding: '0.5rem', 
                         borderRadius: '6px', 
-                        border: '2px solid var(--border-color)',
                         width: '100%',
                         fontSize: '0.95rem'
                       }}
@@ -14802,27 +14569,9 @@ const DashboardTiles = {
 
           {/* Step 3: Recurrence Pattern - Monthly */}
           {scheduleForm.type === 'monthly' && (
-            <div style={{ 
-              marginBottom: '2rem', 
-              padding: '1.5rem', 
-              backgroundColor: 'var(--card-bg)', 
-              borderRadius: '12px', 
-              border: '2px solid var(--border-color)',
-              boxShadow: '0 2px 8px rgba(0,0,0,0.08)'
-            }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', marginBottom: '1.25rem' }}>
-                <div style={{ 
-                  display: 'flex', 
-                  alignItems: 'center', 
-                  justifyContent: 'center',
-                  width: '32px', 
-                  height: '32px', 
-                  borderRadius: '50%', 
-                  backgroundColor: 'var(--button-bg)',
-                  color: 'white',
-                  fontWeight: 700,
-                  fontSize: '1rem'
-                }}>3</div>
+            <div className="nx-sched-section">
+              <div className="nx-sched-section-head">
+                <span className="nx-sched-step">3</span>
                 <h3 style={{ margin: 0, fontSize: '1.2rem', fontWeight: 600 }}><Calendar size={20} style={{marginRight: '0.5rem', verticalAlign: 'middle'}} /> Monthly Recurrence</h3>
               </div>
               
@@ -14963,27 +14712,9 @@ const DashboardTiles = {
           )}
 
           {/* Step 4: Content Configuration */}
-          <div style={{ 
-            marginBottom: '2rem', 
-            padding: '1.5rem', 
-            backgroundColor: 'var(--card-bg)', 
-            borderRadius: '12px', 
-            border: '2px solid var(--border-color)',
-            boxShadow: '0 2px 8px rgba(0,0,0,0.08)'
-          }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', marginBottom: '1.25rem' }}>
-              <div style={{ 
-                display: 'flex', 
-                alignItems: 'center', 
-                justifyContent: 'center',
-                width: '32px', 
-                height: '32px', 
-                borderRadius: '50%', 
-                backgroundColor: 'var(--button-bg)',
-                color: 'white',
-                fontWeight: 700,
-                fontSize: '1rem'
-              }}>4</div>
+          <div className="nx-sched-section">
+            <div className="nx-sched-section-head">
+              <span className="nx-sched-step">4</span>
               <h3 style={{ margin: 0, fontSize: '1.2rem', fontWeight: 600, display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
                 {scheduleMode === 'simple' ? <><Folder size={20} /> Content Selection</> : <><Film size={20} /> Sequence Builder</>}
               </h3>
@@ -15042,9 +14773,8 @@ const DashboardTiles = {
                       style={{ 
                         padding: '0.65rem', 
                         fontSize: '0.95rem',
-                        border: '2px solid var(--border-color)',
                         borderRadius: '6px',
-                        width: '90%'
+                        width: '100%'
                       }}
                     />
                   </div>
@@ -15061,9 +14791,8 @@ const DashboardTiles = {
                       style={{ 
                         padding: '0.65rem', 
                         fontSize: '0.95rem',
-                        border: '2px solid var(--border-color)',
                         borderRadius: '6px',
-                        width: '90%'
+                        width: '100%'
                       }}
                     />
                   </div>
@@ -15116,7 +14845,6 @@ const DashboardTiles = {
                       style={{ 
                         padding: '0.75rem', 
                         fontSize: '1rem',
-                        border: '2px solid var(--border-color)',
                         borderRadius: '6px',
                         width: '100%'
                       }}
@@ -15235,7 +14963,6 @@ const DashboardTiles = {
                         flex: 1,
                         padding: '0.75rem', 
                         fontSize: '0.95rem',
-                        border: '2px solid var(--border-color)',
                         borderRadius: '6px'
                       }}
                     >
@@ -15294,27 +15021,9 @@ const DashboardTiles = {
             )}
           </div>
           {/* Step 5: Optional Settings */}
-          <div style={{ 
-            marginBottom: '2rem', 
-            padding: '1.5rem', 
-            backgroundColor: 'var(--card-bg)', 
-            borderRadius: '12px', 
-            border: '2px solid var(--border-color)',
-            boxShadow: '0 2px 8px rgba(0,0,0,0.08)'
-          }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', marginBottom: '1.25rem' }}>
-              <div style={{ 
-                display: 'flex', 
-                alignItems: 'center', 
-                justifyContent: 'center',
-                width: '32px', 
-                height: '32px', 
-                borderRadius: '50%', 
-                backgroundColor: '#6c757d',
-                color: 'white',
-                fontWeight: 700,
-                fontSize: '1rem'
-              }}>5</div>
+          <div className="nx-sched-section">
+            <div className="nx-sched-section-head">
+              <span className="nx-sched-step">5</span>
               <h3 style={{ margin: 0, fontSize: '1.2rem', fontWeight: 600, display: 'flex', alignItems: 'center', gap: '0.5rem' }}><Settings size={20} /> Optional Settings</h3>
             </div>
             
@@ -15395,7 +15104,6 @@ const DashboardTiles = {
                   style={{ 
                     padding: '0.75rem', 
                     fontSize: '1rem',
-                    border: '2px solid var(--border-color)',
                     borderRadius: '6px',
                     width: '100%'
                   }}
@@ -15422,8 +15130,7 @@ const DashboardTiles = {
                     onChange={(e) => setScheduleForm({...scheduleForm, color: e.target.value})}
                     style={{ 
                       width: '60px', 
-                      height: '48px', 
-                      border: '2px solid var(--border-color)', 
+                      height: '48px',  
                       borderRadius: '6px', 
                       cursor: 'pointer',
                       padding: '4px'
@@ -15440,7 +15147,6 @@ const DashboardTiles = {
                       flex: 1,
                       fontFamily: 'monospace',
                       fontSize: '0.95rem',
-                      border: '2px solid var(--border-color)',
                       borderRadius: '6px'
                     }}
                   />
@@ -15467,17 +15173,14 @@ const DashboardTiles = {
             </div>
           </div>
           
-          {/* Submit Button */}
-          <div style={{ 
-            display: 'flex', 
-            justifyContent: 'flex-end', 
-            gap: '1rem',
-            paddingTop: '1rem',
-            borderTop: '2px solid var(--border-color)'
-          }}>
-            <button 
-              type="button" 
-              className="button"
+          {/* Sticky create bar */}
+          <div className="nx-sched-bar">
+            <span className="nx-sched-bar-info">
+              {scheduleForm.name ? <>Creating <strong style={{ color: 'var(--text-color)' }}>{scheduleForm.name}</strong></> : 'Give your schedule a name to continue'}
+            </span>
+            <button
+              type="button"
+              className="button button-secondary"
               onClick={() => {
                 setScheduleForm({
                   name: '', type: 'monthly', start_date: '', end_date: '',
@@ -15490,40 +15193,15 @@ const DashboardTiles = {
                 setSelectedMonths([]); setMonthDays([]);
                 setTimeRange({ start: '', end: '' });
               }}
-              style={{ 
-                padding: '1rem 2rem', 
-                backgroundColor: '#6c757d',
-                fontSize: '1.05rem',
-                fontWeight: 600,
-                borderRadius: '8px',
-                minWidth: '150px'
-              }}
             >
-              Cancel
+              Reset
             </button>
-            <button 
-              type="submit" 
-              className="button"
-              style={{ 
-                padding: '1rem 2rem', 
-                backgroundColor: 'var(--button-bg)',
-                fontSize: '1.05rem',
-                fontWeight: 600,
-                borderRadius: '8px',
-                minWidth: '200px',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                gap: '0.5rem'
-              }}
-            >
-              <span style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                {editingSchedule 
-                  ? <><Save size={18} /> Update Schedule</> 
-                  : scheduleMode === 'advanced' 
-                    ? <><CheckCircle size={18} /> Create Custom Schedule</> 
-                    : <><CheckCircle size={18} /> Create Schedule</>}
-              </span>
+            <button type="submit" className="button">
+              {editingSchedule
+                ? <><Save size={16} /> Update Schedule</>
+                : scheduleMode === 'advanced'
+                  ? <><CheckCircle size={16} /> Create Custom Schedule</>
+                  : <><CheckCircle size={16} /> Create Schedule</>}
             </button>
           </div>
           {/* edit handled via modal */}
@@ -29746,52 +29424,6 @@ const DashboardTiles = {
   );
 
   // Render function for Create Schedule page
-  const renderCreateSchedule = () => {
-    return (
-      <div className="upload-section" style={{ maxWidth: '1200px', margin: '30px auto' }}>
-        <div style={{ 
-          display: 'flex', 
-          justifyContent: 'space-between', 
-          alignItems: 'center', 
-          marginBottom: '2rem',
-          paddingBottom: '1rem',
-          borderBottom: '2px solid var(--border-color)'
-        }}>
-          <h2 style={{ margin: 0, fontSize: '1.8rem', fontWeight: 700 }}>
-            {editingSchedule ? 'Edit Schedule' : 'Create New Schedule'}
-          </h2>
-          <div style={{ fontSize: '0.9rem', color: 'var(--text-secondary)' }}>
-            {editingSchedule ? 'Modify your existing schedule' : 'Step-by-step guide to create your perfect schedule'}
-          </div>
-        </div>
-        
-        <form onSubmit={handleCreateSchedule}>
-          {/* Form content will render from renderSchedules - this is the dedicated page version */}
-          {/* Using inline form reference to maintain state */}
-          {(() => {
-            // This renders the same form that's in renderSchedules but on its own page
-            // We'll keep this simple for now and use a navigation approach
-            return (
-              <div style={{ textAlign: 'center', padding: '3rem', opacity: 0.7 }}>
-                <p style={{ fontSize: '1.1rem', marginBottom: '1rem' }}>
-                  The schedule form is currently embedded in the Schedule List page.
-                </p>
-                <button 
-                  type="button"
-                  className="button button-primary"
-                  onClick={() => setActiveTab('schedules')}
-                  style={{ padding: '1rem 2rem', fontSize: '1rem' }}
-                >
-                  Go to Schedule List to Create Schedule
-                </button>
-              </div>
-            );
-          })()}
-        </form>
-      </div>
-    );
-  };
-
   // Render function for Sequence Builder page
   const renderSequenceBuilder = () => {
     return (

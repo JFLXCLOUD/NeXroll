@@ -4655,3 +4655,148 @@ body.dark .nx-community select:focus { box-shadow: 0 0 0 3px rgba(79, 70, 229, 0
   text-overflow: ellipsis;
 }
 .nx-buildbar-stats { flex: 0 0 auto; font-weight: 600; font-variant-numeric: tabular-nums; }
+
+/* ============================================================
+   NeXroll v2 — Create Schedule page
+   Wrap the page in .nx-sched: themed inputs/selects, consistent numbered
+   section cards, and a sticky create bar.
+   ============================================================ */
+.nx-sched {
+  max-width: 980px;
+  margin: 0 auto;
+}
+
+/* Themed form controls (mirror .nx-connect) */
+.nx-sched input[type="text"],
+.nx-sched input[type="date"],
+.nx-sched input[type="time"],
+.nx-sched input[type="number"],
+.nx-sched input:not([type]),
+.nx-sched select,
+.nx-sched textarea {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 0.6rem 0.75rem;
+  font-size: 0.95rem;
+  font-family: inherit;
+  color: var(--text-color);
+  background-color: var(--input-bg);
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  outline: none;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+.nx-sched input::placeholder { color: var(--text-muted); opacity: 1; }
+.nx-sched input:focus,
+.nx-sched select:focus,
+.nx-sched textarea:focus {
+  border-color: var(--button-bg);
+  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.18);
+}
+body.dark .nx-sched input:focus,
+body.dark .nx-sched select:focus,
+body.dark .nx-sched textarea:focus { box-shadow: 0 0 0 3px rgba(79, 70, 229, 0.3); }
+
+/* Section card */
+.nx-sched-section {
+  background: var(--card-bg);
+  border: 1px solid var(--border-color);
+  border-radius: 14px;
+  padding: 1.25rem 1.4rem;
+  margin-bottom: 1rem;
+  box-shadow: 0 1px 2px var(--shadow);
+}
+.nx-sched-section-head {
+  display: flex;
+  align-items: center;
+  gap: 0.7rem;
+  margin-bottom: 1.1rem;
+}
+.nx-sched-step {
+  flex: 0 0 auto;
+  width: 30px; height: 30px;
+  border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+  background: color-mix(in srgb, var(--button-bg) 14%, transparent);
+  color: var(--button-bg);
+  font-weight: 700;
+  font-size: 0.9rem;
+}
+.nx-sched-section-head h3 {
+  margin: 0;
+  font-size: 1.1rem;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+}
+.nx-sched-section-sub {
+  margin: -0.6rem 0 1.1rem 2.5rem;
+  font-size: 0.85rem;
+  color: var(--text-secondary);
+}
+
+/* Field label */
+.nx-sched-label {
+  display: block;
+  margin-bottom: 0.4rem;
+  font-size: 0.88rem;
+  font-weight: 600;
+  color: var(--text-color);
+}
+.nx-sched-label .req { color: var(--error-color); margin-left: 2px; }
+.nx-sched-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1.1rem;
+}
+@media (max-width: 680px) { .nx-sched-grid { grid-template-columns: 1fr; } }
+
+/* Mode / choice cards (Simple vs Sequence) */
+.nx-sched-choices {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.85rem;
+}
+@media (max-width: 680px) { .nx-sched-choices { grid-template-columns: 1fr; } }
+.nx-sched-choice {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  padding: 1rem 1.1rem;
+  border-radius: 10px;
+  border: 2px solid var(--border-color);
+  background: var(--bg-color);
+  cursor: pointer;
+  transition: border-color 0.15s ease, background-color 0.15s ease;
+}
+.nx-sched-choice:hover { border-color: color-mix(in srgb, var(--button-bg) 55%, var(--border-color)); }
+.nx-sched-choice.active {
+  border-color: var(--button-bg);
+  background: color-mix(in srgb, var(--button-bg) 8%, transparent);
+}
+.nx-sched-choice-title {
+  display: flex; align-items: center; gap: 0.5rem;
+  font-weight: 700; color: var(--text-color);
+}
+.nx-sched-choice-title .nx-sched-choice-check { margin-left: auto; color: var(--button-bg); }
+.nx-sched-choice-desc { font-size: 0.85rem; color: var(--text-secondary); margin: 0; line-height: 1.45; }
+
+/* Sticky create bar */
+.nx-sched-bar {
+  position: sticky;
+  bottom: 0;
+  z-index: 50;
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  justify-content: flex-end;
+  margin-top: 1rem;
+  padding: 0.85rem 1rem;
+  background: var(--card-bg);
+  border: 1px solid var(--border-color);
+  border-radius: 12px;
+  box-shadow: 0 -2px 12px var(--shadow);
+}
+.nx-sched-bar .nx-sched-bar-info { margin-right: auto; font-size: 0.85rem; color: var(--text-secondary); }
