@@ -6921,9 +6921,19 @@ const DashboardTiles = {
         </div>
         
         {filteredPrerolls.length === 0 && (
-          <div className="card" style={{ textAlign: 'center', padding: '2rem', color: 'var(--text-secondary)' }}>
-            <Video size={32} style={{ opacity: 0.5, marginBottom: '0.5rem' }} />
-            <div>No prerolls found{scalingFilterResolution ? ` at ${scalingFilterResolution}` : ''}</div>
+          <div className="nx-empty">
+            <span className="nx-empty-icon"><Video size={48} /></span>
+            <h3 className="nx-empty-title">No prerolls to scale</h3>
+            <p className="nx-empty-text">
+              {scalingFilterResolution
+                ? `No prerolls found at ${scalingFilterResolution}. Try a different resolution filter.`
+                : 'Add prerolls to your library to scale their resolution here.'}
+            </p>
+            {!scalingFilterResolution && (
+              <button className="button" onClick={() => setActiveTab('library/add')}>
+                <Upload size={16} /> Add Prerolls
+              </button>
+            )}
           </div>
         )}
         
@@ -17173,26 +17183,18 @@ const DashboardTiles = {
             
             if (filtered.length === 0) {
               return (
-                <div style={{ textAlign: 'center', padding: '3rem 1rem', color: 'var(--text-secondary)' }}>
+                <div className="nx-empty">
                   {categorySearchQuery ? (
                     <>
-                      <div style={{ fontSize: '3rem', marginBottom: '1rem' }}><Search size={48} /></div>
-                      <div style={{ fontSize: '1.1rem', marginBottom: '0.5rem', color: 'var(--text-color)' }}>
-                        No categories found matching "{categorySearchQuery}"
-                      </div>
-                      <div style={{ fontSize: '0.9rem' }}>
-                        Try adjusting your search or create a new category below
-                      </div>
+                      <span className="nx-empty-icon"><Search size={48} /></span>
+                      <h3 className="nx-empty-title">No categories found</h3>
+                      <p className="nx-empty-text">Nothing matches "{categorySearchQuery}". Try a different search, or create a new category below.</p>
                     </>
                   ) : (
                     <>
-                      <div style={{ fontSize: '3rem', marginBottom: '1rem' }}><Folder size={48} /></div>
-                      <div style={{ fontSize: '1.1rem', marginBottom: '0.5rem', color: 'var(--text-color)' }}>
-                        No categories yet
-                      </div>
-                      <div style={{ fontSize: '0.9rem' }}>
-                        Create your first category below to organize your prerolls
-                      </div>
+                      <span className="nx-empty-icon"><Folder size={48} /></span>
+                      <h3 className="nx-empty-title">No categories yet</h3>
+                      <p className="nx-empty-text">Create your first category below to organize your prerolls.</p>
                     </>
                   )}
                 </div>
@@ -17623,28 +17625,22 @@ const DashboardTiles = {
                 if (filtered.length === 0) {
                   return (
                     <tr>
-                      <td colSpan="5" style={{ textAlign: 'center', padding: '3rem 1rem', color: 'var(--text-secondary)' }}>
-                        {categorySearchQuery ? (
-                          <>
-                            <div style={{ fontSize: '2rem', marginBottom: '0.5rem' }}><Search size={32} /></div>
-                            <div style={{ fontSize: '1rem', marginBottom: '0.5rem', color: 'var(--text-color)' }}>
-                              No categories found matching "{categorySearchQuery}"
-                            </div>
-                            <div style={{ fontSize: '0.85rem' }}>
-                              Try adjusting your search or create a new category below
-                            </div>
-                          </>
-                        ) : (
-                          <>
-                            <div style={{ fontSize: '2rem', marginBottom: '0.5rem' }}><Folder size={32} /></div>
-                            <div style={{ fontSize: '1rem', marginBottom: '0.5rem', color: 'var(--text-color)' }}>
-                              No categories yet
-                            </div>
-                            <div style={{ fontSize: '0.85rem' }}>
-                              Create your first category below to organize your prerolls
-                            </div>
-                          </>
-                        )}
+                      <td colSpan="5" style={{ padding: 0, border: 'none' }}>
+                        <div className="nx-empty">
+                          {categorySearchQuery ? (
+                            <>
+                              <span className="nx-empty-icon"><Search size={48} /></span>
+                              <h3 className="nx-empty-title">No categories found</h3>
+                              <p className="nx-empty-text">Nothing matches "{categorySearchQuery}". Try a different search, or create a new category below.</p>
+                            </>
+                          ) : (
+                            <>
+                              <span className="nx-empty-icon"><Folder size={48} /></span>
+                              <h3 className="nx-empty-title">No categories yet</h3>
+                              <p className="nx-empty-text">Create your first category below to organize your prerolls.</p>
+                            </>
+                          )}
+                        </div>
                       </td>
                     </tr>
                   );
@@ -22598,22 +22594,17 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
             </button>
           </div>
         ) : nexupTrailers.length === 0 ? (
-          <div style={{ 
-            padding: '2rem', 
-            textAlign: 'center', 
-            backgroundColor: 'var(--bg-color)', 
-            borderRadius: '8px',
-            border: '1px dashed var(--border-color)'
-          }}>
-            <Film size={48} style={{ color: '#666', marginBottom: '1rem' }} />
-            <p style={{ color: '#888', marginBottom: '1rem' }}>No movie trailers downloaded yet</p>
+          <div className="nx-empty">
+            <span className="nx-empty-icon"><Film size={48} /></span>
+            <h3 className="nx-empty-title">No movie trailers yet</h3>
+            <p className="nx-empty-text">Download trailers for your upcoming movies from Radarr to use them as prerolls.</p>
             <button
               onClick={handleSyncNexup}
               disabled={nexupLoading || syncProgress}
               className="button"
-              style={{ backgroundColor: '#ffc230' }}
+              style={{ backgroundColor: '#ffc230', color: '#1a1a1a' }}
             >
-              {syncProgress ? <><Loader2 size={16} className="spin" style={{ marginRight: '0.5rem' }} />Syncing...</> : 'Download Trailers'}
+              {syncProgress ? <><Loader2 size={16} className="spin" />Syncing...</> : 'Download Trailers'}
             </button>
             {syncProgress && (
               <div style={{ 
@@ -22873,15 +22864,10 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
             </button>
           </div>
         ) : nexupTVTrailers.length === 0 ? (
-          <div style={{ 
-            padding: '2rem', 
-            textAlign: 'center', 
-            backgroundColor: 'var(--bg-color)', 
-            borderRadius: '8px',
-            border: '1px dashed var(--border-color)'
-          }}>
-            <Tv size={48} style={{ color: '#666', marginBottom: '1rem' }} />
-            <p style={{ color: '#888', marginBottom: '1rem' }}>No TV trailers downloaded yet</p>
+          <div className="nx-empty">
+            <span className="nx-empty-icon"><Tv size={48} /></span>
+            <h3 className="nx-empty-title">No TV trailers yet</h3>
+            <p className="nx-empty-text">Download trailers for your upcoming shows from Sonarr to use them as prerolls.</p>
             <button
               onClick={handleSyncSonarr}
               disabled={nexupLoading || tvSyncProgress}
@@ -27407,16 +27393,10 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
             <p style={{ marginTop: '0.75rem', color: 'var(--text-secondary)' }}>Loading logs...</p>
           </div>
         ) : logs.length === 0 ? (
-          <div style={{ 
-            textAlign: 'center', 
-            padding: '3rem',
-            backgroundColor: 'var(--bg-color)',
-            borderRadius: '8px',
-            border: '1px dashed var(--border-color)'
-          }}>
-            <Terminal size={40} style={{ color: 'var(--text-secondary)', opacity: 0.4, marginBottom: '0.75rem' }} />
-            <p style={{ color: 'var(--text-secondary)', margin: 0 }}>No logs found matching your filters.</p>
-            <p style={{ color: 'var(--text-secondary)', fontSize: '0.85rem', marginTop: '0.5rem', opacity: 0.7 }}>Try adjusting the filter settings above.</p>
+          <div className="nx-empty">
+            <span className="nx-empty-icon"><Terminal size={48} /></span>
+            <h3 className="nx-empty-title">No logs found</h3>
+            <p className="nx-empty-text">Nothing matches your current filters. Try adjusting the filter settings above.</p>
           </div>
         ) : (
           <div style={{ 
