@@ -5048,6 +5048,14 @@ body.dark .nx-settings input:focus,
 body.dark .nx-settings select:focus,
 body.dark .nx-settings textarea:focus { box-shadow: 0 0 0 3px rgba(79, 70, 229, 0.3); }
 
+/* Consistent spacing between the stacked cards on a settings page. Most
+   settings sub-pages render several top-level .card blocks; the base .card has
+   no margin, so without this they touch. (Pages that use a single card with
+   .nx-setting-row blocks inside are unaffected — the rows carry their own
+   spacing.) */
+.nx-settings .card { margin-bottom: 1rem; }
+.nx-settings .card:last-child { margin-bottom: 0; }
+
 /* Hide the now-redundant in-page .header on settings pages (the sticky page
    header supplies the title). Kept as a safety net in case any sub-page still
    renders one. */
