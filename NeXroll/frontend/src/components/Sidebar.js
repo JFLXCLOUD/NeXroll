@@ -1,11 +1,11 @@
-import React, { useMemo } from 'react';
+import React, { useMemo, useState, useRef, useEffect } from 'react';
 import {
   LayoutDashboard, Upload, Film, Video, Zap,
   Calendar, Plus, CalendarDays, BookOpen, GitCompare,
   Library, Sparkles, Link as LinkIcon, ClipboardList, Settings,
   Globe, ArrowRight, HardDrive, Key, FileText, Users, Download, Info, FolderTree,
   Github, Heart,
-  ChevronDown, ChevronRight, PanelLeftClose, PanelLeftOpen, X
+  ChevronDown, ChevronRight, PanelLeftClose, PanelLeftOpen, X, Search, CornerDownLeft
 } from 'lucide-react';
 
 /**
@@ -112,6 +112,90 @@ const NAV = [
   },
 ];
 
+// Extra keyword aliases per destination id, so natural search terms ("dark
+// mode", "token", "trailers"…) land on the right page even when they don't
+// appear in the visible label.
+const KEYWORDS = {
+  'dashboard': 'overview home stats status tiles',
+  'library': 'prerolls videos files browse collection media',
+  'library/add': 'upload import add new preroll video file folder',
+  'library/categories': 'category tag organize group folders',
+  'library/scaling': 'resolution scale transcode 1080 720 quality video size',
+  'schedules': 'schedule automation rules calendar active',
+  'schedules/create': 'new schedule add create wizard daily weekly monthly holiday yearly',
+  'schedules/calendar': 'calendar month week view',
+  'schedules/builder': 'sequence builder blocks order playlist',
+  'schedules/library': 'saved sequences reusable nexseq nexbundle import export',
+  'schedules/conflicts': 'conflict overlap priority exclusive blend resolve',
+  'nexup': 'radarr sonarr connections integrations trailers automation',
+  'nexup/upcoming': 'upcoming movies tv shows radarr sonarr releases',
+  'nexup/trailers': 'trailers downloaded youtube your',
+  'nexup/generator': 'generate dynamic preroll coming soon list create',
+  'nexup/settings': 'nexup settings radarr sonarr tmdb youtube cookies quality',
+  'actions': 'apply refresh clear bulk maintenance operations quick',
+  'connect': 'plex jellyfin emby server token oauth sign in api key media server cinema trailers',
+  'community-prerolls': 'community typical nerds download search index browse',
+  'settings': 'general theme dark mode light timezone notifications preferences',
+  'settings/paths': 'path mapping docker nas unc translate plex path',
+  'settings/storage': 'storage folder preroll location auto scan disk',
+  'settings/apikeys': 'api key token external integration automation',
+  'settings/logs': 'logs events errors debug verbose export',
+  'settings/users': 'user account login password auth require admin register',
+  'settings/backup': 'backup restore export import data',
+  'settings/system': 'system version diagnostics info update about',
+};
+
+// Flatten NAV into a searchable index of leaf destinations (and standalone
+// top-level items), each with a breadcrumb and keyword string.
+const SEARCH_INDEX = (() => {
+  const out = [];
+  for (const section of NAV) {
+    if (section.children && section.children.length) {
+      for (const child of section.children) {
+        out.push({
+          id: child.id,
+          label: child.label,
+          crumb: section.label,
+          icon: child.icon,
+          accent: section.accent,
+          keywords: `${section.label} ${child.label} ${KEYWORDS[child.id] || ''}`.toLowerCase(),
+        });
+      }
+    } else {
+      out.push({
+        id: section.id,
+        label: section.label,
+        crumb: null,
+        icon: section.icon,
+        accent: section.accent,
+        keywords: `${section.label} ${KEYWORDS[section.id] || ''}`.toLowerCase(),
+      });
+    }
+  }
+  return out;
+})();
+
+function searchNav(query) {
+  const q = query.trim().toLowerCase();
+  if (!q) return [];
+  const terms = q.split(/\s+/);
+  const scored = [];
+  for (const item of SEARCH_INDEX) {
+    const hay = item.keywords;
+    // every term must appear somewhere
+    if (!terms.every((t) => hay.includes(t))) continue;
+    const label = item.label.toLowerCase();
+    let score = 0;
+    if (label === q) score += 100;
+    else if (label.startsWith(q)) score += 60;
+    else if (label.includes(q)) score += 40;
+    else score += 10; // matched only via keywords/crumb
+    scored.push({ item, score });
+  }
+  scored.sort((a, b) => b.score - a.score || a.item.label.localeCompare(b.item.label));
+  return scored.slice(0, 8).map((s) => s.item);
+}
+
 // Brand glyphs lucide doesn't ship. Sized/colored via currentColor to match
 // the lucide icons in the footer row.
 const DiscordIcon = ({ size = 18 }) => (
@@ -151,6 +235,34 @@ function Sidebar({
   const go = (id) => {
     setActiveTab(id);
     if (onCloseMobile) onCloseMobile();
+  };
+
+  // ---- Sidebar search (command-palette style) ----
+  const [query, setQuery] = useState('');
+  const [highlight, setHighlight] = useState(0);
+  const searchInputRef = useRef(null);
+  const results = useMemo(() => searchNav(query), [query]);
+
+  // Keep the highlighted result in range as the list changes.
+  useEffect(() => { setHighlight(0); }, [query]);
+
+  const goToResult = (item) => {
+    if (!item) return;
+    go(item.id);
+    setQuery('');
+  };
+
+  const onSearchKeyDown = (e) => {
+    if (e.key === 'ArrowDown') { e.preventDefault(); setHighlight((h) => Math.min(h + 1, results.length - 1)); }
+    else if (e.key === 'ArrowUp') { e.preventDefault(); setHighlight((h) => Math.max(h - 1, 0)); }
+    else if (e.key === 'Enter') { e.preventDefault(); goToResult(results[highlight]); }
+    else if (e.key === 'Escape') { setQuery(''); searchInputRef.current?.blur(); }
+  };
+
+  // In collapsed mode the search icon expands the sidebar, then focuses the box.
+  const onCollapsedSearchClick = () => {
+    if (onToggleCollapse) onToggleCollapse();
+    setTimeout(() => searchInputRef.current?.focus(), 180);
   };
 
   return (
@@ -198,6 +310,71 @@ function Sidebar({
             <X size={20} />
           </button>
         </div>
+
+        {/* Search */}
+        {collapsed ? (
+          <button
+            type="button"
+            className="nx-sidebar-search-icon"
+            onClick={onCollapsedSearchClick}
+            title="Search"
+            aria-label="Search"
+          >
+            <Search size={18} />
+          </button>
+        ) : (
+          <div className="nx-sidebar-search">
+            <div className="nx-sidebar-search-box">
+              <Search size={16} className="nx-sidebar-search-glyph" />
+              <input
+                ref={searchInputRef}
+                type="text"
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                onKeyDown={onSearchKeyDown}
+                placeholder="Search settings & pages…"
+                aria-label="Search settings and pages"
+                spellCheck={false}
+              />
+              {query && (
+                <button type="button" className="nx-sidebar-search-clear" onClick={() => { setQuery(''); searchInputRef.current?.focus(); }} aria-label="Clear search">
+                  <X size={14} />
+                </button>
+              )}
+            </div>
+
+            {query && (
+              <div className="nx-sidebar-search-results" role="listbox">
+                {results.length === 0 ? (
+                  <div className="nx-sidebar-search-empty">No matches for “{query}”</div>
+                ) : (
+                  results.map((item, i) => {
+                    const Icon = item.icon;
+                    return (
+                      <button
+                        key={item.id + ':' + item.label}
+                        type="button"
+                        role="option"
+                        aria-selected={i === highlight}
+                        className={`nx-sidebar-search-item${i === highlight ? ' active' : ''}`}
+                        onMouseEnter={() => setHighlight(i)}
+                        onClick={() => goToResult(item)}
+                        style={item.accent ? { '--nx-accent': item.accent } : undefined}
+                      >
+                        <span className="nx-sidebar-search-item-icon"><Icon size={15} /></span>
+                        <span className="nx-sidebar-search-item-text">
+                          <span className="nx-sidebar-search-item-label">{item.label}</span>
+                          {item.crumb && <span className="nx-sidebar-search-item-crumb">{item.crumb}</span>}
+                        </span>
+                        {i === highlight && <CornerDownLeft size={13} className="nx-sidebar-search-item-enter" />}
+                      </button>
+                    );
+                  })
+                )}
+              </div>
+            )}
+          </div>
+        )}
 
         <nav className="nx-sidebar-nav">
           {NAV.map((section) => {
