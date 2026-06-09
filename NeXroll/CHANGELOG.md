@@ -1,5 +1,19 @@
 # Changelog
 
+## [1.14.0] - 06-09-2026 (stable)
+
+> Stable release of the 1.14 line, promoting 1.14.0-beta.1 and 1.14.0-beta.2.
+> No code changes from beta.2 — version bump and stable promotion only.
+
+Rolls up everything from the 1.14 betas:
+
+- **Connections UI overhaul** plus scheduler, plugin, and Plex OAuth fixes
+  (1.14.0-beta.1).
+- **Dashboard layout overhaul** — a uniform, aligned stat-tile grid with the
+  weekly calendar as a reorderable full-width tile (1.14.0-beta.2).
+
+See the 1.14.0-beta.1 / beta.2 entries below for full details.
+
 ## [1.14.0-beta.2] - 06-05-2026 (beta)
 
 > Dashboard layout overhaul. Builds on beta.1; no backend or plugin changes.
