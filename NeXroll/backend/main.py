@@ -23760,23 +23760,37 @@ def _build_prerolls_index(progress_callback=None, base_url=None) -> dict:
     }
     
     visited_urls = set()
+    discovered_urls = set()  # every directory URL we've seen (>= visited)
     prerolls = []
     json_count = 0
     html_count = 0
-    estimated_total_dirs = 400  # Rough estimate for progress calculation
-    
+
     def update_progress():
-        """Update global progress state"""
+        """Update global progress state.
+
+        The crawl is depth-first with no known total, so a true percentage is
+        impossible. Instead we map "directories visited" through a smooth
+        asymptotic curve that climbs quickly at first and eases toward — but
+        never reaches — 90% while scanning. The finalize step then advances
+        90→98→100%. This gives steady, honest-feeling motion proportional to
+        real crawl work (no fixed estimate, no instant jump to done).
+
+            progress = 90 * (1 - e^(-dirs_visited / DECAY))
+
+        DECAY ~150 suits the Typical Nerds tree (~270 dirs): ~33 dirs → 18%,
+        ~110 → 48%, ~270 → 75%, trailing off slowly thereafter.
+        """
+        import math
         dirs_done = len(visited_urls)
-        # Progress is 0-95% during scanning, then 95-100% for final processing
-        # Only update progress percentage if it hasn't been manually set higher
         current_progress = _index_build_progress.get("progress", 0)
-        if current_progress < 95:
-            progress_pct = min(95, int((dirs_done / estimated_total_dirs) * 95))
-            _index_build_progress["progress"] = progress_pct
+        if current_progress < 90:
+            DECAY = 150.0
+            progress_pct = int(90 * (1 - math.exp(-dirs_done / DECAY)))
+            if progress_pct > current_progress:
+                _index_build_progress["progress"] = progress_pct
         _index_build_progress["dirs_visited"] = dirs_done
         _index_build_progress["files_found"] = len(prerolls)
-        
+
         if progress_callback:
             progress_callback(_index_build_progress.copy())
     
@@ -23795,6 +23809,7 @@ def _build_prerolls_index(progress_callback=None, base_url=None) -> dict:
         if url in visited_urls:
             return
         visited_urls.add(url)
+        discovered_urls.add(url)  # the root/entry dir counts as discovered too
         
         # Update progress
         path_display = url.replace(base_url, '') or '/'
@@ -23840,6 +23855,8 @@ def _build_prerolls_index(progress_callback=None, base_url=None) -> dict:
                         
                         # Recursively explore directories
                         if is_dir:
+                            discovered_urls.add(full_url.rstrip('/') + '/')
+                            update_progress()
                             scrape_directory(full_url, depth + 1, max_depth)
                         # Index video files
                         elif any(name.lower().endswith(ext) for ext in ['.mp4', '.mkv', '.avi', '.mov', '.webm']):
@@ -23908,6 +23925,8 @@ def _build_prerolls_index(progress_callback=None, base_url=None) -> dict:
                     
                     # Recursively explore directories
                     if href.endswith('/'):
+                        discovered_urls.add(full_url.rstrip('/') + '/')
+                        update_progress()
                         scrape_directory(full_url, depth + 1, max_depth)
                     # Index video files
                     elif any(href.lower().endswith(ext) for ext in ['.mp4', '.mkv', '.avi', '.mov', '.webm']):
