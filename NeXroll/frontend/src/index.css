@@ -3815,6 +3815,12 @@ body.dark .nx-chip.warn {
   padding-left: 0.65rem;
   border-left: 1px solid var(--border-color);
   margin-left: 0.85rem;
+  /* Smooth entrance when a section expands */
+  animation: nx-tree-in 0.16s ease-out;
+}
+@keyframes nx-tree-in {
+  from { opacity: 0; transform: translateY(-4px); }
+  to   { opacity: 1; transform: translateY(0); }
 }
 .nx-sidebar-child {
   font-size: 0.85rem;
@@ -4214,4 +4220,57 @@ body.dark .nx-chip.warn {
   margin: 0 0 0.5rem;
   font-size: 0.92rem;
   max-width: 420px;
+}
+
+/* ============================================================
+   NeXroll v2 — Accessibility: keyboard focus rings
+   Only shows for keyboard navigation (:focus-visible), so mouse users see no
+   extra outline. Applies to all interactive controls.
+   ============================================================ */
+.nx-shell a:focus-visible,
+.nx-shell button:focus-visible,
+.nx-shell input:focus-visible,
+.nx-shell select:focus-visible,
+.nx-shell textarea:focus-visible,
+.nx-sidebar a:focus-visible,
+.nx-sidebar button:focus-visible,
+.nx-toast button:focus-visible {
+  outline: 2px solid var(--accent-color);
+  outline-offset: 2px;
+  border-radius: 6px;
+}
+/* Sidebar items already have rounded corners; keep the ring snug. */
+.nx-sidebar-item:focus-visible,
+.nx-sidebar-resource:focus-visible {
+  outline: 2px solid var(--accent-color);
+  outline-offset: -2px;
+}
+
+/* Topbar icon/utility buttons: lighter than primary .button so the bar reads as
+   a quiet utility strip. */
+.nx-topbar .nx-iconbtn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.3rem;
+  background: transparent;
+  border: 1px solid var(--border-color);
+  color: var(--text-secondary);
+  border-radius: 8px;
+  height: 32px;
+  padding: 0 0.6rem;
+  cursor: pointer;
+  font-size: 0.8rem;
+  transition: background-color 0.13s ease, color 0.13s ease, border-color 0.13s ease;
+}
+.nx-topbar .nx-iconbtn:hover {
+  background: var(--hover-bg);
+  color: var(--text-color);
+}
+.nx-topbar .nx-user {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  font-size: 0.8rem;
+  color: var(--text-secondary);
 }

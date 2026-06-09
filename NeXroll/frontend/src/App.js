@@ -16585,7 +16585,7 @@ const DashboardTiles = {
             </div>
 
             {categoryPrerollsLoading[editingCategory.id] ? (
-              <div style={{ fontSize: '0.9rem', color: '#666' }}>Loading prerolls…</div>
+              <div style={{ fontSize: '0.9rem', color: 'var(--text-secondary)', display: 'flex', alignItems: 'center', gap: '0.5rem' }}><Loader2 size={16} className="spin" /> Loading prerolls…</div>
             ) : (
               <>
                 <div className="nx-field nx-span-2" style={{ marginBottom: '0.5rem' }}>
@@ -18557,7 +18557,7 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
           </p>
 
           {cinemaTrailersLoading && !cinemaTrailers && (
-            <div style={{ color: 'var(--text-secondary)', fontSize: '0.9rem' }}>Loading Plex settings…</div>
+            <div style={{ color: 'var(--text-secondary)', fontSize: '0.9rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}><Loader2 size={16} className="spin" /> Loading Plex settings…</div>
           )}
 
           {cinemaTrailers && Array.isArray(cinemaTrailers.fields) && (
@@ -32860,48 +32860,25 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
           {/* Theme Toggle Button */}
           <button
             onClick={toggleTheme}
-            className="button"
+            className="nx-iconbtn"
+            aria-label={darkMode ? 'Switch to Light Mode' : 'Switch to Dark Mode'}
             title={darkMode ? 'Switch to Light Mode' : 'Switch to Dark Mode'}
-            style={{
-              padding: '6px 10px',
-              fontSize: '0.8rem',
-              minWidth: 'auto',
-              display: 'flex',
-              alignItems: 'center',
-              gap: '0.25rem'
-            }}
+            style={{ width: '32px', padding: 0 }}
           >
-            {darkMode ? <Sun size={14} /> : <Moon size={14} />}
+            {darkMode ? <Sun size={15} /> : <Moon size={15} />}
           </button>
-          
+
           {/* User/Logout Button (when authenticated) */}
           {authStatus.auth_enabled && authStatus.authenticated && authStatus.user && (
             <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-              <span style={{ 
-                fontSize: '0.8rem', 
-                color: 'var(--text-secondary)',
-                display: 'flex',
-                alignItems: 'center',
-                gap: '0.25rem'
-              }}>
+              <span className="nx-user">
                 <User size={14} />
                 {authStatus.user.display_name || authStatus.user.username}
               </span>
               <button
                 onClick={handleLogout}
-                className="button"
+                className="nx-iconbtn"
                 title="Logout"
-                style={{
-                  padding: '6px 10px',
-                  fontSize: '0.8rem',
-                  minWidth: 'auto',
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: '0.25rem',
-                  backgroundColor: 'var(--bg-color)',
-                  border: '1px solid var(--text-secondary)',
-                  color: 'var(--text-color)'
-                }}
               >
                 <Lock size={14} /> Logout
               </button>
