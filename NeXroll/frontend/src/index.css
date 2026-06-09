@@ -3668,8 +3668,11 @@ body.dark .nx-chip.warn {
   align-items: center;
   justify-content: center;
   color: #fff;
-  background: var(--brand);
-  box-shadow: 0 4px 12px color-mix(in srgb, var(--brand) 40%, transparent);
+  /* Connected = success green (reads as "good" regardless of the server's brand
+     color, which can be red/purple/green). Brand identity lives in the hero's
+     left edge wash + the selector tabs. */
+  background: var(--success-color);
+  box-shadow: 0 4px 12px color-mix(in srgb, var(--success-color) 38%, transparent);
 }
 .nx-conn-hero-badge.idle {
   background: var(--hover-bg);
