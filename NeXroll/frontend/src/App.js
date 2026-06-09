@@ -31424,44 +31424,45 @@ const DashboardTiles = {
                 ? <><Loader2 size={15} className="spin" /> Building…</>
                 : (idxExists ? <><RefreshCw size={15} /> Refresh Index</> : <><Zap size={15} /> Build Index</>)}
             </button>
-            <details className="nx-conn-alt" style={{ marginBottom: 0, minWidth: '210px' }}>
-              <summary>More <ChevronRight size={15} className="nx-conn-alt-chev" /></summary>
-              <div className="nx-conn-alt-body" style={{ display: 'flex', flexDirection: 'column', gap: '0.4rem', paddingTop: '0.6rem' }}>
-                <button onClick={() => handleMatchExisting(true)} disabled={communityIsMigrating} className="button button-secondary">
-                  {communityIsMigrating ? <><Loader2 size={14} className="spin" /> Matching…</> : <><Link size={14} /> Match Existing Prerolls</>}
-                </button>
-                {idxExists && (
-                  <button onClick={handleRematchAll} disabled={communityIsMigrating} className="button button-secondary">
-                    {communityIsMigrating ? <><Loader2 size={14} className="spin" /> Rematching…</> : <><RefreshCcw size={14} /> Rematch All</>}
-                  </button>
-                )}
-                <button
-                  onClick={() => setCommunityShowCustomUrl(!communityShowCustomUrl)}
-                  className="button button-secondary"
-                >
-                  <Server size={14} /> Change Server
-                </button>
-                <button
-                  onClick={async () => {
-                    if (!communityPolicyText) {
-                      try {
-                        const policyResponse = await fetch(apiUrl('community-prerolls/fair-use-policy'));
-                        const policyData = await policyResponse.json();
-                        setCommunityPolicyText(policyData.policy);
-                      } catch (error) {
-                        console.error('Failed to fetch policy text:', error);
-                      }
-                    }
-                    setCommunityFairUseStatus({ accepted: false });
-                  }}
-                  className="button button-secondary"
-                  title="View Fair Use Policy"
-                >
-                  <FileText size={14} /> Fair Use Policy
-                </button>
-              </div>
-            </details>
           </div>
+        </div>
+
+        {/* Secondary action bar — visible, one-click */}
+        <div className="nx-comm-actionbar">
+          <button onClick={() => handleMatchExisting(true)} disabled={communityIsMigrating} className="button button-secondary">
+            {communityIsMigrating ? <><Loader2 size={14} className="spin" /> Matching…</> : <><Link size={14} /> Match Existing Prerolls</>}
+          </button>
+          {idxExists && (
+            <button onClick={handleRematchAll} disabled={communityIsMigrating} className="button button-secondary">
+              {communityIsMigrating ? <><Loader2 size={14} className="spin" /> Rematching…</> : <><RefreshCcw size={14} /> Rematch All</>}
+            </button>
+          )}
+          <div className="nx-comm-actionbar-spacer" />
+          <button
+            onClick={() => setCommunityShowCustomUrl(!communityShowCustomUrl)}
+            className={`nx-comm-linkbtn${communityShowCustomUrl ? ' active' : ''}`}
+            title="Choose a community server or enter a custom URL"
+          >
+            <Server size={14} /> Change Server
+          </button>
+          <button
+            onClick={async () => {
+              if (!communityPolicyText) {
+                try {
+                  const policyResponse = await fetch(apiUrl('community-prerolls/fair-use-policy'));
+                  const policyData = await policyResponse.json();
+                  setCommunityPolicyText(policyData.policy);
+                } catch (error) {
+                  console.error('Failed to fetch policy text:', error);
+                }
+              }
+              setCommunityFairUseStatus({ accepted: false });
+            }}
+            className="nx-comm-linkbtn"
+            title="View Fair Use Policy"
+          >
+            <FileText size={14} /> Fair Use Policy
+          </button>
         </div>
 
         {/* Server picker (toggled from the hero's "Change Server") */}

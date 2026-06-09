@@ -4569,3 +4569,33 @@ body.dark .nx-community select:focus { box-shadow: 0 0 0 3px rgba(79, 70, 229, 0
   margin-top: 0.1rem;
 }
 .nx-comm-row-actions { flex: 0 0 auto; display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap; justify-content: flex-end; }
+
+/* Community secondary action bar — visible row under the hero. Real actions on
+   the left; quiet utility links on the right. */
+.nx-comm-actionbar {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+.nx-comm-actionbar-spacer { flex: 1 1 auto; }
+.nx-comm-linkbtn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  background: transparent;
+  border: 1px solid transparent;
+  color: var(--text-secondary);
+  font: inherit;
+  font-size: 0.85rem;
+  padding: 0.4rem 0.6rem;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: background-color 0.13s ease, color 0.13s ease, border-color 0.13s ease;
+}
+.nx-comm-linkbtn:hover { background: var(--hover-bg); color: var(--text-color); }
+.nx-comm-linkbtn.active {
+  color: var(--accent-color);
+  border-color: color-mix(in srgb, var(--accent-color) 40%, transparent);
+  background: color-mix(in srgb, var(--accent-color) 10%, transparent);
+}
