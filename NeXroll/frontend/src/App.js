@@ -434,7 +434,7 @@ const CategoryPicker = ({ categories, primaryId, secondaryIds, onChange, onCreat
               aria-label={`Remove ${i.name}`}
               title="Remove"
             >
-              ×
+              <X size={12} />
             </button>
           </span>
         ))}
@@ -9574,7 +9574,7 @@ const DashboardTiles = {
                 onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
                 style={{ padding: '0.4rem 0.75rem', fontSize: '0.85rem' }}
               >
-                ◀ Prev
+                <ChevronLeft size={15} /> Prev
               </button>
               <span style={{ fontSize: '0.9rem', padding: '0 0.5rem', color: 'var(--text-color)' }}>
                 Page <span style={{ fontWeight: 600 }}>{currentPageClamped}</span> of <span style={{ fontWeight: 600 }}>{totalPages}</span>
@@ -9585,7 +9585,7 @@ const DashboardTiles = {
                 onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
                 style={{ padding: '0.4rem 0.75rem', fontSize: '0.85rem' }}
               >
-                Next ▶
+                Next <ChevronRight size={15} />
               </button>
             </div>
           </div>
@@ -9757,7 +9757,7 @@ const DashboardTiles = {
              onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
              style={{ padding: '0.4rem 0.75rem', fontSize: '0.85rem' }}
            >
-             ◀ Prev
+             <ChevronLeft size={15} /> Prev
            </button>
            <span style={{ fontSize: '0.9rem', padding: '0 0.5rem', color: 'var(--text-color)' }}>
              Page <span style={{ fontWeight: 600 }}>{currentPageClamped}</span> of <span style={{ fontWeight: 600 }}>{totalPages}</span>
@@ -9768,7 +9768,7 @@ const DashboardTiles = {
              onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
              style={{ padding: '0.4rem 0.75rem', fontSize: '0.85rem' }}
            >
-             Next ▶
+             Next <ChevronRight size={15} />
            </button>
          </div>
        </div>
@@ -10960,7 +10960,7 @@ const DashboardTiles = {
             title="Previous Day"
             style={{ padding: '0.5rem 1rem', fontWeight: 500 }}
           >
-            <span className="view-icon">◀</span>
+            <span className="view-icon" style={{ display: 'inline-flex' }}><ChevronLeft size={15} /></span>
             Previous
           </button>
           <button
@@ -10984,7 +10984,7 @@ const DashboardTiles = {
             style={{ padding: '0.5rem 1rem', fontWeight: 500 }}
           >
             Next
-            <span className="view-icon">▶</span>
+            <span className="view-icon" style={{ display: 'inline-flex' }}><ChevronRight size={15} /></span>
           </button>
         </div>
       </div>
@@ -11018,7 +11018,7 @@ const DashboardTiles = {
             title="Previous Week"
             style={{ padding: '0.5rem 1rem', fontWeight: 500 }}
           >
-            <span className="view-icon">◀</span>
+            <span className="view-icon" style={{ display: 'inline-flex' }}><ChevronLeft size={15} /></span>
             Previous
           </button>
           <button
@@ -11047,7 +11047,7 @@ const DashboardTiles = {
             style={{ padding: '0.5rem 1rem', fontWeight: 500 }}
           >
             Next
-            <span className="view-icon">▶</span>
+            <span className="view-icon" style={{ display: 'inline-flex' }}><ChevronRight size={15} /></span>
           </button>
         </div>
       </div>
@@ -11065,7 +11065,7 @@ const DashboardTiles = {
             title="Previous Month"
             style={{ padding: '0.5rem 1rem', fontWeight: 500 }}
           >
-            <span className="view-icon">◀</span>
+            <span className="view-icon" style={{ display: 'inline-flex' }}><ChevronLeft size={15} /></span>
             Previous
           </button>
           <button
@@ -11089,7 +11089,7 @@ const DashboardTiles = {
             style={{ padding: '0.5rem 1rem', fontWeight: 500 }}
           >
             Next
-            <span className="view-icon">▶</span>
+            <span className="view-icon" style={{ display: 'inline-flex' }}><ChevronRight size={15} /></span>
           </button>
         </div>
       </div>
@@ -11146,7 +11146,7 @@ const DashboardTiles = {
           title="Previous Year"
           style={{ padding: '0.5rem 1rem', fontWeight: 500 }}
         >
-          <span className="view-icon">◀</span>
+          <span className="view-icon" style={{ display: 'inline-flex' }}><ChevronLeft size={15} /></span>
           {calendarYear - 1}
         </button>
         <button
@@ -11166,7 +11166,7 @@ const DashboardTiles = {
           style={{ padding: '0.5rem 1rem', fontWeight: 500 }}
         >
           {calendarYear + 1}
-          <span className="view-icon">▶</span>
+          <span className="view-icon" style={{ display: 'inline-flex' }}><ChevronRight size={15} /></span>
         </button>
       </div>
 
@@ -23304,9 +23304,12 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
                       cursor: 'pointer',
                       color: 'var(--text-color)',
                       lineHeight: 1,
-                      padding: '0 0.5rem'
+                      padding: '0 0.5rem',
+                      display: 'inline-flex',
+                      alignItems: 'center'
                     }}
-                  >×</button>
+                    aria-label="Close"
+                  ><X size={20} /></button>
                 </div>
                 <div style={{ padding: '1.5rem' }}>
                   {/* Progress Indicator */}
@@ -33147,14 +33150,16 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
              </h2>
              <button
                onClick={() => setShowNexupSequenceWizard(false)}
+               aria-label="Close"
                style={{
                  background: 'none',
                  border: 'none',
-                 fontSize: '1.5rem',
                  cursor: 'pointer',
-                 color: 'var(--text-secondary)'
+                 color: 'var(--text-secondary)',
+                 display: 'inline-flex',
+                 alignItems: 'center'
                }}
-             >×</button>
+             ><X size={20} /></button>
            </div>
            
            {/* Step Indicator */}
@@ -33888,8 +33893,9 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
                                    e.currentTarget.style.borderColor = 'rgba(33, 150, 243, 0.3)';
                                  }}
                                  title="Preview video"
+                                 aria-label="Preview video"
                                >
-                                 ▶
+                                 <Play size={16} />
                                </button>
                              )}
                            </div>
@@ -34147,8 +34153,9 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
                                alignItems: 'center'
                              }}
                              title={`Remove "${cleanTag}" tag`}
+                             aria-label={`Remove "${cleanTag}" tag`}
                            >
-                             ×
+                             <X size={13} />
                            </button>
                          </span>
                        );
@@ -35665,6 +35672,7 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
                 )}
                 <button
                   onClick={() => setShowHolidayBrowser(false)}
+                  aria-label="Close"
                   style={{
                     background: 'var(--bg-color)',
                     border: '1px solid var(--border-color)',
@@ -35673,7 +35681,6 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
                     height: '32px',
                     borderRadius: '6px',
                     cursor: 'pointer',
-                    fontSize: '1.1rem',
                     display: 'flex',
                     alignItems: 'center',
                     justifyContent: 'center',
@@ -35681,7 +35688,7 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
                   }}
                   onMouseEnter={(e) => e.currentTarget.style.backgroundColor = 'var(--border-color)'}
                   onMouseLeave={(e) => e.currentTarget.style.backgroundColor = 'var(--bg-color)'}
-                >×</button>
+                ><X size={18} /></button>
               </div>
             </div>
 
@@ -35917,8 +35924,9 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
               <button 
                 onClick={() => setShowNexupUpcoming(false)}
                 className="nx-modal-close"
+                aria-label="Close"
               >
-                ×
+                <X size={18} />
               </button>
             </div>
             <div className="nx-modal-body" style={{ padding: '1rem', overflowY: 'auto' }}>
@@ -36066,8 +36074,9 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
               <button 
                 onClick={() => setShowNexupTrailers(false)}
                 className="nx-modal-close"
+                aria-label="Close"
               >
-                ×
+                <X size={18} />
               </button>
             </div>
             <div className="nx-modal-body" style={{ padding: '1rem', overflowY: 'auto' }}>
@@ -36170,8 +36179,9 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
               <button 
                 onClick={() => setShowNexupUpcomingTV(false)}
                 className="nx-modal-close"
+                aria-label="Close"
               >
-                ×
+                <X size={18} />
               </button>
             </div>
             <div className="nx-modal-body" style={{ padding: '1rem', overflowY: 'auto' }}>
@@ -36329,8 +36339,9 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
               <button 
                 onClick={() => setShowNexupTVTrailers(false)}
                 className="nx-modal-close"
+                aria-label="Close"
               >
-                ×
+                <X size={18} />
               </button>
             </div>
             <div className="nx-modal-body" style={{ padding: '1rem', overflowY: 'auto' }}>
@@ -36437,8 +36448,9 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
               <button 
                 onClick={() => setShowManualTrailerModal(false)}
                 className="nx-modal-close"
+                aria-label="Close"
               >
-                ×
+                <X size={18} />
               </button>
             </div>
             <div className="nx-modal-body" style={{ padding: '1rem' }}>
