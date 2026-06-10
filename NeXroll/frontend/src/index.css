@@ -1985,8 +1985,20 @@ body.dark .dashboard .grid .card:hover {
 /* ---- NeXroll dashboard grid (fixed 4-column uniform tiles) ---- */
 .nx-dash-grid { position: relative; grid-template-columns: repeat(4, minmax(0, 1fr)); }
 /* Responsive column count (the rest of the grid is set inline). */
-@media (max-width: 1100px) { .nx-dash-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
-@media (max-width: 620px)  { .nx-dash-grid { grid-template-columns: minmax(0, 1fr); } }
+@media (max-width: 1100px) {
+  .nx-dash-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  /* Feature tiles carry an inline `grid-column: span 2`; at 2 columns that's
+     the full width, which is what we want — no override needed here. */
+}
+@media (max-width: 620px) {
+  .nx-dash-grid { grid-template-columns: minmax(0, 1fr); }
+  /* In a single-column grid, the inline `span 2` on feature tiles would create
+     a phantom second column and overflow the viewport. Force every tile to one
+     full column (overrides the inline gridColumn). */
+  .nx-dash-grid .nx-tile,
+  .nx-dash-grid .nx-tile-sized,
+  .nx-dash-grid .nx-tile-cal { grid-column: 1 / -1 !important; }
+}
 .nx-dash-grid .nx-tile.editing { cursor: grab; }
 .nx-dash-grid .nx-tile.editing:active { cursor: grabbing; }
 .nx-dash-grid .nx-tile.dragging { box-shadow: 0 12px 32px var(--shadow); border-radius: 0.5rem; }
@@ -3834,7 +3846,16 @@ body.dark .nx-chip.warn {
   align-items: stretch;
   background-color: var(--bg-color);
   color: var(--text-color);
+  /* Never let the shell exceed the viewport — content columns shrink instead of
+     pushing the whole page wide (which caused right-side cut-off / horizontal
+     scroll on smaller laptops like the Surface Book). */
+  max-width: 100vw;
+  overflow-x: hidden;
 }
+/* The content column must be allowed to shrink (min-width:0) AND not leak wide
+   children past the viewport. Wide inner content (tables, long unbroken text)
+   should scroll within its own card, not blow out the page width. */
+.nx-content { max-width: 100%; }
 
 /* ---- Sidebar ---- */
 .nx-sidebar {
