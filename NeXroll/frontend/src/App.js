@@ -74,7 +74,7 @@ const FEATURE_SIZE_OPTIONS = ['md', 'lg'];
 // Small; the chart/list feature tiles are Large (2x2).
 const DEFAULT_SIZES = {
   servers: 'sm', prerolls: 'sm', storage: 'sm', schedules: 'sm', scheduler: 'sm',
-  current_category: 'sm', community: 'sm', nexup: 'sm', upcoming: 'lg', resolution_chart: 'lg',
+  current_category: 'sm', community: 'sm', nexup: 'sm', upcoming: 'lg', resolution_chart: 'md',
 };
 const DEFAULT_ORDER = ['servers', 'prerolls', 'storage', 'schedules', 'scheduler', 'current_category', 'community', 'nexup', 'upcoming', 'resolution_chart', 'weekly_calendar'];
 const DEFAULT_HIDDEN = [];
@@ -5341,6 +5341,15 @@ const [dashLayout, setDashLayout] = useState(() => {
             allKeys.push(k);
           }
         }
+        // One-time migration: the Video Quality tile used to default to Large (2x2)
+        // and showed a lot of empty space. It's now a content-sized Medium (2x1).
+        // Bump existing saved 'lg' down to 'md' once, then mark it done so we don't
+        // override a user who deliberately re-enlarges it afterward.
+        if (data.sizes && data.sizes.resolution_chart === 'lg' &&
+            !localStorage.getItem('dashMigratedResChartMd')) {
+          data.sizes = { ...data.sizes, resolution_chart: 'md' };
+          try { localStorage.setItem('dashMigratedResChartMd', '1'); } catch (_) {}
+        }
         return {
           grid: {
             cols: Math.max(1, Math.min(8, parseInt(data.grid.cols || 4, 10) || 4)),
@@ -5374,7 +5383,7 @@ const [calRows, setCalRows] = useState(1);
 useEffect(() => {
   const grid = dashGridRef.current;
   if (!grid) return undefined;
-  const GAP = 16;
+  const GAP = 12; // must match the grid's inline `gap` (condensed tiles)
   let raf = 0;
   const recompute = () => {
     cancelAnimationFrame(raf);
@@ -6117,7 +6126,15 @@ const DashboardTiles = {
     const tvCount = nexupTVTrailers?.length || 0;
     const radarrConnected = nexupSettings?.radarr_connected || false;
     const sonarrConnected = nexupSettings?.sonarr_connected || false;
-    
+
+    // Storage used by trailers vs the configured cap (file sizes are in MB).
+    const usedMb = [...(nexupTrailers || []), ...(nexupTVTrailers || [])]
+      .reduce((s, t) => s + (t?.file_size_mb || 0), 0);
+    const capGb = nexupSettings?.max_storage_gb || 0;
+    const usedGb = usedMb / 1024;
+    const storagePct = capGb > 0 ? Math.min(100, Math.round((usedGb / capGb) * 100)) : 0;
+    const fmtGb = (gb) => gb >= 10 ? gb.toFixed(0) : gb.toFixed(1);
+
     return (
       <div className="card">
         <h2 style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
@@ -6151,6 +6168,20 @@ const DashboardTiles = {
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                 <span style={{ fontSize: '0.9rem', color: 'var(--text-secondary, #666)' }}>TV Trailers:</span>
                 <span style={{ fontWeight: 'bold', color: '#ffc230' }}>{tvCount}</span>
+              </div>
+            </div>
+          )}
+          {/* Storage used vs cap (thin bar, matching the Storage tile style) */}
+          {capGb > 0 && (movieCount > 0 || tvCount > 0) && (
+            <div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '0.9rem' }}>
+                <span style={{ color: 'var(--text-secondary, #666)', display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
+                  <HardDrive size={14} /> Storage
+                </span>
+                <span><strong>{fmtGb(usedGb)}</strong> <span style={{ color: 'var(--text-secondary, #888)' }}>of {fmtGb(capGb)} GB</span></span>
+              </div>
+              <div style={{ height: 4, borderRadius: 2, background: 'var(--hover-bg)', marginTop: '0.25rem', overflow: 'hidden' }}>
+                <div style={{ width: `${storagePct}%`, height: '100%', background: storagePct >= 90 ? '#ef4444' : '#ffc230' }} />
               </div>
             </div>
           )}
@@ -6274,8 +6305,10 @@ const DashboardTiles = {
           </div>
         ) : (
           <>
-            <div style={{ height: 130, minHeight: 130 }}>
-              <ResponsiveContainer width="100%" height="100%" minWidth={100} minHeight={100}>
+            {/* flex:1 so any slack in the cell is absorbed by the chart (which
+                looks intentional) instead of opening a gap above the footer. */}
+            <div style={{ flex: '1 1 auto', minHeight: 90, height: 104 }}>
+              <ResponsiveContainer width="100%" height="100%" minWidth={100} minHeight={90}>
                 <BarChart data={chartData} layout="vertical" margin={{ top: 0, right: 10, bottom: 0, left: 0 }}>
                   <XAxis type="number" hide />
                   <YAxis type="category" dataKey="name" width={45} tick={{ fontSize: 11, fill: 'var(--text-secondary)' }} axisLine={false} tickLine={false} />
@@ -6331,7 +6364,7 @@ const DashboardTiles = {
             </div>
           </>
         )}
-        <p style={{ fontSize: '0.78rem', color: 'var(--text-secondary)', marginTop: '0.5rem', display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+        <p style={{ flex: '0 0 auto', fontSize: '0.75rem', color: 'var(--text-secondary)', marginTop: '0.5rem', display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
           {loaded}/{total} prerolls analyzed
           {loadingVideoInfo && <Loader2 size={12} className="spin" />}
         </p>
@@ -6392,6 +6425,10 @@ const DashboardTiles = {
     'settings/system':  { icon: Info,            title: 'System',            desc: 'System information and diagnostics.' },
   };
   const renderPageHeader = () => {
+    // EXPERIMENT: page header band hidden app-wide. Flip this to false (or delete
+    // the line) to restore the per-page title + description headers.
+    const HIDE_PAGE_HEADER = true;
+    if (HIDE_PAGE_HEADER) return null;
     const cfg = PAGE_HEADERS[activeTab];
     if (!cfg) return null;
     const Icon = cfg.icon;
@@ -7727,7 +7764,7 @@ const DashboardTiles = {
                   gridAutoRows: uniformRowH ? `${uniformRowH}px` : 'auto',
                   gridAutoFlow: dashLayout.locked ? 'row dense' : 'row',
                   alignItems: 'stretch',
-                  gap: '16px'
+                  gap: '12px'
                 }}
               >
                 {renderKeys.map((key) => {
@@ -16561,146 +16598,77 @@ const DashboardTiles = {
       </div>)}
 
       <div className="card">
-        <h2>Categories</h2>
-        
         {/* Action Buttons */}
-        <div style={{ display: 'flex', gap: '1rem', marginBottom: '1.5rem', flexWrap: 'wrap' }}>
-          <button 
+        <div style={{ display: 'flex', gap: '0.6rem', marginBottom: '1.25rem', flexWrap: 'wrap' }}>
+          <button
             type="button"
-            onClick={() => setShowCreateCategoryModal(true)} 
-            className="button" 
-            style={{ 
-              backgroundColor: '#28a745', 
-              borderColor: '#28a745',
-              display: 'flex',
-              alignItems: 'center',
-              gap: '0.5rem'
-            }}
+            onClick={() => setShowCreateCategoryModal(true)}
+            className="button button-success"
+            style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}
           >
-            <span style={{ fontSize: '1.2rem', fontWeight: 'bold' }}>+</span>
-            Create Category
+            <Plus size={15} /> Create Category
           </button>
-          <button 
+          <button
             type="button"
-            onClick={handleInitHolidays} 
-            className="button" 
-            style={{ 
-              backgroundColor: '#dc3545', 
-              borderColor: '#dc3545',
-              display: 'flex',
-              alignItems: 'center',
-              gap: '0.5rem'
-            }}
+            onClick={handleInitHolidays}
+            className="button button-secondary"
+            style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}
           >
-            <TreePine size={14} style={{marginRight: '0.35rem'}} /> Load Holiday Categories
+            <TreePine size={15} /> Load Holiday Categories
           </button>
-          <button 
+          <button
             type="button"
-            onClick={handleRefreshHolidayDates} 
-            className="button" 
-            style={{ 
-              backgroundColor: '#17a2b8', 
-              borderColor: '#17a2b8',
-              display: 'flex',
-              alignItems: 'center',
-              gap: '0.5rem'
-            }}
+            onClick={handleRefreshHolidayDates}
+            className="button button-secondary"
+            style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}
             title="Update dates for variable holidays (Thanksgiving, Easter, etc.)"
           >
-            <RefreshCw size={14} style={{marginRight: '0.35rem'}} /> Refresh Holiday Dates
+            <RefreshCw size={15} /> Refresh Holiday Dates
           </button>
-          <button 
+          <button
             type="button"
-            onClick={() => setBulkActionMode(!bulkActionMode)} 
-            className="button" 
-            style={{ 
-              backgroundColor: bulkActionMode ? '#ffc107' : '#6c757d', 
-              borderColor: bulkActionMode ? '#ffc107' : '#6c757d',
-              display: 'flex',
-              alignItems: 'center',
-              gap: '0.5rem'
-            }}
+            onClick={() => setBulkActionMode(!bulkActionMode)}
+            className={`button ${bulkActionMode ? 'button-warn' : 'button-outline'}`}
+            style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}
           >
-            {bulkActionMode ? '' : ''} {bulkActionMode ? 'Exit' : 'Bulk Select'}
+            <ListChecks size={15} /> {bulkActionMode ? 'Exit Bulk Select' : 'Bulk Select'}
           </button>
           {bulkActionMode && selectedCategoryIds.length > 0 && (
             <>
-              <button 
+              <button
                 type="button"
-                onClick={handleBulkApplyToPlex} 
-                className="button" 
-                style={{ 
-                  backgroundColor: '#007bff', 
-                  borderColor: '#007bff',
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: '0.5rem'
-                }}
+                onClick={handleBulkApplyToPlex}
+                className="button button-info"
+                style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}
               >
-                <Upload size={14} style={{marginRight: '0.35rem'}} /> Apply Selected ({selectedCategoryIds.length})
+                <Upload size={15} /> Apply Selected ({selectedCategoryIds.length})
               </button>
-              <button 
+              <button
                 type="button"
-                onClick={handleBulkDelete} 
-                className="button" 
-                style={{ 
-                  backgroundColor: '#dc3545', 
-                  borderColor: '#dc3545',
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: '0.5rem'
-                }}
+                onClick={handleBulkDelete}
+                className="button button-danger"
+                style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}
               >
-                <Trash size={14} style={{marginRight: '0.35rem'}} /> Delete Selected ({selectedCategoryIds.length})
+                <Trash size={15} /> Delete Selected ({selectedCategoryIds.length})
               </button>
             </>
           )}
         </div>
         
         {/* Search, Filter and View Controls */}
-        <div style={{ 
-          display: 'flex', 
-          gap: '1rem', 
-          marginBottom: '1.5rem', 
-          alignItems: 'center',
-          backgroundColor: 'var(--card-bg)',
-          padding: '1rem',
-          borderRadius: '0.5rem',
-          border: '1px solid var(--border-color)'
-        }}>
-          {/* Search Bar - 65% width */}
+        <div className="nx-cat-toolbar">
           <input
             type="text"
+            className="nx-cat-search"
             placeholder="Search categories by name or description..."
             value={categorySearchQuery}
             onChange={(e) => setCategorySearchQuery(e.target.value)}
-            style={{
-              width: '65%',
-              padding: '0.75rem 1rem',
-              fontSize: '0.95rem',
-              border: '2px solid var(--border-color)',
-              borderRadius: '0.5rem',
-              backgroundColor: 'var(--bg-color)',
-              color: 'var(--text-color)',
-              boxSizing: 'border-box'
-            }}
           />
 
-          {/* Filter Dropdown - 20% width */}
           <select
+            className="nx-cat-filter"
             value={categoryFilter}
             onChange={(e) => setCategoryFilter(e.target.value)}
-            style={{
-              width: '20%',
-              padding: '0.75rem',
-              fontSize: '0.95rem',
-              border: '2px solid var(--border-color)',
-              borderRadius: '0.5rem',
-              backgroundColor: 'var(--bg-color)',
-              color: 'var(--text-color)',
-              cursor: 'pointer',
-              boxSizing: 'border-box'
-            }}
           >
             <option value="all">All Categories</option>
             <option value="active">Active Only</option>
@@ -16709,7 +16677,7 @@ const DashboardTiles = {
           </select>
 
           {/* View Toggle */}
-          <div className="view-toggle" style={{ marginLeft: 'auto' }}>
+          <div className="view-toggle">
               <button
                 type="button"
                 className={`view-btn ${categoryView === 'grid' ? 'active' : ''}`}
@@ -16733,32 +16701,18 @@ const DashboardTiles = {
         
         {/* Bulk Selection Info */}
         {bulkActionMode && (
-          <div style={{
-            backgroundColor: '#fff3cd',
-            border: '1px solid #ffc107',
-            borderRadius: '0.5rem',
-            padding: '0.75rem 1rem',
-            marginBottom: '1rem',
-            color: '#856404',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'space-between'
-          }}>
-            <span>
-                          <Lightbulb size={16} style={{marginRight: '0.35rem', verticalAlign: 'middle', color: '#14B8A6'}} /> <strong>Bulk Selection Mode:</strong> Click categories to select them, then use the action buttons above.
-              {selectedCategoryIds.length > 0 && ` (${selectedCategoryIds.length} selected)`}
+          <div className="nx-cat-bulkbar">
+            <span style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+              <Lightbulb size={16} style={{ color: '#f59e0b', flexShrink: 0 }} />
+              <span><strong>Bulk Selection Mode:</strong> Click categories to select them, then use the action buttons above.
+              {selectedCategoryIds.length > 0 && ` (${selectedCategoryIds.length} selected)`}</span>
             </span>
             {getFilteredCategories().length > 0 && (
               <button
                 type="button"
                 onClick={toggleSelectAll}
-                className="button"
-                style={{
-                  padding: '0.25rem 0.75rem',
-                  fontSize: '0.85rem',
-                  backgroundColor: '#6c757d',
-                  borderColor: '#6c757d'
-                }}
+                className="button button-secondary"
+                style={{ padding: '0.3rem 0.75rem', fontSize: '0.82rem' }}
               >
                 {selectedCategoryIds.length === getFilteredCategories().length ? 'Deselect All' : 'Select All'}
               </button>
@@ -16771,9 +16725,10 @@ const DashboardTiles = {
           <div style={{
             display: 'flex',
             alignItems: 'center',
-            gap: '1.5rem',
+            flexWrap: 'wrap',
+            gap: '0.5rem 1.5rem',
             padding: '0.75rem 1rem',
-            backgroundColor: 'var(--bg-secondary)',
+            backgroundColor: 'var(--bg-color)',
             borderRadius: '0.5rem',
             border: '1px solid var(--border-color)',
             marginBottom: '1rem',
@@ -17143,8 +17098,12 @@ const DashboardTiles = {
           })()}
         </div>
         
-        {/* List View */}
-        <div style={{ display: categoryView === 'list' ? 'block' : 'none' }}>
+        {/* List View. Below 768px the .preroll-table CSS converts this to a
+            stacked-card layout (no horizontal scroll). The .nx-cat-tablewrap
+            scroll container is a safety net for the in-between widths. Do NOT
+            set a table min-width here — it overrides that mobile card-stack and
+            forces horizontal overflow on phones. */}
+        <div className="nx-cat-tablewrap" style={{ display: categoryView === 'list' ? 'block' : 'none' }}>
           <table className="preroll-table" style={{ width: '100%', borderCollapse: 'collapse' }}>
             <thead>
               <tr>

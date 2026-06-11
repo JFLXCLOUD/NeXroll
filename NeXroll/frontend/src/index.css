@@ -31,7 +31,7 @@ code {
 
 /* ========== Uniform Tile Sizing ========== */
 .nx-tile {
-  min-height: 140px;
+  min-height: 104px;
   display: flex;
   flex-direction: column;
 }
@@ -44,10 +44,17 @@ code {
   border-top: none;
   border-right: 1px solid var(--border-color);
   border-bottom: 1px solid var(--border-color);
+  /* Condensed padding so tiles read compact, not airy. */
+  padding: 0.85rem;
 }
 
+/* Condensed tile header: a touch smaller/tighter than the default 1.25rem card
+   h2 so short tiles aren't top-heavy. Kept normal-case and the same weight as
+   before — minimalist, not decorative. */
 .nx-tile .card h2 {
   flex-shrink: 0;
+  font-size: 1.05rem;
+  margin-bottom: 0.4rem;
 }
 
 .nx-tile .card > div:last-child {
@@ -5094,3 +5101,78 @@ body.dark .nx-settings textarea:focus { box-shadow: 0 0 0 3px rgba(79, 70, 229, 
   color: var(--text-secondary);
   font-size: 0.85rem;
 }
+
+/* ====================================================================
+   Categories page (v2 refresh). The action buttons use the standard
+   .button variants; here we make the search/filter/view toolbar a clean
+   responsive bar that stacks full-width on phones (the old version used
+   fixed % widths with no wrap and overflowed small screens).
+   ==================================================================== */
+.nx-cat-toolbar {
+  display: flex;
+  gap: 0.75rem;
+  align-items: center;
+  flex-wrap: wrap;
+  padding: 0.75rem;
+  background: var(--bg-color);
+  border: 1px solid var(--border-color);
+  border-radius: 10px;
+  margin-bottom: 1.25rem;
+}
+.nx-cat-toolbar .nx-cat-search {
+  flex: 1 1 320px;
+  min-width: 0;
+  padding: 0.6rem 0.85rem;
+  font-size: 0.92rem;
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  background: var(--card-bg);
+  color: var(--text-color);
+  box-sizing: border-box;
+}
+.nx-cat-toolbar .nx-cat-search:focus {
+  outline: none;
+  border-color: var(--accent-color);
+}
+.nx-cat-toolbar .nx-cat-filter {
+  flex: 0 0 auto;
+  padding: 0.6rem 0.85rem;
+  font-size: 0.92rem;
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  background: var(--card-bg);
+  color: var(--text-color);
+  cursor: pointer;
+  box-sizing: border-box;
+}
+.nx-cat-toolbar .view-toggle { margin-left: auto; flex: 0 0 auto; }
+
+/* Phone: everything stacks full width and the view toggle drops to its
+   own row instead of being pinned right (which caused the overflow). */
+@media (max-width: 620px) {
+  .nx-cat-toolbar .nx-cat-search { flex: 1 1 100%; }
+  .nx-cat-toolbar .nx-cat-filter { flex: 1 1 100%; }
+  .nx-cat-toolbar .view-toggle { margin-left: 0; flex: 1 1 100%; }
+  .nx-cat-toolbar .view-toggle .view-btn { flex: 1 1 0; justify-content: center; }
+}
+
+/* Bulk-selection info banner — theme-aware (the old hardcoded #fff3cd /
+   #856404 was invisible/wrong in dark mode). */
+.nx-cat-bulkbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+  padding: 0.7rem 1rem;
+  margin-bottom: 1rem;
+  border-radius: 10px;
+  font-size: 0.88rem;
+  color: var(--text-color);
+  background: color-mix(in srgb, #f59e0b 12%, transparent);
+  border: 1px solid color-mix(in srgb, #f59e0b 40%, transparent);
+}
+
+/* Keep the list-view table from blowing out narrow screens — it scrolls
+   horizontally within its own wrapper instead of widening the page. */
+.nx-cat-tablewrap { width: 100%; overflow-x: auto; -webkit-overflow-scrolling: touch; }
