@@ -1,5 +1,72 @@
 # Changelog
 
+## [2.0.0-beta.2] - 06-11-2026 (beta)
+
+> Security and polish round for the v2 beta: **Require Login now protects the
+> entire API**, the dashboard and Categories pages got a responsive/density
+> pass, and the German-umlaut rendering bug (#31) is fixed. Upgrade-safe.
+
+### Security
+
+- **Global auth gate.** With Require Login enabled, every endpoint now requires
+  a valid session or API key — previously only a handful of routes enforced
+  auth, leaving uploads, deletes, schedules, and settings callable without
+  logging in. Exempt: the login screen surface, `/health`, static assets, and
+  the Jellyfin/Emby plugin endpoints (which keep their own API-key auth).
+  Preroll thumbnails are gated too. **Note for automation users:** external
+  scripts hitting the API now need an API key (read scope for GET, write for
+  changes) when Require Login is on.
+
+### Added
+
+- **Update indicator in the sidebar footer** — a quiet pill (icon when
+  collapsed) linking to the new release; replaces the old top-of-page banners.
+- **NeX-Up dashboard tile** shows trailer storage used vs the configured cap
+  with a usage bar (turns red at 90%).
+- **Add Prerolls > Import Folder** now explains how Automatic Folder Monitoring
+  (Settings > Storage) keeps an imported folder in sync, with a direct link.
+
+### Changed
+
+- **Dashboard tiles condensed** — tighter padding, smaller headers, reduced
+  min-height and grid gap. The Video Quality tile is now half-height (Medium)
+  and sized to its content; existing saved layouts migrate once automatically.
+- **Page title/description headers removed app-wide** for a cleaner,
+  content-first layout (the sidebar already labels every page).
+- **Categories page refresh** — standard v2 button styles, a responsive
+  search/filter toolbar that stacks on phones, theme-aware bulk-selection
+  banner (was unreadable in dark mode), and a list view that converts to
+  stacked cards on mobile.
+- Dashboard edit-mode hint no longer references the removed S/M/L size
+  controls.
+- Removed an unused grid library from the frontend bundle (~23 kB smaller).
+
+### Fixed
+
+- **German umlauts and accented characters** rendered as garbage in Coming Soon
+  lists and dynamic prerolls (#31) — FFmpeg drawtext now resolves a real
+  Unicode font on Windows, Linux, and Docker (DejaVu/Liberation fonts added to
+  the Docker image), and the German/Spanish/French preset labels were
+  corrected.
+- **Right edge of every page was cut off below ~1700px** window width with the
+  sidebar expanded (page frame exceeded its column by its own padding).
+- **Dashboard tiles on phones** — wide feature tiles crushed the stat tiles
+  into a thin sliver and overflowed the screen; tiles now stack cleanly in one
+  column.
+- **Categories page overflowed on phones** (had to zoom out): the toolbar used
+  fixed percentage widths, and the list view forced a table min-width that
+  defeated its own mobile card layout.
+- Consistent spacing between stacked cards on Settings pages.
+- Logging in now reloads the app so all data loads under the auth gate instead
+  of showing empty pages until a manual refresh.
+
+### Internal
+
+- `scripts/bump_version.py` bumps all four version locations in one shot
+  (they had drifted when bumped by hand).
+- PR-validation CI workflow (frontend build + backend syntax check).
+- Dropped unused `alembic` and `APScheduler` from requirements.
+
 ## [2.0.0-beta.1] - 06-09-2026 (beta)
 
 > First beta of the NeXroll v2 line — a top-to-bottom modern "Arr-style"
