@@ -18804,13 +18804,11 @@ const DashboardTiles = {
       });
       const data = await safeJson(res);
       if (res.ok && data?.success) {
-        setAuthStatus(prev => ({
-          ...prev,
-          authenticated: true,
-          user: data.user
-        }));
-        setLoginForm({ username: '', password: '', remember_me: false });
-        showAlert('Logged in successfully!', 'success');
+        // Full reload instead of patching authenticated=true: the mount-time
+        // data fetches ran before login and got 401s from the global auth
+        // gate, so revealing the app without remounting would show empty
+        // state everywhere. A reload re-runs them all with the session cookie.
+        window.location.reload();
       } else {
         setLoginError(data?.detail || 'Login failed');
       }
