@@ -1986,7 +1986,14 @@ body.dark .dashboard .grid .card:hover {
 .nx-dash-grid { position: relative; grid-template-columns: repeat(4, minmax(0, 1fr)); }
 /* Responsive column count (the rest of the grid is set inline). */
 @media (max-width: 1100px) { .nx-dash-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
-@media (max-width: 620px)  { .nx-dash-grid { grid-template-columns: minmax(0, 1fr); } }
+@media (max-width: 620px) {
+  .nx-dash-grid { grid-template-columns: minmax(0, 1fr); }
+  /* Feature tiles carry an inline `grid-column: span 2`; in a single-column
+     grid that forces a phantom 2nd column, which crushes the stat tiles into a
+     sliver and makes the whole grid overflow (seen on phones). Force every tile
+     to one full column at this width — overrides the inline span. */
+  .nx-dash-grid > .nx-tile { grid-column: 1 / -1 !important; }
+}
 .nx-dash-grid .nx-tile.editing { cursor: grab; }
 .nx-dash-grid .nx-tile.editing:active { cursor: grabbing; }
 .nx-dash-grid .nx-tile.dragging { box-shadow: 0 12px 32px var(--shadow); border-radius: 0.5rem; }
@@ -4259,6 +4266,7 @@ body.dark .nx-chip.warn {
   max-width: var(--nx-page-max);
   margin: 0 auto;
   padding: 0 var(--nx-page-pad-x);
+  box-sizing: border-box; /* keep padding inside the width (see .dashboard note) */
   display: flex;
   align-items: center;
   gap: 0.75rem;
@@ -4337,6 +4345,10 @@ body.dark .nx-chip.warn {
   margin: 0 auto;
   padding: 1.5rem var(--nx-page-pad-x) 3rem;
   width: 100%;
+  /* Include the horizontal padding in the width. Without border-box, width:100%
+     + padding made the page ~56px wider than its column, so once the sidebar
+     ate enough width (~<1700px expanded) the right edge got cut off. */
+  box-sizing: border-box;
 }
 
 /* Legacy in-page page titles (still used by full-screen views like the calendar

@@ -7674,7 +7674,7 @@ const DashboardTiles = {
               className="nx-dash-hint"
               style={{ color: 'var(--text-secondary)', fontSize: '0.78rem', opacity: 0.72 }}
             >
-              Drag to move • use S / M / L to set tile size • lock to save
+              Drag to move • lock to save
             </span>
           )}
           {!dashLayout.locked && (
@@ -8572,7 +8572,49 @@ const DashboardTiles = {
             <p style={{ marginBottom: '1rem', color: 'var(--text-secondary)', fontSize: '0.9rem' }}>
               Index video files from an existing folder into NeXroll without moving them. Files are marked as external (managed=false).
             </p>
-            
+
+            {/* Heads-up: imported folders are indexed once. To keep them in sync as
+                files are added/removed outside NeXroll, the user enables Automatic
+                Folder Monitoring under Settings > Storage. Surfaced here so they can
+                make that decision while choosing a folder to import. */}
+            <div style={{
+              marginBottom: '1rem',
+              padding: '0.85rem 1rem',
+              backgroundColor: 'rgba(23, 162, 184, 0.1)',
+              borderRadius: '8px',
+              border: '1px solid #17a2b8',
+              fontSize: '0.85rem'
+            }}>
+              <div style={{ display: 'flex', alignItems: 'flex-start', gap: '0.6rem' }}>
+                <Info size={18} color="#17a2b8" style={{ flexShrink: 0, marginTop: '1px' }} />
+                <div style={{ color: 'var(--text-secondary)', lineHeight: 1.5 }}>
+                  <strong style={{ color: 'var(--text-color)' }}>Keeping this folder in sync:</strong>{' '}
+                  An imported folder is indexed once. If you'll add or remove files in it later
+                  (drop new clips in, sync from another tool), turn on{' '}
+                  <strong>Automatic Folder Monitoring</strong> so NeXroll re-scans it on a schedule
+                  and picks up the changes — otherwise you'll need to import or rescan again manually.
+                  <button
+                    type="button"
+                    onClick={() => setActiveTab('settings/storage')}
+                    style={{
+                      display: 'inline',
+                      padding: 0,
+                      marginLeft: '0.35rem',
+                      background: 'none',
+                      border: 'none',
+                      color: '#17a2b8',
+                      fontWeight: 600,
+                      cursor: 'pointer',
+                      textDecoration: 'underline',
+                      fontSize: 'inherit'
+                    }}
+                  >
+                    Settings &gt; Storage
+                  </button>
+                </div>
+              </div>
+            </div>
+
             <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
               {/* Path Input */}
               <div>
