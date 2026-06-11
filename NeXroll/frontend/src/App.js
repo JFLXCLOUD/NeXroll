@@ -26,11 +26,6 @@ import {
     Music, Wand2, GitCompare, Square, Plug
   } from 'lucide-react';
 import { BarChart, Bar, XAxis, YAxis, ResponsiveContainer, Cell, Tooltip } from 'recharts';
-import { Responsive as ResponsiveGrid, WidthProvider } from 'react-grid-layout';
-import 'react-resizable/css/styles.css';
-
-// react-grid-layout that auto-measures its container width (responsive dashboard).
-const DashGrid = WidthProvider(ResponsiveGrid);
 
 // Grid units. A small rowHeight lets a tile's height land close to its measured
 // content height. Tile HEIGHT is always auto-fit to content (so no scrollbars);

@@ -5,9 +5,8 @@ uvicorn[standard]>=0.34.0
 python-multipart>=0.0.20
 starlette>=0.46.0
 
-# Database
+# Database (schema migrations run at startup via ensure_schema(); alembic unused)
 sqlalchemy>=2.0.40
-alembic>=1.14.1
 
 # Plex API
 PlexAPI>=4.15.16
@@ -21,8 +20,7 @@ urllib3>=2.4.0
 # Data Validation
 pydantic>=2.11.1
 
-# Scheduling
-APScheduler>=3.11.0
+# Scheduling is a custom thread loop in backend/scheduler.py (no APScheduler)
 
 # Utilities
 python-dotenv>=1.1.0

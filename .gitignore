@@ -151,3 +151,5 @@ replace_*.py
 
 # Root package-lock (frontend only)
 /package-lock.json
+# Built installers staged for release uploads (local only)
+release-artifacts/
