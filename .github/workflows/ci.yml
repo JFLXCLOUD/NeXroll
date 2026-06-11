@@ -1,0 +1,44 @@
+name: CI
+
+# PR validation: catch broken frontend builds and Python syntax errors before
+# they reach main. Deliberately lightweight — no pip install of the full
+# runtime deps (slow, network-flaky); compileall catches syntax/import-shape
+# breakage, the npm build catches the rest.
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+env:
+  # GitHub forces Node 24 for JS actions from 2026-06-16; opt in now so the
+  # switch is validated on our schedule. Safe to delete after 2026-09-16.
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+jobs:
+  frontend-build:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: NeXroll/frontend
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: NeXroll/frontend/package-lock.json
+      - run: npm ci
+      # CI=false: CRA treats warnings as errors under CI=true; we gate on real
+      # build failures only (matches the local build command).
+      - run: CI=false npm run build
+
+  backend-syntax:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: Compile all backend sources
+        run: python -m compileall -q NeXroll/backend NeXroll/version.py NeXroll/scripts
