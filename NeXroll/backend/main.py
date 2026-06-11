@@ -1855,7 +1855,36 @@ def _community_headers(extra=None) -> dict:
     return h
 
 # Local index for Typical Nerds prerolls (faster than remote scraping)
-PREROLLS_INDEX_PATH = Path(os.environ.get("PROGRAMDATA", os.path.expanduser("~"))) / "NeXroll" / "prerolls_index.json"
+def _resolve_prerolls_index_path() -> Path:
+    """Persistent home for the community prerolls index.
+
+    Docker/Linux: NEXROLL_DB_DIR (/data in the official image) is the mounted
+    volume — the index must live there. The old code fell back to the home dir
+    when PROGRAMDATA was unset, which on Docker is inside the container
+    filesystem, so every image update wiped the index ("No index" after each
+    upgrade). Windows keeps using ProgramData as before.
+    """
+    db_dir = os.environ.get("NEXROLL_DB_DIR")
+    if db_dir and db_dir.strip():
+        return Path(db_dir.strip()) / "prerolls_index.json"
+    pd = os.environ.get("PROGRAMDATA")
+    if pd:
+        return Path(pd) / "NeXroll" / "prerolls_index.json"
+    return Path(os.path.expanduser("~")) / "NeXroll" / "prerolls_index.json"
+
+PREROLLS_INDEX_PATH = _resolve_prerolls_index_path()
+
+# One-time migration: adopt an index left at the old home-dir location by
+# pre-beta.3 builds (only helps containers that haven't been recreated yet;
+# already-wiped installs just rebuild the index once).
+_legacy_index = Path(os.path.expanduser("~")) / "NeXroll" / "prerolls_index.json"
+if _legacy_index != PREROLLS_INDEX_PATH and _legacy_index.exists() and not PREROLLS_INDEX_PATH.exists():
+    try:
+        PREROLLS_INDEX_PATH.parent.mkdir(parents=True, exist_ok=True)
+        shutil.move(str(_legacy_index), str(PREROLLS_INDEX_PATH))
+    except Exception:
+        pass
+
 PREROLLS_INDEX_MAX_AGE = 7 * 24 * 3600  # 7 days in seconds (refresh weekly recommended)
 
 # Smart search synonym mapping - helps find related content
@@ -13948,6 +13977,26 @@ def _set_last_scan_stats(stats: dict) -> None:
         pass
 
 
+def _scanner_exclude_trees(db: Session) -> list:
+    """Trees the library scanner must not index (scanner.exclude_trees).
+
+    NeX-Up's trailer storage is owned by NeX-Up — it registers downloads under
+    its system categories itself. When that storage sits inside the prerolls
+    dir (the norm on Docker, where both live under /data), the scanner used to
+    index the same files again and created a second, Uncategorized row per
+    trailer.
+    """
+    trees = []
+    try:
+        setting = db.query(models.Setting).first()
+        sp = getattr(setting, "nexup_storage_path", None) if setting else None
+        if sp and str(sp).strip():
+            trees.append(str(sp).strip())
+    except Exception:
+        pass
+    return trees
+
+
 def scan_preroll_library(db: Session = None, delete_missing: bool = False, dedupe: bool = False,
                          auto_prune_missing: bool = True) -> dict:
     """
@@ -13974,6 +14023,7 @@ def scan_preroll_library(db: Session = None, delete_missing: bool = False, dedup
             delete_missing=delete_missing,
             dedupe=dedupe,
             auto_prune_missing=auto_prune_missing,
+            exclude_trees=_scanner_exclude_trees(db),
         )
         try:
             _set_last_scan_stats(stats)
@@ -14177,6 +14227,7 @@ def rescan_prerolls(
             # automatically (safely). The explicit "Remove Missing Rows" button
             # passes delete_missing=true to force-remove without the threshold.
             auto_prune_missing=(not delete_missing),
+            exclude_trees=_scanner_exclude_trees(db),
         )
         _set_last_scan_stats(stats)
         log_event(
@@ -14673,6 +14724,7 @@ def restore_database(backup_data: dict, db: Session = Depends(get_db)):
                 data_dir=data_dir,
                 generate_thumbnail_fn=_generate_thumbnail_for_preroll,
                 file_log=_file_log,
+                exclude_trees=_scanner_exclude_trees(db),
             )
             _set_last_scan_stats(scan_stats)
             print(f"RESTORE: post-restore scan complete: {scan_stats}")

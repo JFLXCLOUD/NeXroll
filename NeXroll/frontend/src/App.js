@@ -16294,7 +16294,7 @@ const DashboardTiles = {
                               style={{ marginRight: '0.25rem' }}
                               title="Edit preroll"
                             >
-                              
+                              <Edit size={14} />
                             </button>
                             <button
                               type="button"
@@ -17340,7 +17340,7 @@ const DashboardTiles = {
                                 title="Edit category"
                                 style={{ fontSize: '0.9rem' }}
                               >
-                                
+                                <Edit size={14} />
                               </button>
                               <button
                                 onClick={(e) => {
@@ -33370,7 +33370,7 @@ const DashboardTiles = {
                }}
                title="Close preview"
              >
-               
+               <X size={20} />
              </button>
            </div>
            <div>
@@ -33468,7 +33468,7 @@ const DashboardTiles = {
                }}
                title="Close preview"
              >
-               
+               <X size={20} />
              </button>
            </div>
            <div>
@@ -33562,7 +33562,7 @@ const DashboardTiles = {
                }}
                title="Close preview"
              >
-               
+               <X size={20} />
              </button>
            </div>
            <div>
@@ -33658,7 +33658,7 @@ const DashboardTiles = {
                }}
                title="Close"
              >
-               
+               <X size={20} />
              </button>
            </div>
            <div>
