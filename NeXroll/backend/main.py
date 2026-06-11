@@ -2010,6 +2010,101 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# ---------------------------------------------------------------------------
+# Global auth gate
+# ---------------------------------------------------------------------------
+# When "Require Login" is enabled (Settings > Users), every request must carry
+# a valid session cookie or API key. Before this gate, only a handful of
+# endpoints enforced auth via Depends(require_auth), so enabling login
+# protected the UI but left most of the API (uploads, deletes, settings)
+# callable unauthenticated.
+#
+# Exemptions, kept minimal:
+#   - the pre-login surface the login screen itself needs (/auth/status,
+#     login, logout, register, reset-password — each self-guards internally)
+#   - /health for Docker/uptime probes
+#   - /plugin/*, /jellyfin/plugin/*, /emby/plugin/*: the Jellyfin/Emby plugin
+#     endpoints do their own optional API-key auth; session-gating them would
+#     break every existing plugin install
+#   - the SPA shell + static assets, so the login screen can load at all
+#     (/data thumbnails are deliberately NOT exempt — preroll content stays
+#     behind the gate)
+#
+# Requests with a valid API key (X-Api-Key header or ?api_key=) also pass:
+# GET/HEAD requires a "read" key, anything else a "write" key — so external
+# automation keeps working when login is required.
+_AUTH_GATE_EXEMPT_EXACT = {
+    "/", "/health", "/favicon.ico", "/manifest.json", "/asset-manifest.json",
+    "/sw.js", "/robots.txt", "/logo192.png", "/logo512.png",
+    "/auth/status", "/auth/login", "/auth/logout", "/auth/register",
+    "/auth/reset-password",
+}
+_AUTH_GATE_EXEMPT_PREFIXES = (
+    "/static/",
+    "/plugin/", "/jellyfin/plugin/", "/emby/plugin/",
+)
+
+# auth_enabled is read on every gated request; cache it briefly so static-ish
+# traffic doesn't hammer SQLite. The /auth/settings PUT resets the cache so a
+# toggle takes effect immediately.
+_auth_gate_cache = {"enabled": None, "ts": 0.0}
+_AUTH_GATE_CACHE_TTL = 5.0
+
+
+def _auth_gate_invalidate():
+    _auth_gate_cache["ts"] = 0.0
+
+
+def _auth_gate_enabled() -> bool:
+    now = time.monotonic()
+    if _auth_gate_cache["enabled"] is None or (now - _auth_gate_cache["ts"]) > _AUTH_GATE_CACHE_TTL:
+        try:
+            db = SessionLocal()
+            try:
+                setting = db.query(models.Setting).first()
+                _auth_gate_cache["enabled"] = bool(getattr(setting, "auth_enabled", False)) if setting else False
+            finally:
+                db.close()
+        except Exception:
+            # Transient DB error: keep the last known answer rather than either
+            # silently dropping protection or bricking the UI. A fresh DB with
+            # no answer yet defaults to disabled (it has no users to log in as).
+            if _auth_gate_cache["enabled"] is None:
+                _auth_gate_cache["enabled"] = False
+        _auth_gate_cache["ts"] = now
+    return _auth_gate_cache["enabled"]
+
+
+@app.middleware("http")
+async def _auth_gate_mw(request: Request, call_next):
+    path = request.url.path or "/"
+    if (
+        request.method == "OPTIONS"
+        or path in _AUTH_GATE_EXEMPT_EXACT
+        or path.startswith(_AUTH_GATE_EXEMPT_PREFIXES)
+    ):
+        return await call_next(request)
+    if not _auth_gate_enabled():
+        return await call_next(request)
+
+    # Validate and close the session BEFORE forwarding: holding a SQLite read
+    # transaction open across call_next would contend with downstream writes.
+    allowed = False
+    db = SessionLocal()
+    try:
+        allowed = _validate_session(request.cookies.get("nexroll_session"), db) is not None
+        if not allowed:
+            api_key_value = request.headers.get("X-Api-Key") or request.query_params.get("api_key")
+            if api_key_value:
+                needed = "read" if request.method in ("GET", "HEAD") else "write"
+                allowed = validate_api_key(api_key_value, needed, db) is not None
+    finally:
+        db.close()
+    if allowed:
+        return await call_next(request)
+    return JSONResponse(status_code=401, content={"detail": "Authentication required"})
+
+
 # Log unhandled exceptions and 4xx/5xx responses to writable logs (with fallback)
 @app.middleware("http")
 async def _log_errors_mw(request, call_next):
@@ -5628,9 +5723,10 @@ async def auth_update_settings(
         setting.auth_allow_registration = bool(body['allow_registration'])
     if 'require_https' in body:
         setting.auth_require_https = bool(body['require_https'])
-    
+
     db.commit()
-    
+    _auth_gate_invalidate()  # gate caches auth_enabled; apply the toggle now
+
     return {
         "success": True,
         "auth_enabled": setting.auth_enabled,
