@@ -25,8 +25,6 @@ import {
     Database, Archive, Shield, UserPlus, Users, LayoutGrid, List, Layers, Terminal, AlertCircle, Filter, BarChart2, HelpCircle,
     Music, Wand2, GitCompare, Square, Plug
   } from 'lucide-react';
-import { BarChart, Bar, XAxis, YAxis, ResponsiveContainer, Cell, Tooltip } from 'recharts';
-
 // Grid units. A small rowHeight lets a tile's height land close to its measured
 // content height. Tile HEIGHT is always auto-fit to content (so no scrollbars);
 // only WIDTH and POSITION are user-controlled.
@@ -73,6 +71,55 @@ const DEFAULT_SIZES = {
 };
 const DEFAULT_ORDER = ['servers', 'prerolls', 'storage', 'schedules', 'scheduler', 'current_category', 'community', 'nexup', 'upcoming', 'resolution_chart', 'weekly_calendar'];
 const DEFAULT_HIDDEN = [];
+
+// Theater-style boot quotes: one is picked per page load and shown on the
+// loading screen, in the spirit of the pre-show bumpers NeXroll exists to
+// serve. Module-level so the pick is stable across re-renders of the loader.
+const BOOT_QUOTES = [
+  'And now... our feature presentation',
+  'The feature presentation will begin shortly',
+  'Please silence your cell phones',
+  'Previews of coming attractions',
+  'Sit back, relax, and enjoy the show',
+  'Dimming the lights...',
+  'Threading the projector...',
+  'Now seating: all rows',
+  'The show is about to begin',
+  'Fresh popcorn, ice-cold drinks',
+  'No talking during the feature',
+  'Curtain up in 3... 2... 1...',
+  'Rolling film...',
+  "Today's feature: your preroll library",
+];
+const BOOT_QUOTE = BOOT_QUOTES[Math.floor(Math.random() * BOOT_QUOTES.length)];
+
+// Quick-pick chips rendered under the native time inputs in the schedule
+// create/edit forms. One click fills the input; the native picker stays for
+// arbitrary times (and follows the dark theme now via color-scheme in CSS).
+const TIME_QUICK_PRESETS = [
+  { label: '9:00 AM', value: '09:00' },
+  { label: '12:00 PM', value: '12:00' },
+  { label: '6:00 PM', value: '18:00' },
+  { label: '9:00 PM', value: '21:00' },
+];
+const TIME_QUICK_PRESETS_END = [
+  { label: '11:59 PM', value: '23:59' },
+  { label: 'Clear', value: '' },
+];
+const TimeQuickPicks = ({ current, onPick, end = false }) => (
+  <div className="nx-timepicks">
+    {(end ? [...TIME_QUICK_PRESETS, ...TIME_QUICK_PRESETS_END] : TIME_QUICK_PRESETS).map(p => (
+      <button
+        key={p.label}
+        type="button"
+        className={`nx-timepick ${current === p.value && p.value !== '' ? 'active' : ''}`}
+        onClick={() => onPick(p.value)}
+      >
+        {p.label}
+      </button>
+    ))}
+  </div>
+);
 
 // Wraps a tile and reports its natural content height (in grid rows). The card is
 // height:auto here, so the measurement is independent of the cell size — no
@@ -530,6 +577,13 @@ function App() {
   }, []);
   // v2 first-run onboarding wizard gate. null = unknown (still checking).
   const [needsOnboarding, setNeedsOnboarding] = useState(null);
+  // Keep the boot splash (theater quote) up a beat longer than the actual
+  // load so the line can land. Cleared by a one-shot timer.
+  const [bootHold, setBootHold] = useState(true);
+  useEffect(() => {
+    const t = setTimeout(() => setBootHold(false), 3000);
+    return () => clearTimeout(t);
+  }, []);
   const [openDropdown, setOpenDropdown] = useState(null); // For dropdown navigation
   const [plexConfig, setPlexConfig] = useState({
     url: '',
@@ -2224,16 +2278,27 @@ const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
         }
       }
 
-      if (!nearest) { setNextScheduleCountdown(null); return; }
-      const diff = nearest - now;
-      const days = Math.floor(diff / 86400000);
-      const hours = Math.floor((diff % 86400000) / 3600000);
-      const minutes = Math.floor((diff % 3600000) / 60000);
-      const seconds = Math.floor((diff % 60000) / 1000);
-      setNextScheduleCountdown({ days, hours, minutes, seconds, name: nearestName, categoryId: nearestCatId, targetTime: nearest });
+      // Only name/targetTime are displayed now (the D/H/M/S countdown boxes
+      // are gone), so bail out with the previous state object when nothing
+      // changed. Returning the same reference makes React skip the re-render
+      // entirely - the old code created a fresh object every second, which
+      // re-rendered the whole app each tick and reset scroll positions and
+      // text selection on the dashboard.
+      if (!nearest) {
+        setNextScheduleCountdown(prev => (prev === null ? prev : null));
+        return;
+      }
+      setNextScheduleCountdown(prev => (
+        prev &&
+        prev.name === nearestName &&
+        prev.categoryId === nearestCatId &&
+        prev.targetTime instanceof Date && prev.targetTime.getTime() === nearest.getTime()
+          ? prev
+          : { name: nearestName, categoryId: nearestCatId, targetTime: nearest }
+      ));
     };
     computeCountdown();
-    const countdownInterval = setInterval(computeCountdown, 1000);
+    const countdownInterval = setInterval(computeCountdown, 15000);
     return () => clearInterval(countdownInterval);
   }, [schedules]);
 
@@ -2249,10 +2314,12 @@ const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
         try {
           const data = JSON.parse(ev.data);
           if (data && data.scheduler) {
-            setSchedulerStatus(prev => ({
-              ...prev,
-              running: !!data.scheduler.running
-            }));
+            // The backend heartbeats every ~5s; bail out with the previous
+            // state object unless `running` actually flipped. A fresh object
+            // per message re-rendered the entire app every 5 seconds, which
+            // reset scroll positions and text selection on the dashboard.
+            const running = !!data.scheduler.running;
+            setSchedulerStatus(prev => (prev && prev.running === running ? prev : { ...prev, running }));
           }
         } catch (e) {
           // ignore parse errors
@@ -5373,10 +5440,20 @@ const [dashSaving, setDashSaving] = useState(false);
 // as grid-auto-rows and tiles span 1 row (S/M) or 2 rows (L). The full-width
 // calendar gets its own measured row span (calRows).
 const dashGridRef = useRef(null);
+// Callback ref: the dashboard grid mounts AFTER the boot splash / login early
+// returns, long after this component's effects first ran. A plain ref left the
+// measurement effect with grid=null forever (its deps never retriggered it),
+// so the row unit was never measured at all. Tracking the node in state makes
+// the effect re-run the moment the grid actually exists.
+const [dashGridEl, setDashGridEl] = useState(null);
+const setDashGridRef = useCallback((el) => {
+  dashGridRef.current = el;
+  setDashGridEl(el);
+}, []);
 const [uniformRowH, setUniformRowH] = useState(0);
 const [calRows, setCalRows] = useState(1);
 useEffect(() => {
-  const grid = dashGridRef.current;
+  const grid = dashGridEl;
   if (!grid) return undefined;
   const GAP = 12; // must match the grid's inline `gap` (condensed tiles)
   let raf = 0;
@@ -5384,10 +5461,22 @@ useEffect(() => {
     cancelAnimationFrame(raf);
     raf = requestAnimationFrame(() => {
       let rowH = 0;
-      grid.querySelectorAll('.nx-tile-sized').forEach((t) => {
+      // Only single-row tiles define the row unit. Feature tiles (span 2)
+      // must purely INHERIT it - including them in the measurement let their
+      // content height feed back into the row unit, so moving them around in
+      // edit mode could ratchet the whole grid taller.
+      grid.querySelectorAll('.nx-tile-sized[data-rows="1"]:not(.nx-tile-wide)').forEach((t) => {
         const card = t.querySelector('.card'); if (!card) return;
-        const r = Number(t.dataset.rows) || 1;
-        rowH = Math.max(rowH, (card.offsetHeight - (r - 1) * GAP) / r);
+        // The card is normally height-locked to its grid cell, which hides its
+        // true content height from every metric (scrollHeight included, since
+        // the flex children shrink to fit). Briefly release it to height:auto
+        // inside this animation frame - measured and restored before paint,
+        // so nothing flickers - to get the real natural height.
+        const prevH = card.style.height;
+        card.style.height = 'auto';
+        const natural = card.offsetHeight;
+        card.style.height = prevH;
+        rowH = Math.max(rowH, natural + 8);
       });
       // Tolerance guard: ignore sub-pixel jitter so the measure/apply loop settles.
       if (rowH > 0) setUniformRowH((prev) => (Math.abs(prev - rowH) > 1 ? rowH : prev));
@@ -5403,7 +5492,7 @@ useEffect(() => {
   grid.querySelectorAll('.nx-tile .card').forEach((c) => ro.observe(c));
   recompute();
   return () => { cancelAnimationFrame(raf); ro.disconnect(); };
-}, [dashLayout]);
+}, [dashLayout, dashGridEl]);
 
 const visibleOrder = React.useMemo(
   () => (dashLayout?.order || DASH_KEYS).filter(k => !(dashLayout?.hidden || []).includes(k)),
@@ -5413,7 +5502,6 @@ const visibleOrder = React.useMemo(
 const dashSensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 5 } }));
 // Bumping this remounts the grid — used by "Reset layout" so RGL actually drops
 // its cached internal layout and rebuilds from the default.
-const [dashGridKey, setDashGridKey] = useState(0);
 // Per-tile content height (in grid rows), measured live. This is the single
 // source of truth for tile HEIGHT — the layout below always uses it — so tiles
 // fit their content exactly and never scroll, independent of RGL's own state.
@@ -5561,7 +5649,7 @@ const SortableTile = ({ id, disabled, cols = 1, rows = 1, fullWidth, onHide, chi
       ref={setNodeRef}
       style={style}
       data-rows={rows}
-      className={`nx-tile ${fullWidth ? 'nx-tile-cal' : 'nx-tile-sized'} ${isDragging ? 'dragging' : ''} ${disabled ? '' : 'editing'}`}
+      className={`nx-tile ${fullWidth ? 'nx-tile-cal' : 'nx-tile-sized'} ${cols === 2 ? 'nx-tile-wide' : ''} ${isDragging ? 'dragging' : ''} ${disabled ? '' : 'editing'}`}
       {...attributes}
       {...listeners}
     >
@@ -5583,100 +5671,122 @@ const SortableTile = ({ id, disabled, cols = 1, rows = 1, fullWidth, onHide, chi
 
 // Tile renderers: content mirrors the original dashboard cards
 const DashboardTiles = {
-  servers: () => (
-    <div className="card">
-      <h2 style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}><Server size={18} /> Servers</h2>
-      <div style={{ display: 'grid', gap: '0.35rem' }}>
-        {(() => {
-          const s = getActiveConnectedServer();
-          if (s === 'plex') {
-            return (
-              <div>
-                <strong>Plex:</strong>
-                <span className={`nx-chip nx-status ok`} style={{ marginLeft: '0.35rem' }}>Connected</span>
-                {plexServerInfo?.name && (
-                  <span style={{ fontSize: '0.9rem', marginLeft: '0.5rem', color: 'var(--text-color)' }}>
-                    - {plexServerInfo.name}{plexServerInfo.version ? ` (${plexServerInfo.version})` : ''}
-                  </span>
-                )}
-              </div>
-            );
-          }
-          if (s === 'jellyfin') {
-            return (
-              <div>
-                <strong>Jellyfin:</strong>
-                <span className={`nx-chip nx-status ok`} style={{ marginLeft: '0.35rem' }}>Connected</span>
-                {jellyfinServerInfo?.name && (
-                  <span style={{ fontSize: '0.9rem', marginLeft: '0.5rem', color: 'var(--text-color)' }}>
-                    - {jellyfinServerInfo.name}{jellyfinServerInfo.version ? ` (${jellyfinServerInfo.version})` : ''}
-                  </span>
-                )}
-              </div>
-            );
-          }
-          if (s === 'emby') {
-            return (
-              <div>
-                <strong>Emby:</strong>
-                <span className={`nx-chip nx-status ok`} style={{ marginLeft: '0.35rem' }}>Connected</span>
-                {embyServerInfo?.name && (
-                  <span style={{ fontSize: '0.9rem', marginLeft: '0.5rem', color: 'var(--text-color)' }}>
-                    - {embyServerInfo.name}{embyServerInfo.version ? ` (${embyServerInfo.version})` : ''}
-                  </span>
-                )}
-              </div>
-            );
-          }
-          if (s === 'conflict') {
-            return (
-              <div style={{ fontSize: '0.9rem', color: '#dc3545' }}>
-                Multiple servers connected. Disconnect extras on the Connect tab.
-              </div>
-            );
-          }
-          return (
-            <div style={{ fontSize: '0.9rem', color: 'var(--text-secondary, #666)' }}>
-              No media server connected. Connect to Plex, Jellyfin, or Emby on the Connect tab.
+  servers: () => {
+    const s = getActiveConnectedServer();
+    const INFO = { plex: plexServerInfo, jellyfin: jellyfinServerInfo, emby: embyServerInfo };
+    const LABEL = { plex: 'Plex', jellyfin: 'Jellyfin', emby: 'Emby' };
+    const info = INFO[s];
+    return (
+      <div className="card">
+        <div className="nx-tile-head">
+          <h2 style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}><Server size={18} /> Servers</h2>
+          <button className="nx-tile-headbtn" onClick={() => setActiveTab('connect')} title="Open Connections">
+            <ArrowRight size={14} />
+          </button>
+        </div>
+        {LABEL[s] ? (
+          <>
+            <p className="nx-tile-status" style={{ color: 'var(--success-color, #28a745)', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+              {LABEL[s]}
+              <span className="nx-chip nx-status ok" style={{ fontSize: '0.72rem' }}>Connected</span>
+            </p>
+            <div className="nx-tile-rows">
+              {(info?.name || info?.friendlyName) && (
+                <div className="nx-tile-row">
+                  <span className="nx-tile-row-k"><Server size={14} /> Server</span>
+                  <span className="nx-tile-row-v">{info.name || info.friendlyName}</span>
+                </div>
+              )}
+              {info?.url && (
+                <div className="nx-tile-row">
+                  <span className="nx-tile-row-k"><Globe size={14} /> Address</span>
+                  <span className="nx-tile-row-v" title={info.url}>{info.url.replace(/^https?:\/\//, '')}</span>
+                </div>
+              )}
+              {info?.version && (
+                <div className="nx-tile-row">
+                  <span className="nx-tile-row-k"><Info size={14} /> Version</span>
+                  <span className="nx-tile-row-v">{info.version}</span>
+                </div>
+              )}
             </div>
-          );
-        })()}
+          </>
+        ) : s === 'conflict' ? (
+          <>
+            <p className="nx-tile-status" style={{ color: '#dc3545' }}>Conflict</p>
+            <p style={{ fontSize: '0.88rem', color: 'var(--text-secondary, #666)', margin: 0 }}>
+              Multiple servers connected. Disconnect extras on the Connections page.
+            </p>
+          </>
+        ) : (
+          <>
+            <p className="nx-tile-status" style={{ color: 'var(--text-secondary, #888)' }}>Not connected</p>
+            <p style={{ fontSize: '0.88rem', color: 'var(--text-secondary, #666)', margin: 0 }}>
+              Connect to Plex, Jellyfin, or Emby to start serving prerolls.
+            </p>
+          </>
+        )}
       </div>
-    </div>
-  ),
+    );
+  },
   prerolls: () => {
     const total = prerolls.length;
     const totalCats = categories.length;
     const usedCats = categories.filter(cat => prerolls.some(p => p.category_id === cat.id)).length;
     const uncategorized = prerolls.filter(p => !p.category_id).length;
     const sizeBytes = prerolls.reduce((s, p) => s + (p.file_size || 0), 0);
+    const externalCount = prerolls.filter(p => p.managed === false).length;
+    // Freshness: most recent upload/import across the library.
+    const lastAddedTs = prerolls.reduce((latest, p) => {
+      const t = p.upload_date ? new Date(p.upload_date).getTime() : 0;
+      return t > latest ? t : latest;
+    }, 0);
+    const lastAddedLabel = (() => {
+      if (!lastAddedTs) return null;
+      const days = (Date.now() - lastAddedTs) / 86400000;
+      if (days < 1 / 24) return 'just now';
+      if (days < 1) return `${Math.round(days * 24)}h ago`;
+      if (days < 60) return `${Math.round(days)}d ago`;
+      return new Date(lastAddedTs).toLocaleDateString();
+    })();
     return (
       <div className="card">
-        <h2 style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}><Film size={18} /> Prerolls</h2>
-        <p style={{ fontSize: '1.6rem', fontWeight: 'bold', margin: '0.15rem 0 0.5rem' }}>
-          {total} <span style={{ fontSize: '0.85rem', fontWeight: 'normal', color: 'var(--text-secondary, #666)' }}>preroll{total === 1 ? '' : 's'}</span>
+        <div className="nx-tile-head">
+          <h2 style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}><Film size={18} /> Prerolls</h2>
+          <button className="nx-tile-headbtn" onClick={() => setActiveTab('library')} title="Open Library">
+            <ArrowRight size={14} />
+          </button>
+        </div>
+        <p className="nx-tile-bignum">
+          {total} <span className="nx-tile-bignum-unit">preroll{total === 1 ? '' : 's'}</span>
         </p>
-        <div style={{ display: 'grid', gap: '0.4rem' }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '0.9rem' }}>
-            <span style={{ color: 'var(--text-secondary, #666)', display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
-              <Folder size={14} /> Categories
-            </span>
-            <span><strong>{usedCats}</strong> <span style={{ color: 'var(--text-secondary, #888)' }}>of {totalCats} used</span></span>
+        <div className="nx-tile-rows">
+          <div className="nx-tile-row">
+            <span className="nx-tile-row-k"><Folder size={14} /> Categories</span>
+            <span className="nx-tile-row-v">{usedCats} <span className="muted" style={{ color: 'var(--text-secondary)', fontWeight: 400 }}>of {totalCats} used</span></span>
           </div>
           {sizeBytes > 0 && (
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '0.9rem' }}>
-              <span style={{ color: 'var(--text-secondary, #666)', display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
-                <HardDrive size={14} /> Library size
-              </span>
-              <strong>{formatBytes(sizeBytes)}</strong>
+            <div className="nx-tile-row">
+              <span className="nx-tile-row-k"><HardDrive size={14} /> Library size</span>
+              <span className="nx-tile-row-v">{formatBytes(sizeBytes)}</span>
+            </div>
+          )}
+          {externalCount > 0 && (
+            <div className="nx-tile-row">
+              <span className="nx-tile-row-k"><FolderOpen size={14} /> External (mapped)</span>
+              <span className="nx-tile-row-v">{externalCount}</span>
+            </div>
+          )}
+          {lastAddedLabel && (
+            <div className="nx-tile-row">
+              <span className="nx-tile-row-k"><Clock size={14} /> Last added</span>
+              <span className="nx-tile-row-v">{lastAddedLabel}</span>
             </div>
           )}
           {uncategorized > 0 && (
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '0.9rem' }}>
-              <span style={{ color: '#f59e0b', display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
-                <AlertTriangle size={14} /> Uncategorized
-              </span>
-              <strong style={{ color: '#f59e0b' }}>{uncategorized}</strong>
+            <div className="nx-tile-row">
+              <span className="nx-tile-row-k" style={{ color: '#f59e0b' }}><AlertTriangle size={14} /> Uncategorized</span>
+              <span className="nx-tile-row-v" style={{ color: '#f59e0b' }}>{uncategorized}</span>
             </div>
           )}
         </div>
@@ -5690,26 +5800,31 @@ const DashboardTiles = {
     const shown = locs.filter(l => l.bytes > 0).sort((a, b) => b.bytes - a.bytes);
     return (
       <div className="card">
-        <h2 style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}><HardDrive size={18} /> Storage</h2>
-        <p style={{ fontSize: '1.6rem', fontWeight: 'bold', margin: '0.15rem 0 0.5rem' }}>
-          {formatBytes(totalBytes)} <span style={{ fontSize: '0.85rem', fontWeight: 'normal', color: 'var(--text-secondary, #666)' }}>used</span>
+        <div className="nx-tile-head">
+          <h2 style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}><HardDrive size={18} /> Storage</h2>
+          <button className="nx-tile-headbtn" onClick={() => setActiveTab('settings/storage')} title="Open Storage settings">
+            <ArrowRight size={14} />
+          </button>
+        </div>
+        <p className="nx-tile-bignum">
+          {formatBytes(totalBytes)} <span className="nx-tile-bignum-unit">used</span>
         </p>
         {!storageBreakdown ? (
-          <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary, #888)' }}>Calculating…</p>
+          <p style={{ fontSize: '0.88rem', color: 'var(--text-secondary, #888)', margin: 0 }}>Calculating…</p>
         ) : shown.length === 0 ? (
-          <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary, #888)' }}>No stored files yet</p>
+          <p style={{ fontSize: '0.88rem', color: 'var(--text-secondary, #888)', margin: 0 }}>No stored files yet</p>
         ) : (
-          <div style={{ display: 'grid', gap: '0.45rem' }}>
+          <div className="nx-tile-rows">
             {shown.map(l => {
               const pct = totalBytes > 0 ? Math.round((l.bytes / totalBytes) * 100) : 0;
               return (
                 <div key={l.key} title={l.path || ''}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '0.9rem' }}>
-                    <span style={{ color: 'var(--text-secondary, #666)', display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+                  <div className="nx-tile-row">
+                    <span className="nx-tile-row-k">
                       <span style={{ width: 8, height: 8, borderRadius: 2, background: colors[l.key] || 'var(--accent-color, #00d4ff)', flexShrink: 0 }} />
                       {l.label}
                     </span>
-                    <strong>{formatBytes(l.bytes)}</strong>
+                    <span className="nx-tile-row-v">{formatBytes(l.bytes)}</span>
                   </div>
                   <div style={{ height: 4, borderRadius: 2, background: 'var(--hover-bg)', marginTop: '0.2rem', overflow: 'hidden' }}>
                     <div style={{ width: `${pct}%`, height: '100%', background: colors[l.key] || 'var(--accent-color, #00d4ff)' }} />
@@ -5728,19 +5843,29 @@ const DashboardTiles = {
     const withConflicts = enabled.filter(s => getScheduleConflicts(s).length > 0);
     return (
       <div className="card">
-        <h2 style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}><Calendar size={18} /> Schedules</h2>
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', marginTop: '0.5rem' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '1.05rem' }}>
-            <CheckCircle size={18} style={{ color: 'var(--success-color, #28a745)', flexShrink: 0 }} />
-            <span>{enabled.length} Enabled</span>
+        <div className="nx-tile-head">
+          <h2 style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}><Calendar size={18} /> Schedules</h2>
+          <button className="nx-tile-headbtn" onClick={() => setActiveTab('schedules')} title="Open Schedules">
+            <ArrowRight size={14} />
+          </button>
+        </div>
+        <p className="nx-tile-bignum">
+          {schedules.length} <span className="nx-tile-bignum-unit">total</span>
+        </p>
+        <div className="nx-tile-rows">
+          <div className="nx-tile-row">
+            <span className="nx-tile-row-k"><CheckCircle size={14} style={{ color: 'var(--success-color, #28a745)' }} /> Enabled</span>
+            <span className="nx-tile-row-v">{enabled.length}</span>
           </div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '1.05rem' }}>
-            <Ban size={18} style={{ color: 'var(--text-secondary, #888)', flexShrink: 0 }} />
-            <span>{disabled.length} Disabled</span>
+          <div className="nx-tile-row">
+            <span className="nx-tile-row-k"><Ban size={14} /> Disabled</span>
+            <span className="nx-tile-row-v">{disabled.length}</span>
           </div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '1.05rem' }}>
-            <AlertTriangle size={18} style={{ color: withConflicts.length > 0 ? '#ff9800' : 'var(--text-secondary, #888)', flexShrink: 0 }} />
-            <span style={{ color: withConflicts.length > 0 ? '#ff9800' : undefined }}>{withConflicts.length} Conflicting</span>
+          <div className="nx-tile-row">
+            <span className="nx-tile-row-k" style={withConflicts.length > 0 ? { color: '#ff9800' } : undefined}>
+              <AlertTriangle size={14} style={withConflicts.length > 0 ? { color: '#ff9800' } : undefined} /> Conflicting
+            </span>
+            <span className="nx-tile-row-v" style={withConflicts.length > 0 ? { color: '#ff9800' } : undefined}>{withConflicts.length}</span>
           </div>
           {withConflicts.length > 0 && (
             <button
@@ -5764,153 +5889,97 @@ const DashboardTiles = {
       </div>
     );
   },
-  scheduler: () => (
+  scheduler: () => {
+    // Schedules that will fire before local midnight — quick "is today busy?"
+    const now = new Date();
+    const endOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1);
+    const firingToday = schedules.filter(s => {
+      if (!s.is_active || !s.next_run) return false;
+      const t = new Date(s.next_run);
+      return t >= now && t < endOfDay;
+    }).length;
+    return (
     <div className="card">
-      <h2 style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}><Timer size={18} /> Scheduler</h2>
-      <p style={{ color: schedulerStatus.running ? 'var(--success-color, #28a745)' : 'var(--error-color, #dc3545)' }}>
+      <div className="nx-tile-head">
+        <h2 style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}><Timer size={18} /> Scheduler</h2>
+        <button
+          className="nx-tile-headbtn"
+          onClick={toggleScheduler}
+          title={schedulerStatus.running ? 'Stop scheduler' : 'Start scheduler'}
+          style={{ color: schedulerStatus.running ? 'var(--error-color, #dc3545)' : 'var(--success-color, #28a745)' }}
+        >
+          {schedulerStatus.running ? <Square size={14} /> : <Play size={14} />}
+        </button>
+      </div>
+      <p className="nx-tile-status" style={{ color: schedulerStatus.running ? 'var(--success-color, #28a745)' : 'var(--error-color, #dc3545)' }}>
         {schedulerStatus.running ? 'Running' : 'Stopped'}
       </p>
-      {/* Currently-active line. Lets the user see what's playing right now alongside
-          "what's next" — without this, the countdown's name flip from schedule A to
-          schedule B at the moment A activates looked like A's countdown just expired
-          without applying. */}
-      {schedulerStatus.running && activeCategory && (activeCategory.active_schedule_name || activeCategory.name) && (
-        <p style={{ fontSize: '0.75rem', color: 'var(--text-secondary, #888)', margin: '0 0 0.2rem', fontWeight: 600 }}>
-          Now: <span style={{ color: 'var(--success-color, #28a745)', fontWeight: 'bold' }}>
-            {activeCategory.active_schedule_name || activeCategory.name}
+      <div className="nx-tile-rows">
+        <div className="nx-tile-row">
+          <span className="nx-tile-row-k">
+            <Globe size={14} /> Timezone
           </span>
-        </p>
-      )}
-      {schedulerStatus.running && nextScheduleCountdown && (
-        <div style={{ marginTop: '0.5rem' }}>
-          <p style={{ fontSize: '0.75rem', color: 'var(--text-secondary, #888)', margin: '0 0 0.15rem', fontWeight: 600 }}>
-            Next: <span style={{ color: '#007bff', fontWeight: 'bold' }}>{nextScheduleCountdown.name}</span>
-            {nextScheduleCountdown.targetTime && (
-              <span style={{ color: 'var(--text-secondary, #888)', fontWeight: 400, marginLeft: '0.35rem' }}>
-                @ {new Date(nextScheduleCountdown.targetTime).toLocaleString([], {
-                  month: 'short', day: 'numeric',
-                  hour: '2-digit', minute: '2-digit'
-                })}
-              </span>
-            )}
-          </p>
-          <div style={{ display: 'flex', justifyContent: 'center', gap: '0.35rem', marginTop: '0.4rem' }}>
-            {[
-              { val: nextScheduleCountdown.days, label: 'D' },
-              { val: nextScheduleCountdown.hours, label: 'H' },
-              { val: nextScheduleCountdown.minutes, label: 'M' },
-              { val: nextScheduleCountdown.seconds, label: 'S' }
-            ].filter((seg, i) => i > 0 || seg.val > 0).map((seg, i) => (
-              <div key={i} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', minWidth: '36px' }}>
-                <span style={{
-                  fontSize: '1.15rem', fontWeight: 'bold', fontFamily: 'monospace',
-                  color: 'var(--text-color, #fff)',
-                  background: 'var(--card-bg, rgba(0,0,0,0.15))',
-                  borderRadius: '6px', padding: '0.15rem 0.35rem',
-                  border: '1px solid var(--border-color, #333)',
-                  lineHeight: 1.2
-                }}>{String(seg.val).padStart(2, '0')}</span>
-                <span style={{ fontSize: '0.55rem', color: 'var(--text-secondary, #888)', marginTop: '0.1rem', fontWeight: 600 }}>{seg.label}</span>
-              </div>
-            ))}
-          </div>
+          <span className="nx-tile-row-v">{currentTimezone}</span>
         </div>
-      )}
-      {schedulerStatus.running && !nextScheduleCountdown && (
-        <p style={{ fontSize: '0.7rem', color: 'var(--text-secondary, #888)', margin: '0.5rem 0 0', fontStyle: 'italic' }}>No upcoming schedules</p>
-      )}
-      <button onClick={toggleScheduler} className="button" style={{
-        marginTop: '0.5rem',
-        padding: '0.3rem 0.6rem',
-        fontSize: '0.8rem',
-        backgroundColor: '#6366f1',
-        borderColor: '#6366f1',
-        display: 'inline-flex',
-        alignItems: 'center',
-        justifyContent: 'center',
-        gap: '0.3rem'
-      }}>
-        {schedulerStatus.running ? <><Square size={13} /> Stop</> : <><Play size={13} /> Start</>} Scheduler
-      </button>
+        {schedulerStatus.running && (
+          <div className="nx-tile-row">
+            <span className="nx-tile-row-k">
+              <CalendarDays size={14} /> Firing today
+            </span>
+            <span className="nx-tile-row-v">{firingToday}</span>
+          </div>
+        )}
+        {/* "Now" beside "what's next": without it, the next-schedule name flipping
+            from A to B at the moment A activates looked like A never applied. */}
+        {schedulerStatus.running && activeCategory && (activeCategory.active_schedule_name || activeCategory.name) && (
+          <div className="nx-tile-row">
+            <span className="nx-tile-row-k">
+              <Play size={14} /> Now
+            </span>
+            <span className="nx-tile-row-v" style={{ color: 'var(--success-color, #28a745)' }}>
+              {activeCategory.active_schedule_name || activeCategory.name}
+            </span>
+          </div>
+        )}
+        {schedulerStatus.running && nextScheduleCountdown && (
+          <div className="nx-tile-row">
+            <span className="nx-tile-row-k">
+              <ArrowRight size={14} /> Next
+            </span>
+            <span className="nx-tile-row-v">
+              <span style={{ color: '#007bff', fontWeight: 600 }}>{nextScheduleCountdown.name}</span>
+              {nextScheduleCountdown.targetTime && (
+                <span style={{ color: 'var(--text-secondary, #888)', marginLeft: '0.35rem' }}>
+                  {new Date(nextScheduleCountdown.targetTime).toLocaleString([], {
+                    month: 'short', day: 'numeric',
+                    hour: '2-digit', minute: '2-digit'
+                  })}
+                </span>
+              )}
+            </span>
+          </div>
+        )}
+        {schedulerStatus.running && !nextScheduleCountdown && (
+          <div className="nx-tile-row">
+            <span className="nx-tile-row-k">
+              <ArrowRight size={14} /> Next
+            </span>
+            <span style={{ color: 'var(--text-secondary, #888)', fontStyle: 'italic' }}>No upcoming schedules</span>
+          </div>
+        )}
+      </div>
     </div>
-  ),
+    );
+  },
   current_category: () => (
     <div className="card">
-      <h2 style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}><Folder size={18} /> Currently Showing</h2>
-      {appliedSequence ? (
-        <div>
-          <p style={{ fontWeight: 'bold', color: '#8b5cf6' }}>
-            {appliedSequence.name}
-          </p>
-          <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary, #666)' }}>
-            Mode: Sequence (Manual Apply)
-          </p>
-          {activeCategory && (
-            <p style={{ fontSize: '0.8rem', color: 'var(--text-secondary, #666)', fontStyle: 'italic', marginTop: '0.25rem' }}>
-              Scheduled: {activeCategory.name}
-            </p>
-          )}
-        </div>
-      ) : activeCategory ? (
-        <div>
-          {activeCategory.blend_schedules && activeCategory.blend_schedules.length >= 2 ? (
-            <>
-              <p style={{ fontWeight: 'bold', color: 'var(--success-color, #28a745)' }}>
-                Blending
-              </p>
-              <p style={{ fontSize: '0.85rem', color: '#f59e0b', fontStyle: 'italic' }}>
-                {activeCategory.blend_schedules.map(s => s.name).join(' + ')}
-              </p>
-              {activeCategory.active_schedule_name && (
-                <p style={{ fontSize: '0.8rem', color: 'var(--text-secondary, #666)' }}>
-                  Playing: {activeCategory.active_schedule_name}
-                </p>
-              )}
-            </>
-          ) : (
-            <>
-              <p style={{ fontWeight: 'bold', color: 'var(--success-color, #28a745)' }}>
-                {activeCategory.active_schedule_name || activeCategory.name}
-              </p>
-              {activeCategory.active_schedule_name && (
-                <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary, #666)' }}>
-                  Category: {activeCategory.name}
-                </p>
-              )}
-              <p style={{ fontSize: '0.9rem', color: 'var(--text-secondary, #666)' }}>
-                Mode: {activeCategory.plex_mode === 'playlist' ? 'Sequential' :
-                       activeCategory.plex_mode === 'single' ? 'Single File' :
-                       activeCategory.plex_mode === 'sequence' ? 'Sequence' : 'Shuffle'}
-              </p>
-              {/* Only show preroll count for regular categories, not filler/sequence/blend */}
-              {!activeCategory.is_filler && activeCategory.id != null && activeCategory.plex_mode !== 'single' && activeCategory.plex_mode !== 'sequence' && (
-                <p style={{ fontSize: '0.9rem', color: 'var(--text-secondary, #666)' }}>
-                  Prerolls: {(() => {
-                    const primaryCount = prerolls.filter(p => p.category_id === activeCategory.id).length;
-                    const secondaryCount = prerolls.filter(p =>
-                      p.categories &&
-                      p.categories.some(c => c.id === activeCategory.id) &&
-                      p.category_id !== activeCategory.id
-                    ).length;
-                    return primaryCount + secondaryCount;
-                  })()}
-                </p>
-              )}
-              {activeCategory.is_filler && (
-                <p style={{ fontSize: '0.85rem', color: '#00d4ff', fontStyle: 'italic' }}>
-                  Gap filler active
-                </p>
-              )}
-            </>
-          )}
-        </div>
-      ) : (
-        <p style={{ color: 'var(--text-secondary, #666)' }}>No category applied</p>
-      )}
-      {(activeCategory || appliedSequence) && (
-        <button
-          className="button"
-          onClick={async () => {
+      <div className="nx-tile-head">
+        <h2 style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}><Folder size={18} /> Currently Showing</h2>
+        {(activeCategory || appliedSequence) && (
+          <button
+            className="nx-tile-headbtn"
+            title="Preview what's currently applied to the server"
+            onClick={async () => {
             try {
               const resp = await fetch(apiUrl('plex/current-preroll-details'));
               const data = await resp.json();
@@ -5934,21 +6003,111 @@ const DashboardTiles = {
               showAlert('Failed to fetch current preroll details', 'error');
             }
           }}
-          style={{
-            marginTop: '0.5rem',
-            padding: '0.3rem 0.6rem',
-            fontSize: '0.8rem',
-            backgroundColor: '#6366f1',
-            borderColor: '#6366f1',
-            display: 'inline-flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            gap: '0.3rem'
-          }}
-          title="Preview what's currently applied to the server"
-        >
-          <Play size={13} /> Preview
-        </button>
+          >
+            <Eye size={14} />
+          </button>
+        )}
+      </div>
+      {appliedSequence ? (
+        <div>
+          <p className="nx-tile-status" style={{ color: '#8b5cf6' }}>
+            {appliedSequence.name}
+          </p>
+          <div className="nx-tile-rows">
+            <div className="nx-tile-row">
+              <span className="nx-tile-row-k">
+                <Layers size={14} /> Mode
+              </span>
+              <span className="nx-tile-row-v">Sequence (Manual Apply)</span>
+            </div>
+            {activeCategory && (
+              <div className="nx-tile-row">
+                <span className="nx-tile-row-k">
+                  <Calendar size={14} /> Scheduled
+                </span>
+                <span className="nx-tile-row-v">{activeCategory.name}</span>
+              </div>
+            )}
+          </div>
+        </div>
+      ) : activeCategory ? (
+        <div>
+          {activeCategory.blend_schedules && activeCategory.blend_schedules.length >= 2 ? (
+            <>
+              <p className="nx-tile-status" style={{ color: 'var(--success-color, #28a745)' }}>
+                Blending
+              </p>
+              <div className="nx-tile-rows">
+                <div className="nx-tile-row">
+                  <span className="nx-tile-row-k">
+                    <Layers size={14} /> Blend
+                  </span>
+                  <span style={{ color: '#f59e0b', fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', marginLeft: '0.5rem' }}>
+                    {activeCategory.blend_schedules.map(s => s.name).join(' + ')}
+                  </span>
+                </div>
+                {activeCategory.active_schedule_name && (
+                  <div className="nx-tile-row">
+                    <span className="nx-tile-row-k">
+                      <Play size={14} /> Playing
+                    </span>
+                    <span className="nx-tile-row-v">{activeCategory.active_schedule_name}</span>
+                  </div>
+                )}
+              </div>
+            </>
+          ) : (
+            <>
+              <p className="nx-tile-status" style={{ color: 'var(--success-color, #28a745)' }}>
+                {activeCategory.active_schedule_name || activeCategory.name}
+              </p>
+              <div className="nx-tile-rows">
+                {activeCategory.active_schedule_name && (
+                  <div className="nx-tile-row">
+                    <span className="nx-tile-row-k">
+                      <Folder size={14} /> Category
+                    </span>
+                    <span className="nx-tile-row-v">{activeCategory.name}</span>
+                  </div>
+                )}
+                <div className="nx-tile-row">
+                  <span className="nx-tile-row-k">
+                    <Shuffle size={14} /> Mode
+                  </span>
+                  <span className="nx-tile-row-v">
+                    {activeCategory.plex_mode === 'playlist' ? 'Sequential' :
+                     activeCategory.plex_mode === 'single' ? 'Single File' :
+                     activeCategory.plex_mode === 'sequence' ? 'Sequence' : 'Shuffle'}
+                  </span>
+                </div>
+                {/* Only show preroll count for regular categories, not filler/sequence/blend */}
+                {!activeCategory.is_filler && activeCategory.id != null && activeCategory.plex_mode !== 'single' && activeCategory.plex_mode !== 'sequence' && (
+                  <div className="nx-tile-row">
+                    <span className="nx-tile-row-k">
+                      <Film size={14} /> Prerolls
+                    </span>
+                    <span className="nx-tile-row-v">{(() => {
+                      const primaryCount = prerolls.filter(p => p.category_id === activeCategory.id).length;
+                      const secondaryCount = prerolls.filter(p =>
+                        p.categories &&
+                        p.categories.some(c => c.id === activeCategory.id) &&
+                        p.category_id !== activeCategory.id
+                      ).length;
+                      return primaryCount + secondaryCount;
+                    })()}</span>
+                  </div>
+                )}
+                {activeCategory.is_filler && (
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.35rem', fontSize: '0.85rem', color: '#00d4ff', fontStyle: 'italic' }}>
+                    <Zap size={14} /> Gap filler active
+                  </div>
+                )}
+              </div>
+            </>
+          )}
+        </div>
+      ) : (
+        <p style={{ fontSize: '0.88rem', color: 'var(--text-secondary, #666)', margin: 0 }}>No category applied</p>
       )}
     </div>
   ),
@@ -5986,36 +6145,41 @@ const DashboardTiles = {
             if (!a.isActiveNow && b.isActiveNow) return 1;
             return a.sortTime - b.sortTime;
           })
-          .slice(0, 5); // Show up to 5 schedules
-        
+          .slice(0, 30); // Sanity cap; the list scrolls past ~6 entries
+
         return allUpcomingSchedules.length > 0 ? (
-          <div style={{ display: 'grid', gap: '0.35rem' }}>
-            {allUpcomingSchedules.map(schedule => {
-              const category = categories.find(c => c.id === schedule.category_id);
-              const displayTime = schedule.next_run || schedule.start_date;
-              return (
-                <div key={schedule.id} style={{ fontSize: '0.8rem', padding: '0.35rem 0.5rem', backgroundColor: 'var(--card-bg)', borderRadius: '4px', border: schedule.isActiveNow ? '1px solid #28a745' : '1px solid var(--border-color)' }}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                    <span style={{ fontWeight: 'bold', color: '#007bff', fontSize: '0.85rem' }}>
-                      {schedule.name}
-                    </span>
-                    <span style={{ 
-                      fontSize: '0.65rem', 
-                      padding: '0.1rem 0.4rem', 
-                      borderRadius: '8px', 
-                      backgroundColor: schedule.isActiveNow ? '#28a745' : '#6c757d',
-                      color: '#fff',
-                      fontWeight: '600'
-                    }}>
-                      {schedule.isActiveNow ? 'Active Now' : 'Coming Up'}
-                    </span>
+          <div className="nx-upcoming-list">
+            <div style={{ display: 'grid', gap: '0.35rem' }}>
+              {allUpcomingSchedules.map(schedule => {
+                const category = categories.find(c => c.id === schedule.category_id);
+                const displayTime = schedule.next_run || schedule.start_date;
+                return (
+                  <div key={schedule.id} style={{ fontSize: '0.8rem', padding: '0.35rem 0.5rem', backgroundColor: 'var(--card-bg)', borderRadius: '4px', border: schedule.isActiveNow ? '1px solid #28a745' : '1px solid var(--border-color)' }}>
+                    <div className="nx-tile-row">
+                      <span style={{ fontWeight: 'bold', color: '#007bff', fontSize: '0.85rem' }}>
+                        {schedule.name}
+                      </span>
+                      <span style={{
+                        fontSize: '0.65rem',
+                        padding: '0.1rem 0.4rem',
+                        borderRadius: '8px',
+                        backgroundColor: schedule.isActiveNow ? '#28a745' : '#6c757d',
+                        color: '#fff',
+                        fontWeight: '600'
+                      }}>
+                        {schedule.isActiveNow ? 'Active Now' : 'Coming Up'}
+                      </span>
+                    </div>
+                    <div style={{ color: 'var(--text-secondary, #666)', fontSize: '0.75rem', marginTop: '0.1rem' }}>
+                      {toLocalDisplay(displayTime)} → {category?.name || 'Unknown'}
+                    </div>
                   </div>
-                  <div style={{ color: 'var(--text-secondary, #666)', fontSize: '0.75rem', marginTop: '0.1rem' }}>
-                    {toLocalDisplay(displayTime)} → {category?.name || 'Unknown'}
-                  </div>
-                </div>
-              );
-            })}
+                );
+              })}
+            </div>
+            {/* Fade hint: only rendered when more entries exist than the
+                ~4-row viewport shows, so the cutoff reads as "scroll for more". */}
+            {allUpcomingSchedules.length > 4 && <div className="nx-upcoming-fade" />}
           </div>
         ) : (
           <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary, #666)', margin: 0 }}>No upcoming schedules</p>
@@ -6027,7 +6191,7 @@ const DashboardTiles = {
     <div className="card">
       <h2 style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}><Palette size={18} /> Recent Genre Prerolls</h2>
       {recentGenreApplications.length > 0 ? (
-        <div style={{ display: 'grid', gap: '0.5rem' }}>
+        <div className="nx-tile-rows">
           {recentGenreApplications.map((app, idx) => (
             <div key={idx} style={{ fontSize: '0.9rem', padding: '0.5rem', backgroundColor: 'var(--card-bg)', border: '1px solid var(--border-color)', borderRadius: '4px' }}>
               <div style={{ fontWeight: 'bold', color: '#28a745' }}>
@@ -6049,13 +6213,25 @@ const DashboardTiles = {
     const matchedCount = communityMatchedCount || 0;
     const isStale = communityIndexStatus?.is_stale || false;
     const ageDays = communityIndexStatus?.age_days || 0;
+    const indexExists = communityIndexStatus?.exists || false;
+    const indexSizeMb = communityIndexStatus?.size_mb || 0;
     const online = communityHealth?.online;
+    const pingMs = communityHealth?.response_time_ms;
+    // "today" / "Nh ago" under a day; "Nd ago" after.
+    const ageLabel = ageDays < (1 / 24) ? 'just now'
+      : ageDays < 1 ? `${Math.round(ageDays * 24)}h ago`
+      : `${Math.round(ageDays)}d ago`;
 
     return (
       <div className="card">
-        <h2 style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}><Users2 size={18} /> Community Prerolls</h2>
+        <div className="nx-tile-head">
+          <h2 style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}><Users2 size={18} /> Community Prerolls</h2>
+          <button className="nx-tile-headbtn" onClick={() => setActiveTab('community-prerolls')} title="Browse Community Prerolls">
+            <ArrowRight size={14} />
+          </button>
+        </div>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.6rem' }}>
-          <span style={{ fontSize: '0.9rem', color: 'var(--text-secondary, #666)', display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
+          <span className="nx-tile-row-k">
             <Globe size={14} /> prerolls.uk
           </span>
           {online === undefined ? (
@@ -6065,35 +6241,51 @@ const DashboardTiles = {
               className={`nx-chip nx-status ${online ? 'ok' : 'bad'}`}
               style={{ fontSize: '0.75rem' }}
               title={online
-                ? `Reachable${communityHealth?.response_time_ms ? ` (${communityHealth.response_time_ms} ms)` : ''}`
+                ? `Reachable${pingMs ? ` (${pingMs} ms)` : ''}`
                 : (communityHealth?.error || 'Unreachable')}
             >
-              {online ? 'Online' : 'Offline'}
+              {online ? (pingMs ? `Online · ${pingMs}ms` : 'Online') : 'Offline'}
             </span>
           )}
         </div>
         {indexedCount > 0 || matchedCount > 0 ? (
-          <div style={{ display: 'grid', gap: '0.5rem' }}>
+          <div className="nx-tile-rows">
             {indexedCount > 0 && (
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                <span style={{ fontSize: '0.9rem', color: 'var(--text-secondary, #666)', display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
+              <div className="nx-tile-row">
+                <span className="nx-tile-row-k">
                   <BookOpen size={14} /> Indexed:
                 </span>
-                <span style={{ fontWeight: 'bold', color: '#22c55e' }}>{indexedCount}</span>
+                <span className="nx-tile-row-v" style={{ color: '#22c55e' }}>{indexedCount}</span>
               </div>
             )}
             {matchedCount > 0 && (
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                <span style={{ fontSize: '0.9rem', color: 'var(--text-secondary, #666)', display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
+              <div className="nx-tile-row">
+                <span className="nx-tile-row-k">
                   <Link size={14} /> Matched:
                 </span>
-                <span style={{ fontWeight: 'bold', color: '#3b82f6' }}>{matchedCount}</span>
+                <span className="nx-tile-row-v" style={{ color: '#3b82f6' }}>{matchedCount}</span>
+              </div>
+            )}
+            {indexExists && (
+              <div className="nx-tile-row">
+                <span className="nx-tile-row-k">
+                  <Clock size={14} /> Index updated:
+                </span>
+                <span className="nx-tile-row-v" style={isStale ? { color: '#f59e0b' } : undefined}>{ageLabel}</span>
+              </div>
+            )}
+            {indexSizeMb > 0 && (
+              <div className="nx-tile-row">
+                <span className="nx-tile-row-k">
+                  <Database size={14} /> Index size:
+                </span>
+                <span className="nx-tile-row-v">{indexSizeMb} MB</span>
               </div>
             )}
             {isStale && (
-              <div style={{ 
-                display: 'flex', 
-                alignItems: 'center', 
+              <div style={{
+                display: 'flex',
+                alignItems: 'center',
                 gap: '0.35rem',
                 marginTop: '0.25rem',
                 padding: '0.35rem 0.5rem',
@@ -6104,7 +6296,7 @@ const DashboardTiles = {
                 color: '#f59e0b'
               }}>
                 <AlertTriangle size={12} />
-                <span>Stale ({Math.round(ageDays)}d old)</span>
+                <span>Stale ({Math.round(ageDays)}d old) — rebuild recommended</span>
               </div>
             )}
           </div>
@@ -6132,21 +6324,26 @@ const DashboardTiles = {
 
     return (
       <div className="card">
-        <h2 style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-          <Clapperboard size={18} /> NeX-Up
-        </h2>
-        <div style={{ display: 'grid', gap: '0.5rem' }}>
+        <div className="nx-tile-head">
+          <h2 style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+            <Clapperboard size={18} /> NeX-Up
+          </h2>
+          <button className="nx-tile-headbtn" onClick={() => setActiveTab('nexup')} title="Open NeX-Up">
+            <ArrowRight size={14} />
+          </button>
+        </div>
+        <div className="nx-tile-rows">
           {/* Connection Status */}
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-            <span style={{ fontSize: '0.9rem', color: 'var(--text-secondary, #666)', display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
+          <div className="nx-tile-row">
+            <span className="nx-tile-row-k">
               <Video size={14} /> Radarr:
             </span>
             <span className={`nx-chip nx-status ${radarrConnected ? 'ok' : ''}`} style={{ fontSize: '0.75rem' }}>
               {radarrConnected ? 'Connected' : 'Not Connected'}
             </span>
           </div>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-            <span style={{ fontSize: '0.9rem', color: 'var(--text-secondary, #666)', display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
+          <div className="nx-tile-row">
+            <span className="nx-tile-row-k">
               <Tv size={14} /> Sonarr:
             </span>
             <span className={`nx-chip nx-status ${sonarrConnected ? 'ok' : ''}`} style={{ fontSize: '0.75rem' }}>
@@ -6156,24 +6353,24 @@ const DashboardTiles = {
           {/* Trailer Counts */}
           {(movieCount > 0 || tvCount > 0) && (
             <div style={{ borderTop: '1px solid var(--border-color)', paddingTop: '0.5rem', marginTop: '0.25rem' }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                <span style={{ fontSize: '0.9rem', color: 'var(--text-secondary, #666)' }}>Movie Trailers:</span>
-                <span style={{ fontWeight: 'bold', color: '#ffc230' }}>{movieCount}</span>
+              <div className="nx-tile-row">
+                <span className="nx-tile-row-k">Movie Trailers:</span>
+                <span className="nx-tile-row-v" style={{ color: '#ffc230' }}>{movieCount}</span>
               </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                <span style={{ fontSize: '0.9rem', color: 'var(--text-secondary, #666)' }}>TV Trailers:</span>
-                <span style={{ fontWeight: 'bold', color: '#ffc230' }}>{tvCount}</span>
+              <div className="nx-tile-row">
+                <span className="nx-tile-row-k">TV Trailers:</span>
+                <span className="nx-tile-row-v" style={{ color: '#ffc230' }}>{tvCount}</span>
               </div>
             </div>
           )}
           {/* Storage used vs cap (thin bar, matching the Storage tile style) */}
           {capGb > 0 && (movieCount > 0 || tvCount > 0) && (
             <div>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '0.9rem' }}>
-                <span style={{ color: 'var(--text-secondary, #666)', display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
+              <div className="nx-tile-row">
+                <span className="nx-tile-row-k">
                   <HardDrive size={14} /> Storage
                 </span>
-                <span><strong>{fmtGb(usedGb)}</strong> <span style={{ color: 'var(--text-secondary, #888)' }}>of {fmtGb(capGb)} GB</span></span>
+                <span className="nx-tile-row-v">{fmtGb(usedGb)} <span style={{ color: 'var(--text-secondary, #888)', fontWeight: 400 }}>of {fmtGb(capGb)} GB</span></span>
               </div>
               <div style={{ height: 4, borderRadius: 2, background: 'var(--hover-bg)', marginTop: '0.25rem', overflow: 'hidden' }}>
                 <div style={{ width: `${storagePct}%`, height: '100%', background: storagePct >= 90 ? '#ef4444' : '#ffc230' }} />
@@ -6282,78 +6479,70 @@ const DashboardTiles = {
     
     return (
       <div className="card">
-        <h2 style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.75rem' }}>
-          <BarChart3 size={18} /> Video Quality
-        </h2>
+        <div className="nx-tile-head">
+          <h2 style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+            <BarChart3 size={18} /> Video Quality
+          </h2>
+          <button className="nx-tile-headbtn" onClick={() => setActiveTab('library/scaling')} title="Open Video Scaling">
+            <ArrowRight size={14} />
+          </button>
+        </div>
         {total === 0 ? (
-          <p style={{ fontSize: '0.9rem', color: 'var(--text-secondary)' }}>No prerolls uploaded</p>
+          <p style={{ fontSize: '0.88rem', color: 'var(--text-secondary)', margin: 0 }}>No prerolls uploaded</p>
         ) : loaded === 0 ? (
-          <div style={{ fontSize: '0.9rem', color: 'var(--text-secondary)' }}>
-            <p style={{ margin: '0 0 0.5rem' }}>Resolution data not loaded</p>
-            <button
-              className="button button-secondary"
-              style={{ fontSize: '0.8rem', padding: '4px 10px' }}
-              onClick={() => setActiveTab('library/scaling')}
-            >
-              Load in Video Scaling
-            </button>
-          </div>
+          <p style={{ fontSize: '0.88rem', color: 'var(--text-secondary)', margin: 0 }}>
+            Resolution data not loaded — open Video Scaling to analyze the library.
+          </p>
         ) : (
           <>
-            {/* flex:1 so any slack in the cell is absorbed by the chart (which
-                looks intentional) instead of opening a gap above the footer. */}
-            <div style={{ flex: '1 1 auto', minHeight: 90, height: 104 }}>
-              <ResponsiveContainer width="100%" height="100%" minWidth={100} minHeight={90}>
-                <BarChart data={chartData} layout="vertical" margin={{ top: 0, right: 10, bottom: 0, left: 0 }}>
-                  <XAxis type="number" hide />
-                  <YAxis type="category" dataKey="name" width={45} tick={{ fontSize: 11, fill: 'var(--text-secondary)' }} axisLine={false} tickLine={false} />
-                  <Tooltip
-                    contentStyle={{ background: 'var(--card-bg)', border: '1px solid var(--border-color)', borderRadius: 6, fontSize: 12, color: 'var(--text-color)' }}
-                    labelStyle={{ color: 'var(--text-color)' }}
-                    itemStyle={{ color: 'var(--text-color)' }}
-                    formatter={(value) => [value, 'Count']}
-                    cursor={{ fill: 'transparent' }}
-                  />
-                  <Bar dataKey="count" radius={[0, 4, 4, 0]} isAnimationActive={false}>
-                    {chartData.map((entry, index) => (
-                      <Cell key={`cell-${index}`} fill={entry.color} />
-                    ))}
-                  </Bar>
-                </BarChart>
-              </ResponsiveContainer>
+            {/* Segmented distribution bar (same visual language as the Storage
+                tile's usage bars) with a legend; replaces the recharts bar
+                chart, which was this tile's only recharts usage. */}
+            <div style={{ display: 'flex', height: 10, borderRadius: 5, overflow: 'hidden', background: 'var(--hover-bg)', marginBottom: '0.6rem' }}>
+              {chartData.map(d => (
+                <div
+                  key={d.name}
+                  title={`${d.name}: ${d.count} (${Math.round((d.count / loaded) * 100)}%)`}
+                  style={{ width: `${(d.count / loaded) * 100}%`, background: d.color }}
+                />
+              ))}
             </div>
-            <div style={{ 
-              display: 'grid', 
-              gridTemplateColumns: '1fr 1fr', 
-              gap: '0.4rem 1rem', 
-              fontSize: '0.78rem', 
-              color: 'var(--text-secondary)',
-              marginTop: '0.5rem',
-              paddingTop: '0.5rem',
-              borderTop: '1px solid var(--border-color)'
-            }}>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.35rem 1.25rem' }}>
+              {chartData.map(d => (
+                <div key={d.name} className="nx-tile-row">
+                  <span className="nx-tile-row-k">
+                    <span style={{ width: 8, height: 8, borderRadius: 2, background: d.color, flexShrink: 0 }} />
+                    {d.name}
+                  </span>
+                  <span className="nx-tile-row-v">
+                    {d.count} <span style={{ color: 'var(--text-secondary)', fontWeight: 400 }}>({Math.round((d.count / loaded) * 100)}%)</span>
+                  </span>
+                </div>
+              ))}
+            </div>
+            <div className="nx-tile-rows" style={{ gridTemplateColumns: '1fr 1fr', columnGap: '1.25rem', marginTop: '0.6rem', paddingTop: '0.55rem', borderTop: '1px solid var(--border-color)' }}>
               {topCodecs && (
-                <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                  <span>Codecs:</span>
-                  <span style={{ color: 'var(--text-color)', fontWeight: 500 }}>{topCodecs}</span>
+                <div className="nx-tile-row">
+                  <span className="nx-tile-row-k">Codecs</span>
+                  <span className="nx-tile-row-v">{topCodecs}</span>
                 </div>
               )}
               {totalDuration > 0 && (
-                <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                  <span>Duration:</span>
-                  <span style={{ color: 'var(--text-color)', fontWeight: 500 }}>{formatDuration(totalDuration)}</span>
+                <div className="nx-tile-row">
+                  <span className="nx-tile-row-k">Duration</span>
+                  <span className="nx-tile-row-v">{formatDuration(totalDuration)}</span>
                 </div>
               )}
               {totalFileSize > 0 && (
-                <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                  <span>Total Size:</span>
-                  <span style={{ color: 'var(--text-color)', fontWeight: 500 }}>{formatFileSize(totalFileSize)}</span>
+                <div className="nx-tile-row">
+                  <span className="nx-tile-row-k">Total size</span>
+                  <span className="nx-tile-row-v">{formatFileSize(totalFileSize)}</span>
                 </div>
               )}
               {analyzedCount > 0 && totalDuration > 0 && (
-                <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                  <span>Avg Length:</span>
-                  <span style={{ color: 'var(--text-color)', fontWeight: 500 }}>{formatDuration(totalDuration / analyzedCount)}</span>
+                <div className="nx-tile-row">
+                  <span className="nx-tile-row-k">Avg length</span>
+                  <span className="nx-tile-row-v">{formatDuration(totalDuration / analyzedCount)}</span>
                 </div>
               )}
             </div>
@@ -6407,7 +6596,6 @@ const DashboardTiles = {
     'library/add':      { icon: Upload,          title: 'Add Prerolls',    desc: 'Upload videos or import prerolls into your library.' },
     'library/categories': { icon: Folder,        title: 'Categories',      desc: 'Organize your prerolls into categories.' },
     'library/scaling':  { icon: Video,           title: 'Video Scaling',   desc: 'Review and rescale preroll resolutions.' },
-    'actions':          { icon: Zap,             title: 'Quick Actions',   desc: 'Common operations and maintenance tasks.' },
     'connect':          { icon: Link2,           title: 'Connections',     desc: 'Connect to your Plex, Jellyfin, or Emby media server.' },
     'community-prerolls': { icon: Globe,         title: 'Community Prerolls', desc: 'Discover and import community-made prerolls.' },
     'settings':         { icon: Settings,        title: 'General Settings',  desc: 'Theme, timezone, and general application preferences.' },
@@ -7030,544 +7218,92 @@ const DashboardTiles = {
   };
 
   // Dashboard Quick Actions Sub-Page
-  const renderDashboardQuickActions = () => (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
+  // Lifted from the removed Quick Actions page; now powers the dashboard
+  // Quick Actions tile. Syncs Radarr then Sonarr and summarizes both.
+  const handleNexupFullSync = async () => {
+    if (nexupSyncProgress?.phase === 'init') return;
+    setNexupSyncProgress({ status: 'Syncing Radarr...', phase: 'init' });
+    let radarrResult = null;
+    let sonarrResult = null;
+    let radarrError = null;
+    let sonarrError = null;
+    try {
+      const res = await fetch(apiUrl('/nexup/sync'), { method: 'POST' });
+      if (res.ok) {
+        radarrResult = await res.json();
+      } else {
+        const err = await res.json().catch(() => ({}));
+        radarrError = err.detail || 'Radarr sync failed';
+      }
+    } catch (e) {
+      radarrError = e.message || 'Radarr sync failed';
+    }
+    setNexupSyncProgress({ status: 'Syncing Sonarr...', phase: 'init' });
+    try {
+      const res = await fetch(apiUrl('/nexup/sonarr/sync'), { method: 'POST' });
+      if (res.ok) {
+        sonarrResult = await res.json();
+      } else {
+        const err = await res.json().catch(() => ({}));
+        sonarrError = err.detail || 'Sonarr sync failed';
+      }
+    } catch (e) {
+      sonarrError = e.message || 'Sonarr sync failed';
+    }
+    const radarrDownloaded = radarrResult?.downloaded || 0;
+    const sonarrDownloaded = sonarrResult?.downloaded || 0;
+    const totalDownloaded = radarrDownloaded + sonarrDownloaded;
+    const radarrCookieError = radarrResult?.errors?.some(e => e.includes('bot detection') || e.includes('cookies'));
+    const sonarrCookieError = sonarrResult?.errors?.some(e => e.includes('bot detection') || e.includes('cookies'));
+    const hasCookieError = radarrCookieError || sonarrCookieError;
+    if (radarrError && sonarrError) {
+      setNexupSyncProgress({ status: 'Both syncs failed', phase: 'error' });
+    } else if (hasCookieError) {
+      setNexupSyncProgress({
+        status: 'YouTube blocked - re-export cookies from Incognito (login, then robots.txt, then export)',
+        phase: 'error',
+        cookieError: true
+      });
+    } else if (radarrError || sonarrError) {
+      setNexupSyncProgress({ status: `Done! ${totalDownloaded} trailers (${radarrError ? 'Radarr failed' : 'Sonarr failed'})`, phase: 'done' });
+    } else {
+      setNexupSyncProgress({ status: `Done! ${totalDownloaded} new trailers (${radarrDownloaded} movies, ${sonarrDownloaded} TV)`, phase: 'done' });
+    }
+    setTimeout(() => setNexupSyncProgress(null), hasCookieError ? 15000 : 5000);
+  };
 
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: '1rem' }}>
-        {/* Apply to Plex/Jellyfin */}
-        <div className="card">
-          <h3 style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.75rem' }}>
-            <Target size={18} /> Apply to Server
-          </h3>
-          <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginBottom: '1rem' }}>
-            Apply the currently active category to your Plex or Jellyfin server.
-          </p>
-          <button
-            onClick={() => activeCategory && handleApplyCategoryToActiveServer(activeCategory.id, activeCategory.name)}
-            className="button"
-            disabled={!activeCategory}
-            style={{ width: '100%' }}
-          >
-            <Target size={14} style={{ marginRight: '0.35rem' }} />
-            {activeCategory ? `Apply "${activeCategory.name}"` : 'No Category Selected'}
-          </button>
-        </div>
-
-        {/* Refresh Thumbnails */}
-        <div className="card">
-          <h3 style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.75rem' }}>
-            <RefreshCw size={18} /> Regenerate Thumbnails
-          </h3>
-          <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginBottom: '1rem' }}>
-            Regenerate thumbnails for all prerolls in your library.
-          </p>
-          <button
-            onClick={handleReinitThumbnails}
-            className="button button-secondary"
-            disabled={thumbnailProgress && thumbnailProgress.phase === 'init'}
-            style={{ width: '100%' }}
-          >
-            {thumbnailProgress && thumbnailProgress.phase === 'init' ? (
-              <><Loader2 size={14} className="spin" style={{ marginRight: '0.35rem' }} /> Rebuilding...</>
-            ) : (
-              <><RefreshCw size={14} style={{ marginRight: '0.35rem' }} /> Reinitialize Thumbnails</>
-            )}
-          </button>
-          {thumbnailProgress && (
-            <div style={{ 
-              marginTop: '0.75rem', 
-              padding: '0.5rem 0.75rem', 
-              backgroundColor: 'var(--bg-color)', 
-              borderRadius: '6px',
-              display: 'flex',
-              alignItems: 'center',
-              gap: '0.5rem',
-              fontSize: '0.9rem',
-              color: thumbnailProgress.phase === 'error' ? '#dc3545' : 
-                     thumbnailProgress.phase === 'done' ? '#28a745' : 'var(--text-secondary)'
-            }}>
-              {thumbnailProgress.phase === 'init' && (
-                <Loader2 size={16} className="spin" style={{ color: '#ffc230' }} />
-              )}
-              {thumbnailProgress.phase === 'done' && (
-                <Check size={16} style={{ color: '#28a745' }} />
-              )}
-              {thumbnailProgress.phase === 'error' && (
-                <AlertTriangle size={16} style={{ color: '#dc3545' }} />
-              )}
-              {thumbnailProgress.status}
-            </div>
-          )}
-        </div>
-
-        {/* Sync with Server */}
-        <div className="card">
-          <h3 style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.75rem' }}>
-            <RefreshCcw size={18} /> Sync Library
-          </h3>
-          <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginBottom: '1rem' }}>
-            Refresh all data from the backend - prerolls, categories, schedules.
-          </p>
-          <button
-            onClick={async () => {
-              if (librarySyncProgress?.phase === 'init') return;
-              setLibrarySyncProgress({ status: 'Syncing...', phase: 'init' });
-              try {
-                await fetchData();
-                setLibrarySyncProgress({ status: 'Synced!', phase: 'done' });
-                setTimeout(() => setLibrarySyncProgress(null), 3000);
-              } catch (err) {
-                setLibrarySyncProgress({ status: 'Sync failed', phase: 'error' });
-                setTimeout(() => setLibrarySyncProgress(null), 5000);
-              }
-            }}
-            disabled={librarySyncProgress?.phase === 'init'}
-            className="button button-secondary"
-            style={{ width: '100%' }}
-          >
-            {librarySyncProgress?.phase === 'init' ? (
-              <Loader2 size={14} className="spin" style={{ marginRight: '0.35rem' }} />
-            ) : (
-              <RefreshCcw size={14} style={{ marginRight: '0.35rem' }} />
-            )}
-            {librarySyncProgress?.phase === 'init' ? 'Syncing...' : 'Refresh All Data'}
-          </button>
-          {librarySyncProgress && (
-            <div style={{
-              marginTop: '0.5rem',
-              padding: '0.5rem',
-              borderRadius: '6px',
-              backgroundColor: 'var(--bg-color)',
-              fontSize: '0.8rem',
-              display: 'flex',
-              alignItems: 'center',
-              gap: '0.5rem',
-              color: librarySyncProgress.phase === 'error' ? '#dc3545' : (librarySyncProgress.phase === 'done' ? '#28a745' : 'var(--text-secondary)')
-            }}>
-              {librarySyncProgress.phase === 'init' && (
-                <Loader2 size={16} className="spin" style={{ color: '#f0ad4e' }} />
-              )}
-              {librarySyncProgress.phase === 'done' && (
-                <Check size={16} style={{ color: '#28a745' }} />
-              )}
-              {librarySyncProgress.phase === 'error' && (
-                <AlertTriangle size={16} style={{ color: '#dc3545' }} />
-              )}
-              {librarySyncProgress.status}
-            </div>
-          )}
-        </div>
-
-        {/* Navigate to Categories */}
-        <div className="card">
-          <h3 style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.75rem' }}>
-            <Folder size={18} /> Manage Categories
-          </h3>
-          <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginBottom: '1rem' }}>
-            Create, edit, and organize your preroll categories.
-          </p>
-          <button
-            onClick={() => setActiveTab('library/categories')}
-            className="button button-secondary"
-            style={{ width: '100%' }}
-          >
-            <Folder size={14} style={{ marginRight: '0.35rem' }} />
-            Go to Categories
-          </button>
-        </div>
-
-        {/* Navigate to Schedules */}
-        <div className="card">
-          <h3 style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.75rem' }}>
-            <Calendar size={18} /> Manage Schedules
-          </h3>
-          <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginBottom: '1rem' }}>
-            Create and manage automated schedule rotations.
-          </p>
-          <button
-            onClick={() => setActiveTab('schedules')}
-            className="button button-secondary"
-            style={{ width: '100%' }}
-          >
-            <Calendar size={14} style={{ marginRight: '0.35rem' }} />
-            Go to Schedules
-          </button>
-        </div>
-
-        {/* NeX-Up Sync */}
-        <div className="card">
-          <h3 style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.75rem' }}>
-            <Clapperboard size={18} /> NeX-Up Sync
-          </h3>
-          <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginBottom: '1rem' }}>
-            Sync trailers from both Radarr and Sonarr.
-          </p>
-          <button
-            onClick={async () => {
-              if (nexupSyncProgress?.phase === 'init') return;
-              setNexupSyncProgress({ status: 'Syncing Radarr...', phase: 'init' });
-              let radarrResult = null;
-              let sonarrResult = null;
-              let radarrError = null;
-              let sonarrError = null;
-              
-              // Sync Radarr
-              try {
-                const res = await fetch(apiUrl('/nexup/sync'), { method: 'POST' });
-                if (res.ok) {
-                  radarrResult = await res.json();
-                } else {
-                  const err = await res.json().catch(() => ({}));
-                  radarrError = err.detail || 'Radarr sync failed';
-                }
-              } catch (e) {
-                radarrError = e.message || 'Radarr sync failed';
-              }
-              
-              // Sync Sonarr
-              setNexupSyncProgress({ status: 'Syncing Sonarr...', phase: 'init' });
-              try {
-                const res = await fetch(apiUrl('/nexup/sonarr/sync'), { method: 'POST' });
-                if (res.ok) {
-                  sonarrResult = await res.json();
-                } else {
-                  const err = await res.json().catch(() => ({}));
-                  sonarrError = err.detail || 'Sonarr sync failed';
-                }
-              } catch (e) {
-                sonarrError = e.message || 'Sonarr sync failed';
-              }
-              
-              // Build summary
-              const radarrDownloaded = radarrResult?.downloaded || 0;
-              const sonarrDownloaded = sonarrResult?.downloaded || 0;
-              const totalDownloaded = radarrDownloaded + sonarrDownloaded;
-              
-              // Check for YouTube bot block/cookie errors in the results
-              const radarrCookieError = radarrResult?.errors?.some(e => e.includes('bot detection') || e.includes('') || e.includes('cookies'));
-              const sonarrCookieError = sonarrResult?.errors?.some(e => e.includes('bot detection') || e.includes('') || e.includes('cookies'));
-              const hasCookieError = radarrCookieError || sonarrCookieError;
-              
-              if (radarrError && sonarrError) {
-                setNexupSyncProgress({ status: 'Both syncs failed', phase: 'error' });
-              } else if (hasCookieError) {
-                setNexupSyncProgress({ 
-                  status: `YouTube blocked - re-export cookies from Incognito (login → robots.txt → export)`, 
-                  phase: 'error',
-                  cookieError: true
-                });
-              } else if (radarrError || sonarrError) {
-                setNexupSyncProgress({ 
-                  status: `Done! ${totalDownloaded} trailers (${radarrError ? 'Radarr failed' : 'Sonarr failed'})`, 
-                  phase: 'done' 
-                });
-              } else {
-                setNexupSyncProgress({ 
-                  status: `Done! ${totalDownloaded} new trailers (${radarrDownloaded} movies, ${sonarrDownloaded} TV)`, 
-                  phase: 'done' 
-                });
-              }
-              setTimeout(() => setNexupSyncProgress(null), hasCookieError ? 15000 : 5000);
-            }}
-            disabled={nexupSyncProgress?.phase === 'init'}
-            className="button button-secondary"
-            style={{ width: '100%' }}
-          >
-            {nexupSyncProgress?.phase === 'init' ? (
-              <Loader2 size={14} className="spin" style={{ marginRight: '0.35rem' }} />
-            ) : (
-              <Download size={14} style={{ marginRight: '0.35rem' }} />
-            )}
-            {nexupSyncProgress?.phase === 'init' ? 'Syncing...' : 'Sync All Trailers'}
-          </button>
-          {nexupSyncProgress && (
-            <div style={{
-              marginTop: '0.5rem',
-              padding: '0.5rem',
-              borderRadius: '6px',
-              backgroundColor: 'var(--bg-color)',
-              fontSize: '0.8rem',
-              display: 'flex',
-              alignItems: 'center',
-              gap: '0.5rem',
-              color: nexupSyncProgress.phase === 'error' ? '#dc3545' : (nexupSyncProgress.phase === 'done' ? '#28a745' : 'var(--text-secondary)')
-            }}>
-              {nexupSyncProgress.phase === 'init' && (
-                <Loader2 size={16} className="spin" style={{ color: '#f0ad4e' }} />
-              )}
-              {nexupSyncProgress.phase === 'done' && (
-                <Check size={16} style={{ color: '#28a745' }} />
-              )}
-              {nexupSyncProgress.phase === 'error' && (
-                <AlertTriangle size={16} style={{ color: '#dc3545' }} />
-              )}
-              {nexupSyncProgress.status}
-            </div>
-          )}
-        </div>
-
-        {/* Check for Updates */}
-        <div className="card">
-          <h3 style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.75rem' }}>
-            <RefreshCw size={18} /> Check for Updates
-          </h3>
-          <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginBottom: '1rem' }}>
-            Check if a new version of NeXroll is available.
-          </p>
-          <button
-            onClick={async () => {
-              if (updateCheckProgress?.phase === 'init') return;
-              setUpdateCheckProgress({ status: 'Checking GitHub...', phase: 'init' });
-              try {
-                // Clear cache to force fresh check
-                localStorage.removeItem('nx_update_checked_at');
-                localStorage.removeItem('nx_latest_release_info');
-                
-                // Use backend endpoint which respects include_prerelease setting
-                const res = await fetch(apiUrl('update/check'), {
-                  method: 'POST',
-                  headers: { 'Content-Type': 'application/json' }
-                });
-                
-                if (!res.ok) throw new Error('Failed to check for updates');
-                
-                const data = await res.json();
-                
-                if (!data.success) {
-                  throw new Error(data.error || 'Update check failed');
-                }
-                
-                const latestVersion = (data.latest_version || data.version || '').replace(/^v/, '');
-                const currentVersion = data.current_version || systemVersion?.api_version || '0.0.0';
-                
-                if (data.update_available) {
-                  const prereleaseLabel = data.prerelease ? ' (Pre-release)' : '';
-                  setUpdateCheckProgress({ status: `Update available: v${latestVersion}${prereleaseLabel}`, phase: 'done' });
-                  setUpdateInfo({ version: latestVersion, url: data.html_url, name: data.name, prerelease: data.prerelease });
-                  setShowUpdateBanner(true);
-                } else {
-                  setUpdateCheckProgress({ status: `You're up to date! (v${currentVersion})`, phase: 'done' });
-                }
-                setTimeout(() => setUpdateCheckProgress(null), 5000);
-              } catch (err) {
-                setUpdateCheckProgress({ status: 'Check failed: ' + (err.message || err), phase: 'error' });
-                setTimeout(() => setUpdateCheckProgress(null), 5000);
-              }
-            }}
-            disabled={updateCheckProgress?.phase === 'init'}
-            className="button button-secondary"
-            style={{ width: '100%' }}
-          >
-            {updateCheckProgress?.phase === 'init' ? (
-              <Loader2 size={14} className="spin" style={{ marginRight: '0.35rem' }} />
-            ) : (
-              <RefreshCw size={14} style={{ marginRight: '0.35rem' }} />
-            )}
-            {updateCheckProgress?.phase === 'init' ? 'Checking...' : 'Check for Updates'}
-          </button>
-          {updateCheckProgress && (
-            <div style={{
-              marginTop: '0.5rem',
-              padding: '0.5rem',
-              borderRadius: '6px',
-              backgroundColor: 'var(--bg-color)',
-              fontSize: '0.8rem',
-              display: 'flex',
-              alignItems: 'center',
-              gap: '0.5rem',
-              color: updateCheckProgress.phase === 'error' ? '#dc3545' : (updateCheckProgress.phase === 'done' ? '#28a745' : 'var(--text-secondary)')
-            }}>
-              {updateCheckProgress.phase === 'init' && (
-                <Loader2 size={16} className="spin" style={{ color: '#f0ad4e' }} />
-              )}
-              {updateCheckProgress.phase === 'done' && (
-                <Check size={16} style={{ color: '#28a745' }} />
-              )}
-              {updateCheckProgress.phase === 'error' && (
-                <AlertTriangle size={16} style={{ color: '#dc3545' }} />
-              )}
-              {updateCheckProgress.status}
-            </div>
-          )}
-        </div>
-
-        {/* Community Prerolls */}
-        <div className="card">
-          <h3 style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.75rem' }}>
-            <Users2 size={18} /> Community Prerolls
-          </h3>
-          <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginBottom: '1rem' }}>
-            Discover and download prerolls shared by the community.
-          </p>
-          <button
-            onClick={() => setActiveTab('community-prerolls')}
-            className="button button-secondary"
-            style={{ width: '100%' }}
-          >
-            <Users2 size={14} style={{ marginRight: '0.35rem' }} />
-            Browse Community
-          </button>
-        </div>
-
-        {/* Build Community Index */}
-        <div className="card">
-          <h3 style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.75rem' }}>
-            <Zap size={18} /> Community Index
-          </h3>
-          <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginBottom: '1rem' }}>
-            Build/refresh the community prerolls index for faster searches.
-          </p>
-          <button
-            onClick={async () => {
-              if (communityIndexProgress?.phase === 'init' || communityIsBuilding) return;
-              setCommunityIndexProgress({ status: 'Building index...', phase: 'init' });
-              setCommunityIsBuilding(true);
-              setCommunityBuildProgress({
-                progress: 0,
-                current_dir: '',
-                files_found: 0,
-                dirs_visited: 0,
-                message: 'Starting...'
-              });
-              
-              // Start listening to progress updates via SSE
-              const eventSource = new EventSource(apiUrl('community-prerolls/build-progress'));
-              
-              eventSource.onmessage = (event) => {
-                const data = JSON.parse(event.data);
-                setCommunityBuildProgress(data);
-                setCommunityIndexProgress({ 
-                  status: data.message || `${data.progress}% - ${data.files_found} files found`, 
-                  phase: 'init' 
-                });
-                
-                if (!data.building && data.progress === 100) {
-                  eventSource.close();
-                  setTimeout(() => {
-                    setCommunityBuildProgress(null);
-                  }, 1000);
-                }
-              };
-              
-              eventSource.onerror = (error) => {
-                console.error('SSE error:', error);
-                eventSource.close();
-                setCommunityBuildProgress(null);
-                setCommunityIsBuilding(false);
-                setCommunityIndexProgress({ status: 'Index build failed', phase: 'error' });
-                setTimeout(() => setCommunityIndexProgress(null), 5000);
-              };
-              
-              try {
-                const response = await fetch(apiUrl('community-prerolls/build-index'));
-                
-                if (response.status === 429) {
-                  const error = await response.json();
-                  eventSource.close();
-                  setCommunityBuildProgress(null);
-                  setCommunityIsBuilding(false);
-                  setCommunityIndexProgress({ status: error.detail || 'Please wait before rebuilding', phase: 'error' });
-                  setTimeout(() => setCommunityIndexProgress(null), 5000);
-                  return;
-                }
-                
-                const data = await response.json();
-                
-                setTimeout(() => {
-                  setCommunityIsBuilding(false);
-                  setCommunityIndexProgress({ 
-                    status: `Done! ${data.total_prerolls} prerolls indexed`, 
-                    phase: 'done' 
-                  });
-                  fetchData(); // Refresh to get new index status
-                  setTimeout(() => setCommunityIndexProgress(null), 5000);
-                }, 1500);
-                
-              } catch (error) {
-                setCommunityBuildProgress(null);
-                eventSource.close();
-                setCommunityIsBuilding(false);
-                setCommunityIndexProgress({ status: `Failed: ${error.message}`, phase: 'error' });
-                setTimeout(() => setCommunityIndexProgress(null), 5000);
-              }
-            }}
-            disabled={communityIndexProgress?.phase === 'init' || communityIsBuilding}
-            className="button button-secondary"
-            style={{ width: '100%' }}
-          >
-            {(communityIndexProgress?.phase === 'init' || communityIsBuilding) ? (
-              <Loader2 size={14} className="spin" style={{ marginRight: '0.35rem' }} />
-            ) : (
-              <Zap size={14} style={{ marginRight: '0.35rem' }} />
-            )}
-            {(communityIndexProgress?.phase === 'init' || communityIsBuilding) ? 'Building...' : (communityIndexStatus?.exists ? 'Refresh Index' : 'Build Index')}
-          </button>
-          {communityIndexProgress && (
-            <div style={{
-              marginTop: '0.5rem',
-              padding: '0.5rem',
-              borderRadius: '6px',
-              backgroundColor: 'var(--bg-color)',
-              fontSize: '0.8rem',
-              display: 'flex',
-              alignItems: 'center',
-              gap: '0.5rem',
-              color: communityIndexProgress.phase === 'error' ? '#dc3545' : (communityIndexProgress.phase === 'done' ? '#28a745' : 'var(--text-secondary)')
-            }}>
-              {communityIndexProgress.phase === 'init' && (
-                <Loader2 size={16} className="spin" style={{ color: '#f0ad4e' }} />
-              )}
-              {communityIndexProgress.phase === 'done' && (
-                <Check size={16} style={{ color: '#28a745' }} />
-              )}
-              {communityIndexProgress.phase === 'error' && (
-                <AlertTriangle size={16} style={{ color: '#dc3545' }} />
-              )}
-              {communityIndexProgress.status}
-            </div>
-          )}
-          {communityBuildProgress && communityIndexProgress?.phase === 'init' && (
-            <div style={{ marginTop: '0.5rem' }}>
-              <div style={{
-                height: '4px',
-                backgroundColor: 'var(--border-color)',
-                borderRadius: '2px',
-                overflow: 'hidden'
-              }}>
-                <div style={{
-                  height: '100%',
-                  width: `${communityBuildProgress.progress}%`,
-                  backgroundColor: '#14B8A6',
-                  transition: 'width 0.3s ease'
-                }} />
-              </div>
-              <div style={{ fontSize: '0.7rem', color: 'var(--text-secondary)', marginTop: '0.25rem' }}>
-                {communityBuildProgress.files_found} files • {communityBuildProgress.dirs_visited} dirs
-              </div>
-            </div>
-          )}
-        </div>
-
-        {/* Settings */}
-        <div className="card">
-          <h3 style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.75rem' }}>
-            <Settings size={18} /> Settings
-          </h3>
-          <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginBottom: '1rem' }}>
-            Configure paths, backup/restore, and app preferences.
-          </p>
-          <button
-            onClick={() => setActiveTab('settings')}
-            className="button button-secondary"
-            style={{ width: '100%' }}
-          >
-            <Settings size={14} style={{ marginRight: '0.35rem' }} />
-            Go to Settings
-          </button>
-        </div>
-      </div>
-    </div>
-  );
+  // Lifted from the removed Quick Actions page: force a fresh update check.
+  const handleForceUpdateCheck = async () => {
+    if (updateCheckProgress?.phase === 'init') return;
+    setUpdateCheckProgress({ status: 'Checking GitHub...', phase: 'init' });
+    try {
+      localStorage.removeItem('nx_update_checked_at');
+      localStorage.removeItem('nx_latest_release_info');
+      const res = await fetch(apiUrl('update/check'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' }
+      });
+      if (!res.ok) throw new Error('Failed to check for updates');
+      const data = await res.json();
+      if (!data.success) {
+        throw new Error(data.error || 'Update check failed');
+      }
+      const latestVersion = (data.latest_version || data.version || '').replace(/^v/, '');
+      const currentVersion = data.current_version || systemVersion?.api_version || '0.0.0';
+      if (data.update_available) {
+        const prereleaseLabel = data.prerelease ? ' (Pre-release)' : '';
+        setUpdateCheckProgress({ status: `Update available: v${latestVersion}${prereleaseLabel}`, phase: 'done' });
+        setUpdateInfo({ version: latestVersion, url: data.html_url, name: data.name, prerelease: data.prerelease });
+        setShowUpdateBanner(true);
+      } else {
+        setUpdateCheckProgress({ status: `You're up to date! (v${currentVersion})`, phase: 'done' });
+      }
+      setTimeout(() => setUpdateCheckProgress(null), 5000);
+    } catch (err) {
+      setUpdateCheckProgress({ status: 'Check failed: ' + (err.message || err), phase: 'error' });
+      setTimeout(() => setUpdateCheckProgress(null), 5000);
+    }
+  };
 
   // Dashboard Overview Sub-Page (Tiles)
   const renderDashboardOverview = () => (
@@ -7670,8 +7406,92 @@ const DashboardTiles = {
       )}
 
  
+      {/* Dashboard toolbar: quick actions on the left, layout/edit controls on
+          the right. Replaces both the lonely edit-toggle card and the removed
+          Quick Actions page/tile. */}
       <div className="card nx-dashboard-controls" style={{ marginBottom: '10px' }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem', flexWrap: 'wrap' }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.75rem', flexWrap: 'wrap' }}>
+          <div className="nx-qa-bar">
+            <button
+              className="button button-outline nx-qa-btn"
+              disabled={thumbnailProgress?.phase === 'init'}
+              title="Regenerate thumbnails for all prerolls"
+              onClick={handleReinitThumbnails}
+            >
+              {thumbnailProgress?.phase === 'init' ? <Loader2 size={14} className="spin" /> : <RefreshCw size={14} />} Rebuild Thumbs
+            </button>
+            <button
+              className="button button-outline nx-qa-btn"
+              disabled={librarySyncProgress?.phase === 'init'}
+              title="Refresh all data from the backend"
+              onClick={async () => {
+                if (librarySyncProgress?.phase === 'init') return;
+                setLibrarySyncProgress({ status: 'Syncing...', phase: 'init' });
+                try {
+                  await fetchData();
+                  setLibrarySyncProgress({ status: 'Synced!', phase: 'done' });
+                  setTimeout(() => setLibrarySyncProgress(null), 3000);
+                } catch (err) {
+                  setLibrarySyncProgress({ status: 'Sync failed', phase: 'error' });
+                  setTimeout(() => setLibrarySyncProgress(null), 5000);
+                }
+              }}
+            >
+              {librarySyncProgress?.phase === 'init' ? <Loader2 size={14} className="spin" /> : <RefreshCcw size={14} />} Refresh Data
+            </button>
+            <button
+              className="button button-outline nx-qa-btn"
+              disabled={nexupSyncProgress?.phase === 'init'}
+              title="Sync trailers from Radarr and Sonarr"
+              onClick={handleNexupFullSync}
+            >
+              {nexupSyncProgress?.phase === 'init' ? <Loader2 size={14} className="spin" /> : <Download size={14} />} NeX-Up Sync
+            </button>
+            <button
+              className="button button-outline nx-qa-btn"
+              title="Scan the storage folder for added/removed prerolls"
+              onClick={() => handleRescanPrerolls()}
+            >
+              <HardDrive size={14} /> Scan Files
+            </button>
+            <button
+              className="button button-outline nx-qa-btn"
+              title="Rebuild the community prerolls index (runs in the background; progress shows on the Community page)"
+              onClick={async () => {
+                try {
+                  const res = await fetch(apiUrl('community-prerolls/build-index'));
+                  if (res.ok) {
+                    showAlert('Community index build started - progress on the Community page', 'success');
+                  } else {
+                    let detail = `Failed to start index build (HTTP ${res.status})`;
+                    try { const err = await res.json(); if (err?.detail) detail = err.detail; } catch {}
+                    showAlert(detail, 'error');
+                  }
+                } catch (e) {
+                  showAlert('Failed to start index build: ' + (e.message || e), 'error');
+                }
+              }}
+            >
+              <BookOpen size={14} /> Rebuild Index
+            </button>
+            <button
+              className="button button-outline nx-qa-btn"
+              disabled={backupProgress?.active}
+              title="Download a database backup (settings, schedules, categories)"
+              onClick={handleBackupDatabase}
+            >
+              {backupProgress?.active ? <Loader2 size={14} className="spin" /> : <Database size={14} />} Backup DB
+            </button>
+            <button
+              className="button button-outline nx-qa-btn"
+              disabled={updateCheckProgress?.phase === 'init'}
+              title="Check GitHub for a newer NeXroll release"
+              onClick={handleForceUpdateCheck}
+            >
+              {updateCheckProgress?.phase === 'init' ? <Loader2 size={14} className="spin" /> : <Rocket size={14} />} Check Updates
+            </button>
+          </div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem', flexShrink: 0 }}>
           <label className="nx-rockerswitch" title={dashLayout.locked ? 'Unlock to rearrange' : 'Lock to finish'}>
             <input
               type="checkbox"
@@ -7720,26 +7540,45 @@ const DashboardTiles = {
               <RotateCw size={12} /> Reset layout
             </button>
           )}
-          {!dashLayout.locked && (dashLayout?.hidden || []).length > 0 && (
-            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginLeft: '1rem' }}>
-              <span style={{ fontSize: '0.78rem', color: 'var(--text-secondary)' }}>Hidden tiles:</span>
-              {(dashLayout?.hidden || []).map(tileKey => (
-                <button
-                  key={tileKey}
-                  onClick={() => {
-                    const newHidden = (dashLayout.hidden || []).filter(h => h !== tileKey);
-                    setDashLayout({ ...dashLayout, hidden: newHidden });
-                  }}
-                  className="button button-secondary"
-                  style={{ padding: '2px 8px', fontSize: '0.72rem', display: 'flex', alignItems: 'center', gap: '4px' }}
-                  title={`Show ${tileKey} tile`}
-                >
-                  <Plus size={12} /> {tileKey}
-                </button>
-              ))}
-            </div>
-          )}
+          </div>
         </div>
+        {(() => {
+          const qaStatus = thumbnailProgress || librarySyncProgress || nexupSyncProgress || updateCheckProgress;
+          return qaStatus ? (
+            <p style={{
+              margin: '0.5rem 0 0',
+              fontSize: '0.78rem',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '0.4rem',
+              color: qaStatus.phase === 'error' ? '#dc3545' : qaStatus.phase === 'done' ? '#28a745' : 'var(--text-secondary)'
+            }}>
+              {qaStatus.phase === 'init' && <Loader2 size={13} className="spin" />}
+              {qaStatus.phase === 'done' && <Check size={13} />}
+              {qaStatus.phase === 'error' && <AlertTriangle size={13} />}
+              {qaStatus.status}
+            </p>
+          ) : null;
+        })()}
+        {!dashLayout.locked && (dashLayout?.hidden || []).length > 0 && (
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginTop: '0.6rem', flexWrap: 'wrap' }}>
+            <span style={{ fontSize: '0.78rem', color: 'var(--text-secondary)' }}>Hidden tiles:</span>
+            {(dashLayout?.hidden || []).map(tileKey => (
+              <button
+                key={tileKey}
+                onClick={() => {
+                  const newHidden = (dashLayout.hidden || []).filter(h => h !== tileKey);
+                  setDashLayout({ ...dashLayout, hidden: newHidden });
+                }}
+                className="button button-secondary"
+                style={{ padding: '2px 8px', fontSize: '0.72rem', display: 'flex', alignItems: 'center', gap: '4px' }}
+                title={`Show ${tileKey} tile`}
+              >
+                <Plus size={12} /> {tileKey}
+              </button>
+            ))}
+          </div>
+        )}
       </div>
 
       {(() => {
@@ -7748,7 +7587,7 @@ const DashboardTiles = {
           <DndContext sensors={dashSensors} collisionDetection={closestCenter} onDragEnd={handleDashDragEnd}>
             <SortableContext items={renderKeys} strategy={rectSortingStrategy}>
               <div
-                ref={dashGridRef}
+                ref={setDashGridRef}
                 className={`nx-dash-grid ${dashLayout.locked ? '' : 'editing'}`}
                 style={{
                   display: 'grid',
@@ -7756,7 +7595,10 @@ const DashboardTiles = {
                   // responsive). Stat tiles = 1 cell; feature tiles span 2 cols x
                   // 2 rows; calendar is full-width. The measured base row height
                   // keeps every tile aligned to the same vertical rhythm.
-                  gridAutoRows: uniformRowH ? `${uniformRowH}px` : 'auto',
+                  // Never fall back to 'auto': content-sized rows make tile
+                  // height depend on position and content (the exact bug where
+                  // feature tiles grew when moved in edit mode).
+                  gridAutoRows: `${uniformRowH || 176}px`,
                   gridAutoFlow: dashLayout.locked ? 'row dense' : 'row',
                   alignItems: 'stretch',
                   gap: '12px'
@@ -7772,7 +7614,7 @@ const DashboardTiles = {
                       disabled={dashLayout.locked}
                       fullWidth={isCal}
                       cols={isFeature ? 2 : 1}
-                      rows={isCal ? calRows : (isFeature ? 2 : 1)}
+                      rows={isCal ? calRows : 1}
                       onHide={(tileId) => setDashLayout(prev => ({ ...prev, hidden: [...(prev.hidden || []), tileId] }))}
                     >
                       {isCal ? renderWeeklyCalendar() : DashboardTiles[key]()}
@@ -14411,6 +14253,7 @@ const DashboardTiles = {
                       width: '100%'
                     }}
                   />
+                  <TimeQuickPicks current={timeRange.start} onPick={(v) => setTimeRange({ ...timeRange, start: v })} />
                   <p style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', margin: '0.25rem 0 0 0' }}>
                     When should this schedule activate?
                   </p>
@@ -14432,6 +14275,7 @@ const DashboardTiles = {
                       width: '100%'
                     }}
                   />
+                  <TimeQuickPicks end current={timeRange.end} onPick={(v) => setTimeRange({ ...timeRange, end: v })} />
                   <p style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', margin: '0.25rem 0 0 0' }}>
                     Leave blank for specific time trigger
                   </p>
@@ -14550,6 +14394,7 @@ const DashboardTiles = {
                         fontSize: '0.95rem'
                       }}
                     />
+                    <TimeQuickPicks current={timeRange.start} onPick={(v) => setTimeRange({ ...timeRange, start: v })} />
                   </div>
                   <div>
                     <label style={{ display: 'block', marginBottom: '0.25rem', fontSize: '0.85rem', color: 'var(--text-color)' }}>
@@ -14566,6 +14411,7 @@ const DashboardTiles = {
                         fontSize: '0.95rem'
                       }}
                     />
+                    <TimeQuickPicks end current={timeRange.end} onPick={(v) => setTimeRange({ ...timeRange, end: v })} />
                   </div>
                 </div>
                 {timeRange.start && timeRange.end && (
@@ -14706,6 +14552,7 @@ const DashboardTiles = {
                       onChange={(e) => setTimeRange({...timeRange, start: e.target.value})}
                       style={{ padding: '0.75rem', fontSize: '1rem', border: '2px solid var(--border-color)', borderRadius: '6px', width: '100%' }}
                     />
+                    <TimeQuickPicks current={timeRange.start} onPick={(v) => setTimeRange({ ...timeRange, start: v })} />
                   </div>
                   <div>
                     <label style={{ display: 'block', marginBottom: '0.4rem', fontSize: '0.85rem', color: 'var(--text-secondary)' }}>End Time</label>
@@ -14716,6 +14563,7 @@ const DashboardTiles = {
                       onChange={(e) => setTimeRange({...timeRange, end: e.target.value})}
                       style={{ padding: '0.75rem', fontSize: '1rem', border: '2px solid var(--border-color)', borderRadius: '6px', width: '100%' }}
                     />
+                    <TimeQuickPicks end current={timeRange.end} onPick={(v) => setTimeRange({ ...timeRange, end: v })} />
                   </div>
                 </div>
               </div>
@@ -31267,7 +31115,8 @@ const DashboardTiles = {
   }
 
   // Avoid a flash of the app/login before the onboarding check resolves.
-  if (needsOnboarding === null || authStatus.loading) {
+  // bootHold keeps the splash up ~3s minimum so the quote is readable.
+  if (needsOnboarding === null || authStatus.loading || bootHold) {
     return (
       <div style={{
         display: 'flex',
@@ -31278,7 +31127,9 @@ const DashboardTiles = {
       }}>
         <div style={{ textAlign: 'center', color: darkMode ? '#fff' : '#333' }}>
           <Loader2 size={40} className="spin" style={{ marginBottom: '1rem' }} />
-          <div>Loading NeXroll...</div>
+          <div style={{ fontSize: '1.1rem', fontStyle: 'italic', letterSpacing: '0.01em' }}>
+            {BOOT_QUOTE}
+          </div>
         </div>
       </div>
     );
@@ -31931,7 +31782,6 @@ const DashboardTiles = {
 
        {activeTab === 'dashboard' && renderDashboard()}
        {(activeTab === 'library' || activeTab.startsWith('library/')) && renderLibrary()}
-       {activeTab === 'actions' && renderDashboardQuickActions()}
        {activeTab.startsWith('schedules') && renderSchedules()}
        {activeTab.startsWith('nexup') && renderNexUp()}
        {activeTab.startsWith('settings') && renderSettings()}
@@ -33941,6 +33791,7 @@ const DashboardTiles = {
                         onChange={(e) => setTimeRange({...timeRange, start: e.target.value})}
                         style={{ width: '100%' }}
                       />
+                      <TimeQuickPicks current={timeRange.start} onPick={(v) => setTimeRange({ ...timeRange, start: v })} />
                     </div>
                     <div>
                       <label style={{ display: 'block', marginBottom: '0.5rem', fontSize: '0.9rem', color: '#666' }}>End Time (Optional)</label>
@@ -33951,6 +33802,7 @@ const DashboardTiles = {
                         onChange={(e) => setTimeRange({...timeRange, end: e.target.value})}
                         style={{ width: '100%' }}
                       />
+                      <TimeQuickPicks end current={timeRange.end} onPick={(v) => setTimeRange({ ...timeRange, end: v })} />
                     </div>
                   </div>
                   <p style={{ fontSize: '0.85rem', color: '#666', marginTop: '0.5rem', marginBottom: 0 }}>
@@ -34029,6 +33881,7 @@ const DashboardTiles = {
                           onChange={(e) => setTimeRange({...timeRange, start: e.target.value})}
                           style={{ width: '100%' }}
                         />
+                        <TimeQuickPicks current={timeRange.start} onPick={(v) => setTimeRange({ ...timeRange, start: v })} />
                       </div>
                       <div>
                         <label style={{ display: 'block', marginBottom: '0.5rem', fontSize: '0.9rem', color: '#666' }}>End Time</label>
@@ -34039,6 +33892,7 @@ const DashboardTiles = {
                           onChange={(e) => setTimeRange({...timeRange, end: e.target.value})}
                           style={{ width: '100%' }}
                         />
+                        <TimeQuickPicks end current={timeRange.end} onPick={(v) => setTimeRange({ ...timeRange, end: v })} />
                       </div>
                     </div>
                     <p style={{ fontSize: '0.85rem', color: '#666', marginTop: '0.5rem', marginBottom: 0 }}>
@@ -34143,6 +33997,7 @@ const DashboardTiles = {
                           value={timeRange.start || ''}
                           onChange={(e) => setTimeRange({...timeRange, start: e.target.value})}
                         />
+                        <TimeQuickPicks current={timeRange.start} onPick={(v) => setTimeRange({ ...timeRange, start: v })} />
                       </div>
                       <div>
                         <label style={{ display: 'block', marginBottom: '0.3rem', fontSize: '0.8rem', color: 'var(--text-secondary)' }}>End Time</label>
@@ -34152,6 +34007,7 @@ const DashboardTiles = {
                           value={timeRange.end || ''}
                           onChange={(e) => setTimeRange({...timeRange, end: e.target.value})}
                         />
+                        <TimeQuickPicks end current={timeRange.end} onPick={(v) => setTimeRange({ ...timeRange, end: v })} />
                       </div>
                     </div>
                   </div>

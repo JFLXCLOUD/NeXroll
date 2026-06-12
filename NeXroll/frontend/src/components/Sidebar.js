@@ -77,12 +77,6 @@ const NAV = [
     ],
   },
   {
-    id: 'actions',
-    label: 'Quick Actions',
-    icon: Zap,
-    match: (t) => t === 'actions',
-  },
-  {
     id: 'connect',
     label: 'Connect',
     icon: LinkIcon,
@@ -132,7 +126,6 @@ const KEYWORDS = {
   'nexup/trailers': 'trailers downloaded youtube your',
   'nexup/generator': 'generate dynamic preroll coming soon list create',
   'nexup/settings': 'nexup settings radarr sonarr tmdb youtube cookies quality',
-  'actions': 'apply refresh clear bulk maintenance operations quick',
   'connect': 'plex jellyfin emby server token oauth sign in api key media server cinema trailers',
   'community-prerolls': 'community typical nerds download search index browse',
   'settings': 'general theme dark mode light timezone notifications preferences',

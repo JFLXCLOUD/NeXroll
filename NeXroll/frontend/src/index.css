@@ -59,8 +59,112 @@ code {
 
 .nx-tile .card > div:last-child {
   flex: 1;
+  min-height: 0;
+}
+/* Inner scrolling is for the tall feature tiles and the calendar only. Small
+   (1-row) tiles must NOT clip-and-scroll: the row-height measurement reads the
+   card's scrollHeight, which only reflects true content height when overflow
+   is visible — with an inner scroller the card never overflows and the grid
+   could never grow to fit (tiles showed scrollbars instead). */
+.nx-tile-cal .card > div:last-child {
   overflow-y: auto;
 }
+/* Wide feature tiles (Video Quality, Upcoming) span ONE row unit like everyone
+   else but two columns; if their content ever exceeds the unit, they scroll
+   inside rather than stretching the grid or spilling out. */
+.nx-tile-wide .card {
+  overflow-y: auto;
+}
+
+/* --------------------------------------------------------------------
+   Shared detail-row vocabulary for the stat tiles. Every tile renders
+   its facts as these key/value rows so type size, icon size, spacing,
+   and alignment match across the whole dashboard (the rows were inline
+   styles per tile before and had drifted: 0.8-0.9rem, varied gaps).
+   -------------------------------------------------------------------- */
+.nx-tile-rows {
+  display: grid;
+  gap: 0.45rem;
+  margin: 0.4rem 0 0;
+}
+.nx-tile-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 0.75rem;
+  font-size: 0.88rem;
+  min-width: 0;
+}
+.nx-tile-row-k {
+  color: var(--text-secondary);
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  flex-shrink: 0;
+}
+.nx-tile-row-k svg { width: 14px; height: 14px; flex-shrink: 0; }
+.nx-tile-row-v {
+  font-weight: 500;
+  color: var(--text-color);
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-align: right;
+}
+.nx-tile-row-v.muted { color: var(--text-secondary); font-weight: 400; }
+/* Status/headline line under the tile title (Running, schedule name, ...) */
+.nx-tile-status {
+  margin: 0.1rem 0 0.35rem;
+  font-size: 1.05rem;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* Big count headline (Prerolls / Storage) */
+.nx-tile-bignum {
+  font-size: 1.6rem;
+  font-weight: 700;
+  margin: 0.15rem 0 0.5rem;
+}
+.nx-tile-bignum .nx-tile-bignum-unit {
+  font-size: 0.85rem;
+  font-weight: 400;
+  color: var(--text-secondary);
+}
+/* Tile header: title left, one compact action button right. Buttons used to
+   sit at the tile bottom, where varying content lengths left them at uneven
+   heights across the grid; in the header they align perfectly on every tile. */
+.nx-tile-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  margin-bottom: 0.45rem;
+}
+.nx-tile-head h2 { margin-bottom: 0; }
+.nx-tile-headbtn {
+  flex-shrink: 0;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border-radius: 7px;
+  border: 1px solid var(--border-color);
+  background: transparent;
+  color: var(--text-secondary);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: color 0.15s ease, background 0.15s ease, border-color 0.15s ease;
+}
+.nx-tile-headbtn:hover {
+  color: var(--text-color);
+  background: var(--hover-bg);
+  border-color: var(--accent-color);
+}
+.nx-tile-headbtn svg { width: 14px; height: 14px; }
 
 /* Unique border-left colors for each tile */
 .nx-tile:nth-child(1) .card {
@@ -129,6 +233,9 @@ code {
 
 /* Light theme (default) */
 body.light {
+  /* Tell the browser the page is light so native controls (time/date pickers,
+     selects, scrollbars) render in the matching scheme. */
+  color-scheme: light;
   --bg-color: #f5f5f5;
   --card-bg: white;
   --text-color: #333;
@@ -155,6 +262,9 @@ body.light .header-icon {
 
 /* Dark theme */
 body.dark {
+  /* Native time/date pickers, selects, and scrollbars render dark to match
+     the theme (without this they stay light regardless of our CSS vars). */
+  color-scheme: dark;
   --bg-color: #1a1a1a;
   --card-bg: #2d2d2d;
   --text-color: #e0e0e0;
@@ -5176,3 +5286,77 @@ body.dark .nx-settings textarea:focus { box-shadow: 0 0 0 3px rgba(79, 70, 229, 
 /* Keep the list-view table from blowing out narrow screens — it scrolls
    horizontally within its own wrapper instead of widening the page. */
 .nx-cat-tablewrap { width: 100%; overflow-x: auto; -webkit-overflow-scrolling: touch; }
+
+/* ====================================================================
+   Time quick-pick chips (schedule create/edit forms). One-click presets
+   under each native time input; the input itself stays for arbitrary
+   times and follows the theme via color-scheme on body.light/.dark.
+   ==================================================================== */
+.nx-timepicks {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  margin-top: 0.45rem;
+}
+.nx-timepick {
+  padding: 0.22rem 0.6rem;
+  font-size: 0.75rem;
+  font-weight: 500;
+  border-radius: 999px;
+  border: 1px solid var(--border-color);
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: color 0.12s ease, background 0.12s ease, border-color 0.12s ease;
+}
+.nx-timepick:hover {
+  color: var(--text-color);
+  background: var(--hover-bg);
+}
+.nx-timepick.active {
+  background: var(--button-bg);
+  border-color: var(--button-bg);
+  color: #fff;
+}
+
+/* Quick Actions tile buttons: compact, left-aligned, truncating labels */
+.nx-qa-btn {
+  font-size: 0.78rem;
+  padding: 0.4rem 0.55rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 0.4rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+.nx-qa-btn svg { flex-shrink: 0; }
+
+/* Dashboard quick-actions bar (left side of the dashboard toolbar) */
+.nx-qa-bar {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  flex-wrap: wrap;
+  min-width: 0;
+}
+
+/* Upcoming Schedules tile: list shows ~6 entries, then scrolls. The sticky
+   fade sits at the viewport bottom of the scroll area to hint at more rows;
+   it is only rendered when there are more entries than fit. */
+.nx-upcoming-list {
+  max-height: 240px; /* ~4 schedule rows incl. gaps */
+  overflow-y: auto;
+  position: relative;
+  scrollbar-width: thin;
+}
+.nx-upcoming-fade {
+  position: sticky;
+  bottom: 0;
+  height: 72px;
+  margin-top: -72px;
+  background: linear-gradient(to bottom, transparent, var(--card-bg) 80%);
+  pointer-events: none;
+}
