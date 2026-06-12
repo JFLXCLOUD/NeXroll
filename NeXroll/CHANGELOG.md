@@ -1,5 +1,64 @@
 # Changelog
 
+## [2.0.0-beta.3] - 06-12-2026 (beta)
+
+> Docker feedback fixes plus a major dashboard refinement round: unified
+> tile design with quick actions built into the dashboard, big performance
+> fixes, and a rebuilt tile height system. Upgrade-safe.
+
+### Fixed
+
+- **Community prerolls index survived Docker updates** (#Docker feedback) —
+  the index was stored inside the container filesystem and wiped on every
+  image update ("No index" after each upgrade). It now lives on the /data
+  volume; a one-time migration adopts an existing copy where present.
+- **NeX-Up trailers no longer appear twice** (once Uncategorized) — the
+  library scanner also indexed the trailer storage folder and created
+  duplicate rows. The scanner now leaves NeX-Up's tree alone and cleans up
+  the duplicates it created on the next scan.
+- **Six icon buttons rendered as empty boxes** (Edit category, Edit preroll,
+  and four Close buttons) — leftovers from the emoji removal; restored with
+  proper icons.
+- **Dashboard scroll position and text selection reset every few seconds** —
+  two background updaters (a leftover countdown timer and the status
+  heartbeat) re-rendered the entire app once per second / per heartbeat.
+  Both now update only when something actually changed.
+- **Tile heights were content- and position-dependent** (feature tiles grew
+  when moved in edit mode; later, tile content clipped or overflowed). The
+  height measurement system never actually ran due to a mount-order bug; it
+  now measures correctly — small tiles fit their content exactly, the wide
+  tiles (Video Quality, Upcoming) match the same height, identical in
+  locked and edit mode at any position.
+- Native time/date pickers, dropdowns, and scrollbars now follow dark mode
+  (the app never declared color-scheme).
+- Plex server name now shows on the Servers tile (Plex reports it under a
+  different field than Jellyfin/Emby).
+
+### Changed
+
+- **Dashboard tiles unified and enriched** — every stat tile shares one
+  detail-row design; added: server address row (Servers), external/mapped
+  count and last-added (Prerolls), timezone, firing-today, and Now/Next
+  rows (Scheduler — countdown boxes removed), per-state icon rows
+  (Currently Showing), response time, index freshness and size (Community),
+  trailer storage bar (NeX-Up).
+- **Every tile header has an action button** — navigation arrows to the
+  relevant page, Stop/Start on Scheduler, Preview on Currently Showing.
+- **Quick Actions moved into the dashboard** — the separate page is gone;
+  a toolbar above the tiles offers Rebuild Thumbs, Refresh Data, NeX-Up
+  Sync, Scan Files, Rebuild Index, Backup DB, and Check Updates alongside
+  the layout controls.
+- **Video Quality tile redesigned** — a segmented distribution bar with a
+  count/percentage legend replaces the old chart, and the charting library
+  was dropped entirely: **the app bundle is 21% (98 kB) smaller**.
+- **Upcoming Schedules** lists up to 30 entries, scrolling past ~4 with a
+  fade hint instead of stretching the tile.
+- **Schedule time pickers** gained one-click preset chips (9:00 AM, 12:00
+  PM, 6:00 PM, 9:00 PM; end-of-day and Clear for end fields) in both the
+  create form and edit modal.
+- **Loading screen** now shows a random theater pre-show line ("And now...
+  our feature presentation").
+
 ## [2.0.0-beta.2] - 06-11-2026 (beta)
 
 > Security and polish round for the v2 beta: **Require Login now protects the
