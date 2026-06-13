@@ -557,6 +557,86 @@ class RadarrConnector:
         return None
 
 
+def classify_ytdlp_error(msg: str) -> dict:
+    """Map a yt-dlp error string to a stable category + user-facing guidance.
+
+    Distinguishes the cases the old code conflated: bot/auth wall (cookies
+    stale or missing) vs a specific video being unavailable (private, removed,
+    age/region-locked) vs everything else. Lets the UI stop telling users to
+    re-export cookies when the cookies are fine and only that video is bad.
+    """
+    m = (msg or '').lower()
+    if any(s in m for s in ["sign in to confirm", "who's watching", 'not a bot',
+                            'confirm you', 'sign in to view']):
+        return {'category': 'auth', 'reason': 'YouTube is requiring sign-in (bot wall). Your cookies are missing, stale, or rate-limited.'}
+    if any(s in m for s in ['private video', 'video unavailable', 'removed by the uploader',
+                            'no longer available', 'this video is not available', 'members-only',
+                            'account associated with this video has been terminated']):
+        return {'category': 'video_unavailable', 'reason': 'This specific video is unavailable (private, removed, members-only, or region-locked) - not a cookie problem.'}
+    if 'age' in m and ('restrict' in m or 'confirm' in m):
+        return {'category': 'age_restricted', 'reason': 'This video is age-restricted. Signed-in cookies are required for this one specifically.'}
+    if 'http error 429' in m or 'too many requests' in m:
+        return {'category': 'rate_limited', 'reason': 'YouTube is rate-limiting your IP. Wait a while, or try a VPN/different network.'}
+    return {'category': 'other', 'reason': (msg or 'Unknown error')[:300]}
+
+
+def probe_youtube(url: str, cookies_file=None, cookie_browser=None, timeout: int = 45) -> dict:
+    """Probe a single YouTube URL via the yt_dlp PYTHON MODULE (no CLI binary,
+    which doesn't exist in Docker/PyInstaller builds). Returns
+    {ok, title?, category?, reason?}. Used by the test/diagnostic endpoint so
+    it exercises the same code path production downloads use.
+    """
+    try:
+        import yt_dlp
+    except ImportError:
+        return {'ok': False, 'category': 'no_ytdlp', 'reason': 'yt-dlp module not available'}
+
+    opts = {
+        'quiet': True, 'no_warnings': True, 'noplaylist': True,
+        'skip_download': True, 'socket_timeout': timeout,
+        'no_check_certificate': True,
+    }
+    if cookies_file and Path(cookies_file).exists():
+        opts['cookiefile'] = str(cookies_file)
+    elif cookie_browser:
+        opts['cookiesfrombrowser'] = _parse_cookies_from_browser(cookie_browser)
+
+    try:
+        with yt_dlp.YoutubeDL(opts) as ydl:
+            info = ydl.extract_info(url, download=False)
+        return {'ok': True, 'title': info.get('title'), 'duration': info.get('duration')}
+    except yt_dlp.utils.DownloadError as e:
+        return {'ok': False, **classify_ytdlp_error(str(e))}
+    except Exception as e:
+        return {'ok': False, **classify_ytdlp_error(str(e))}
+
+
+def _parse_cookies_from_browser(spec: str):
+    """Turn a yt-dlp CLI --cookies-from-browser spec into the Python-API tuple.
+
+    CLI form:  BROWSER[+KEYRING][:PROFILE][::CONTAINER]   e.g. "edge:+keyring"
+    API form:  (browser, profile, keyring, container)     e.g. ("edge", None, "+keyring", None)
+
+    The previous code passed the raw string as a 1-tuple, which yt-dlp rejected,
+    so every browser-cookie strategy silently failed.
+    """
+    browser = spec
+    profile = None
+    keyring = None
+    container = None
+    # KEYRING is attached to the browser with '+': "edge+gnomekeyring" or "edge:+keyring"
+    if '::' in browser:
+        browser, container = browser.split('::', 1)
+    if ':' in browser:
+        browser, profile = browser.split(':', 1)
+    if profile and profile.startswith('+'):
+        keyring = profile[1:] or None
+        profile = None
+    if '+' in browser:
+        browser, keyring = browser.split('+', 1)
+    return (browser.strip().lower(), profile or None, keyring or None, container or None)
+
+
 class TrailerDownloader:
     """Handles downloading trailers using yt-dlp with TMDB source discovery and browser cookie support"""
     
@@ -880,12 +960,11 @@ class TrailerDownloader:
                             '--force-ipv4', '--geo-bypass'
                         ])
                     
-                    # Strategy 2: Try browser cookies with different browsers
+                    # Strategy 2: Try browser cookies with different browsers.
+                    # (Dropped the old "{browser}:+keyring" variant — 'keyring'
+                    # is not a valid yt-dlp keyring name, so it always errored.
+                    # Plain browser name lets yt-dlp auto-detect the keyring.)
                     if cookie_browser:
-                        youtube_strategies.append([
-                            '--cookies-from-browser', f'{cookie_browser}:+keyring',
-                            '--force-ipv4', '--geo-bypass'
-                        ])
                         youtube_strategies.append([
                             '--cookies-from-browser', cookie_browser,
                             '--force-ipv4', '--geo-bypass'
@@ -1074,7 +1153,11 @@ class TrailerDownloader:
                 ydl_opts['cookiefile'] = extra_args[i + 1]
                 i += 2
             elif arg == '--cookies-from-browser' and i + 1 < len(extra_args):
-                ydl_opts['cookiesfrombrowser'] = (extra_args[i + 1],)
+                # yt-dlp's Python API wants a structured tuple
+                # (browser, profile, keyring, container) - NOT the CLI string
+                # form "edge:+keyring". Parse the CLI spec into that tuple, or
+                # the browser cookie strategies silently fail.
+                ydl_opts['cookiesfrombrowser'] = _parse_cookies_from_browser(extra_args[i + 1])
                 i += 2
             elif arg == '--username' and i + 1 < len(extra_args):
                 ydl_opts['username'] = extra_args[i + 1]

@@ -18510,59 +18510,73 @@ async def extract_youtube_cookies(browser: str = Query(None, description="Specif
     }
 
 @app.post("/nexup/youtube/test-download")
-async def test_youtube_download(db: Session = Depends(get_db)):
-    """Test if YouTube downloads are working with current configuration"""
+async def test_youtube_download(payload: dict = Body(default=None), db: Session = Depends(get_db)):
+    """Test YouTube authentication using the same yt-dlp Python module the real
+    downloads use (the old version shelled out to a `yt-dlp` CLI binary, which
+    doesn't exist in Docker/PyInstaller builds — so it failed even with valid
+    cookies). Probes a known-good control video to prove auth works, and
+    optionally the specific URL the user passes, so the UI can tell
+    "auth is broken" apart from "that one video is unavailable".
+
+    Optional body: { "url": "<youtube url the user is trying>" }
+    """
     setting = db.query(models.Setting).first()
     storage_path = getattr(setting, 'nexup_storage_path', None)
-    
     if not storage_path:
         return {"success": False, "error": "Storage path not configured"}
-    
-    import subprocess
-    import sys
-    
-    creationflags = 0
-    if sys.platform == 'win32':
-        creationflags = subprocess.CREATE_NO_WINDOW
-    
-    test_url = "https://www.youtube.com/watch?v=dQw4w9WgXcQ"  # Short test video
+
+    from backend.radarr_connector import TrailerDownloader, probe_youtube
     cookies_file = Path(storage_path) / 'youtube_cookies.txt'
-    
-    # Build command - we need to actually try to get video info, not just simulate
-    # This properly tests if authentication is working
-    base_cmd = ['yt-dlp', '--dump-json', '--no-download', test_url]
-    
-    if cookies_file.exists():
-        cmd = ['yt-dlp', '--cookies', str(cookies_file), '--dump-json', '--no-download', test_url]
-    else:
-        from backend.radarr_connector import TrailerDownloader
-        downloader = TrailerDownloader(storage_path, '1080')
-        browser = downloader.get_cookie_browser()
-        if browser:
-            cmd = ['yt-dlp', '--cookies-from-browser', browser, '--dump-json', '--no-download', test_url]
-        else:
-            cmd = base_cmd
-    
-    try:
-        result = subprocess.run(
-            cmd,
-            capture_output=True,
-            text=True,
-            timeout=30,
-            creationflags=creationflags
-        )
-        
-        if result.returncode == 0:
-            return {"success": True, "message": "YouTube downloads are working!"}
-        else:
-            error = result.stderr or "Unknown error"
-            if "Sign in to confirm" in error:
-                return {"success": False, "error": "Authentication required", "hint": "Please complete the YouTube setup process"}
-            return {"success": False, "error": error[:200]}
-    except subprocess.TimeoutExpired:
-        return {"success": False, "error": "Test timed out"}
-    except Exception as e:
-        return {"success": False, "error": str(e)}
+    have_cookies_file = cookies_file.exists()
+    downloader = TrailerDownloader(storage_path, '1080')
+    browser = None if have_cookies_file else downloader.get_cookie_browser()
+    cf = str(cookies_file) if have_cookies_file else None
+
+    auth_method = ('cookies file' if have_cookies_file
+                   else f'browser cookies ({browser})' if browser
+                   else 'no authentication')
+
+    # Run the (blocking) probes off the event loop.
+    loop = asyncio.get_event_loop()
+    control_url = "https://www.youtube.com/watch?v=dQw4w9WgXcQ"  # always-available control
+    control = await loop.run_in_executor(None, lambda: probe_youtube(control_url, cf, browser))
+
+    user_url = (payload or {}).get('url') if isinstance(payload, dict) else None
+    target = None
+    if user_url:
+        target = await loop.run_in_executor(None, lambda: probe_youtube(user_url, cf, browser))
+
+    # Interpret results.
+    if control.get('ok'):
+        if target is not None and not target.get('ok'):
+            # Auth works but the specific video doesn't — the key distinction.
+            return {
+                "success": False,
+                "auth_ok": True,
+                "auth_method": auth_method,
+                "category": target.get('category'),
+                "error": f"Authentication is working ({auth_method}), but that specific video failed: {target.get('reason')}",
+                "hint": "Try a different trailer — this one looks unavailable rather than a cookie problem.",
+            }
+        return {
+            "success": True,
+            "auth_ok": True,
+            "auth_method": auth_method,
+            "message": f"YouTube authentication is working via {auth_method}." + (
+                f" Target video OK: {target.get('title')}." if target and target.get('ok') else ""),
+        }
+
+    # Control failed → auth itself is the problem.
+    return {
+        "success": False,
+        "auth_ok": False,
+        "auth_method": auth_method,
+        "category": control.get('category'),
+        "error": control.get('reason'),
+        "hint": ("Re-export cookies from an Incognito window while signed in to YouTube, "
+                 "then upload youtube_cookies.txt."
+                 if control.get('category') in ('auth', 'rate_limited') else None),
+    }
 
 # YouTube OAuth state storage
 YOUTUBE_OAUTH_SESSIONS: dict = {}

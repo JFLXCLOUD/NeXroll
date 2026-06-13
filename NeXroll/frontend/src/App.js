@@ -19391,22 +19391,30 @@ const DashboardTiles = {
   const handleYoutubeTestDownload = async () => {
     setYoutubeSetup(prev => ({ ...prev, testing: true }));
     try {
-      const res = await fetch(apiUrl('/nexup/youtube/test-download'), { method: 'POST' });
+      // Pass the optional "specific trailer" URL so the backend can tell auth
+      // failures apart from a single unavailable video.
+      const testUrl = (youtubeSetup.testUrl || '').trim();
+      const res = await fetch(apiUrl('/nexup/youtube/test-download'), {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(testUrl ? { url: testUrl } : {})
+      });
       const data = await res.json();
-      
-      setYoutubeSetup(prev => ({ 
-        ...prev, 
+
+      setYoutubeSetup(prev => ({
+        ...prev,
         testing: false,
         testResult: data,
         wizardStep: data.success ? 4 : prev.wizardStep
       }));
-      
+
       if (data.success) {
         loadYoutubeStatus();
       }
     } catch (err) {
-      setYoutubeSetup(prev => ({ 
-        ...prev, 
+      setYoutubeSetup(prev => ({
+        ...prev,
         testing: false,
         testResult: { success: false, message: err?.message || 'Test failed' }
       }));
@@ -23047,24 +23055,51 @@ const DashboardTiles = {
                       </p>
                       
                       {youtubeSetup.testResult && (
-                        <div style={{ 
-                          padding: '1rem', 
-                          backgroundColor: youtubeSetup.testResult.success ? '#d4edda' : '#f8d7da', 
+                        <div style={{
+                          padding: '0.85rem 1rem',
                           borderRadius: '8px',
                           marginBottom: '1.5rem',
-                          color: youtubeSetup.testResult.success ? '#155724' : '#721c24'
+                          fontSize: '0.9rem',
+                          color: youtubeSetup.testResult.success ? 'var(--success-color, #28a745)' : '#dc3545',
+                          background: youtubeSetup.testResult.success
+                            ? 'color-mix(in srgb, var(--success-color, #28a745) 12%, transparent)'
+                            : 'color-mix(in srgb, #dc3545 12%, transparent)',
+                          border: `1px solid ${youtubeSetup.testResult.success ? 'color-mix(in srgb, var(--success-color, #28a745) 40%, transparent)' : 'color-mix(in srgb, #dc3545 40%, transparent)'}`,
                         }}>
-                          {youtubeSetup.testResult.message}
+                          <div style={{ fontWeight: 600 }}>
+                            {youtubeSetup.testResult.message || youtubeSetup.testResult.error || 'Test failed'}
+                          </div>
+                          {youtubeSetup.testResult.hint && (
+                            <div style={{ marginTop: '0.4rem', color: 'var(--text-secondary)', fontWeight: 400 }}>
+                              {youtubeSetup.testResult.hint}
+                            </div>
+                          )}
                         </div>
                       )}
-                      
+
+                      {/* Optional: test the exact trailer that's failing, so a
+                          single bad video can be told apart from broken auth. */}
+                      <div style={{ marginBottom: '1rem' }}>
+                        <label style={{ display: 'block', marginBottom: '0.35rem', fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
+                          Test a specific trailer URL <span style={{ opacity: 0.7 }}>(optional)</span>
+                        </label>
+                        <input
+                          type="text"
+                          className="nx-input"
+                          placeholder="https://www.youtube.com/watch?v=... (leave blank to test sign-in only)"
+                          value={youtubeSetup.testUrl || ''}
+                          onChange={(e) => setYoutubeSetup(prev => ({ ...prev, testUrl: e.target.value }))}
+                          style={{ width: '100%', padding: '0.55rem 0.7rem', borderRadius: '6px', border: '1px solid var(--border-color)', boxSizing: 'border-box' }}
+                        />
+                      </div>
+
                       <div style={{ display: 'flex', gap: '1rem', justifyContent: 'center' }}>
                         <button
                           onClick={handleYoutubeTestDownload}
                           className="button button-secondary"
                           disabled={youtubeSetup.testing}
                         >
-                          {youtubeSetup.testing 
+                          {youtubeSetup.testing
                             ? <><Loader2 size={16} className="spin" /> Testing...</>
                             : <><FlaskConical size={16} /> Test Download</>}
                         </button>
