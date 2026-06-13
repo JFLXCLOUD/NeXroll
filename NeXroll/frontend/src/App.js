@@ -5482,7 +5482,16 @@ useEffect(() => {
       if (rowH > 0) setUniformRowH((prev) => (Math.abs(prev - rowH) > 1 ? rowH : prev));
       const calCard = grid.querySelector('.nx-tile-cal > .card');
       if (calCard && rowH > 0) {
-        const span = Math.max(1, Math.ceil((calCard.offsetHeight + GAP) / (rowH + GAP)));
+        // The card is height-locked to its grid cell, so offsetHeight reports
+        // the CLIPPED height and the span never grew to fit the whole week.
+        // The card's last child is the schedule-rows wrapper with overflow-y:
+        // auto, so its scrollHeight is the true content height. Real height =
+        // card chrome (header + day row) + that wrapper's full scroll height.
+        const inner = calCard.querySelector(':scope > div:last-child');
+        const natural = inner
+          ? (calCard.offsetHeight - inner.offsetHeight) + inner.scrollHeight
+          : calCard.offsetHeight;
+        const span = Math.max(1, Math.ceil((natural + GAP) / (rowH + GAP)));
         setCalRows((prev) => (prev !== span ? span : prev));
       }
     });
