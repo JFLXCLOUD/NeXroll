@@ -1,5 +1,37 @@
 # Changelog
 
+## [2.0.0-beta.4] - 06-13-2026 (beta)
+
+> Fixes the YouTube trailer "Test" button (it was misreporting failures),
+> the weekly calendar getting cut off, and a sidebar scroll glitch. Plus a
+> bit of fun on the loading screen. Upgrade-safe.
+
+### Fixed
+
+- **YouTube "Test Download" was unreliable.** It invoked a `yt-dlp`
+  command-line binary that doesn't exist in the Docker image or the Windows
+  build (yt-dlp is bundled as a Python module), so the test failed and showed
+  a confusing error even when your cookies were valid. The test now runs
+  through the same engine real downloads use, checks a known-good control
+  video to confirm sign-in works, and lets you paste a specific trailer URL —
+  so it can tell you "authentication is working, but that one video is
+  unavailable" instead of wrongly blaming your cookies.
+- **Browser-cookie downloads were silently broken** — the
+  `--cookies-from-browser` option was passed to yt-dlp in the wrong form, so
+  that authentication path never worked. Fixed (uploaded `youtube_cookies.txt`
+  files were unaffected).
+- **Clearer trailer error messages** — NeXroll now distinguishes stale/missing
+  cookies from a video that is simply private, removed, members-only, or
+  age-restricted, so you are not told to re-export cookies when the cookies
+  are fine.
+- **"This Week's Schedule" tile no longer cuts off** — it now expands to show
+  every active schedule for the week.
+- **Sidebar no longer drifts when scrolling** a long page.
+
+### Changed
+
+- The loading screen now shows a rotating set of dry, theater-themed quips.
+
 ## [2.0.0-beta.3] - 06-12-2026 (beta)
 
 > Docker feedback fixes plus a major dashboard refinement round: unified
