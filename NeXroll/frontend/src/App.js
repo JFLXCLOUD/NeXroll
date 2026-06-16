@@ -29806,15 +29806,18 @@ const DashboardTiles = {
                 {/* Spacer if no description */}
                 {!sequence.description && <div style={{ flex: 1 }} />}
                 
-                {/* Action Buttons */}
-                <div style={{ 
-                  display: 'flex', 
-                  gap: '0.35rem',
+                {/* Action Buttons — wrap as a uniform left-aligned group with a
+                    consistent row gap so wrapped buttons (e.g. Delete on a
+                    narrow tile) line up under the row above instead of floating. */}
+                <div style={{
+                  display: 'flex',
+                  gap: '0.4rem',
                   marginTop: '0.75rem',
                   paddingTop: '0.75rem',
                   borderTop: '1px solid var(--border-color)',
                   flexWrap: 'wrap',
-                  alignItems: 'center'
+                  alignItems: 'stretch',
+                  justifyContent: 'flex-start'
                 }}>
                   <button 
                     className="button"
@@ -29948,8 +29951,7 @@ const DashboardTiles = {
                       display: 'inline-flex',
                       alignItems: 'center',
                       justifyContent: 'center',
-                      gap: '0.25rem',
-                      marginLeft: 'auto'
+                      gap: '0.25rem'
                     }}
                     title="Delete sequence"
                   >

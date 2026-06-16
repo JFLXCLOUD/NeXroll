@@ -839,6 +839,50 @@ def resolve_nexup_trailer_block(block: dict, db) -> list:
     return rows
 
 
+def _relocate_nexup_trailers(db, new_storage_path: str):
+    """Move existing trailer files into new_storage_path and update their DB
+    local_path. Movies -> <new>/movies, TV -> <new>/tv. Called when the NeX-Up
+    storage path changes so downloads don't stay scattered in the old folder.
+
+    Returns (moved_count, failed_count). Safe/idempotent: files already under
+    the new path are left alone; a missing source is skipped (not an error).
+    """
+    import shutil
+    moved = 0
+    failed = 0
+    new_root = os.path.normpath(new_storage_path)
+
+    def _move(rows, subdir):
+        nonlocal moved, failed
+        dest_dir = os.path.join(new_root, subdir)
+        for t in rows:
+            src = t.local_path
+            if not src or not os.path.exists(src):
+                continue  # nothing to move (already gone / missing)
+            # Already under the new storage root? leave it.
+            if os.path.normcase(os.path.normpath(src)).startswith(os.path.normcase(new_root) + os.sep):
+                continue
+            try:
+                os.makedirs(dest_dir, exist_ok=True)
+                dest = os.path.join(dest_dir, os.path.basename(src))
+                # Avoid clobbering a different file with the same name.
+                if os.path.exists(dest) and os.path.abspath(dest) != os.path.abspath(src):
+                    base, ext = os.path.splitext(os.path.basename(src))
+                    dest = os.path.join(dest_dir, f"{base}_{t.id}{ext}")
+                shutil.move(src, dest)
+                t.local_path = dest
+                moved += 1
+            except Exception as e:
+                failed += 1
+                _file_log(f"NeX-Up relocate: failed to move {src} -> {dest_dir}: {e}")
+
+    _move(db.query(models.ComingSoonTrailer).all(), "movies")
+    _move(db.query(models.ComingSoonTVTrailer).all(), "tv")
+    if moved:
+        db.commit()
+    return moved, failed
+
+
 def calculate_file_hash(file_path: str) -> str:
     """Calculate SHA256 hash of a file for duplicate detection"""
     import hashlib
@@ -16815,6 +16859,7 @@ def update_nexup_settings(
     if sonarr_enabled is not None:
         setting.nexup_sonarr_enabled = sonarr_enabled
     if storage_path is not None:
+        old_storage_path = getattr(setting, "nexup_storage_path", None)
         setting.nexup_storage_path = storage_path
         # Create directory if it doesn't exist
         if storage_path:
@@ -16822,6 +16867,19 @@ def update_nexup_settings(
                 Path(storage_path).mkdir(parents=True, exist_ok=True)
             except Exception as e:
                 _file_log(f"Failed to create NeX-Up storage path: {e}")
+
+        # If the storage path actually changed, relocate existing trailer files
+        # into the new location and update their DB paths, so everything stays
+        # consolidated (otherwise old downloads stay scattered in the previous
+        # folder after a path change).
+        try:
+            if storage_path and old_storage_path and \
+               os.path.normcase(os.path.normpath(old_storage_path)) != os.path.normcase(os.path.normpath(storage_path)):
+                moved, failed = _relocate_nexup_trailers(db, storage_path)
+                if moved or failed:
+                    _file_log(f"NeX-Up: storage path changed; relocated {moved} trailer file(s), {failed} failed")
+        except Exception as e:
+            _file_log(f"NeX-Up: trailer relocation after path change failed: {e}")
         
         # Auto-create the NeX-Up Trailers system category for movies if it doesn't exist
         nexup_category = db.query(models.Category).filter(
