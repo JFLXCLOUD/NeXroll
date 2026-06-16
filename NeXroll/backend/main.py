@@ -19239,18 +19239,29 @@ async def download_trailer(radarr_movie_id: int, db: Session = Depends(get_db)):
         
         if not (result and isinstance(result, dict) and result.get('path')):
             # download_trailer returns {'error','message'} on failure now.
+            err_code = (result.get('error') if isinstance(result, dict) else '') or ''
             fail_detail = (result.get('message') if isinstance(result, dict) else '') or ''
-            # Provide helpful error message
-            help_msg = "YouTube is blocking the download. "
-            if not cookies_file.exists() and not browser:
-                help_msg += "Export your browser cookies to 'youtube_cookies.txt' in your NeX-Up storage folder, or close your browser and try again."
-            elif not cookies_file.exists():
-                help_msg += f"Detected browser: {browser}. Try closing {browser} completely and retry, or export cookies to youtube_cookies.txt."
+            # Only blame cookies/bot-block when it actually IS one — otherwise
+            # report the real reason. YouTube downloads are flaky (transient
+            # rate-limits, network blips, a strategy timing out), and the old
+            # code always said "cookies expired", sending people to re-export
+            # cookies that were fine.
+            is_auth = ('YOUTUBE_BOT_BLOCK' in err_code or 'STALE_COOKIES' in err_code
+                       or any(s in fail_detail.lower() for s in ['sign in to confirm', 'not a bot', 'bot detection']))
+            if is_auth:
+                if not cookies_file.exists() and not browser:
+                    help_msg = "YouTube is requiring sign-in. Export your browser cookies to 'youtube_cookies.txt' in your NeX-Up storage folder."
+                elif not cookies_file.exists():
+                    help_msg = f"YouTube is requiring sign-in. Detected browser: {browser}. Close {browser} completely and retry, or export cookies to youtube_cookies.txt."
+                else:
+                    help_msg = "YouTube is requiring sign-in and your cookies may be expired. Re-export fresh cookies from an Incognito window."
             else:
-                help_msg += "Cookies file exists but may be expired. Re-export fresh cookies from your browser."
-            
-            _file_log(f"Failed to download trailer for {movie.get('title')} - {help_msg}")
-            log_event('ERROR', 'nexup', f'Trailer download failed: {movie.get("title")} - YouTube bot block', source='download_trailer', db=db)
+                help_msg = "Couldn't download this trailer right now. YouTube downloads can fail transiently — try again in a moment."
+                if fail_detail:
+                    help_msg += f" (Details: {fail_detail[:160]})"
+
+            _file_log(f"Failed to download trailer for {movie.get('title')} - err={err_code} detail={fail_detail[:200]}")
+            log_event('ERROR', 'nexup', f'Trailer download failed: {movie.get("title")} - {err_code or "unknown"}', source='download_trailer', db=db)
             raise HTTPException(status_code=500, detail=help_msg)
     except HTTPException:
         raise
