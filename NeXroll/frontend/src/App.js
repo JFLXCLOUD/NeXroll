@@ -20400,8 +20400,18 @@ const DashboardTiles = {
         loadGeneratedComingSoonLists();
         loadGeneratedPrerolls();
       } else {
-        const err = await res.json();
-        showAlert(err.detail || 'Failed to generate Coming Soon List', 'error');
+        // A 500 returns plain "Internal Server Error" text, not JSON — reading
+        // it as JSON used to throw "Unexpected token 'I'". Read as text and try
+        // to parse, so the real reason shows instead of a confusing parse error.
+        const raw = await res.text();
+        let detail = `Failed to generate Coming Soon List (HTTP ${res.status})`;
+        try {
+          const parsed = JSON.parse(raw);
+          if (parsed && parsed.detail) detail = parsed.detail;
+        } catch {
+          if (raw && raw.length < 300) detail += `: ${raw.trim()}`;
+        }
+        showAlert(detail, 'error');
       }
     } catch (err) {
       showAlert('Error generating Coming Soon List: ' + (err?.message || err), 'error');

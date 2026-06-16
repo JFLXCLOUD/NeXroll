@@ -20765,8 +20765,19 @@ async def generate_coming_soon_list(
     
     # Generate the video
     output_dir = Path(storage_path) / "dynamic_prerolls"
-    output_dir.mkdir(parents=True, exist_ok=True)
-    
+    try:
+        output_dir.mkdir(parents=True, exist_ok=True)
+    except OSError as e:
+        # e.g. the configured storage path is on an unreachable network drive
+        # or isn't writable. Return a clear reason instead of a bare 500
+        # (which surfaced in the UI as "Unexpected token 'I'").
+        _file_log(f"[COMING-SOON-LIST] storage path not writable: {storage_path} ({e})")
+        raise HTTPException(
+            status_code=400,
+            detail=f"NeX-Up storage path is not accessible: {storage_path}. "
+                   f"Check the path exists and is writable (Settings > NeX-Up > Storage). [{e.strerror or e}]"
+        )
+
     generator = DynamicPrerollGenerator(str(output_dir))
     
     if not generator.check_ffmpeg_available():
