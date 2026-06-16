@@ -22262,14 +22262,19 @@ const DashboardTiles = {
                       <div style={{ fontWeight: 'bold', color: 'var(--text-color)', marginBottom: '0.25rem', fontSize: '0.95rem' }}>
                         {trailer.title}
                       </div>
-                      <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', marginBottom: '0.5rem' }}>
+                      <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', marginBottom: trailer.removal_date ? '0.25rem' : '0.5rem' }}>
                         {trailer.release_date ? `Releases: ${new Date(trailer.release_date).toLocaleDateString()}` : 'Release date unknown'}
                       </div>
+                      {trailer.removal_date && (
+                        <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: '0.5rem', opacity: 0.85 }} title="Auto-removed by NeX-Up retention cleanup">
+                          {`Removed: ${new Date(trailer.removal_date).toLocaleDateString()}`}
+                        </div>
+                      )}
                       <div style={{ display: 'flex', gap: '0.5rem' }}>
                         <button
                           onClick={() => handleToggleTrailer(trailer.id)}
                           className="button"
-                          style={{ 
+                          style={{
                             flex: 1,
                             backgroundColor: trailer.is_enabled ? '#28a745' : '#6c757d',
                             padding: '0.35rem 0.5rem',
@@ -22307,6 +22312,11 @@ const DashboardTiles = {
                       <div style={{ fontWeight: 'bold', color: 'var(--text-color)' }}>{trailer.title}</div>
                       <div style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
                         {trailer.release_date ? `Releases: ${new Date(trailer.release_date).toLocaleDateString()}` : 'Release date unknown'}
+                        {trailer.removal_date && (
+                          <span style={{ opacity: 0.85 }} title="Auto-removed by NeX-Up retention cleanup">
+                            {`  ·  Removed: ${new Date(trailer.removal_date).toLocaleDateString()}`}
+                          </span>
+                        )}
                       </div>
                     </div>
                     <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
@@ -22524,9 +22534,14 @@ const DashboardTiles = {
                       <div style={{ fontWeight: 'bold', color: 'var(--text-color)', marginBottom: '0.25rem', fontSize: '0.95rem' }}>
                         {trailer.title}
                       </div>
-                      <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', marginBottom: '0.5rem' }}>
+                      <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', marginBottom: trailer.removal_date ? '0.25rem' : '0.5rem' }}>
                         {trailer.release_date ? `Airs: ${new Date(trailer.release_date).toLocaleDateString()}` : 'Air date unknown'}
                       </div>
+                      {trailer.removal_date && (
+                        <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: '0.5rem', opacity: 0.85 }} title="Auto-removed by NeX-Up retention cleanup">
+                          {`Removed: ${new Date(trailer.removal_date).toLocaleDateString()}`}
+                        </div>
+                      )}
                       <div style={{ display: 'flex', gap: '0.5rem' }}>
                         <button
                           onClick={() => handleToggleTVTrailer(trailer.id)}
@@ -22569,6 +22584,11 @@ const DashboardTiles = {
                       <div style={{ fontWeight: 'bold', color: 'var(--text-color)' }}>{trailer.title}</div>
                       <div style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
                         {trailer.release_date ? `Airs: ${new Date(trailer.release_date).toLocaleDateString()}` : 'Air date unknown'}
+                        {trailer.removal_date && (
+                          <span style={{ opacity: 0.85 }} title="Auto-removed by NeX-Up retention cleanup">
+                            {`  ·  Removed: ${new Date(trailer.removal_date).toLocaleDateString()}`}
+                          </span>
+                        )}
                       </div>
                     </div>
                     <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>

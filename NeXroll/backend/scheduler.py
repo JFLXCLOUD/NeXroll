@@ -195,6 +195,7 @@ class Scheduler:
         self._last_nexup_sync_time: Optional[datetime.datetime] = None
         # Track last log-retention cleanup (runs ~once/day from the loop)
         self._last_log_cleanup_time: Optional[datetime.datetime] = None
+        self._last_trailer_cleanup_time: Optional[datetime.datetime] = None
         # Automatic preroll-folder scan runs in its own isolated thread so it can
         # never block or crash the scheduler loop.
         self._last_preroll_scan_time: Optional[datetime.datetime] = None
@@ -363,6 +364,11 @@ class Scheduler:
                 self._maybe_cleanup_logs()
             except Exception as e:
                 _scheduler_log(f"Log cleanup error: {e}", level="ERROR")
+            try:
+                # Enforce NeX-Up trailer retention ~once per hour
+                self._maybe_cleanup_trailers()
+            except Exception as e:
+                _scheduler_log(f"Trailer retention cleanup error: {e}", level="ERROR")
             # NOTE: automatic preroll-folder scanning runs in its OWN dedicated
             # thread (_run_autoscan_loop), NOT here. The scan walks the disk and
             # may spawn ffmpeg for thumbnails; keeping it off the scheduler loop
@@ -449,6 +455,60 @@ class Scheduler:
         deleted = cleanup_old_logs()
         if deleted:
             _scheduler_log(f"Log retention: pruned {deleted} log entries older than retention window")
+
+    def _maybe_cleanup_trailers(self):
+        """Delete downloaded NeX-Up trailers older than the retention window
+        (nexup_trailer_retention_days; 0 = keep forever). Runs at most hourly.
+
+        Removal is by downloaded_at age — the same basis the Your Trailers page
+        shows as each trailer's removal date. This is separate from the
+        library-arrival cleanup in the sync (movie now in your library), which
+        is event-based; this is the time-based retention the setting promised
+        but never previously enforced.
+        """
+        now = datetime.datetime.utcnow()
+        last = self._last_trailer_cleanup_time
+        if last is not None and (now - last).total_seconds() < 3600:
+            return
+        self._last_trailer_cleanup_time = now
+
+        db = SessionLocal()
+        try:
+            setting = db.query(models.Setting).first()
+            days = getattr(setting, "nexup_trailer_retention_days", 7) if setting else 7
+            try:
+                days = int(days)
+            except Exception:
+                days = 7
+            if days <= 0:
+                return  # 0 = keep forever
+            cutoff = now - datetime.timedelta(days=days)
+            removed = 0
+            for model in (models.ComingSoonTrailer, models.ComingSoonTVTrailer):
+                old = db.query(model).filter(
+                    model.status == 'downloaded',
+                    model.downloaded_at != None,  # noqa: E711 (SQLAlchemy NULL check)
+                    model.downloaded_at < cutoff,
+                ).all()
+                for t in old:
+                    if t.local_path and os.path.exists(t.local_path):
+                        try:
+                            os.remove(t.local_path)
+                        except Exception:
+                            pass
+                    db.delete(t)
+                    removed += 1
+            if removed:
+                db.commit()
+                _scheduler_log(f"NeX-Up trailer retention: removed {removed} trailer(s) older than {days} day(s)")
+        except Exception as e:
+            try:
+                db.rollback()
+            except Exception:
+                pass
+            _scheduler_log(f"Trailer retention cleanup failed: {e}", level="ERROR")
+        finally:
+            db.close()
 
     def _check_nexup_auto_sync(self):
         """

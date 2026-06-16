@@ -17519,7 +17519,22 @@ def get_sonarr_trailers(db: Session = Depends(get_db)):
     trailers = db.query(models.ComingSoonTVTrailer).filter(
         models.ComingSoonTVTrailer.status == 'downloaded'
     ).order_by(models.ComingSoonTVTrailer.release_date.asc()).all()
-    
+
+    setting = db.query(models.Setting).first()
+    retention_days = getattr(setting, "nexup_trailer_retention_days", 7) if setting else 7
+    try:
+        retention_days = int(retention_days)
+    except Exception:
+        retention_days = 7
+
+    def calc_removal(downloaded_at):
+        if not downloaded_at or retention_days <= 0:
+            return None
+        try:
+            return (downloaded_at + datetime.timedelta(days=retention_days)).isoformat()
+        except Exception:
+            return None
+
     return [{
         "id": t.id,
         "sonarr_series_id": t.sonarr_series_id,
@@ -17534,7 +17549,9 @@ def get_sonarr_trailers(db: Session = Depends(get_db)):
         "file_size_mb": t.file_size_mb,
         "poster_url": t.poster_url,
         "is_enabled": t.is_enabled,
-        "status": t.status
+        "status": t.status,
+        "downloaded_at": t.downloaded_at.isoformat() if t.downloaded_at else None,
+        "removal_date": calc_removal(t.downloaded_at)
     } for t in trailers]
 
 @app.get("/nexup/trailers/download/tv")
@@ -19152,7 +19169,7 @@ def get_nexup_trailers(db: Session = Depends(get_db)):
     trailers = db.query(models.ComingSoonTrailer).order_by(
         models.ComingSoonTrailer.release_date.asc()
     ).all()
-    
+
     def calc_days_until(release_dt):
         if not release_dt:
             return None
@@ -19164,8 +19181,27 @@ def get_nexup_trailers(db: Session = Depends(get_db)):
             return (release_date - datetime.datetime.now().date()).days
         except:
             return None
-    
+
+    # Time-based retention: a downloaded trailer is auto-removed once it's older
+    # than nexup_trailer_retention_days (0 = keep forever). Surface the date so
+    # the UI can show when each trailer will be removed.
+    setting = db.query(models.Setting).first()
+    retention_days = getattr(setting, "nexup_trailer_retention_days", 7) if setting else 7
+    try:
+        retention_days = int(retention_days)
+    except Exception:
+        retention_days = 7
+
+    def calc_removal(downloaded_at):
+        if not downloaded_at or retention_days <= 0:
+            return None
+        try:
+            return (downloaded_at + datetime.timedelta(days=retention_days)).isoformat()
+        except Exception:
+            return None
+
     return {
+        "retention_days": retention_days,  # 0 = never auto-removed
         "trailers": [
             {
                 "id": t.id,
@@ -19185,7 +19221,8 @@ def get_nexup_trailers(db: Session = Depends(get_db)):
                 "status": t.status,
                 "is_enabled": t.is_enabled,
                 "play_count": t.play_count,
-                "downloaded_at": t.downloaded_at.isoformat() if t.downloaded_at else None
+                "downloaded_at": t.downloaded_at.isoformat() if t.downloaded_at else None,
+                "removal_date": calc_removal(t.downloaded_at)
             }
             for t in trailers
         ],
