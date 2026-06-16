@@ -29940,12 +29940,15 @@ const DashboardTiles = {
                         deleteSequence(sequence.id, sequence.name);
                       }
                     }}
-                    style={{ 
-                      padding: '0.3rem 0.55rem', 
+                    style={{
+                      padding: '0.3rem 0.55rem',
                       fontSize: '0.75rem',
                       backgroundColor: '#dc3545',
+                      borderColor: '#dc3545',
                       display: 'inline-flex',
                       alignItems: 'center',
+                      justifyContent: 'center',
+                      gap: '0.25rem',
                       marginLeft: 'auto'
                     }}
                     title="Delete sequence"
