@@ -785,6 +785,57 @@ def _migrate_legacy_api_keys():
 
 _migrate_legacy_api_keys()
 
+def resolve_nexup_trailer_block(block: dict, db) -> list:
+    """Resolve a sequence/filler 'nexup_trailers' block to an ordered list of
+    trailer rows (movie and/or TV ComingSoonTrailer objects), honoring:
+
+      source: 'both' | 'movies' | 'tv'   which trailer pools to draw from
+      mode:   'random' | 'sequential'    random.sample vs soonest-release-first
+      count:  int                        how many to return (both modes)
+
+    Single source of truth so every resolution site (sequence preview, apply,
+    filler, scheduler) behaves identically. Returns a list of model rows; the
+    caller maps them to paths or preview dicts as needed. Only downloaded,
+    enabled, not-yet-released trailers whose file exists are considered.
+    """
+    source = str(block.get("source", "both")).lower()
+    mode = str(block.get("mode", "random")).lower()
+    try:
+        count = int(block.get("count") or 2)
+    except Exception:
+        count = 2
+    count = max(count, 1)
+    now = datetime.datetime.now()
+
+    rows = []
+    if source in ("movies", "both"):
+        rows += [t for t in db.query(models.ComingSoonTrailer).filter(
+            models.ComingSoonTrailer.status == 'downloaded',
+            models.ComingSoonTrailer.is_enabled == True,
+            models.ComingSoonTrailer.release_date >= now,
+        ).all() if t.local_path and os.path.exists(t.local_path)]
+    if source in ("tv", "both"):
+        rows += [t for t in db.query(models.ComingSoonTVTrailer).filter(
+            models.ComingSoonTVTrailer.status == 'downloaded',
+            models.ComingSoonTVTrailer.is_enabled == True,
+            models.ComingSoonTVTrailer.release_date >= now,
+        ).all() if t.local_path and os.path.exists(t.local_path)]
+
+    if not rows:
+        return []
+
+    if mode == "sequential":
+        # Deterministic: soonest release first (None dates sort last).
+        rows.sort(key=lambda t: (t.release_date is None, t.release_date))
+        return rows[:count]
+    # Random (default, and the historical behavior): shuffle the selected
+    # source pool, then take count.
+    if len(rows) > count:
+        return random.sample(rows, count)
+    random.shuffle(rows)
+    return rows
+
+
 def calculate_file_hash(file_path: str) -> str:
     """Calculate SHA256 hash of a file for duplicate detection"""
     import hashlib
@@ -10072,30 +10123,8 @@ def apply_sequence_to_server(sequence_id: int, db: Session = Depends(get_db)):
                     paths.append(os.path.abspath(p.path))
 
         elif block_type == "nexup_trailers":
-            source = str(block.get("source", "both")).lower()
-            count = int(block.get("count") or 2)
-            now = datetime.datetime.now()
-            trailer_paths = []
-            if source in ("movies", "both"):
-                for t in db.query(models.ComingSoonTrailer).filter(
-                    models.ComingSoonTrailer.status == 'downloaded',
-                    models.ComingSoonTrailer.is_enabled == True,
-                    models.ComingSoonTrailer.release_date >= now
-                ).all():
-                    if t.local_path and os.path.exists(t.local_path):
-                        trailer_paths.append(os.path.abspath(t.local_path))
-            if source in ("tv", "both"):
-                for t in db.query(models.ComingSoonTVTrailer).filter(
-                    models.ComingSoonTVTrailer.status == 'downloaded',
-                    models.ComingSoonTVTrailer.is_enabled == True,
-                    models.ComingSoonTVTrailer.release_date >= now
-                ).all():
-                    if t.local_path and os.path.exists(t.local_path):
-                        trailer_paths.append(os.path.abspath(t.local_path))
-            if trailer_paths:
-                k = min(max(count, 1), len(trailer_paths))
-                picks = random.sample(trailer_paths, k) if len(trailer_paths) > k else trailer_paths
-                paths.extend(picks)
+            for t in resolve_nexup_trailer_block(block, db):
+                paths.append(os.path.abspath(t.local_path))
 
         elif block_type == "coming_soon_list":
             layout = str(block.get("layout", "grid")).lower()
@@ -13005,44 +13034,18 @@ def _preview_payload_from_intent(setting, db) -> Optional[dict]:
             elif btype == "nexup_trailers":
                 # Mirror /sequences/resolve-preview-blocks so the dashboard preview
                 # includes trailer blocks instead of silently dropping them.
-                source = str(block.get("source", "both")).lower()
-                count = int(block.get("count") or 2)
-                storage_path = getattr(setting, "nexup_storage_path", None)
-                now = datetime.datetime.now()
-                trailer_items = []
-                if source in ("movies", "both"):
-                    for t in db.query(models.ComingSoonTrailer).filter(
-                        models.ComingSoonTrailer.status == 'downloaded',
-                        models.ComingSoonTrailer.is_enabled == True,
-                        models.ComingSoonTrailer.release_date >= now
-                    ).all():
-                        if t.local_path and os.path.exists(t.local_path):
-                            trailer_items.append({
-                                "id": None,
-                                "filename": (t.title or f"movie_trailer_{t.id}"),
-                                "display_name": t.title or f"Movie Trailer #{t.id}",
-                                "category_name": "Coming Soon",
-                                "path": t.local_path,
-                                "preview_url": f"/nexup/trailer/video/movie/{t.id}",
-                            })
-                if source in ("tv", "both"):
-                    for t in db.query(models.ComingSoonTVTrailer).filter(
-                        models.ComingSoonTVTrailer.status == 'downloaded',
-                        models.ComingSoonTVTrailer.is_enabled == True,
-                        models.ComingSoonTVTrailer.release_date >= now
-                    ).all():
-                        if t.local_path and os.path.exists(t.local_path):
-                            trailer_items.append({
-                                "id": None,
-                                "filename": (t.title or f"tv_trailer_{t.id}"),
-                                "display_name": t.title or f"TV Trailer #{t.id}",
-                                "category_name": "Coming Soon",
-                                "path": t.local_path,
-                                "preview_url": f"/nexup/trailer/video/tv/{t.id}",
-                            })
-                if len(trailer_items) > count:
-                    trailer_items = random.sample(trailer_items, count)
-                rows.extend(trailer_items)
+                # Shared helper applies source/mode/count; map rows -> preview dicts.
+                for t in resolve_nexup_trailer_block(block, db):
+                    is_tv = isinstance(t, models.ComingSoonTVTrailer)
+                    kind = "tv" if is_tv else "movie"
+                    rows.append({
+                        "id": None,
+                        "filename": (t.title or f"{kind}_trailer_{t.id}"),
+                        "display_name": t.title or f"{'TV' if is_tv else 'Movie'} Trailer #{t.id}",
+                        "category_name": "Coming Soon",
+                        "path": t.local_path,
+                        "preview_url": f"/nexup/trailer/video/{kind}/{t.id}",
+                    })
             elif btype == "coming_soon_list":
                 layout = str(block.get("layout", "grid")).lower()
                 storage_path = getattr(setting, "nexup_storage_path", None)
@@ -20882,35 +20885,14 @@ def resolve_preview_blocks(blocks: list = Body(...), db: Session = Depends(get_d
         block_type = str(block.get("type", "")).lower()
         items = []
         if block_type == "nexup_trailers":
-            source = str(block.get("source", "both")).lower()
-            count = int(block.get("count") or 2)
-            if source in ("movies", "both"):
-                for t in db.query(models.ComingSoonTrailer).filter(
-                    models.ComingSoonTrailer.status == 'downloaded',
-                    models.ComingSoonTrailer.is_enabled == True,
-                    models.ComingSoonTrailer.release_date >= now
-                ).all():
-                    if t.local_path and os.path.exists(t.local_path):
-                        items.append({
-                            "title": t.title,
-                            "url": f"/nexup/trailer/video/movie/{t.id}",
-                            "type": "movie_trailer"
-                        })
-            if source in ("tv", "both"):
-                for t in db.query(models.ComingSoonTVTrailer).filter(
-                    models.ComingSoonTVTrailer.status == 'downloaded',
-                    models.ComingSoonTVTrailer.is_enabled == True,
-                    models.ComingSoonTVTrailer.release_date >= now
-                ).all():
-                    if t.local_path and os.path.exists(t.local_path):
-                        items.append({
-                            "title": t.title,
-                            "url": f"/nexup/trailer/video/tv/{t.id}",
-                            "type": "tv_trailer"
-                        })
-            if len(items) > count:
-                import random as _rand
-                items = _rand.sample(items, count)
+            for t in resolve_nexup_trailer_block(block, db):
+                is_tv = isinstance(t, models.ComingSoonTVTrailer)
+                kind = "tv" if is_tv else "movie"
+                items.append({
+                    "title": t.title,
+                    "url": f"/nexup/trailer/video/{kind}/{t.id}",
+                    "type": "tv_trailer" if is_tv else "movie_trailer"
+                })
         elif block_type == "coming_soon_list":
             layout = str(block.get("layout", "grid")).lower()
             filename = f"coming_soon_{layout}.mp4"
@@ -26425,30 +26407,8 @@ def _resolve_current_intros(db: Session) -> dict:
                     if p:
                         paths.append(os.path.abspath(p.path))
             elif btype == "nexup_trailers":
-                source = str(block.get("source", "both")).lower()
-                count = int(block.get("count") or 2)
-                now = datetime.datetime.now()
-                trailer_paths = []
-                if source in ("movies", "both"):
-                    for t in db.query(models.ComingSoonTrailer).filter(
-                        models.ComingSoonTrailer.status == 'downloaded',
-                        models.ComingSoonTrailer.is_enabled == True,
-                        models.ComingSoonTrailer.release_date >= now
-                    ).all():
-                        if t.local_path and os.path.exists(t.local_path):
-                            trailer_paths.append(os.path.abspath(t.local_path))
-                if source in ("tv", "both"):
-                    for t in db.query(models.ComingSoonTVTrailer).filter(
-                        models.ComingSoonTVTrailer.status == 'downloaded',
-                        models.ComingSoonTVTrailer.is_enabled == True,
-                        models.ComingSoonTVTrailer.release_date >= now
-                    ).all():
-                        if t.local_path and os.path.exists(t.local_path):
-                            trailer_paths.append(os.path.abspath(t.local_path))
-                if trailer_paths:
-                    k = min(max(count, 1), len(trailer_paths))
-                    picks = random.sample(trailer_paths, k) if len(trailer_paths) > k else trailer_paths
-                    paths.extend(picks)
+                for t in resolve_nexup_trailer_block(block, db):
+                    paths.append(os.path.abspath(t.local_path))
             elif btype == "coming_soon_list":
                 layout = str(block.get("layout", "grid")).lower()
                 _setting = db.query(models.Setting).first()

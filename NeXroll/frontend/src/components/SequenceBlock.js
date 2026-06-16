@@ -294,7 +294,9 @@ const SequenceBlock = ({
     } else if (blockType === 'nexup_trailers') {
       const source = block.source || 'both';
       const count = block.count || 2;
+      const mode = block.mode || 'random';
       const sourceLabel = source === 'both' ? 'Movies & TV' : source === 'movies' ? 'Movies' : 'TV Shows';
+      const modeLabel = mode === 'sequential' ? 'Sequential (soonest first)' : 'Random';
       return (
         <>
           <div style={{
@@ -334,6 +336,13 @@ const SequenceBlock = ({
               color: 'var(--text-color)',
               marginBottom: '8px'
             }}>NeX-Up Trailers</div>
+            <div style={{
+              fontSize: '14px',
+              color: 'var(--text-secondary)',
+              marginBottom: '5px'
+            }}>
+              <strong style={{ color: 'var(--text-color)' }}>Mode:</strong> {modeLabel}
+            </div>
             <div style={{
               fontSize: '14px',
               color: 'var(--text-secondary)',

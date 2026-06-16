@@ -29331,6 +29331,7 @@ const DashboardTiles = {
         } else if (block.type === 'nexup_trailers') {
           cleaned.source = block.source || 'both';
           cleaned.count = block.count || 2;
+          cleaned.mode = block.mode || 'random';
         } else if (block.type === 'coming_soon_list') {
           cleaned.layout = block.layout || 'grid';
         } else if (block.type === 'dynamic_preroll') {

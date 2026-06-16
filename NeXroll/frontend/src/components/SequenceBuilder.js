@@ -98,7 +98,7 @@ const SequenceBuilder = ({ blocks: externalBlocks = [], onBlocksChange, initialS
     const defaults = {
       random: { category_id: categories[0]?.id || null, count: 1 },
       fixed: { preroll_ids: [] },
-      nexup_trailers: { source: 'both', count: 2 },
+      nexup_trailers: { source: 'both', count: 2, mode: 'random' },
       coming_soon_list: { layout: 'grid' },
       dynamic_preroll: { template: '', theme: '' },
     };
