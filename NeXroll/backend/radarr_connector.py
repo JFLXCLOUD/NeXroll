@@ -577,6 +577,13 @@ def classify_ytdlp_error(msg: str) -> dict:
         return {'category': 'age_restricted', 'reason': 'This video is age-restricted. Signed-in cookies are required for this one specifically.'}
     if 'http error 429' in m or 'too many requests' in m:
         return {'category': 'rate_limited', 'reason': 'YouTube is rate-limiting your IP. Wait a while, or try a VPN/different network.'}
+    if 'requested format is not available' in m or 'no video formats found' in m:
+        # Extraction + auth SUCCEEDED — yt-dlp reached the video and read its
+        # format list; it only failed to match a format string. For a probe
+        # (which downloads nothing) this proves sign-in works. The real
+        # downloader tries many format/player-client combos, so this is not a
+        # download blocker either.
+        return {'category': 'reachable', 'reason': 'Reached the video and authenticated (format selection is not relevant to a sign-in test).'}
     return {'category': 'other', 'reason': (msg or 'Unknown error')[:300]}
 
 
@@ -595,6 +602,11 @@ def probe_youtube(url: str, cookies_file=None, cookie_browser=None, timeout: int
         'quiet': True, 'no_warnings': True, 'noplaylist': True,
         'skip_download': True, 'socket_timeout': timeout,
         'no_check_certificate': True,
+        # This is a sign-in/reachability probe, not a download. Accept any
+        # format so format-string mismatches never fail it; we never fetch
+        # media anyway (download=False).
+        'format': 'best/bestvideo*+bestaudio/bestvideo*/worst',
+        'ignore_no_formats_error': True,
     }
     if cookies_file and Path(cookies_file).exists():
         opts['cookiefile'] = str(cookies_file)
@@ -606,9 +618,17 @@ def probe_youtube(url: str, cookies_file=None, cookie_browser=None, timeout: int
             info = ydl.extract_info(url, download=False)
         return {'ok': True, 'title': info.get('title'), 'duration': info.get('duration')}
     except yt_dlp.utils.DownloadError as e:
-        return {'ok': False, **classify_ytdlp_error(str(e))}
+        c = classify_ytdlp_error(str(e))
+        # "reachable" means extraction + auth worked (only format selection
+        # failed) — that's a PASS for a sign-in test.
+        if c.get('category') == 'reachable':
+            return {'ok': True, 'title': None, 'reason': c['reason']}
+        return {'ok': False, **c}
     except Exception as e:
-        return {'ok': False, **classify_ytdlp_error(str(e))}
+        c = classify_ytdlp_error(str(e))
+        if c.get('category') == 'reachable':
+            return {'ok': True, 'title': None, 'reason': c['reason']}
+        return {'ok': False, **c}
 
 
 def _parse_cookies_from_browser(spec: str):
