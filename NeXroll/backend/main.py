@@ -1298,6 +1298,56 @@ def _run_subprocess(cmd, **kwargs):
         # Fallback if anything above fails
         import subprocess as _sp
         return _sp.run(cmd, **kwargs)
+
+
+def _is_running_in_docker() -> bool:
+    """Best-effort detection of running inside a container. Used to disable the
+    dependency-install actions there (deps are baked into the image; a runtime
+    install would be lost on container recreate)."""
+    try:
+        if os.environ.get("NEXROLL_IN_DOCKER") == "1":
+            return True
+        if os.path.exists("/.dockerenv"):
+            return True
+        # cgroup check (Linux containers)
+        if sys.platform.startswith("linux"):
+            try:
+                with open("/proc/1/cgroup", "rt") as f:
+                    if any(("docker" in line or "containerd" in line or "kubepods" in line) for line in f):
+                        return True
+            except Exception:
+                pass
+    except Exception:
+        pass
+    return False
+
+
+def _find_deno() -> str:
+    """Locate the deno executable. Checks PATH first, then the standard install
+    locations the official installer uses — so a deno that was installed after
+    the backend started (and thus isn't on the backend process's inherited
+    PATH) is still found without a restart. Returns a path or None."""
+    import shutil
+    p = shutil.which("deno")
+    if p:
+        return p
+    exe = "deno.exe" if sys.platform.startswith("win") else "deno"
+    candidates = []
+    home = os.path.expanduser("~")
+    candidates.append(os.path.join(home, ".deno", "bin", exe))
+    if sys.platform.startswith("win"):
+        la = os.environ.get("LOCALAPPDATA")
+        if la:
+            candidates.append(os.path.join(la, "deno", exe))
+    else:
+        candidates.append("/usr/local/bin/deno")
+        candidates.append("/root/.deno/bin/deno")
+    for c in candidates:
+        if c and os.path.exists(c):
+            return c
+    return None
+
+
 def _resolve_tool(tool_name: str) -> str:
     """
     Return an absolute path or the bare tool name that can be executed.
@@ -2826,28 +2876,115 @@ def system_dependencies():
             dependencies["yt_dlp"]["version"] = f"yt-dlp {yt_ver}" if yt_ver else "yt-dlp (version unknown)"
             dependencies["yt_dlp"]["path"] = yt_dlp_path
     
-    # Check Deno (required for yt-dlp YouTube extraction)
-    deno_path = shutil.which('deno')
+    # Check Deno (required for yt-dlp YouTube extraction). Use _find_deno so a
+    # deno installed after the backend started (not yet on the process PATH) is
+    # still detected — and flag whether it was found off-PATH so the UI can hint
+    # at a restart.
+    deno_path = _find_deno()
     if deno_path:
         dependencies["deno"]["available"] = True
-        deno_ok, deno_ver = probe_version('deno', '--version')
-        if deno_ver:
-            # deno --version returns multiple lines, first line is "deno X.X.X"
-            dependencies["deno"]["version"] = deno_ver
         dependencies["deno"]["path"] = deno_path
-    
+        ok, ver = probe_version(deno_path, '--version')
+        if ver:
+            dependencies["deno"]["version"] = ver
+        # On PATH? if not, the running process still won't pick it up for
+        # subprocess calls that rely on PATH resolution.
+        dependencies["deno"]["on_path"] = shutil.which('deno') is not None
+
+    # Which deps can be installed from this page, given the platform.
+    is_docker = _is_running_in_docker()
+    dependencies["deno"]["installable"] = (not is_docker) and (not dependencies["deno"]["available"] or not dependencies["deno"].get("on_path", True))
+
     # Add system info
     system_info = {
         "platform": platform.system(),
         "platform_version": platform.version(),
         "architecture": platform.machine(),
-        "hostname": platform.node()
+        "hostname": platform.node(),
+        "is_docker": is_docker
     }
-    
+
     return {
         "dependencies": dependencies,
         "system": system_info
     }
+
+
+@app.post("/system/dependencies/install/deno")
+def install_deno():
+    # Auth (when enabled) is enforced by the global auth-gate middleware, so we
+    # don't add Depends(require_auth) here — require_auth is defined later in
+    # this module, and referencing it in the decorator's default would NameError
+    # at import time.
+    """Install the Deno runtime (needed for YouTube/NeX-Up extraction).
+
+    Windows: runs the official PowerShell installer.
+    Linux/macOS (non-Docker): runs the official shell installer.
+    Docker: refused — dependencies are baked into the image; pull a newer image
+    instead (a runtime install would be lost when the container is recreated).
+
+    After installing, we add Deno's bin dir to THIS process's PATH and re-probe,
+    so it's usable immediately for most cases without a NeXroll restart.
+    """
+    if _is_running_in_docker():
+        return {
+            "success": False,
+            "docker": True,
+            "message": "Running in Docker — Deno is provided by the image. Pull the latest NeXroll image to update it; runtime installs don't persist across container recreation.",
+        }
+
+    # Already present and on PATH? Nothing to do.
+    existing = _find_deno()
+    if existing and shutil.which("deno"):
+        return {"success": True, "already_installed": True, "path": existing, "message": "Deno is already installed."}
+
+    try:
+        if sys.platform.startswith("win"):
+            # Official Windows installer (irm https://deno.land/install.ps1 | iex)
+            ps_cmd = "$ErrorActionPreference='Stop'; irm https://deno.land/install.ps1 | iex"
+            r = _run_subprocess(
+                ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", ps_cmd],
+                capture_output=True, text=True, timeout=180,
+            )
+        else:
+            r = _run_subprocess(
+                ["sh", "-c", "curl -fsSL https://deno.land/install.sh | sh"],
+                capture_output=True, text=True, timeout=180,
+            )
+        out = (r.stdout or "") + "\n" + (r.stderr or "")
+        if r.returncode != 0:
+            _file_log(f"Deno install failed (rc={r.returncode}): {out[-500:]}")
+            return {"success": False, "message": f"Install failed: {out.strip()[-300:] or 'unknown error'}"}
+    except Exception as e:
+        _file_log(f"Deno install exception: {e}")
+        return {"success": False, "message": f"Install error: {e}"}
+
+    # Locate the freshly installed deno and add its dir to this process's PATH
+    # so subprocesses that resolve via PATH can find it now.
+    deno_path = _find_deno()
+    if deno_path:
+        bin_dir = os.path.dirname(deno_path)
+        if bin_dir and bin_dir not in os.environ.get("PATH", "").split(os.pathsep):
+            os.environ["PATH"] = bin_dir + os.pathsep + os.environ.get("PATH", "")
+        on_path_now = shutil.which("deno") is not None
+        ver = None
+        try:
+            vr = _run_subprocess([deno_path, "--version"], capture_output=True, text=True, timeout=20)
+            if vr.returncode == 0 and vr.stdout:
+                ver = vr.stdout.splitlines()[0].strip()
+        except Exception:
+            pass
+        _file_log(f"Deno installed at {deno_path} (on_path={on_path_now}, version={ver})")
+        return {
+            "success": True,
+            "path": deno_path,
+            "version": ver,
+            "active_now": on_path_now,
+            "message": ("Deno installed and active." if on_path_now
+                        else "Deno installed. Restart NeXroll if YouTube extraction still reports it missing."),
+        }
+
+    return {"success": False, "message": "Install ran but Deno could not be located afterward. A NeXroll restart may be required."}
 
 
 @app.get("/system/ffmpeg-info")

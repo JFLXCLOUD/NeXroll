@@ -567,7 +567,43 @@ function App() {
   const [holidayPresets, setHolidayPresets] = useState([]);
   const [files, setFiles] = useState([]);
   const [uploadProgress, setUploadProgress] = useState({});
-  const [activeTab, setActiveTab] = useState('dashboard');
+  // Hash-based routing: the current page lives in the URL hash (#/settings/storage)
+  // so pages are deep-linkable, refresh-safe, and Back/Forward works. Tab IDs
+  // already mirror paths (e.g. 'settings/storage'), so the mapping is 1:1.
+  const tabFromHash = () => {
+    try {
+      const h = (window.location.hash || '').replace(/^#\/?/, '').trim();
+      return h || 'dashboard';
+    } catch {
+      return 'dashboard';
+    }
+  };
+  const [activeTab, setActiveTab] = useState(tabFromHash);
+  // Keep the URL hash and activeTab in sync, both directions:
+  //  - activeTab changes (sidebar click, tile arrow, programmatic) -> write hash
+  //  - hash changes (Back/Forward, manual edit, shared link) -> update activeTab
+  // The guard prevents a feedback loop between the two updates.
+  const _suppressHashWrite = useRef(false);
+  useEffect(() => {
+    const desired = '#/' + (activeTab || 'dashboard');
+    if (window.location.hash !== desired) {
+      _suppressHashWrite.current = true;
+      window.location.hash = desired;
+    }
+  }, [activeTab]);
+  useEffect(() => {
+    const onHashChange = () => {
+      if (_suppressHashWrite.current) {
+        // This hashchange was caused by our own activeTab->hash write; ignore.
+        _suppressHashWrite.current = false;
+        return;
+      }
+      const t = tabFromHash();
+      setActiveTab(prev => (prev === t ? prev : t));
+    };
+    window.addEventListener('hashchange', onHashChange);
+    return () => window.removeEventListener('hashchange', onHashChange);
+  }, []);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false); // Mobile navigation menu
   // v2 sidebar: collapsed (icon-only) state, persisted across sessions
   const [sidebarCollapsed, setSidebarCollapsed] = useState(() => {
@@ -686,6 +722,7 @@ function App() {
   const [ffmpegInfo, setFfmpegInfo] = useState(null);
   const [systemDependencies, setSystemDependencies] = useState(null);
   const [dependenciesLoading, setDependenciesLoading] = useState(false);
+  const [installingDep, setInstallingDep] = useState(null); // e.g. 'deno' while installing
   const [updateInfo, setUpdateInfo] = useState(null);
   const [showUpdateBanner, setShowUpdateBanner] = useState(false);
   const [updateSettings, setUpdateSettings] = useState({ check_interval: 'daily', include_prerelease: false, last_check: null, dismissed_version: null });
@@ -7795,9 +7832,9 @@ const DashboardTiles = {
                       <Wand2 size={12} /> Fix
                     </button>
                   )}
-                  <button 
-                    className="button button-secondary" 
-                    onClick={() => { setActiveTab('schedules'); setShowCalendar(true); setCalendarMode('week'); }}
+                  <button
+                    className="button button-secondary"
+                    onClick={() => { setActiveTab('schedules/calendar'); setShowCalendar(true); setCalendarMode('week'); }}
                     style={{ fontSize: '0.75rem', padding: '4px 10px', display: 'flex', alignItems: 'center', gap: '4px' }}
                   >
                     Full Calendar <ChevronRight size={12} />
@@ -18106,6 +18143,26 @@ const DashboardTiles = {
     }
   };
 
+  const handleInstallDeno = async () => {
+    setInstallingDep('deno');
+    try {
+      const res = await fetch(apiUrl('system/dependencies/install/deno'), {
+        method: 'POST', credentials: 'include'
+      });
+      const data = await res.json().catch(() => ({}));
+      if (data.success) {
+        showAlert(data.message || 'Deno installed.', 'success');
+        await recheckFfmpeg(); // re-probe dependencies so the card updates
+      } else {
+        showAlert(data.message || 'Failed to install Deno.', 'error');
+      }
+    } catch (e) {
+      showAlert('Failed to install Deno: ' + (e?.message || e), 'error');
+    } finally {
+      setInstallingDep(null);
+    }
+  };
+
   const recheckFfmpeg = async () => {
     setDependenciesLoading(true);
     try {
@@ -27867,14 +27924,37 @@ const DashboardTiles = {
               <div>
                 <div style={{ fontWeight: '500' }}>Deno</div>
                 <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>
-                  {systemDependencies?.dependencies?.deno?.available 
-                    ? systemDependencies.dependencies.deno.version 
-                    : (systemDependencies ? 'Not installed (optional)' : 'Detecting...')}
+                  {systemDependencies?.dependencies?.deno?.available
+                    ? (systemDependencies.dependencies.deno.version
+                        + (systemDependencies.dependencies.deno.on_path === false ? ' — installed but not on PATH (restart NeXroll)' : ''))
+                    : (systemDependencies ? 'Not installed (needed for YouTube/NeX-Up extraction)' : 'Detecting...')}
                 </div>
               </div>
             </div>
-            <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>
-              JavaScript runtime for YouTube extraction
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap' }}>
+              <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>
+                JavaScript runtime for YouTube extraction
+              </div>
+              {/* Install action — only when this NeXroll can actually install it
+                  (missing or off-PATH, and not in Docker). Docker shows a note. */}
+              {systemDependencies?.system?.is_docker ? (
+                (!systemDependencies?.dependencies?.deno?.available) && (
+                  <span style={{ fontSize: '0.72rem', color: 'var(--text-secondary)', fontStyle: 'italic' }}>
+                    Managed by the Docker image — pull the latest image to update
+                  </span>
+                )
+              ) : systemDependencies?.dependencies?.deno?.installable && (
+                <button
+                  className="button button-secondary"
+                  disabled={installingDep === 'deno'}
+                  onClick={handleInstallDeno}
+                  style={{ fontSize: '0.78rem', padding: '0.35rem 0.7rem', display: 'inline-flex', alignItems: 'center', gap: '0.35rem', whiteSpace: 'nowrap' }}
+                >
+                  {installingDep === 'deno'
+                    ? <><Loader2 size={14} className="spin" /> Installing…</>
+                    : <><Download size={14} /> Install Deno</>}
+                </button>
+              )}
             </div>
           </div>
 
