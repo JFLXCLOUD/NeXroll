@@ -12,7 +12,7 @@ import SequencePreviewModal from './components/SequencePreviewModal';
 import Sidebar from './components/Sidebar';
 import OnboardingWizard from './components/OnboardingWizard';
 import ToastHost from './components/Toast';
-import { validateSequence, stringifySequence, parseSequence, cloneSequenceWithIds } from './utils/sequenceValidator';
+import { validateSequence, stringifySequence, parseSequence, cloneSequenceWithIds, estimatePrerollCount } from './utils/sequenceValidator';
 import { 
     Calendar, CalendarDays, ChevronLeft, Clock, Play, Edit, Save, Trash, Trash2, Upload, 
     Search, Folder, Film, BookOpen, Star, Plus, PlusCircle, Settings, Target, CheckCircle, Link, Link2,
@@ -2976,6 +2976,11 @@ const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
       // Backend expects category_id, so we'll use first category from sequence or null
       const firstCategory = blocks.find(b => b.type === 'random')?.category_id;
       scheduleData.category_id = firstCategory || null;
+      // Link to the saved sequence (if this was built from one) so edits to that
+      // sequence propagate back into this schedule.
+      if (loadedSavedSequenceId) {
+        scheduleData.source_sequence_id = loadedSavedSequenceId;
+      }
     }
 
     fetch(apiUrl('schedules'), {
@@ -29849,11 +29854,7 @@ const DashboardTiles = {
                     fontWeight: 600,
                     whiteSpace: 'nowrap'
                   }}>
-                    {(sequence.blocks || []).reduce((total, block) => {
-                      if (block.type === 'random') return total + (block.count || 1);
-                      if (block.type === 'fixed') return total + (block.preroll_ids?.length || 0);
-                      return total;
-                    }, 0)} prerolls
+                    {estimatePrerollCount(sequence.blocks || []).max} prerolls
                   </span>
                   <span style={{ 
                     fontSize: '0.75rem',

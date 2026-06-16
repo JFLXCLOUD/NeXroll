@@ -83,6 +83,10 @@ class Schedule(Base):
     # Holiday tracking fields for auto-updating variable date holidays
     holiday_name = Column(String, nullable=True)  # e.g., "Thanksgiving", "Easter"
     holiday_country = Column(String, nullable=True)  # e.g., "US", "CA"
+    # When this schedule was created from a saved sequence, remember which one
+    # so edits to that saved sequence can be propagated back into this
+    # schedule's embedded `sequence` copy. Null for schedules built ad-hoc.
+    source_sequence_id = Column(Integer, nullable=True)
 
     category = relationship("Category", foreign_keys=[category_id])
     fallback_category = relationship("Category", foreign_keys=[fallback_category_id])

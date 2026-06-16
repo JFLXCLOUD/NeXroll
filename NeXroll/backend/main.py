@@ -101,6 +101,8 @@ def ensure_schema() -> None:
                 _sqlite_add_column("schedules", "holiday_name TEXT")
             if not _sqlite_has_column("schedules", "holiday_country"):
                 _sqlite_add_column("schedules", "holiday_country TEXT")
+            if not _sqlite_has_column("schedules", "source_sequence_id"):
+                _sqlite_add_column("schedules", "source_sequence_id INTEGER")
 
             # Holiday presets: ensure date range fields and is_recurring
             for col, ddl in [
@@ -1639,6 +1641,7 @@ class ScheduleCreate(BaseModel):
     exclusive: bool = False  # When active, this schedule wins exclusively (no blending)
     holiday_name: Optional[str] = None  # Holiday name for dynamic date lookup
     holiday_country: Optional[str] = None  # Country code for holiday lookup
+    source_sequence_id: Optional[int] = None  # Saved sequence this was built from (for edit propagation)
 
 class ScheduleResponse(BaseModel):
     id: int
@@ -9806,7 +9809,8 @@ def create_schedule(schedule: ScheduleCreate, db: Session = Depends(get_db)):
         priority=schedule.priority,
         exclusive=schedule.exclusive,
         holiday_name=schedule.holiday_name,
-        holiday_country=schedule.holiday_country
+        holiday_country=schedule.holiday_country,
+        source_sequence_id=schedule.source_sequence_id
     )
     db.add(db_schedule)
     try:
@@ -10162,13 +10166,26 @@ def update_saved_sequence(sequence_id: int, sequence: SavedSequenceUpdate, db: S
             db_sequence.name = sequence.name
         if sequence.description is not None:
             db_sequence.description = sequence.description
+        synced_schedules = 0
         if sequence.blocks is not None:
             db_sequence.blocks = json.dumps(sequence.blocks)
-        
+            # Propagate the edit into any schedule built from this saved sequence
+            # (schedules keep their own embedded copy of the blocks; without this,
+            # editing the library sequence wouldn't update the schedule using it).
+            linked = db.query(models.Schedule).filter(
+                models.Schedule.source_sequence_id == sequence_id
+            ).all()
+            new_seq_json = json.dumps(sequence.blocks)
+            for sched in linked:
+                sched.sequence = new_seq_json
+                synced_schedules += 1
+
         db_sequence.updated_at = datetime.datetime.utcnow()
         db.commit()
         db.refresh(db_sequence)
-        
+
+        if synced_schedules:
+            _file_log(f"Sequence {sequence_id} edit propagated to {synced_schedules} linked schedule(s)")
         _file_log(f"Updated sequence: {db_sequence.name} (ID: {sequence_id})")
         log_event('INFO', 'nexup', f"NeX-Up sequence '{db_sequence.name}' updated", 
                   source='update_sequence', details={"sequence_id": sequence_id}, db=db)
