@@ -6069,9 +6069,11 @@ const DashboardTiles = {
               <span className="nx-tile-row-k">
                 <Layers size={14} /> Mode
               </span>
-              <span className="nx-tile-row-v">Sequence (Manual Apply)</span>
+              <span className="nx-tile-row-v">
+                {appliedSequence.via_schedule ? 'Sequence (Scheduled)' : 'Sequence (Manual Apply)'}
+              </span>
             </div>
-            {activeCategory && (
+            {activeCategory && !appliedSequence.via_schedule && (
               <div className="nx-tile-row">
                 <span className="nx-tile-row-k">
                   <Calendar size={14} /> Scheduled

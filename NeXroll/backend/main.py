@@ -16258,6 +16258,26 @@ def apply_preroll_by_genres(req: ResolveGenresRequest, ttl: int = 15, db: Sessio
         "override_ttl_minutes": ttl
     }
 
+def _schedule_has_sequence(schedule) -> bool:
+    """True if a schedule carries a valid, non-empty inline sequence definition.
+    Mirrors scheduler._has_valid_sequence (kept local to avoid cross-import)."""
+    raw = getattr(schedule, "sequence", None) if schedule else None
+    if not raw:
+        return False
+    if isinstance(raw, str):
+        s = raw.strip()
+        if not s or s in ("null", "[]", "''", '""'):
+            return False
+        try:
+            parsed = json.loads(s)
+            return isinstance(parsed, list) and len(parsed) > 0
+        except Exception:
+            return False
+    if isinstance(raw, list):
+        return len(raw) > 0
+    return False
+
+
 @app.get("/settings/active-category")
 def get_active_category(db: Session = Depends(get_db)):
     """Get the currently applied category"""
@@ -16406,6 +16426,17 @@ def get_active_category(db: Session = Depends(get_db)):
             active_sched = db.query(models.Schedule).filter(models.Schedule.id == active_sched_id).first()
             if active_sched:
                 result["active_schedule_name"] = active_sched.name
+                # If the active schedule runs a SEQUENCE (e.g. NeX-Up trailer
+                # blocks), report it as applied_sequence so the Currently
+                # Showing tile shows the sequence view instead of the schedule's
+                # category ("Holidays / Shuffle / 0 Prerolls" was the category
+                # being shown for a sequence-based schedule).
+                if not applied_sequence and _schedule_has_sequence(active_sched):
+                    applied_sequence = {
+                        "id": active_sched.id,
+                        "name": active_sched.name,
+                        "via_schedule": True,
+                    }
         elif category_id:
             # Fallback for users upgrading from older versions where active_schedule_id was not yet
             # written to the DB (scheduler hasn't ticked since restart). Find the most recently run
