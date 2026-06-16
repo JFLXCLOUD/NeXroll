@@ -18265,57 +18265,102 @@ def get_youtube_status(db: Session = Depends(get_db)):
     
     return status
 
+def _find_browser_executable(browser: str) -> Optional[str]:
+    """Resolve the path to a specific browser's executable, or None.
+
+    Checks PATH first (shutil.which), then the standard per-OS install
+    locations. Needed because the open-browser endpoint must launch the
+    browser the user picked, not the OS default.
+    """
+    import shutil
+    candidates = {
+        'win32': {
+            'chrome':  ['chrome', r'C:\Program Files\Google\Chrome\Application\chrome.exe',
+                        r'C:\Program Files (x86)\Google\Chrome\Application\chrome.exe',
+                        os.path.expandvars(r'%LOCALAPPDATA%\Google\Chrome\Application\chrome.exe')],
+            'edge':    ['msedge', r'C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe',
+                        r'C:\Program Files\Microsoft\Edge\Application\msedge.exe'],
+            'firefox': ['firefox', r'C:\Program Files\Mozilla Firefox\firefox.exe',
+                        r'C:\Program Files (x86)\Mozilla Firefox\firefox.exe'],
+            'brave':   ['brave', r'C:\Program Files\BraveSoftware\Brave-Browser\Application\brave.exe',
+                        r'C:\Program Files (x86)\BraveSoftware\Brave-Browser\Application\brave.exe',
+                        os.path.expandvars(r'%LOCALAPPDATA%\BraveSoftware\Brave-Browser\Application\brave.exe')],
+        },
+        'darwin': {
+            'chrome':  ['/Applications/Google Chrome.app/Contents/MacOS/Google Chrome'],
+            'edge':    ['/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge'],
+            'firefox': ['/Applications/Firefox.app/Contents/MacOS/firefox'],
+            'brave':   ['/Applications/Brave Browser.app/Contents/MacOS/Brave Browser'],
+        },
+        'linux': {
+            'chrome':  ['google-chrome', 'google-chrome-stable', 'chromium', 'chromium-browser'],
+            'edge':    ['microsoft-edge', 'microsoft-edge-stable'],
+            'firefox': ['firefox'],
+            'brave':   ['brave-browser', 'brave'],
+        },
+    }
+    osk = 'win32' if sys.platform == 'win32' else ('darwin' if sys.platform == 'darwin' else 'linux')
+    for c in candidates.get(osk, {}).get(browser, []):
+        found = shutil.which(c) if (os.sep not in c and '/' not in c) else (c if os.path.exists(c) else None)
+        if found:
+            return found
+    # Windows: consult the App Paths registry for non-standard installs.
+    if sys.platform == 'win32':
+        exe_name = {'chrome': 'chrome.exe', 'edge': 'msedge.exe',
+                    'firefox': 'firefox.exe', 'brave': 'brave.exe'}.get(browser)
+        if exe_name:
+            try:
+                import winreg
+                for root in (winreg.HKEY_CURRENT_USER, winreg.HKEY_LOCAL_MACHINE):
+                    try:
+                        with winreg.OpenKey(root, rf"SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths\{exe_name}") as k:
+                            path = winreg.QueryValue(k, None)
+                            if path and os.path.exists(path):
+                                return path
+                    except OSError:
+                        continue
+            except Exception:
+                pass
+    return None
+
+
 @app.post("/nexup/youtube/open-browser")
 def open_youtube_browser(browser: str = Query('chrome', description="Browser to open")):
-    """Open YouTube in a specific browser for user to sign in"""
+    """Open YouTube in the SPECIFIC browser the user picked, so they sign in
+    where NeXroll will later read cookies from. Previously, on Windows, this
+    built the right command but then fell back to webbrowser.open(), which
+    opens the OS default browser — so picking Firefox opened Chrome.
+
+    NOTE: this launches a browser on the machine NeXroll runs on. It is only
+    meaningful for a local (same-machine) install; on a remote/Docker server
+    it cannot open a browser on the user's device (see the response 'note').
+    """
     import webbrowser
     import subprocess
-    import sys
-    
+
     youtube_url = 'https://www.youtube.com'
-    
-    # Try to open in specific browser
-    browser_commands = {
-        'chrome': {
-            'windows': ['start', 'chrome', youtube_url],
-            'darwin': ['open', '-a', 'Google Chrome', youtube_url],
-            'linux': ['google-chrome', youtube_url]
-        },
-        'edge': {
-            'windows': ['start', 'msedge', youtube_url],
-            'darwin': ['open', '-a', 'Microsoft Edge', youtube_url],
-            'linux': ['microsoft-edge', youtube_url]
-        },
-        'firefox': {
-            'windows': ['start', 'firefox', youtube_url],
-            'darwin': ['open', '-a', 'Firefox', youtube_url],
-            'linux': ['firefox', youtube_url]
-        },
-        'brave': {
-            'windows': ['start', 'brave', youtube_url],
-            'darwin': ['open', '-a', 'Brave Browser', youtube_url],
-            'linux': ['brave-browser', youtube_url]
-        }
+    browser = (browser or 'chrome').lower()
+
+    exe = _find_browser_executable(browser)
+    if exe:
+        try:
+            subprocess.Popen([exe, youtube_url])
+            return {"success": True, "message": f"Opened YouTube in {browser}. Sign in if you're not already."}
+        except Exception as e:
+            _file_log(f"Failed to launch {browser} at {exe}: {e}")
+
+    # Could not find/launch the requested browser. Don't silently open a
+    # different one — that's the bug we're fixing. Tell the UI so it can guide
+    # the user (open it manually, or just continue if already signed in).
+    _file_log(f"open-browser: requested '{browser}' not found on the server")
+    return {
+        "success": False,
+        "browser_not_found": True,
+        "message": f"Couldn't find {browser.capitalize()} on the machine running NeXroll. "
+                   f"Open {browser.capitalize()} yourself and sign in to YouTube, then continue — "
+                   f"or, if NeXroll runs on a different machine/Docker, sign in there or upload a "
+                   f"cookies.txt file instead.",
     }
-    
-    platform = 'windows' if sys.platform == 'win32' else ('darwin' if sys.platform == 'darwin' else 'linux')
-    
-    try:
-        if browser in browser_commands:
-            cmd = browser_commands[browser].get(platform)
-            if cmd and sys.platform == 'win32':
-                # Use os.startfile or webbrowser instead of shell=True for security
-                webbrowser.open(youtube_url)
-                return {"success": True, "message": f"Opened YouTube in {browser}. Please sign in if not already."}
-            elif cmd:
-                subprocess.run(cmd)
-                return {"success": True, "message": f"Opened YouTube in {browser}. Please sign in if not already."}
-    except Exception as e:
-        _file_log(f"Failed to open specific browser {browser}: {e}")
-    
-    # Fallback to default browser
-    webbrowser.open(youtube_url)
-    return {"success": True, "message": "Opened YouTube in default browser. Please sign in if not already."}
 
 @app.post("/nexup/youtube/upload-cookies")
 async def upload_youtube_cookies(file: UploadFile = File(...), user: models.User = Depends(require_auth), db: Session = Depends(get_db)):

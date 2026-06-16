@@ -19312,10 +19312,21 @@ const DashboardTiles = {
 
   const handleYoutubeOpenBrowser = async () => {
     try {
-      await fetch(apiUrl(`/nexup/youtube/open-browser?browser=${youtubeSetup.selectedBrowser}`), { method: 'POST' });
+      const res = await fetch(apiUrl(`/nexup/youtube/open-browser?browser=${youtubeSetup.selectedBrowser}`), {
+        method: 'POST', credentials: 'include'
+      });
+      const data = await res.json().catch(() => ({}));
+      // If the chosen browser isn't on the NeXroll machine, the server no
+      // longer silently opens the default browser — tell the user so they can
+      // open it themselves (or upload a cookies file instead).
+      if (data && data.browser_not_found) {
+        showAlert(data.message || `Couldn't open ${youtubeSetup.selectedBrowser} on the server.`, 'error');
+      }
+      // Advance regardless: "Open" is a convenience; the user can also just
+      // sign in manually and continue.
       setYoutubeSetup(prev => ({ ...prev, wizardStep: 2 }));
     } catch (err) {
-      alert('Failed to open browser: ' + (err?.message || err));
+      showAlert('Failed to open browser: ' + (err?.message || err), 'error');
     }
   };
 
