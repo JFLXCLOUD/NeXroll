@@ -1,5 +1,33 @@
 # Changelog
 
+## [2.0.0-beta.6] - 06-16-2026 (beta)
+
+> Sequence-and-schedule fixes: scheduled sequences now display correctly,
+> editing a saved sequence updates the schedules built from it, and the
+> Coming Soon List generator fails gracefully. Upgrade-safe.
+
+### Added
+
+- **Editing a saved sequence now updates the schedules built from it.**
+  Schedules created from a saved sequence are linked to it, so changing the
+  sequence's blocks propagates into those schedules automatically. (Schedules
+  created before this update aren't linked yet — recreate them from the
+  sequence to enable propagation.)
+
+### Fixed
+
+- **Scheduled sequences now show in the Currently Showing tile.** A schedule
+  that runs a sequence (rather than a category) showed nothing — or showed its
+  category as "0 prerolls". The tile now recognizes a sequence-based active
+  schedule and labels it "Sequence (Scheduled)".
+- **The Random/Sequential mode is preserved** when a sequence is saved into a
+  schedule (it was silently reverting to Random).
+- **The Saved Sequences cards show the correct preroll count** — trailer,
+  coming-soon, and dynamic blocks were counted as 0; now they match the editor.
+- **Coming Soon List generation gives a clear error** instead of the cryptic
+  "Unexpected token 'I'… is not valid JSON" when something fails (e.g. the
+  storage path is on an unreachable drive) — it now names the actual problem.
+
 ## [2.0.0-beta.5] - 06-15-2026 (beta)
 
 > URL routing for every page, a NeX-Up sequence upgrade, and a batch of
