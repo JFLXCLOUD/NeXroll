@@ -202,6 +202,7 @@ export const sanitizeSequence = (sequence) => {
     } else if (block.type === 'nexup_trailers') {
       sanitized.source = block.source || 'both';
       sanitized.count = block.count || 2;
+      sanitized.mode = block.mode || 'random';
     } else if (block.type === 'coming_soon_list') {
       sanitized.layout = block.layout || 'grid';
     } else if (block.type === 'dynamic_preroll') {

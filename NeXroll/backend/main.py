@@ -16391,6 +16391,21 @@ def get_active_category(db: Session = Depends(get_db)):
         except Exception:
             pass
 
+        # Sequence-only active schedule: a schedule that runs a sequence has
+        # category_id = None (by design), so it would otherwise fall into the
+        # "category_id is None -> no active_category" branch below and the
+        # dashboard would show nothing. Detect it here, before that branch, so
+        # the Currently Showing tile renders the sequence. (Skipped for blend,
+        # which has its own handling below.)
+        if not applied_sequence and not blend_schedules_info and active_sched_id:
+            _seq_sched = db.query(models.Schedule).filter(models.Schedule.id == active_sched_id).first()
+            if _seq_sched and _schedule_has_sequence(_seq_sched):
+                applied_sequence = {
+                    "id": _seq_sched.id,
+                    "name": _seq_sched.name,
+                    "via_schedule": True,
+                }
+
         if category_id is None:
             if blend_schedules_info:
                 blend_obj = {
