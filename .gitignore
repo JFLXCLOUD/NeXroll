@@ -1,4 +1,8 @@
-﻿# Python
+﻿# Local dev backend run logs
+backend_local.log
+backend_local.log.err
+
+# Python
 __pycache__/
 *.py[cod]
 *$py.class

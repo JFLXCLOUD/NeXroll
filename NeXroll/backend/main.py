@@ -10022,7 +10022,25 @@ def update_schedule(schedule_id: int, schedule: ScheduleCreate, db: Session = De
         _file_log(f"Schedule update failed for id={schedule_id}: {e}")
         log_event('ERROR', 'scheduler', f'Schedule update failed: {e}', source='update_schedule', details={'schedule_id': schedule_id})
         raise HTTPException(status_code=500, detail=f"Failed to update schedule: {str(e)}")
-    
+
+    # If we just disabled the schedule that the dashboard is pointing at, clear
+    # the pointer now. The scheduler only advances active_schedule_id on a
+    # successful Plex apply of a NEW winner, so without this the dashboard would
+    # keep showing this (now-disabled) schedule as "currently showing" until
+    # something else successfully applies — which may never happen (e.g. no
+    # active schedule, or Plex unreachable).
+    if is_being_disabled:
+        try:
+            setting = db.query(models.Setting).first()
+            if setting and getattr(setting, "active_schedule_id", None) == schedule_id:
+                setting.active_schedule_id = None
+                db.commit()
+        except Exception:
+            try:
+                db.rollback()
+            except Exception:
+                pass
+
     # Re-evaluate the scheduler immediately so dashboard + Plex reflect the change without
     # waiting up to 60 seconds for the next tick. (Pre-v1.13.5 this called a ~410-line
     # parallel reimplementation of scheduler logic — `_apply_schedule_win_lose_logic` —
@@ -16383,6 +16401,33 @@ def get_active_category(db: Session = Depends(get_db)):
         # Normal category lookup
         category_id = getattr(setting, "active_category", None)
         active_sched_id = getattr(setting, "active_schedule_id", None)
+
+        # Guard against a STALE active_schedule_id. The scheduler only advances
+        # this pointer as a side effect of a successful Plex apply, and it isn't
+        # cleared when the pointed-to schedule is disabled or falls out of its
+        # window. So it can keep pointing at a schedule the user has since turned
+        # off (the dashboard would then show a disabled schedule as "currently
+        # showing"). Validate it here before we trust it, and self-heal settings
+        # so the next tick / read is clean.
+        if active_sched_id:
+            try:
+                _ptr = db.query(models.Schedule).filter(models.Schedule.id == active_sched_id).first()
+                _now = datetime.datetime.now()
+                _ptr_valid = bool(
+                    _ptr
+                    and getattr(_ptr, "is_active", False)
+                    and _schedule_in_date_window(_ptr, _now)
+                )
+                if not _ptr_valid:
+                    active_sched_id = None
+                    if getattr(setting, "active_schedule_id", None) is not None:
+                        try:
+                            setting.active_schedule_id = None
+                            db.commit()
+                        except Exception:
+                            db.rollback()
+            except Exception:
+                pass
 
         # Detect blend mode. The scheduler sets last_run on ALL blend partners in the same DB commit
         # on every tick — sequence blend, category blend, and mixed alike — so last_run is the
