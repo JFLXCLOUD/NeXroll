@@ -19039,7 +19039,9 @@ async def download_trailer(radarr_movie_id: int, db: Session = Depends(get_db)):
             year=movie.get('year')
         )
         
-        if not result:
+        if not (result and isinstance(result, dict) and result.get('path')):
+            # download_trailer returns {'error','message'} on failure now.
+            fail_detail = (result.get('message') if isinstance(result, dict) else '') or ''
             # Provide helpful error message
             help_msg = "YouTube is blocking the download. "
             if not cookies_file.exists() and not browser:
@@ -19208,11 +19210,14 @@ async def add_manual_trailer(
         _file_log(f"NeX-Up: Starting manual download for '{title}' from {url}")
         try:
             result = await downloader.download_trailer(url, title, tmdb_id)
-            if not result:
-                _file_log(f"NeX-Up: Manual download failed for '{title}' - no result returned")
+            # download_trailer now returns an {'error','message'} dict on
+            # failure (not None), so check for a real path, not just truthiness.
+            if not (result and isinstance(result, dict) and result.get('path')):
+                detail = (result.get('message') if isinstance(result, dict) else '') or ''
+                _file_log(f"NeX-Up: Manual download failed for '{title}' - {detail or 'no result returned'}")
                 log_event('ERROR', 'nexup', f'Manual trailer download failed: {title}', source='add_manual_trailer', db=db)
-                raise HTTPException(status_code=500, detail=f"Failed to download trailer from {url}. Check if YouTube authentication is configured.")
-            
+                raise HTTPException(status_code=500, detail=f"Failed to download trailer from {url}. {detail[:160] if detail else 'Check if YouTube authentication is configured.'}")
+
             final_path = result['path']
             file_size_mb = result['size_mb']
         except HTTPException:
@@ -19659,6 +19664,7 @@ async def sync_nexup(db: Session = Depends(get_db)):
                 else:
                     # Check if result contains YouTube bot block error
                     error_code = str(result.get('error', '')) if result and isinstance(result, dict) else ''
+                    detail_msg = str(result.get('message', '')) if result and isinstance(result, dict) else ''
                     if 'YOUTUBE_BOT_BLOCK' in error_code or 'STALE_COOKIES' in error_code:
                         error_msg = "YouTube bot detection. Re-export cookies from Incognito: login → youtube.com/robots.txt → export"
                         _nexup_sync_progress["status"] = f"YouTube blocked '{movie['title']}' - try re-exporting cookies"
@@ -19667,9 +19673,19 @@ async def sync_nexup(db: Session = Depends(get_db)):
                         _file_log(f"NeX-Up sync: YOUTUBE BOT BLOCK - '{movie['title']}' - cookies may be invalid or IP is rate-limited")
                         log_event('ERROR', 'nexup', f'YouTube bot block during Radarr sync: {movie["title"]}', source='sync_nexup', db=db)
                     else:
+                        # The movie HAD a trailer URL (it was eligible), so the
+                        # download itself failed. Report the real reason instead
+                        # of the old misleading "No trailer source available".
+                        had_url = bool(movie.get('trailer_url'))
+                        if had_url:
+                            error_msg = "Trailer found but the download failed (YouTube may be serving formats yt-dlp can't fetch right now). Try syncing again later."
+                        else:
+                            error_msg = "No trailer URL from Radarr or TMDB for this title yet"
+                        if detail_msg:
+                            error_msg += f" [{detail_msg[:120]}]"
                         _nexup_sync_progress["status"] = f"Failed to download '{movie['title']}'"
-                        results["errors"].append(f"{movie['title']}: No trailer source available")
-                        _file_log(f"NeX-Up sync: Download FAILED for '{movie['title']}' - no trailer source worked")
+                        results["errors"].append(f"{movie['title']}: {error_msg}")
+                        _file_log(f"NeX-Up sync: Download FAILED for '{movie['title']}' (had_url={had_url}) - {detail_msg or 'all strategies failed'}")
                     _nexup_sync_progress["errors"] = len(results["errors"])
                     
             except Exception as e:

@@ -680,11 +680,17 @@ class TrailerDownloader:
         self.tmdb = TMDBTrailerFetcher(tmdb_api_key=tmdb_api_key)
         
         # Quality format mapping
+        # Each ends in progressively looser fallbacks so a video that doesn't
+        # offer a separate video+audio pair at the target height still resolves
+        # (the strict "bestvideo[h<=N]+bestaudio/best[h<=N]" alone errored with
+        # "Requested format is not available" on some trailers — e.g. Toy Story 5
+        # via the cookies-file strategy). Order: prefer capped merged, then
+        # capped progressive, then any best, then anything.
         self.quality_formats = {
-            '720': 'bestvideo[height<=720]+bestaudio/best[height<=720]',
-            '1080': 'bestvideo[height<=1080]+bestaudio/best[height<=1080]',
-            '4k': 'bestvideo[height<=2160]+bestaudio/best[height<=2160]',
-            'best': 'bestvideo+bestaudio/best'
+            '720':  'bestvideo[height<=720]+bestaudio/best[height<=720]/best/bestvideo+bestaudio/b',
+            '1080': 'bestvideo[height<=1080]+bestaudio/best[height<=1080]/best/bestvideo+bestaudio/b',
+            '4k':   'bestvideo[height<=2160]+bestaudio/best[height<=2160]/best/bestvideo+bestaudio/b',
+            'best': 'bestvideo+bestaudio/best/b'
         }
         
         # Detect available browser for cookies
@@ -1111,13 +1117,17 @@ class TrailerDownloader:
             # Return error info so UI can show helpful message
             if last_error and ('YOUTUBE_BOT_BLOCK' in last_error or 'STALE_COOKIES' in last_error):
                 return {'error': 'YOUTUBE_BOT_BLOCK', 'message': last_error}
-            return None
-            
+            # Non-bot failure: return the real reason instead of None so the
+            # caller can report it (was surfacing as "No trailer source
+            # available", which was wrong when a source existed but the
+            # download failed).
+            return {'error': 'DOWNLOAD_FAILED', 'message': last_error or 'All download strategies failed'}
+
         except Exception as e:
             logger.error(f"Error downloading trailer for {title}: {e}")
             import traceback
             logger.error(f"Traceback: {traceback.format_exc()}")
-            return None
+            return {'error': 'EXCEPTION', 'message': str(e)}
     
     async def _download_with_ytdlp(
         self,
@@ -1418,8 +1428,10 @@ class NexUpManager:
                     movie['title'],
                     movie['tmdb_id']
                 )
-                
-                if download_result:
+
+                # download_trailer returns an {'error','message'} dict on
+                # failure now, so require an actual path (not just truthiness).
+                if download_result and isinstance(download_result, dict) and download_result.get('path'):
                     # Create database entry
                     trailer = models.ComingSoonTrailer(
                         radarr_movie_id=movie['radarr_id'],
