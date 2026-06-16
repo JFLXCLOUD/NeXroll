@@ -35,6 +35,10 @@
   were valid (it called a yt-dlp CLI that doesn't exist in the packaged build,
   and it misread a harmless "format not available" as an error). It now tests
   through the real download engine and can also check a specific trailer URL.
+- **Trailer download errors no longer always blame expired cookies** — a
+  transient YouTube failure used to tell you to re-export cookies that were
+  fine. The cookie advice now appears only for genuine sign-in/bot blocks;
+  other failures report the real reason and suggest retrying.
 - **YouTube cookie setup opens the browser you actually picked** (selecting
   Firefox previously opened the default browser on Windows). If the chosen
   browser isn't installed, it now says so instead of silently using another.
