@@ -153,3 +153,7 @@ replace_*.py
 /package-lock.json
 # Built installers staged for release uploads (local only)
 release-artifacts/
+
+# Screenshot staging/scratch folder (real screenshots live in docs/screenshots/)
+nexrollsC*/
+nexrolls*/
