@@ -1,5 +1,53 @@
 # Changelog
 
+## [2.0.0-beta.5] - 06-15-2026 (beta)
+
+> URL routing for every page, a NeX-Up sequence upgrade, and a batch of
+> NeX-Up trailer/cookie fixes. Upgrade-safe — existing sequences keep working
+> unchanged.
+
+### Added
+
+- **Real URL routing.** Every page now has its own address
+  (`#/settings/storage`, `#/nexup/trailers`, ...), so pages are bookmarkable
+  and shareable, the browser Back/Forward buttons work, and refreshing keeps
+  you on the page you were viewing instead of bouncing to the Dashboard.
+- **NeX-Up trailer sequence blocks now have a Mode: Random or Sequential.**
+  Random shuffles the chosen source (Movies / TV / Both); Sequential plays the
+  soonest-releasing trailers in order — a proper coming-attractions reel.
+  Existing trailer blocks default to Random (their current behavior), so
+  nothing changes for sequences you already built.
+- **Install Deno from the System page.** If the Deno runtime (used for
+  YouTube/NeX-Up extraction) is missing, a one-click install is offered on
+  Windows. In Docker it shows a note instead (Deno ships in the image).
+
+### Fixed
+
+- **NeX-Up trailer sequences now include all your trailers.** A sequence set
+  to a small count could show only one trailer because the pool excluded
+  trailers with a blank or already-passed release date. The pool is now every
+  downloaded, enabled trailer you have, refreshed live as you add/remove them.
+- **Trailers that exist on YouTube no longer fail with a misleading "No
+  trailer source available."** Downloads use a more forgiving video-format
+  selection, and when a download genuinely fails the message now explains the
+  real reason instead of blaming a missing source.
+- **YouTube cookie test fixed** — it reported failure even when your cookies
+  were valid (it called a yt-dlp CLI that doesn't exist in the packaged build,
+  and it misread a harmless "format not available" as an error). It now tests
+  through the real download engine and can also check a specific trailer URL.
+- **YouTube cookie setup opens the browser you actually picked** (selecting
+  Firefox previously opened the default browser on Windows). If the chosen
+  browser isn't installed, it now says so instead of silently using another.
+- **Deno that was already installed is now detected** even if it isn't on the
+  service's PATH yet (this is why a freshly-installed Deno could still show
+  "not found").
+- **Trailers move with the storage path** — changing the NeX-Up storage
+  location now relocates existing trailer files into the new folder.
+- **Dashboard "Full Calendar" button** opens the calendar page (it was opening
+  the schedules list).
+- **Saved Sequences cards** — the Delete button is aligned with the other
+  action buttons and no longer floats off on its own line.
+
 ## [2.0.0-beta.4] - 06-13-2026 (beta)
 
 > Fixes the YouTube trailer "Test" button (it was misreporting failures),
