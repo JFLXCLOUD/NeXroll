@@ -77,8 +77,9 @@ def resolve_nexup_trailer_block(block: dict, db) -> list:
     Mirror of main.resolve_nexup_trailer_block (kept here to avoid importing the
     FastAPI app module into the scheduler thread). Honors:
       source: 'both'|'movies'|'tv'   mode: 'random'|'sequential'   count: int
-    Random = sample; Sequential = soonest release first. Only downloaded,
-    enabled, unreleased trailers with an existing file are considered.
+    Random = sample; Sequential = soonest release first. Eligible = any
+    downloaded + enabled trailer whose file exists (NOT filtered by release
+    date — see main.resolve_nexup_trailer_block for why).
     """
     source = str(block.get("source", "both")).lower()
     mode = str(block.get("mode", "random")).lower()
@@ -87,20 +88,17 @@ def resolve_nexup_trailer_block(block: dict, db) -> list:
     except Exception:
         count = 2
     count = max(count, 1)
-    now = datetime.datetime.now()
 
     rows = []
     if source in ("movies", "both"):
         rows += [t for t in db.query(models.ComingSoonTrailer).filter(
             models.ComingSoonTrailer.status == 'downloaded',
             models.ComingSoonTrailer.is_enabled == True,
-            models.ComingSoonTrailer.release_date >= now,
         ).all() if t.local_path and os.path.exists(t.local_path)]
     if source in ("tv", "both"):
         rows += [t for t in db.query(models.ComingSoonTVTrailer).filter(
             models.ComingSoonTVTrailer.status == 'downloaded',
             models.ComingSoonTVTrailer.is_enabled == True,
-            models.ComingSoonTVTrailer.release_date >= now,
         ).all() if t.local_path and os.path.exists(t.local_path)]
 
     if not rows:
