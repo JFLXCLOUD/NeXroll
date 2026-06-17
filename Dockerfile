@@ -15,6 +15,28 @@ WORKDIR /build
 COPY requirements.txt .
 RUN pip wheel --no-cache-dir --wheel-dir /wheels -r requirements.txt
 
+# --- PO-token provider build stage (bgutil) ---
+# Builds the YouTube Proof-of-Origin token server. This is what gets NeX-Up past
+# YouTube's "Sign in to confirm you're not a bot" wall. node:20 + bookworm keeps
+# it glibc-compatible with the python:3.12-slim runtime so we can copy node and
+# the (native-canvas) node_modules across stages. Keep BGUTIL_VERSION in sync
+# with the bgutil-ytdlp-pot-provider pin in requirements.txt.
+FROM node:20-bookworm-slim AS potoken
+ARG BGUTIL_VERSION=1.3.1
+# ca-certificates is required for the HTTPS git clone below (the slim node image
+# ships without it, so the clone fails with "server certificate verification
+# failed"). git pulls the provider; the rest are a fallback toolchain in case
+# node-canvas has no prebuilt binary for this arch and builds from source.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        ca-certificates git python3 build-essential pkg-config \
+        libcairo2-dev libpango1.0-dev libjpeg-dev libgif-dev librsvg2-dev && \
+    rm -rf /var/lib/apt/lists/*
+RUN git clone --depth 1 --branch ${BGUTIL_VERSION} \
+        https://github.com/Brainicism/bgutil-ytdlp-pot-provider.git /opt/bgutil-provider && \
+    cd /opt/bgutil-provider/server && \
+    npm install --no-audit --no-fund && \
+    npx tsc
+
 # --- Runtime stage: slim image without build tools ---
 FROM python:3.12-slim
 
@@ -58,6 +80,18 @@ RUN apt-get update && \
 # Install Deno (required for yt-dlp YouTube extraction)
 RUN curl -fsSL https://deno.land/install.sh | sh && \
     ln -s /root/.deno/bin/deno /usr/local/bin/deno
+
+# YouTube PO-token provider: copy the Node runtime + the prebuilt bgutil server
+# from the potoken stage, and install the shared libs its native `canvas`
+# dependency links against. The backend (backend/nexup_potoken.py) launches
+# `node build/main.js` from NEXROLL_BGUTIL_DIR so yt-dlp can mint PO tokens.
+COPY --from=potoken /usr/local/bin/node /usr/local/bin/node
+COPY --from=potoken /opt/bgutil-provider /opt/bgutil-provider
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        libcairo2 libpango-1.0-0 libpangocairo-1.0-0 libjpeg62-turbo \
+        libgif7 librsvg2-2 libpixman-1-0 libfontconfig1 && \
+    rm -rf /var/lib/apt/lists/*
+ENV NEXROLL_BGUTIL_DIR=/opt/bgutil-provider/server
 
 WORKDIR /app/NeXroll
 

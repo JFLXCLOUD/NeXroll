@@ -8,10 +8,15 @@ import { Upload, Package, AlertTriangle, Loader2, Lightbulb, Sparkles } from 'lu
  * Props:
  * - isOpen: Boolean - whether modal is visible
  * - onClose: Function - callback to close modal
- * - scheduleId: Number - ID of schedule to export
- * - scheduleName: String - name of schedule
+ * - scheduleId: Number - ID of a SAVED sequence to export (by-id mode)
+ * - scheduleName: String - name to use for the exported file
+ * - blocks: Array - when provided, export these blocks directly (ad-hoc mode).
+ *     Used by the in-builder export where the sequence isn't a saved row, so a
+ *     SavedSequence id isn't available. Avoids mismatching a Schedule id against
+ *     the by-id endpoint.
+ * - description: String - description to embed when exporting blocks
  */
-const PatternExport = ({ isOpen, onClose, scheduleId, scheduleName }) => {
+const PatternExport = ({ isOpen, onClose, scheduleId, scheduleName, blocks = null, description = '' }) => {
   const [isExporting, setIsExporting] = useState(false);
   const [exportProgress, setExportProgress] = useState('');
   const [error, setError] = useState(null);
@@ -30,9 +35,25 @@ const PatternExport = ({ isOpen, onClose, scheduleId, scheduleName }) => {
         setExportProgress('Creating pattern file...');
       }
 
-      const response = await fetch(`/sequences/${scheduleId}/export?export_mode=${exportMode}`, {
-        method: 'POST',
-      });
+      // Ad-hoc mode: export the supplied blocks directly (no saved-sequence id).
+      // By-id mode: export an existing SavedSequence by its id.
+      let response;
+      if (Array.isArray(blocks)) {
+        response = await fetch('/sequences/export-pattern', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            name: scheduleName || 'Sequence',
+            description: description || '',
+            blocks,
+            export_mode: exportMode,
+          }),
+        });
+      } else {
+        response = await fetch(`/sequences/${scheduleId}/export?export_mode=${exportMode}`, {
+          method: 'POST',
+        });
+      }
 
       if (!response.ok) {
         const errorData = await response.json();

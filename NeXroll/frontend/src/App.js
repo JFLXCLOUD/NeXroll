@@ -1124,6 +1124,17 @@ const [applyingToServer, setApplyingToServer] = useState(false);
     uploading: false
   });
 
+  // YouTube PO-token provider (bgutil) — the primary, automatic download method.
+  const [potoken, setPotoken] = useState({ status: null, loading: false, testing: false, testResult: null });
+
+  // Alternate-trailer picker: when the default trailer is unavailable, show the
+  // top 3 YouTube candidates for the user to preview and choose.
+  const [altTrailers, setAltTrailers] = useState({
+    open: false, loading: false, kind: 'movie', id: null, season: 1,
+    title: '', candidates: [], error: null, downloadingUrl: null, previewId: null,
+    failedUrls: {}, // url -> reason, so we can mark candidates that can't be fetched
+  });
+
   // UI Preferences state (stored in localStorage)
   const [confirmDeletions, setConfirmDeletions] = useState(() => {
     try { return JSON.parse(localStorage.getItem('confirmDeletions') || 'true'); } catch { return true; }
@@ -18168,6 +18179,29 @@ const DashboardTiles = {
     }
   };
 
+  const handleInstallPotoken = async () => {
+    setInstallingDep('potoken');
+    try {
+      // Downloads Node + builds the bgutil provider, so this can take a couple
+      // of minutes on first run.
+      showAlert('Installing YouTube PO-token provider (this can take a few minutes)…', 'info');
+      const res = await fetch(apiUrl('system/dependencies/install/potoken'), {
+        method: 'POST', credentials: 'include'
+      });
+      const data = await res.json().catch(() => ({}));
+      if (data.success) {
+        showAlert(data.message || 'PO-token provider installed.', 'success');
+        await recheckFfmpeg();
+      } else {
+        showAlert(data.message || 'Failed to install PO-token provider.', 'error');
+      }
+    } catch (e) {
+      showAlert('Failed to install PO-token provider: ' + (e?.message || e), 'error');
+    } finally {
+      setInstallingDep(null);
+    }
+  };
+
   const recheckFfmpeg = async () => {
     setDependenciesLoading(true);
     try {
@@ -19372,6 +19406,70 @@ const DashboardTiles = {
     }
   };
 
+  const loadPotoken = async () => {
+    setPotoken(prev => ({ ...prev, loading: true }));
+    try {
+      const res = await fetch(apiUrl('/nexup/potoken/status'));
+      if (res.ok) {
+        const data = await res.json();
+        setPotoken(prev => ({ ...prev, status: data, loading: false }));
+      } else {
+        setPotoken(prev => ({ ...prev, loading: false }));
+      }
+    } catch (err) {
+      console.error('Failed to load PO-token status:', err);
+      setPotoken(prev => ({ ...prev, loading: false }));
+    }
+  };
+
+  // Install the provider from the NeX-Up card (reuses the System-page installer).
+  const handleInstallPotokenFromNexup = async () => {
+    setInstallingDep('potoken');
+    try {
+      showAlert('Installing YouTube downloader (this can take a few minutes)…', 'info');
+      const res = await fetch(apiUrl('system/dependencies/install/potoken'), { method: 'POST', credentials: 'include' });
+      const data = await res.json().catch(() => ({}));
+      showAlert(data.message || (data.success ? 'Installed.' : 'Install failed.'), data.success ? 'success' : 'error');
+      await loadPotoken();
+    } catch (e) {
+      showAlert('Install failed: ' + (e?.message || e), 'error');
+    } finally {
+      setInstallingDep(null);
+    }
+  };
+
+  const handleStartPotoken = async () => {
+    setPotoken(prev => ({ ...prev, loading: true }));
+    try {
+      const res = await fetch(apiUrl('nexup/potoken/start'), { method: 'POST', credentials: 'include' });
+      const data = await res.json().catch(() => ({}));
+      if (data && data.usable) showAlert('YouTube downloader started.', 'success');
+      else showAlert(data.hint || 'Could not start the provider.', 'warning');
+      setPotoken(prev => ({ ...prev, status: data, loading: false }));
+    } catch (e) {
+      showAlert('Failed to start provider: ' + (e?.message || e), 'error');
+      setPotoken(prev => ({ ...prev, loading: false }));
+    }
+  };
+
+  const handleTestPotoken = async () => {
+    setPotoken(prev => ({ ...prev, testing: true, testResult: null }));
+    try {
+      const res = await fetch(apiUrl('nexup/potoken/test'), { method: 'POST', credentials: 'include' });
+      const data = await res.json().catch(() => ({}));
+      setPotoken(prev => ({
+        ...prev,
+        testing: false,
+        testResult: data,
+        status: data.status || prev.status,
+      }));
+      showAlert(data.ok ? 'Working — minted a fresh YouTube token.' : ('Test failed: ' + (data.reason || 'unknown')), data.ok ? 'success' : 'error');
+    } catch (e) {
+      setPotoken(prev => ({ ...prev, testing: false, testResult: { ok: false, reason: String(e?.message || e) } }));
+      showAlert('Test failed: ' + (e?.message || e), 'error');
+    }
+  };
+
   const handleYoutubeOpenBrowser = async () => {
     try {
       const res = await fetch(apiUrl(`/nexup/youtube/open-browser?browser=${youtubeSetup.selectedBrowser}`), {
@@ -19703,10 +19801,12 @@ const DashboardTiles = {
         loadNexupTVTrailers();
         loadNexupUpcomingTV();
       } else {
-        alert('Download failed: ' + (data.message || 'Unknown error'));
+        showAlert('Download failed: ' + (data.message || 'Unknown error'), 'error');
+        openAltTrailers({ kind: 'tv', id: sonarrId, season: seasonNumber, title: showTitle });
       }
     } catch (err) {
-      alert('Download error: ' + (err?.message || err));
+      showAlert(err?.message || String(err), 'error');
+      openAltTrailers({ kind: 'tv', id: sonarrId, season: seasonNumber, title: showTitle });
     } finally {
       setDownloadingTrailerId(null);
       setDownloadProgress(null);
@@ -19991,6 +20091,55 @@ const DashboardTiles = {
     }
   };
 
+  // Open the alternate-trailer picker (top 3 YouTube candidates to preview/choose).
+  const openAltTrailers = async ({ kind, id, season = 1, title }) => {
+    setAltTrailers({ open: true, loading: true, kind, id, season, title: title || '', candidates: [], error: null, downloadingUrl: null, previewId: null, failedUrls: {} });
+    try {
+      const url = kind === 'tv'
+        ? apiUrl(`/nexup/sonarr/trailers/search?sonarr_series_id=${id}&season_number=${season}`)
+        : apiUrl(`/nexup/trailers/search?radarr_movie_id=${id}`);
+      const res = await fetch(url);
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.detail || 'Trailer search failed');
+      setAltTrailers(prev => ({ ...prev, loading: false, candidates: data.candidates || [] }));
+    } catch (e) {
+      setAltTrailers(prev => ({ ...prev, loading: false, error: e?.message || String(e) }));
+    }
+  };
+
+  const closeAltTrailers = () => setAltTrailers(prev => ({ ...prev, open: false, previewId: null }));
+
+  const downloadAlternateTrailer = async (candidate) => {
+    setAltTrailers(prev => ({ ...prev, downloadingUrl: candidate.url, error: null }));
+    try {
+      const { kind, id, season } = altTrailers;
+      const isTv = kind === 'tv';
+      const base = isTv
+        ? `/nexup/trailers/download/tv?sonarr_series_id=${id}&season_number=${season}`
+        : `/nexup/trailers/download?radarr_movie_id=${id}`;
+      const res = await fetch(apiUrl(`${base}&trailer_url=${encodeURIComponent(candidate.url)}`), { method: isTv ? 'GET' : 'POST' });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.detail || 'Download failed');
+      if (data.success === false) throw new Error(data.message || 'Download failed');
+      showAlert(`Downloaded "${candidate.title}".`, 'success');
+      setAltTrailers(prev => ({ ...prev, open: false, downloadingUrl: null, previewId: null }));
+      loadNexupTrailers();
+      loadNexupStorage();
+      if (typeof handleLoadNexupUpcoming === 'function') handleLoadNexupUpcoming();
+    } catch (e) {
+      // Keep the modal open and surface the failure INSIDE it (a toast would
+      // render behind the overlay), and mark this candidate so the user can
+      // immediately try a different one.
+      const reason = e?.message || String(e);
+      setAltTrailers(prev => ({
+        ...prev,
+        downloadingUrl: null,
+        error: reason,
+        failedUrls: { ...(prev.failedUrls || {}), [candidate.url]: reason },
+      }));
+    }
+  };
+
   const handleDownloadTrailer = async (radarrMovieId, movieTitle) => {
     if (!nexupSettings.storage_path) {
       alert('Please configure a storage path in NeX-Up settings first');
@@ -20019,17 +20168,16 @@ const DashboardTiles = {
         loadNexupStorage();
         handleLoadNexupUpcoming(); // Refresh to show downloaded status
       } else {
-        alert('Download failed: ' + (data.message || 'Unknown error'));
+        showAlert('Download failed: ' + (data.message || 'Unknown error'), 'error');
+        openAltTrailers({ kind: 'movie', id: radarrMovieId, title: movieTitle });
       }
     } catch (err) {
-      // More descriptive error messages
-      let errorMsg = err?.message || String(err);
-      if (errorMsg.includes('Failed to download trailer')) {
-        errorMsg = `Could not download trailer for "${movieTitle || 'this movie'}".\n\nPossible reasons:\n• YouTube bot detection (try again later)\n• Trailer video is age-restricted\n• Video is not available in your region\n\nTip: Export browser cookies to a youtube_cookies.txt file in your NeX-Up storage folder for better reliability.`;
-      } else if (errorMsg.includes('No trailer available')) {
-        errorMsg = `No trailer URL found for "${movieTitle || 'this movie'}". The movie may not have a trailer available in Radarr yet.`;
-      }
-      alert('Download error:\n\n' + errorMsg);
+      const errorMsg = err?.message || String(err);
+      // The default trailer couldn't be downloaded — surface the real reason and
+      // open the alternate-trailer picker so the user can choose a working one
+      // instead of hitting a dead end.
+      showAlert(errorMsg, 'error');
+      openAltTrailers({ kind: 'movie', id: radarrMovieId, title: movieTitle });
     } finally {
       setDownloadingTrailerId(null);
       setDownloadProgress(null);
@@ -20119,6 +20267,7 @@ const DashboardTiles = {
     loadGeneratedPrerolls();
     loadGeneratedComingSoonLists();
     loadYoutubeStatus();
+    loadPotoken();
   }, []);
 
   // Dynamic Preroll Generator Functions
@@ -22691,95 +22840,146 @@ const DashboardTiles = {
           {/* YouTube Authentication Card */}
           <div className="card">
             <h2 style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-              <Youtube size={24} /> YouTube Authentication
+              <Youtube size={24} /> YouTube Downloads
             </h2>
             <p style={{ color: '#888', marginBottom: '1rem' }}>
-              YouTube requires authentication to download trailers. Set this up with one click.
+              Trailers download automatically using a Proof-of-Origin (PO) token provider —
+              no YouTube sign-in or cookies needed for most trailers.
             </p>
-            
-            <div style={{ 
-              display: 'flex', 
-              alignItems: 'center', 
-              gap: '1rem',
-              padding: '1rem',
-              backgroundColor: youtubeSetup.status?.configured 
-                ? 'rgba(40, 167, 69, 0.1)' 
-                : 'rgba(255, 193, 7, 0.1)',
+
+            {/* PRIMARY METHOD: PO-Token Provider */}
+            <div style={{
+              display: 'flex', alignItems: 'center', gap: '1rem', padding: '1rem',
+              backgroundColor: potoken.status?.usable ? 'rgba(40, 167, 69, 0.1)' : 'rgba(255, 193, 7, 0.1)',
               borderRadius: '8px',
-              border: `1px solid ${youtubeSetup.status?.configured ? '#28a745' : '#ffc107'}`
+              border: `1px solid ${potoken.status?.usable ? '#28a745' : '#ffc107'}`
             }}>
-              <div style={{ 
-                width: '50px',
-                display: 'flex',
-                justifyContent: 'center'
-              }}>
-                {youtubeSetup.loading 
+              <div style={{ width: '50px', display: 'flex', justifyContent: 'center' }}>
+                {potoken.loading
                   ? <Loader2 size={32} className="spin" color="#ffc107" />
-                  : youtubeSetup.status?.configured 
+                  : potoken.status?.usable
                     ? <CheckCircle size={32} color="#28a745" />
                     : <AlertTriangle size={32} color="#ffc107" />}
               </div>
               <div style={{ flex: 1 }}>
                 <div style={{ fontWeight: 'bold', marginBottom: '0.25rem' }}>
-                  {youtubeSetup.loading 
-                    ? 'Checking status...' 
-                    : youtubeSetup.status?.configured 
-                      ? 'YouTube Ready' 
-                      : 'Setup Required'}
+                  {potoken.loading ? 'Checking…' : potoken.status?.usable ? 'YouTube downloads active' : 'Setup needed'}
                 </div>
                 <div style={{ fontSize: '0.85rem', color: '#888' }}>
-                  {youtubeSetup.status?.message || 'Loading...'}
+                  {potoken.status?.usable
+                    ? `Cookieless downloads enabled${potoken.status?.version ? ' · bgutil ' + potoken.status.version : ''}.`
+                    : (potoken.status?.provider_present
+                        ? 'The token provider is installed but not running — Start it below.'
+                        : 'Install the YouTube downloader to fetch trailers without signing in.')}
                 </div>
-                {youtubeSetup.status?.method && (
-                  <div style={{ fontSize: '0.8rem', color: '#666', marginTop: '0.25rem' }}>
-                    Method: {
-                      youtubeSetup.status.method === 'oauth' ? 'OAuth (Recommended)' :
-                      youtubeSetup.status.method === 'cookies_file' ? 'Exported cookies file' : 
-                      `${youtubeSetup.status.browser} browser cookies`
-                    }
+                {/* Installed / Enabled / Working indicators */}
+                <div style={{ display: 'flex', gap: '0.5rem', marginTop: '0.5rem', flexWrap: 'wrap' }}>
+                  {[
+                    { label: 'Installed', on: !!potoken.status?.provider_present },
+                    { label: 'Enabled', on: !!potoken.status?.healthy },
+                    { label: 'Working', on: potoken.testResult?.ok === true || (!!potoken.status?.usable && potoken.testResult == null) },
+                  ].map(chip => (
+                    <span key={chip.label} style={{
+                      display: 'inline-flex', alignItems: 'center', gap: '0.3rem',
+                      fontSize: '0.75rem', padding: '0.15rem 0.5rem', borderRadius: '999px',
+                      backgroundColor: chip.on ? 'rgba(40,167,69,0.15)' : 'rgba(255,255,255,0.06)',
+                      color: chip.on ? '#28a745' : '#999',
+                      border: `1px solid ${chip.on ? '#28a745' : 'var(--border-color)'}`
+                    }}>
+                      {chip.on ? <CheckCircle size={12} /> : <AlertTriangle size={12} />} {chip.label}
+                    </span>
+                  ))}
+                </div>
+                {potoken.testResult && (
+                  <div style={{ fontSize: '0.78rem', marginTop: '0.4rem', color: potoken.testResult.ok ? '#28a745' : 'var(--error-color)' }}>
+                    {potoken.testResult.ok
+                      ? `✓ Minted a fresh token${potoken.testResult.token_preview ? ' (' + potoken.testResult.token_preview + ')' : ''}.`
+                      : `✗ ${potoken.testResult.reason || 'Test failed.'}`}
                   </div>
                 )}
               </div>
-              <button
-                onClick={() => setYoutubeSetup(prev => ({ ...prev, showWizard: true, wizardStep: 1, testResult: null }))}
-                className="button"
-                style={{ 
-                  backgroundColor: youtubeSetup.status?.configured ? '#6c757d' : 'var(--button-bg)',
-                  whiteSpace: 'nowrap',
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: '0.5rem'
-                }}
-              >
-                {youtubeSetup.status?.configured 
-                  ? <><RefreshCw size={16} /> Reconfigure</> 
-                  : <><Rocket size={16} /> Setup YouTube</>}
-              </button>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', alignItems: 'stretch' }}>
+                {!potoken.status?.provider_present && (
+                  <button onClick={handleInstallPotokenFromNexup} className="button" disabled={installingDep === 'potoken'}
+                    style={{ whiteSpace: 'nowrap', display: 'flex', alignItems: 'center', gap: '0.4rem', justifyContent: 'center' }}>
+                    {installingDep === 'potoken' ? <><Loader2 size={16} className="spin" /> Installing…</> : <><Download size={16} /> Install</>}
+                  </button>
+                )}
+                {potoken.status?.provider_present && !potoken.status?.healthy && (
+                  <button onClick={handleStartPotoken} className="button" disabled={potoken.loading}
+                    style={{ whiteSpace: 'nowrap', display: 'flex', alignItems: 'center', gap: '0.4rem', justifyContent: 'center' }}>
+                    <Rocket size={16} /> Start
+                  </button>
+                )}
+                {potoken.status?.usable && (
+                  <button onClick={handleTestPotoken} className="button button-secondary" disabled={potoken.testing}
+                    style={{ whiteSpace: 'nowrap', display: 'flex', alignItems: 'center', gap: '0.4rem', justifyContent: 'center' }}>
+                    {potoken.testing ? <><Loader2 size={16} className="spin" /> Testing…</> : <><RefreshCw size={16} /> Test</>}
+                  </button>
+                )}
+              </div>
             </div>
-            
-            {/* YouTube Bot Detection Warning */}
-            <div style={{ 
-              marginTop: '1rem',
-              padding: '1rem',
-              backgroundColor: 'rgba(23, 162, 184, 0.1)',
-              borderRadius: '8px',
-              border: '1px solid #17a2b8',
-              fontSize: '0.9rem'
+
+            {/* ADVANCED: cookie / OAuth sign-in (only for age-restricted) */}
+            <details style={{ marginTop: '1rem' }}>
+              <summary style={{ cursor: 'pointer', fontWeight: 600, color: 'var(--text-secondary)' }}>
+                Advanced: sign in for age-restricted trailers
+              </summary>
+              <div style={{
+                display: 'flex', alignItems: 'center', gap: '1rem', padding: '1rem', marginTop: '0.75rem',
+                backgroundColor: youtubeSetup.status?.configured ? 'rgba(40, 167, 69, 0.1)' : 'rgba(255, 255, 255, 0.04)',
+                borderRadius: '8px',
+                border: `1px solid ${youtubeSetup.status?.configured ? '#28a745' : 'var(--border-color)'}`
+              }}>
+                <div style={{ width: '40px', display: 'flex', justifyContent: 'center' }}>
+                  {youtubeSetup.loading
+                    ? <Loader2 size={24} className="spin" color="#ffc107" />
+                    : youtubeSetup.status?.configured
+                      ? <CheckCircle size={24} color="#28a745" />
+                      : <Info size={24} color="#888" />}
+                </div>
+                <div style={{ flex: 1 }}>
+                  <div style={{ fontWeight: 'bold', marginBottom: '0.25rem' }}>
+                    {youtubeSetup.status?.configured ? 'Signed in' : 'Optional sign-in'}
+                  </div>
+                  <div style={{ fontSize: '0.85rem', color: '#888' }}>
+                    {youtubeSetup.status?.configured
+                      ? (youtubeSetup.status?.message || 'Cookies configured.')
+                      : 'Only needed for age-restricted trailers. Most trailers download without this.'}
+                  </div>
+                  {youtubeSetup.status?.method && (
+                    <div style={{ fontSize: '0.8rem', color: '#666', marginTop: '0.25rem' }}>
+                      Method: {
+                        youtubeSetup.status.method === 'oauth' ? 'OAuth' :
+                        youtubeSetup.status.method === 'cookies_file' ? 'Exported cookies file' :
+                        `${youtubeSetup.status.browser} browser cookies`
+                      }
+                    </div>
+                  )}
+                </div>
+                <button
+                  onClick={() => setYoutubeSetup(prev => ({ ...prev, showWizard: true, wizardStep: 1, testResult: null }))}
+                  className="button button-secondary"
+                  style={{ whiteSpace: 'nowrap', display: 'flex', alignItems: 'center', gap: '0.5rem' }}
+                >
+                  {youtubeSetup.status?.configured ? <><RefreshCw size={16} /> Reconfigure</> : <><Rocket size={16} /> Set up sign-in</>}
+                </button>
+              </div>
+            </details>
+
+            {/* How it works */}
+            <div style={{
+              marginTop: '1rem', padding: '1rem',
+              backgroundColor: 'rgba(23, 162, 184, 0.1)', borderRadius: '8px',
+              border: '1px solid #17a2b8', fontSize: '0.9rem'
             }}>
               <div style={{ display: 'flex', alignItems: 'flex-start', gap: '0.75rem' }}>
                 <Info size={20} color="#17a2b8" style={{ flexShrink: 0, marginTop: '2px' }} />
-                <div>
-                  <div style={{ fontWeight: 'bold', marginBottom: '0.5rem', color: '#17a2b8' }}>
-                    YouTube Bot Detection
-                  </div>
-                  <div style={{ color: '#aaa', lineHeight: '1.5' }}>
-                    YouTube actively blocks automated trailer downloads. If downloads fail with "Sign in to confirm you're not a bot":
-                    <ul style={{ margin: '0.5rem 0 0 1rem', paddingLeft: '0' }}>
-                      <li><strong>VPN users:</strong> Try refreshing your IP or disconnecting temporarily</li>
-                      <li><strong>Rate limiting:</strong> Wait a few hours if you've downloaded many trailers</li>
-                      <li><strong>Cookie export:</strong> Use Incognito → login → go to youtube.com/robots.txt → export cookies</li>
-                    </ul>
-                  </div>
+                <div style={{ color: '#aaa', lineHeight: '1.5' }}>
+                  <strong style={{ color: '#17a2b8' }}>How this works.</strong> The PO-token provider answers
+                  YouTube's "confirm you're not a bot" challenge automatically, so trailers download without
+                  signing in. If a specific trailer still fails it's usually age-restricted (use Advanced
+                  sign-in above), region-locked, or your IP is briefly rate-limited.
                 </div>
               </div>
             </div>
@@ -27993,6 +28193,72 @@ const DashboardTiles = {
             </div>
           </div>
 
+          {/* YouTube PO-Token Provider Status — the modern fix for YouTube's
+              "Sign in to confirm you're not a bot" wall on trailer downloads. */}
+          <div style={{
+            padding: '0.75rem 1rem',
+            backgroundColor: 'var(--card-bg)',
+            border: '1px solid var(--border-color)',
+            borderRadius: '8px',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            flexWrap: 'wrap',
+            gap: '0.5rem'
+          }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+              <div style={{
+                width: '32px',
+                height: '32px',
+                borderRadius: '6px',
+                backgroundColor: systemDependencies?.dependencies?.potoken?.available ? 'rgba(40, 167, 69, 0.15)' : 'rgba(255, 193, 7, 0.15)',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center'
+              }}>
+                {systemDependencies?.dependencies?.potoken?.available ?
+                  <CheckCircle size={18} style={{ color: '#28a745' }} /> :
+                  <AlertTriangle size={18} style={{ color: '#ffc107' }} />
+                }
+              </div>
+              <div>
+                <div style={{ fontWeight: '500' }}>YouTube PO-Token Provider</div>
+                <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>
+                  {systemDependencies?.dependencies?.potoken?.available
+                    ? `Active${systemDependencies.dependencies.potoken.version ? ' (bgutil ' + systemDependencies.dependencies.potoken.version + ')' : ''} — cookieless YouTube downloads enabled`
+                    : (systemDependencies
+                        ? (systemDependencies.dependencies?.potoken?.detail?.provider_present
+                            ? 'Installed but not running — restart NeXroll or re-install'
+                            : 'Not installed (defeats YouTube’s bot wall on trailer downloads)')
+                        : 'Detecting...')}
+                </div>
+              </div>
+            </div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap' }}>
+              <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>
+                Mints Proof-of-Origin tokens for yt-dlp
+              </div>
+              {systemDependencies?.system?.is_docker ? (
+                (!systemDependencies?.dependencies?.potoken?.available) && (
+                  <span style={{ fontSize: '0.72rem', color: 'var(--text-secondary)', fontStyle: 'italic' }}>
+                    Managed by the Docker image — pull the latest image to update
+                  </span>
+                )
+              ) : systemDependencies?.dependencies?.potoken?.installable && (
+                <button
+                  className="button button-secondary"
+                  disabled={installingDep === 'potoken'}
+                  onClick={handleInstallPotoken}
+                  style={{ fontSize: '0.78rem', padding: '0.35rem 0.7rem', display: 'inline-flex', alignItems: 'center', gap: '0.35rem', whiteSpace: 'nowrap' }}
+                >
+                  {installingDep === 'potoken'
+                    ? <><Loader2 size={14} className="spin" /> Installing…</>
+                    : <><Download size={14} /> Install Provider</>}
+                </button>
+              )}
+            </div>
+          </div>
+
           {/* System Info */}
           {systemDependencies?.system && (
             <div style={{
@@ -30138,7 +30404,7 @@ const DashboardTiles = {
           scheduleName={exportingSequence.name}
         />
       )}
-      
+
       {/* Sequence Preview Modal */}
       {previewingSequence && (
         <SequencePreviewModal
@@ -34393,6 +34659,7 @@ const DashboardTiles = {
                     scheduleId={editingSchedule?.id || null}
                     apiUrl={apiUrl}
                     hideNameSection={true}
+                    initialName={scheduleForm.name || ''}
                     onSave={(blocks) => {
                       setSequenceBlocks(blocks);
                       console.log('Sequence updated:', blocks);
@@ -35620,6 +35887,112 @@ const DashboardTiles = {
       )}
       </div>
     </div>
+
+    {/* Alternate Trailer Picker — global so it works from every tab (NeX-Up
+        upcoming, etc.). Shows the top 3 YouTube candidates to preview & choose. */}
+    {altTrailers.open && (
+      <div
+        style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.7)', zIndex: 10000, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '1rem' }}
+        onClick={(e) => { if (e.target === e.currentTarget) closeAltTrailers(); }}
+      >
+        <div style={{ background: 'var(--card-bg)', border: '1px solid var(--border-color)', borderRadius: '10px', width: '100%', maxWidth: '720px', maxHeight: '88vh', overflowY: 'auto', padding: '1.25rem' }} onClick={(e) => e.stopPropagation()}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '0.5rem' }}>
+            <h2 style={{ margin: 0, display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '1.25rem' }}>
+              <Youtube size={22} /> Choose a trailer{altTrailers.title ? ` — ${altTrailers.title}` : ''}
+            </h2>
+            <button onClick={closeAltTrailers} className="button button-secondary" style={{ padding: '0.3rem 0.5rem' }} aria-label="Close"><X size={18} /></button>
+          </div>
+          <p style={{ color: 'var(--text-secondary)', fontSize: '0.88rem', marginTop: 0 }}>
+            The default trailer couldn’t be downloaded. Preview these alternates and pick one to download.
+          </p>
+
+          {altTrailers.error && altTrailers.candidates.length > 0 && (
+            <div style={{ marginBottom: '0.75rem', padding: '0.6rem 0.8rem', background: 'rgba(220,53,69,0.12)', border: '1px solid rgba(220,53,69,0.45)', borderRadius: '8px', color: 'var(--error-color)', fontSize: '0.82rem', lineHeight: 1.45 }}>
+              {altTrailers.error}
+            </div>
+          )}
+
+          {altTrailers.candidates.length > 0 && Object.keys(altTrailers.failedUrls || {}).length >= altTrailers.candidates.length && (
+            <div style={{ marginBottom: '0.75rem', padding: '0.6rem 0.8rem', background: 'rgba(255,193,7,0.12)', border: '1px solid rgba(255,193,7,0.45)', borderRadius: '8px', color: '#d39e00', fontSize: '0.82rem', lineHeight: 1.45 }}>
+              All of these are unavailable from your network — this title is likely region-blocked where NeXroll runs. A VPN or different network may be required, or this trailer simply isn’t downloadable here.
+            </div>
+          )}
+
+          {altTrailers.loading ? (
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem', padding: '2rem', justifyContent: 'center', color: 'var(--text-secondary)' }}>
+              <Loader2 size={20} className="spin" /> Searching YouTube for trailers…
+            </div>
+          ) : altTrailers.error && altTrailers.candidates.length === 0 ? (
+            <div style={{ padding: '1rem', background: 'rgba(220,53,69,0.1)', border: '1px solid rgba(220,53,69,0.4)', borderRadius: '8px', color: 'var(--error-color)', fontSize: '0.88rem' }}>
+              {altTrailers.error}
+            </div>
+          ) : altTrailers.candidates.length === 0 ? (
+            <div style={{ padding: '1.5rem', textAlign: 'center', color: 'var(--text-secondary)' }}>
+              No alternate trailers found on YouTube for this title.
+            </div>
+          ) : (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+              {altTrailers.candidates.map((c) => {
+                const mins = c.duration ? `${Math.floor(c.duration / 60)}:${String(Math.round(c.duration % 60)).padStart(2, '0')}` : '';
+                const busy = altTrailers.downloadingUrl === c.url;
+                const anyBusy = !!altTrailers.downloadingUrl;
+                const previewing = altTrailers.previewId === c.id;
+                const failed = (altTrailers.failedUrls || {})[c.url];
+                return (
+                  <div key={c.id} style={{ border: '1px solid var(--border-color)', borderRadius: '8px', overflow: 'hidden', background: 'var(--hover-bg)' }}>
+                    {previewing ? (
+                      <iframe
+                        title={c.title}
+                        src={`https://www.youtube.com/embed/${c.id}`}
+                        style={{ width: '100%', aspectRatio: '16 / 9', border: 'none', display: 'block' }}
+                        allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+                        allowFullScreen
+                      />
+                    ) : (
+                      <div style={{ position: 'relative', cursor: 'pointer' }} onClick={() => setAltTrailers(prev => ({ ...prev, previewId: c.id }))}>
+                        <img src={c.thumbnail} alt={c.title} style={{ width: '100%', display: 'block', aspectRatio: '16 / 9', objectFit: 'cover' }} />
+                        <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'rgba(0,0,0,0.25)' }}>
+                          <span style={{ display: 'inline-flex', alignItems: 'center', gap: '0.4rem', background: 'rgba(0,0,0,0.6)', color: '#fff', padding: '0.4rem 0.8rem', borderRadius: '999px', fontSize: '0.85rem' }}>
+                            <Eye size={16} /> Preview
+                          </span>
+                        </div>
+                      </div>
+                    )}
+                    <div style={{ padding: '0.6rem 0.75rem', opacity: failed ? 0.65 : 1 }}>
+                      <div style={{ fontWeight: 600, fontSize: '0.9rem', marginBottom: '0.2rem' }}>{c.title}</div>
+                      {failed && (
+                        <div style={{ display: 'inline-flex', alignItems: 'center', gap: '0.25rem', fontSize: '0.72rem', color: '#d39e00', marginBottom: '0.2rem' }}>
+                          <AlertTriangle size={12} /> Unavailable from your network — try another
+                        </div>
+                      )}
+                      <div style={{ fontSize: '0.78rem', color: 'var(--text-secondary)' }}>
+                        {c.channel || 'YouTube'}{mins ? ` · ${mins}` : ''}{typeof c.view_count === 'number' ? ` · ${c.view_count.toLocaleString()} views` : ''}
+                      </div>
+                      <div style={{ display: 'flex', gap: '0.5rem', marginTop: '0.6rem', flexWrap: 'wrap' }}>
+                        <button onClick={() => setAltTrailers(prev => ({ ...prev, previewId: previewing ? null : c.id }))} className="button button-secondary" style={{ fontSize: '0.78rem', padding: '0.35rem 0.6rem', display: 'inline-flex', alignItems: 'center', gap: '0.3rem' }}>
+                          <Eye size={14} /> {previewing ? 'Hide preview' : 'Preview'}
+                        </button>
+                        <a href={c.url} target="_blank" rel="noopener noreferrer" className="button button-secondary" style={{ fontSize: '0.78rem', padding: '0.35rem 0.6rem', display: 'inline-flex', alignItems: 'center', gap: '0.3rem', textDecoration: 'none' }}>
+                          <ExternalLink size={14} /> YouTube
+                        </a>
+                        <button onClick={() => downloadAlternateTrailer(c)} className="button" disabled={anyBusy || !!failed} title={failed || ''} style={{ fontSize: '0.78rem', padding: '0.35rem 0.7rem', display: 'inline-flex', alignItems: 'center', gap: '0.3rem', marginLeft: 'auto', opacity: failed ? 0.6 : 1 }}>
+                          {busy ? <><Loader2 size={14} className="spin" /> Downloading…</> : failed ? <><AlertTriangle size={14} /> Unavailable</> : <><Download size={14} /> Download this</>}
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+
+          <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '1rem' }}>
+            <button onClick={closeAltTrailers} className="button button-secondary">Cancel</button>
+          </div>
+        </div>
+      </div>
+    )}
+
     <ToastHost toasts={toasts} onDismiss={dismissToast} />
     </>
   );

@@ -32,6 +32,10 @@ pytz>=2025.1
 httpx>=0.28.1
 yt-dlp>=2025.3.21
 psutil>=7.0.0
+# YouTube PO-token provider plugin (defeats "Sign in to confirm you're not a bot").
+# This is the yt-dlp side; the token-generating server (Node) is provided
+# separately (baked into Docker, one-click install on Windows).
+bgutil-ytdlp-pot-provider>=1.3.0
 
 # Authentication
 bcrypt>=4.3.0

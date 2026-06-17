@@ -1,5 +1,84 @@
 # Changelog
 
+## [2.0.0-beta.7] - 06-17-2026 (beta)
+
+> A new **cookie-free YouTube download method** (a PO-token provider clears the
+> "not a bot" wall, with a pick-an-alternate-trailer flow when one's unavailable)
+> and Backup & Restore hardening (restores no longer fail partway, nothing goes
+> missing on the round-trip, bundle previews play, two archive path-traversal
+> holes closed), plus schedule-time, dashboard, and NeX-Up trailer-retention
+> fixes. Upgrade-safe.
+
+### Added
+
+- **New YouTube download method — browser cookies are no longer the default.**
+  Trailer downloads now use a Proof-of-Origin (PO) token provider (bgutil) that
+  automatically clears YouTube's "Sign in to confirm you're not a bot" challenge,
+  so trailers download — on request *and* during sync — **without exporting any
+  browser cookies**. Cookies / sign-in are now an **Advanced** option, used only
+  for the occasional age-restricted trailer; previously they were the primary
+  (and frequently-broken) method. The old "YouTube Authentication" panel is now a
+  **"YouTube Downloads"** card that shows a live **Installed / Enabled / Working**
+  status with a one-click **Test** that mints a real token. Docker images bundle
+  the provider; on Windows it installs in one click from the System page (sets up
+  Node.js + the provider). Internally, the previous ~30-strategy yt-dlp cascade —
+  much of it player clients YouTube has since disabled — was replaced with a lean,
+  token-aware path.
+- **Pick an alternate trailer when the default can't be downloaded.** If a
+  movie/show's trailer is unavailable (region-blocked, removed, age-restricted,
+  …), NeXroll now offers the **top 3 YouTube alternatives** to **preview** in an
+  in-app player and choose from — nothing downloads automatically. Download
+  errors now explain the real reason (e.g. "this video is unavailable in your
+  country") instead of a generic "try again," and a candidate that fails is
+  flagged so you can try another.
+- **NeX-Up Trailer Retention is now enforced.** The Trailer Retention (days)
+  setting was saved but never acted on — downloaded trailers were only removed
+  once their movie/show arrived in your library. The scheduler now runs a
+  time-based cleanup (at most hourly) that deletes downloaded movie and TV
+  trailers older than the retention window, based on when they were downloaded
+  (0 = keep forever). The **Your Trailers** page now also shows each trailer's
+  removal date on movie and TV cards, in both detailed and list views.
+
+### Fixed
+
+- **Schedule start/end times no longer drift.** Enabling or disabling a
+  schedule, or picking a holiday from the holiday browser, could shift its
+  start/end time by your timezone's offset every time (e.g. 9:00 AM creeping to
+  1:00 PM, and occasionally rolling to the next day). The times you set now stay
+  put until you change them.
+- **A schedule you turned off no longer stays pinned as "Currently Showing."**
+  A disabled or expired schedule could remain displayed as the active one while
+  your genuinely-active schedules didn't appear. Turning a schedule off now
+  clears it immediately, and the dashboard re-checks that what it shows is
+  actually active (self-healing a stale pointer).
+- **Restoring a database backup no longer fails when a filler sequence is set.**
+  If you'd configured a filler *sequence* (not just a category), restore aborted
+  with a foreign-key error and rolled back the whole import. That reference is
+  now cleared before the restore proceeds.
+- **Genre → category mappings now survive backup and restore.** They were
+  dropped during every restore (never written to the backup and deleted on the
+  way in), silently losing your genre-based preroll routing. They're now
+  included in the backup and re-linked to the restored categories.
+- **One bad row in a backup no longer discards the good ones.** A single
+  problem entry (e.g. a duplicate category name) used to wipe out everything
+  already restored in that batch; each row is now restored independently, so the
+  rest comes through.
+- **Restoring a full system (ZIP) backup reliably replaces the database.** The
+  old database's leftover write-ahead files could mask the restored data, and on
+  Windows an open database handle could block the swap. The restore now releases
+  the database and clears those leftovers first.
+- **Bundle import preview now plays.** Preview videos stored in category
+  subfolders always failed to load (the player looked in the wrong place); they
+  now play correctly during the import preview.
+- **Security: archive imports can no longer write outside NeXroll's folders.**
+  Restoring a crafted system ZIP or importing a crafted sequence bundle could
+  drop files elsewhere on disk via `..` paths; such entries are now rejected.
+- **Exporting a sequence while editing a schedule now exports that sequence.**
+  From the schedule editor, Export could fail or download an unrelated sequence
+  because it looked one up by the schedule's ID. It now exports the blocks you're
+  actually editing. (A missing sequence also returns a proper "not found" instead
+  of a generic failure.)
+
 ## [2.0.0-beta.6] - 06-16-2026 (beta)
 
 > Sequence-and-schedule fixes: scheduled sequences now display correctly,

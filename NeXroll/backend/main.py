@@ -2650,6 +2650,40 @@ def startup_event():
     # Log startup banner
     _log_startup_banner()
 
+    # PO-Token provider (bgutil) for YouTube downloads. Init always so status
+    # endpoints work; start the local token server in the background when NeX-Up
+    # is enabled and the provider is present, so trailer downloads can mint
+    # Proof-of-Origin tokens and get past YouTube's "confirm you're not a bot"
+    # wall without cookies. Fully optional — absence just means no PO tokens.
+    try:
+        import threading as _threading
+        from backend import nexup_potoken
+        nexup_potoken.init(data_dir, _file_log)
+
+        def _start_potoken():
+            try:
+                _db = SessionLocal()
+                try:
+                    _s = _db.query(models.Setting).first()
+                    nexup_on = bool(getattr(_s, "nexup_enabled", False)) if _s else False
+                finally:
+                    _db.close()
+                mgr = nexup_potoken.get_manager()
+                if mgr and nexup_on:
+                    mgr.start()
+            except Exception as e:
+                try:
+                    _file_log(f"PO-token provider start error: {e}")
+                except Exception:
+                    pass
+
+        _threading.Thread(target=_start_potoken, daemon=True).start()
+    except Exception as e:
+        try:
+            _file_log(f"PO-token provider init error: {e}")
+        except Exception:
+            pass
+
     scheduler.start()
 
 @app.on_event("startup")
@@ -2782,6 +2816,13 @@ def _auto_refresh_holiday_dates():
 @app.on_event("shutdown")
 def shutdown_event():
     scheduler.stop()
+    try:
+        from backend import nexup_potoken
+        mgr = nexup_potoken.get_manager()
+        if mgr:
+            mgr.stop()
+    except Exception:
+        pass
 
 # Dependency to get DB session
 def get_db():
@@ -2848,6 +2889,18 @@ def system_dependencies():
             "version": None,
             "description": "JavaScript runtime for YouTube extraction",
             "path": None
+        },
+        "node": {
+            "available": False,
+            "version": None,
+            "description": "JavaScript runtime for the YouTube PO-token provider",
+            "path": None
+        },
+        "potoken": {
+            "available": False,
+            "version": None,
+            "description": "YouTube PO-token provider (beats bot detection)",
+            "path": None
         }
     }
     
@@ -2897,6 +2950,35 @@ def system_dependencies():
     # Which deps can be installed from this page, given the platform.
     is_docker = _is_running_in_docker()
     dependencies["deno"]["installable"] = (not is_docker) and (not dependencies["deno"]["available"] or not dependencies["deno"].get("on_path", True))
+
+    # Node + PO-token provider (bgutil) — the modern fix for YouTube's bot wall.
+    try:
+        from backend import nexup_potoken
+        node_path = nexup_potoken.find_node()
+        if node_path:
+            dependencies["node"]["available"] = True
+            dependencies["node"]["path"] = node_path
+            _nok, _nver = probe_version(node_path, '--version')
+            if _nver:
+                dependencies["node"]["version"] = _nver
+            dependencies["node"]["on_path"] = shutil.which('node') is not None
+        dependencies["node"]["installable"] = (not is_docker) and (not dependencies["node"]["available"] or not dependencies["node"].get("on_path", True))
+
+        mgr = nexup_potoken.get_manager()
+        pot_status = mgr.status() if mgr else {
+            "plugin_installed": nexup_potoken.is_plugin_installed(),
+            "provider_present": bool(nexup_potoken.provider_server_dir(data_dir)),
+            "node_available": bool(node_path),
+            "usable": False,
+            "healthy": False,
+        }
+        dependencies["potoken"]["available"] = bool(pot_status.get("usable"))
+        dependencies["potoken"]["version"] = pot_status.get("version")
+        dependencies["potoken"]["path"] = pot_status.get("server_dir")
+        dependencies["potoken"]["detail"] = pot_status
+        dependencies["potoken"]["installable"] = (not is_docker) and not bool(pot_status.get("usable"))
+    except Exception as _pe:
+        print(f"potoken dependency probe failed: {_pe}")
 
     # Add system info
     system_info = {
@@ -2988,6 +3070,153 @@ def install_deno():
         }
 
     return {"success": False, "message": "Install ran but Deno could not be located afterward. A NeXroll restart may be required."}
+
+
+# Pinned Node LTS — chosen so node-canvas (a bgutil provider dependency) has
+# prebuilt binaries and doesn't need a C/C++ toolchain on the user's machine.
+_NODE_VERSION = "20.18.1"
+# Keep in sync with the bgutil-ytdlp-pot-provider pin in requirements.txt.
+_BGUTIL_VERSION = "1.3.1"
+
+
+def _nexroll_node_dir() -> str:
+    return os.path.join(os.path.expanduser("~"), ".nexroll", "node")
+
+
+def _download_to(url: str, dest_path: str, timeout: int = 300) -> None:
+    import urllib.request
+    req = urllib.request.Request(url, headers={"User-Agent": "NeXroll"})
+    with urllib.request.urlopen(req, timeout=timeout) as r, open(dest_path, "wb") as f:
+        shutil.copyfileobj(r, f)
+
+
+@app.post("/system/dependencies/install/potoken")
+def install_potoken():
+    """Install the YouTube PO-token provider (Node.js + bgutil server).
+
+    This is the component that gets NeX-Up past YouTube's "Sign in to confirm
+    you're not a bot" wall. Docker bakes it into the image, so this endpoint
+    targets non-Docker (Windows/dev) installs:
+      1. Ensure Node.js (download a pinned LTS into ~/.nexroll/node if missing).
+      2. Download + build the bgutil provider into <data_dir>/bgutil-provider.
+      3. Start the local token server.
+    """
+    if _is_running_in_docker():
+        return {"success": False, "docker": True,
+                "message": "Running in Docker — the PO-token provider is baked into the image. Pull the latest NeXroll image to update it."}
+
+    from backend import nexup_potoken
+    import tempfile, zipfile as _zip
+    steps = []
+    try:
+        # --- 1. Node.js ---
+        node = nexup_potoken.find_node()
+        if node:
+            steps.append(f"Node found: {node}")
+        elif not sys.platform.startswith("win"):
+            return {"success": False, "steps": steps,
+                    "message": "Node.js (>=20) not found. Install it via your package manager, then retry."}
+        else:
+            steps.append("Downloading Node.js LTS...")
+            node_dir = _nexroll_node_dir()
+            os.makedirs(node_dir, exist_ok=True)
+            arch = "x64" if sys.maxsize > 2 ** 32 else "x86"
+            fn = f"node-v{_NODE_VERSION}-win-{arch}"
+            url = f"https://nodejs.org/dist/v{_NODE_VERSION}/{fn}.zip"
+            tmpzip = os.path.join(tempfile.gettempdir(), fn + ".zip")
+            _download_to(url, tmpzip, timeout=300)
+            with _zip.ZipFile(tmpzip, "r") as z:
+                z.extractall(tempfile.gettempdir())
+            src = os.path.join(tempfile.gettempdir(), fn)
+            for item in os.listdir(src):  # flatten node-vX-win-x64/* into node_dir
+                s = os.path.join(src, item)
+                d = os.path.join(node_dir, item)
+                if os.path.isdir(d):
+                    shutil.rmtree(d, ignore_errors=True)
+                elif os.path.exists(d):
+                    os.remove(d)
+                shutil.move(s, d)
+            try:
+                os.remove(tmpzip)
+                shutil.rmtree(src, ignore_errors=True)
+            except Exception:
+                pass
+            node = nexup_potoken.find_node()
+            if not node:
+                return {"success": False, "steps": steps, "message": "Node.js download/extract failed."}
+            steps.append(f"Node installed: {node}")
+
+        node_dir = os.path.dirname(node)
+        env = dict(os.environ)
+        env["PATH"] = node_dir + os.pathsep + env.get("PATH", "")
+
+        # --- 2. Provider source + build ---
+        provider_root = os.path.join(data_dir, "bgutil-provider")
+        server_dir = os.path.join(provider_root, "server")
+        if os.path.isfile(os.path.join(server_dir, "build", "main.js")):
+            steps.append("Provider already built.")
+        else:
+            steps.append("Downloading PO-token provider...")
+            url = f"https://github.com/Brainicism/bgutil-ytdlp-pot-provider/archive/refs/tags/{_BGUTIL_VERSION}.zip"
+            tmpzip = os.path.join(tempfile.gettempdir(), f"bgutil-{_BGUTIL_VERSION}.zip")
+            _download_to(url, tmpzip, timeout=300)
+            extract_to = os.path.join(tempfile.gettempdir(), f"bgutil-extract-{_BGUTIL_VERSION}")
+            shutil.rmtree(extract_to, ignore_errors=True)
+            with _zip.ZipFile(tmpzip, "r") as z:
+                z.extractall(extract_to)
+            srcrepo = next((os.path.join(extract_to, d) for d in os.listdir(extract_to)
+                            if os.path.isdir(os.path.join(extract_to, d))), None)
+            if not srcrepo or not os.path.isdir(os.path.join(srcrepo, "server")):
+                return {"success": False, "steps": steps, "message": "Provider download malformed."}
+            os.makedirs(provider_root, exist_ok=True)
+            if os.path.isdir(server_dir):
+                shutil.rmtree(server_dir, ignore_errors=True)
+            shutil.move(os.path.join(srcrepo, "server"), server_dir)
+            try:
+                os.remove(tmpzip)
+                shutil.rmtree(extract_to, ignore_errors=True)
+            except Exception:
+                pass
+
+            steps.append("Installing provider dependencies (npm install)...")
+            npm = os.path.join(node_dir, "npm.cmd" if sys.platform.startswith("win") else "npm")
+            if not os.path.exists(npm):
+                npm = "npm"
+            r1 = _run_subprocess([npm, "install", "--no-audit", "--no-fund"],
+                                 cwd=server_dir, env=env, capture_output=True, text=True, timeout=900)
+            if r1.returncode != 0:
+                _file_log(f"PO-token npm install failed: {(r1.stderr or '')[-800:]}")
+                return {"success": False, "steps": steps,
+                        "message": f"npm install failed: {(r1.stderr or r1.stdout or '')[-300:]}"}
+            steps.append("Compiling provider (tsc)...")
+            npx = os.path.join(node_dir, "npx.cmd" if sys.platform.startswith("win") else "npx")
+            if not os.path.exists(npx):
+                npx = "npx"
+            r2 = _run_subprocess([npx, "tsc"], cwd=server_dir, env=env,
+                                 capture_output=True, text=True, timeout=300)
+            if r2.returncode != 0 or not os.path.isfile(os.path.join(server_dir, "build", "main.js")):
+                _file_log(f"PO-token tsc build failed: {(r2.stderr or '')[-800:]}")
+                return {"success": False, "steps": steps,
+                        "message": f"Build failed: {(r2.stderr or r2.stdout or '')[-300:]}"}
+            steps.append("Provider built.")
+
+        # --- 3. Start ---
+        mgr = nexup_potoken.get_manager() or nexup_potoken.init(data_dir, _file_log)
+        status = mgr.start()
+        steps.append("Provider started." if status.get("usable") else "Provider built but not healthy yet.")
+        return {
+            "success": bool(status.get("usable")),
+            "steps": steps,
+            "status": status,
+            "message": ("YouTube PO-token provider installed and active."
+                        if status.get("usable")
+                        else "Components installed; provider not healthy yet — restart NeXroll or check bgutil-provider.log."),
+        }
+    except Exception as e:
+        _file_log(f"PO-token install error: {e}")
+        import traceback
+        _file_log(traceback.format_exc())
+        return {"success": False, "steps": steps, "message": f"Install error: {e}"}
 
 
 @app.get("/system/ffmpeg-info")
@@ -10453,6 +10682,30 @@ def apply_sequence_to_server(sequence_id: int, db: Session = Depends(get_db)):
         "applied_to": applied_to
     }
 
+def _is_within_directory(directory: str, target: str) -> bool:
+    """Return True only if `target` resolves to a path inside `directory`.
+
+    Used to defend zip extraction (and preview serving) against zip-slip /
+    path-traversal entries like "../../etc/passwd" or absolute paths.
+    """
+    try:
+        abs_dir = os.path.abspath(directory)
+        abs_target = os.path.abspath(target)
+        return os.path.commonpath([abs_dir]) == os.path.commonpath([abs_dir, abs_target])
+    except (ValueError, TypeError):
+        # commonpath raises ValueError for paths on different drives (Windows)
+        return False
+
+
+def _safe_extractall(zip_ref: "zipfile.ZipFile", dest_dir: str) -> None:
+    """zipfile.extractall that rejects any member escaping dest_dir (zip-slip)."""
+    for member in zip_ref.namelist():
+        target = os.path.join(dest_dir, member)
+        if not _is_within_directory(dest_dir, target):
+            raise HTTPException(status_code=400, detail=f"Unsafe path in archive: {member}")
+    zip_ref.extractall(dest_dir)
+
+
 @app.get("/sequences/preview-video/{preview_id}/{video_path:path}")
 async def get_preview_video(preview_id: str, video_path: str):
     """
@@ -10468,15 +10721,16 @@ async def get_preview_video(preview_id: str, video_path: str):
     if not re.match(r'^[a-zA-Z0-9]{1,8}$', preview_id):
         raise HTTPException(status_code=400, detail="Invalid preview ID")
     
-    # Sanitize video_path to prevent directory traversal
-    video_path = os.path.basename(video_path)
-    
-    # Build the full path
+    # Build the full path. Bundle videos live in subfolders (e.g.
+    # "categories/Christmas/file.mp4"), so we must preserve the relative path
+    # rather than collapsing it with basename(). Traversal is blocked by the
+    # containment check below.
     preview_dir = os.path.join(tempfile.gettempdir(), f"nexroll_preview_{preview_id}")
-    full_path = os.path.join(preview_dir, video_path)
-    
-    # Security check - ensure the path is within the preview directory
-    if not os.path.abspath(full_path).startswith(os.path.abspath(preview_dir)):
+    rel_path = video_path.replace("\\", "/").lstrip("/")
+    full_path = os.path.normpath(os.path.join(preview_dir, rel_path))
+
+    # Security check - ensure the resolved path is within the preview directory
+    if not _is_within_directory(preview_dir, full_path):
         raise HTTPException(status_code=403, detail="Access denied")
     
     if not os.path.exists(full_path):
@@ -10579,9 +10833,9 @@ async def import_sequence_pattern(
             
             try:
                 with zipfile.ZipFile(tmp_path, 'r') as zip_ref:
-                    # Extract to temporary directory
+                    # Extract to temporary directory (zip-slip safe)
                     extract_dir = tempfile.mkdtemp()
-                    zip_ref.extractall(extract_dir)
+                    _safe_extractall(zip_ref, extract_dir)
                     
                     # Find the .nexseq file
                     nexseq_file = None
@@ -11458,7 +11712,7 @@ async def import_sequence_pattern(
                                     models.Preroll.community_preroll_id == preroll_ref['community_id']
                                 ).first()
                                 if matched_preroll:
-                                    _file_log(f"Successfully downloaded preroll: {matched_preroll.name} (ID {matched_preroll.id})")
+                                    _file_log(f"Successfully downloaded preroll: {matched_preroll.display_name or matched_preroll.filename} (ID {matched_preroll.id})")
                                 else:
                                     _file_log(f"Download completed but preroll not found in database")
                             except Exception as e:
@@ -11845,32 +12099,21 @@ def _unmangle_community_id(mangled_id: str) -> Optional[str]:
         return None
 
 
-@app.post("/sequences/{sequence_id}/export")
-def export_sequence_pattern(
-    sequence_id: int, 
-    export_mode: str = Query("pattern_only", regex="^(pattern_only|with_community_ids|with_preroll_data|full_bundle)$"),
-    db: Session = Depends(get_db)
-):
-    """
-    Export a saved sequence as a .nexseq pattern file with various levels of detail.
-    
+def _build_sequence_export(sequence_name, sequence_description, blocks, export_mode, db):
+    """Build a .nexseq pattern (dict) or a full-bundle ZIP (StreamingResponse)
+    from a list of sequence blocks.
+
+    Shared by the saved-sequence export endpoint and the ad-hoc blocks export
+    endpoint so both produce identical output. Category/preroll names and
+    (optionally) community IDs and video files are resolved from the live DB by id.
+
     Export modes:
     - pattern_only: Structure only (category names, no preroll details)
     - with_community_ids: Include community preroll IDs for easy re-downloading
     - with_preroll_data: Include full preroll metadata (name, tags, duration, etc.)
     - full_bundle: ZIP file with pattern + all preroll video files (large!)
-    
-    Returns JSON pattern or ZIP file depending on mode
     """
     try:
-        # Get the sequence
-        sequence = db.query(models.SavedSequence).filter(models.SavedSequence.id == sequence_id).first()
-        if not sequence:
-            raise HTTPException(status_code=404, detail="Sequence not found")
-        
-        # Parse the sequence blocks
-        blocks = sequence.get_blocks()
-        
         # Convert blocks to pattern format
         pattern_blocks = []
         all_preroll_ids = []  # Collect for full bundle mode
@@ -12001,8 +12244,8 @@ def export_sequence_pattern(
         
         # Create pattern data
         pattern_data = {
-            'pattern_name': sequence.name,
-            'pattern_description': sequence.description,
+            'pattern_name': sequence_name,
+            'pattern_description': sequence_description,
             'created_by': 'NeXroll',
             'export_mode': export_mode,
             'nexroll_version': app_version,
@@ -12017,7 +12260,7 @@ def export_sequence_pattern(
                 with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zip_file:
                     # Add pattern JSON
                     zip_file.writestr(
-                        f"{sequence.name.replace(' ', '_')}.nexseq",
+                        f"{sequence_name.replace(' ', '_')}.nexseq",
                         json.dumps(pattern_data, indent=2)
                     )
                     
@@ -12109,7 +12352,7 @@ def export_sequence_pattern(
                     
                     # Add a manifest file with export details
                     manifest = {
-                        'sequence_name': sequence.name,
+                        'sequence_name': sequence_name,
                         'exported_at': datetime.datetime.utcnow().isoformat() + 'Z',
                         'nexroll_version': app_version,
                         'total_files': len(added_files),
@@ -12127,13 +12370,13 @@ def export_sequence_pattern(
                     zip_file.writestr('MANIFEST.json', json.dumps(manifest, indent=2))
                 
                 zip_buffer.seek(0)
-                _file_log(f"Exported full bundle: {sequence.name} - {len(categories_exported)} categories, {len(fixed_prerolls_exported)} fixed prerolls, {len(added_files)} total files")
-                
+                _file_log(f"Exported full bundle: {sequence_name} - {len(categories_exported)} categories, {len(fixed_prerolls_exported)} fixed prerolls, {len(added_files)} total files")
+
                 return StreamingResponse(
                     zip_buffer,
                     media_type="application/zip",
                     headers={
-                        "Content-Disposition": f"attachment; filename={sequence.name.replace(' ', '_')}_bundle.zip"
+                        "Content-Disposition": f"attachment; filename={sequence_name.replace(' ', '_')}_bundle.zip"
                     }
                 )
             except Exception as e:
@@ -12141,13 +12384,55 @@ def export_sequence_pattern(
                 log_event('ERROR', 'nexup', f'Bundle export failed: {e}', source='export_sequence_pattern')
                 raise HTTPException(status_code=500, detail=f"Bundle creation failed: {str(e)}")
         
-        _file_log(f"Exported sequence pattern ({export_mode}): {sequence.name} with {len(pattern_blocks)} blocks")
+        _file_log(f"Exported sequence pattern ({export_mode}): {sequence_name} with {len(pattern_blocks)} blocks")
         return pattern_data
-        
+
+    except HTTPException:
+        raise
     except Exception as e:
         _file_log(f"Failed to export sequence pattern: {e}")
-        log_event('ERROR', 'nexup', f'Sequence export failed: {e}', source='export_sequence_pattern')
+        log_event('ERROR', 'nexup', f'Sequence export failed: {e}', source='_build_sequence_export')
         raise HTTPException(status_code=500, detail=f"Export failed: {str(e)}")
+
+
+@app.post("/sequences/{sequence_id}/export")
+def export_sequence_pattern(
+    sequence_id: int,
+    export_mode: str = Query("pattern_only", regex="^(pattern_only|with_community_ids|with_preroll_data|full_bundle)$"),
+    db: Session = Depends(get_db)
+):
+    """Export a saved sequence as a .nexseq pattern file (or full-bundle ZIP)."""
+    sequence = db.query(models.SavedSequence).filter(models.SavedSequence.id == sequence_id).first()
+    if not sequence:
+        raise HTTPException(status_code=404, detail="Sequence not found")
+    return _build_sequence_export(sequence.name, sequence.description, sequence.get_blocks(), export_mode, db)
+
+
+class SequenceBlocksExportRequest(BaseModel):
+    name: Optional[str] = "Sequence"
+    description: Optional[str] = ""
+    blocks: List[dict] = []
+    export_mode: Optional[str] = "pattern_only"
+
+
+@app.post("/sequences/export-pattern")
+def export_sequence_blocks(request: SequenceBlocksExportRequest, db: Session = Depends(get_db)):
+    """Export an ad-hoc list of sequence blocks (e.g. the in-progress builder or a
+    schedule's inline sequence) without requiring a saved SavedSequence row. Mirrors
+    /sequences/{id}/export but takes the blocks in the request body, which avoids the
+    id-space mismatch that occurred when a Schedule id was passed to the by-id route.
+    """
+    valid_modes = ("pattern_only", "with_community_ids", "with_preroll_data", "full_bundle")
+    mode = request.export_mode or "pattern_only"
+    if mode not in valid_modes:
+        raise HTTPException(status_code=400, detail=f"Invalid export_mode: {mode}")
+    return _build_sequence_export(
+        request.name or "Sequence",
+        request.description or "",
+        request.blocks or [],
+        mode,
+        db,
+    )
 
 # Holiday presets
 @app.post("/holiday-presets/init")
@@ -14556,6 +14841,16 @@ def backup_database(db: Session = Depends(get_db)):
                     "updated_at": seq.updated_at.isoformat() if seq.updated_at else None
                 } for seq in db.query(models.SavedSequence).all()
             ],
+            # genre_maps: user-configured genre -> category routing. Restore deletes
+            # these (FK to categories), so they must be backed up to avoid silent
+            # data loss. category_id is the source-DB id; restore remaps it by name.
+            "genre_maps": [
+                {
+                    "genre": gm.genre,
+                    "genre_norm": getattr(gm, "genre_norm", None),
+                    "category_id": gm.category_id,
+                } for gm in db.query(models.GenreMap).all()
+            ],
             "exported_at": datetime.datetime.utcnow().isoformat(),
             "exported_by_version": "1.13.13",
         }
@@ -14699,14 +14994,16 @@ def restore_database(backup_data: dict, db: Session = Depends(get_db)):
         print("RESTORE: Deleting genre maps...")
         db.query(models.GenreMap).delete(synchronize_session=False)
         
-        # 3. Clear every category FK on settings (each has FK to categories).
-        # Missing on Windows restores because SQLite there defaults to
-        # foreign_keys=OFF; Docker enforces them, so a non-NULL nexup_category_id
-        # / nexup_tv_category_id / filler_category_id made "DELETE FROM categories"
-        # fail. NULL each independently so schema drift on one column can't abort
-        # the whole restore.
-        print("RESTORE: Clearing category references from settings...")
-        for _col in ("active_category", "nexup_category_id", "nexup_tv_category_id", "filler_category_id"):
+        # 3. Clear every FK on settings that points at a table we are about to
+        # delete. SQLite enforces foreign_keys=ON here (see database.py pragma),
+        # so a non-NULL nexup_category_id / nexup_tv_category_id / filler_category_id
+        # made "DELETE FROM categories" fail, and filler_sequence_id (FK ->
+        # saved_sequences) made "DELETE FROM saved_sequences" fail and aborted the
+        # whole restore. NULL each independently so schema drift on one column
+        # can't abort the others.
+        print("RESTORE: Clearing category/sequence references from settings...")
+        for _col in ("active_category", "nexup_category_id", "nexup_tv_category_id",
+                     "filler_category_id", "filler_sequence_id"):
             try:
                 db.execute(text(f"UPDATE settings SET {_col} = NULL"))
             except Exception as _col_err:
@@ -14742,80 +15039,106 @@ def restore_database(backup_data: dict, db: Session = Depends(get_db)):
         print("RESTORE: Restoring categories...")
         old_id_to_new_id = {}  # Map old category IDs to new IDs
         for cat_data in backup_data.get("categories", []):
+            old_id = cat_data.get("id")
             try:
-                old_id = cat_data.get("id")
-                category = models.Category(
-                    name=cat_data.get("name"),
-                    description=cat_data.get("description"),
-                    plex_mode=cat_data.get("plex_mode") or "shuffle",
-                    apply_to_plex=bool(cat_data.get("apply_to_plex", False)),
-                    is_system=bool(cat_data.get("is_system", False)),
-                )
-                db.add(category)
-                db.flush()  # Get the new ID
+                # Per-row SAVEPOINT: a single bad row (e.g. duplicate name) only
+                # rolls back itself, instead of discarding every category already
+                # staged in this batch (which a plain db.rollback() would do).
+                with db.begin_nested():
+                    category = models.Category(
+                        name=cat_data.get("name"),
+                        description=cat_data.get("description"),
+                        plex_mode=cat_data.get("plex_mode") or "shuffle",
+                        apply_to_plex=bool(cat_data.get("apply_to_plex", False)),
+                        is_system=bool(cat_data.get("is_system", False)),
+                    )
+                    db.add(category)
+                    db.flush()  # Get the new ID (surfaces IntegrityError inside the savepoint)
                 if old_id:
                     old_id_to_new_id[old_id] = category.id
                 print(f"RESTORE: Category '{category.name}' - old ID {old_id} -> new ID {category.id}")
             except Exception as cat_err:
-                print(f"Error adding category: {cat_err}")
-                db.rollback()
+                print(f"Error adding category '{cat_data.get('name')}': {cat_err}")
                 continue
         db.commit()
 
         # Build quick lookup by name
         name_to_category = {c.name: c for c in db.query(models.Category).all()}
 
+        # Restore genre maps (genre -> category routing). These were deleted above
+        # for FK safety; re-create them with category_id remapped to the new IDs.
+        # Pre-v2 backups have no "genre_maps" key, so this is a no-op for them.
+        print("RESTORE: Restoring genre maps...")
+        for gm_data in backup_data.get("genre_maps", []):
+            old_cat_id = gm_data.get("category_id")
+            new_cat_id = old_id_to_new_id.get(old_cat_id) if old_cat_id else None
+            if not new_cat_id:
+                # GenreMap.category_id is NOT NULL; skip entries whose category
+                # didn't make it into the restore.
+                print(f"RESTORE: skipping genre map '{gm_data.get('genre')}' - category not found")
+                continue
+            try:
+                with db.begin_nested():
+                    db.add(models.GenreMap(
+                        genre=gm_data.get("genre"),
+                        genre_norm=gm_data.get("genre_norm"),
+                        category_id=new_cat_id,
+                    ))
+                    db.flush()
+            except Exception as gm_err:
+                print(f"Error adding genre map '{gm_data.get('genre')}': {gm_err}")
+                continue
+        db.commit()
+
         # Restore prerolls (including display_name and many-to-many categories if present)
         for preroll_data in backup_data.get("prerolls", []):
             try:
-                # Safe datetime parsing
-                upload_date = None
-                if preroll_data.get("upload_date"):
-                    try:
-                        upload_date = datetime.datetime.fromisoformat(str(preroll_data["upload_date"]).replace('Z', '+00:00'))
-                    except (ValueError, TypeError):
-                        upload_date = None
-                
-                # Map old category_id to new category_id
-                old_cat_id = preroll_data.get("category_id")
-                new_cat_id = old_id_to_new_id.get(old_cat_id) if old_cat_id else None
-                
-                p = models.Preroll(
-                    filename=preroll_data.get("filename"),
-                    display_name=preroll_data.get("display_name"),
-                    path=preroll_data.get("path"),
-                    thumbnail=preroll_data.get("thumbnail"),
-                    tags=preroll_data.get("tags"),
-                    category_id=new_cat_id,
-                    description=preroll_data.get("description"),
-                    duration=preroll_data.get("duration"),
-                    file_size=preroll_data.get("file_size"),
-                    upload_date=upload_date,
-                    managed=preroll_data.get("managed", True),
-                    # v1.13.13: previously-missing fields restored
-                    enabled=bool(preroll_data.get("enabled", True)),
-                    community_preroll_id=preroll_data.get("community_preroll_id"),
-                    exclude_from_matching=bool(preroll_data.get("exclude_from_matching", False)),
-                    file_hash=preroll_data.get("file_hash"),
-                )
-                db.add(p)
-                db.flush()  # get p.id without full commit
+                # Per-row SAVEPOINT so one bad preroll can't discard the batch.
+                with db.begin_nested():
+                    # Safe datetime parsing
+                    upload_date = None
+                    if preroll_data.get("upload_date"):
+                        try:
+                            upload_date = datetime.datetime.fromisoformat(str(preroll_data["upload_date"]).replace('Z', '+00:00'))
+                        except (ValueError, TypeError):
+                            upload_date = None
 
-                # Restore associated categories by name (IDs in backup may not match new DB)
-                assoc = []
-                try:
+                    # Map old category_id to new category_id
+                    old_cat_id = preroll_data.get("category_id")
+                    new_cat_id = old_id_to_new_id.get(old_cat_id) if old_cat_id else None
+
+                    p = models.Preroll(
+                        filename=preroll_data.get("filename"),
+                        display_name=preroll_data.get("display_name"),
+                        path=preroll_data.get("path"),
+                        thumbnail=preroll_data.get("thumbnail"),
+                        tags=preroll_data.get("tags"),
+                        category_id=new_cat_id,
+                        description=preroll_data.get("description"),
+                        duration=preroll_data.get("duration"),
+                        file_size=preroll_data.get("file_size"),
+                        upload_date=upload_date,
+                        managed=preroll_data.get("managed", True),
+                        # v1.13.13: previously-missing fields restored
+                        enabled=bool(preroll_data.get("enabled", True)),
+                        community_preroll_id=preroll_data.get("community_preroll_id"),
+                        exclude_from_matching=bool(preroll_data.get("exclude_from_matching", False)),
+                        file_hash=preroll_data.get("file_hash"),
+                    )
+                    db.add(p)
+                    db.flush()  # get p.id without full commit
+
+                    # Restore associated categories by name (IDs in backup may not match new DB)
+                    assoc = []
                     for c in preroll_data.get("categories", []):
                         nm = c.get("name") if isinstance(c, dict) else c
                         if nm and nm in name_to_category:
                             assoc.append(name_to_category[nm])
-                except Exception as cat_assoc_err:
-                    print(f"Error associating categories to preroll: {cat_assoc_err}")
-                    assoc = []
-                if assoc:
-                    p.categories = assoc
+                    if assoc:
+                        p.categories = assoc
+                        db.flush()
             except Exception as preroll_err:
                 print(f"Error adding preroll {preroll_data.get('filename')}: {preroll_err}")
-                db.rollback()
                 continue
 
         db.commit()
@@ -14843,33 +15166,34 @@ def restore_database(backup_data: dict, db: Session = Depends(get_db)):
                 old_fallback_id = schedule_data.get("fallback_category_id")
                 new_fallback_id = old_id_to_new_id.get(old_fallback_id) if old_fallback_id else None
                 
-                schedule = models.Schedule(
-                    name=schedule_data.get("name"),
-                    type=schedule_data.get("type"),
-                    start_date=start_date,
-                    end_date=end_date,
-                    category_id=new_cat_id,
-                    fallback_category_id=new_fallback_id,
-                    shuffle=schedule_data.get("shuffle", False),
-                    playlist=schedule_data.get("playlist", False),
-                    is_active=schedule_data.get("is_active", True),
-                    recurrence_pattern=schedule_data.get("recurrence_pattern"),
-                    preroll_ids=schedule_data.get("preroll_ids"),
-                    # v1.13.13: previously-missing fields restored. Without these, sequence
-                    # schedules came back as plain category schedules, blend/exclusive/priority
-                    # were lost, and holiday-API auto-update bindings were dropped.
-                    sequence=schedule_data.get("sequence"),
-                    color=schedule_data.get("color"),
-                    blend_enabled=bool(schedule_data.get("blend_enabled", False)),
-                    priority=schedule_data.get("priority") if schedule_data.get("priority") is not None else 5,
-                    exclusive=bool(schedule_data.get("exclusive", False)),
-                    holiday_name=schedule_data.get("holiday_name"),
-                    holiday_country=schedule_data.get("holiday_country"),
-                )
-                db.add(schedule)
+                with db.begin_nested():
+                    schedule = models.Schedule(
+                        name=schedule_data.get("name"),
+                        type=schedule_data.get("type"),
+                        start_date=start_date,
+                        end_date=end_date,
+                        category_id=new_cat_id,
+                        fallback_category_id=new_fallback_id,
+                        shuffle=schedule_data.get("shuffle", False),
+                        playlist=schedule_data.get("playlist", False),
+                        is_active=schedule_data.get("is_active", True),
+                        recurrence_pattern=schedule_data.get("recurrence_pattern"),
+                        preroll_ids=schedule_data.get("preroll_ids"),
+                        # v1.13.13: previously-missing fields restored. Without these, sequence
+                        # schedules came back as plain category schedules, blend/exclusive/priority
+                        # were lost, and holiday-API auto-update bindings were dropped.
+                        sequence=schedule_data.get("sequence"),
+                        color=schedule_data.get("color"),
+                        blend_enabled=bool(schedule_data.get("blend_enabled", False)),
+                        priority=schedule_data.get("priority") if schedule_data.get("priority") is not None else 5,
+                        exclusive=bool(schedule_data.get("exclusive", False)),
+                        holiday_name=schedule_data.get("holiday_name"),
+                        holiday_country=schedule_data.get("holiday_country"),
+                    )
+                    db.add(schedule)
+                    db.flush()
             except Exception as schedule_err:
                 print(f"Error adding schedule {schedule_data.get('name')}: {schedule_err}")
-                db.rollback()
                 continue
 
         # Restore holiday presets
@@ -14879,23 +15203,24 @@ def restore_database(backup_data: dict, db: Session = Depends(get_db)):
                 old_cat_id = holiday_data.get("category_id")
                 new_cat_id = old_id_to_new_id.get(old_cat_id) if old_cat_id else None
                 
-                holiday = models.HolidayPreset(
-                    name=holiday_data.get("name"),
-                    description=holiday_data.get("description"),
-                    month=holiday_data.get("month"),
-                    day=holiday_data.get("day"),
-                    # v1.13.13: date-range and is_recurring fields, previously dropped
-                    start_month=holiday_data.get("start_month"),
-                    start_day=holiday_data.get("start_day"),
-                    end_month=holiday_data.get("end_month"),
-                    end_day=holiday_data.get("end_day"),
-                    is_recurring=bool(holiday_data.get("is_recurring", True)),
-                    category_id=new_cat_id
-                )
-                db.add(holiday)
+                with db.begin_nested():
+                    holiday = models.HolidayPreset(
+                        name=holiday_data.get("name"),
+                        description=holiday_data.get("description"),
+                        month=holiday_data.get("month"),
+                        day=holiday_data.get("day"),
+                        # v1.13.13: date-range and is_recurring fields, previously dropped
+                        start_month=holiday_data.get("start_month"),
+                        start_day=holiday_data.get("start_day"),
+                        end_month=holiday_data.get("end_month"),
+                        end_day=holiday_data.get("end_day"),
+                        is_recurring=bool(holiday_data.get("is_recurring", True)),
+                        category_id=new_cat_id
+                    )
+                    db.add(holiday)
+                    db.flush()
             except Exception as holiday_err:
                 print(f"Error adding holiday preset {holiday_data.get('name')}: {holiday_err}")
-                db.rollback()
                 continue
 
         # Restore saved sequences
@@ -14916,18 +15241,19 @@ def restore_database(backup_data: dict, db: Session = Depends(get_db)):
                     except (ValueError, TypeError):
                         updated_at = None
                 
-                sequence = models.SavedSequence(
-                    name=seq_data.get("name"),
-                    description=seq_data.get("description"),
-                    blocks=json.dumps(seq_data.get("blocks", [])),
-                    created_at=created_at or datetime.datetime.utcnow(),
-                    updated_at=updated_at or datetime.datetime.utcnow()
-                )
-                db.add(sequence)
+                with db.begin_nested():
+                    sequence = models.SavedSequence(
+                        name=seq_data.get("name"),
+                        description=seq_data.get("description"),
+                        blocks=json.dumps(seq_data.get("blocks", [])),
+                        created_at=created_at or datetime.datetime.utcnow(),
+                        updated_at=updated_at or datetime.datetime.utcnow()
+                    )
+                    db.add(sequence)
+                    db.flush()
                 print(f"RESTORE: Added sequence '{seq_data.get('name')}'")
             except Exception as seq_err:
                 print(f"Error adding saved sequence {seq_data.get('name')}: {seq_err}")
-                db.rollback()
                 continue
 
         db.commit()
@@ -14997,11 +15323,20 @@ def restore_files(file: UploadFile = File(...), db: Session = Depends(get_db)):
                 # 1. Restore database file if present
                 if "database/nexroll.db" in namelist:
                     print("RESTORE: Restoring database file...")
+                    from backend.database import engine as _engine
                     # Extract to temp location first
                     db_temp = os.path.join(temp_dir, "nexroll_restore.db")
                     with zip_ref.open("database/nexroll.db") as src:
                         with open(db_temp, "wb") as dst:
                             dst.write(src.read())
+                    # Release all pooled SQLite connections BEFORE touching the file.
+                    # Without this, Windows may refuse to overwrite an open DB handle,
+                    # and the OLD database's WAL/SHM sidecars could be replayed over
+                    # the freshly-restored file. Disposing checkpoints + closes them.
+                    try:
+                        _engine.dispose()
+                    except Exception as _eng_err:
+                        print(f"RESTORE: engine.dispose failed (non-fatal): {_eng_err}")
                     # Copy to actual location (backup existing first)
                     if os.path.exists(DB_PATH):
                         backup_db = DB_PATH + ".backup"
@@ -15009,6 +15344,14 @@ def restore_files(file: UploadFile = File(...), db: Session = Depends(get_db)):
                             shutil.copy2(DB_PATH, backup_db)
                         except Exception:
                             pass
+                    # Drop stale WAL/SHM sidecars that belong to the old database.
+                    for _side in ("-wal", "-shm"):
+                        try:
+                            _sp = DB_PATH + _side
+                            if os.path.exists(_sp):
+                                os.remove(_sp)
+                        except Exception as _side_err:
+                            print(f"RESTORE: could not remove {DB_PATH + _side}: {_side_err}")
                     shutil.copy2(db_temp, DB_PATH)
                     os.unlink(db_temp)
                     restored_items.append("database")
@@ -15017,28 +15360,40 @@ def restore_files(file: UploadFile = File(...), db: Session = Depends(get_db)):
                 preroll_files = [n for n in namelist if n.startswith("prerolls/") and not n.endswith("/")]
                 if preroll_files:
                     print(f"RESTORE: Restoring {len(preroll_files)} preroll files...")
+                    written = 0
                     for name in preroll_files:
                         # Extract relative path after "prerolls/"
                         rel_path = name[len("prerolls/"):]
                         target_path = os.path.join(PREROLLS_DIR, rel_path)
+                        # Zip-slip guard: never write outside PREROLLS_DIR
+                        if not _is_within_directory(PREROLLS_DIR, target_path):
+                            print(f"RESTORE: skipping unsafe archive entry: {name}")
+                            continue
                         os.makedirs(os.path.dirname(target_path), exist_ok=True)
                         with zip_ref.open(name) as src:
                             with open(target_path, "wb") as dst:
                                 dst.write(src.read())
-                    restored_items.append(f"{len(preroll_files)} preroll files")
+                        written += 1
+                    restored_items.append(f"{written} preroll files")
                 
                 # 3. Restore thumbnails
                 thumb_files = [n for n in namelist if n.startswith("thumbnails/") and not n.endswith("/")]
                 if thumb_files:
                     print(f"RESTORE: Restoring {len(thumb_files)} thumbnail files...")
+                    written = 0
                     for name in thumb_files:
                         rel_path = name[len("thumbnails/"):]
                         target_path = os.path.join(THUMBNAILS_DIR, rel_path)
+                        # Zip-slip guard: never write outside THUMBNAILS_DIR
+                        if not _is_within_directory(THUMBNAILS_DIR, target_path):
+                            print(f"RESTORE: skipping unsafe archive entry: {name}")
+                            continue
                         os.makedirs(os.path.dirname(target_path), exist_ok=True)
                         with zip_ref.open(name) as src:
                             with open(target_path, "wb") as dst:
                                 dst.write(src.read())
-                    restored_items.append(f"{len(thumb_files)} thumbnails")
+                        written += 1
+                    restored_items.append(f"{written} thumbnails")
                 
                 # 4. Restore settings if present
                 if "settings/settings.json" in namelist:
@@ -15050,9 +15405,9 @@ def restore_files(file: UploadFile = File(...), db: Session = Depends(get_db)):
                     restored_items.append("settings")
                 
             else:
-                # Legacy format - just prerolls folder directly
+                # Legacy format - just prerolls folder directly (zip-slip safe)
                 print("RESTORE: Detected legacy backup format")
-                zip_ref.extractall(PREROLLS_DIR)
+                _safe_extractall(zip_ref, PREROLLS_DIR)
                 restored_items.append("preroll files (legacy format)")
         
         # Clean up temp file
@@ -17599,13 +17954,47 @@ def get_sonarr_trailers(db: Session = Depends(get_db)):
         "removal_date": calc_removal(t.downloaded_at)
     } for t in trailers]
 
+@app.get("/nexup/sonarr/trailers/search")
+async def search_tv_trailers(sonarr_series_id: int, season_number: int = 1, db: Session = Depends(get_db)):
+    """Find alternate YouTube trailers for a Sonarr series (top 3) for the user to
+    preview and pick when the auto-discovered trailer is unavailable."""
+    setting = db.query(models.Setting).first()
+    if not setting or not getattr(setting, 'nexup_sonarr_url', None):
+        raise HTTPException(status_code=400, detail="Sonarr not connected")
+    from backend.sonarr_connector import SonarrConnector
+    from backend.radarr_connector import search_youtube_trailers
+    try:
+        connector = SonarrConnector(setting.nexup_sonarr_url, setting.nexup_sonarr_api_key)
+        all_series = await connector.get_all_series()
+        show = next((s for s in all_series if s.get('id') == sonarr_series_id), None)
+        if not show:
+            raise HTTPException(status_code=404, detail="Show not found in Sonarr")
+        title = show.get('title', '') or ''
+        year = show.get('year')
+        season_str = f"season {season_number}" if season_number and season_number > 1 else ""
+        query = " ".join(p for p in [title, str(year) if year else "", season_str, "official trailer"] if p).strip()
+        candidates = await asyncio.get_event_loop().run_in_executor(
+            None, search_youtube_trailers, query, 3)
+        return {"title": title, "year": year, "season_number": season_number, "query": query, "candidates": candidates}
+    except HTTPException:
+        raise
+    except Exception as e:
+        log_event('ERROR', 'nexup', f'TV trailer search failed: {e}', source='search_tv_trailers')
+        raise HTTPException(status_code=500, detail=f"TV trailer search failed: {e}")
+
+
 @app.get("/nexup/trailers/download/tv")
 async def download_tv_trailer(
     sonarr_series_id: int,
     season_number: int = 1,
+    trailer_url: Optional[str] = None,
     db: Session = Depends(get_db)
 ):
-    """Download a trailer for a TV show from Sonarr"""
+    """Download a trailer for a TV show from Sonarr.
+
+    Pass `trailer_url` to download a user-chosen alternate (from
+    /nexup/sonarr/trailers/search) instead of the auto-discovered one.
+    """
     _file_log(f"Sonarr: Download request for series_id={sonarr_series_id}, season={season_number}")
     setting = db.query(models.Setting).first()
     if not setting or not getattr(setting, 'nexup_sonarr_url', None):
@@ -17655,34 +18044,34 @@ async def download_tv_trailer(
     
     _file_log(f"Sonarr: Found show '{show_info.get('title')}' (TVDB: {show_info.get('tvdbId')}, IMDB: {show_info.get('imdbId')})")
     
-    # Get trailer URL from TMDB or IMDB
+    # Get trailer URL from TMDB or IMDB (skipped when the caller chose an alternate)
     tmdb_api_key = getattr(setting, 'nexup_tmdb_api_key', None)
-    fetcher = TVTrailerFetcher(tmdb_api_key=tmdb_api_key)
-    _file_log(f"Sonarr: Searching for trailers for '{show_info.get('title')}' S{season_number}")
-    trailers = await fetcher.get_season_trailers(
-        tmdb_id=None,
-        tvdb_id=show_info.get('tvdbId'),
-        imdb_id=show_info.get('imdbId'),
-        season_number=season_number
-    ) if show_info.get('tvdbId') or show_info.get('imdbId') else []
-    
-    # If no season-specific trailers, try show-level trailers
-    if not trailers:
-        _file_log(f"Sonarr: No season-specific trailers found, trying show-level trailers")
-        trailers = await fetcher.get_tv_trailers(
+    trailers = []
+    if not trailer_url:
+        fetcher = TVTrailerFetcher(tmdb_api_key=tmdb_api_key)
+        _file_log(f"Sonarr: Searching for trailers for '{show_info.get('title')}' S{season_number}")
+        trailers = await fetcher.get_season_trailers(
+            tmdb_id=None,
             tvdb_id=show_info.get('tvdbId'),
-            imdb_id=show_info.get('imdbId')
-        )
-    
-    if not trailers:
-        _file_log(f"Sonarr: No trailers found for '{show_info.get('title')}'")
-        raise HTTPException(status_code=404, detail="No trailer found for this show")
-    
-    _file_log(f"Sonarr: Found {len(trailers)} trailer(s) for '{show_info.get('title')}'")
-    
-    # Use first available trailer
-    trailer_info = trailers[0]
-    trailer_url = trailer_info['url']
+            imdb_id=show_info.get('imdbId'),
+            season_number=season_number
+        ) if show_info.get('tvdbId') or show_info.get('imdbId') else []
+
+        # If no season-specific trailers, try show-level trailers
+        if not trailers:
+            _file_log(f"Sonarr: No season-specific trailers found, trying show-level trailers")
+            trailers = await fetcher.get_tv_trailers(
+                tvdb_id=show_info.get('tvdbId'),
+                imdb_id=show_info.get('imdbId')
+            )
+
+        if not trailers:
+            _file_log(f"Sonarr: No trailers found for '{show_info.get('title')}'")
+            raise HTTPException(status_code=404, detail="No trailer found for this show")
+
+        _file_log(f"Sonarr: Found {len(trailers)} trailer(s) for '{show_info.get('title')}'")
+        # Use first available trailer
+        trailer_url = trailers[0]['url']
     
     # Create trailer record
     trailer = models.ComingSoonTVTrailer(
@@ -18508,6 +18897,63 @@ async def download_diagnostics(db: Session = Depends(get_db)):
     
     return diagnostics
 
+@app.get("/nexup/potoken/status")
+def get_potoken_status():
+    """Status of the YouTube PO-token provider (bgutil).
+
+    `usable: true` means yt-dlp will get Proof-of-Origin tokens (plugin importable
+    AND a healthy local token server), which is what defeats the bot wall.
+    """
+    try:
+        from backend import nexup_potoken
+        mgr = nexup_potoken.get_manager()
+        if mgr is None:
+            mgr = nexup_potoken.init(data_dir, _file_log)
+        return mgr.status()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"PO-token status failed: {e}")
+
+
+@app.post("/nexup/potoken/start")
+def start_potoken():
+    """Start (or adopt) the local PO-token provider server. Idempotent."""
+    try:
+        from backend import nexup_potoken
+        mgr = nexup_potoken.get_manager()
+        if mgr is None:
+            mgr = nexup_potoken.init(data_dir, _file_log)
+        status = mgr.start()
+        if not status.get("usable"):
+            # Give the caller a precise reason so the UI can guide the user.
+            if not status.get("plugin_installed"):
+                status["hint"] = "PO-token yt-dlp plugin not installed (bgutil-ytdlp-pot-provider)."
+            elif not status.get("node_available"):
+                status["hint"] = "Node.js not found — install it from the System page."
+            elif not status.get("provider_present"):
+                status["hint"] = "PO-token provider files not found — install the YouTube downloader components."
+            elif not status.get("healthy"):
+                status["hint"] = "Provider server failed to start; check bgutil-provider.log."
+        return status
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"PO-token start failed: {e}")
+
+
+@app.post("/nexup/potoken/test")
+def test_potoken():
+    """Mint a PO token right now to prove the provider is actively working."""
+    try:
+        from backend import nexup_potoken
+        mgr = nexup_potoken.get_manager()
+        if mgr is None:
+            mgr = nexup_potoken.init(data_dir, _file_log)
+        mgr.ensure_running()
+        result = mgr.test_mint()
+        result["status"] = mgr.status()
+        return result
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"PO-token test failed: {e}")
+
+
 @app.get("/nexup/youtube/status")
 def get_youtube_status(db: Session = Depends(get_db)):
     """Check if YouTube authentication is set up and working"""
@@ -19318,9 +19764,46 @@ def serve_trailer_video(trailer_type: str, trailer_id: int, db: Session = Depend
     return response
 
 
+@app.get("/nexup/trailers/search")
+async def search_movie_trailers(radarr_movie_id: int, db: Session = Depends(get_db)):
+    """Find alternate YouTube trailers for a Radarr movie (top 3) so the user can
+    preview and pick one when the default trailer is unavailable."""
+    setting = db.query(models.Setting).first()
+    if not setting or not setting.nexup_radarr_url or not setting.nexup_radarr_api_key:
+        raise HTTPException(status_code=400, detail="Radarr not connected")
+    from backend.radarr_connector import RadarrConnector, search_youtube_trailers
+    try:
+        connector = RadarrConnector(setting.nexup_radarr_url, setting.nexup_radarr_api_key)
+        movie = await connector.get_movie_by_id(radarr_movie_id)
+        if not movie:
+            raise HTTPException(status_code=404, detail="Movie not found in Radarr")
+        title = movie.get('title', '') or ''
+        year = movie.get('year')
+        query = (f"{title} {year} official trailer" if year else f"{title} official trailer").strip()
+        candidates = await asyncio.get_event_loop().run_in_executor(
+            None, search_youtube_trailers, query, 3)
+        return {
+            "title": title,
+            "year": year,
+            "query": query,
+            "radarr_youtube_id": movie.get('youTubeTrailerId'),
+            "candidates": candidates,
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        log_event('ERROR', 'nexup', f'Trailer search failed: {e}', source='search_movie_trailers')
+        raise HTTPException(status_code=500, detail=f"Trailer search failed: {e}")
+
+
 @app.post("/nexup/trailers/download")
-async def download_trailer(radarr_movie_id: int, db: Session = Depends(get_db)):
-    """Download a specific trailer by Radarr movie ID"""
+async def download_trailer(radarr_movie_id: int, trailer_url: Optional[str] = None, db: Session = Depends(get_db)):
+    """Download a trailer for a Radarr movie.
+
+    By default uses Radarr's youTubeTrailerId. Pass `trailer_url` to download a
+    user-chosen alternate (from /nexup/trailers/search) when the default one is
+    unavailable.
+    """
     
     setting = db.query(models.Setting).first()
     if not setting or not setting.nexup_radarr_url or not setting.nexup_radarr_api_key:
@@ -19356,13 +19839,13 @@ async def download_trailer(radarr_movie_id: int, db: Session = Depends(get_db)):
         if not movie:
             raise HTTPException(status_code=404, detail="Movie not found in Radarr")
         
-        trailer_url = None
+        # Honor a caller-provided alternate URL; otherwise derive from Radarr.
         youtube_id = movie.get('youTubeTrailerId')
-        if youtube_id:
+        if not trailer_url and youtube_id:
             trailer_url = f"https://www.youtube.com/watch?v={youtube_id}"
-        
+
         _file_log(f"Downloading trailer for: {movie.get('title')} (TMDB: {movie.get('tmdbId')}, YouTube ID: {youtube_id}, URL: {trailer_url})")
-        
+
         if not trailer_url:
             raise HTTPException(status_code=400, detail="No trailer available for this movie in Radarr")
         
@@ -19383,27 +19866,35 @@ async def download_trailer(radarr_movie_id: int, db: Session = Depends(get_db)):
         )
         
         if not (result and isinstance(result, dict) and result.get('path')):
-            # download_trailer returns {'error','message'} on failure now.
+            # download_trailer returns {'error': <CODE>, 'message': '<CODE>: ...'}.
             err_code = (result.get('error') if isinstance(result, dict) else '') or ''
             fail_detail = (result.get('message') if isinstance(result, dict) else '') or ''
-            # Only blame cookies/bot-block when it actually IS one — otherwise
-            # report the real reason. YouTube downloads are flaky (transient
-            # rate-limits, network blips, a strategy timing out), and the old
-            # code always said "cookies expired", sending people to re-export
-            # cookies that were fine.
-            is_auth = ('YOUTUBE_BOT_BLOCK' in err_code or 'STALE_COOKIES' in err_code
-                       or any(s in fail_detail.lower() for s in ['sign in to confirm', 'not a bot', 'bot detection']))
-            if is_auth:
+            # The message starts with the internal CODE; strip it for display.
+            clean = fail_detail
+            if ':' in fail_detail:
+                head, rest = fail_detail.split(':', 1)
+                if head.strip().replace('_', '').isalpha() and head.strip().isupper():
+                    clean = rest.strip()
+
+            if err_code in ('VIDEO_UNAVAILABLE', 'AGE_RESTRICTED', 'RATE_LIMITED'):
+                # Concrete, known reason from YouTube — show it verbatim (already
+                # written for users, and NOT "try again", which would mislead).
+                help_msg = clean
+            elif (err_code in ('YOUTUBE_BOT_BLOCK', 'STALE_COOKIES')
+                  or any(s in fail_detail.lower() for s in ['sign in to confirm', 'not a bot', 'bot detection'])):
                 if not cookies_file.exists() and not browser:
-                    help_msg = "YouTube is requiring sign-in. Export your browser cookies to 'youtube_cookies.txt' in your NeX-Up storage folder."
+                    help_msg = ("YouTube is requiring sign-in for this trailer (usually age-restricted). "
+                                "Most trailers don't need this — for the ones that do, add cookies via "
+                                "'Advanced: sign in for age-restricted trailers' on the YouTube Downloads card.")
                 elif not cookies_file.exists():
-                    help_msg = f"YouTube is requiring sign-in. Detected browser: {browser}. Close {browser} completely and retry, or export cookies to youtube_cookies.txt."
+                    help_msg = (f"YouTube is requiring sign-in. Detected browser: {browser}. Close {browser} "
+                                "completely and retry, or add cookies via 'Advanced: sign in' on the YouTube Downloads card.")
                 else:
                     help_msg = "YouTube is requiring sign-in and your cookies may be expired. Re-export fresh cookies from an Incognito window."
             else:
-                help_msg = "Couldn't download this trailer right now. YouTube downloads can fail transiently — try again in a moment."
-                if fail_detail:
-                    help_msg += f" (Details: {fail_detail[:160]})"
+                help_msg = "Couldn't download this trailer right now — this is often a transient YouTube block, so try again in a moment."
+                if clean and clean != help_msg:
+                    help_msg += f" (Details: {clean[:180]})"
 
             _file_log(f"Failed to download trailer for {movie.get('title')} - err={err_code} detail={fail_detail[:200]}")
             log_event('ERROR', 'nexup', f'Trailer download failed: {movie.get("title")} - {err_code or "unknown"}', source='download_trailer', db=db)

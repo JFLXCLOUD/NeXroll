@@ -804,11 +804,18 @@ const SequenceBuilder = ({ blocks: externalBlocks = [], onBlocksChange, initialS
       />
 
       {/* Pattern Export Modal */}
+      {/* Export the blocks currently in the builder (ad-hoc mode). This sequence
+          isn't a saved SavedSequence row here, so we pass `blocks` rather than an
+          id - exporting by `scheduleId` (a Schedule id in the schedule editor)
+          would mismatch the by-id /sequences/{id}/export endpoint. */}
       {scheduleId && (
         <PatternExport
           isOpen={showExportModal}
           onClose={() => setShowExportModal(false)}
           scheduleId={scheduleId}
+          scheduleName={initialName || 'Sequence'}
+          description={initialDescription || ''}
+          blocks={blocks}
         />
       )}
 
