@@ -1975,17 +1975,15 @@ const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
     );
     
     try {
-      // Format dates correctly for backend
-      const formatDateForBackend = (dateStr) => {
-        if (!dateStr) return '';
-        try {
-          const d = new Date(dateStr);
-          return d.toISOString().slice(0, 16);
-        } catch {
-          return '';
-        }
-      };
-      
+      // Format dates for the backend WITHOUT timezone conversion. Schedules are
+      // stored as naive local datetimes; using new Date(dateStr).toISOString()
+      // here parses the naive string as local time and re-emits it as UTC, which
+      // shifts start_date/end_date by the local offset EVERY time a schedule is
+      // toggled (the times drift further on each enable/disable, and can even
+      // roll the date for users far from UTC). toLocalInputValue just strips any
+      // tz suffix and keeps the wall-clock value unchanged.
+      const formatDateForBackend = toLocalInputValue;
+
       const requestData = {
         name: schedule.name,
         type: schedule.type,
@@ -34709,10 +34707,13 @@ const DashboardTiles = {
                           <button
                             type="button"
                             onClick={() => {
-                              // Parse the holiday date
-                              const holidayDate = new Date(holiday.date + 'T00:00:00');
-                              const formattedDate = holidayDate.toISOString().slice(0, 16);
-                              
+                              // holiday.date is already a naive 'YYYY-MM-DD' wall-clock
+                              // date. Build the form values directly from it — do NOT
+                              // round-trip through new Date(...).toISOString(), which
+                              // would convert to UTC and shift the holiday to the wrong
+                              // day/time for users not on UTC.
+                              const formattedDate = holiday.date + 'T00:00';
+
                               // Prefill the schedule form with holiday metadata for auto-updating
                               setScheduleForm(prev => ({
                                 ...prev,
