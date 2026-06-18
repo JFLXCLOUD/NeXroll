@@ -2,9 +2,22 @@
 
 
 import os
+from PyInstaller.utils.hooks import collect_submodules, collect_data_files, copy_metadata
+
 spec_root = os.path.abspath(SPECPATH)
 project_root = os.path.dirname(spec_root)
 frontend_build = os.path.join(project_root, 'NeXroll', 'frontend', 'build')
+
+# yt-dlp discovers PO-token plugins (bgutil) via the `yt_dlp_plugins` namespace
+# package at runtime. In a frozen build those submodules aren't picked up
+# automatically, so collect them explicitly — otherwise the installed app can't
+# mint PO tokens and YouTube trailer downloads fall back to the bot wall.
+_potoken_hidden = collect_submodules('yt_dlp_plugins')
+_potoken_datas = collect_data_files('yt_dlp_plugins')
+try:
+    _potoken_datas += copy_metadata('bgutil-ytdlp-pot-provider')
+except Exception:
+    pass
 
 a = Analysis(
     ['..\\NeXroll\\backend\\main.py'],
@@ -14,8 +27,8 @@ a = Analysis(
         (frontend_build, 'frontend/build'),
         (os.path.join(project_root, 'NeXroll', 'CHANGELOG.md'), '.'),
         (os.path.join(project_root, 'docs', 'lefty-blue-wednesday-main-version-36162-02-38.mp3'), 'docs'),
-    ],
-    hiddenimports=['backend.radarr_connector', 'backend.dynamic_preroll', 'httpx', 'httpx._transports', 'httpx._transports.default', 'httpcore', 'h11', 'h2', 'hpack', 'hyperframe', 'yt_dlp'],
+    ] + _potoken_datas,
+    hiddenimports=['backend.radarr_connector', 'backend.dynamic_preroll', 'httpx', 'httpx._transports', 'httpx._transports.default', 'httpcore', 'h11', 'h2', 'hpack', 'hyperframe', 'yt_dlp', 'yt_dlp_plugins'] + _potoken_hidden,
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
