@@ -22,7 +22,7 @@ ShowInstDetails show
 Icon "NeXroll_ICON\icon_1758297097_64x64.ico"
 UninstallIcon "NeXroll_ICON\icon_1758297097_32x32.ico"
 
-!define APP_VERSION "2.0.0-beta.7"
+!define APP_VERSION "2.0.0-beta.8"
 VIProductVersion "2.0.0.0"
 VIAddVersionKey /LANG=1033 "ProductName" "NeXroll"
 VIAddVersionKey /LANG=1033 "ProductVersion" "${APP_VERSION}"
@@ -246,6 +246,15 @@ Section "Install Dependencies (FFmpeg via winget)" SEC_DEPS
    nsExec::ExecToStack 'powershell -NoProfile -ExecutionPolicy Bypass -Command "if (-not (Get-Command ffmpeg -ErrorAction SilentlyContinue)) { winget install Gyan.FFmpeg --accept-source-agreements --accept-package-agreements -e }"' $0
    Pop $0
    ; $0 contains exit code (ignored for best-effort)
+SectionEnd
+
+Section "Visual C++ Runtime (YouTube downloader)" SEC_VCREDIST
+   ; The YouTube PO-token provider's Node modules (canvas) link the Microsoft
+   ; Visual C++ runtime. Without it the provider exits immediately on launch
+   ; (rc=1), so install it via winget (idempotent — a no-op if already present).
+   nsExec::ExecToStack 'powershell -NoProfile -ExecutionPolicy Bypass -Command "if (Get-Command winget -ErrorAction SilentlyContinue) { winget install Microsoft.VCRedist.2015+.x64 --accept-source-agreements --accept-package-agreements -e }"' $0
+   Pop $0
+   ; best-effort; exit code ignored
 SectionEnd
 
 ; Auto-detect ffmpeg/ffprobe and record absolute paths in HKLM\Software\NeXroll

@@ -1,5 +1,69 @@
 # Changelog
 
+## [2.0.0-beta.8] - 06-19-2026 (beta)
+
+> The headline fix: beta.7's **cookie-free YouTube downloads now actually work**.
+> The PO-token provider was crashing on startup with the bundled Node, so trailer
+> downloads still hit the "not a bot" wall — the bundled Node is updated and the
+> provider launches correctly now. Trailers also **download in a Plex-friendly
+> format (H.264)** so they play as prerolls instead of silently failing on AV1.
+> Plus real **Backup/Restore progress**, a **Storage Usage** view, a clearer and
+> more honest alternate-trailer + preview flow, **automatic log redaction**, and
+> fixes for a PO-token install that could make the app unresponsive. Upgrade-safe.
+
+### Added
+
+- **Backup & Restore show real progress.** Creating a system backup now streams
+  the archive as it's built and shows a live progress bar with percentage and
+  MB (instead of a spinner that sat there during large exports); database backups
+  stream too. Restores show a real upload percentage, then an "extracting &
+  restoring" phase. A system backup also no longer sweeps in the PO-token
+  provider's thousands of dependency files.
+- **Storage Usage on the Storage page.** Settings → Storage now opens with a
+  breakdown of disk use across prerolls, NeX-Up trailers, thumbnails, and the
+  database — a segmented bar plus per-location cards showing size, share of
+  total, and path. Same data as the dashboard Storage tile, expanded.
+- **Scheduler tile shows "Last applied."** The dashboard Scheduler tile replaces
+  the "Firing today" counter (which was always 0 for everyday schedule types)
+  with the most recently applied schedule and when — a reliable confirmation that
+  the scheduler is actually running and acting.
+- **Logs auto-redact sensitive data.** API keys, tokens, and IP addresses are
+  now stripped from logs everywhere they leave the app — the log viewer, JSON/CSV
+  export, and the diagnostics bundle — so logs can be shared safely. Loopback
+  addresses are kept for debugging; version numbers and timestamps are untouched.
+
+### Fixed
+
+- **Cookie-free YouTube downloads now work (provider no longer crashes).** In
+  beta.7 the PO-token provider exited immediately on the bundled Node.js
+  (`ERR_REQUIRE_ESM`), so trailer downloads still ran into YouTube's bot wall and
+  the System page showed a provider error. The bundled Node is updated to a
+  version that runs the provider, and existing installs launch it correctly too.
+  Docker images get the same update. After updating, the **YouTube Downloads**
+  status on the System page goes green and trailers download again.
+- **Trailers download in a Plex-friendly format (H.264).** Downloads previously
+  preferred AV1, which Plex can't direct-play as a preroll — so a trailer would
+  apply but never appear before playback. Trailers now download as H.264 so they
+  actually play. *Existing AV1 trailers should be re-downloaded to benefit.*
+- **The alternate-trailer flow is clearer and honest.** When the default trailer
+  can't be downloaded, NeXroll no longer flashes an alarming error before opening
+  the picker — the picker now shows the real reason inline. And when you pick an
+  alternate, it downloads **exactly that video** (it used to be able to quietly
+  substitute a different one if your pick failed), so what you choose is what you
+  get.
+- **Older trailers preview again.** Previews now self-heal a trailer's file path
+  when the storage folder moved or the file was re-downloaded with a different
+  extension, and match more robustly — so older trailers play in the dashboard
+  preview instead of being silently skipped. When a clip genuinely can't play
+  (e.g. an older AV1 file), the preview explains why and suggests re-downloading.
+- **A PO-token install could make the app unresponsive — fixed.** The provider
+  now installs alongside the database rather than inside the Prerolls folder, and
+  the media scanner skips dependency folders (`node_modules`, the provider dir),
+  so installing it can no longer flood the library with thousands of files to
+  thumbnail.
+- **Installer bundles the Visual C++ runtime**, which the provider's native
+  dependency can require on a bare Windows install.
+
 ## [2.0.0-beta.7] - 06-17-2026 (beta)
 
 > A new **cookie-free YouTube download method** (a PO-token provider clears the

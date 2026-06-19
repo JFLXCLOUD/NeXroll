@@ -746,18 +746,19 @@ class TrailerDownloader:
         self.cookie_browser = cookie_browser  # 'chrome', 'firefox', 'edge', 'brave', 'auto'
         self.tmdb = TMDBTrailerFetcher(tmdb_api_key=tmdb_api_key)
         
-        # Quality format mapping
-        # Each ends in progressively looser fallbacks so a video that doesn't
-        # offer a separate video+audio pair at the target height still resolves
-        # (the strict "bestvideo[h<=N]+bestaudio/best[h<=N]" alone errored with
-        # "Requested format is not available" on some trailers — e.g. Toy Story 5
-        # via the cookies-file strategy). Order: prefer capped merged, then
-        # capped progressive, then any best, then anything.
+        # Quality format mapping.
+        # PREFER H.264 (avc1) video + AAC (mp4a) audio first. Plex prerolls must
+        # DIRECT-PLAY (Plex never transcodes a preroll), and yt-dlp's default
+        # "bestvideo" at 1080p is usually VP9 — which many Plex clients can't
+        # direct-play, so VP9 trailers get silently skipped in a sequence while
+        # the H.264 dynamic/category prerolls play. Each entry then falls back to
+        # the old codec-agnostic selection so a video that only offers VP9/AV1
+        # still downloads (it just may not direct-play on every client).
         self.quality_formats = {
-            '720':  'bestvideo[height<=720]+bestaudio/best[height<=720]/best/bestvideo+bestaudio/b',
-            '1080': 'bestvideo[height<=1080]+bestaudio/best[height<=1080]/best/bestvideo+bestaudio/b',
-            '4k':   'bestvideo[height<=2160]+bestaudio/best[height<=2160]/best/bestvideo+bestaudio/b',
-            'best': 'bestvideo+bestaudio/best/b'
+            '720':  'bestvideo[vcodec^=avc1][height<=720]+bestaudio[acodec^=mp4a]/bestvideo[height<=720]+bestaudio/best[height<=720]/best/bestvideo+bestaudio/b',
+            '1080': 'bestvideo[vcodec^=avc1][height<=1080]+bestaudio[acodec^=mp4a]/bestvideo[height<=1080]+bestaudio/best[height<=1080]/best/bestvideo+bestaudio/b',
+            '4k':   'bestvideo[vcodec^=avc1][height<=2160]+bestaudio[acodec^=mp4a]/bestvideo[height<=2160]+bestaudio/best[height<=2160]/best/bestvideo+bestaudio/b',
+            'best': 'bestvideo[vcodec^=avc1]+bestaudio[acodec^=mp4a]/bestvideo+bestaudio/best/b'
         }
         
         # Detect available browser for cookies
@@ -899,11 +900,12 @@ class TrailerDownloader:
     
     async def download_trailer(
         self, 
-        url: str, 
-        title: str, 
+        url: str,
+        title: str,
         tmdb_id: int = None,
         year: int = None,
-        tvdb_id: int = None
+        tvdb_id: int = None,
+        only_provided_url: bool = False
     ) -> Optional[Dict[str, Any]]:
         """
         Download a trailer for a movie or TV show.
@@ -912,7 +914,12 @@ class TrailerDownloader:
         2. Apple Trailers (no bot detection)
         3. TMDB YouTube sources
         4. Other sources
-        
+
+        only_provided_url=True downloads EXACTLY `url` with no TMDB/Apple fallback.
+        Used when the user explicitly chose an alternate trailer in the picker, so
+        a failure is reported honestly instead of silently substituting a
+        different trailer.
+
         For TV shows, tmdb_id may be None - use tvdb_id instead for filename.
         Movies are stored in /movies subdirectory, TV shows in /tv subdirectory.
         """
@@ -951,8 +958,10 @@ class TrailerDownloader:
                 })
             
             # PRIORITY 2+: Get additional sources from TMDB (Apple Trailers, Vimeo, other YouTube)
-            # Only if we have a TMDB ID (movies, not TV shows)
-            if tmdb_id:
+            # Only if we have a TMDB ID (movies, not TV shows). Skipped when the
+            # caller asked to use exactly the provided URL (user-chosen alternate),
+            # so a failure isn't masked by quietly grabbing a different trailer.
+            if tmdb_id and not only_provided_url:
                 tmdb_sources = await self.tmdb.get_trailer_sources(tmdb_id, title=title, year=year)
                 
                 # Add TMDB sources, but avoid duplicates with the Radarr URL

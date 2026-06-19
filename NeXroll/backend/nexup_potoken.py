@@ -81,6 +81,39 @@ def find_node() -> Optional[str]:
     return None
 
 
+def node_major_minor(node: str) -> tuple:
+    """Return (major, minor) of the Node binary, or (0, 0) if undetermined."""
+    try:
+        out = subprocess.run([node, "--version"], capture_output=True, text=True, timeout=10)
+        ver = (out.stdout or "").strip().lstrip("v")  # e.g. "20.18.1"
+        parts = ver.split(".")
+        return (int(parts[0]), int(parts[1]))
+    except Exception:
+        return (0, 0)
+
+
+def _needs_require_module_flag(major: int, minor: int) -> bool:
+    """True when Node needs --experimental-require-module to ``require()`` an
+    ESM dependency.
+
+    The provider's jsdom stack pulls an ESM-only ``@exodus/bytes`` that
+    ``html-encoding-sniffer`` loads via CommonJS ``require()``. On Node < 22.12
+    that raises ERR_REQUIRE_ESM and the server exits rc=1 at startup (the
+    bundled Node 20.18.1 hit exactly this). ``require(esm)`` ships enabled by
+    default on Node >= 22.12 and all of 23/24, and is available behind the flag
+    from 20.17 up to that cutoff. Below 20.17 the flag doesn't exist (those
+    users need a newer Node); at/above the cutoff it's unnecessary, so we omit
+    it to stay future-proof against the flag eventually being removed.
+    """
+    if major == 20:
+        return minor >= 17
+    if major == 21:
+        return True
+    if major == 22:
+        return minor < 12
+    return False
+
+
 def is_plugin_installed() -> bool:
     """True if the bgutil PO-token yt-dlp plugin is importable."""
     try:
@@ -148,6 +181,22 @@ class POTokenManager:
     def server_dir(self) -> Optional[Path]:
         return provider_server_dir(self.base_dir)
 
+    def log_tail(self, lines: int = 25) -> Optional[str]:
+        """Last lines of bgutil-provider.log — the Node server's own stdout/stderr.
+        Surfaced in status/install responses so an rc=1 crash (e.g. a missing
+        canvas/VC++ runtime) is visible without hunting for the file on disk."""
+        lp = self.log_path
+        if not lp or not os.path.exists(lp):
+            return None
+        try:
+            with open(lp, "rb") as f:
+                data = f.read()[-8000:]  # last ~8 KB is plenty for a crash trace
+            text = data.decode("utf-8", "replace")
+            tail = "\n".join(text.splitlines()[-lines:]).strip()
+            return tail or None
+        except Exception:
+            return None
+
     def is_healthy(self, timeout: float = 3.0) -> bool:
         try:
             with urlopen(f"{self.base_url}/ping", timeout=timeout) as r:
@@ -213,7 +262,13 @@ class POTokenManager:
                 return self.status()
 
             main_js = sdir / "build" / "main.js"
-            cmd = [node, str(main_js), "--port", str(self.port)]
+            cmd = [node]
+            maj, minr = node_major_minor(node)
+            if _needs_require_module_flag(maj, minr):
+                # Without this, Node 20.17–22.11 crash at startup (rc=1,
+                # ERR_REQUIRE_ESM) loading the provider's ESM-only @exodus/bytes.
+                cmd.append("--experimental-require-module")
+            cmd += [str(main_js), "--port", str(self.port)]
             creationflags = 0
             if _IS_WIN:
                 creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
@@ -291,6 +346,10 @@ class POTokenManager:
             # Usable means yt-dlp will actually get tokens: plugin importable AND
             # a healthy server to talk to.
             "usable": bool(is_plugin_installed() and healthy),
+            "log_path": self.log_path,
+            # When the provider isn't healthy, surface the server's own log tail so
+            # the crash reason (e.g. canvas/VC++ load failure) is visible directly.
+            "log_excerpt": (None if healthy else self.log_tail()),
         }
 
 

@@ -17,11 +17,14 @@ RUN pip wheel --no-cache-dir --wheel-dir /wheels -r requirements.txt
 
 # --- PO-token provider build stage (bgutil) ---
 # Builds the YouTube Proof-of-Origin token server. This is what gets NeX-Up past
-# YouTube's "Sign in to confirm you're not a bot" wall. node:20 + bookworm keeps
+# YouTube's "Sign in to confirm you're not a bot" wall. node:22 + bookworm keeps
 # it glibc-compatible with the python:3.12-slim runtime so we can copy node and
-# the (native-canvas) node_modules across stages. Keep BGUTIL_VERSION in sync
-# with the bgutil-ytdlp-pot-provider pin in requirements.txt.
-FROM node:20-bookworm-slim AS potoken
+# the (native-canvas) node_modules across stages. node:22 (>=22.12) is required
+# because the provider's jsdom stack pulls an ESM-only @exodus/bytes that is
+# loaded via require(); on Node <22.12 that crashes the server at startup with
+# ERR_REQUIRE_ESM. Keep BGUTIL_VERSION in sync with the bgutil-ytdlp-pot-provider
+# pin in requirements.txt.
+FROM node:22-bookworm-slim AS potoken
 ARG BGUTIL_VERSION=1.3.1
 # ca-certificates is required for the HTTPS git clone below (the slim node image
 # ships without it, so the clone fails with "server certificate verification

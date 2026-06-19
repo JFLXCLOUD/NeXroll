@@ -634,7 +634,7 @@ function App() {
   const [schedulerStatus, setSchedulerStatus] = useState({ running: false, active_schedules: 0 });
   const [nextScheduleCountdown, setNextScheduleCountdown] = useState(null);
   const [backupFile, setBackupFile] = useState(null);
-  const [backupProgress, setBackupProgress] = useState({ active: false, type: '', message: '' });
+  const [backupProgress, setBackupProgress] = useState({ active: false, type: '', message: '', percent: null, loaded: 0, total: 0 });
   const [communityTemplates, setCommunityTemplates] = useState([]);
   const [selectedSchedules, setSelectedSchedules] = useState([]);
   const [darkMode, setDarkMode] = useState(() => {
@@ -734,10 +734,12 @@ function App() {
   const [activeCategory, setActiveCategory] = useState(null);
   const [appliedSequence, setAppliedSequence] = useState(null); // Manually applied sequence info
   const [currentPrerollPreview, setCurrentPrerollPreview] = useState(null); // {prerolls: [...], index: 0} for preview modal
+  const [previewError, setPreviewError] = useState(null); // { code } when the current preview clip can't be played
   const dashboardVideoRef = useRef(null);
 
   // Load new src into the dashboard preview video when track index changes
   useEffect(() => {
+    setPreviewError(null); // fresh clip — clear any prior "can't play" message
     if (!currentPrerollPreview || !dashboardVideoRef.current) return;
     const current = currentPrerollPreview.prerolls[currentPrerollPreview.index];
     if (!current || !current.preview_url) return;
@@ -746,7 +748,7 @@ function App() {
     dashboardVideoRef.current.load();
     dashboardVideoRef.current.play().catch(() => {});
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [currentPrerollPreview?.index]);
+  }, [currentPrerollPreview?.index, currentPrerollPreview?.prerolls]);
 
   const [activeScheduleIds, setActiveScheduleIds] = useState([]);
   
@@ -1133,6 +1135,7 @@ const [applyingToServer, setApplyingToServer] = useState(false);
     open: false, loading: false, kind: 'movie', id: null, season: 1,
     title: '', candidates: [], error: null, downloadingUrl: null, previewId: null,
     failedUrls: {}, // url -> reason, so we can mark candidates that can't be fetched
+    defaultReason: '', // why the default trailer couldn't be downloaded
   });
 
   // UI Preferences state (stored in localStorage)
@@ -2187,6 +2190,18 @@ const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
     } catch (_) {
       // Endpoint missing on older backends — silently skip the banner.
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Per-location storage breakdown (prerolls / NeX-Up / thumbnails / database).
+  // Backend caches 5 min, so this is cheap to call when opening the Storage page.
+  const refreshStorageBreakdown = React.useCallback(async () => {
+    try {
+      const res = await fetch(apiUrl('system/storage/breakdown'));
+      if (!res.ok) return;
+      const data = await res.json();
+      if (data && !data.__error) setStorageBreakdown(data);
+    } catch (_) { /* ignore */ }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -4234,69 +4249,106 @@ const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
       });
   };
 
-  const handleBackupDatabase = () => {
-    setBackupProgress({ active: true, type: 'database-backup', message: 'Preparing database export...' });
-    fetch(apiUrl('backup/database'))
-      .then(res => res.json())
-      .then(data => {
-        setBackupProgress({ active: true, type: 'database-backup', message: 'Creating download...' });
-        const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = `nexroll_database_${new Date().toISOString().split('T')[0]}.json`;
-        document.body.appendChild(a);
-        a.click();
-        document.body.removeChild(a);
-        URL.revokeObjectURL(url);
-        setBackupProgress({ active: false, type: '', message: '' });
-        showAlert('Database backup downloaded successfully!', 'success');
-      })
-      .catch(error => {
-        console.error('Backup error:', error);
-        setBackupProgress({ active: false, type: '', message: '' });
-        showAlert('Backup failed: ' + error.message, 'error');
-      });
+  const resetBackupProgress = () => setBackupProgress({ active: false, type: '', message: '', percent: null, loaded: 0, total: 0 });
+
+  // Stream a download so we can show real byte progress. Returns the assembled
+  // Blob. `total` comes from X-Estimated-Total (backups compress on the fly so
+  // there's no exact Content-Length) or Content-Length, else indeterminate.
+  const downloadWithProgress = async (url, opts, type, label) => {
+    const res = await fetch(url, opts);
+    if (!res.ok) {
+      let detail = `HTTP ${res.status}`;
+      try { detail = (await res.json()).detail || detail; } catch (_) {}
+      throw new Error(detail);
+    }
+    const cd = res.headers.get('content-disposition');
+    let filename = null;
+    if (cd) { const m = cd.match(/filename="?([^"]+)"?/); if (m) filename = m[1]; }
+    const total = Number(res.headers.get('x-estimated-total') || res.headers.get('content-length') || 0);
+    if (!res.body || !res.body.getReader) {
+      // Streaming unsupported — fall back to a plain blob.
+      return { blob: await res.blob(), filename };
+    }
+    const reader = res.body.getReader();
+    const chunks = [];
+    let loaded = 0;
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      chunks.push(value);
+      loaded += value.length;
+      const percent = total > 0 ? Math.min(99, Math.round((loaded / total) * 100)) : null;
+      setBackupProgress({ active: true, type, message: label, percent, loaded, total });
+    }
+    return { blob: new Blob(chunks), filename };
   };
 
-  const handleBackupFiles = () => {
-    setBackupProgress({ active: true, type: 'system-backup', message: 'Creating comprehensive system backup... This may take a few minutes for large libraries.' });
-    
-    // Use fetch with blob response for large files
-    fetch(apiUrl('backup/files'), {
-      method: 'POST'
-    })
-      .then(res => {
-        if (!res.ok) {
-          throw new Error(`HTTP error! status: ${res.status}`);
+  const triggerDownload = (blob, filename) => {
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  };
+
+  const handleBackupDatabase = async () => {
+    setBackupProgress({ active: true, type: 'database-backup', message: 'Exporting database…', percent: null, loaded: 0, total: 0 });
+    try {
+      const { blob } = await downloadWithProgress(apiUrl('backup/database'), {}, 'database-backup', 'Downloading database export…');
+      triggerDownload(blob, `nexroll_database_${new Date().toISOString().split('T')[0]}.json`);
+      resetBackupProgress();
+      showAlert('Database backup downloaded successfully!', 'success');
+    } catch (error) {
+      console.error('Backup error:', error);
+      resetBackupProgress();
+      showAlert('Backup failed: ' + error.message, 'error');
+    }
+  };
+
+  const handleBackupFiles = async () => {
+    setBackupProgress({ active: true, type: 'system-backup', message: 'Compressing system backup…', percent: 0, loaded: 0, total: 0 });
+    try {
+      const { blob, filename } = await downloadWithProgress(
+        apiUrl('backup/files'), { method: 'POST' }, 'system-backup', 'Compressing & downloading…');
+      const name = filename || `nexroll_system_backup_${new Date().toISOString().split('T')[0]}.zip`;
+      setBackupProgress({ active: true, type: 'system-backup', message: 'Saving file…', percent: 100, loaded: blob.size, total: blob.size });
+      triggerDownload(blob, name);
+      resetBackupProgress();
+      showAlert('System backup downloaded successfully!', 'success');
+    } catch (error) {
+      console.error('System backup error:', error);
+      resetBackupProgress();
+      showAlert('System backup failed: ' + error.message, 'error');
+    }
+  };
+
+  // Upload via XHR so we get real upload progress, then flip to an
+  // indeterminate "processing" state while the server extracts/restores.
+  const uploadWithProgress = (url, body, type, uploadLabel, processingLabel) => {
+    return new Promise((resolve, reject) => {
+      const xhr = new XMLHttpRequest();
+      xhr.open('POST', url);
+      xhr.upload.onprogress = (e) => {
+        if (e.lengthComputable) {
+          const percent = Math.min(99, Math.round((e.loaded / e.total) * 100));
+          setBackupProgress({ active: true, type, message: uploadLabel, percent, loaded: e.loaded, total: e.total });
         }
-        // Get filename from content-disposition header if available
-        const contentDisposition = res.headers.get('content-disposition');
-        let filename = `nexroll_system_backup_${new Date().toISOString().split('T')[0]}.zip`;
-        if (contentDisposition) {
-          const match = contentDisposition.match(/filename="?([^"]+)"?/);
-          if (match) filename = match[1];
-        }
-        return res.blob().then(blob => ({ blob, filename }));
-      })
-      .then(({ blob, filename }) => {
-        setBackupProgress({ active: true, type: 'system-backup', message: 'Download ready! Starting download...' });
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = filename;
-        document.body.appendChild(a);
-        a.click();
-        document.body.removeChild(a);
-        URL.revokeObjectURL(url);
-        setBackupProgress({ active: false, type: '', message: '' });
-        showAlert('System backup downloaded successfully!', 'success');
-      })
-      .catch(error => {
-        console.error('System backup error:', error);
-        setBackupProgress({ active: false, type: '', message: '' });
-        showAlert('System backup failed: ' + error.message, 'error');
-      });
+      };
+      xhr.upload.onload = () => {
+        setBackupProgress({ active: true, type, message: processingLabel, percent: null, loaded: 0, total: 0 });
+      };
+      xhr.onload = () => {
+        let data = {};
+        try { data = JSON.parse(xhr.responseText); } catch (_) {}
+        if (xhr.status >= 200 && xhr.status < 300) resolve(data);
+        else reject(new Error(data.detail || `HTTP ${xhr.status}: request failed`));
+      };
+      xhr.onerror = () => reject(new Error('Network error during upload'));
+      xhr.send(body);
+    });
   };
 
   const handleRestoreDatabase = () => {
@@ -4305,52 +4357,38 @@ const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
       return;
     }
 
-    setBackupProgress({ active: true, type: 'database-restore', message: 'Reading backup file...' });
+    setBackupProgress({ active: true, type: 'database-restore', message: 'Reading backup file…', percent: null, loaded: 0, total: 0 });
     const reader = new FileReader();
-    reader.onload = (e) => {
+    reader.onload = async (e) => {
       try {
-        const backupData = JSON.parse(e.target.result);
-        setBackupProgress({ active: true, type: 'database-restore', message: 'Restoring database...' });
-        fetch(apiUrl('restore/database'), {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(backupData)
-        })
-          .then(res => {
-            if (!res.ok) {
-              return res.json().then(error => {
-                throw new Error(error.detail || `HTTP ${res.status}: Restore failed`);
-              });
-            }
-            return res.json();
-          })
-          .then(data => {
-            setBackupProgress({ active: false, type: '', message: '' });
-            let msg = 'Database restored successfully!';
-            const rs = data && data.rescan;
-            if (rs) {
-              const parts = [];
-              if (rs.paths_updated) parts.push(`${rs.paths_updated} path${rs.paths_updated === 1 ? '' : 's'} relinked`);
-              if (rs.thumbnails_generated) parts.push(`${rs.thumbnails_generated} thumbnail${rs.thumbnails_generated === 1 ? '' : 's'} generated`);
-              if (rs.new_prerolls) parts.push(`${rs.new_prerolls} new file${rs.new_prerolls === 1 ? '' : 's'} found`);
-              if (rs.missing_files) parts.push(`${rs.missing_files} file${rs.missing_files === 1 ? '' : 's'} still missing`);
-              if (parts.length) msg += ` Scan: ${parts.join(', ')}.`;
-            }
-            showAlert(msg + ' Refreshing data...', 'success');
-            setBackupFile(null);
-            // Reset file input
-            const fileInput = document.querySelector('input[type="file"][accept=".json,.zip"]');
-            if (fileInput) fileInput.value = '';
-            fetchData();
-          })
-          .catch(error => {
-            console.error('Restore error:', error);
-            setBackupProgress({ active: false, type: '', message: '' });
-            showAlert('Restore failed: ' + error.message, 'error');
-          });
+        const backupData = JSON.parse(e.target.result);  // validate before sending
+        const payload = JSON.stringify(backupData);
+        const blob = new Blob([payload], { type: 'application/json' });
+        const data = await uploadWithProgress(apiUrl('restore/database'), blob, 'database-restore',
+          'Uploading database backup…', 'Restoring database…');
+        {
+          resetBackupProgress();
+          let msg = 'Database restored successfully!';
+          const rs = data && data.rescan;
+          if (rs) {
+            const parts = [];
+            if (rs.paths_updated) parts.push(`${rs.paths_updated} path${rs.paths_updated === 1 ? '' : 's'} relinked`);
+            if (rs.thumbnails_generated) parts.push(`${rs.thumbnails_generated} thumbnail${rs.thumbnails_generated === 1 ? '' : 's'} generated`);
+            if (rs.new_prerolls) parts.push(`${rs.new_prerolls} new file${rs.new_prerolls === 1 ? '' : 's'} found`);
+            if (rs.missing_files) parts.push(`${rs.missing_files} file${rs.missing_files === 1 ? '' : 's'} still missing`);
+            if (parts.length) msg += ` Scan: ${parts.join(', ')}.`;
+          }
+          showAlert(msg + ' Refreshing data...', 'success');
+          setBackupFile(null);
+          const fileInput = document.querySelector('input[type="file"][accept=".json,.zip"]');
+          if (fileInput) fileInput.value = '';
+          fetchData();
+        }
       } catch (error) {
-        setBackupProgress({ active: false, type: '', message: '' });
-        showAlert('Invalid backup file format', 'error');
+        console.error('Restore error:', error);
+        resetBackupProgress();
+        const msg = (error instanceof SyntaxError) ? 'Invalid backup file format' : ('Restore failed: ' + error.message);
+        showAlert(msg, 'error');
       }
     };
     reader.readAsText(backupFile);
@@ -4439,42 +4477,30 @@ const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
     }
   };
 
-  const handleRestoreFiles = () => {
+  const handleRestoreFiles = async () => {
     if (!backupFile) {
       showAlert('Please select a ZIP file first', 'warning');
       return;
     }
 
-    setBackupProgress({ active: true, type: 'system-restore', message: 'Uploading and restoring system backup... This may take a few minutes.' });
+    setBackupProgress({ active: true, type: 'system-restore', message: 'Uploading backup…', percent: 0, loaded: 0, total: backupFile.size });
     const formData = new FormData();
     formData.append('file', backupFile);
-    fetch(apiUrl('restore/files'), {
-      method: 'POST',
-      body: formData
-    })
-      .then(res => {
-        if (!res.ok) {
-          return res.json().then(error => {
-            throw new Error(error.detail || `HTTP ${res.status}: Restore failed`);
-          });
-        }
-        return res.json();
-      })
-      .then(data => {
-        setBackupProgress({ active: false, type: '', message: '' });
-        const restoredItems = data.restored ? data.restored.join(', ') : 'files';
-        showAlert(`System restored successfully! Restored: ${restoredItems}`, 'success');
-        setBackupFile(null);
-        // Reset file input
-        const fileInput = document.querySelector('input[type="file"][accept=".json,.zip"]');
-        if (fileInput) fileInput.value = '';
-        fetchData();
-      })
-      .catch(error => {
-        console.error('System restore error:', error);
-        setBackupProgress({ active: false, type: '', message: '' });
-        showAlert('System restore failed: ' + error.message, 'error');
-      });
+    try {
+      const data = await uploadWithProgress(apiUrl('restore/files'), formData, 'system-restore',
+        'Uploading backup…', 'Extracting & restoring… (this can take a bit)');
+      resetBackupProgress();
+      const restoredItems = data.restored ? data.restored.join(', ') : 'files';
+      showAlert(`System restored successfully! Restored: ${restoredItems}`, 'success');
+      setBackupFile(null);
+      const fileInput = document.querySelector('input[type="file"][accept=".json,.zip"]');
+      if (fileInput) fileInput.value = '';
+      fetchData();
+    } catch (error) {
+      console.error('System restore error:', error);
+      resetBackupProgress();
+      showAlert('System restore failed: ' + error.message, 'error');
+    }
   };
 
   const handleInitTemplates = () => {
@@ -5955,14 +5981,30 @@ const DashboardTiles = {
     );
   },
   scheduler: () => {
-    // Schedules that will fire before local midnight — quick "is today busy?"
-    const now = new Date();
-    const endOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1);
-    const firingToday = schedules.filter(s => {
-      if (!s.is_active || !s.next_run) return false;
-      const t = new Date(s.next_run);
-      return t >= now && t < endOfDay;
-    }).length;
+    // Most recently applied schedule. last_run is stamped every time the scheduler
+    // applies a schedule, so this reliably confirms the loop is actually acting —
+    // unlike the old next_run-based "Firing today", which stayed 0 because next_run
+    // is only computed for monthly/yearly/holiday schedules.
+    const lastApplied = (() => {
+      let best = null;
+      for (const s of schedules) {
+        if (!s.last_run) continue;
+        const t = new Date(s.last_run);
+        if (isNaN(t.getTime())) continue;
+        if (!best || t > best.time) best = { time: t, name: s.name };
+      }
+      return best;
+    })();
+    const fmtLastApplied = (d) => {
+      const n = new Date();
+      const startToday = new Date(n.getFullYear(), n.getMonth(), n.getDate());
+      const startYest = new Date(startToday);
+      startYest.setDate(startYest.getDate() - 1);
+      const time = d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+      if (d >= startToday) return `Today, ${time}`;
+      if (d >= startYest) return `Yesterday, ${time}`;
+      return `${d.toLocaleDateString([], { month: 'short', day: 'numeric' })}, ${time}`;
+    };
     return (
     <div className="card">
       <div className="nx-tile-head">
@@ -5989,9 +6031,18 @@ const DashboardTiles = {
         {schedulerStatus.running && (
           <div className="nx-tile-row">
             <span className="nx-tile-row-k">
-              <CalendarDays size={14} /> Firing today
+              <CheckCircle size={14} /> Last applied
             </span>
-            <span className="nx-tile-row-v">{firingToday}</span>
+            <span className="nx-tile-row-v">
+              {lastApplied ? (
+                <>
+                  <span>{fmtLastApplied(lastApplied.time)}</span>
+                  <span style={{ color: 'var(--text-secondary, #888)', marginLeft: '0.35rem' }}>{lastApplied.name}</span>
+                </>
+              ) : (
+                <span style={{ color: 'var(--text-secondary, #888)', fontStyle: 'italic' }}>Never</span>
+              )}
+            </span>
           </div>
         )}
         {/* "Now" beside "what's next": without it, the next-schedule name flipping
@@ -19801,12 +19852,10 @@ const DashboardTiles = {
         loadNexupTVTrailers();
         loadNexupUpcomingTV();
       } else {
-        showAlert('Download failed: ' + (data.message || 'Unknown error'), 'error');
-        openAltTrailers({ kind: 'tv', id: sonarrId, season: seasonNumber, title: showTitle });
+        openAltTrailers({ kind: 'tv', id: sonarrId, season: seasonNumber, title: showTitle, reason: data.message || '' });
       }
     } catch (err) {
-      showAlert(err?.message || String(err), 'error');
-      openAltTrailers({ kind: 'tv', id: sonarrId, season: seasonNumber, title: showTitle });
+      openAltTrailers({ kind: 'tv', id: sonarrId, season: seasonNumber, title: showTitle, reason: err?.message || String(err) });
     } finally {
       setDownloadingTrailerId(null);
       setDownloadProgress(null);
@@ -20092,8 +20141,8 @@ const DashboardTiles = {
   };
 
   // Open the alternate-trailer picker (top 3 YouTube candidates to preview/choose).
-  const openAltTrailers = async ({ kind, id, season = 1, title }) => {
-    setAltTrailers({ open: true, loading: true, kind, id, season, title: title || '', candidates: [], error: null, downloadingUrl: null, previewId: null, failedUrls: {} });
+  const openAltTrailers = async ({ kind, id, season = 1, title, reason = '' }) => {
+    setAltTrailers({ open: true, loading: true, kind, id, season, title: title || '', candidates: [], error: null, downloadingUrl: null, previewId: null, failedUrls: {}, defaultReason: reason || '' });
     try {
       const url = kind === 'tv'
         ? apiUrl(`/nexup/sonarr/trailers/search?sonarr_series_id=${id}&season_number=${season}`)
@@ -20168,16 +20217,15 @@ const DashboardTiles = {
         loadNexupStorage();
         handleLoadNexupUpcoming(); // Refresh to show downloaded status
       } else {
-        showAlert('Download failed: ' + (data.message || 'Unknown error'), 'error');
-        openAltTrailers({ kind: 'movie', id: radarrMovieId, title: movieTitle });
+        openAltTrailers({ kind: 'movie', id: radarrMovieId, title: movieTitle, reason: data.message || '' });
       }
     } catch (err) {
       const errorMsg = err?.message || String(err);
-      // The default trailer couldn't be downloaded — surface the real reason and
-      // open the alternate-trailer picker so the user can choose a working one
-      // instead of hitting a dead end.
-      showAlert(errorMsg, 'error');
-      openAltTrailers({ kind: 'movie', id: radarrMovieId, title: movieTitle });
+      // Don't fire a scary error toast — the *default* trailer just couldn't be
+      // fetched. Open the picker with the reason so the user can choose a working
+      // alternate. (Showing an error AND then a success when the alternate
+      // downloaded was the confusing part testers hit.)
+      openAltTrailers({ kind: 'movie', id: radarrMovieId, title: movieTitle, reason: errorMsg });
     } finally {
       setDownloadingTrailerId(null);
       setDownloadProgress(null);
@@ -21069,8 +21117,9 @@ const DashboardTiles = {
   React.useEffect(() => {
     if (activeTab === 'settings/storage') {
       loadAutoScan();
+      refreshStorageBreakdown();
     }
-  }, [activeTab, loadAutoScan]);
+  }, [activeTab, loadAutoScan, refreshStorageBreakdown]);
 
   // Auto-load users when opening Users tab
   React.useEffect(() => {
@@ -26154,32 +26203,49 @@ const DashboardTiles = {
           marginBottom: '1.5rem',
           backgroundColor: 'rgba(59, 130, 246, 0.1)',
           border: '1px solid rgba(59, 130, 246, 0.3)',
-          borderRadius: '8px',
-          display: 'flex',
-          alignItems: 'center',
-          gap: '0.75rem'
+          borderRadius: '8px'
         }}>
-          <div style={{
-            width: '24px',
-            height: '24px',
-            border: '3px solid rgba(59, 130, 246, 0.3)',
-            borderTopColor: '#3b82f6',
-            borderRadius: '50%',
-            animation: 'spin 1s linear infinite'
-          }} />
-          <div>
-            <div style={{ fontWeight: 600, color: '#3b82f6' }}>
-              {(() => {
-                const t = backupProgress.type || '';
-                if (t.includes('backup')) return 'Creating Backup...';
-                if (t === 'rescan') return 'Rescanning...';
-                return 'Restoring...';
-              })()}
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+            <div style={{
+              width: '24px',
+              height: '24px',
+              border: '3px solid rgba(59, 130, 246, 0.3)',
+              borderTopColor: '#3b82f6',
+              borderRadius: '50%',
+              animation: 'spin 1s linear infinite',
+              flexShrink: 0
+            }} />
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ fontWeight: 600, color: '#3b82f6' }}>
+                {(() => {
+                  const t = backupProgress.type || '';
+                  if (t.includes('backup')) return 'Backing up…';
+                  if (t === 'rescan') return 'Rescanning…';
+                  return 'Restoring…';
+                })()}
+              </div>
+              <div style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
+                {backupProgress.message}
+              </div>
             </div>
-            <div style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
-              {backupProgress.message}
-            </div>
+            {backupProgress.percent != null && (
+              <div style={{ fontWeight: 700, color: '#3b82f6', fontSize: '1.1rem', minWidth: '3.2rem', textAlign: 'right', flexShrink: 0 }}>
+                {backupProgress.percent}%
+              </div>
+            )}
           </div>
+          {backupProgress.percent != null && (
+            <div style={{ marginTop: '0.75rem' }}>
+              <div style={{ height: '8px', backgroundColor: 'rgba(59, 130, 246, 0.2)', borderRadius: '999px', overflow: 'hidden' }}>
+                <div style={{ height: '100%', width: `${backupProgress.percent}%`, backgroundColor: '#3b82f6', borderRadius: '999px', transition: 'width 0.2s ease' }} />
+              </div>
+              {backupProgress.total > 0 && (
+                <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginTop: '0.3rem', textAlign: 'right' }}>
+                  {(backupProgress.loaded / 1048576).toFixed(1)} MB / {(backupProgress.total / 1048576).toFixed(1)} MB
+                </div>
+              )}
+            </div>
+          )}
         </div>
       )}
 
@@ -26943,6 +27009,11 @@ const DashboardTiles = {
             </button>
           </div>
         </div>
+
+        <p style={{ fontSize: '0.78rem', color: 'var(--text-secondary)', margin: '0 0 0.85rem', display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+          <Shield size={13} style={{ color: 'var(--success-color, #28a745)', flexShrink: 0 }} />
+          API keys, tokens, and IP addresses are automatically redacted from logs when viewed, copied, or exported.
+        </p>
 
         {/* Filters Bar */}
         <div style={{ 
@@ -28589,6 +28660,88 @@ const DashboardTiles = {
 
   const renderSettingsStorage = () => (
     <>
+    {/* Storage Usage overview — same data as the dashboard Storage tile, expanded */}
+    <div className="card">
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '0.5rem' }}>
+        <h2 style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', margin: 0 }}>
+          <HardDrive size={20} style={{ color: 'var(--accent-color)' }} /> Storage Usage
+        </h2>
+        <button
+          type="button"
+          className="button button-secondary"
+          onClick={refreshStorageBreakdown}
+          style={{ fontSize: '0.78rem', padding: '0.35rem 0.7rem', display: 'inline-flex', alignItems: 'center', gap: '0.35rem' }}
+        >
+          <RefreshCw size={14} /> Refresh
+        </button>
+      </div>
+      <p style={{ color: 'var(--text-secondary)', fontSize: '0.85rem', margin: '0.4rem 0 1rem' }}>
+        How disk space is used across prerolls, NeX-Up trailers, thumbnails, and the database.
+      </p>
+      {!storageBreakdown ? (
+        <p style={{ color: 'var(--text-secondary)', fontSize: '0.88rem', margin: 0 }}>Calculating…</p>
+      ) : (() => {
+        const colors = { prerolls: '#3b82f6', nexup: '#ffc230', thumbnails: '#8b5cf6', database: '#22c55e' };
+        const total = storageBreakdown.total_bytes || 0;
+        const all = (storageBreakdown.locations || []).slice().sort((a, b) => b.bytes - a.bytes);
+        const shown = all.filter(l => l.bytes > 0);
+        if (shown.length === 0) {
+          return <p style={{ color: 'var(--text-secondary)', fontSize: '0.88rem', margin: 0 }}>No stored files yet.</p>;
+        }
+        return (
+          <>
+            <div style={{ display: 'flex', alignItems: 'baseline', gap: '0.5rem', marginBottom: '0.85rem' }}>
+              <span style={{ fontSize: '1.9rem', fontWeight: 700 }}>{formatBytes(total)}</span>
+              <span style={{ color: 'var(--text-secondary)' }}>used across {shown.length} location{shown.length === 1 ? '' : 's'}</span>
+            </div>
+            {/* Single segmented bar (disk-usage style) */}
+            <div style={{ display: 'flex', height: '16px', borderRadius: '8px', overflow: 'hidden', background: 'var(--hover-bg)', marginBottom: '1.1rem' }}>
+              {shown.map(l => {
+                const pct = total > 0 ? (l.bytes / total) * 100 : 0;
+                return (
+                  <div
+                    key={l.key}
+                    title={`${l.label}: ${formatBytes(l.bytes)} (${Math.round(pct)}%)`}
+                    style={{ width: `${pct}%`, background: colors[l.key] || 'var(--accent-color, #00d4ff)', transition: 'width 0.3s ease' }}
+                  />
+                );
+              })}
+            </div>
+            {/* Per-location legend cards */}
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(230px, 1fr))', gap: '0.75rem' }}>
+              {all.map(l => {
+                const pct = total > 0 ? Math.round((l.bytes / total) * 100) : 0;
+                return (
+                  <div key={l.key} style={{ padding: '0.7rem 0.8rem', background: 'var(--bg-color)', border: '1px solid var(--border-color)', borderRadius: '8px', opacity: l.bytes > 0 ? 1 : 0.6 }}>
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.5rem', marginBottom: '0.3rem' }}>
+                      <span style={{ display: 'flex', alignItems: 'center', gap: '0.45rem', fontWeight: 600 }}>
+                        <span style={{ width: 11, height: 11, borderRadius: 3, background: colors[l.key] || 'var(--accent-color, #00d4ff)', flexShrink: 0 }} />
+                        {l.label}
+                      </span>
+                      <span style={{ fontWeight: 600, whiteSpace: 'nowrap' }}>{formatBytes(l.bytes)}</span>
+                    </div>
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.5rem', fontSize: '0.76rem', color: 'var(--text-secondary)' }}>
+                      <span>{pct}% of total</span>
+                      {l.path && (
+                        <span title={l.path} style={{ maxWidth: '62%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontFamily: 'monospace' }}>
+                          {l.path}
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+            {storageBreakdown.checked_at && (
+              <div style={{ marginTop: '0.85rem', fontSize: '0.72rem', color: 'var(--text-secondary)' }}>
+                Updated {new Date(storageBreakdown.checked_at).toLocaleTimeString()}{storageBreakdown.cached ? ' (cached)' : ''}
+              </div>
+            )}
+          </>
+        );
+      })()}
+    </div>
+
     <div className="card">
       <h2 style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
         <FolderOpen size={20} style={{ color: 'var(--accent-color)' }} /> Preroll Storage Folder
@@ -33550,24 +33703,42 @@ const DashboardTiles = {
                    )}
                  </p>
                  {videoUrl ? (
-                   <video
-                     ref={dashboardVideoRef}
-                     controls
-                     autoPlay
-                     style={{ width: '100%', maxHeight: '400px', borderRadius: '8px', backgroundColor: '#000' }}
-                     onEnded={() => {
-                       // Auto-advance only for sequential/playlist mode
-                       if (currentPrerollPreview.mode === 'sequential' && currentPrerollPreview.index < currentPrerollPreview.prerolls.length - 1) {
-                         setCurrentPrerollPreview(prev => ({ ...prev, index: prev.index + 1 }));
-                       }
-                     }}
-                     onError={() => {
-                       // Skip broken videos (404 / missing file)
-                       if (currentPrerollPreview.mode === 'sequential' && currentPrerollPreview.index < currentPrerollPreview.prerolls.length - 1) {
-                         setCurrentPrerollPreview(prev => ({ ...prev, index: prev.index + 1 }));
-                       }
-                     }}
-                   />
+                   <>
+                     <video
+                       ref={dashboardVideoRef}
+                       controls
+                       autoPlay
+                       style={{ width: '100%', maxHeight: '400px', borderRadius: '8px', backgroundColor: '#000', display: previewError ? 'none' : 'block' }}
+                       onEnded={() => {
+                         // Auto-advance only for sequential/playlist mode
+                         if (currentPrerollPreview.mode === 'sequential' && currentPrerollPreview.index < currentPrerollPreview.prerolls.length - 1) {
+                           setCurrentPrerollPreview(prev => ({ ...prev, index: prev.index + 1 }));
+                         }
+                       }}
+                       onError={(e) => {
+                         const code = e?.target?.error?.code || 0;
+                         // In a sequence, skip a broken clip and keep playing the rest;
+                         // otherwise surface a clear, actionable message instead of a
+                         // silent black box.
+                         if (currentPrerollPreview.mode === 'sequential' && currentPrerollPreview.index < currentPrerollPreview.prerolls.length - 1) {
+                           setCurrentPrerollPreview(prev => ({ ...prev, index: prev.index + 1 }));
+                         } else {
+                           setPreviewError({ code });
+                         }
+                       }}
+                     />
+                     {previewError && (
+                       <div style={{ padding: '1.5rem', textAlign: 'center', color: 'var(--text-secondary, #888)', backgroundColor: 'rgba(0,0,0,0.3)', borderRadius: '8px' }}>
+                         <p style={{ fontWeight: 600, color: 'var(--text-color, #fff)', margin: '0 0 0.4rem' }}>This clip couldn’t be played</p>
+                         <p style={{ fontSize: '0.85rem', margin: '0 0 0.5rem' }}>
+                           {previewError.code === 4 /* MEDIA_ERR_SRC_NOT_SUPPORTED */
+                             ? 'Your browser can’t decode this video’s format — older trailers were often saved as AV1. Re-download the trailer to get a browser-friendly (H.264) version.'
+                             : 'The file may be missing or unreadable. Try re-downloading the trailer.'}
+                         </p>
+                         <p style={{ fontSize: '0.78rem', wordBreak: 'break-all', opacity: 0.8 }}>{current.path}</p>
+                       </div>
+                     )}
+                   </>
                  ) : (
                    <div style={{ padding: '2rem', textAlign: 'center', color: 'var(--text-secondary, #888)', backgroundColor: 'rgba(0,0,0,0.3)', borderRadius: '8px' }}>
                      <p>Preview unavailable for this file</p>
@@ -35905,6 +36076,11 @@ const DashboardTiles = {
           <p style={{ color: 'var(--text-secondary)', fontSize: '0.88rem', marginTop: 0 }}>
             The default trailer couldn’t be downloaded. Preview these alternates and pick one to download.
           </p>
+          {altTrailers.defaultReason && (
+            <div style={{ marginTop: '-0.4rem', marginBottom: '0.75rem', fontSize: '0.8rem', color: 'var(--text-secondary)', background: 'var(--hover-bg)', borderRadius: '6px', padding: '0.5rem 0.7rem', borderLeft: '3px solid #ffc230' }}>
+              <strong>Why:</strong> {altTrailers.defaultReason}
+            </div>
+          )}
 
           {altTrailers.error && altTrailers.candidates.length > 0 && (
             <div style={{ marginBottom: '0.75rem', padding: '0.6rem 0.8rem', background: 'rgba(220,53,69,0.12)', border: '1px solid rgba(220,53,69,0.45)', borderRadius: '8px', color: 'var(--error-color)', fontSize: '0.82rem', lineHeight: 1.45 }}>

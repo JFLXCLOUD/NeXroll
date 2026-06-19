@@ -1302,6 +1302,23 @@ def _run_subprocess(cmd, **kwargs):
         return _sp.run(cmd, **kwargs)
 
 
+def _potoken_home() -> str:
+    """Directory the YouTube PO-token provider is installed/managed under.
+
+    Deliberately the DB directory, NOT data_dir/PREROLLS_DIR. On Windows
+    data_dir == prerolls_dir (both ...\\NeXroll\\Prerolls), so installing the
+    provider under data_dir dropped its node_modules *inside* the scanned
+    library and the scanner choked on the TypeScript files. The DB dir is always
+    one level up (ProgramData\\NeXroll on Windows, /data on Docker) and is never
+    scanned. Falls back to data_dir if DB_PATH can't be resolved.
+    """
+    try:
+        d = os.path.dirname(DB_PATH)
+        return d or data_dir
+    except Exception:
+        return data_dir
+
+
 def _is_running_in_docker() -> bool:
     """Best-effort detection of running inside a container. Used to disable the
     dependency-install actions there (deps are baked into the image; a runtime
@@ -2658,7 +2675,7 @@ def startup_event():
     try:
         import threading as _threading
         from backend import nexup_potoken
-        nexup_potoken.init(data_dir, _file_log)
+        nexup_potoken.init(_potoken_home(), _file_log)
 
         def _start_potoken():
             try:
@@ -2967,7 +2984,7 @@ def system_dependencies():
         mgr = nexup_potoken.get_manager()
         pot_status = mgr.status() if mgr else {
             "plugin_installed": nexup_potoken.is_plugin_installed(),
-            "provider_present": bool(nexup_potoken.provider_server_dir(data_dir)),
+            "provider_present": bool(nexup_potoken.provider_server_dir(_potoken_home())),
             "node_available": bool(node_path),
             "usable": False,
             "healthy": False,
@@ -3072,9 +3089,14 @@ def install_deno():
     return {"success": False, "message": "Install ran but Deno could not be located afterward. A NeXroll restart may be required."}
 
 
-# Pinned Node LTS — chosen so node-canvas (a bgutil provider dependency) has
-# prebuilt binaries and doesn't need a C/C++ toolchain on the user's machine.
-_NODE_VERSION = "20.18.1"
+# Pinned Node LTS. 22.12+ is required so `require()` of ESM works by default:
+# the provider's jsdom stack pulls an ESM-only @exodus/bytes that older Node
+# (e.g. the previously-bundled 20.18.1) refused to require(), crashing the
+# provider at startup with ERR_REQUIRE_ESM. 22.x also keeps prebuilt binaries
+# for node-canvas so no C/C++ toolchain is needed. Existing installs that kept
+# an older Node are handled at launch via --experimental-require-module
+# (see nexup_potoken._needs_require_module_flag).
+_NODE_VERSION = "22.12.0"
 # Keep in sync with the bgutil-ytdlp-pot-provider pin in requirements.txt.
 _BGUTIL_VERSION = "1.3.1"
 
@@ -3151,7 +3173,7 @@ def install_potoken():
         env["PATH"] = node_dir + os.pathsep + env.get("PATH", "")
 
         # --- 2. Provider source + build ---
-        provider_root = os.path.join(data_dir, "bgutil-provider")
+        provider_root = os.path.join(_potoken_home(), "bgutil-provider")
         server_dir = os.path.join(provider_root, "server")
         if os.path.isfile(os.path.join(server_dir, "build", "main.js")):
             steps.append("Provider already built.")
@@ -3201,7 +3223,7 @@ def install_potoken():
             steps.append("Provider built.")
 
         # --- 3. Start ---
-        mgr = nexup_potoken.get_manager() or nexup_potoken.init(data_dir, _file_log)
+        mgr = nexup_potoken.get_manager() or nexup_potoken.init(_potoken_home(), _file_log)
         status = mgr.start()
         steps.append("Provider started." if status.get("usable") else "Provider built but not healthy yet.")
         return {
@@ -6505,6 +6527,123 @@ async def update_check_now(
 # ENHANCED LOGGING SYSTEM ENDPOINTS
 # ============================================================================
 
+# ---------------------------------------------------------------------------
+# Log redaction. Strips secrets and IP addresses from any log text that leaves
+# the app — the /logs viewer, exports, the diagnostics bundle — so logs can be
+# shared or copied without leaking API keys, tokens, or network addresses.
+# ---------------------------------------------------------------------------
+_REDACT_PARAM_RE = re.compile(
+    r'([?&](?:api_key|apikey|token|X-Plex-Token|api-key|access_token|secret|password)=)'
+    r'([^&\s"\']+)',
+    re.IGNORECASE,
+)
+_REDACT_HEADER_RE = re.compile(
+    r'((?:X-Plex-Token|X-Api-Key|ApiKey|X-Emby-Token|X-MediaBrowser-Token)\s*[:=]\s*)(\S+)',
+    re.IGNORECASE,
+)
+# Authorization is special: keep the scheme (Bearer/Basic/…) but redact the
+# credential after it, since "(\S+)" would otherwise only catch the scheme word.
+_REDACT_AUTH_RE = re.compile(
+    r'(Authorization\s*[:=]\s*)(?:(Bearer|Basic|Token|Digest|Negotiate)\s+)?(\S+)',
+    re.IGNORECASE,
+)
+
+
+def _redact_auth_match(m):
+    scheme = m.group(2)
+    return m.group(1) + (scheme + ' ' if scheme else '') + '[REDACTED]'
+_REDACT_IPV4_RE = re.compile(r'\b(?:\d{1,3}\.){3}\d{1,3}\b')
+# IPv6: only the unambiguous '::' compressed form or a full 8-group address.
+# Requiring '::' (or 7 colons) avoids matching "HH:MM:SS" timestamps. Addresses
+# that *start* with '::' (e.g. ::1 loopback, :: unspecified) aren't matched and
+# so are preserved.
+_REDACT_IPV6_RE = re.compile(
+    r'\b(?:[0-9A-Fa-f]{1,4}:){7}[0-9A-Fa-f]{1,4}\b'
+    r'|(?<![\w:])(?:[0-9A-Fa-f]{1,4}:){1,7}:(?:[0-9A-Fa-f]{1,4}(?::[0-9A-Fa-f]{1,4})*)?(?![\w:])',
+    re.IGNORECASE,
+)
+
+
+def _redact_ipv4_match(m):
+    ip = m.group(0)
+    # Loopback / unspecified carry no privacy risk and aid debugging — keep them.
+    if ip.startswith('127.') or ip == '0.0.0.0':
+        return ip
+    try:
+        if all(0 <= int(o) <= 255 for o in ip.split('.')):
+            return '[REDACTED-IP]'
+    except ValueError:
+        pass
+    return ip  # not a real IPv4 (e.g. a version-like number) — leave as-is
+
+
+def collect_sensitive_values(db) -> set:
+    """The user's actual configured secrets (server URLs, tokens, API keys),
+    gathered from settings + the secure store, for literal redaction."""
+    vals = set()
+    try:
+        setting = db.query(models.Setting).first()
+        if setting:
+            for attr in (
+                "plex_token", "plex_url", "plex_server_base_url",
+                "jellyfin_url", "jellyfin_api_key",
+                "nexup_radarr_url", "nexup_radarr_api_key",
+                "nexup_sonarr_url", "nexup_sonarr_api_key",
+                "nexup_tmdb_api_key",
+            ):
+                val = getattr(setting, attr, None)
+                if val and str(val).strip():
+                    vals.add(str(val).strip())
+                    vals.add(str(val).strip().rstrip("/"))
+    except Exception:
+        pass
+    for getter in (
+        secure_store.get_plex_token,
+        secure_store.get_jellyfin_api_key,
+        secure_store.get_emby_api_key,
+    ):
+        try:
+            v = getter()
+            if v and len(v) >= 6:
+                vals.add(v)
+        except Exception:
+            pass
+    return vals
+
+
+def redact_log_text(text, sensitive_values=None):
+    """Redact secrets and IP addresses from log text. Safe on anything about to
+    leave the app."""
+    if text is None:
+        return text
+    if not isinstance(text, str):
+        text = str(text)
+    text = _REDACT_PARAM_RE.sub(r'\1[REDACTED]', text)
+    text = _REDACT_HEADER_RE.sub(r'\1[REDACTED]', text)
+    text = _REDACT_AUTH_RE.sub(_redact_auth_match, text)
+    if sensitive_values:
+        # Longest first so a URL isn't partially clobbered before its token.
+        for sv in sorted((s for s in sensitive_values if s and len(s) >= 6), key=len, reverse=True):
+            try:
+                text = re.sub(re.escape(sv), '[REDACTED]', text, flags=re.IGNORECASE)
+            except re.error:
+                text = text.replace(sv, '[REDACTED]')
+    text = _REDACT_IPV4_RE.sub(_redact_ipv4_match, text)
+    text = _REDACT_IPV6_RE.sub('[REDACTED-IP]', text)
+    return text
+
+
+def _redact_details(raw, sensitive_values=None):
+    """Redact a JSON 'details' string, returning parsed JSON when still valid."""
+    if not raw:
+        return None
+    red = redact_log_text(raw, sensitive_values)
+    try:
+        return json.loads(red)
+    except Exception:
+        return red
+
+
 @app.get("/logs")
 async def logs_get(
     request: Request,
@@ -6561,7 +6700,8 @@ async def logs_get(
     
     # Order by most recent first and apply limit
     logs = query.order_by(models.LogEntry.timestamp.desc()).limit(min(limit, 1000)).all()
-    
+
+    svals = collect_sensitive_values(db)
     return {
         "logs": [
             {
@@ -6570,12 +6710,12 @@ async def logs_get(
                 "level": log.level,
                 "category": log.category,
                 "source": log.source,
-                "message": log.message,
-                "details": json.loads(log.details) if log.details else None,
+                "message": redact_log_text(log.message, svals),
+                "details": _redact_details(log.details, svals),
                 "request_id": log.request_id,
                 "user_id": log.user_id,
                 "duration_ms": log.duration_ms,
-                "ip_address": log.ip_address
+                "ip_address": redact_log_text(log.ip_address, svals)
             }
             for log in logs
         ],
@@ -6675,29 +6815,32 @@ async def logs_export(
     
     # Get logs
     logs = query.order_by(models.LogEntry.timestamp.desc()).limit(min(limit, 50000)).all()
-    
+
     timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-    
+
+    # Redact secrets/IPs before anything is written to the export file.
+    svals = collect_sensitive_values(db)
+
     if format.lower() == "csv":
         # Export as CSV
         import csv
         import io
-        
+
         output = io.StringIO()
         writer = csv.writer(output)
         writer.writerow(["timestamp", "level", "category", "source", "message", "details", "request_id", "duration_ms", "ip_address"])
-        
+
         for log in logs:
             writer.writerow([
                 log.timestamp.isoformat() if log.timestamp else "",
                 log.level,
                 log.category,
                 log.source or "",
-                log.message,
-                log.details or "",
+                redact_log_text(log.message, svals),
+                redact_log_text(log.details or "", svals),
                 log.request_id or "",
                 log.duration_ms or "",
-                log.ip_address or ""
+                redact_log_text(log.ip_address or "", svals)
             ])
         
         content = output.getvalue()
@@ -6717,11 +6860,11 @@ async def logs_export(
                     "level": log.level,
                     "category": log.category,
                     "source": log.source,
-                    "message": log.message,
-                    "details": json.loads(log.details) if log.details else None,
+                    "message": redact_log_text(log.message, svals),
+                    "details": _redact_details(log.details, svals),
                     "request_id": log.request_id,
                     "duration_ms": log.duration_ms,
-                    "ip_address": log.ip_address
+                    "ip_address": redact_log_text(log.ip_address, svals)
                 }
                 for log in logs
             ]
@@ -6762,6 +6905,7 @@ async def logs_get_file(
         if not os.path.exists(log_path):
             return {"logs": [], "file_path": log_path, "file_exists": False}
         
+        svals = collect_sensitive_values(db)
         # Read file in reverse order to get most recent entries first
         with open(log_path, "r", encoding="utf-8", errors="ignore") as f:
             lines = f.readlines()
@@ -6786,7 +6930,7 @@ async def logs_get_file(
                 logs.append({
                     "timestamp": timestamp_str,
                     "level": log_level.upper(),
-                    "message": message,
+                    "message": redact_log_text(message, svals),
                     "source": "app.log"
                 })
                 
@@ -13801,16 +13945,32 @@ def get_current_preroll_details(db: Session = Depends(get_db)):
             })
             continue
 
-        # Try to match to a NeX-Up movie trailer
+        # Try to match to a NeX-Up movie/TV trailer. Exact path first, then by
+        # filename (basename, then stem) so a trailer still resolves when its
+        # recorded path drifted — storage folder moved, or it was re-downloaded
+        # with a different extension. Without this, older trailers produce no
+        # preview_url and get silently skipped in the dashboard preview.
+        target_base = os.path.basename(norm_local).lower()
+        target_stem = os.path.splitext(target_base)[0]
+
+        def _trailer_matches(t):
+            if not t.local_path:
+                return False
+            tp = os.path.normpath(t.local_path)
+            if tp == norm_local:
+                return True
+            tb = os.path.basename(tp).lower()
+            return tb == target_base or os.path.splitext(tb)[0] == target_stem
+
         matched_trailer = None
         for t in all_movie_trailers:
-            if t.local_path and os.path.normpath(t.local_path) == norm_local:
+            if _trailer_matches(t):
                 matched_trailer = ("movie", t)
                 break
         # Try TV trailers if no movie match
         if not matched_trailer:
             for t in all_tv_trailers:
-                if t.local_path and os.path.normpath(t.local_path) == norm_local:
+                if _trailer_matches(t):
                     matched_trailer = ("tv", t)
                     break
 
@@ -14860,120 +15020,175 @@ def backup_database(db: Session = Depends(get_db)):
         log_event('ERROR', 'system', f'Database backup failed: {e}', source='backup_database')
         raise HTTPException(status_code=500, detail=f"Backup failed: {str(e)}")
 
+class _ZipDrainSink:
+    """A write-only, non-seekable file object for streaming a zip out as it's
+    built. zipfile writes here; we drain the buffer after each chunk and yield
+    it to the client, so the download reflects real compression progress instead
+    of waiting for the whole archive to be staged to a temp file first."""
+    def __init__(self):
+        self.buf = bytearray()
+        self._pos = 0
+    def write(self, b):
+        self.buf += bytes(b)
+        self._pos += len(b)
+        return len(b)
+    def tell(self):
+        return self._pos
+    def flush(self):
+        pass
+    def seekable(self):
+        return False
+    def drain(self):
+        if not self.buf:
+            return b""
+        out = bytes(self.buf)
+        self.buf.clear()
+        return out
+
+
 @app.post("/backup/files")
 def backup_files():
-    """Create comprehensive ZIP archive of all system files including database, prerolls, and thumbnails"""
+    """Stream a comprehensive system backup ZIP (database, prerolls, thumbnails,
+    settings) and compress it on the fly.
+
+    Unlike the old version (which staged the whole archive to a temp file before
+    sending a single byte), this yields the zip incrementally as each file is
+    compressed, so the client can show real progress. `X-Estimated-Total`
+    advertises the expected size — media files (mp4) barely deflate, so the sum
+    of input sizes is a close estimate of the final zip size.
+    """
     try:
         from backend.database import DB_PATH
-        
-        # Create temp file for ZIP (streaming large files)
-        import tempfile
-        temp_dir = tempfile.gettempdir()
         timestamp = datetime.datetime.now().strftime('%Y%m%d_%H%M%S')
         zip_filename = f"nexroll_system_backup_{timestamp}.zip"
-        zip_path = os.path.join(temp_dir, zip_filename)
-        
-        with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as zip_file:
-            # 1. Add database file
-            if os.path.exists(DB_PATH):
-                zip_file.write(DB_PATH, "database/nexroll.db")
-            
-            # 2. Add database JSON export (for cross-version compatibility)
+
+        # Build the cross-version JSON export up front (needs a DB session).
+        json_bytes = b""
+        try:
+            db = SessionLocal()
             try:
-                db = SessionLocal()
+                db_export = {
+                    "prerolls": [
+                        {
+                            "filename": p.filename,
+                            "display_name": getattr(p, "display_name", None),
+                            "path": p.path,
+                            "thumbnail": p.thumbnail,
+                            "tags": p.tags,
+                            "category_id": p.category_id,
+                            "categories": [{"id": c.id, "name": c.name} for c in (p.categories or [])],
+                            "description": p.description,
+                            "managed": getattr(p, "managed", True),
+                            "upload_date": p.upload_date.isoformat() if p.upload_date else None
+                        } for p in db.query(models.Preroll).all()
+                    ],
+                    "categories": [
+                        {"id": c.id, "name": c.name, "description": c.description}
+                        for c in db.query(models.Category).all()
+                    ],
+                    "schedules": [
+                        {
+                            "name": s.name, "type": s.type,
+                            "start_date": s.start_date.isoformat() if s.start_date else None,
+                            "end_date": s.end_date.isoformat() if s.end_date else None,
+                            "category_id": s.category_id,
+                            "fallback_category_id": getattr(s, "fallback_category_id", None),
+                            "shuffle": s.shuffle, "playlist": s.playlist, "is_active": s.is_active,
+                            "recurrence_pattern": s.recurrence_pattern, "preroll_ids": s.preroll_ids
+                        } for s in db.query(models.Schedule).all()
+                    ],
+                    "holiday_presets": [
+                        {"name": h.name, "description": h.description, "month": h.month,
+                         "day": h.day, "category_id": h.category_id}
+                        for h in db.query(models.HolidayPreset).all()
+                    ],
+                    "saved_sequences": [
+                        {"name": seq.name, "description": seq.description, "blocks": seq.get_blocks(),
+                         "created_at": seq.created_at.isoformat() if seq.created_at else None,
+                         "updated_at": seq.updated_at.isoformat() if seq.updated_at else None}
+                        for seq in db.query(models.SavedSequence).all()
+                    ],
+                    "exported_at": datetime.datetime.utcnow().isoformat(),
+                    "version": "1.10.14",
+                }
+                json_bytes = json.dumps(db_export, indent=2).encode("utf-8")
+            finally:
+                db.close()
+        except Exception as db_err:
+            print(f"Warning: Could not export database JSON: {db_err}")
+
+        # Enumerate the files to include as (abs_path, arcname). Skip the provider
+        # tree / node_modules so a backup never sweeps in thousands of those files.
+        _skip = {"node_modules", "bgutil-provider"}
+        entries = []
+        if os.path.exists(DB_PATH):
+            entries.append((DB_PATH, "database/nexroll.db"))
+        if os.path.exists(PREROLLS_DIR):
+            for root, dirs, files in os.walk(PREROLLS_DIR):
+                dirs[:] = [d for d in dirs if d.lower() not in _skip]
+                for f in files:
+                    fp = os.path.join(root, f)
+                    rel = os.path.relpath(fp, PREROLLS_DIR)
+                    if rel.split(os.sep)[0].lower() == "thumbnails":
+                        continue  # added under thumbnails/ below
+                    entries.append((fp, "prerolls/" + rel.replace(os.sep, "/")))
+        if os.path.exists(THUMBNAILS_DIR):
+            for root, dirs, files in os.walk(THUMBNAILS_DIR):
+                for f in files:
+                    fp = os.path.join(root, f)
+                    rel = os.path.relpath(fp, THUMBNAILS_DIR)
+                    entries.append((fp, "thumbnails/" + rel.replace(os.sep, "/")))
+        settings_path = os.path.join(data_dir, "settings.json")
+        if os.path.exists(settings_path):
+            entries.append((settings_path, "settings/settings.json"))
+
+        est_total = len(json_bytes)
+        for fp, _arc in entries:
+            try:
+                est_total += os.path.getsize(fp)
+            except Exception:
+                pass
+
+        def _gen():
+            sink = _ZipDrainSink()
+            zf = zipfile.ZipFile(sink, "w", zipfile.ZIP_DEFLATED)
+            try:
+                if json_bytes:
+                    zf.writestr("database/nexroll_data.json", json_bytes)
+                    d = sink.drain()
+                    if d:
+                        yield d
+                for fp, arc in entries:
+                    try:
+                        with zf.open(arc, "w") as dest, open(fp, "rb") as src:
+                            while True:
+                                chunk = src.read(1024 * 1024)
+                                if not chunk:
+                                    break
+                                dest.write(chunk)
+                                d = sink.drain()
+                                if d:
+                                    yield d
+                    except Exception as fe:
+                        print(f"backup_files: skipped {fp}: {fe}")
+                    d = sink.drain()
+                    if d:
+                        yield d
+            finally:
                 try:
-                    db_export = {
-                        "prerolls": [
-                            {
-                                "filename": p.filename,
-                                "display_name": getattr(p, "display_name", None),
-                                "path": p.path,
-                                "thumbnail": p.thumbnail,
-                                "tags": p.tags,
-                                "category_id": p.category_id,
-                                "categories": [{"id": c.id, "name": c.name} for c in (p.categories or [])],
-                                "description": p.description,
-                                "managed": getattr(p, "managed", True),
-                                "upload_date": p.upload_date.isoformat() if p.upload_date else None
-                            } for p in db.query(models.Preroll).all()
-                        ],
-                        "categories": [
-                            {
-                                "id": c.id,
-                                "name": c.name,
-                                "description": c.description
-                            } for c in db.query(models.Category).all()
-                        ],
-                        "schedules": [
-                            {
-                                "name": s.name,
-                                "type": s.type,
-                                "start_date": s.start_date.isoformat() if s.start_date else None,
-                                "end_date": s.end_date.isoformat() if s.end_date else None,
-                                "category_id": s.category_id,
-                                "fallback_category_id": getattr(s, "fallback_category_id", None),
-                                "shuffle": s.shuffle,
-                                "playlist": s.playlist,
-                                "is_active": s.is_active,
-                                "recurrence_pattern": s.recurrence_pattern,
-                                "preroll_ids": s.preroll_ids
-                            } for s in db.query(models.Schedule).all()
-                        ],
-                        "holiday_presets": [
-                            {
-                                "name": h.name,
-                                "description": h.description,
-                                "month": h.month,
-                                "day": h.day,
-                                "category_id": h.category_id
-                            } for h in db.query(models.HolidayPreset).all()
-                        ],
-                        "saved_sequences": [
-                            {
-                                "name": seq.name,
-                                "description": seq.description,
-                                "blocks": seq.get_blocks(),
-                                "created_at": seq.created_at.isoformat() if seq.created_at else None,
-                                "updated_at": seq.updated_at.isoformat() if seq.updated_at else None
-                            } for seq in db.query(models.SavedSequence).all()
-                        ],
-                        "exported_at": datetime.datetime.utcnow().isoformat(),
-                        "version": "1.10.14"
-                    }
-                    zip_file.writestr("database/nexroll_data.json", json.dumps(db_export, indent=2))
-                finally:
-                    db.close()
-            except Exception as db_err:
-                print(f"Warning: Could not export database JSON: {db_err}")
-            
-            # 3. Add all preroll video files
-            if os.path.exists(PREROLLS_DIR):
-                for file_path in Path(PREROLLS_DIR).rglob("*"):
-                    if file_path.is_file():
-                        # Skip thumbnails folder - we'll add it separately
-                        rel_path = file_path.relative_to(Path(PREROLLS_DIR))
-                        if not str(rel_path).startswith("thumbnails"):
-                            zip_file.write(file_path, f"prerolls/{rel_path}")
-            
-            # 4. Add thumbnails
-            if os.path.exists(THUMBNAILS_DIR):
-                for file_path in Path(THUMBNAILS_DIR).rglob("*"):
-                    if file_path.is_file():
-                        rel_path = file_path.relative_to(Path(THUMBNAILS_DIR))
-                        zip_file.write(file_path, f"thumbnails/{rel_path}")
-            
-            # 5. Add settings.json if exists
-            settings_path = os.path.join(data_dir, "settings.json")
-            if os.path.exists(settings_path):
-                zip_file.write(settings_path, "settings/settings.json")
-        
-        # Return as streaming response
-        return FileResponse(
-            path=zip_path,
-            filename=zip_filename,
-            media_type="application/zip",
-            background=BackgroundTask(lambda: os.unlink(zip_path) if os.path.exists(zip_path) else None)
-        )
+                    zf.close()
+                except Exception:
+                    pass
+            d = sink.drain()
+            if d:
+                yield d
+
+        headers = {
+            "Content-Disposition": f'attachment; filename="{zip_filename}"',
+            "X-Estimated-Total": str(est_total),
+            "Access-Control-Expose-Headers": "X-Estimated-Total, Content-Disposition",
+        }
+        return StreamingResponse(_gen(), media_type="application/zip", headers=headers)
     except Exception as e:
         log_event('ERROR', 'system', f'System backup failed: {e}', source='backup_files')
         raise HTTPException(status_code=500, detail=f"System backup failed: {str(e)}")
@@ -18908,7 +19123,7 @@ def get_potoken_status():
         from backend import nexup_potoken
         mgr = nexup_potoken.get_manager()
         if mgr is None:
-            mgr = nexup_potoken.init(data_dir, _file_log)
+            mgr = nexup_potoken.init(_potoken_home(), _file_log)
         return mgr.status()
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"PO-token status failed: {e}")
@@ -18921,7 +19136,7 @@ def start_potoken():
         from backend import nexup_potoken
         mgr = nexup_potoken.get_manager()
         if mgr is None:
-            mgr = nexup_potoken.init(data_dir, _file_log)
+            mgr = nexup_potoken.init(_potoken_home(), _file_log)
         status = mgr.start()
         if not status.get("usable"):
             # Give the caller a precise reason so the UI can guide the user.
@@ -18945,7 +19160,7 @@ def test_potoken():
         from backend import nexup_potoken
         mgr = nexup_potoken.get_manager()
         if mgr is None:
-            mgr = nexup_potoken.init(data_dir, _file_log)
+            mgr = nexup_potoken.init(_potoken_home(), _file_log)
         mgr.ensure_running()
         result = mgr.test_mint()
         result["status"] = mgr.status()
@@ -19721,6 +19936,57 @@ def get_nexup_trailers(db: Session = Depends(get_db)):
     }
 
 
+def _resolve_trailer_file(trailer, trailer_type: str, db: Session) -> Optional[Path]:
+    """Return the on-disk trailer file, self-healing a stale ``local_path``.
+
+    The recorded path drifts when the NeX-Up storage folder is moved or the
+    trailer is re-downloaded with a different container/extension — and then
+    older trailers stop previewing even though the file is sitting right there.
+    We fall back to locating it in the *current* storage by filename stem and by
+    the TMDB/TVDB id baked into the download filename
+    (``{title}_{tmdb_id}_trailer.ext`` / ``{title}_tvdb{tvdb_id}_trailer.ext``).
+    """
+    lp = getattr(trailer, 'local_path', None)
+    try:
+        if lp and Path(lp).exists():
+            return Path(lp)
+    except Exception:
+        pass
+
+    setting = db.query(models.Setting).first()
+    storage = getattr(setting, 'nexup_storage_path', None) if setting else None
+    if not storage:
+        return None
+    subdir = 'movies' if trailer_type == 'movie' else 'tv'
+    search_dir = Path(storage) / subdir
+    if not search_dir.is_dir():
+        return None
+
+    patterns = []
+    # 1. Same filename, any extension (handles e.g. a .webm -> .mp4 re-download).
+    if lp:
+        stem = Path(lp).stem
+        if stem:
+            patterns.append(f"{stem}.*")
+    # 2. The id is embedded in the download filename — robust to title changes.
+    if trailer_type == 'movie':
+        tmdb = getattr(trailer, 'tmdb_id', None)
+        if tmdb:
+            patterns.append(f"*_{tmdb}_trailer.*")
+    else:
+        tvdb = getattr(trailer, 'tvdb_id', None)
+        if tvdb:
+            patterns.append(f"*_tvdb{tvdb}_trailer.*")
+    for pat in patterns:
+        try:
+            for f in sorted(search_dir.glob(pat)):
+                if f.is_file():
+                    return f
+        except Exception:
+            continue
+    return None
+
+
 @app.get("/nexup/trailer/video/{trailer_type}/{trailer_id}")
 def serve_trailer_video(trailer_type: str, trailer_id: int, db: Session = Depends(get_db)):
     """Serve a downloaded trailer video for preview
@@ -19743,14 +20009,19 @@ def serve_trailer_video(trailer_type: str, trailer_id: int, db: Session = Depend
     if not trailer:
         raise HTTPException(status_code=404, detail="Trailer not found")
     
-    local_path = getattr(trailer, 'local_path', None)
-    if not local_path:
-        raise HTTPException(status_code=404, detail="Trailer video not available")
-    
-    video_path = Path(local_path)
-    if not video_path.exists():
+    video_path = _resolve_trailer_file(trailer, trailer_type, db)
+    if not video_path:
         raise HTTPException(status_code=404, detail="Trailer video file not found")
-    
+
+    # Self-heal the DB when we recovered the file at a new path, so future
+    # previews (and the next Plex apply) use the correct location.
+    try:
+        if str(getattr(trailer, 'local_path', '') or '') != str(video_path):
+            trailer.local_path = str(video_path)
+            db.commit()
+    except Exception:
+        db.rollback()
+
     import mimetypes
     mime_type, _ = mimetypes.guess_type(str(video_path))
     if not mime_type or not mime_type.startswith("video/"):
@@ -19840,6 +20111,7 @@ async def download_trailer(radarr_movie_id: int, trailer_url: Optional[str] = No
             raise HTTPException(status_code=404, detail="Movie not found in Radarr")
         
         # Honor a caller-provided alternate URL; otherwise derive from Radarr.
+        _user_chose_url = trailer_url is not None  # explicit pick from the alternate-trailer picker
         youtube_id = movie.get('youTubeTrailerId')
         if not trailer_url and youtube_id:
             trailer_url = f"https://www.youtube.com/watch?v={youtube_id}"
@@ -19862,9 +20134,10 @@ async def download_trailer(radarr_movie_id: int, trailer_url: Optional[str] = No
             trailer_url,
             movie.get('title', 'Unknown'),
             movie.get('tmdbId', 0),
-            year=movie.get('year')
+            year=movie.get('year'),
+            only_provided_url=_user_chose_url
         )
-        
+
         if not (result and isinstance(result, dict) and result.get('path')):
             # download_trailer returns {'error': <CODE>, 'message': '<CODE>: ...'}.
             err_code = (result.get('error') if isinstance(result, dict) else '') or ''
@@ -23320,67 +23593,14 @@ def diagnostics_bundle(db: Session = Depends(get_db)):
         ts = datetime.datetime.utcnow().strftime("%Y%m%d_%H%M%S")
         tmp_path = os.path.join(tempfile.gettempdir(), f"NeXroll_Diagnostics_{ts}.zip")
 
-        # ---- sensitive-value inventory from DB settings ----
-        _sensitive_values = set()
-        try:
-            setting = db.query(models.Setting).first()
-            if setting:
-                for attr in (
-                    "plex_token", "plex_url", "plex_server_base_url",
-                    "jellyfin_url", "jellyfin_api_key",
-                    "nexup_radarr_url", "nexup_radarr_api_key",
-                    "nexup_sonarr_url", "nexup_sonarr_api_key",
-                    "nexup_tmdb_api_key",
-                ):
-                    val = getattr(setting, attr, None)
-                    if val and str(val).strip():
-                        _sensitive_values.add(str(val).strip())
-                        # Also catch the value without trailing slash
-                        _sensitive_values.add(str(val).strip().rstrip("/"))
-        except Exception:
-            pass
-
-        # Also pull from secure store (tokens/keys may only live there)
-        for _ss_getter in (
-            secure_store.get_plex_token,
-            secure_store.get_jellyfin_api_key,
-            secure_store.get_emby_api_key,
-        ):
-            try:
-                _ss_val = _ss_getter()
-                if _ss_val and len(_ss_val) >= 6:
-                    _sensitive_values.add(_ss_val)
-            except Exception:
-                pass
-
-        # Build compiled regex patterns for scrubbing
-        # 1) Known URL-parameter keys that carry secrets
-        _param_re = _re.compile(
-            r'([?&](?:api_key|apikey|token|X-Plex-Token|api-key|access_token|secret|password)'
-            r'=)([^&\s"\']+)',
-            _re.IGNORECASE,
-        )
-        # 2) Authorization / media-server token headers
-        _header_re = _re.compile(
-            r'((?:Authorization|X-Plex-Token|X-Api-Key|ApiKey|X-Emby-Token|X-MediaBrowser-Token)\s*[:=]\s*)(\S+)',
-            _re.IGNORECASE,
-        )
-        # 3) Literal known values
-        _literal_res = []
-        for sv in _sensitive_values:
-            if len(sv) >= 6:  # Don't match very short strings
-                _literal_res.append(_re.compile(_re.escape(sv), _re.IGNORECASE))
+        # Sensitive-value inventory (settings + secure store) and the scrubber are
+        # shared with the /logs endpoints so the bundle redacts identically —
+        # URL/header secrets, the user's literal keys/URLs, and IP addresses.
+        _sensitive_values = collect_sensitive_values(db)
 
         def _scrub(text: str) -> str:
-            """Redact sensitive data from a block of text."""
-            # URL query-parameter secrets
-            text = _param_re.sub(r'\1[REDACTED]', text)
-            # Header values
-            text = _header_re.sub(r'\1[REDACTED]', text)
-            # Known literal sensitive values (longest first to avoid partial matches)
-            for pat in sorted(_literal_res, key=lambda p: -len(p.pattern)):
-                text = pat.sub('[REDACTED]', text)
-            return text
+            """Redact secrets and IP addresses from a block of text."""
+            return redact_log_text(text, _sensitive_values)
 
         # ---- info.json (redact db_url which may embed credentials) ----
         raw_paths = system_paths()
@@ -23437,6 +23657,18 @@ def diagnostics_bundle(db: Session = Depends(get_db)):
                         with open(svc_log, "r", encoding="utf-8", errors="replace") as lf:
                             scrubbed_svc = _scrub(lf.read())
                         z.writestr(os.path.join("logs", "service.log"), scrubbed_svc)
+            except Exception:
+                pass
+            # PO-token provider (bgutil) server log — the Node server's stdout/stderr,
+            # which holds the reason it crashed (rc=1). Check the current home and the
+            # legacy under-prerolls location so older installs are covered too.
+            try:
+                for _bg in {os.path.join(_potoken_home(), "bgutil-provider.log"),
+                            os.path.join(PREROLLS_DIR, "bgutil-provider.log")}:
+                    if _bg and os.path.exists(_bg):
+                        with open(_bg, "r", encoding="utf-8", errors="replace") as lf:
+                            z.writestr(os.path.join("logs", "bgutil-provider.log"), _scrub(lf.read()))
+                        break
             except Exception:
                 pass
 

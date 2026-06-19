@@ -27,7 +27,13 @@ VALID_VIDEO_EXTENSIONS = {
 }
 
 # Subdirectory basenames the scanner should never recurse into.
-SKIP_DIRS = {'thumbnails', 'temp', 'nexup_temp', 'tmp', '__pycache__'}
+# node_modules / bgutil-provider hold the YouTube PO-token provider: thousands of
+# files including TypeScript sources (*.ts / *.d.ts). Since '.ts' is also a valid
+# video extension (MPEG-TS), those were being treated as prerolls and each spawned
+# a failing FFmpeg thumbnail job — enough to make NeXroll unresponsive when the
+# provider lands inside the prerolls folder. Never descend into them.
+SKIP_DIRS = {'thumbnails', 'temp', 'nexup_temp', 'tmp', '__pycache__',
+             'node_modules', 'bgutil-provider'}
 
 
 def _iter_preroll_files(prerolls_dir: str):
