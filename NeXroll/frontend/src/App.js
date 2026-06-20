@@ -635,6 +635,7 @@ function App() {
   const [nextScheduleCountdown, setNextScheduleCountdown] = useState(null);
   const [backupFile, setBackupFile] = useState(null);
   const [backupProgress, setBackupProgress] = useState({ active: false, type: '', message: '', percent: null, loaded: 0, total: 0 });
+  const [factoryReset, setFactoryReset] = useState({ open: false, wipeTrailers: false, wipePrerolls: false, wipeProvider: false, confirm: '', busy: false });
   const [communityTemplates, setCommunityTemplates] = useState([]);
   const [selectedSchedules, setSelectedSchedules] = useState([]);
   const [darkMode, setDarkMode] = useState(() => {
@@ -27853,6 +27854,31 @@ const DashboardTiles = {
   );
 
   // Settings - System Tab
+  const handleFactoryReset = async () => {
+    if (factoryReset.confirm.trim().toUpperCase() !== 'RESET') return;
+    setFactoryReset(prev => ({ ...prev, busy: true }));
+    try {
+      const res = await fetch(apiUrl('admin/factory-reset'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          confirm: 'RESET',
+          wipe_trailers: factoryReset.wipeTrailers,
+          wipe_prerolls: factoryReset.wipePrerolls,
+          wipe_provider: factoryReset.wipeProvider,
+        }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.detail || 'Reset failed');
+      showAlert('Factory reset complete — restarting at onboarding…', 'success');
+      // App is now a fresh install; reload to the root to trigger first-run onboarding.
+      setTimeout(() => window.location.assign('/'), 1200);
+    } catch (e) {
+      setFactoryReset(prev => ({ ...prev, busy: false }));
+      showAlert('Factory reset failed: ' + (e.message || e), 'error');
+    }
+  };
+
   const renderSettingsSystem = () => (
     <>
     <div>
@@ -28654,7 +28680,80 @@ const DashboardTiles = {
           </a>
         </div>
       </div>
+
+      {/* Danger Zone — Factory Reset */}
+      <div className="card" style={{ border: '1px solid rgba(239,68,68,0.4)' }}>
+        <h2 style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', color: '#ef4444' }}>
+          <AlertTriangle size={20} /> Danger Zone
+        </h2>
+        <p style={{ color: 'var(--text-secondary)', fontSize: '0.88rem', marginBottom: '1rem' }}>
+          <strong>Factory reset</strong> returns NeXroll to a fresh-install state: it empties the
+          database (schedules, categories, prerolls, settings) and clears saved connections,
+          dropping you back at first-run onboarding. You can optionally also delete downloaded
+          trailers, uploaded prerolls, and the PO-token provider from disk. <strong>This cannot be
+          undone</strong> — make a backup first if you want to keep anything.
+        </p>
+        <button
+          className="button"
+          style={{ backgroundColor: '#dc2626', borderColor: '#dc2626' }}
+          onClick={() => setFactoryReset({ open: true, wipeTrailers: false, wipePrerolls: false, wipeProvider: false, confirm: '', busy: false })}
+        >
+          <Trash2 size={14} style={{ marginRight: '0.35rem' }} /> Factory Reset…
+        </button>
+      </div>
     </div>
+
+    {factoryReset.open && (
+      <div
+        style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000, padding: '1rem' }}
+        onClick={() => { if (!factoryReset.busy) setFactoryReset(prev => ({ ...prev, open: false })); }}
+      >
+        <div className="card" style={{ maxWidth: '520px', width: '100%', border: '1px solid rgba(239,68,68,0.5)', margin: 0 }} onClick={e => e.stopPropagation()}>
+          <h3 style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', color: '#ef4444', marginTop: 0 }}>
+            <AlertTriangle size={18} /> Factory Reset
+          </h3>
+          <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', margin: '0 0 0.5rem' }}>
+            Always removed: the <strong>database</strong> (schedules, categories, prerolls, settings)
+            and <strong>saved connections</strong>. You'll return to first-run onboarding.
+          </p>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', margin: '0.75rem 0', padding: '0.75rem', background: 'var(--bg-color)', borderRadius: '8px' }}>
+            <div style={{ fontSize: '0.8rem', fontWeight: 600, color: 'var(--text-secondary)' }}>Also delete from disk (optional):</div>
+            <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '0.88rem', cursor: 'pointer' }}>
+              <input type="checkbox" checked={factoryReset.wipeTrailers} disabled={factoryReset.busy} onChange={e => setFactoryReset(prev => ({ ...prev, wipeTrailers: e.target.checked }))} />
+              Downloaded trailers (NeX-Up)
+            </label>
+            <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '0.88rem', cursor: 'pointer' }}>
+              <input type="checkbox" checked={factoryReset.wipePrerolls} disabled={factoryReset.busy} onChange={e => setFactoryReset(prev => ({ ...prev, wipePrerolls: e.target.checked }))} />
+              Uploaded prerolls
+            </label>
+            <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '0.88rem', cursor: 'pointer' }}>
+              <input type="checkbox" checked={factoryReset.wipeProvider} disabled={factoryReset.busy} onChange={e => setFactoryReset(prev => ({ ...prev, wipeProvider: e.target.checked }))} />
+              PO-token provider (re-installs next time)
+            </label>
+          </div>
+          <p style={{ fontSize: '0.85rem', margin: '0 0 0.35rem' }}>Type <code>RESET</code> to confirm:</p>
+          <input
+            className="input"
+            value={factoryReset.confirm}
+            disabled={factoryReset.busy}
+            onChange={e => setFactoryReset(prev => ({ ...prev, confirm: e.target.value }))}
+            placeholder="RESET"
+            style={{ width: '100%', marginBottom: '1rem' }}
+          />
+          <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.5rem' }}>
+            <button className="button button-secondary" disabled={factoryReset.busy} onClick={() => setFactoryReset(prev => ({ ...prev, open: false }))}>Cancel</button>
+            <button
+              className="button"
+              style={{ backgroundColor: '#dc2626', borderColor: '#dc2626', opacity: (factoryReset.confirm.trim().toUpperCase() === 'RESET' && !factoryReset.busy) ? 1 : 0.5 }}
+              disabled={factoryReset.confirm.trim().toUpperCase() !== 'RESET' || factoryReset.busy}
+              onClick={handleFactoryReset}
+            >
+              {factoryReset.busy ? 'Resetting…' : 'Factory Reset'}
+            </button>
+          </div>
+        </div>
+      </div>
+    )}
     </>
   );
 

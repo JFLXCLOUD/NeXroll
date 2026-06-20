@@ -3241,6 +3241,119 @@ def install_potoken():
         return {"success": False, "steps": steps, "message": f"Install error: {e}"}
 
 
+class FactoryResetRequest(BaseModel):
+    confirm: str = ""           # must equal "RESET"
+    wipe_trailers: bool = False  # delete downloaded NeX-Up trailer files
+    wipe_prerolls: bool = False  # delete uploaded preroll files
+    wipe_provider: bool = False  # delete the bgutil PO-token provider
+
+
+@app.post("/admin/factory-reset")
+def factory_reset(req: FactoryResetRequest, request: Request, db: Session = Depends(get_db)):
+    """Reset NeXroll to a fresh-install state.
+
+    Always: empties every database table (schedules, categories, prerolls,
+    trailers, settings, users, logs…) and clears saved connections from the
+    secure store — leaving the app at first-run onboarding. Optionally also
+    deletes downloaded trailers, uploaded prerolls, and the PO-token provider
+    from disk. Admin-only; requires confirm == "RESET".
+
+    Tables are emptied row-by-row (not dropped) so the full schema — including
+    every runtime-migrated column — is preserved without needing a restart.
+    """
+    user = get_current_user_optional(request, db)
+    if _check_auth_enabled(db) and not _is_local_request(request):
+        if not user or user.role != 'admin':
+            raise HTTPException(status_code=403, detail="Admin access required")
+    if (req.confirm or "").strip().upper() != "RESET":
+        raise HTTPException(status_code=400, detail='Confirmation text must be "RESET".')
+
+    removed = []
+
+    # Capture disk paths before the settings row is wiped.
+    setting = db.query(models.Setting).first()
+    nexup_storage = getattr(setting, 'nexup_storage_path', None) if setting else None
+
+    # Pause the scheduler so it can't act on half-wiped state.
+    try:
+        scheduler.stop()
+    except Exception:
+        pass
+
+    # 1. Clear saved connections (tokens/keys live in the secure store).
+    try:
+        secure_store.delete_plex_token()
+        secure_store.delete_jellyfin_api_key()
+        secure_store.delete_emby_api_key()
+        sf = secure_store._secrets_file_path()
+        if sf and os.path.exists(sf):
+            os.remove(sf)
+        removed.append("saved connections")
+    except Exception as e:
+        _file_log(f"factory-reset: secret clear error: {e}")
+
+    # 2. Empty every table (keeps schema + runtime-migrated columns). Delete in
+    #    reverse dependency order so foreign keys are satisfied.
+    try:
+        for table in reversed(models.Base.metadata.sorted_tables):
+            db.execute(table.delete())
+        db.commit()
+        removed.append("database")
+    except Exception as e:
+        db.rollback()
+        _file_log(f"factory-reset: db wipe failed: {e}")
+        raise HTTPException(status_code=500, detail=f"Database wipe failed: {e}")
+    # Reclaim the freed space (a long-lived DB can be hundreds of MB).
+    try:
+        with engine.connect().execution_options(isolation_level="AUTOCOMMIT") as conn:
+            conn.exec_driver_sql("VACUUM")
+    except Exception as e:
+        _file_log(f"factory-reset: VACUUM skipped: {e}")
+
+    # 3. Optional on-disk deletions.
+    def _wipe_dir_contents(path):
+        if not path or not os.path.isdir(path):
+            return
+        for entry in os.listdir(path):
+            fp = os.path.join(path, entry)
+            try:
+                if os.path.isdir(fp):
+                    shutil.rmtree(fp, ignore_errors=True)
+                else:
+                    os.remove(fp)
+            except Exception:
+                pass
+
+    if req.wipe_prerolls:
+        _wipe_dir_contents(PREROLLS_DIR)
+        removed.append("uploaded prerolls")
+    if req.wipe_trailers:
+        roots = [p for p in (nexup_storage, os.path.join(os.path.dirname(DB_PATH), "NeXup")) if p]
+        for root in roots:
+            for sub in ("movies", "tv"):
+                d = os.path.join(root, sub)
+                if os.path.isdir(d):
+                    shutil.rmtree(d, ignore_errors=True)
+        removed.append("downloaded trailers")
+    if req.wipe_provider:
+        try:
+            prov = os.path.join(_potoken_home(), "bgutil-provider")
+            if os.path.isdir(prov):
+                shutil.rmtree(prov, ignore_errors=True)
+                removed.append("PO-token provider")
+        except Exception as e:
+            _file_log(f"factory-reset: provider remove error: {e}")
+
+    # Restart the scheduler against the now-empty database.
+    try:
+        scheduler.start()
+    except Exception:
+        pass
+
+    _file_log(f"Factory reset performed. Removed: {', '.join(removed) or 'nothing'}")
+    return {"success": True, "removed": removed}
+
+
 @app.get("/system/ffmpeg-info")
 def system_ffmpeg_info():
     """Return presence and versions for ffmpeg and ffprobe (for diagnostics UI)."""
@@ -14664,6 +14777,91 @@ def _scanner_exclude_trees(db: Session) -> list:
     return trees
 
 
+def _looks_like_dependency_file(path: str) -> bool:
+    """True for paths that are Node/TypeScript dependency files, not prerolls —
+    e.g. *.d.ts / *.ts sources under node_modules or the bgutil PO-token
+    provider. '.ts' doubles as the MPEG-TS video extension, so a scan from
+    before the scanner learned to skip those trees could import them as
+    prerolls; this lets us find and purge the junk rows."""
+    if not path:
+        return False
+    p = str(path).replace("\\", "/").lower()
+    # Match as a path *segment* so relative paths (no leading slash) are caught
+    # too — preroll paths are often stored relative to the prerolls dir.
+    segs = [s for s in p.split("/") if s]
+    if "node_modules" in segs or "bgutil-provider" in segs:
+        return True
+    if p.endswith(".d.ts"):
+        return True
+    return False
+
+
+def _purge_dependency_prerolls(db: Session) -> int:
+    """Delete preroll rows that point at Node/TypeScript dependency files and
+    remove their generated thumbnails. Returns how many were purged. Safe to run
+    repeatedly; a no-op once the junk is gone."""
+    removed = 0
+    try:
+        rows = db.query(models.Preroll).all()
+    except Exception:
+        return 0
+    for p in rows:
+        if not (_looks_like_dependency_file(getattr(p, "path", "") or "")
+                or _looks_like_dependency_file(getattr(p, "filename", "") or "")):
+            continue
+        try:
+            thumb = getattr(p, "thumbnail", None)
+            if thumb:
+                tabs = thumb if os.path.isabs(thumb) else os.path.join(data_dir, thumb)
+                if os.path.exists(tabs):
+                    os.remove(tabs)
+        except Exception:
+            pass
+        try:
+            db.delete(p)
+            removed += 1
+        except Exception:
+            pass
+    if removed:
+        try:
+            db.commit()
+            _file_log(f"Purged {removed} dependency-file preroll record(s) (node_modules / *.d.ts).")
+        except Exception:
+            db.rollback()
+            return 0
+    return removed
+
+
+def _sweep_orphan_thumbnails(db: Session) -> int:
+    """Delete thumbnail files whose '<id>_…' prefix no longer maps to a preroll
+    row — e.g. the '<id>_index.d.ts.jpg' files left on disk after junk rows are
+    purged (the row's stored thumbnail path can be wrong/missing, so we clean up
+    by scanning the folder). Returns the count removed."""
+    removed = 0
+    try:
+        valid_ids = {row[0] for row in db.query(models.Preroll.id).all()}
+    except Exception:
+        return 0
+    if not THUMBNAILS_DIR or not os.path.isdir(THUMBNAILS_DIR):
+        return 0
+    pat = re.compile(r'^(\d+)_')
+    for root, _dirs, files in os.walk(THUMBNAILS_DIR):
+        for f in files:
+            if not f.lower().endswith(".jpg"):
+                continue
+            m = pat.match(f)
+            if not m or int(m.group(1)) in valid_ids:
+                continue
+            try:
+                os.remove(os.path.join(root, f))
+                removed += 1
+            except Exception:
+                pass
+    if removed:
+        _file_log(f"Removed {removed} orphan thumbnail file(s).")
+    return removed
+
+
 def scan_preroll_library(db: Session = None, delete_missing: bool = False, dedupe: bool = False,
                          auto_prune_missing: bool = True) -> dict:
     """
@@ -14681,6 +14879,12 @@ def scan_preroll_library(db: Session = None, delete_missing: bool = False, dedup
         db = SessionLocal()
         close_db = True
     try:
+        # Purge junk rows from any pre-fix scan (TypeScript/node_modules files
+        # imported as prerolls) before reconciling, so they don't linger.
+        try:
+            _purge_dependency_prerolls(db)
+        except Exception:
+            pass
         stats = fs_scanner.reconcile_prerolls(
             db,
             prerolls_dir=PREROLLS_DIR,
@@ -14692,6 +14896,11 @@ def scan_preroll_library(db: Session = None, delete_missing: bool = False, dedup
             auto_prune_missing=auto_prune_missing,
             exclude_trees=_scanner_exclude_trees(db),
         )
+        # Clean up thumbnail files left orphaned by the purge / removed prerolls.
+        try:
+            _sweep_orphan_thumbnails(db)
+        except Exception:
+            pass
         try:
             _set_last_scan_stats(stats)
         except Exception:
@@ -15688,6 +15897,10 @@ def thumbnails_rebuild(category: str = None, force: bool = False, db: Session = 
     failures = []
 
     try:
+        # Drop junk rows (TypeScript/node_modules files mis-imported as prerolls)
+        # first, so re-initializing thumbnails doesn't regenerate *.d.ts.jpg etc.
+        purged = _purge_dependency_prerolls(db)
+
         # Query prerolls with optional category name filter
         query = db.query(models.Preroll).join(models.Category, isouter=True)
         if category and category.strip():
@@ -15796,10 +16009,15 @@ def thumbnails_rebuild(category: str = None, force: bool = False, db: Session = 
             log_event('ERROR', 'system', f'Thumbnail rebuild commit failed: {e}', source='thumbnails_rebuild')
             raise HTTPException(status_code=500, detail=f"Thumbnail rebuild failed to commit: {str(e)}")
 
+        # Remove thumbnail files left orphaned on disk (e.g. by the purge above).
+        orphans = _sweep_orphan_thumbnails(db)
+
         return {
             "processed": processed,
             "generated": generated,
             "skipped": skipped,
+            "purged": purged,  # junk dependency-file rows removed before rebuilding
+            "orphans_removed": orphans,  # orphan thumbnail files deleted from disk
             "failures": len(failures),
             "failure_details": failures[:15],  # cap details
             "category": category or None,
@@ -18272,7 +18490,31 @@ async def download_tv_trailer(
             season_number=season_number
         ) if show_info.get('tvdbId') or show_info.get('imdbId') else []
 
-        # If no season-specific trailers, try show-level trailers
+        # For an upcoming season (>1), TMDB usually only has the show's original
+        # (season-1) trailer — flagged season_specific=False. Prefer a
+        # season-specific YouTube result in that case, so e.g. "The Bear" S5
+        # downloads the S5 trailer instead of the S1 one.
+        if season_number and season_number > 1 and (not trailers or not trailers[0].get('season_specific')):
+            try:
+                from backend.radarr_connector import search_youtube_trailers
+                _title = show_info.get('title', '') or ''
+                _year = show_info.get('year')
+                yq = " ".join(p for p in [_title, str(_year) if _year else "",
+                                          f"season {season_number}", "official trailer"] if p).strip()
+                _file_log(f"Sonarr: Season-aware YouTube search: {yq}")
+                yt = await asyncio.get_event_loop().run_in_executor(None, search_youtube_trailers, yq, 1)
+                if yt and yt[0].get('url'):
+                    trailers = [{
+                        'source': 'youtube',
+                        'url': yt[0]['url'],
+                        'name': yt[0].get('title') or f"Season {season_number} Trailer",
+                        'season_specific': True,
+                    }]
+                    _file_log(f"Sonarr: Season-aware YouTube match: {yt[0]['url']}")
+            except Exception as e:
+                _file_log(f"Sonarr: Season-aware YouTube search failed: {e}")
+
+        # If still nothing, try show-level trailers (last resort)
         if not trailers:
             _file_log(f"Sonarr: No season-specific trailers found, trying show-level trailers")
             trailers = await fetcher.get_tv_trailers(

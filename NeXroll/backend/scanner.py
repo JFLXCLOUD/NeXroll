@@ -50,6 +50,11 @@ def _iter_preroll_files(prerolls_dir: str):
             ext = os.path.splitext(f)[1].lower()
             if ext not in VALID_VIDEO_EXTENSIONS:
                 continue
+            # '*.d.ts' splits to ext '.ts' (MPEG-TS) but is a TypeScript
+            # declaration file, never a video — skip it explicitly so a stray
+            # node_modules tree outside SKIP_DIRS can't seed junk prerolls.
+            if f.lower().endswith('.d.ts'):
+                continue
             abs_path = os.path.join(root, f)
             # Parent folder name relative to prerolls_dir: '' for the root itself
             try:

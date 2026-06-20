@@ -1,5 +1,57 @@
 # Changelog
 
+## [2.0.0-beta.10] - 06-20-2026 (beta)
+
+> Makes beta.9's junk-thumbnail cleanup actually work, and teaches TV trailer
+> downloads to fetch the *upcoming* season's trailer. Upgrade-safe.
+
+### Fixed
+
+- **Junk TypeScript thumbnails are now actually removed.** beta.9's cleanup
+  missed records whose stored path was *relative* (the common case), so the
+  `*.d.ts.jpg` / `*.ts.jpg` thumbnails kept coming back. Matching is now by path
+  segment (catches absolute and relative paths alike), and a new sweep deletes
+  orphaned thumbnail files left on disk. "Reinitialize Thumbnails" now reports
+  how many junk records and orphan files it cleaned, and the same cleanup runs on
+  every library scan.
+
+### Changed
+
+- **Smarter TV trailer search — fetches the upcoming season.** When a show's
+  next season is greater than 1 and TMDB only offers the original (season-1)
+  trailer, NeXroll now searches YouTube for that specific season (e.g. *"The
+  Bear season 5 official trailer"*) instead of downloading the season-1 trailer.
+  Falls back to the show-level trailer only if the season search finds nothing.
+
+## [2.0.0-beta.9] - 06-19-2026 (beta)
+
+> Adds a built-in **Factory Reset** for returning NeXroll to a fresh-install
+> state — handy for clean re-testing without reinstalling. Upgrade-safe.
+
+### Added
+
+- **Factory Reset (Settings → System → Danger Zone).** Resets NeXroll to a
+  fresh-install state: empties the database (schedules, categories, prerolls,
+  settings) and clears saved connections, dropping you back at first-run
+  onboarding. A confirmation modal (type `RESET` to proceed) lets you optionally
+  also delete downloaded trailers, uploaded prerolls, and the PO-token provider
+  from disk. Tables are emptied rather than dropped, so the full schema is
+  preserved and the reset takes effect immediately without a restart.
+
+### Fixed
+
+- **TypeScript files no longer show up as prerolls/thumbnails.** A scan from
+  before the scanner learned to skip `node_modules` could import the PO-token
+  provider's `*.ts` / `*.d.ts` source files as prerolls (`.ts` doubles as the
+  MPEG-TS video extension), and "Reinitialize Thumbnails" then generated a
+  thumbnail for each — e.g. `index.d.ts.jpg`. NeXroll now purges these junk
+  records (and their thumbnails) during any scan and at the start of a thumbnail
+  rebuild, and the scanner skips `*.d.ts` outright.
+- **Faster Windows install.** The installer now checks whether the Visual C++
+  runtime is already present and skips the `winget` step when it is, instead of
+  invoking winget on every install (which was slow to start even when it had
+  nothing to do).
+
 ## [2.0.0-beta.8] - 06-19-2026 (beta)
 
 > The headline fix: beta.7's **cookie-free YouTube downloads now actually work**.
