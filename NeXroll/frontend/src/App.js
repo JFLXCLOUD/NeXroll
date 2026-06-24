@@ -766,6 +766,12 @@ function App() {
   const [communitySearchPlatform, setCommunitySearchPlatform] = useState('');
   const [communitySearchResults, setCommunitySearchResults] = useState([]);
   const [communityIsSearching, setCommunityIsSearching] = useState(false);
+  // Browse-by-facet state (Community Prerolls)
+  const [communityFacets, setCommunityFacets] = useState(null);
+  const [browseCategory, setBrowseCategory] = useState('');
+  const [browseCreator, setBrowseCreator] = useState('');
+  const [browsePlatform, setBrowsePlatform] = useState('');
+  const [browseSort, setBrowseSort] = useState('name');
   const [communityIsDownloading, setCommunityIsDownloading] = useState({});
   const [communityBuildProgress, setCommunityBuildProgress] = useState(null);
   const [communitySelectedCategory, setCommunitySelectedCategory] = useState(null);
@@ -2555,6 +2561,14 @@ const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
                 console.log('Index status state set!');
               } catch (indexError) {
                 console.error('Failed to load index status:', indexError);
+              }
+              // Load browse facets (categories / creators / platforms + counts)
+              try {
+                const facetsRes = await fetch(apiUrl('community-prerolls/facets'));
+                const facetsData = await facetsRes.json();
+                setCommunityFacets(facetsData && facetsData.available ? facetsData : null);
+              } catch (facetsError) {
+                console.error('Failed to load community facets:', facetsError);
               }
               // Fetch community server info
               try {
@@ -30727,10 +30741,33 @@ const DashboardTiles = {
         message: 'Starting...'
       });
       
-      // Start listening to progress updates via SSE
+      // Kick off the build FIRST, so the server resets its progress state
+      // (building=true, progress=0) before we attach the SSE stream. Otherwise
+      // the stream's first frame is the *previous* build's terminal state
+      // (building=false) and we'd wrongly report "failed" while the new build
+      // actually runs in the background.
+      try {
+        const response = await fetch(apiUrl('community-prerolls/build-index'));
+        if (!response.ok) {
+          let detail = `Failed to start index build (HTTP ${response.status}).`;
+          try { const err = await response.json(); if (err?.detail) detail = err.detail; } catch {}
+          setCommunityIsBuilding(false);
+          setCommunityBuildProgress(null);
+          showAlert(detail, 'error');
+          return;
+        }
+      } catch (error) {
+        setCommunityIsBuilding(false);
+        setCommunityBuildProgress(null);
+        showAlert(`Failed to build index: ${error.message}`, 'error');
+        return;
+      }
+
+      // Now stream progress/completion via SSE.
       const eventSource = new EventSource(apiUrl('community-prerolls/build-progress'));
-      
+
       let finished = false;
+      let sawBuilding = false;
       const finish = (failedMsg) => {
         if (finished) return;
         finished = true;
@@ -30753,12 +30790,14 @@ const DashboardTiles = {
         let data;
         try { data = JSON.parse(event.data); } catch { return; }
         setCommunityBuildProgress(data);
+        if (data.building === true) sawBuilding = true;
 
         // The server flips building=false at the end. progress=100 => success;
         // building=false with progress<100 => the build errored on the server.
+        // Ignore a stale terminal frame that arrives before our build registers.
         if (data.building === false) {
           if (data.progress === 100) finish(null);
-          else finish(data.message || 'Index build failed on the server.');
+          else if (sawBuilding) finish(data.message || 'Index build failed on the server.');
         }
       };
 
@@ -30767,21 +30806,6 @@ const DashboardTiles = {
         // haven't already finished.
         finish(finished ? null : 'Lost connection to the index build progress stream.');
       };
-
-      try {
-        // Kick off the build — the server runs it on a background thread and
-        // returns immediately; progress/completion arrive via the SSE stream.
-        const response = await fetch(apiUrl('community-prerolls/build-index'));
-
-        if (!response.ok) {
-          let detail = `Failed to start index build (HTTP ${response.status}).`;
-          try { const err = await response.json(); if (err?.detail) detail = err.detail; } catch {}
-          finish(detail);
-          return;
-        }
-      } catch (error) {
-        finish(`Failed to build index: ${error.message}`);
-      }
     };
 
     // Handle rematching all prerolls (clears existing matches first)
@@ -30981,6 +31005,38 @@ const DashboardTiles = {
       } catch (error) {
         alert(`Search failed: ${error.message}`);
         setCommunitySearchResults([]);
+      } finally {
+        setCommunityIsSearching(false);
+      }
+    };
+
+    // Browse by facet filters (category / creator / platform + sort) into the
+    // same results grid the search uses. `overrides` lets a facet click apply
+    // immediately without waiting for state to settle.
+    const handleBrowse = async (overrides = {}) => {
+      const cat = overrides.category !== undefined ? overrides.category : browseCategory;
+      const creator = overrides.creator !== undefined ? overrides.creator : browseCreator;
+      const platform = overrides.platform !== undefined ? overrides.platform : browsePlatform;
+      const sort = overrides.sort !== undefined ? overrides.sort : browseSort;
+      setCommunityIsSearching(true);
+      try {
+        const params = new URLSearchParams();
+        if (cat) params.append('category', cat);
+        if (creator) params.append('creator', creator);
+        if (platform) params.append('platform', platform);
+        if (sort) params.append('sort', sort);
+        params.append('limit', 200);
+        const response = await fetch(apiUrl(`community-prerolls/search?${params.toString()}`));
+        if (response.status === 429) {
+          const err = await response.json();
+          alert(err.detail || 'Rate limit exceeded. Please wait before browsing again.');
+          return;
+        }
+        const data = await response.json();
+        setCommunitySearchResults(data.results || []);
+        setCommunityTotalResults(data.total || 0);
+      } catch (error) {
+        alert(`Browse failed: ${error.message}`);
       } finally {
         setCommunityIsSearching(false);
       }
@@ -31425,9 +31481,16 @@ const DashboardTiles = {
               />
               <button
                 onClick={async () => {
+                  const url = communityCustomUrlInput.trim().replace(/\/+$/, '');
+                  // Empty field = nothing to save. Don't send null here, or it
+                  // would reset a server you just picked above. Use "Reset to
+                  // default" to clear a custom URL.
+                  if (!url) {
+                    showAlert('Enter a custom server URL, or pick a server above. Use "Reset to default" to clear.', 'info');
+                    return;
+                  }
                   setCommunityServerLoading(true);
                   try {
-                    const url = communityCustomUrlInput.trim().replace(/\/+$/, '') || null;
                     await fetch(apiUrl('community-prerolls/server-url'), {
                       method: 'PUT',
                       headers: { 'Content-Type': 'application/json' },
@@ -31437,7 +31500,6 @@ const DashboardTiles = {
                     const data = await res.json();
                     setCommunityServerUrl(data.server_url || '');
                     setCommunityServerIsCustom(!!data.is_custom);
-                    if (!url) setCommunityCustomUrlInput('');
                   } catch (e) { console.error('Failed to save custom URL:', e); }
                   setCommunityServerLoading(false);
                 }}
@@ -31604,6 +31666,62 @@ const DashboardTiles = {
             </div>
           )}
         </div>
+
+        {/* Browse the library by facet (category / platform / creator / sort) */}
+        {communityFacets && (
+          <div className="card">
+            <h3 style={{ marginTop: 0, marginBottom: '0.75rem', fontSize: '1rem', display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+              <Filter size={16} /> Browse the Library
+              <span style={{ color: 'var(--text-secondary)', fontWeight: 500, fontSize: '0.85rem' }}>({communityFacets.total} prerolls)</span>
+            </h3>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '0.75rem', marginBottom: '0.75rem' }}>
+              <div>
+                <label className="nx-conn-field-label">Category</label>
+                <select className="input" value={browseCategory} onChange={e => { setBrowseCategory(e.target.value); handleBrowse({ category: e.target.value }); }}>
+                  <option value="">All categories</option>
+                  {communityFacets.categories.map(c => <option key={c.name} value={c.name}>{c.name} ({c.count})</option>)}
+                </select>
+              </div>
+              <div>
+                <label className="nx-conn-field-label">Platform</label>
+                <select className="input" value={browsePlatform} onChange={e => { setBrowsePlatform(e.target.value); handleBrowse({ platform: e.target.value }); }}>
+                  <option value="">All platforms</option>
+                  {communityFacets.platforms.filter(p => p.name !== 'Universal').map(p => <option key={p.name} value={p.name}>{p.name} ({p.count})</option>)}
+                </select>
+              </div>
+              <div>
+                <label className="nx-conn-field-label">Creator</label>
+                <select className="input" value={browseCreator} onChange={e => { setBrowseCreator(e.target.value); handleBrowse({ creator: e.target.value }); }}>
+                  <option value="">All creators</option>
+                  {communityFacets.creators.map(c => <option key={c.name} value={c.name}>{c.name} ({c.count})</option>)}
+                </select>
+              </div>
+              <div>
+                <label className="nx-conn-field-label">Sort</label>
+                <select className="input" value={browseSort} onChange={e => { setBrowseSort(e.target.value); handleBrowse({ sort: e.target.value }); }}>
+                  <option value="name">Name (A–Z)</option>
+                  <option value="newest">Newest{communityFacets.has_dates ? '' : ' (re-index)'}</option>
+                  <option value="oldest">Oldest{communityFacets.has_dates ? '' : ' (re-index)'}</option>
+                </select>
+              </div>
+            </div>
+            <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', flexWrap: 'wrap' }}>
+              <button className="button" onClick={() => handleBrowse()} disabled={communityIsSearching}>
+                <Filter size={14} style={{ marginRight: '0.35rem' }} /> Browse
+              </button>
+              {(browseCategory || browseCreator || browsePlatform) && (
+                <button className="button button-secondary" onClick={() => { setBrowseCategory(''); setBrowseCreator(''); setBrowsePlatform(''); handleBrowse({ category: '', creator: '', platform: '' }); }}>
+                  Clear filters
+                </button>
+              )}
+              {!communityFacets.has_dates && (
+                <span style={{ fontSize: '0.78rem', color: 'var(--text-secondary)' }}>
+                  Re-index to enable date sorting.
+                </span>
+              )}
+            </div>
+          </div>
+        )}
 
         {/* Results List */}
         {communitySearchResults.length > 0 && (

@@ -2076,12 +2076,49 @@ SEARCH_SYNONYMS = {
     "pumpkin": ["halloween", "october", "autumn", "fall"],
 }
 
+_community_default_server_cache = {"url": None, "at": 0.0}
+_COMMUNITY_DEFAULT_SERVER_TTL = 600  # 10 minutes
+
+
+def _resolve_default_community_server() -> Optional[str]:
+    """Resolve an active community *file* server from servers.json.
+
+    The bare prerolls.uk domain is now the project website — its directory paths
+    302-redirect and its root is a landing page, so the index scrape and file
+    downloads must target one of the mirror file servers it advertises (e.g.
+    https://usa.prerolls.uk). Cached 10 min; returns None if servers.json can't
+    be reached.
+    """
+    import time as _t
+    now = _t.time()
+    cached = _community_default_server_cache.get("url")
+    if cached and (now - _community_default_server_cache.get("at", 0)) < _COMMUNITY_DEFAULT_SERVER_TTL:
+        return cached
+    try:
+        import requests as _r
+        resp = _r.get(COMMUNITY_SERVERS_JSON_URL, timeout=10, headers=_community_headers())
+        if resp.ok:
+            servers = (resp.json() or {}).get("servers", []) or []
+            pick = next((s for s in servers
+                         if str(s.get("status", "")).lower() == "active" and s.get("baseUrl")), None)
+            if not pick:
+                pick = next((s for s in servers if s.get("baseUrl")), None)
+            if pick:
+                url = str(pick["baseUrl"]).rstrip("/")
+                _community_default_server_cache.update({"url": url, "at": now})
+                return url
+    except Exception as e:
+        _file_log(f"Could not resolve community file server from servers.json: {e}")
+    return None
+
+
 def _get_community_base_url(db=None) -> str:
-    """Get the configured community server base URL.
-    
-    Returns the user's custom community server URL if set in settings,
-    otherwise returns the DEFAULT_COMMUNITY_BASE_URL constant.
-    The returned URL never has a trailing slash.
+    """Get the effective community server base URL (never trailing-slashed).
+
+    Priority: the user's explicitly-chosen server, then an active mirror from
+    servers.json, then the DEFAULT_COMMUNITY_BASE_URL constant as a last resort.
+    Resolving via servers.json matters because the bare prerolls.uk default is
+    the website now and won't serve the preroll directory tree.
     """
     if db is not None:
         try:
@@ -2090,6 +2127,9 @@ def _get_community_base_url(db=None) -> str:
                 return setting.community_server_url.rstrip("/")
         except Exception:
             pass
+    resolved = _resolve_default_community_server()
+    if resolved:
+        return resolved
     return DEFAULT_COMMUNITY_BASE_URL
 
 # NOTE: Wildcard CORS removed for security. Specific-origin CORS middleware is defined below.
@@ -25137,13 +25177,19 @@ def get_community_servers():
 
 @app.get("/community-prerolls/server-url")
 def get_community_server_url(db: Session = Depends(get_db)):
-    """Return the currently configured community server URL."""
+    """Return the effective community server URL.
+
+    When no custom server is chosen, report the resolved active mirror (e.g.
+    https://usa.prerolls.uk) rather than the bare prerolls.uk constant, so the UI
+    shows — and highlights — the server that index builds/downloads actually use.
+    """
     setting = db.query(models.Setting).first()
     custom_url = getattr(setting, "community_server_url", None) if setting else None
+    resolved_default = _resolve_default_community_server() or DEFAULT_COMMUNITY_BASE_URL
     return {
-        "server_url": custom_url or DEFAULT_COMMUNITY_BASE_URL,
+        "server_url": (custom_url.rstrip("/") if custom_url else resolved_default),
         "is_custom": bool(custom_url),
-        "default_url": DEFAULT_COMMUNITY_BASE_URL
+        "default_url": resolved_default
     }
 
 @app.put("/community-prerolls/server-url")
@@ -25165,12 +25211,13 @@ def set_community_server_url(
     setting.community_server_url = clean_url if clean_url else None
     db.commit()
 
-    effective = clean_url or DEFAULT_COMMUNITY_BASE_URL
+    resolved_default = _resolve_default_community_server() or DEFAULT_COMMUNITY_BASE_URL
+    effective = clean_url or resolved_default
     _file_log(f"Community server URL updated to: {effective}")
     return {
         "server_url": effective,
         "is_custom": bool(clean_url),
-        "default_url": DEFAULT_COMMUNITY_BASE_URL
+        "default_url": resolved_default
     }
 
 @app.get("/community-prerolls/fair-use-policy")
@@ -25261,6 +25308,31 @@ _index_build_progress = {
     "dirs_visited": 0,
     "message": ""
 }
+
+
+def _parse_caddy_mod_time(s):
+    """Convert a Caddy listing 'mod_time' (RFC3339, often with nanosecond
+    precision and a trailing Z) into a (unix_timestamp_float, iso_string) pair —
+    the timestamp for sorting newest/oldest, the ISO string for display. Returns
+    (0.0, None) when absent or unparseable."""
+    if not s:
+        return 0.0, None
+    try:
+        t = str(s).strip().replace("Z", "+00:00")
+        # fromisoformat accepts at most microseconds; trim Caddy's nanoseconds.
+        if "." in t:
+            head, rest = t.split(".", 1)
+            frac = ""
+            i = 0
+            while i < len(rest) and rest[i].isdigit():
+                frac += rest[i]
+                i += 1
+            t = f"{head}.{frac[:6]}{rest[i:]}"
+        dt = datetime.datetime.fromisoformat(t)
+        return dt.timestamp(), dt.isoformat()
+    except Exception:
+        return 0.0, None
+
 
 def _build_prerolls_index(progress_callback=None, base_url=None) -> dict:
     """
@@ -25420,7 +25492,8 @@ def _build_prerolls_index(progress_callback=None, base_url=None) -> dict:
                                 keywords.extend(words)
                             keywords.extend(title.lower().replace('_', ' ').replace('-', ' ').split())
                             keywords = list(set([k for k in keywords if len(k) > 2]))  # Deduplicate and filter short words
-                            
+
+                            _mt, _miso = _parse_caddy_mod_time(item.get('mod_time'))
                             preroll_entry = {
                                 "id": full_url.replace(base_url, ''),  # Use URL path as ID (e.g., "/Holidays/Christmas/file.mp4")
                                 "title": title.replace('.mp4', '').replace('.mkv', '').replace('_', ' ').replace('-', ' ').title(),
@@ -25429,9 +25502,11 @@ def _build_prerolls_index(progress_callback=None, base_url=None) -> dict:
                                 "url": full_url,
                                 "path": full_url.replace(base_url, ''),
                                 "keywords": keywords,  # For fast local searching
-                                "tags": folder_category.lower()
+                                "tags": folder_category.lower(),
+                                "modified_time": _mt,   # unix ts for sorting (0 if unknown)
+                                "modified_iso": _miso,  # ISO string for display
                             }
-                            
+
                             prerolls.append(preroll_entry)
                             _file_log(f"  Found: {title[:60]}")
                 except json.JSONDecodeError as e:
@@ -25500,9 +25575,11 @@ def _build_prerolls_index(progress_callback=None, base_url=None) -> dict:
                             "url": full_url,
                             "path": full_url.replace(base_url, ''),
                             "keywords": keywords,  # For fast local searching
-                            "tags": folder_category.lower()
+                            "tags": folder_category.lower(),
+                            "modified_time": 0.0,   # HTML listings carry no per-file date
+                            "modified_iso": None,
                         }
-                        
+
                         prerolls.append(preroll_entry)
                         _file_log(f"  Found: {title[:60]}")
         except json.JSONDecodeError as e:
@@ -25584,76 +25661,87 @@ def _load_prerolls_index() -> Optional[dict]:
         return None
 
 
-def _search_local_index(index_data: dict, query: str = "", category: str = "", platform: str = "", limit: int = 50) -> List[dict]:
+def _detect_platform(preroll) -> Optional[str]:
+    """Best-effort platform tag (Plex / Jellyfin / Emby) from a preroll's path or
+    title; None means it isn't platform-specific (universal)."""
+    blob = ((preroll.get("path", "") or "") + " " + (preroll.get("title", "") or "")).lower()
+    for plat in ("plex", "jellyfin", "emby"):
+        if plat in blob:
+            return plat.capitalize()
+    return None
+
+
+def _search_local_index(index_data: dict, query: str = "", category: str = "", platform: str = "",
+                        creator: str = "", sort: str = "relevance", limit: int = 50) -> List[dict]:
     """
-    Search the local prerolls index (FAST - milliseconds vs seconds)
-    
+    Search/browse the local prerolls index (FAST - milliseconds vs seconds).
+
     Args:
         index_data: The loaded index dict
-        query: Search term to match against keywords
-        category: Filter by category
-        platform: Filter by platform name in title
+        query: Search term to match against keywords/title
+        category: Filter by category (substring)
+        platform: Filter by platform (plex/jellyfin/emby; matched in path or title)
+        creator: Filter by creator (substring)
+        sort: relevance (index order) | newest | oldest | name
         limit: Maximum results to return
-    
+
     Returns:
         List of matching preroll dicts
     """
     prerolls = index_data.get("prerolls", [])
     results = []
-    
+
     query_lower = query.lower() if query else ""
     category_lower = category.lower() if category else ""
     platform_lower = platform.lower() if platform else ""
-    
+    creator_lower = creator.lower() if creator else ""
+
     # Build expanded search terms using synonyms
     search_terms = [query_lower] if query_lower else []
     if query_lower:
-        # Check if query matches any synonym groups
         for key, synonyms in SEARCH_SYNONYMS.items():
             if query_lower in key or key in query_lower:
-                # Add all related terms
                 search_terms.extend(synonyms)
                 search_terms.append(key)
                 break
-        # Remove duplicates
         search_terms = list(set(search_terms))
-    
+
     for preroll in prerolls:
-        # Apply filters
         if search_terms:
-            # Check if ANY search term matches keywords or title
             match_found = False
             preroll_title = preroll.get("title", "").lower()
             preroll_keywords = preroll.get("keywords", [])
-            
             for term in search_terms:
-                # Check keywords
-                if any(term in keyword for keyword in preroll_keywords):
+                if any(term in keyword for keyword in preroll_keywords) or term in preroll_title:
                     match_found = True
                     break
-                # Check title
-                if term in preroll_title:
-                    match_found = True
-                    break
-            
             if not match_found:
                 continue
-        
-        if category_lower:
-            if category_lower not in preroll.get("category", "").lower():
-                continue
-        
+
+        if category_lower and category_lower not in preroll.get("category", "").lower():
+            continue
+
         if platform_lower:
-            title_lower = preroll.get("title", "").lower()
-            if platform_lower not in title_lower:
+            # Platform lives in the path (e.g. /Plex/) or the filename — check both.
+            blob = ((preroll.get("path", "") or "") + " " + (preroll.get("title", "") or "")).lower()
+            if platform_lower not in blob:
                 continue
-        
+
+        if creator_lower and creator_lower not in (preroll.get("creator", "") or "").lower():
+            continue
+
         results.append(preroll)
-        
-        if len(results) >= limit:
-            break
-    
-    return results
+
+    # Sort (relevance = keep index order). Collect-then-sort so newest/name aren't
+    # truncated by an early limit; the index is small (~2k), so this is instant.
+    if sort == "newest":
+        results.sort(key=lambda x: x.get("modified_time", 0) or 0, reverse=True)
+    elif sort == "oldest":
+        results.sort(key=lambda x: x.get("modified_time", 0) or 0)
+    elif sort == "name":
+        results.sort(key=lambda x: (x.get("title", "") or "").lower())
+
+    return results[:limit]
 
 
 @app.get("/community-prerolls/build-index")
@@ -25817,8 +25905,43 @@ def get_community_prerolls_index_status():
         }
 
 
+@app.get("/community-prerolls/facets")
+def get_community_facets():
+    """Distinct categories, creators, and platforms (with counts) from the local
+    index — powers the Browse filters. Instant; no network calls."""
+    index_data = _load_prerolls_index()
+    if not index_data:
+        return {"available": False, "categories": [], "creators": [], "platforms": [],
+                "total": 0, "has_dates": False,
+                "message": "Build the community index to browse."}
+    prerolls = index_data.get("prerolls", []) or []
+    from collections import Counter
+    cats, creators, platforms = Counter(), Counter(), Counter()
+    has_dates = False
+    for p in prerolls:
+        cats[(p.get("category") or "Other")] += 1
+        creators[(p.get("creator") or "Unknown")] += 1
+        platforms[_detect_platform(p) or "Universal"] += 1
+        if p.get("modified_time"):
+            has_dates = True
+
+    def _as_list(counter):
+        return [{"name": k, "count": v}
+                for k, v in sorted(counter.items(), key=lambda kv: (-kv[1], kv[0].lower()))]
+
+    return {
+        "available": True,
+        "total": len(prerolls),
+        "categories": _as_list(cats),
+        "platforms": _as_list(platforms),
+        "creators": _as_list(creators),
+        "has_dates": has_dates,  # False until a re-index has captured modified_time
+        "created_at": index_data.get("created_at"),
+    }
+
+
 @app.get("/community-prerolls/search")
-def search_community_prerolls(request: Request, query: str = "", category: str = "", platform: str = "", limit: int = 50, db: Session = Depends(get_db)):
+def search_community_prerolls(request: Request, query: str = "", category: str = "", platform: str = "", creator: str = "", sort: str = "relevance", limit: int = 50, db: Session = Depends(get_db)):
     """
     Search the Typical Nerds preroll library (LOCAL INDEX PREFERRED - FAST!).
     
@@ -25847,24 +25970,27 @@ def search_community_prerolls(request: Request, query: str = "", category: str =
     from bs4 import BeautifulSoup
     import time
     
-    if limit > 100:
-        limit = 100
-    
+    if limit > 200:
+        limit = 200
+
     # ===== NEW: TRY LOCAL INDEX FIRST (FAST!) =====
-    _file_log(f"Community search: query='{query}' category='{category}' platform='{platform}' limit={limit}")
-    
+    _file_log(f"Community search: query='{query}' category='{category}' platform='{platform}' creator='{creator}' sort='{sort}' limit={limit}")
+
     index_data = _load_prerolls_index()
     if index_data:
         # LOCAL INDEX FOUND - Use it for instant search!
         _file_log("Using local prerolls index for fast search")
-        results = _search_local_index(index_data, query, category, platform, limit)
-        
+        results = _search_local_index(index_data, query=query, category=category, platform=platform,
+                                      creator=creator, sort=sort, limit=limit)
+
         return {
             "found": len(results),
             "results": results,
             "total": len(results),
             "query": query,
             "category": category,
+            "creator": creator,
+            "sort": sort,
             "source": "local_index",
             "index_created": index_data.get("created_at"),
             "message": f"Searched {index_data.get('total_prerolls', 0)} prerolls from local index (instant!)"

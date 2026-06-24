@@ -1,5 +1,32 @@
 # Changelog
 
+## [2.0.0-beta.11] - 06-23-2026 (beta)
+
+> Fixes Community Prerolls indexing (the library moved servers) and adds a
+> **Browse** view to explore it by category, platform, and creator. Upgrade-safe.
+
+### Added
+
+- **Browse the Community Prerolls library.** A new Browse panel filters the
+  library by **category** (Holidays, Seasons, Clips, Community, Archives…),
+  **platform** (Plex / Jellyfin / Emby), and **creator** — each with counts —
+  and sorts by name, or by newest/oldest after a re-index. Results feed the same
+  preview + download cards as search.
+
+### Fixed
+
+- **Community Prerolls indexing works again.** prerolls.uk became a website and
+  moved its files to mirror servers (`usa`/`uk.prerolls.uk`); NeXroll's default
+  still pointed at the old address, so a rebuild found nothing. It now
+  auto-resolves an active mirror from the published server list, and the server
+  picker shows/uses the right one — the custom-URL **Save** no longer resets your
+  choice when the field is left empty.
+- **The "Index build failed" false alarm.** The progress UI attached to the build
+  stream *before* starting the build, so it read the previous run's end state and
+  reported failure while the build actually ran fine. It now starts the build
+  first, then streams progress. Capturing each file's date during the crawl also
+  fixes the previously non-functional "Latest" row (after one re-index).
+
 ## [2.0.0-beta.10] - 06-20-2026 (beta)
 
 > Makes beta.9's junk-thumbnail cleanup actually work, and teaches TV trailer
