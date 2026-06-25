@@ -11,21 +11,30 @@ root.render(
   </React.StrictMode>
 );
 
-// Service Worker: proactively unregister and clear caches to avoid stale hashed bundles
+// Service Worker: this app no longer uses one. Older builds registered a
+// CACHE-FIRST service worker that cached preroll thumbnails/videos under
+// /static/ and served them stale — and because a SW intercepts before the
+// browser cache, even a hard refresh couldn't clear them. Unregister any
+// leftover SW and delete its caches, then — if a stale SW is still controlling
+// this page — reload exactly once to drop out of its control so media loads
+// fresh from the network.
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => {
-    // Unregister any existing service workers
     navigator.serviceWorker.getRegistrations()
-      .then(regs => {
-        regs.forEach(reg => reg.unregister());
+      .then(regs => Promise.all(regs.map(reg => reg.unregister())).then(() => regs.length))
+      .then(had => {
+        const clearCaches = (window.caches && caches.keys)
+          ? caches.keys().then(keys => Promise.all(keys.map(k => caches.delete(k)))).catch(() => {})
+          : Promise.resolve();
+        return clearCaches.then(() => {
+          // Escape a still-controlling stale SW — once (afterwards there's no
+          // controller, so this won't loop).
+          if (had && navigator.serviceWorker.controller) {
+            window.location.reload();
+          }
+        });
       })
       .catch(() => {});
-    // Clear all caches created by previous builds
-    if (window.caches && caches.keys) {
-      caches.keys().then(keys => {
-        keys.forEach(k => caches.delete(k));
-      }).catch(() => {});
-    }
   });
 }
 

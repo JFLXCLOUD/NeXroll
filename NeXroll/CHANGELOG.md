@@ -1,5 +1,43 @@
 # Changelog
 
+## [2.0.0-beta.12] - 06-25-2026 (beta)
+
+> Thumbnails now reliably appear and stay put, plus several Community Prerolls
+> and UI fixes. Upgrade-safe.
+
+### Fixed
+
+- **YouTube PO-token downloads now actually work in the Windows build.** The
+  yt-dlp bgutil plugin was never bundled into the packaged app — only the empty
+  `yt_dlp_plugins` namespace shipped — so the token provider ran but yt-dlp
+  couldn't use it, and the System page reported "Components installed; provider
+  not healthy yet" even when the provider was running. The plugin modules are now
+  bundled, and the "is the plugin installed?" check no longer gives a false
+  negative in the packaged app.
+- **Preroll thumbnails reliably display.** Three issues fixed: (1) thumbnails for
+  files whose name contains `...` (e.g. community prerolls) returned "Invalid
+  path" and never loaded — the path-traversal guard wrongly rejected any name
+  containing `..`; (2) a leftover **service worker** cached thumbnails so they
+  showed stale/blank and a hard refresh couldn't clear them — the app now
+  unregisters it and serves preroll media fresh from the network; (3) after
+  rebuilding thumbnails the browser kept showing the old cached image — a
+  cache-bust now forces the regenerated thumbnail to load.
+- **"Reinitialize Thumbnails" shows its status on the Library page**, where the
+  button is, instead of only in the dashboard quick-actions — with processed /
+  generated / cleaned counts and a spinner while it runs.
+- **Community auto-match "failed to link" fixed.** Linking a preroll to a chosen
+  community match failed because the community ID (a URL path with slashes and
+  encoded characters) was sent in the URL; it now goes in the request body.
+- **Index-build progress shows on the Community page** regardless of where the
+  rebuild was started (dashboard button or Community page), and clicking Refresh
+  during a build attaches to it instead of erroring "already in progress".
+
+### Added
+
+- **Edit Preroll modal shows the file's full path** (under "Current file").
+- **Download Diagnostics button on the Logs page** (Settings → Logs), alongside
+  the JSON/CSV export — the same redacted bundle as the System page.
+
 ## [2.0.0-beta.11] - 06-23-2026 (beta)
 
 > Fixes Community Prerolls indexing (the library moved servers) and adds a

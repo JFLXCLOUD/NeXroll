@@ -170,11 +170,17 @@ const apiUrl = (path) => {
 // URL onto the local /static/ path and cause WinError 123 on Windows when the backend
 // tried to serve it as a file. With ~50 trailers and ~20 visits per session that was
 // the source of 99% of the noise in the error log.
+// Bumped after a thumbnail rebuild so the browser re-fetches regenerated images
+// (otherwise it shows the cached old picture — or a cached pre-fix 404/400 — at
+// the same URL).
+let _thumbCacheBust = 0;
+const bustThumbCache = () => { _thumbCacheBust = Date.now(); };
 const thumbnailUrl = (thumbnail) => {
   if (!thumbnail) return '';
   const t = String(thumbnail);
   if (/^https?:\/\//i.test(t)) return t;
-  return apiUrl(`static/${t}`);
+  const u = apiUrl(`static/${t}`);
+  return _thumbCacheBust ? `${u}${u.includes('?') ? '&' : '?'}cb=${_thumbCacheBust}` : u;
 };
 // Runtime API base resolver + CORS shield: rewrite hardcoded http://localhost:9393 to same-origin or configured base
 (function setupNeXrollApiBase() {
@@ -2599,6 +2605,49 @@ const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
       checkFairUseStatus();
     }
   }, [activeTab, communityFairUseStatus]);
+
+  // While the Community page is open, reflect an index build that was started
+  // elsewhere (e.g. the dashboard "Rebuild Index" button) so its progress shows
+  // without re-clicking. Opens the progress stream once; closes immediately when
+  // nothing is building.
+  useEffect(() => {
+    if (activeTab !== 'community-prerolls') return undefined;
+    let es = null;
+    let closed = false;
+    let sawBuilding = false;
+    const close = () => { if (!closed) { closed = true; try { es && es.close(); } catch {} } };
+    try {
+      es = new EventSource(apiUrl('community-prerolls/build-progress'));
+    } catch { return undefined; }
+    es.onmessage = (ev) => {
+      let d;
+      try { d = JSON.parse(ev.data); } catch { return; }
+      if (d.building === true) {
+        sawBuilding = true;
+        setCommunityIsBuilding(true);
+        setCommunityBuildProgress(d);
+      } else if (sawBuilding) {
+        // A build we were watching just finished.
+        setCommunityIsBuilding(false);
+        if (d.progress === 100) {
+          setCommunityBuildProgress({ ...d, progress: 100 });
+          setTimeout(() => setCommunityBuildProgress(null), 1000);
+          (async () => {
+            try { const r = await fetch(apiUrl('community-prerolls/index-status')); setCommunityIndexStatus(await r.json()); } catch {}
+            try { const r = await fetch(apiUrl('community-prerolls/facets')); const f = await r.json(); setCommunityFacets(f && f.available ? f : null); } catch {}
+          })();
+        } else {
+          setCommunityBuildProgress(null);
+        }
+        close();
+      } else {
+        // First frame and nothing is building — stop listening.
+        close();
+      }
+    };
+    es.onerror = () => close();
+    return close;
+  }, [activeTab]);
 
   // Function to load Top 5 prerolls
   const loadTop5Prerolls = async () => {
@@ -5027,8 +5076,10 @@ const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
     if (!confirmed) return;
     
     try {
-      const response = await fetch(apiUrl(`prerolls/${editingPreroll.id}/link-community/${communityId}`), {
-        method: 'POST'
+      const response = await fetch(apiUrl(`prerolls/${editingPreroll.id}/link-community`), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ community_id: communityId })
       });
       
       if (!response.ok) {
@@ -9017,15 +9068,34 @@ const DashboardTiles = {
             <span style={{ color: 'var(--text-secondary)', fontSize: '0.9rem' }}>selected</span>
           </div>
         )}
-        <button 
-          onClick={handleReinitThumbnails} 
-          className="button button-secondary" 
+        <button
+          onClick={handleReinitThumbnails}
+          className="button button-secondary"
           style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: '0.35rem' }}
+          disabled={thumbnailProgress?.phase === 'init'}
           title="Reinitialize all preroll thumbnails"
         >
-          <RefreshCw size={14} /> Reinitialize Thumbnails
+          {thumbnailProgress?.phase === 'init' ? <Loader2 size={14} className="spin" /> : <RefreshCw size={14} />} Reinitialize Thumbnails
         </button>
       </div>
+
+      {/* Reinitialize-thumbnails status, right where the button is (also mirrored
+          in the dashboard quick-actions). */}
+      {thumbnailProgress && (
+        <div style={{
+          display: 'flex', alignItems: 'center', gap: '0.5rem',
+          padding: '0.6rem 1rem', marginBottom: '0.75rem', borderRadius: '8px',
+          background: thumbnailProgress.phase === 'error' ? 'rgba(239,68,68,0.12)' : 'rgba(0,212,255,0.1)',
+          border: '1px solid ' + (thumbnailProgress.phase === 'error' ? 'rgba(239,68,68,0.4)' : 'var(--accent-color)'),
+        }}>
+          {thumbnailProgress.phase === 'init'
+            ? <Loader2 size={15} className="spin" />
+            : thumbnailProgress.phase === 'error'
+              ? <AlertTriangle size={15} style={{ color: '#ef4444' }} />
+              : <CheckCircle size={15} style={{ color: 'var(--accent-color)' }} />}
+          <span style={{ fontSize: '0.88rem' }}>{thumbnailProgress.status}</span>
+        </div>
+      )}
 
       {/* Control Bar Card */}
       <div className="card" style={{ padding: '1rem 1.25rem' }}>
@@ -18334,11 +18404,14 @@ const DashboardTiles = {
         const msg = (data && (data.detail || data.message)) || text || `HTTP ${res.status}`;
         throw new Error(msg);
       }
-      setThumbnailProgress({ 
-        status: `Complete! Processed: ${data.processed}, Generated: ${data.generated}, Skipped: ${data.skipped}`, 
+      const purgedNote = data.purged ? `, Purged: ${data.purged}` : '';
+      const orphanNote = data.orphans_removed ? `, Cleaned: ${data.orphans_removed}` : '';
+      setThumbnailProgress({
+        status: `Complete! Processed: ${data.processed}, Generated: ${data.generated}, Skipped: ${data.skipped}${purgedNote}${orphanNote}`,
         phase: 'done',
-        data 
+        data
       });
+      bustThumbCache();  // force the browser to re-fetch regenerated thumbnails
       fetchData();
       // Clear the success message after 5 seconds
       setTimeout(() => setThumbnailProgress(null), 5000);
@@ -27008,7 +27081,20 @@ const DashboardTiles = {
             >
               <Download size={14} /> CSV
             </button>
-            <button 
+            <button
+              className="button"
+              style={{
+                backgroundColor: 'transparent',
+                border: '1px solid var(--border-color)',
+                fontSize: '0.8rem',
+                padding: '0.4rem 0.75rem'
+              }}
+              onClick={handleDownloadDiagnostics}
+              title="Download a diagnostics bundle (logs + system info, with secrets redacted)"
+            >
+              <Wrench size={14} /> Diagnostics
+            </button>
+            <button
               className="button"
               style={{
                 backgroundColor: 'rgba(0, 212, 255, 0.1)',
@@ -30748,7 +30834,10 @@ const DashboardTiles = {
       // actually runs in the background.
       try {
         const response = await fetch(apiUrl('community-prerolls/build-index'));
-        if (!response.ok) {
+        // 429 = a build is already running (e.g. started from the dashboard
+        // "Rebuild Index" button). Don't error — fall through and attach the
+        // progress stream so this button shows the running build's progress.
+        if (!response.ok && response.status !== 429) {
           let detail = `Failed to start index build (HTTP ${response.status}).`;
           try { const err = await response.json(); if (err?.detail) detail = err.detail; } catch {}
           setCommunityIsBuilding(false);
@@ -33528,6 +33617,12 @@ const DashboardTiles = {
                color: 'var(--text-color, #333)'
              }}>
                <div><strong>Current file:</strong> {editingPreroll.filename}</div>
+               {editingPreroll.path && (
+                 <div style={{ marginTop: '0.5rem', fontSize: '0.82rem', opacity: 0.85 }}>
+                   <strong>File path:</strong>{' '}
+                   <span style={{ fontFamily: 'monospace', wordBreak: 'break-all' }} title={editingPreroll.path}>{editingPreroll.path}</span>
+                 </div>
+               )}
                {editingPreroll.category?.name && (
                  <div style={{ marginTop: '0.5rem', fontSize: '0.85rem', opacity: 0.8 }}>
                    <strong>Category:</strong> {editingPreroll.category.name}

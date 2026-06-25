@@ -13,7 +13,12 @@ frontend_build = os.path.join(project_root, 'NeXroll', 'frontend', 'build')
 # automatically, so collect them explicitly — otherwise the installed app can't
 # mint PO tokens and YouTube trailer downloads fall back to the bot wall.
 _potoken_hidden = collect_submodules('yt_dlp_plugins')
-_potoken_datas = collect_data_files('yt_dlp_plugins')
+# include_py_files=True is essential: yt-dlp discovers plugins by scanning the
+# yt_dlp_plugins namespace package's path for modules. Without the .py files on
+# disk a frozen build ships only the EMPTY namespace package, so the bgutil
+# plugin never loads and PO-token downloads silently fail (the provider server
+# runs, but yt-dlp can't talk to it).
+_potoken_datas = collect_data_files('yt_dlp_plugins', include_py_files=True)
 try:
     _potoken_datas += copy_metadata('bgutil-ytdlp-pot-provider')
 except Exception:
@@ -28,7 +33,7 @@ a = Analysis(
         (os.path.join(project_root, 'NeXroll', 'CHANGELOG.md'), '.'),
         (os.path.join(project_root, 'docs', 'lefty-blue-wednesday-main-version-36162-02-38.mp3'), 'docs'),
     ] + _potoken_datas,
-    hiddenimports=['backend.radarr_connector', 'backend.dynamic_preroll', 'httpx', 'httpx._transports', 'httpx._transports.default', 'httpcore', 'h11', 'h2', 'hpack', 'hyperframe', 'yt_dlp', 'yt_dlp_plugins'] + _potoken_hidden,
+    hiddenimports=['backend.radarr_connector', 'backend.dynamic_preroll', 'httpx', 'httpx._transports', 'httpx._transports.default', 'httpcore', 'h11', 'h2', 'hpack', 'hyperframe', 'yt_dlp', 'yt_dlp_plugins', 'yt_dlp_plugins.extractor', 'yt_dlp_plugins.extractor.getpot_bgutil', 'yt_dlp_plugins.extractor.getpot_bgutil_http', 'yt_dlp_plugins.extractor.getpot_bgutil_script'] + _potoken_hidden,
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],

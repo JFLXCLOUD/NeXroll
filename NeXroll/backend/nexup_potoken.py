@@ -115,23 +115,25 @@ def _needs_require_module_flag(major: int, minor: int) -> bool:
 
 
 def is_plugin_installed() -> bool:
-    """True if the bgutil PO-token yt-dlp plugin is importable."""
+    """True if the bgutil PO-token yt-dlp plugin is importable.
+
+    Uses an actual import rather than importlib.util.find_spec(): in frozen
+    (PyInstaller) builds find_spec() on the yt_dlp_plugins *namespace* package is
+    unreliable and returns None even when the plugin ships — which made the
+    installer wrongly report the provider as "not healthy yet".
+    """
+    for name in (
+        "yt_dlp_plugins.extractor.getpot_bgutil_http",
+        "yt_dlp_plugins.extractor.getpot_bgutil",
+    ):
+        try:
+            importlib.import_module(name)
+            return True
+        except Exception:
+            continue
+    # Fall back to a spec lookup (covers source installs / odd layouts).
     try:
-        # The plugin registers under the yt_dlp_plugins namespace package.
-        if importlib.util.find_spec("yt_dlp_plugins") is None:
-            return False
-        # Be specific: look for the bgutil provider module.
-        for name in (
-            "yt_dlp_plugins.extractor.getpot_bgutil",
-            "yt_dlp_plugins.extractor.getpot_bgutil_http",
-        ):
-            try:
-                if importlib.util.find_spec(name) is not None:
-                    return True
-            except Exception:
-                continue
-        # Fall back to "some yt_dlp plugin present" — better than a false negative.
-        return True
+        return importlib.util.find_spec("yt_dlp_plugins") is not None
     except Exception:
         return False
 

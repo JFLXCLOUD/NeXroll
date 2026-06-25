@@ -9375,10 +9375,14 @@ def auto_match_single_preroll(preroll_id: int, db: Session = Depends(get_db)):
         log_event('ERROR', 'user', f'Auto-match failed for preroll {preroll_id}: {e}', source='auto_match_community')
         raise HTTPException(status_code=500, detail=f"Auto-match failed: {str(e)}")
 
-@app.post("/prerolls/{preroll_id}/link-community/{community_id}")
-def link_preroll_to_community(preroll_id: int, community_id: str, db: Session = Depends(get_db)):
+@app.post("/prerolls/{preroll_id}/link-community")
+def link_preroll_to_community(preroll_id: int, community_id: str = Body(..., embed=True), db: Session = Depends(get_db)):
     """
     Manually link a preroll to a community preroll ID.
+
+    community_id arrives in the request body (not the URL) because community IDs
+    are URL paths — they contain slashes and URL-encoded characters (e.g. %20)
+    that can't survive as a path parameter.
     """
     preroll = db.query(models.Preroll).filter(models.Preroll.id == preroll_id).first()
     if not preroll:
@@ -16474,7 +16478,10 @@ def get_or_create_thumbnail(category: str, thumb_name: str):
         pass
 
     for frag in (category, thumb_name):
-        if ".." in frag or "/" in frag or "\\" in frag:
+        # Block path separators and the exact "."/".." traversal segments, but
+        # NOT filenames that merely contain ".." (e.g. "Caaable Guy... - Plex"):
+        # with no separators allowed, a dotted name can't escape the directory.
+        if "/" in frag or "\\" in frag or frag in (".", ".."):
             raise HTTPException(status_code=400, detail="Invalid path")
 
     # Resolve target thumbnail path and ensure category directory exists (case-insensitive)
@@ -16667,7 +16674,10 @@ def get_preroll_video(category: str, filename: str, db: Session = Depends(get_db
         pass
 
     for frag in (category, filename):
-        if ".." in frag or "/" in frag or "\\" in frag:
+        # Block path separators and the exact "."/".." traversal segments, but
+        # NOT filenames that merely contain ".." (e.g. "Caaable Guy... - Plex"):
+        # with no separators allowed, a dotted name can't escape the directory.
+        if "/" in frag or "\\" in frag or frag in (".", ".."):
             raise HTTPException(status_code=400, detail="Invalid path")
 
     # Resolve target video path and ensure category directory exists (case-insensitive)
@@ -22319,7 +22329,7 @@ def delete_specific_preroll(filename: str, db: Session = Depends(get_db)):
         return {"success": False, "message": "Storage path not configured"}
     
     # Sanitize filename
-    if ".." in filename or "/" in filename or "\\" in filename:
+    if "/" in filename or "\\" in filename or filename in (".", ".."):
         return {"success": False, "message": "Invalid filename"}
     
     file_path = Path(storage_path) / "dynamic_prerolls" / filename
@@ -22424,7 +22434,7 @@ def serve_dynamic_preroll_video(filename: str, db: Session = Depends(get_db)):
         raise HTTPException(status_code=404, detail="Storage path not configured")
     
     # Sanitize filename
-    if ".." in filename or "/" in filename or "\\" in filename:
+    if "/" in filename or "\\" in filename or filename in (".", ".."):
         raise HTTPException(status_code=400, detail="Invalid filename")
     
     video_path = Path(storage_path) / "dynamic_prerolls" / filename
