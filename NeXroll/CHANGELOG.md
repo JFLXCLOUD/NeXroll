@@ -1,5 +1,25 @@
 # Changelog
 
+## [2.0.0-beta.13] - 06-25-2026 (beta)
+
+> NeX-Up release-date fixes: dates no longer drift by a day, and "Digital Only"
+> now actually hides non-digital trailers. Upgrade-safe.
+
+### Fixed
+
+- **NeX-Up release dates no longer appear a day off.** Dates were rendered with
+  the browser's timezone, so a date-only value could shift the displayed day by
+  one (and disagree with Radarr). Release/air dates are now shown as a stable
+  calendar date — the actual TMDB date, identical regardless of viewer timezone.
+- **"Release Date to Use = Digital Only" now hides non-digital trailers.** The
+  preference previously only affected which trailers got *downloaded* on the next
+  sync; trailers already downloaded under another setting (e.g. a theatrical-only
+  movie) kept showing in the list and playback reel. With Digital Only selected,
+  those are now hidden from the trailers list and from playback (non-destructive
+  — switch the preference back and they return). A note shows how many are hidden.
+  Downloaded trailers now also record their release type so the filter recognizes
+  them.
+
 ## [2.0.0-beta.12] - 06-25-2026 (beta)
 
 > Thumbnails now reliably appear and stay put, plus several Community Prerolls

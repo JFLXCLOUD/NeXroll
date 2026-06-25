@@ -182,6 +182,22 @@ const thumbnailUrl = (thumbnail) => {
   const u = apiUrl(`static/${t}`);
   return _thumbCacheBust ? `${u}${u.includes('?') ? '&' : '?'}cb=${_thumbCacheBust}` : u;
 };
+// Render a NeX-Up release/air date as a stable calendar date. These are
+// date-only values (a movie releases "on June 17", not at an instant), but the
+// backend sends them either as "YYYY-MM-DD" or a naive "YYYY-MM-DDT00:00:00".
+// Passing those to `new Date(...)` applies a UTC/local shift that lands the day
+// off by one depending on the viewer's timezone (and disagreeing with Radarr).
+// Parse the Y-M-D parts directly so the displayed day never drifts.
+const formatReleaseDate = (val, opts) => {
+  if (!val) return '';
+  const s = String(val);
+  const m = s.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (m) {
+    return new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3])).toLocaleDateString(undefined, opts);
+  }
+  const d = new Date(s);
+  return isNaN(d.getTime()) ? s : d.toLocaleDateString(undefined, opts);
+};
 // Runtime API base resolver + CORS shield: rewrite hardcoded http://localhost:9393 to same-origin or configured base
 (function setupNeXrollApiBase() {
   try {
@@ -980,6 +996,7 @@ const [applyingToServer, setApplyingToServer] = useState(false);
   const [nexupRadarrUrl, setNexupRadarrUrl] = useState('');
   const [nexupRadarrApiKey, setNexupRadarrApiKey] = useState('');
   const [nexupTrailers, setNexupTrailers] = useState([]);
+  const [nexupHiddenByPref, setNexupHiddenByPref] = useState(0);
   const [nexupUpcoming, setNexupUpcoming] = useState([]);
   const [nexupStorage, setNexupStorage] = useState(null);
   const [showNexupUpcoming, setShowNexupUpcoming] = useState(false);
@@ -19512,6 +19529,7 @@ const DashboardTiles = {
       if (res.ok) {
         const data = await res.json();
         setNexupTrailers(data.trailers || []);
+        setNexupHiddenByPref(data.hidden_by_preference || 0);
       }
     } catch (err) {
       console.error('Failed to load NeX-Up trailers:', err);
@@ -21410,7 +21428,7 @@ const DashboardTiles = {
                       </h3>
                       {movie.release_date && (
                         <p style={{ margin: '0 0 0.5rem 0', fontSize: '0.9rem' }}>
-                          <strong>Release:</strong> {new Date(movie.release_date).toLocaleDateString()} 
+                          <strong>Release:</strong> {formatReleaseDate(movie.release_date)} 
                           {movie.available_now ? (
                             <span style={{ 
                               marginLeft: '0.5rem',
@@ -21704,7 +21722,7 @@ const DashboardTiles = {
                       )}
                       {(show.release_date || show.air_date) && (
                         <p style={{ margin: '0 0 0.5rem 0', fontSize: '0.9rem' }}>
-                          <strong>Release:</strong> {new Date(show.release_date || show.air_date).toLocaleDateString()}
+                          <strong>Release:</strong> {formatReleaseDate(show.release_date || show.air_date)}
                           {show.available_now ? (
                             <span style={{ 
                               marginLeft: '0.5rem',
@@ -22370,7 +22388,12 @@ const DashboardTiles = {
             {nexupTrailers.length} trailer{nexupTrailers.length !== 1 ? 's' : ''}
           </span>
         </h2>
-        
+        {nexupHiddenByPref > 0 && (
+          <div style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginTop: '-0.25rem', marginBottom: '0.5rem' }}>
+            {nexupHiddenByPref} trailer{nexupHiddenByPref !== 1 ? 's' : ''} hidden by your “Digital Only” release-date setting (switch it back to show them again).
+          </div>
+        )}
+
         {!nexupSettings.radarr_connected ? (
           <div style={{ 
             padding: '2rem', 
@@ -22547,7 +22570,7 @@ const DashboardTiles = {
                         {trailer.title}
                       </div>
                       <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', marginBottom: trailer.removal_date ? '0.25rem' : '0.5rem' }}>
-                        {trailer.release_date ? `Releases: ${new Date(trailer.release_date).toLocaleDateString()}` : 'Release date unknown'}
+                        {trailer.release_date ? `Releases: ${formatReleaseDate(trailer.release_date)}` : 'Release date unknown'}
                       </div>
                       {trailer.removal_date && (
                         <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: '0.5rem', opacity: 0.85 }} title="Auto-removed by NeX-Up retention cleanup">
@@ -22595,7 +22618,7 @@ const DashboardTiles = {
                     <div style={{ flex: 1 }}>
                       <div style={{ fontWeight: 'bold', color: 'var(--text-color)' }}>{trailer.title}</div>
                       <div style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
-                        {trailer.release_date ? `Releases: ${new Date(trailer.release_date).toLocaleDateString()}` : 'Release date unknown'}
+                        {trailer.release_date ? `Releases: ${formatReleaseDate(trailer.release_date)}` : 'Release date unknown'}
                         {trailer.removal_date && (
                           <span style={{ opacity: 0.85 }} title="Auto-removed by NeX-Up retention cleanup">
                             {`  ·  Removed: ${new Date(trailer.removal_date).toLocaleDateString()}`}
@@ -22819,7 +22842,7 @@ const DashboardTiles = {
                         {trailer.title}
                       </div>
                       <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', marginBottom: trailer.removal_date ? '0.25rem' : '0.5rem' }}>
-                        {trailer.release_date ? `Airs: ${new Date(trailer.release_date).toLocaleDateString()}` : 'Air date unknown'}
+                        {trailer.release_date ? `Airs: ${formatReleaseDate(trailer.release_date)}` : 'Air date unknown'}
                       </div>
                       {trailer.removal_date && (
                         <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: '0.5rem', opacity: 0.85 }} title="Auto-removed by NeX-Up retention cleanup">
@@ -22867,7 +22890,7 @@ const DashboardTiles = {
                     <div style={{ flex: 1 }}>
                       <div style={{ fontWeight: 'bold', color: 'var(--text-color)' }}>{trailer.title}</div>
                       <div style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
-                        {trailer.release_date ? `Airs: ${new Date(trailer.release_date).toLocaleDateString()}` : 'Air date unknown'}
+                        {trailer.release_date ? `Airs: ${formatReleaseDate(trailer.release_date)}` : 'Air date unknown'}
                         {trailer.removal_date && (
                           <span style={{ opacity: 0.85 }} title="Auto-removed by NeX-Up retention cleanup">
                             {`  ·  Removed: ${new Date(trailer.removal_date).toLocaleDateString()}`}
@@ -34470,7 +34493,7 @@ const DashboardTiles = {
              alignItems: 'center'
            }}>
              {playingTrailer.trailer?.release_date && (
-               <span>Release: {new Date(playingTrailer.trailer.release_date).toLocaleDateString()}</span>
+               <span>Release: {formatReleaseDate(playingTrailer.trailer.release_date)}</span>
              )}
              {playingTrailer.trailer?.duration_seconds && (
                <span>⏱️ Duration: {Math.floor(playingTrailer.trailer.duration_seconds / 60)}:{String(playingTrailer.trailer.duration_seconds % 60).padStart(2, '0')}</span>
@@ -35577,7 +35600,7 @@ const DashboardTiles = {
                       </h3>
                       {movie.release_date && (
                         <p style={{ margin: '0 0 0.5rem 0', fontSize: '0.9rem' }}>
-                          <strong>Release:</strong> {new Date(movie.release_date).toLocaleDateString()} 
+                          <strong>Release:</strong> {formatReleaseDate(movie.release_date)} 
                           {movie.available_now ? (
                             <span style={{ 
                               marginLeft: '0.5rem',
@@ -35729,7 +35752,7 @@ const DashboardTiles = {
                       <div style={{ display: 'flex', gap: '1rem', flexWrap: 'wrap', fontSize: '0.85rem', color: '#666' }}>
                         {trailer.release_date && (
                           <span>
-                            {new Date(trailer.release_date).toLocaleDateString()}
+                            {formatReleaseDate(trailer.release_date)}
                             {trailer.days_until !== null && trailer.days_until > 0 && ` (in ${trailer.days_until} days)`}
                           </span>
                         )}
@@ -35837,7 +35860,7 @@ const DashboardTiles = {
                       )}
                       {(show.release_date || show.air_date) && (
                         <p style={{ margin: '0 0 0.5rem 0', fontSize: '0.9rem' }}>
-                          <strong>Release:</strong> {new Date(show.release_date || show.air_date).toLocaleDateString()}
+                          <strong>Release:</strong> {formatReleaseDate(show.release_date || show.air_date)}
                           {show.available_now ? (
                             <span style={{ 
                               marginLeft: '0.5rem',
@@ -35999,7 +36022,7 @@ const DashboardTiles = {
                       <div style={{ display: 'flex', gap: '1rem', flexWrap: 'wrap', fontSize: '0.85rem', color: '#666' }}>
                         {trailer.release_date && (
                           <span>
-                            {new Date(trailer.release_date).toLocaleDateString()}
+                            {formatReleaseDate(trailer.release_date)}
                             {trailer.days_until !== null && trailer.days_until > 0 && ` (in ${trailer.days_until} days)`}
                           </span>
                         )}

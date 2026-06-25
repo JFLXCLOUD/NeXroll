@@ -20161,12 +20161,30 @@ def delete_youtube_oauth(db: Session = Depends(get_db)):
     except Exception as e:
         return {"success": False, "error": str(e)}
 
+def _trailer_matches_preference(release_type, preference) -> bool:
+    """Whether a downloaded trailer should appear given the release-date preference.
+
+    Only 'digital_only' is exclusive: it hides trailers that are explicitly
+    non-digital (e.g. a theatrical-only movie that was downloaded under a prior
+    preference). Legacy/unknown release types (None) are kept. The other
+    preferences are fallback orderings that accept any type, so nothing is hidden.
+    This filter is non-destructive — switching the preference back restores them.
+    """
+    if preference == 'digital_only':
+        return release_type not in ('physical', 'theatrical')
+    return True
+
+
 @app.get("/nexup/trailers")
 def get_nexup_trailers(db: Session = Depends(get_db)):
     """Get all downloaded trailers"""
-    trailers = db.query(models.ComingSoonTrailer).order_by(
+    _pref_setting = db.query(models.Setting).first()
+    _pref = getattr(_pref_setting, 'nexup_release_date_preference', 'digital_first') if _pref_setting else 'digital_first'
+    _all_trailers = db.query(models.ComingSoonTrailer).order_by(
         models.ComingSoonTrailer.release_date.asc()
     ).all()
+    trailers = [t for t in _all_trailers if _trailer_matches_preference(t.release_type, _pref)]
+    hidden_by_preference = len(_all_trailers) - len(trailers)
 
     def calc_days_until(release_dt):
         if not release_dt:
@@ -20200,6 +20218,7 @@ def get_nexup_trailers(db: Session = Depends(get_db)):
 
     return {
         "retention_days": retention_days,  # 0 = never auto-removed
+        "hidden_by_preference": hidden_by_preference,  # count hidden by Digital Only
         "trailers": [
             {
                 "id": t.id,
@@ -20471,16 +20490,19 @@ async def download_trailer(radarr_movie_id: int, trailer_url: Optional[str] = No
         log_event('ERROR', 'nexup', f'Trailer download error: {e}', source='download_trailer', db=db)
         raise HTTPException(status_code=500, detail=f"Error downloading trailer: {str(e)}")
     
-    # Parse release date
+    # Parse release date — record which field it came from so the Digital Only
+    # filter can recognise (and hide) non-digital trailers later.
     release_date = None
-    for date_field in ['digitalRelease', 'physicalRelease', 'inCinemas']:
+    release_type = None
+    for date_field, rtype in [('digitalRelease', 'digital'), ('physicalRelease', 'physical'), ('inCinemas', 'theatrical')]:
         if movie.get(date_field):
             try:
                 release_date = datetime.datetime.fromisoformat(movie[date_field].replace('Z', '+00:00')).date()
+                release_type = rtype
                 break
             except:
                 pass
-    
+
     # Create database entry
     trailer = models.ComingSoonTrailer(
         radarr_movie_id=radarr_movie_id,
@@ -20490,6 +20512,7 @@ async def download_trailer(radarr_movie_id: int, trailer_url: Optional[str] = No
         year=movie.get('year'),
         overview=movie.get('overview', ''),
         release_date=release_date,
+        release_type=release_type,
         trailer_url=trailer_url,
         local_path=result['path'],
         file_size_mb=result['size_mb'],
@@ -21179,7 +21202,16 @@ def get_nexup_playback_trailers(db: Session = Depends(get_db)):
         models.ComingSoonTrailer.is_enabled == True,
         models.ComingSoonTrailer.status == 'downloaded'
     )
-    
+
+    # With 'Digital Only', don't play trailers that are explicitly non-digital
+    # (e.g. a theatrical-only movie downloaded under a prior preference). Keep
+    # legacy/unknown (NULL) release types. Non-destructive — reversible.
+    if (getattr(setting, 'nexup_release_date_preference', 'digital_first') or 'digital_first') == 'digital_only':
+        query = query.filter(or_(
+            models.ComingSoonTrailer.release_type.is_(None),
+            models.ComingSoonTrailer.release_type.notin_(['physical', 'theatrical'])
+        ))
+
     if order == 'release_date':
         query = query.order_by(models.ComingSoonTrailer.release_date.asc())
     elif order == 'random':
