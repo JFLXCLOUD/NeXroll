@@ -460,11 +460,12 @@ class Scheduler:
         """Delete downloaded NeX-Up trailers older than the retention window
         (nexup_trailer_retention_days; 0 = keep forever). Runs at most hourly.
 
-        Removal is by downloaded_at age — the same basis the Your Trailers page
-        shows as each trailer's removal date. This is separate from the
-        library-arrival cleanup in the sync (movie now in your library), which
-        is event-based; this is the time-based retention the setting promised
-        but never previously enforced.
+        Removal is measured from the LATER of download time and release date —
+        the same basis the Your Trailers page shows as each trailer's removal
+        date — so a trailer for a movie that hasn't released yet is never reaped
+        early. This is separate from the library-arrival cleanup in the sync
+        (movie now in your library), which is event-based; this is the time-based
+        retention the setting promised but never previously enforced.
         """
         now = datetime.datetime.utcnow()
         last = self._last_trailer_cleanup_time
@@ -485,10 +486,16 @@ class Scheduler:
             cutoff = now - datetime.timedelta(days=days)
             removed = 0
             for model in (models.ComingSoonTrailer, models.ComingSoonTVTrailer):
+                # Anchor retention on the LATER of download time and release date,
+                # so a still-upcoming movie's trailer is never reaped before the
+                # movie is even out (an early download would otherwise be removed
+                # well before its release). A trailer is only old enough to remove
+                # once BOTH its download and its release are past the cutoff.
                 old = db.query(model).filter(
                     model.status == 'downloaded',
                     model.downloaded_at != None,  # noqa: E711 (SQLAlchemy NULL check)
                     model.downloaded_at < cutoff,
+                    or_(model.release_date == None, model.release_date < cutoff),  # noqa: E711
                 ).all()
                 for t in old:
                     if t.local_path and os.path.exists(t.local_path):

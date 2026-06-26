@@ -40,6 +40,7 @@ const NAV = [
     id: 'library',
     label: 'Library',
     icon: Library,
+    accent: '#8b5cf6', // violet (matches the Prerolls dashboard card)
     match: (t) => t === 'library' || t.startsWith('library/'),
     children: [
       { id: 'library', label: 'All Prerolls', icon: Film },
@@ -52,6 +53,7 @@ const NAV = [
     id: 'schedules',
     label: 'Schedules',
     icon: Calendar,
+    accent: '#10b981', // emerald (matches the Schedules dashboard card)
     match: (t) => t.startsWith('schedules'),
     children: [
       { id: 'schedules', label: 'My Schedules', icon: Calendar },
@@ -80,18 +82,21 @@ const NAV = [
     id: 'connect',
     label: 'Connect',
     icon: LinkIcon,
+    accent: '#0ea5e9', // sky (matches the Plex Status dashboard card)
     match: (t) => t === 'connect',
   },
   {
     id: 'community-prerolls',
     label: 'Community Prerolls',
     icon: Globe,
+    accent: '#f43f5e', // rose
     match: (t) => t === 'community-prerolls',
   },
   {
     id: 'settings',
     label: 'Settings',
     icon: Settings,
+    accent: '#6366f1', // indigo
     match: (t) => t.startsWith('settings'),
     children: [
       { id: 'settings', label: 'General', icon: Settings },

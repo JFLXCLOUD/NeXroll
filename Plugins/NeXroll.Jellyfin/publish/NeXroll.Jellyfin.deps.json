@@ -86,7 +86,8 @@
           "Jellyfin.Model": "10.11.0",
           "Jellyfin.Naming": "10.11.0",
           "Microsoft.Extensions.Configuration.Abstractions": "9.0.10",
-          "Microsoft.Extensions.Configuration.Binder": "9.0.10"
+          "Microsoft.Extensions.Configuration.Binder": "9.0.10",
+          "System.Threading.Tasks.Dataflow": "9.0.10"
         },
         "runtime": {
           "lib/net9.0/MediaBrowser.Controller.dll": {
@@ -147,7 +148,9 @@
         "dependencies": {
           "Jellyfin.Data": "10.11.0",
           "Jellyfin.Extensions": "10.11.0",
-          "Microsoft.Extensions.Logging.Abstractions": "9.0.16"
+          "Microsoft.Extensions.Logging.Abstractions": "9.0.16",
+          "System.Globalization": "4.3.0",
+          "System.Text.Json": "9.0.10"
         },
         "runtime": {
           "lib/net9.0/MediaBrowser.Model.dll": {
@@ -171,6 +174,7 @@
       "Microsoft.EntityFrameworkCore/9.0.10": {
         "dependencies": {
           "Microsoft.EntityFrameworkCore.Abstractions": "9.0.10",
+          "Microsoft.EntityFrameworkCore.Analyzers": "9.0.10",
           "Microsoft.Extensions.Caching.Memory": "9.0.10",
           "Microsoft.Extensions.Logging": "9.0.10"
         },
@@ -189,6 +193,7 @@
           }
         }
       },
+      "Microsoft.EntityFrameworkCore.Analyzers/9.0.10": {},
       "Microsoft.EntityFrameworkCore.Relational/9.0.10": {
         "dependencies": {
           "Microsoft.EntityFrameworkCore": "9.0.10",
@@ -314,6 +319,8 @@
           }
         }
       },
+      "Microsoft.NETCore.Platforms/1.1.0": {},
+      "Microsoft.NETCore.Targets/1.1.0": {},
       "NEbml/1.1.0.5": {
         "runtime": {
           "lib/netstandard2.0/NEbml.Core.dll": {
@@ -341,14 +348,22 @@
           }
         }
       },
-      "System.Net.Http.Json/9.0.16": {
-        "runtime": {
-          "lib/net9.0/System.Net.Http.Json.dll": {
-            "assemblyVersion": "9.0.0.0",
-            "fileVersion": "9.0.1626.22923"
-          }
+      "System.Globalization/4.3.0": {
+        "dependencies": {
+          "Microsoft.NETCore.Platforms": "1.1.0",
+          "Microsoft.NETCore.Targets": "1.1.0",
+          "System.Runtime": "4.3.0"
         }
-      }
+      },
+      "System.Net.Http.Json/9.0.16": {},
+      "System.Runtime/4.3.0": {
+        "dependencies": {
+          "Microsoft.NETCore.Platforms": "1.1.0",
+          "Microsoft.NETCore.Targets": "1.1.0"
+        }
+      },
+      "System.Text.Json/9.0.10": {},
+      "System.Threading.Tasks.Dataflow/9.0.10": {}
     }
   },
   "libraries": {
@@ -462,6 +477,13 @@
       "path": "microsoft.entityframeworkcore.abstractions/9.0.10",
       "hashPath": "microsoft.entityframeworkcore.abstractions.9.0.10.nupkg.sha512"
     },
+    "Microsoft.EntityFrameworkCore.Analyzers/9.0.10": {
+      "type": "package",
+      "serviceable": true,
+      "sha512": "sha512-mXNl0Gg3l3zGrClLCHepB+b7rYVuFfB9qQJwya0dUSHFuR1T0jMD8KxuNVyhQSfoWIepanhzjcG8TUNGXOcU0Q==",
+      "path": "microsoft.entityframeworkcore.analyzers/9.0.10",
+      "hashPath": "microsoft.entityframeworkcore.analyzers.9.0.10.nupkg.sha512"
+    },
     "Microsoft.EntityFrameworkCore.Relational/9.0.10": {
       "type": "package",
       "serviceable": true,
@@ -539,6 +561,20 @@
       "path": "microsoft.extensions.primitives/9.0.10",
       "hashPath": "microsoft.extensions.primitives.9.0.10.nupkg.sha512"
     },
+    "Microsoft.NETCore.Platforms/1.1.0": {
+      "type": "package",
+      "serviceable": true,
+      "sha512": "sha512-kz0PEW2lhqygehI/d6XsPCQzD7ff7gUJaVGPVETX611eadGsA3A877GdSlU0LRVMCTH/+P3o2iDTak+S08V2+A==",
+      "path": "microsoft.netcore.platforms/1.1.0",
+      "hashPath": "microsoft.netcore.platforms.1.1.0.nupkg.sha512"
+    },
+    "Microsoft.NETCore.Targets/1.1.0": {
+      "type": "package",
+      "serviceable": true,
+      "sha512": "sha512-aOZA3BWfz9RXjpzt0sRJJMjAscAUm3Hoa4UWAfceV9UTYxgwZ1lZt5nO2myFf+/jetYQo4uTP7zS8sJY67BBxg==",
+      "path": "microsoft.netcore.targets/1.1.0",
+      "hashPath": "microsoft.netcore.targets.1.1.0.nupkg.sha512"
+    },
     "NEbml/1.1.0.5": {
       "type": "package",
       "serviceable": true,
@@ -560,12 +596,40 @@
       "path": "polly.core/8.6.4",
       "hashPath": "polly.core.8.6.4.nupkg.sha512"
     },
+    "System.Globalization/4.3.0": {
+      "type": "package",
+      "serviceable": true,
+      "sha512": "sha512-kYdVd2f2PAdFGblzFswE4hkNANJBKRmsfa2X5LG2AcWE1c7/4t0pYae1L8vfZ5xvE2nK/R9JprtToA61OSHWIg==",
+      "path": "system.globalization/4.3.0",
+      "hashPath": "system.globalization.4.3.0.nupkg.sha512"
+    },
     "System.Net.Http.Json/9.0.16": {
       "type": "package",
       "serviceable": true,
       "sha512": "sha512-SKHLcpm4mL7G4irA9A+vIzpM4T/lKA02r41lXMI9BQqdigDyX3w3frN7nrQrpVuwtx9jw1eGW2aDyyYE77UjLA==",
       "path": "system.net.http.json/9.0.16",
       "hashPath": "system.net.http.json.9.0.16.nupkg.sha512"
+    },
+    "System.Runtime/4.3.0": {
+      "type": "package",
+      "serviceable": true,
+      "sha512": "sha512-JufQi0vPQ0xGnAczR13AUFglDyVYt4Kqnz1AZaiKZ5+GICq0/1MH/mO/eAJHt/mHW1zjKBJd7kV26SrxddAhiw==",
+      "path": "system.runtime/4.3.0",
+      "hashPath": "system.runtime.4.3.0.nupkg.sha512"
+    },
+    "System.Text.Json/9.0.10": {
+      "type": "package",
+      "serviceable": true,
+      "sha512": "sha512-XM02ZBnzxk7Ti6l9YRy8Bp639wANqJzJzw4W4VYiCh+HXY9hBOWkGB4k89OLP/s/RxgM02P4a/mWcJTgFiLf1Q==",
+      "path": "system.text.json/9.0.10",
+      "hashPath": "system.text.json.9.0.10.nupkg.sha512"
+    },
+    "System.Threading.Tasks.Dataflow/9.0.10": {
+      "type": "package",
+      "serviceable": true,
+      "sha512": "sha512-k1o6v6V3+4mznSnPnO0FBaRjiAPL1ouKPfPQH7hO9Z2SwJHt8E45F4wX5yQh1aeja1JHPYEungQedXibng654Q==",
+      "path": "system.threading.tasks.dataflow/9.0.10",
+      "hashPath": "system.threading.tasks.dataflow.9.0.10.nupkg.sha512"
     }
   }
 }

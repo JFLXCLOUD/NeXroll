@@ -1,5 +1,30 @@
 # Changelog
 
+## [2.0.0-beta.14] - 06-26-2026 (beta)
+
+> NeX-Up trailer retention fix, dashboard polish, and a sidebar with per-section
+> colors. Upgrade-safe.
+
+### Fixed
+
+- **NeX-Up trailers are no longer auto-removed before the movie releases.**
+  Retention was measured from a trailer's download time, so a trailer grabbed
+  early for an upcoming movie could be deleted before the film was even out (and
+  the "Removed" date shown on Your Trailers could fall *before* the release
+  date). Retention is now measured from the later of download time and release
+  date, in both the displayed removal date and the actual cleanup.
+
+### Changed
+
+- **Sidebar sections now have their own accent colors** for the active item
+  (Library/violet, Schedules/emerald, NeX-Up/gold, Connect/sky, Community/rose,
+  Settings/indigo); Dashboard is unchanged.
+- **Dashboard weekly calendar:** the "Filler" fallback row is gone; when filler
+  is enabled it's shown as a compact badge above the calendar instead. The empty
+  state's "Create a schedule" text is now a link to the schedule creator.
+- **NeX-Up Trailer Storage Path is now set via Browse only** — the field is
+  read-only so a mistyped path can't silently create a stray folder.
+
 ## [2.0.0-beta.13] - 06-25-2026 (beta)
 
 > NeX-Up release-date fixes: dates no longer drift by a day, and "Digital Only"

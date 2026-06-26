@@ -18410,11 +18410,18 @@ def get_sonarr_trailers(db: Session = Depends(get_db)):
     except Exception:
         retention_days = 7
 
-    def calc_removal(downloaded_at):
+    def calc_removal(downloaded_at, release_date=None):
+        # Anchor on the later of download time and release date so an upcoming
+        # movie's trailer is never shown as "removed" before it even releases.
         if not downloaded_at or retention_days <= 0:
             return None
         try:
-            return (downloaded_at + datetime.timedelta(days=retention_days)).isoformat()
+            anchor = downloaded_at
+            if release_date:
+                rd = release_date if isinstance(release_date, datetime.datetime) else datetime.datetime(release_date.year, release_date.month, release_date.day)
+                if rd > anchor:
+                    anchor = rd
+            return (anchor + datetime.timedelta(days=retention_days)).isoformat()
         except Exception:
             return None
 
@@ -18434,7 +18441,7 @@ def get_sonarr_trailers(db: Session = Depends(get_db)):
         "is_enabled": t.is_enabled,
         "status": t.status,
         "downloaded_at": t.downloaded_at.isoformat() if t.downloaded_at else None,
-        "removal_date": calc_removal(t.downloaded_at)
+        "removal_date": calc_removal(t.downloaded_at, t.release_date)
     } for t in trailers]
 
 @app.get("/nexup/sonarr/trailers/search")
@@ -20208,11 +20215,18 @@ def get_nexup_trailers(db: Session = Depends(get_db)):
     except Exception:
         retention_days = 7
 
-    def calc_removal(downloaded_at):
+    def calc_removal(downloaded_at, release_date=None):
+        # Anchor on the later of download time and release date so an upcoming
+        # movie's trailer is never shown as "removed" before it even releases.
         if not downloaded_at or retention_days <= 0:
             return None
         try:
-            return (downloaded_at + datetime.timedelta(days=retention_days)).isoformat()
+            anchor = downloaded_at
+            if release_date:
+                rd = release_date if isinstance(release_date, datetime.datetime) else datetime.datetime(release_date.year, release_date.month, release_date.day)
+                if rd > anchor:
+                    anchor = rd
+            return (anchor + datetime.timedelta(days=retention_days)).isoformat()
         except Exception:
             return None
 
@@ -20239,7 +20253,7 @@ def get_nexup_trailers(db: Session = Depends(get_db)):
                 "is_enabled": t.is_enabled,
                 "play_count": t.play_count,
                 "downloaded_at": t.downloaded_at.isoformat() if t.downloaded_at else None,
-                "removal_date": calc_removal(t.downloaded_at)
+                "removal_date": calc_removal(t.downloaded_at, t.release_date)
             }
             for t in trailers
         ],

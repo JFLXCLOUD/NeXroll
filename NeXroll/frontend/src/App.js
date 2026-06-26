@@ -7957,6 +7957,23 @@ const DashboardTiles = {
                       <Lock size={12} /> Exclusive
                     </div>
                   )}
+                  {fillerSettings.enabled && (
+                    <div
+                      title={`Filler plays in any gap with no active schedule — ${fillerSettings.type === 'category'
+                        ? (categories.find(c => c.id === fillerSettings.category_id)?.name || 'Category')
+                        : fillerSettings.type === 'sequence'
+                        ? (savedSequences.find(s => s.id === fillerSettings.sequence_id)?.name || 'Sequence')
+                        : `Coming Soon (${fillerSettings.coming_soon_layout})`}`}
+                      style={{
+                        display: 'flex', alignItems: 'center', gap: '5px',
+                        padding: '4px 10px', borderRadius: '20px',
+                        backgroundColor: 'rgba(0,212,255,0.12)', color: '#00d4ff',
+                        fontSize: '0.75rem', fontWeight: 600
+                      }}
+                    >
+                      <Zap size={12} /> Filler
+                    </div>
+                  )}
                   {hasAnyConflicts && (
                     <div style={{
                       display: 'flex', alignItems: 'center', gap: '5px',
@@ -8088,7 +8105,13 @@ const DashboardTiles = {
                   <Calendar size={36} style={{ opacity: 0.2, marginBottom: '0.5rem' }} />
                   <div style={{ fontSize: '0.95rem', fontWeight: 500 }}>No active schedules this week</div>
                   <div style={{ fontSize: '0.8rem', marginTop: '0.25rem', opacity: 0.7 }}>
-                    Create a schedule to see it here
+                    <button
+                      type="button"
+                      onClick={() => setActiveTab('schedules/create')}
+                      style={{ background: 'none', border: 'none', padding: 0, font: 'inherit', color: 'var(--button-bg)', textDecoration: 'underline', cursor: 'pointer' }}
+                    >
+                      Create a schedule
+                    </button> to see it here
                   </div>
                 </div>
               ) : scheds.map((sched, idx) => {
@@ -8286,69 +8309,6 @@ const DashboardTiles = {
                 );
               }).filter(Boolean)}
               
-              {/* Filler row */}
-              {fillerSettings.enabled && (
-                <div style={{
-                  display: 'grid', gridTemplateColumns: '150px 1fr',
-                  borderBottom: '1px solid var(--border-color)', minHeight: '42px',
-                }}>
-                  <div style={{
-                    padding: '6px 10px', display: 'flex', alignItems: 'center', gap: '7px',
-                    borderRight: '1px solid var(--border-color)',
-                  }}>
-                    <div style={{
-                      width: '8px', height: '8px', borderRadius: '50%',
-                      backgroundColor: '#00d4ff', flexShrink: 0,
-                      boxShadow: '0 0 4px rgba(0,212,255,0.4)',
-                    }} />
-                    <div style={{ minWidth: 0 }}>
-                      <div style={{ fontSize: '0.8rem', fontWeight: 600, color: '#00d4ff' }}>Filler</div>
-                      <span style={{
-                        fontSize: '0.55rem', fontWeight: 600, textTransform: 'uppercase',
-                        padding: '0px 4px', borderRadius: '3px',
-                        backgroundColor: 'rgba(0,212,255,0.1)', color: '#00d4ff',
-                      }}>fallback</span>
-                    </div>
-                  </div>
-                  <div style={{ position: 'relative', display: 'flex', alignItems: 'center', padding: '5px 0' }}>
-                    {days.map((day, dayIdx) => {
-                      const t = new Date(day.getFullYear(), day.getMonth(), day.getDate()).getTime();
-                      const dd = dayData.get(t);
-                      const hasSchedules = dd?.contentScheds?.length > 0;
-                      const isToday = t === todayTime;
-                      
-                      return (
-                        <div key={dayIdx} style={{
-                          flex: 1, height: '100%', position: 'relative',
-                          borderRight: dayIdx < 6 ? '1px solid var(--border-color)' : 'none',
-                          backgroundColor: isToday ? (darkMode ? 'rgba(59,130,246,0.05)' : 'rgba(59,130,246,0.03)') : 'transparent',
-                          display: 'flex', alignItems: 'center', justifyContent: 'center',
-                        }}>
-                          {!hasSchedules && (
-                            <div 
-                              title={`Filler: ${fillerSettings.type === 'category' 
-                                ? (categories.find(c => c.id === fillerSettings.category_id)?.name || 'Category')
-                                : fillerSettings.type === 'sequence'
-                                ? (savedSequences.find(s => s.id === fillerSettings.sequence_id)?.name || 'Sequence')
-                                : `Coming Soon (${fillerSettings.coming_soon_layout})`}`}
-                              style={{
-                                width: '88%', height: '70%',
-                                backgroundColor: 'rgba(0,212,255,0.12)',
-                                border: '2px dashed rgba(0,212,255,0.5)',
-                                borderRadius: '5px',
-                                display: 'flex', alignItems: 'center', justifyContent: 'center',
-                                fontSize: '0.6rem', color: '#00d4ff', fontStyle: 'italic',
-                              }}
-                            >
-                              Active
-                            </div>
-                          )}
-                        </div>
-                      );
-                    })}
-                  </div>
-                </div>
-              )}
             </div>
 
             {/* Compact legend footer */}
@@ -22574,7 +22534,7 @@ const DashboardTiles = {
                       </div>
                       {trailer.removal_date && (
                         <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: '0.5rem', opacity: 0.85 }} title="Auto-removed by NeX-Up retention cleanup">
-                          {`Removed: ${new Date(trailer.removal_date).toLocaleDateString()}`}
+                          {`Removed: ${formatReleaseDate(trailer.removal_date)}`}
                         </div>
                       )}
                       <div style={{ display: 'flex', gap: '0.5rem' }}>
@@ -22621,7 +22581,7 @@ const DashboardTiles = {
                         {trailer.release_date ? `Releases: ${formatReleaseDate(trailer.release_date)}` : 'Release date unknown'}
                         {trailer.removal_date && (
                           <span style={{ opacity: 0.85 }} title="Auto-removed by NeX-Up retention cleanup">
-                            {`  ·  Removed: ${new Date(trailer.removal_date).toLocaleDateString()}`}
+                            {`  ·  Removed: ${formatReleaseDate(trailer.removal_date)}`}
                           </span>
                         )}
                       </div>
@@ -22846,7 +22806,7 @@ const DashboardTiles = {
                       </div>
                       {trailer.removal_date && (
                         <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: '0.5rem', opacity: 0.85 }} title="Auto-removed by NeX-Up retention cleanup">
-                          {`Removed: ${new Date(trailer.removal_date).toLocaleDateString()}`}
+                          {`Removed: ${formatReleaseDate(trailer.removal_date)}`}
                         </div>
                       )}
                       <div style={{ display: 'flex', gap: '0.5rem' }}>
@@ -22893,7 +22853,7 @@ const DashboardTiles = {
                         {trailer.release_date ? `Airs: ${formatReleaseDate(trailer.release_date)}` : 'Air date unknown'}
                         {trailer.removal_date && (
                           <span style={{ opacity: 0.85 }} title="Auto-removed by NeX-Up retention cleanup">
-                            {`  ·  Removed: ${new Date(trailer.removal_date).toLocaleDateString()}`}
+                            {`  ·  Removed: ${formatReleaseDate(trailer.removal_date)}`}
                           </span>
                         )}
                       </div>
@@ -23593,10 +23553,12 @@ const DashboardTiles = {
                 <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
                   <input
                     type="text"
-                    placeholder="C:\NeXroll\Trailers or /opt/nexroll/trailers"
+                    readOnly
+                    placeholder="Click Browse to select an existing folder"
                     value={nexupSettings.storage_path || ''}
-                    onChange={(e) => handleUpdateNexupSettings({ storage_path: e.target.value })}
-                    style={{ flex: 1, padding: '0.5rem', borderRadius: '4px', border: '1px solid var(--border-color)' }}
+                    onClick={() => openFolderBrowser('nexup-storage')}
+                    title={nexupSettings.storage_path || 'Click Browse to choose an existing folder'}
+                    style={{ flex: 1, padding: '0.5rem', borderRadius: '4px', border: '1px solid var(--border-color)', backgroundColor: 'var(--hover-bg)', color: 'var(--text-secondary)', cursor: 'pointer' }}
                   />
                   <button
                     type="button"
