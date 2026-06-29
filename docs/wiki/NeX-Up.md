@@ -48,8 +48,8 @@ Go to the **Settings** tab to configure:
 | **Days Ahead** | How far in the future to look for releases | 30-90 days |
 | **Max Trailers** | Maximum number of trailers to keep | 10-20 |
 | **Quality** | Download quality (720p, 1080p, 4K) | 1080p |
-| **Auto-Cleanup** | Remove trailers when content releases | Enabled |
-| **Release Date Preference** | Which release date to use (physical, digital, or earliest) | Earliest |
+| **Auto-Cleanup** | Remove trailers after content releases and lands in your library | Enabled |
+| **Release Date to Use** | Which date a trailer follows: **Digital First** (default), **Digital Only** (skip movies with no digital date), **Physical First**, or **Theatrical**. Retention is measured from this date, so a trailer is never removed before the movie is out | Digital First |
 | **Include Unmonitored** | Include unmonitored content from Radarr/Sonarr | Disabled |
 
 ## Downloading Trailers
@@ -82,9 +82,21 @@ Each item shows:
 1. Click **Download All Available**
 2. NeX-Up downloads trailers for all upcoming content that has YouTube trailers available
 
-## YouTube Cookie Setup (Recommended)
+## YouTube Downloads (Cookie-Free)
 
-YouTube has aggressive bot detection. For reliable downloads, export cookies from your browser.
+NeXroll downloads trailers from YouTube **without cookies** using a built-in **PO-token provider** — a small local helper that clears YouTube's "Sign in to confirm you're not a bot" wall.
+
+1. Open the **YouTube Downloads** card (in NeX-Up, or **Settings → System → Dependencies**).
+2. Click **Install** to set up the PO-token provider. It's bundled with the Windows app; on Docker it's already included.
+3. Once it shows **healthy**, trailer downloads work with no cookie file.
+
+Trailers download in a **Plex-friendly H.264** format so they play correctly as prerolls (older builds could grab AV1, which silently failed on Plex).
+
+> If a specific trailer is unavailable or blocked, NeX-Up offers a **pick-an-alternate-trailer** flow so you can choose a working one.
+
+## YouTube Cookies (Fallback)
+
+The PO-token provider handles most cases. If you still hit blocks (age-restricted or region-locked trailers), you can additionally supply a cookies file exported from your browser.
 
 ### Why Cookies?
 

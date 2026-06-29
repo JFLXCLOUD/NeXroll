@@ -40,6 +40,19 @@ RUN git clone --depth 1 --branch ${BGUTIL_VERSION} \
     npm install --no-audit --no-fund && \
     npx tsc
 
+# --- Jellyfin plugin build stage ---
+# Builds the NeXroll Intros (Jellyfin) plugin zip so the running container can
+# serve it for download from the Connect page (/jellyfin/plugin/download). Kept
+# self-contained so the image always ships the plugin matching this build.
+FROM mcr.microsoft.com/dotnet/sdk:9.0 AS pluginbuild
+WORKDIR /pluginsrc
+COPY Plugins/NeXroll.Jellyfin/ ./
+RUN apt-get update && apt-get install -y --no-install-recommends zip && \
+    rm -rf /var/lib/apt/lists/* && \
+    dotnet publish NeXroll.Jellyfin.csproj -c Release -o publish && \
+    mkdir -p /out && \
+    zip -j /out/NeXroll.Jellyfin.zip publish/NeXroll.Jellyfin.dll meta.json thumb.png
+
 # --- Runtime stage: slim image without build tools ---
 FROM python:3.12-slim
 
@@ -119,6 +132,9 @@ COPY docs/lefty-blue-wednesday-main-version-36162-02-38.mp3 /app/docs/lefty-blue
 
 # Copy pre-built frontend assets (built locally before Docker build)
 COPY NeXroll/frontend/build /app/NeXroll/frontend/build
+
+# Jellyfin plugin package, served for download from the Connect page
+COPY --from=pluginbuild /out/NeXroll.Jellyfin.zip /app/plugins/NeXroll.Jellyfin.zip
 
 # Prepare persistent data volume
 RUN mkdir -p /data /data/prerolls

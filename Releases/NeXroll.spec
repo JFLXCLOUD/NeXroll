@@ -24,6 +24,15 @@ try:
 except Exception:
     pass
 
+# Bundle the NeXroll Intros (Jellyfin) plugin zip so the running app can serve it
+# for download from the Connect page (/jellyfin/plugin/download). Built by
+# Plugins/NeXroll.Jellyfin/package.ps1 before this spec runs; harmless if absent.
+import glob as _glob
+_plugin_datas = [
+    (z, 'plugins')
+    for z in _glob.glob(os.path.join(project_root, 'Plugins', 'NeXroll.Jellyfin', 'NeXroll.Jellyfin*.zip'))
+]
+
 a = Analysis(
     ['..\\NeXroll\\backend\\main.py'],
     pathex=[],
@@ -32,7 +41,7 @@ a = Analysis(
         (frontend_build, 'frontend/build'),
         (os.path.join(project_root, 'NeXroll', 'CHANGELOG.md'), '.'),
         (os.path.join(project_root, 'docs', 'lefty-blue-wednesday-main-version-36162-02-38.mp3'), 'docs'),
-    ] + _potoken_datas,
+    ] + _potoken_datas + _plugin_datas,
     hiddenimports=['backend.radarr_connector', 'backend.dynamic_preroll', 'httpx', 'httpx._transports', 'httpx._transports.default', 'httpcore', 'h11', 'h2', 'hpack', 'hyperframe', 'yt_dlp', 'yt_dlp_plugins', 'yt_dlp_plugins.extractor', 'yt_dlp_plugins.extractor.getpot_bgutil', 'yt_dlp_plugins.extractor.getpot_bgutil_http', 'yt_dlp_plugins.extractor.getpot_bgutil_script'] + _potoken_hidden,
     hookspath=[],
     hooksconfig={},

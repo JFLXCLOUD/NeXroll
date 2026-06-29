@@ -97,7 +97,7 @@ You can also configure the plugin directly in Emby:
 4. Configure **Path Mapping** if NeXroll and Emby see preroll files at different paths:
    - **NeXroll Path Prefix**: The path as NeXroll sees it (e.g., `\\server\prerolls`)
    - **Emby Path Prefix**: The path as Emby sees it (e.g., `/mnt/prerolls`)
-5. Set **Max Intros** (default: 1 — how many prerolls to play per session)
+5. Set **Max Intros** (default: `0` = unlimited — plays the whole active sequence; set a number only if you want to cap how many play)
 6. Toggle **Enable for Movies** / **Enable for Episodes**
 7. Click **Save**
 
@@ -141,9 +141,7 @@ The NeXroll Emby plugin uses Emby's `IIntroProvider` interface:
 1. **Cache Sync**: The plugin periodically fetches all available prerolls from NeXroll's `/plugin/intros` endpoint and downloads them to a local cache directory
 2. **File Registration**: `GetAllIntroFiles()` returns all cached file paths so Emby can register them as library items during the "Refresh Custom Intros" task
 3. **Playback Selection**: When a user starts a movie/episode, `GetIntros()` is called — the plugin fetches the current active prerolls from NeXroll, selects up to `MaxIntros` from the cache, and returns them for playback
-4. **Cache Location**: Files are cached at:
-   - **Windows**: `%LocalAppData%\NeXroll\intro_cache\`
-   - **Linux**: `~/.local/share/NeXroll/intro_cache/`
+4. **Cache Location**: Emby's own plugin data folder (under the server config dir), falling back to the system temp directory. Older plugin builds cached to `%LocalAppData%\NeXroll\intro_cache` / `~/.local/share/NeXroll`, which **failed on Docker/Unraid** — the service has no `HOME`, so the path collapsed to `/NeXroll` at the container root and threw `Access to the path '/NeXroll' is denied`. Re-download the latest `NeXroll.Emby.dll` if you hit that error.
 
 The cache syncs every 10 minutes to pick up schedule changes in NeXroll.
 
@@ -173,6 +171,8 @@ In the plugin config, set up path mapping:
 - **NeXroll Path Prefix**: `/data/prerolls`
 - **Emby Path Prefix**: `/media/prerolls`
 
+> **Shared mount optional.** The Emby plugin caches prerolls locally (streamed from NeXroll via the cache-sync task), so a shared mount isn't strictly required — just make sure the plugin's **NeXroll Server URL** is reachable from the Emby container. Path mapping only matters if you want Emby to read the original files directly. If prerolls error with `Access to the path '/NeXroll' is denied` on Docker/Unraid, re-download the latest `NeXroll.Emby.dll`.
+
 ## Troubleshooting
 
 | Problem | Solution |
@@ -182,6 +182,8 @@ In the plugin config, set up path mapping:
 | "Could not reach NeXroll" in logs | Check the NeXroll URL in plugin settings. Verify port 9393 is accessible |
 | Intros not updating | Run "Refresh Custom Intros" from Scheduled Tasks. The cache syncs every 10 minutes |
 | Files not found after schedule change | Wait for the next cache sync (10 min) or restart Emby to force a fresh sync |
+| `Access to the path '/NeXroll' is denied` (Docker/Unraid) | Re-download the latest `NeXroll.Emby.dll` — older builds cached prerolls to an unwritable path |
+| Only the first preroll plays / sequence items skipped | Set **Max Intros** to `0` (unlimited). Compare the Emby log's `Injecting N intro(s)` line to your sequence length |
 | Plugin detected but 0 intros returned | Make sure you have an active category or filler set in NeXroll |
 | Prerolls play for movies but not episodes | Check that "Enable for Episodes" is turned on in both Cinema Mode and the plugin config |
 
@@ -195,5 +197,5 @@ In the plugin config, set up path mapping:
 | Path Prefix To | *(empty)* | Path prefix as Emby sees it |
 | Enable for Movies | `true` | Play intros before movies |
 | Enable for Episodes | `true` | Play intros before TV episodes |
-| Max Intros | `1` | Maximum number of prerolls per playback session (0 = 1) |
+| Max Intros | `0` | Maximum number of prerolls per playback session (`0` = unlimited — plays the whole active sequence) |
 | Timeout Seconds | `5` | Network timeout when contacting NeXroll server |

@@ -24427,6 +24427,64 @@ def configure_jellyfin_plugin(req: JellyfinPluginConfigureRequest, db: Session =
         raise HTTPException(status_code=500, detail=str(e))
 
 
+def _resolve_jellyfin_plugin_zip() -> Optional[str]:
+    """Locate the bundled NeXroll Intros (Jellyfin) plugin zip to offer for download.
+
+    Checked in order: explicit override, the PyInstaller frozen bundle, a
+    'plugins' dir next to the app (Docker copies it to /app/plugins), the CWD, and
+    the dev source tree. The zip ships the plugin DLL + meta.json + thumb.png — the
+    full folder Jellyfin needs (a bare DLL won't register in the plugin list).
+    """
+    bases: list = []
+    env = os.environ.get("NEXROLL_PLUGIN_ZIP")
+    if env:
+        bases.append(env)  # may point at the zip directly or a containing dir
+    mei = getattr(sys, "_MEIPASS", None)
+    if mei:
+        bases.append(os.path.join(mei, "plugins"))
+    try:
+        bases.append(os.path.join(os.path.dirname(sys.executable), "plugins"))
+    except Exception:
+        pass
+    bases.append("/app/plugins")
+    bases.append(os.path.join(os.getcwd(), "plugins"))
+    # Dev source tree: NeXroll/backend/main.py -> ../../Plugins/NeXroll.Jellyfin
+    here = os.path.dirname(os.path.abspath(__file__))
+    bases.append(os.path.abspath(os.path.join(here, "..", "..", "Plugins", "NeXroll.Jellyfin")))
+    for base in bases:
+        try:
+            if not base:
+                continue
+            if os.path.isfile(base) and base.lower().endswith(".zip"):
+                return base
+            if os.path.isdir(base):
+                matches = sorted(Path(base).glob("NeXroll.Jellyfin*.zip"))
+                if matches:
+                    return str(matches[-1])  # newest by version-sorted name
+        except Exception:
+            continue
+    return None
+
+
+@app.get("/jellyfin/plugin/download")
+def download_jellyfin_plugin():
+    """Download the NeXroll Intros (Jellyfin) plugin package — a zip of the DLL +
+    meta.json + thumb.png. Served by the running NeXroll so it always matches this
+    build and needs no GitHub/external access."""
+    zip_path = _resolve_jellyfin_plugin_zip()
+    if not zip_path or not os.path.isfile(zip_path):
+        raise HTTPException(
+            status_code=404,
+            detail="Plugin package isn't bundled with this build. Get it from the NeXroll GitHub releases page (NeXroll.Jellyfin-<version>.zip).",
+        )
+    from fastapi.responses import FileResponse
+    return FileResponse(
+        zip_path,
+        media_type="application/zip",
+        filename=os.path.basename(zip_path),
+    )
+
+
 # --- Emby Integration ---
 class EmbyConnectRequest(BaseModel):
     url: str
@@ -25728,7 +25786,7 @@ def _detect_platform(preroll) -> Optional[str]:
 
 
 def _search_local_index(index_data: dict, query: str = "", category: str = "", platform: str = "",
-                        creator: str = "", sort: str = "relevance", limit: int = 50) -> List[dict]:
+                        creator: str = "", sort: str = "relevance", limit: int = 50, offset: int = 0) -> tuple:
     """
     Search/browse the local prerolls index (FAST - milliseconds vs seconds).
 
@@ -25739,10 +25797,12 @@ def _search_local_index(index_data: dict, query: str = "", category: str = "", p
         platform: Filter by platform (plex/jellyfin/emby; matched in path or title)
         creator: Filter by creator (substring)
         sort: relevance (index order) | newest | oldest | name
-        limit: Maximum results to return
+        limit: Maximum results to return (page size)
+        offset: How many matches to skip (for pagination)
 
     Returns:
-        List of matching preroll dicts
+        (page_of_matches, total_match_count) — the slice for this page plus the
+        full number of matches, so the caller can drive pagination.
     """
     prerolls = index_data.get("prerolls", [])
     results = []
@@ -25797,7 +25857,10 @@ def _search_local_index(index_data: dict, query: str = "", category: str = "", p
     elif sort == "name":
         results.sort(key=lambda x: (x.get("title", "") or "").lower())
 
-    return results[:limit]
+    total = len(results)
+    if offset < 0:
+        offset = 0
+    return results[offset:offset + limit], total
 
 
 @app.get("/community-prerolls/build-index")
@@ -25997,7 +26060,7 @@ def get_community_facets():
 
 
 @app.get("/community-prerolls/search")
-def search_community_prerolls(request: Request, query: str = "", category: str = "", platform: str = "", creator: str = "", sort: str = "relevance", limit: int = 50, db: Session = Depends(get_db)):
+def search_community_prerolls(request: Request, query: str = "", category: str = "", platform: str = "", creator: str = "", sort: str = "relevance", limit: int = 50, offset: int = 0, db: Session = Depends(get_db)):
     """
     Search the Typical Nerds preroll library (LOCAL INDEX PREFERRED - FAST!).
     
@@ -26028,6 +26091,10 @@ def search_community_prerolls(request: Request, query: str = "", category: str =
     
     if limit > 200:
         limit = 200
+    if limit < 1:
+        limit = 1
+    if offset < 0:
+        offset = 0
 
     # ===== NEW: TRY LOCAL INDEX FIRST (FAST!) =====
     _file_log(f"Community search: query='{query}' category='{category}' platform='{platform}' creator='{creator}' sort='{sort}' limit={limit}")
@@ -26036,13 +26103,15 @@ def search_community_prerolls(request: Request, query: str = "", category: str =
     if index_data:
         # LOCAL INDEX FOUND - Use it for instant search!
         _file_log("Using local prerolls index for fast search")
-        results = _search_local_index(index_data, query=query, category=category, platform=platform,
-                                      creator=creator, sort=sort, limit=limit)
+        results, total = _search_local_index(index_data, query=query, category=category, platform=platform,
+                                             creator=creator, sort=sort, limit=limit, offset=offset)
 
         return {
             "found": len(results),
             "results": results,
-            "total": len(results),
+            "total": total,
+            "offset": offset,
+            "limit": limit,
             "query": query,
             "category": category,
             "creator": creator,
@@ -26342,9 +26411,11 @@ def search_community_prerolls(request: Request, query: str = "", category: str =
         _file_log(f"Community preroll demo search: query='{query}' category='{category}' found {len(filtered_results)} results")
         
         return {
-            "found": len(filtered_results),
-            "results": filtered_results[:limit],
+            "found": len(filtered_results[offset:offset + limit]),
+            "results": filtered_results[offset:offset + limit],
             "total": len(filtered_results),
+            "offset": offset,
+            "limit": limit,
             "query": query,
             "category": category,
             "note": f"API currently unavailable - showing demo results. Visit {_get_community_base_url(db)}/ to browse the live library."

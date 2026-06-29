@@ -148,7 +148,8 @@ Go to **Settings → Logs** to:
 - Filter by level: DEBUG, INFO, WARNING, ERROR, CRITICAL
 - Filter by category: system, scheduler, api, user, plex, jellyfin, emby, nexup
 - Search through log entries
-- Export logs as JSON or CSV
+- Export logs as JSON or CSV — **API keys and IP addresses are automatically redacted** on export and copy, so logs are safe to share
+- Download a **diagnostics bundle** for support straight from the Logs page
 
 ### Log Settings
 
@@ -160,6 +161,12 @@ Go to **Settings → Logs** to:
 | **Request Logging** | Log API requests with timing | Enabled |
 | **Scheduler Logging** | Log scheduler activity | Enabled |
 | **API Logging** | Log external API calls | Enabled |
+
+---
+
+## Factory Reset
+
+Return NeXroll to a fresh-install state from **Settings → System → Factory Reset**. You choose exactly what to wipe via checkboxes — settings, prerolls, schedules, NeX-Up trailers, the community index, the PO-token provider — so you can do a clean re-test without reinstalling. The action is confirmed before anything is removed and **cannot be undone**, so back up first if you might want the data back.
 
 ---
 

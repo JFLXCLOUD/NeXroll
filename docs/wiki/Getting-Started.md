@@ -10,6 +10,10 @@ Once installed, open NeXroll in your browser:
 - **Local**: `http://localhost:9393`
 - **Remote**: `http://your-server-ip:9393`
 
+On a fresh install, a **first-run onboarding wizard** walks you through the essentials (connecting a media server, adding prerolls). You can skip it and set things up manually at any time.
+
+NeXroll v2 navigates with a **collapsible sidebar**: click the chevron to collapse it to icons, or use the **search box** at the top of the sidebar to jump straight to any page or setting. Every page is deep-linkable, so you can bookmark or share a direct URL.
+
 ## Step 2: Set Up Authentication (Optional)
 
 If you want to secure access to NeXroll:

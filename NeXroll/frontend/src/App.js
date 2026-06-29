@@ -198,6 +198,26 @@ const formatReleaseDate = (val, opts) => {
   const d = new Date(s);
   return isNaN(d.getTime()) ? s : d.toLocaleDateString(undefined, opts);
 };
+
+// Preview players remember the last volume the user set instead of snapping back
+// to max on every preview. The level is persisted in localStorage and applied
+// through a callback ref the moment each <video> mounts (works even though the
+// players start muted for autoplay — unmuting then plays at the saved level).
+const PREVIEW_VOLUME_KEY = 'nexroll_preview_volume';
+const _getSavedPreviewVolume = () => {
+  try {
+    const v = parseFloat(window.localStorage.getItem(PREVIEW_VOLUME_KEY));
+    return (Number.isFinite(v) && v >= 0 && v <= 1) ? v : 1;
+  } catch (e) { return 1; }
+};
+const previewVideoRef = (el) => {
+  if (!el || el.__nxVolBound) return;
+  el.__nxVolBound = true;
+  try { el.volume = _getSavedPreviewVolume(); } catch (e) {}
+  el.addEventListener('volumechange', () => {
+    try { window.localStorage.setItem(PREVIEW_VOLUME_KEY, String(el.volume)); } catch (e) {}
+  });
+};
 // Runtime API base resolver + CORS shield: rewrite hardcoded http://localhost:9393 to same-origin or configured base
 (function setupNeXrollApiBase() {
   try {
@@ -715,6 +735,10 @@ function App() {
   const [jellyfinPluginNexrollUrl, setJellyfinPluginNexrollUrl] = useState('');
   const [jellyfinPluginPathFrom, setJellyfinPluginPathFrom] = useState('');
   const [jellyfinPluginPathTo, setJellyfinPluginPathTo] = useState('');
+  const [jellyfinPluginMaxIntros, setJellyfinPluginMaxIntros] = useState(0);
+  const [jellyfinPluginEnableMovies, setJellyfinPluginEnableMovies] = useState(true);
+  const [jellyfinPluginEnableEpisodes, setJellyfinPluginEnableEpisodes] = useState(true);
+  const [jellyfinPluginTimeout, setJellyfinPluginTimeout] = useState(5);
 
   // Emby connection UI state
   const [embyStatus, setEmbyStatus] = useState('Disconnected');
@@ -800,6 +824,10 @@ function App() {
   const [communityShowAddToCategory, setCommunityShowAddToCategory] = useState({});
   const [communityResultLimit, setCommunityResultLimit] = useState(50);
   const [communityTotalResults, setCommunityTotalResults] = useState(0);
+  // Pagination for community search/browse results.
+  const [communityOffset, setCommunityOffset] = useState(0);
+  const [communityPageLimit, setCommunityPageLimit] = useState(50); // page size of the current results
+  const [communityActiveMode, setCommunityActiveMode] = useState(null); // 'search' | 'browse'
   const [communityPreviewingPreroll, setCommunityPreviewingPreroll] = useState(null);
   const [communityTop5Prerolls, setCommunityTop5Prerolls] = useState([]);
   const [communityRandomPreroll, setCommunityRandomPreroll] = useState(null);
@@ -809,6 +837,17 @@ function App() {
   const [communityIsLoadingLatest, setCommunityIsLoadingLatest] = useState(false);
   // Rename preroll before download
   const [communityRenamingPreroll, setCommunityRenamingPreroll] = useState(null);
+  // Remember where the user was in the community list: the rename/download modal
+  // is a full-view swap (early return in renderCommunityPrerolls), so without
+  // this the list snaps back to the top when the modal closes. Capture the scroll
+  // position on open, restore it once the modal closes.
+  const communityScrollRef = React.useRef(0);
+  React.useEffect(() => {
+    if (communityRenamingPreroll === null && communityScrollRef.current) {
+      const y = communityScrollRef.current;
+      requestAnimationFrame(() => requestAnimationFrame(() => window.scrollTo(0, y)));
+    }
+  }, [communityRenamingPreroll]);
   const [communityNewPrerollName, setCommunityNewPrerollName] = useState('');
   // Index status for local fast search
   const [communityIndexStatus, setCommunityIndexStatus] = useState(null);
@@ -2448,6 +2487,12 @@ const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
             }
             setJellyfinPluginPathFrom(prev => prev || pluginData.config?.PathPrefixFrom || '');
             setJellyfinPluginPathTo(prev => prev || pluginData.config?.PathPrefixTo || '');
+            if (pluginData.config) {
+              setJellyfinPluginMaxIntros(pluginData.config.MaxIntros ?? 0);
+              setJellyfinPluginEnableMovies(pluginData.config.EnableForMovies ?? true);
+              setJellyfinPluginEnableEpisodes(pluginData.config.EnableForEpisodes ?? true);
+              setJellyfinPluginTimeout(pluginData.config.TimeoutSeconds ?? 5);
+            }
           }
         })
         .catch(() => setJellyfinPluginInfo(null));
@@ -17626,6 +17671,10 @@ const DashboardTiles = {
           }
           setJellyfinPluginPathFrom(data.config?.PathPrefixFrom || '');
           setJellyfinPluginPathTo(data.config?.PathPrefixTo || '');
+          setJellyfinPluginMaxIntros(data.config?.MaxIntros ?? 0);
+          setJellyfinPluginEnableMovies(data.config?.EnableForMovies ?? true);
+          setJellyfinPluginEnableEpisodes(data.config?.EnableForEpisodes ?? true);
+          setJellyfinPluginTimeout(data.config?.TimeoutSeconds ?? 5);
         }
       })
       .catch(err => {
@@ -17647,6 +17696,10 @@ const DashboardTiles = {
         nexroll_url: jellyfinPluginNexrollUrl,
         path_prefix_from: jellyfinPluginPathFrom,
         path_prefix_to: jellyfinPluginPathTo,
+        max_intros: Number(jellyfinPluginMaxIntros) || 0,
+        enable_for_movies: jellyfinPluginEnableMovies,
+        enable_for_episodes: jellyfinPluginEnableEpisodes,
+        timeout_seconds: Number(jellyfinPluginTimeout) || 5,
       })
     })
       .then(res => {
@@ -29279,7 +29332,7 @@ const DashboardTiles = {
           <div className="nx-notice" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '0.9rem' }}>
             <Download size={16} style={{ color: 'var(--accent-color, #7c4dff)' }} />
             <span>Download Plugin:</span>
-            <a href="https://github.com/JFLXCLOUD/NeXroll/raw/main/Plugins/NeXroll.Jellyfin.dll" target="_blank" rel="noopener noreferrer" style={{ color: 'var(--accent-color, #7c4dff)', fontWeight: 600 }}>NeXroll.Jellyfin.dll</a>
+            <a href={apiUrl('jellyfin/plugin/download')} download style={{ color: 'var(--accent-color, #7c4dff)', fontWeight: 600 }}>NeXroll.Jellyfin.zip</a>
           </div>
         )}
 
@@ -29319,7 +29372,7 @@ const DashboardTiles = {
               <div className="nx-notice">
                 <h3 style={{ marginTop: 0, marginBottom: '0.75rem', fontSize: '0.95rem' }}>Install the Plugin</h3>
                 <ol style={{ margin: 0, paddingLeft: '1.25rem', lineHeight: '1.7' }}>
-                  <li>Download the <strong>NeXroll Intros</strong> plugin DLL: <a href="https://github.com/JFLXCLOUD/NeXroll/raw/main/Plugins/NeXroll.Jellyfin.dll" target="_blank" rel="noopener noreferrer" style={{ color: 'var(--accent-color, #7c4dff)' }}>NeXroll.Jellyfin.dll</a></li>
+                  <li>Download the <strong>NeXroll Intros</strong> plugin package: <a href={apiUrl('jellyfin/plugin/download')} download style={{ color: 'var(--accent-color, #7c4dff)' }}>NeXroll.Jellyfin.zip</a> (extract the DLL + meta.json + thumb.png into your Jellyfin <code>plugins/NeXroll Intros/</code> folder)</li>
                   <li>Copy it to your Jellyfin plugins folder: <code>plugins/NeXroll Intros/</code></li>
                   <li>Restart Jellyfin</li>
                 </ol>
@@ -29411,6 +29464,57 @@ const DashboardTiles = {
                   <small style={{ color: 'var(--text-secondary)' }}>
                     Only needed if NeXroll and Jellyfin see preroll files at different paths (common with Docker or NAS mounts).
                   </small>
+                </div>
+              </details>
+
+              <details style={{ marginBottom: '0.75rem' }}>
+                <summary style={{ cursor: 'pointer', fontWeight: 'bold', padding: '0.25rem 0' }}>
+                  Playback options
+                </summary>
+                <div style={{ padding: '0.75rem 0 0', display: 'grid', gap: '0.6rem' }}>
+                  <div>
+                    <label style={{ display: 'block', marginBottom: '0.25rem' }}>Max intros per playback</label>
+                    <input
+                      type="number"
+                      min="0"
+                      value={jellyfinPluginMaxIntros}
+                      onChange={(e) => setJellyfinPluginMaxIntros(e.target.value)}
+                      style={{ width: '120px', padding: '0.5rem' }}
+                    />
+                    <small style={{ color: 'var(--text-secondary)', display: 'block', marginTop: '0.25rem' }}>
+                      How many prerolls play before each item. <strong>0 = unlimited</strong> — plays the whole active
+                      sequence. Set to 0 (or at least your sequence length) so sequence items aren't skipped.
+                    </small>
+                  </div>
+                  <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', cursor: 'pointer' }}>
+                    <input
+                      type="checkbox"
+                      checked={jellyfinPluginEnableMovies}
+                      onChange={(e) => setJellyfinPluginEnableMovies(e.target.checked)}
+                    />
+                    Play prerolls before movies
+                  </label>
+                  <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', cursor: 'pointer' }}>
+                    <input
+                      type="checkbox"
+                      checked={jellyfinPluginEnableEpisodes}
+                      onChange={(e) => setJellyfinPluginEnableEpisodes(e.target.checked)}
+                    />
+                    Play prerolls before TV episodes
+                  </label>
+                  <div>
+                    <label style={{ display: 'block', marginBottom: '0.25rem' }}>Server request timeout (seconds)</label>
+                    <input
+                      type="number"
+                      min="1"
+                      value={jellyfinPluginTimeout}
+                      onChange={(e) => setJellyfinPluginTimeout(e.target.value)}
+                      style={{ width: '120px', padding: '0.5rem' }}
+                    />
+                    <small style={{ color: 'var(--text-secondary)', display: 'block', marginTop: '0.25rem' }}>
+                      How long the plugin waits for NeXroll to answer before skipping prerolls for that play. Default 5.
+                    </small>
+                  </div>
                 </div>
               </details>
 
@@ -31045,33 +31149,38 @@ const DashboardTiles = {
       return cleaned;
     };
 
-    // Handle search submission
-    const handleSearch = async () => {
+    // Handle search submission. `offset` drives pagination (0 = first page).
+    const handleSearch = async (offset = 0) => {
       if (!communitySearchQuery.trim() && !communitySearchPlatform.trim()) {
         alert('Please enter a search query or choose a platform');
         return;
       }
 
+      const pageLimit = Number(communityResultLimit) || 50;
       setCommunityIsSearching(true);
       try {
         const params = new URLSearchParams();
         if (communitySearchQuery.trim()) params.append('query', communitySearchQuery.trim());
         if (communitySearchPlatform.trim()) params.append('platform', communitySearchPlatform.trim());
-        params.append('limit', communityResultLimit);
+        params.append('limit', pageLimit);
+        params.append('offset', offset);
 
         const response = await fetch(apiUrl(`community-prerolls/search?${params.toString()}`));
-        
+
         if (response.status === 429) {
           const error = await response.json();
           alert(error.detail || 'Rate limit exceeded. Please wait before searching again.');
           return;
         }
-        
+
         const data = await response.json();
-        
+
         setCommunitySearchResults(data.results || []);
         setCommunityTotalResults(data.total || 0);
-        
+        setCommunityOffset(offset);
+        setCommunityPageLimit(pageLimit);
+        setCommunityActiveMode('search');
+
         // Show message if available (even with results)
         if (data.message) {
           console.log(`Community Prerolls: ${data.message}`);
@@ -31087,11 +31196,12 @@ const DashboardTiles = {
     // Browse by facet filters (category / creator / platform + sort) into the
     // same results grid the search uses. `overrides` lets a facet click apply
     // immediately without waiting for state to settle.
-    const handleBrowse = async (overrides = {}) => {
+    const handleBrowse = async (overrides = {}, offset = 0) => {
       const cat = overrides.category !== undefined ? overrides.category : browseCategory;
       const creator = overrides.creator !== undefined ? overrides.creator : browseCreator;
       const platform = overrides.platform !== undefined ? overrides.platform : browsePlatform;
       const sort = overrides.sort !== undefined ? overrides.sort : browseSort;
+      const pageLimit = Number(communityResultLimit) || 50;
       setCommunityIsSearching(true);
       try {
         const params = new URLSearchParams();
@@ -31099,7 +31209,8 @@ const DashboardTiles = {
         if (creator) params.append('creator', creator);
         if (platform) params.append('platform', platform);
         if (sort) params.append('sort', sort);
-        params.append('limit', 200);
+        params.append('limit', pageLimit);
+        params.append('offset', offset);
         const response = await fetch(apiUrl(`community-prerolls/search?${params.toString()}`));
         if (response.status === 429) {
           const err = await response.json();
@@ -31109,11 +31220,21 @@ const DashboardTiles = {
         const data = await response.json();
         setCommunitySearchResults(data.results || []);
         setCommunityTotalResults(data.total || 0);
+        setCommunityOffset(offset);
+        setCommunityPageLimit(pageLimit);
+        setCommunityActiveMode('browse');
       } catch (error) {
         alert(`Browse failed: ${error.message}`);
       } finally {
         setCommunityIsSearching(false);
       }
+    };
+
+    // Jump to a results page (re-runs the current search/browse at a new offset).
+    const goToCommunityPage = (newOffset) => {
+      const off = Math.max(0, newOffset);
+      if (communityActiveMode === 'browse') handleBrowse({}, off);
+      else handleSearch(off);
     };
 
     // Handle random preroll fetch
@@ -31226,6 +31347,9 @@ const DashboardTiles = {
         return;
       }
 
+      // Remember scroll position — opening this dialog swaps out the whole list
+      // view, so we restore it after the dialog closes (see the effect above).
+      communityScrollRef.current = window.scrollY;
       // Show rename dialog
       setCommunityRenamingPreroll(preroll);
       // Default name removes the bug number prefix if present
@@ -31690,7 +31814,7 @@ const DashboardTiles = {
                 <option value={100}>100</option>
               </select>
             </div>
-            <button onClick={handleSearch} disabled={communityIsSearching} className="button" style={{ height: '42px' }}>
+            <button onClick={() => handleSearch(0)} disabled={communityIsSearching} className="button" style={{ height: '42px' }}>
               {communityIsSearching ? <Loader2 size={16} className="spin" /> : <Search size={16} />}
               <span>{communityIsSearching ? 'Searching…' : 'Search'}</span>
             </button>
@@ -31801,7 +31925,7 @@ const DashboardTiles = {
         {communitySearchResults.length > 0 && (
           <div className="card">
             <h3 style={{ marginTop: 0, marginBottom: '0.75rem', fontSize: '1rem' }}>
-              Results <span style={{ color: 'var(--text-secondary)', fontWeight: 500 }}>({communitySearchResults.length})</span>
+              Results <span style={{ color: 'var(--text-secondary)', fontWeight: 500 }}>({communityTotalResults})</span>
             </h3>
 
             <div className="nx-comm-results">
@@ -31871,6 +31995,25 @@ const DashboardTiles = {
                 );
               })}
             </div>
+            {communityTotalResults > communityPageLimit && (() => {
+              const pageSize = communityPageLimit || 50;
+              const pageCount = Math.max(1, Math.ceil(communityTotalResults / pageSize));
+              const currentPage = Math.floor(communityOffset / pageSize) + 1;
+              const from = communityOffset + 1;
+              const to = Math.min(communityOffset + pageSize, communityTotalResults);
+              return (
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.75rem', marginTop: '0.9rem', paddingTop: '0.9rem', borderTop: '1px solid var(--border-color)', flexWrap: 'wrap' }}>
+                  <span style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
+                    Showing {from}–{to} of {communityTotalResults}
+                  </span>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem' }}>
+                    <button className="button button-secondary" disabled={communityIsSearching || communityOffset <= 0} onClick={() => goToCommunityPage(communityOffset - pageSize)}>← Prev</button>
+                    <span style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', whiteSpace: 'nowrap' }}>Page {currentPage} of {pageCount}</span>
+                    <button className="button button-secondary" disabled={communityIsSearching || to >= communityTotalResults} onClick={() => goToCommunityPage(communityOffset + pageSize)}>Next →</button>
+                  </div>
+                </div>
+              );
+            })()}
           </div>
         )}
 
@@ -33936,6 +34079,7 @@ const DashboardTiles = {
                  : null;
                return videoUrl ? (
                  <video
+                   ref={previewVideoRef}
                    controls
                    autoPlay
                    muted
@@ -34002,7 +34146,7 @@ const DashboardTiles = {
                  {videoUrl ? (
                    <>
                      <video
-                       ref={dashboardVideoRef}
+                       ref={(el) => { dashboardVideoRef.current = el; previewVideoRef(el); }}
                        controls
                        autoPlay
                        style={{ width: '100%', maxHeight: '400px', borderRadius: '8px', backgroundColor: '#000', display: previewError ? 'none' : 'block' }}
@@ -34136,10 +34280,11 @@ const DashboardTiles = {
            </div>
            <div>
              <video
+               ref={previewVideoRef}
                controls
                autoPlay
-               style={{ 
-                 width: '100%', 
+               style={{
+                 width: '100%',
                  maxHeight: '70vh',
                  borderRadius: '4px'
                }}
@@ -34235,6 +34380,7 @@ const DashboardTiles = {
            <div>
              <video
                key={`video-${previewingDynamicPreroll?.filename}-${previewingDynamicPreroll?.created_at || Date.now()}`}
+               ref={previewVideoRef}
                controls
                autoPlay
                style={{ 
@@ -34329,6 +34475,7 @@ const DashboardTiles = {
            <div>
              <video
                key={`video-cs-${previewingComingSoonList?.filename}`}
+               ref={previewVideoRef}
                controls
                autoPlay
                style={{ 
@@ -34425,6 +34572,7 @@ const DashboardTiles = {
            <div>
              <video
                key={`trailer-${playingTrailer.type}-${playingTrailer.trailer?.id}`}
+               ref={previewVideoRef}
                controls
                autoPlay
                style={{ 

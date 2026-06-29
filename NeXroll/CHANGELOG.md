@@ -1,5 +1,35 @@
 # Changelog
 
+## [2.0.0-beta.15] - 06-29-2026 (beta)
+
+> Community Prerolls pagination, sticky preview volume, one-click Jellyfin plugin
+> download, and plugin playback settings from the Connect page. Upgrade-safe.
+
+### Added
+
+- **Community Prerolls pagination.** Search and Browse now page through the
+  *entire* library (the results header shows the true total) with Prev/Next and
+  a page indicator, instead of only ever showing the first page.
+- **Download the Jellyfin plugin from NeXroll.** The Connect page's Download
+  Plugin link now serves the full plugin **zip** (DLL + meta.json + thumb.png)
+  straight from your NeXroll — bundled into the app and Docker image — so it
+  always matches your build and a bare DLL never fails to register.
+- **Plugin playback settings from the Connect page.** Set the Jellyfin plugin's
+  **Max Intros** (0 = play the whole sequence), Enable for Movies/Episodes, and
+  request timeout from NeXroll and push them to the plugin.
+
+### Fixed
+
+- **Community Prerolls remembers your place.** Downloading an item no longer
+  snaps the list back to the top — you stay on the same page and scroll position.
+- **Preview volume sticks.** The preview players remember the last volume you set
+  instead of resetting to max every time.
+
+### Docs
+
+- Refreshed the wiki for v2 (new Community Prerolls page, updated Home/Getting
+  Started/NeX-Up/Jellyfin/Emby, factory reset + log redaction notes).
+
 ## [2.0.0-beta.14] - 06-26-2026 (beta)
 
 > NeX-Up trailer retention fix, dashboard polish, and a sidebar with per-section
