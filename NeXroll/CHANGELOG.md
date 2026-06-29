@@ -1,5 +1,17 @@
 # Changelog
 
+## [2.0.0] - 06-29-2026
+
+**NeXroll v2.0.0** — the stable release of the v2 line, a top-to-bottom modernization of the app. Promotes beta.1 through beta.15; see those entries below for the full detail. Upgrading from v1.x is safe — your data carries over and the first-run wizard is skipped automatically.
+
+### Highlights
+
+- **All-new "Arr-style" interface** — a collapsible sidebar with built-in search and per-section colors, a redesigned dashboard with quick-action tiles, a first-run onboarding wizard, and deep-linkable (refresh-safe) URLs for every page.
+- **Community Prerolls** — search and browse the community library by category, platform, creator, and upload date, with pagination, and one-click downloads.
+- **NeX-Up** — trailers for upcoming Radarr/Sonarr releases with **cookie-free YouTube downloads** (a built-in PO-token provider) in a Plex-friendly H.264 format, plus a Coming Soon List generator and release-date-aware retention.
+- **Plex, Jellyfin & Emby** — download and remotely configure the Jellyfin/Emby plugin from the Connect page; no shared mount required (the plugin streams and caches).
+- **Security & operations** — Require Login now protects the entire API, logs auto-redact API keys/IPs on export, plus a built-in Factory Reset, a Storage Usage view, and Backup/Restore with live progress.
+
 ## [2.0.0-beta.15] - 06-29-2026 (beta)
 
 > Community Prerolls pagination, sticky preview volume, one-click Jellyfin plugin
