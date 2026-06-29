@@ -22,8 +22,8 @@ ShowInstDetails show
 Icon "NeXroll_ICON\icon_1758297097_64x64.ico"
 UninstallIcon "NeXroll_ICON\icon_1758297097_32x32.ico"
 
-!define APP_VERSION "1.14.0"
-VIProductVersion "1.14.0.0"
+!define APP_VERSION "2.0.0"
+VIProductVersion "2.0.0.0"
 VIAddVersionKey /LANG=1033 "ProductName" "NeXroll"
 VIAddVersionKey /LANG=1033 "ProductVersion" "${APP_VERSION}"
 VIAddVersionKey /LANG=1033 "FileVersion" "${APP_VERSION}"
@@ -246,6 +246,26 @@ Section "Install Dependencies (FFmpeg via winget)" SEC_DEPS
    nsExec::ExecToStack 'powershell -NoProfile -ExecutionPolicy Bypass -Command "if (-not (Get-Command ffmpeg -ErrorAction SilentlyContinue)) { winget install Gyan.FFmpeg --accept-source-agreements --accept-package-agreements -e }"' $0
    Pop $0
    ; $0 contains exit code (ignored for best-effort)
+SectionEnd
+
+Section "Visual C++ Runtime (YouTube downloader)" SEC_VCREDIST
+   ; The YouTube PO-token provider's Node modules (canvas) link the Microsoft
+   ; Visual C++ 2015-2022 x64 runtime. Skip entirely when it's already installed:
+   ; winget is slow to start even when the package ends up a no-op, which made
+   ; the installer feel sluggish. Read the native 64-bit registry view (this is a
+   ; 32-bit installer) for the runtime's "Installed" flag and only call winget
+   ; when it's genuinely missing.
+   SetRegView 64
+   ReadRegDWORD $1 HKLM "SOFTWARE\Microsoft\VisualStudio\14.0\VC\Runtimes\X64" "Installed"
+   SetRegView 32
+   ${If} $1 = 1
+      DetailPrint "Visual C++ runtime already installed - skipping."
+   ${Else}
+      DetailPrint "Installing Visual C++ runtime (required by the YouTube downloader)..."
+      nsExec::ExecToStack 'powershell -NoProfile -ExecutionPolicy Bypass -Command "if (Get-Command winget -ErrorAction SilentlyContinue) { winget install Microsoft.VCRedist.2015+.x64 --accept-source-agreements --accept-package-agreements -e }"' $0
+      Pop $0
+      ; best-effort; exit code ignored
+   ${EndIf}
 SectionEnd
 
 ; Auto-detect ffmpeg/ffprobe and record absolute paths in HKLM\Software\NeXroll

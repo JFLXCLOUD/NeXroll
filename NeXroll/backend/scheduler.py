@@ -71,6 +71,47 @@ def _scheduler_verbose(msg: str):
     except Exception:
         pass
 
+def resolve_nexup_trailer_block(block: dict, db) -> list:
+    """Resolve a 'nexup_trailers' sequence/filler step to ordered trailer rows.
+
+    Mirror of main.resolve_nexup_trailer_block (kept here to avoid importing the
+    FastAPI app module into the scheduler thread). Honors:
+      source: 'both'|'movies'|'tv'   mode: 'random'|'sequential'   count: int
+    Random = sample; Sequential = soonest release first. Eligible = any
+    downloaded + enabled trailer whose file exists (NOT filtered by release
+    date — see main.resolve_nexup_trailer_block for why).
+    """
+    source = str(block.get("source", "both")).lower()
+    mode = str(block.get("mode", "random")).lower()
+    try:
+        count = int(block.get("count") or 2)
+    except Exception:
+        count = 2
+    count = max(count, 1)
+
+    rows = []
+    if source in ("movies", "both"):
+        rows += [t for t in db.query(models.ComingSoonTrailer).filter(
+            models.ComingSoonTrailer.status == 'downloaded',
+            models.ComingSoonTrailer.is_enabled == True,
+        ).all() if t.local_path and os.path.exists(t.local_path)]
+    if source in ("tv", "both"):
+        rows += [t for t in db.query(models.ComingSoonTVTrailer).filter(
+            models.ComingSoonTVTrailer.status == 'downloaded',
+            models.ComingSoonTVTrailer.is_enabled == True,
+        ).all() if t.local_path and os.path.exists(t.local_path)]
+
+    if not rows:
+        return []
+    if mode == "sequential":
+        rows.sort(key=lambda t: (t.release_date is None, t.release_date))
+        return rows[:count]
+    if len(rows) > count:
+        return random.sample(rows, count)
+    random.shuffle(rows)
+    return rows
+
+
 def _has_valid_sequence(schedule) -> bool:
     """Check if a schedule has a valid, non-empty sequence definition.
     Returns False for None, empty string, 'null', '[]', or any non-list JSON.
@@ -154,6 +195,7 @@ class Scheduler:
         self._last_nexup_sync_time: Optional[datetime.datetime] = None
         # Track last log-retention cleanup (runs ~once/day from the loop)
         self._last_log_cleanup_time: Optional[datetime.datetime] = None
+        self._last_trailer_cleanup_time: Optional[datetime.datetime] = None
         # Automatic preroll-folder scan runs in its own isolated thread so it can
         # never block or crash the scheduler loop.
         self._last_preroll_scan_time: Optional[datetime.datetime] = None
@@ -322,6 +364,11 @@ class Scheduler:
                 self._maybe_cleanup_logs()
             except Exception as e:
                 _scheduler_log(f"Log cleanup error: {e}", level="ERROR")
+            try:
+                # Enforce NeX-Up trailer retention ~once per hour
+                self._maybe_cleanup_trailers()
+            except Exception as e:
+                _scheduler_log(f"Trailer retention cleanup error: {e}", level="ERROR")
             # NOTE: automatic preroll-folder scanning runs in its OWN dedicated
             # thread (_run_autoscan_loop), NOT here. The scan walks the disk and
             # may spawn ffmpeg for thumbnails; keeping it off the scheduler loop
@@ -408,6 +455,67 @@ class Scheduler:
         deleted = cleanup_old_logs()
         if deleted:
             _scheduler_log(f"Log retention: pruned {deleted} log entries older than retention window")
+
+    def _maybe_cleanup_trailers(self):
+        """Delete downloaded NeX-Up trailers older than the retention window
+        (nexup_trailer_retention_days; 0 = keep forever). Runs at most hourly.
+
+        Removal is measured from the LATER of download time and release date —
+        the same basis the Your Trailers page shows as each trailer's removal
+        date — so a trailer for a movie that hasn't released yet is never reaped
+        early. This is separate from the library-arrival cleanup in the sync
+        (movie now in your library), which is event-based; this is the time-based
+        retention the setting promised but never previously enforced.
+        """
+        now = datetime.datetime.utcnow()
+        last = self._last_trailer_cleanup_time
+        if last is not None and (now - last).total_seconds() < 3600:
+            return
+        self._last_trailer_cleanup_time = now
+
+        db = SessionLocal()
+        try:
+            setting = db.query(models.Setting).first()
+            days = getattr(setting, "nexup_trailer_retention_days", 7) if setting else 7
+            try:
+                days = int(days)
+            except Exception:
+                days = 7
+            if days <= 0:
+                return  # 0 = keep forever
+            cutoff = now - datetime.timedelta(days=days)
+            removed = 0
+            for model in (models.ComingSoonTrailer, models.ComingSoonTVTrailer):
+                # Anchor retention on the LATER of download time and release date,
+                # so a still-upcoming movie's trailer is never reaped before the
+                # movie is even out (an early download would otherwise be removed
+                # well before its release). A trailer is only old enough to remove
+                # once BOTH its download and its release are past the cutoff.
+                old = db.query(model).filter(
+                    model.status == 'downloaded',
+                    model.downloaded_at != None,  # noqa: E711 (SQLAlchemy NULL check)
+                    model.downloaded_at < cutoff,
+                    or_(model.release_date == None, model.release_date < cutoff),  # noqa: E711
+                ).all()
+                for t in old:
+                    if t.local_path and os.path.exists(t.local_path):
+                        try:
+                            os.remove(t.local_path)
+                        except Exception:
+                            pass
+                    db.delete(t)
+                    removed += 1
+            if removed:
+                db.commit()
+                _scheduler_log(f"NeX-Up trailer retention: removed {removed} trailer(s) older than {days} day(s)")
+        except Exception as e:
+            try:
+                db.rollback()
+            except Exception:
+                pass
+            _scheduler_log(f"Trailer retention cleanup failed: {e}", level="ERROR")
+        finally:
+            db.close()
 
     def _check_nexup_auto_sync(self):
         """
@@ -1065,12 +1173,12 @@ class Scheduler:
                     
                     if connector.set_item_intros(item_id, intro_data):
                         applied_count += 1
-                        _scheduler_verbose(f"  ✓ Applied intro to: {item_name}")
+                        _scheduler_verbose(f"  Applied intro to: {item_name}")
                     else:
-                        _scheduler_log(f"  ✗ Failed to apply intro to: {item_name}", level="ERROR")
+                        _scheduler_log(f"  Failed to apply intro to: {item_name}", level="ERROR")
                 
                 except Exception as e:
-                    _scheduler_log(f"  ✗ Error applying to item: {e}", level="ERROR")
+                    _scheduler_log(f"  Error applying to item: {e}", level="ERROR")
                     continue
             
             _scheduler_log(f"Successfully applied prerolls to {applied_count}/{len(search_results)} Jellyfin items.")
@@ -2530,37 +2638,11 @@ class Scheduler:
                         paths.append(os.path.abspath(p.path))
             elif stype == "nexup_trailers":
                 # NeX-Up trailers from coming_soon_trailers / coming_soon_tv_trailers
-                source = str(step.get("source", "both")).lower()
-                try:
-                    count = int(step.get("count") or 2)
-                except Exception:
-                    count = 2
-                now = datetime.datetime.now()
-                trailer_paths = []
-                if source in ("movies", "both"):
-                    movie_trailers = db.query(models.ComingSoonTrailer).filter(
-                        models.ComingSoonTrailer.status == 'downloaded',
-                        models.ComingSoonTrailer.is_enabled == True,
-                        models.ComingSoonTrailer.release_date >= now
-                    ).all()
-                    for t in movie_trailers:
-                        if t.local_path and os.path.exists(t.local_path):
-                            trailer_paths.append(os.path.abspath(t.local_path))
-                if source in ("tv", "both"):
-                    tv_trailers = db.query(models.ComingSoonTVTrailer).filter(
-                        models.ComingSoonTVTrailer.status == 'downloaded',
-                        models.ComingSoonTVTrailer.is_enabled == True,
-                        models.ComingSoonTVTrailer.release_date >= now
-                    ).all()
-                    for t in tv_trailers:
-                        if t.local_path and os.path.exists(t.local_path):
-                            trailer_paths.append(os.path.abspath(t.local_path))
-                if trailer_paths:
-                    k = min(max(count, 1), len(trailer_paths))
-                    picks = random.sample(trailer_paths, k) if len(trailer_paths) > k else trailer_paths
-                    paths.extend(picks)
+                picked = resolve_nexup_trailer_block(step, db)
+                if picked:
+                    paths.extend(os.path.abspath(t.local_path) for t in picked)
                 else:
-                    _scheduler_log(f"Sequence: No NeX-Up trailers available (source={source})", level="WARNING")
+                    _scheduler_log(f"Sequence: No NeX-Up trailers available (source={step.get('source','both')})", level="WARNING")
             elif stype == "coming_soon_list":
                 # Coming Soon List dynamic video (grid or list layout)
                 layout = str(step.get("layout", "grid")).lower()
@@ -2785,33 +2867,8 @@ class Scheduler:
                                     if p:
                                         paths.append(os.path.abspath(p.path))
                             elif stype == "nexup_trailers":
-                                source = str(step.get("source", "both")).lower()
-                                try:
-                                    count = int(step.get("count") or 2)
-                                except Exception:
-                                    count = 2
-                                now = datetime.datetime.now()
-                                trailer_paths = []
-                                if source in ("movies", "both"):
-                                    for t in db.query(models.ComingSoonTrailer).filter(
-                                        models.ComingSoonTrailer.status == 'downloaded',
-                                        models.ComingSoonTrailer.is_enabled == True,
-                                        models.ComingSoonTrailer.release_date >= now
-                                    ).all():
-                                        if t.local_path and os.path.exists(t.local_path):
-                                            trailer_paths.append(os.path.abspath(t.local_path))
-                                if source in ("tv", "both"):
-                                    for t in db.query(models.ComingSoonTVTrailer).filter(
-                                        models.ComingSoonTVTrailer.status == 'downloaded',
-                                        models.ComingSoonTVTrailer.is_enabled == True,
-                                        models.ComingSoonTVTrailer.release_date >= now
-                                    ).all():
-                                        if t.local_path and os.path.exists(t.local_path):
-                                            trailer_paths.append(os.path.abspath(t.local_path))
-                                if trailer_paths:
-                                    k = min(max(count, 1), len(trailer_paths))
-                                    picks = random.sample(trailer_paths, k) if len(trailer_paths) > k else trailer_paths
-                                    paths.extend(picks)
+                                paths.extend(os.path.abspath(t.local_path)
+                                             for t in resolve_nexup_trailer_block(step, db))
                             elif stype == "coming_soon_list":
                                 layout = str(step.get("layout", "grid")).lower()
                                 blend_setting = db.query(models.Setting).first()
@@ -2999,37 +3056,11 @@ class Scheduler:
                             paths.append(os.path.abspath(p.path))
                 
                 elif block_type == "nexup_trailers":
-                    source = str(block.get("source", "both")).lower()
-                    try:
-                        count = int(block.get("count") or 2)
-                    except Exception:
-                        count = 2
-                    now = datetime.datetime.now()
-                    trailer_paths = []
-                    if source in ("movies", "both"):
-                        movie_trailers = db.query(models.ComingSoonTrailer).filter(
-                            models.ComingSoonTrailer.status == 'downloaded',
-                            models.ComingSoonTrailer.is_enabled == True,
-                            models.ComingSoonTrailer.release_date >= now
-                        ).all()
-                        for t in movie_trailers:
-                            if t.local_path and os.path.exists(t.local_path):
-                                trailer_paths.append(os.path.abspath(t.local_path))
-                    if source in ("tv", "both"):
-                        tv_trailers = db.query(models.ComingSoonTVTrailer).filter(
-                            models.ComingSoonTVTrailer.status == 'downloaded',
-                            models.ComingSoonTVTrailer.is_enabled == True,
-                            models.ComingSoonTVTrailer.release_date >= now
-                        ).all()
-                        for t in tv_trailers:
-                            if t.local_path and os.path.exists(t.local_path):
-                                trailer_paths.append(os.path.abspath(t.local_path))
-                    if trailer_paths:
-                        k = min(max(count, 1), len(trailer_paths))
-                        picks = random.sample(trailer_paths, k) if len(trailer_paths) > k else trailer_paths
-                        paths.extend(picks)
+                    picked = resolve_nexup_trailer_block(block, db)
+                    if picked:
+                        paths.extend(os.path.abspath(t.local_path) for t in picked)
                     else:
-                        _scheduler_log(f"FILLER: No NeX-Up trailers available (source={source})", level="WARNING")
+                        _scheduler_log(f"FILLER: No NeX-Up trailers available (source={block.get('source','both')})", level="WARNING")
                 
                 elif block_type == "coming_soon_list":
                     layout = str(block.get("layout", "grid")).lower()

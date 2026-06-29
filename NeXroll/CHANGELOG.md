@@ -1,18 +1,654 @@
 # Changelog
 
+## [2.0.0] - 06-29-2026
+
+**NeXroll v2.0.0** — the stable release of the v2 line, a top-to-bottom modernization of the app. Promotes beta.1 through beta.15; see those entries below for the full detail. Upgrading from v1.x is safe — your data carries over and the first-run wizard is skipped automatically.
+
+### Highlights
+
+- **All-new "Arr-style" interface** — a collapsible sidebar with built-in search and per-section colors, a redesigned dashboard with quick-action tiles, a first-run onboarding wizard, and deep-linkable (refresh-safe) URLs for every page.
+- **Community Prerolls** — search and browse the community library by category, platform, creator, and upload date, with pagination, and one-click downloads.
+- **NeX-Up** — trailers for upcoming Radarr/Sonarr releases with **cookie-free YouTube downloads** (a built-in PO-token provider) in a Plex-friendly H.264 format, plus a Coming Soon List generator and release-date-aware retention.
+- **Plex, Jellyfin & Emby** — download and remotely configure the Jellyfin/Emby plugin from the Connect page; no shared mount required (the plugin streams and caches).
+- **Security & operations** — Require Login now protects the entire API, logs auto-redact API keys/IPs on export, plus a built-in Factory Reset, a Storage Usage view, and Backup/Restore with live progress.
+
+## [2.0.0-beta.15] - 06-29-2026 (beta)
+
+> Community Prerolls pagination, sticky preview volume, one-click Jellyfin plugin
+> download, and plugin playback settings from the Connect page. Upgrade-safe.
+
+### Added
+
+- **Community Prerolls pagination.** Search and Browse now page through the
+  *entire* library (the results header shows the true total) with Prev/Next and
+  a page indicator, instead of only ever showing the first page.
+- **Download the Jellyfin plugin from NeXroll.** The Connect page's Download
+  Plugin link now serves the full plugin **zip** (DLL + meta.json + thumb.png)
+  straight from your NeXroll — bundled into the app and Docker image — so it
+  always matches your build and a bare DLL never fails to register.
+- **Plugin playback settings from the Connect page.** Set the Jellyfin plugin's
+  **Max Intros** (0 = play the whole sequence), Enable for Movies/Episodes, and
+  request timeout from NeXroll and push them to the plugin.
+
+### Fixed
+
+- **Community Prerolls remembers your place.** Downloading an item no longer
+  snaps the list back to the top — you stay on the same page and scroll position.
+- **Preview volume sticks.** The preview players remember the last volume you set
+  instead of resetting to max every time.
+
+### Docs
+
+- Refreshed the wiki for v2 (new Community Prerolls page, updated Home/Getting
+  Started/NeX-Up/Jellyfin/Emby, factory reset + log redaction notes).
+
+## [2.0.0-beta.14] - 06-26-2026 (beta)
+
+> NeX-Up trailer retention fix, dashboard polish, and a sidebar with per-section
+> colors. Upgrade-safe.
+
+### Fixed
+
+- **NeX-Up trailers are no longer auto-removed before the movie releases.**
+  Retention was measured from a trailer's download time, so a trailer grabbed
+  early for an upcoming movie could be deleted before the film was even out (and
+  the "Removed" date shown on Your Trailers could fall *before* the release
+  date). Retention is now measured from the later of download time and release
+  date, in both the displayed removal date and the actual cleanup.
+
+### Changed
+
+- **Sidebar sections now have their own accent colors** for the active item
+  (Library/violet, Schedules/emerald, NeX-Up/gold, Connect/sky, Community/rose,
+  Settings/indigo); Dashboard is unchanged.
+- **Dashboard weekly calendar:** the "Filler" fallback row is gone; when filler
+  is enabled it's shown as a compact badge above the calendar instead. The empty
+  state's "Create a schedule" text is now a link to the schedule creator.
+- **NeX-Up Trailer Storage Path is now set via Browse only** — the field is
+  read-only so a mistyped path can't silently create a stray folder.
+
+## [2.0.0-beta.13] - 06-25-2026 (beta)
+
+> NeX-Up release-date fixes: dates no longer drift by a day, and "Digital Only"
+> now actually hides non-digital trailers. Upgrade-safe.
+
+### Fixed
+
+- **NeX-Up release dates no longer appear a day off.** Dates were rendered with
+  the browser's timezone, so a date-only value could shift the displayed day by
+  one (and disagree with Radarr). Release/air dates are now shown as a stable
+  calendar date — the actual TMDB date, identical regardless of viewer timezone.
+- **"Release Date to Use = Digital Only" now hides non-digital trailers.** The
+  preference previously only affected which trailers got *downloaded* on the next
+  sync; trailers already downloaded under another setting (e.g. a theatrical-only
+  movie) kept showing in the list and playback reel. With Digital Only selected,
+  those are now hidden from the trailers list and from playback (non-destructive
+  — switch the preference back and they return). A note shows how many are hidden.
+  Downloaded trailers now also record their release type so the filter recognizes
+  them.
+
+## [2.0.0-beta.12] - 06-25-2026 (beta)
+
+> Thumbnails now reliably appear and stay put, plus several Community Prerolls
+> and UI fixes. Upgrade-safe.
+
+### Fixed
+
+- **YouTube PO-token downloads now actually work in the Windows build.** The
+  yt-dlp bgutil plugin was never bundled into the packaged app — only the empty
+  `yt_dlp_plugins` namespace shipped — so the token provider ran but yt-dlp
+  couldn't use it, and the System page reported "Components installed; provider
+  not healthy yet" even when the provider was running. The plugin modules are now
+  bundled, and the "is the plugin installed?" check no longer gives a false
+  negative in the packaged app.
+- **Preroll thumbnails reliably display.** Three issues fixed: (1) thumbnails for
+  files whose name contains `...` (e.g. community prerolls) returned "Invalid
+  path" and never loaded — the path-traversal guard wrongly rejected any name
+  containing `..`; (2) a leftover **service worker** cached thumbnails so they
+  showed stale/blank and a hard refresh couldn't clear them — the app now
+  unregisters it and serves preroll media fresh from the network; (3) after
+  rebuilding thumbnails the browser kept showing the old cached image — a
+  cache-bust now forces the regenerated thumbnail to load.
+- **"Reinitialize Thumbnails" shows its status on the Library page**, where the
+  button is, instead of only in the dashboard quick-actions — with processed /
+  generated / cleaned counts and a spinner while it runs.
+- **Community auto-match "failed to link" fixed.** Linking a preroll to a chosen
+  community match failed because the community ID (a URL path with slashes and
+  encoded characters) was sent in the URL; it now goes in the request body.
+- **Index-build progress shows on the Community page** regardless of where the
+  rebuild was started (dashboard button or Community page), and clicking Refresh
+  during a build attaches to it instead of erroring "already in progress".
+
+### Added
+
+- **Edit Preroll modal shows the file's full path** (under "Current file").
+- **Download Diagnostics button on the Logs page** (Settings → Logs), alongside
+  the JSON/CSV export — the same redacted bundle as the System page.
+
+## [2.0.0-beta.11] - 06-23-2026 (beta)
+
+> Fixes Community Prerolls indexing (the library moved servers) and adds a
+> **Browse** view to explore it by category, platform, and creator. Upgrade-safe.
+
+### Added
+
+- **Browse the Community Prerolls library.** A new Browse panel filters the
+  library by **category** (Holidays, Seasons, Clips, Community, Archives…),
+  **platform** (Plex / Jellyfin / Emby), and **creator** — each with counts —
+  and sorts by name, or by newest/oldest after a re-index. Results feed the same
+  preview + download cards as search.
+
+### Fixed
+
+- **Community Prerolls indexing works again.** prerolls.uk became a website and
+  moved its files to mirror servers (`usa`/`uk.prerolls.uk`); NeXroll's default
+  still pointed at the old address, so a rebuild found nothing. It now
+  auto-resolves an active mirror from the published server list, and the server
+  picker shows/uses the right one — the custom-URL **Save** no longer resets your
+  choice when the field is left empty.
+- **The "Index build failed" false alarm.** The progress UI attached to the build
+  stream *before* starting the build, so it read the previous run's end state and
+  reported failure while the build actually ran fine. It now starts the build
+  first, then streams progress. Capturing each file's date during the crawl also
+  fixes the previously non-functional "Latest" row (after one re-index).
+
+## [2.0.0-beta.10] - 06-20-2026 (beta)
+
+> Makes beta.9's junk-thumbnail cleanup actually work, and teaches TV trailer
+> downloads to fetch the *upcoming* season's trailer. Upgrade-safe.
+
+### Fixed
+
+- **Junk TypeScript thumbnails are now actually removed.** beta.9's cleanup
+  missed records whose stored path was *relative* (the common case), so the
+  `*.d.ts.jpg` / `*.ts.jpg` thumbnails kept coming back. Matching is now by path
+  segment (catches absolute and relative paths alike), and a new sweep deletes
+  orphaned thumbnail files left on disk. "Reinitialize Thumbnails" now reports
+  how many junk records and orphan files it cleaned, and the same cleanup runs on
+  every library scan.
+
+### Changed
+
+- **Smarter TV trailer search — fetches the upcoming season.** When a show's
+  next season is greater than 1 and TMDB only offers the original (season-1)
+  trailer, NeXroll now searches YouTube for that specific season (e.g. *"The
+  Bear season 5 official trailer"*) instead of downloading the season-1 trailer.
+  Falls back to the show-level trailer only if the season search finds nothing.
+
+## [2.0.0-beta.9] - 06-19-2026 (beta)
+
+> Adds a built-in **Factory Reset** for returning NeXroll to a fresh-install
+> state — handy for clean re-testing without reinstalling. Upgrade-safe.
+
+### Added
+
+- **Factory Reset (Settings → System → Danger Zone).** Resets NeXroll to a
+  fresh-install state: empties the database (schedules, categories, prerolls,
+  settings) and clears saved connections, dropping you back at first-run
+  onboarding. A confirmation modal (type `RESET` to proceed) lets you optionally
+  also delete downloaded trailers, uploaded prerolls, and the PO-token provider
+  from disk. Tables are emptied rather than dropped, so the full schema is
+  preserved and the reset takes effect immediately without a restart.
+
+### Fixed
+
+- **TypeScript files no longer show up as prerolls/thumbnails.** A scan from
+  before the scanner learned to skip `node_modules` could import the PO-token
+  provider's `*.ts` / `*.d.ts` source files as prerolls (`.ts` doubles as the
+  MPEG-TS video extension), and "Reinitialize Thumbnails" then generated a
+  thumbnail for each — e.g. `index.d.ts.jpg`. NeXroll now purges these junk
+  records (and their thumbnails) during any scan and at the start of a thumbnail
+  rebuild, and the scanner skips `*.d.ts` outright.
+- **Faster Windows install.** The installer now checks whether the Visual C++
+  runtime is already present and skips the `winget` step when it is, instead of
+  invoking winget on every install (which was slow to start even when it had
+  nothing to do).
+
+## [2.0.0-beta.8] - 06-19-2026 (beta)
+
+> The headline fix: beta.7's **cookie-free YouTube downloads now actually work**.
+> The PO-token provider was crashing on startup with the bundled Node, so trailer
+> downloads still hit the "not a bot" wall — the bundled Node is updated and the
+> provider launches correctly now. Trailers also **download in a Plex-friendly
+> format (H.264)** so they play as prerolls instead of silently failing on AV1.
+> Plus real **Backup/Restore progress**, a **Storage Usage** view, a clearer and
+> more honest alternate-trailer + preview flow, **automatic log redaction**, and
+> fixes for a PO-token install that could make the app unresponsive. Upgrade-safe.
+
+### Added
+
+- **Backup & Restore show real progress.** Creating a system backup now streams
+  the archive as it's built and shows a live progress bar with percentage and
+  MB (instead of a spinner that sat there during large exports); database backups
+  stream too. Restores show a real upload percentage, then an "extracting &
+  restoring" phase. A system backup also no longer sweeps in the PO-token
+  provider's thousands of dependency files.
+- **Storage Usage on the Storage page.** Settings → Storage now opens with a
+  breakdown of disk use across prerolls, NeX-Up trailers, thumbnails, and the
+  database — a segmented bar plus per-location cards showing size, share of
+  total, and path. Same data as the dashboard Storage tile, expanded.
+- **Scheduler tile shows "Last applied."** The dashboard Scheduler tile replaces
+  the "Firing today" counter (which was always 0 for everyday schedule types)
+  with the most recently applied schedule and when — a reliable confirmation that
+  the scheduler is actually running and acting.
+- **Logs auto-redact sensitive data.** API keys, tokens, and IP addresses are
+  now stripped from logs everywhere they leave the app — the log viewer, JSON/CSV
+  export, and the diagnostics bundle — so logs can be shared safely. Loopback
+  addresses are kept for debugging; version numbers and timestamps are untouched.
+
+### Fixed
+
+- **Cookie-free YouTube downloads now work (provider no longer crashes).** In
+  beta.7 the PO-token provider exited immediately on the bundled Node.js
+  (`ERR_REQUIRE_ESM`), so trailer downloads still ran into YouTube's bot wall and
+  the System page showed a provider error. The bundled Node is updated to a
+  version that runs the provider, and existing installs launch it correctly too.
+  Docker images get the same update. After updating, the **YouTube Downloads**
+  status on the System page goes green and trailers download again.
+- **Trailers download in a Plex-friendly format (H.264).** Downloads previously
+  preferred AV1, which Plex can't direct-play as a preroll — so a trailer would
+  apply but never appear before playback. Trailers now download as H.264 so they
+  actually play. *Existing AV1 trailers should be re-downloaded to benefit.*
+- **The alternate-trailer flow is clearer and honest.** When the default trailer
+  can't be downloaded, NeXroll no longer flashes an alarming error before opening
+  the picker — the picker now shows the real reason inline. And when you pick an
+  alternate, it downloads **exactly that video** (it used to be able to quietly
+  substitute a different one if your pick failed), so what you choose is what you
+  get.
+- **Older trailers preview again.** Previews now self-heal a trailer's file path
+  when the storage folder moved or the file was re-downloaded with a different
+  extension, and match more robustly — so older trailers play in the dashboard
+  preview instead of being silently skipped. When a clip genuinely can't play
+  (e.g. an older AV1 file), the preview explains why and suggests re-downloading.
+- **A PO-token install could make the app unresponsive — fixed.** The provider
+  now installs alongside the database rather than inside the Prerolls folder, and
+  the media scanner skips dependency folders (`node_modules`, the provider dir),
+  so installing it can no longer flood the library with thousands of files to
+  thumbnail.
+- **Installer bundles the Visual C++ runtime**, which the provider's native
+  dependency can require on a bare Windows install.
+
+## [2.0.0-beta.7] - 06-17-2026 (beta)
+
+> A new **cookie-free YouTube download method** (a PO-token provider clears the
+> "not a bot" wall, with a pick-an-alternate-trailer flow when one's unavailable)
+> and Backup & Restore hardening (restores no longer fail partway, nothing goes
+> missing on the round-trip, bundle previews play, two archive path-traversal
+> holes closed), plus schedule-time, dashboard, and NeX-Up trailer-retention
+> fixes. Upgrade-safe.
+
+### Added
+
+- **New YouTube download method — browser cookies are no longer the default.**
+  Trailer downloads now use a Proof-of-Origin (PO) token provider (bgutil) that
+  automatically clears YouTube's "Sign in to confirm you're not a bot" challenge,
+  so trailers download — on request *and* during sync — **without exporting any
+  browser cookies**. Cookies / sign-in are now an **Advanced** option, used only
+  for the occasional age-restricted trailer; previously they were the primary
+  (and frequently-broken) method. The old "YouTube Authentication" panel is now a
+  **"YouTube Downloads"** card that shows a live **Installed / Enabled / Working**
+  status with a one-click **Test** that mints a real token. Docker images bundle
+  the provider; on Windows it installs in one click from the System page (sets up
+  Node.js + the provider). Internally, the previous ~30-strategy yt-dlp cascade —
+  much of it player clients YouTube has since disabled — was replaced with a lean,
+  token-aware path.
+- **Pick an alternate trailer when the default can't be downloaded.** If a
+  movie/show's trailer is unavailable (region-blocked, removed, age-restricted,
+  …), NeXroll now offers the **top 3 YouTube alternatives** to **preview** in an
+  in-app player and choose from — nothing downloads automatically. Download
+  errors now explain the real reason (e.g. "this video is unavailable in your
+  country") instead of a generic "try again," and a candidate that fails is
+  flagged so you can try another.
+- **NeX-Up Trailer Retention is now enforced.** The Trailer Retention (days)
+  setting was saved but never acted on — downloaded trailers were only removed
+  once their movie/show arrived in your library. The scheduler now runs a
+  time-based cleanup (at most hourly) that deletes downloaded movie and TV
+  trailers older than the retention window, based on when they were downloaded
+  (0 = keep forever). The **Your Trailers** page now also shows each trailer's
+  removal date on movie and TV cards, in both detailed and list views.
+
+### Fixed
+
+- **Schedule start/end times no longer drift.** Enabling or disabling a
+  schedule, or picking a holiday from the holiday browser, could shift its
+  start/end time by your timezone's offset every time (e.g. 9:00 AM creeping to
+  1:00 PM, and occasionally rolling to the next day). The times you set now stay
+  put until you change them.
+- **A schedule you turned off no longer stays pinned as "Currently Showing."**
+  A disabled or expired schedule could remain displayed as the active one while
+  your genuinely-active schedules didn't appear. Turning a schedule off now
+  clears it immediately, and the dashboard re-checks that what it shows is
+  actually active (self-healing a stale pointer).
+- **Restoring a database backup no longer fails when a filler sequence is set.**
+  If you'd configured a filler *sequence* (not just a category), restore aborted
+  with a foreign-key error and rolled back the whole import. That reference is
+  now cleared before the restore proceeds.
+- **Genre → category mappings now survive backup and restore.** They were
+  dropped during every restore (never written to the backup and deleted on the
+  way in), silently losing your genre-based preroll routing. They're now
+  included in the backup and re-linked to the restored categories.
+- **One bad row in a backup no longer discards the good ones.** A single
+  problem entry (e.g. a duplicate category name) used to wipe out everything
+  already restored in that batch; each row is now restored independently, so the
+  rest comes through.
+- **Restoring a full system (ZIP) backup reliably replaces the database.** The
+  old database's leftover write-ahead files could mask the restored data, and on
+  Windows an open database handle could block the swap. The restore now releases
+  the database and clears those leftovers first.
+- **Bundle import preview now plays.** Preview videos stored in category
+  subfolders always failed to load (the player looked in the wrong place); they
+  now play correctly during the import preview.
+- **Security: archive imports can no longer write outside NeXroll's folders.**
+  Restoring a crafted system ZIP or importing a crafted sequence bundle could
+  drop files elsewhere on disk via `..` paths; such entries are now rejected.
+- **Exporting a sequence while editing a schedule now exports that sequence.**
+  From the schedule editor, Export could fail or download an unrelated sequence
+  because it looked one up by the schedule's ID. It now exports the blocks you're
+  actually editing. (A missing sequence also returns a proper "not found" instead
+  of a generic failure.)
+
+## [2.0.0-beta.6] - 06-16-2026 (beta)
+
+> Sequence-and-schedule fixes: scheduled sequences now display correctly,
+> editing a saved sequence updates the schedules built from it, and the
+> Coming Soon List generator fails gracefully. Upgrade-safe.
+
+### Added
+
+- **Editing a saved sequence now updates the schedules built from it.**
+  Schedules created from a saved sequence are linked to it, so changing the
+  sequence's blocks propagates into those schedules automatically. (Schedules
+  created before this update aren't linked yet — recreate them from the
+  sequence to enable propagation.)
+
+### Fixed
+
+- **Scheduled sequences now show in the Currently Showing tile.** A schedule
+  that runs a sequence (rather than a category) showed nothing — or showed its
+  category as "0 prerolls". The tile now recognizes a sequence-based active
+  schedule and labels it "Sequence (Scheduled)".
+- **The Random/Sequential mode is preserved** when a sequence is saved into a
+  schedule (it was silently reverting to Random).
+- **The Saved Sequences cards show the correct preroll count** — trailer,
+  coming-soon, and dynamic blocks were counted as 0; now they match the editor.
+- **Coming Soon List generation gives a clear error** instead of the cryptic
+  "Unexpected token 'I'… is not valid JSON" when something fails (e.g. the
+  storage path is on an unreachable drive) — it now names the actual problem.
+
+## [2.0.0-beta.5] - 06-15-2026 (beta)
+
+> URL routing for every page, a NeX-Up sequence upgrade, and a batch of
+> NeX-Up trailer/cookie fixes. Upgrade-safe — existing sequences keep working
+> unchanged.
+
+### Added
+
+- **Real URL routing.** Every page now has its own address
+  (`#/settings/storage`, `#/nexup/trailers`, ...), so pages are bookmarkable
+  and shareable, the browser Back/Forward buttons work, and refreshing keeps
+  you on the page you were viewing instead of bouncing to the Dashboard.
+- **NeX-Up trailer sequence blocks now have a Mode: Random or Sequential.**
+  Random shuffles the chosen source (Movies / TV / Both); Sequential plays the
+  soonest-releasing trailers in order — a proper coming-attractions reel.
+  Existing trailer blocks default to Random (their current behavior), so
+  nothing changes for sequences you already built.
+- **Install Deno from the System page.** If the Deno runtime (used for
+  YouTube/NeX-Up extraction) is missing, a one-click install is offered on
+  Windows. In Docker it shows a note instead (Deno ships in the image).
+
+### Fixed
+
+- **NeX-Up trailer sequences now include all your trailers.** A sequence set
+  to a small count could show only one trailer because the pool excluded
+  trailers with a blank or already-passed release date. The pool is now every
+  downloaded, enabled trailer you have, refreshed live as you add/remove them.
+- **Trailers that exist on YouTube no longer fail with a misleading "No
+  trailer source available."** Downloads use a more forgiving video-format
+  selection, and when a download genuinely fails the message now explains the
+  real reason instead of blaming a missing source.
+- **YouTube cookie test fixed** — it reported failure even when your cookies
+  were valid (it called a yt-dlp CLI that doesn't exist in the packaged build,
+  and it misread a harmless "format not available" as an error). It now tests
+  through the real download engine and can also check a specific trailer URL.
+- **Trailer download errors no longer always blame expired cookies** — a
+  transient YouTube failure used to tell you to re-export cookies that were
+  fine. The cookie advice now appears only for genuine sign-in/bot blocks;
+  other failures report the real reason and suggest retrying.
+- **YouTube cookie setup opens the browser you actually picked** (selecting
+  Firefox previously opened the default browser on Windows). If the chosen
+  browser isn't installed, it now says so instead of silently using another.
+- **Deno that was already installed is now detected** even if it isn't on the
+  service's PATH yet (this is why a freshly-installed Deno could still show
+  "not found").
+- **Trailers move with the storage path** — changing the NeX-Up storage
+  location now relocates existing trailer files into the new folder.
+- **Dashboard "Full Calendar" button** opens the calendar page (it was opening
+  the schedules list).
+- **Saved Sequences cards** — the Delete button is aligned with the other
+  action buttons and no longer floats off on its own line.
+
+## [2.0.0-beta.4] - 06-13-2026 (beta)
+
+> Fixes the YouTube trailer "Test" button (it was misreporting failures),
+> the weekly calendar getting cut off, and a sidebar scroll glitch. Plus a
+> bit of fun on the loading screen. Upgrade-safe.
+
+### Fixed
+
+- **YouTube "Test Download" was unreliable.** It invoked a `yt-dlp`
+  command-line binary that doesn't exist in the Docker image or the Windows
+  build (yt-dlp is bundled as a Python module), so the test failed and showed
+  a confusing error even when your cookies were valid. The test now runs
+  through the same engine real downloads use, checks a known-good control
+  video to confirm sign-in works, and lets you paste a specific trailer URL —
+  so it can tell you "authentication is working, but that one video is
+  unavailable" instead of wrongly blaming your cookies.
+- **Browser-cookie downloads were silently broken** — the
+  `--cookies-from-browser` option was passed to yt-dlp in the wrong form, so
+  that authentication path never worked. Fixed (uploaded `youtube_cookies.txt`
+  files were unaffected).
+- **Clearer trailer error messages** — NeXroll now distinguishes stale/missing
+  cookies from a video that is simply private, removed, members-only, or
+  age-restricted, so you are not told to re-export cookies when the cookies
+  are fine.
+- **"This Week's Schedule" tile no longer cuts off** — it now expands to show
+  every active schedule for the week.
+- **Sidebar no longer drifts when scrolling** a long page.
+
+### Changed
+
+- The loading screen now shows a rotating set of dry, theater-themed quips.
+
+## [2.0.0-beta.3] - 06-12-2026 (beta)
+
+> Docker feedback fixes plus a major dashboard refinement round: unified
+> tile design with quick actions built into the dashboard, big performance
+> fixes, and a rebuilt tile height system. Upgrade-safe.
+
+### Fixed
+
+- **Community prerolls index survived Docker updates** (#Docker feedback) —
+  the index was stored inside the container filesystem and wiped on every
+  image update ("No index" after each upgrade). It now lives on the /data
+  volume; a one-time migration adopts an existing copy where present.
+- **NeX-Up trailers no longer appear twice** (once Uncategorized) — the
+  library scanner also indexed the trailer storage folder and created
+  duplicate rows. The scanner now leaves NeX-Up's tree alone and cleans up
+  the duplicates it created on the next scan.
+- **Six icon buttons rendered as empty boxes** (Edit category, Edit preroll,
+  and four Close buttons) — leftovers from the emoji removal; restored with
+  proper icons.
+- **Dashboard scroll position and text selection reset every few seconds** —
+  two background updaters (a leftover countdown timer and the status
+  heartbeat) re-rendered the entire app once per second / per heartbeat.
+  Both now update only when something actually changed.
+- **Tile heights were content- and position-dependent** (feature tiles grew
+  when moved in edit mode; later, tile content clipped or overflowed). The
+  height measurement system never actually ran due to a mount-order bug; it
+  now measures correctly — small tiles fit their content exactly, the wide
+  tiles (Video Quality, Upcoming) match the same height, identical in
+  locked and edit mode at any position.
+- Native time/date pickers, dropdowns, and scrollbars now follow dark mode
+  (the app never declared color-scheme).
+- Plex server name now shows on the Servers tile (Plex reports it under a
+  different field than Jellyfin/Emby).
+
+### Changed
+
+- **Dashboard tiles unified and enriched** — every stat tile shares one
+  detail-row design; added: server address row (Servers), external/mapped
+  count and last-added (Prerolls), timezone, firing-today, and Now/Next
+  rows (Scheduler — countdown boxes removed), per-state icon rows
+  (Currently Showing), response time, index freshness and size (Community),
+  trailer storage bar (NeX-Up).
+- **Every tile header has an action button** — navigation arrows to the
+  relevant page, Stop/Start on Scheduler, Preview on Currently Showing.
+- **Quick Actions moved into the dashboard** — the separate page is gone;
+  a toolbar above the tiles offers Rebuild Thumbs, Refresh Data, NeX-Up
+  Sync, Scan Files, Rebuild Index, Backup DB, and Check Updates alongside
+  the layout controls.
+- **Video Quality tile redesigned** — a segmented distribution bar with a
+  count/percentage legend replaces the old chart, and the charting library
+  was dropped entirely: **the app bundle is 21% (98 kB) smaller**.
+- **Upcoming Schedules** lists up to 30 entries, scrolling past ~4 with a
+  fade hint instead of stretching the tile.
+- **Schedule time pickers** gained one-click preset chips (9:00 AM, 12:00
+  PM, 6:00 PM, 9:00 PM; end-of-day and Clear for end fields) in both the
+  create form and edit modal.
+- **Loading screen** now shows a random theater pre-show line ("And now...
+  our feature presentation").
+
+## [2.0.0-beta.2] - 06-11-2026 (beta)
+
+> Security and polish round for the v2 beta: **Require Login now protects the
+> entire API**, the dashboard and Categories pages got a responsive/density
+> pass, and the German-umlaut rendering bug (#31) is fixed. Upgrade-safe.
+
+### Security
+
+- **Global auth gate.** With Require Login enabled, every endpoint now requires
+  a valid session or API key — previously only a handful of routes enforced
+  auth, leaving uploads, deletes, schedules, and settings callable without
+  logging in. Exempt: the login screen surface, `/health`, static assets, and
+  the Jellyfin/Emby plugin endpoints (which keep their own API-key auth).
+  Preroll thumbnails are gated too. **Note for automation users:** external
+  scripts hitting the API now need an API key (read scope for GET, write for
+  changes) when Require Login is on.
+
+### Added
+
+- **Update indicator in the sidebar footer** — a quiet pill (icon when
+  collapsed) linking to the new release; replaces the old top-of-page banners.
+- **NeX-Up dashboard tile** shows trailer storage used vs the configured cap
+  with a usage bar (turns red at 90%).
+- **Add Prerolls > Import Folder** now explains how Automatic Folder Monitoring
+  (Settings > Storage) keeps an imported folder in sync, with a direct link.
+
+### Changed
+
+- **Dashboard tiles condensed** — tighter padding, smaller headers, reduced
+  min-height and grid gap. The Video Quality tile is now half-height (Medium)
+  and sized to its content; existing saved layouts migrate once automatically.
+- **Page title/description headers removed app-wide** for a cleaner,
+  content-first layout (the sidebar already labels every page).
+- **Categories page refresh** — standard v2 button styles, a responsive
+  search/filter toolbar that stacks on phones, theme-aware bulk-selection
+  banner (was unreadable in dark mode), and a list view that converts to
+  stacked cards on mobile.
+- Dashboard edit-mode hint no longer references the removed S/M/L size
+  controls.
+- Removed an unused grid library from the frontend bundle (~23 kB smaller).
+
+### Fixed
+
+- **German umlauts and accented characters** rendered as garbage in Coming Soon
+  lists and dynamic prerolls (#31) — FFmpeg drawtext now resolves a real
+  Unicode font on Windows, Linux, and Docker (DejaVu/Liberation fonts added to
+  the Docker image), and the German/Spanish/French preset labels were
+  corrected.
+- **Right edge of every page was cut off below ~1700px** window width with the
+  sidebar expanded (page frame exceeded its column by its own padding).
+- **Dashboard tiles on phones** — wide feature tiles crushed the stat tiles
+  into a thin sliver and overflowed the screen; tiles now stack cleanly in one
+  column.
+- **Categories page overflowed on phones** (had to zoom out): the toolbar used
+  fixed percentage widths, and the list view forced a table min-width that
+  defeated its own mobile card layout.
+- Consistent spacing between stacked cards on Settings pages.
+- Logging in now reloads the app so all data loads under the auth gate instead
+  of showing empty pages until a manual refresh.
+
+### Internal
+
+- `scripts/bump_version.py` bumps all four version locations in one shot
+  (they had drifted when bumped by hand).
+- PR-validation CI workflow (frontend build + backend syntax check).
+- Dropped unused `alembic` and `APScheduler` from requirements.
+
+## [2.0.0-beta.1] - 06-09-2026 (beta)
+
+> First beta of the NeXroll v2 line — a top-to-bottom modern "Arr-style"
+> interface overhaul, built on top of 1.14. **Upgrade-safe:** existing installs
+> keep all their data and skip the new first-run wizard automatically.
+
+### Added
+
+- **Collapsible Arr-style sidebar** replaces the top tab bar — an expanding tree
+  of sections/sub-pages, collapsible to an icon-only rail (remembered across
+  sessions), off-canvas drawer on narrow screens. Status/theme/user move to a
+  slim top bar; the logo is centered in the sidebar header.
+- **Sidebar footer resource links** as icons (GitHub, Discord, Reddit, Ko-fi as
+  a heart) with the version.
+- **Sticky page headers** that stay pinned under the top bar while scrolling.
+- **First-run onboarding wizard** — guided setup for media server
+  (Plex/Jellyfin/Emby), optional Radarr/Sonarr, storage folder, and admin
+  account; every step skippable, Plex can hand off to full OAuth.
+- **Toasts** for non-blocking success/info feedback (errors/confirms keep the
+  dialog).
+- **Reusable empty-state** pattern across Library, Categories, Video Scaling,
+  NeX-Up Trailers, Logs, Schedules, and Community.
+- **Standardized button system** (primary/secondary/success/danger/info/outline).
+
+### Changed
+
+- **Page reorganization:** Dashboard standalone; new Library section (All
+  Prerolls, Add Prerolls, Categories, Video Scaling); Quick Actions promoted to
+  top-level. Section nav is driven entirely by the sidebar tree.
+- **Connect page redesigned** (Plex/Jellyfin/Emby) with branded status heroes;
+  Plex leads with the recommended Stable Token method plus a Docker/remote hint.
+- **Community Prerolls redesigned** — status hero, unified search toolbar,
+  refined result rows, cleaned-up random section.
+- **Create New Schedule reorganized** into numbered section cards with themed
+  fields and a sticky create bar.
+- **My Schedules / Saved Sequences** refreshed; Edit Schedule and sequence
+  import/export modals brought in line.
+- **All emojis removed** UI-wide (replaced with lucide icons or words); stray
+  Unicode control glyphs swapped for icons.
+- Dark/light theming fixes throughout (whole viewport follows the theme), themed
+  scrollbars, keyboard focus rings, smoother sidebar animation.
+
+### Fixed
+
+- **Community index build no longer hangs** — runs on a background thread and
+  reports real, gradual progress (asymptotic curve) via a smooth animated bar,
+  instead of blocking the request and racing to "done."
+
+### Migration / upgrade notes
+
+- A new `settings.onboarding_complete` column is added automatically on first
+  launch. Existing databases are detected (a configured server, or any
+  prerolls/categories present) and marked complete, so upgraders go straight to
+  the new UI. Only genuinely fresh installs see onboarding.
+- New endpoints: `GET /onboarding/status`, `POST /onboarding/complete`.
+
 ## [1.14.0] - 06-09-2026 (stable)
 
 > Stable release of the 1.14 line, promoting 1.14.0-beta.1 and 1.14.0-beta.2.
 > No code changes from beta.2 — version bump and stable promotion only.
 
-Rolls up everything from the 1.14 betas:
-
-- **Connections UI overhaul** plus scheduler, plugin, and Plex OAuth fixes
-  (1.14.0-beta.1).
-- **Dashboard layout overhaul** — a uniform, aligned stat-tile grid with the
-  weekly calendar as a reorderable full-width tile (1.14.0-beta.2).
-
-See the 1.14.0-beta.1 / beta.2 entries below for full details.
+Rolls up the 1.14 betas: the **Connections UI overhaul** plus scheduler/plugin/
+Plex-OAuth fixes (beta.1), and the **Dashboard layout overhaul** (beta.2). See
+those entries below for full details.
 
 ## [1.14.0-beta.2] - 06-05-2026 (beta)
 

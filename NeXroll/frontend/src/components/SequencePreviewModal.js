@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
+import { Film, Inbox } from 'lucide-react';
 // eslint-disable-next-line no-unused-vars
 import SequenceTimeline from './SequenceTimeline';
 // eslint-disable-next-line no-unused-vars
@@ -308,15 +309,15 @@ const SequencePreviewModal = ({ isOpen, onClose, blocks = [], categories = [], p
   // eslint-disable-next-line no-unused-vars
   const getBlockIcon = (type) => {
     const icons = {
-      preroll: '🎬',
-      fixed: '📌',
-      random: '🎲',
-      sequential: '📋',
+      preroll: '',
+      fixed: '',
+      random: '',
+      sequential: '',
       queue: '⏭️',
-      sequence: '🔗',
+      sequence: '',
       separator: '┃',
     };
-    return icons[type] || '❓';
+    return icons[type] || '';
   };
 
   // Get block color
@@ -391,7 +392,7 @@ const SequencePreviewModal = ({ isOpen, onClose, blocks = [], categories = [], p
           }}
         >
           <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
-            <span style={{ fontSize: '1.5rem' }}>🎬</span>
+            <span style={{ display: 'flex', alignItems: 'center', color: 'var(--button-bg)' }}><Film size={22} /></span>
             <div>
               <h3 style={{ margin: 0, fontSize: '1.1rem', color: 'var(--text-color)' }}>
                 {sequenceName}
@@ -428,7 +429,7 @@ const SequencePreviewModal = ({ isOpen, onClose, blocks = [], categories = [], p
             }}
             title="Close"
           >
-            ✕
+            
           </button>
         </div>
 
@@ -446,7 +447,7 @@ const SequencePreviewModal = ({ isOpen, onClose, blocks = [], categories = [], p
                 minHeight: '400px',
               }}
             >
-              <div style={{ fontSize: '4rem', marginBottom: '1rem', opacity: 0.5 }}>🎬</div>
+              <div style={{ marginBottom: '1rem', opacity: 0.5, display: 'flex', justifyContent: 'center' }}><Inbox size={56} /></div>
               <h3 style={{ color: 'var(--text-color)', marginBottom: '0.5rem', margin: 0 }}>
                 No Blocks in Sequence
               </h3>

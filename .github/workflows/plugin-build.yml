@@ -1,0 +1,65 @@
+name: Build and Attach Jellyfin Plugin
+
+# Builds the NeXroll Intros Jellyfin plugin and attaches the install zip
+# (NeXroll.Jellyfin-<version>.zip = DLL + meta.json + thumb.png) to the matching
+# GitHub release, so users always have a ready download for the current plugin
+# instead of building it themselves.
+#
+# Triggered on tag push (not `release: published`) on purpose: release-triggered
+# workflows only run from the default branch, but releases here are tagged from
+# the active feature branch. A tag-push workflow runs from the tagged commit, so
+# it works regardless of which branch the release came from. It waits for the
+# GitHub release to exist before uploading (the release is created moments after
+# the tag is pushed).
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Existing release tag to attach the plugin to (e.g. v2.0.0-beta.13)'
+        required: true
+
+jobs:
+  build-plugin:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write   # required to upload release assets
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '9.0.x'
+
+      - name: Build + package plugin
+        shell: pwsh
+        working-directory: Plugins/NeXroll.Jellyfin
+        run: ./package.ps1
+
+      - name: Resolve release tag
+        id: tag
+        run: |
+          if [ "${{ github.event_name }}" = "push" ]; then
+            echo "tag=${GITHUB_REF#refs/tags/}" >> "$GITHUB_OUTPUT"
+          else
+            echo "tag=${{ github.event.inputs.tag }}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Attach plugin zip to release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          zip=$(ls Plugins/NeXroll.Jellyfin/NeXroll.Jellyfin-*.zip | head -1)
+          if [ -z "$zip" ]; then echo "No plugin zip found"; exit 1; fi
+          tag="${{ steps.tag.outputs.tag }}"
+          for i in 1 2 3 4 5 6; do
+            if gh release view "$tag" >/dev/null 2>&1; then
+              gh release upload "$tag" "$zip" --clobber
+              echo "Uploaded $zip to $tag"; exit 0
+            fi
+            echo "Release $tag not published yet, waiting 10s ($i/6)…"; sleep 10
+          done
+          echo "Release $tag never appeared — create the GitHub release for this tag, then re-run."; exit 1

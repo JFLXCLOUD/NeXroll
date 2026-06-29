@@ -114,18 +114,18 @@ const SequenceStats = ({ blocks = [], categories = [], prerolls = [], compact = 
   // Get icon for block type
   const getBlockIcon = (type) => {
     const icons = {
-      preroll: '🎬',
-      fixed: '📌',
-      random: '🎲',
-      sequential: '📋',
+      preroll: '',
+      fixed: '',
+      random: '',
+      sequential: '',
       queue: '⏭️',
-      nexup_trailers: '🎞️',
-      coming_soon_list: '📅',
-      dynamic_preroll: '✨',
-      sequence: '🔗',
+      nexup_trailers: '',
+      coming_soon_list: '',
+      dynamic_preroll: '',
+      sequence: '',
       separator: '┃',
     };
-    return icons[type] || '❓';
+    return icons[type] || '';
   };
 
   // Get friendly label for block type
@@ -157,7 +157,7 @@ const SequenceStats = ({ blocks = [], categories = [], prerolls = [], compact = 
         }}
       >
         <p style={{ fontSize: '0.95rem', color: '#9ca3af', margin: 0 }}>
-          📊 No statistics available. Add blocks to see stats.
+          No statistics available. Add blocks to see stats.
         </p>
       </div>
     );
@@ -210,7 +210,7 @@ const SequenceStats = ({ blocks = [], categories = [], prerolls = [], compact = 
     >
       {/* Header */}
       <h3 style={{ margin: 0, marginBottom: '1.5rem', fontSize: '1.1rem', color: 'var(--text-color)' }}>
-        📊 Sequence Statistics
+        Sequence Statistics
       </h3>
 
       {/* Main Stats Grid */}
@@ -252,7 +252,7 @@ const SequenceStats = ({ blocks = [], categories = [], prerolls = [], compact = 
           }}
         >
           <div style={{ fontSize: '0.8rem', color: '#9ca3af', marginBottom: '0.5rem', textTransform: 'uppercase' }}>
-            🎬 Est. Prerolls
+            Est. Prerolls
           </div>
           <div style={{ fontSize: '1.8rem', fontWeight: 'bold', color: '#f59e0b' }}>
             {stats.estimatedPrerollCount}
@@ -272,7 +272,7 @@ const SequenceStats = ({ blocks = [], categories = [], prerolls = [], compact = 
           }}
         >
           <div style={{ fontSize: '0.8rem', color: '#9ca3af', marginBottom: '0.5rem', textTransform: 'uppercase' }}>
-            🔢 Total Blocks
+            Total Blocks
           </div>
           <div style={{ fontSize: '1.8rem', fontWeight: 'bold', color: '#10b981' }}>
             {stats.totalBlocks}
@@ -351,36 +351,31 @@ const SequenceStats = ({ blocks = [], categories = [], prerolls = [], compact = 
         }}
       >
         <h4 style={{ margin: 0, marginBottom: '0.75rem', fontSize: '0.95rem', color: 'var(--text-color)' }}>
-          💡 Quick Insights
+          Quick Insights
         </h4>
         <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', fontSize: '0.85rem', color: '#9ca3af' }}>
           {stats.totalDuration > 600 && (
             <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-              <span>⚠️</span>
               <span>Long sequence (&gt;10 min) - users may skip prerolls</span>
             </div>
           )}
           {stats.totalDuration < 60 && (
             <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-              <span>⚡</span>
               <span>Quick sequence (&lt;1 min) - great for fast-paced viewing</span>
             </div>
           )}
           {stats.blockTypes.random && stats.blockTypes.random > 2 && (
             <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-              <span>🎲</span>
               <span>Lots of randomization - sequence will vary each playback</span>
             </div>
           )}
           {stats.blockTypes.preroll && stats.totalBlocks === stats.blockTypes.preroll && (
             <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-              <span>🎯</span>
               <span>Fixed sequence - plays identically every time</span>
             </div>
           )}
           {stats.categoriesUsed > 5 && (
             <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-              <span>🌈</span>
               <span>Diverse sequence using {stats.categoriesUsed} different categories</span>
             </div>
           )}

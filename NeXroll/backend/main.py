@@ -101,6 +101,8 @@ def ensure_schema() -> None:
                 _sqlite_add_column("schedules", "holiday_name TEXT")
             if not _sqlite_has_column("schedules", "holiday_country"):
                 _sqlite_add_column("schedules", "holiday_country TEXT")
+            if not _sqlite_has_column("schedules", "source_sequence_id"):
+                _sqlite_add_column("schedules", "source_sequence_id INTEGER")
 
             # Holiday presets: ensure date range fields and is_recurring
             for col, ddl in [
@@ -429,7 +431,49 @@ def ensure_schema() -> None:
             for col_name, col_def in auth_columns:
                 if not _sqlite_has_column("settings", col_name):
                     _sqlite_add_column("settings", col_def)
-            
+
+            # v2 onboarding wizard completion flag.
+            # When this column is freshly added, the database predates v2. Existing
+            # installs must NOT be forced through the first-run wizard, so backfill
+            # onboarding_complete=1 whenever there are signs of prior configuration
+            # (a configured server, or any prerolls/categories). A genuinely fresh
+            # DB leaves it 0 so the wizard shows.
+            if not _sqlite_has_column("settings", "onboarding_complete"):
+                _sqlite_add_column("settings", "onboarding_complete BOOLEAN DEFAULT 0")
+                try:
+                    with engine.connect() as _conn:
+                        def _scalar(sql):
+                            try:
+                                r = _conn.exec_driver_sql(sql).fetchone()
+                                return r[0] if r else None
+                            except Exception:
+                                return None
+                        has_server = bool(_scalar(
+                            "SELECT 1 FROM settings WHERE "
+                            "COALESCE(plex_token,'')<>'' OR COALESCE(plex_url,'')<>'' OR "
+                            "COALESCE(jellyfin_url,'')<>'' OR COALESCE(emby_url,'')<>'' LIMIT 1"
+                        ))
+                        preroll_count = _scalar("SELECT COUNT(*) FROM prerolls") or 0
+                        category_count = _scalar("SELECT COUNT(*) FROM categories") or 0
+                        if has_server or preroll_count > 0 or category_count > 0:
+                            if not _scalar("SELECT 1 FROM settings LIMIT 1"):
+                                _conn.exec_driver_sql("INSERT INTO settings (onboarding_complete) VALUES (1)")
+                            else:
+                                _conn.exec_driver_sql("UPDATE settings SET onboarding_complete = 1")
+                            try:
+                                _conn.commit()
+                            except Exception:
+                                pass
+                            print(
+                                ">>> ONBOARDING MIGRATION: Existing install detected "
+                                f"(server={has_server}, prerolls={preroll_count}, categories={category_count}); "
+                                "marked onboarding_complete=1 (wizard skipped for upgraders)"
+                            )
+                        else:
+                            print(">>> ONBOARDING MIGRATION: Fresh database; onboarding wizard will be shown")
+                except Exception as _e:
+                    print(f">>> ONBOARDING MIGRATION ERROR: {_e}")
+
             # Add update system settings columns
             update_columns = [
                 ("update_check_interval", "update_check_interval TEXT DEFAULT 'daily'"),
@@ -621,6 +665,8 @@ def ensure_settings_schema_now() -> None:
                 "preroll_folder": "TEXT",
                 # Ignored conflicts
                 "ignored_conflicts": "TEXT",
+                # v2 onboarding wizard completion flag
+                "onboarding_complete": "BOOLEAN",
             }
             for col, ddl in need.items():
                 if col not in cols:
@@ -637,7 +683,52 @@ def ensure_settings_schema_now() -> None:
                             _file_log(f">>> SCHEMA MIGRATION: Skipped settings.{col}: {e}")
                         except Exception:
                             pass
-        
+
+            # v2 onboarding backfill: if onboarding_complete was just added, this is an
+            # upgrade from a pre-v2 database. Existing installs must NOT be forced through
+            # the first-run wizard, so mark onboarding complete when there are any signs of
+            # prior configuration (a server connection, or any prerolls/categories already
+            # present). A genuinely fresh DB leaves it False so the wizard shows.
+            if "onboarding_complete" in added_columns:
+                try:
+                    def _scalar(sql):
+                        try:
+                            r = conn.exec_driver_sql(sql).fetchone()
+                            return r[0] if r else None
+                        except Exception:
+                            return None
+
+                    has_server = bool(_scalar(
+                        "SELECT 1 FROM settings WHERE "
+                        "COALESCE(plex_token,'')<>'' OR COALESCE(plex_url,'')<>'' OR "
+                        "COALESCE(jellyfin_url,'')<>'' OR COALESCE(emby_url,'')<>'' LIMIT 1"
+                    ))
+                    preroll_count = _scalar("SELECT COUNT(*) FROM prerolls") or 0
+                    category_count = _scalar("SELECT COUNT(*) FROM categories") or 0
+
+                    if has_server or preroll_count > 0 or category_count > 0:
+                        # Ensure a settings row exists, then mark complete.
+                        if not _scalar("SELECT 1 FROM settings LIMIT 1"):
+                            conn.exec_driver_sql("INSERT INTO settings (onboarding_complete) VALUES (1)")
+                        else:
+                            conn.exec_driver_sql("UPDATE settings SET onboarding_complete = 1")
+                        try:
+                            conn.commit()
+                        except Exception:
+                            pass
+                        _file_log(
+                            ">>> ONBOARDING MIGRATION: Existing install detected "
+                            f"(server={has_server}, prerolls={preroll_count}, categories={category_count}); "
+                            "marked onboarding_complete=1 (wizard skipped for upgraders)"
+                        )
+                    else:
+                        _file_log(">>> ONBOARDING MIGRATION: Fresh database; onboarding wizard will be shown")
+                except Exception as e:
+                    try:
+                        _file_log(f">>> ONBOARDING MIGRATION ERROR: {e}", level="ERROR")
+                    except Exception:
+                        pass
+
         try:
             if added_columns:
                 _file_log(f">>> SCHEMA MIGRATION COMPLETE: Added {len(added_columns)} column(s): {', '.join(added_columns)}")
@@ -695,6 +786,104 @@ def _migrate_legacy_api_keys():
             pass
 
 _migrate_legacy_api_keys()
+
+def resolve_nexup_trailer_block(block: dict, db) -> list:
+    """Resolve a sequence/filler 'nexup_trailers' block to an ordered list of
+    trailer rows (movie and/or TV ComingSoonTrailer objects), honoring:
+
+      source: 'both' | 'movies' | 'tv'   which trailer pools to draw from
+      mode:   'random' | 'sequential'    random.sample vs soonest-release-first
+      count:  int                        how many to return (both modes)
+
+    Single source of truth so every resolution site (sequence preview, apply,
+    filler, scheduler) behaves identically. Returns a list of model rows; the
+    caller maps them to paths or preview dicts as needed.
+
+    Eligible = every downloaded + enabled trailer whose file exists, regardless
+    of release date. We deliberately do NOT filter on release_date >= now:
+    that dropped trailers with a blank date (manual adds leave it NULL) and
+    yanked a trailer from a sequence the moment its release date passed, which
+    surprised users ("I have 3 trailers but only 1 plays"). Trailers for movies
+    that land in your library are still removed by the sync's expiry cleanup.
+    """
+    source = str(block.get("source", "both")).lower()
+    mode = str(block.get("mode", "random")).lower()
+    try:
+        count = int(block.get("count") or 2)
+    except Exception:
+        count = 2
+    count = max(count, 1)
+
+    rows = []
+    if source in ("movies", "both"):
+        rows += [t for t in db.query(models.ComingSoonTrailer).filter(
+            models.ComingSoonTrailer.status == 'downloaded',
+            models.ComingSoonTrailer.is_enabled == True,
+        ).all() if t.local_path and os.path.exists(t.local_path)]
+    if source in ("tv", "both"):
+        rows += [t for t in db.query(models.ComingSoonTVTrailer).filter(
+            models.ComingSoonTVTrailer.status == 'downloaded',
+            models.ComingSoonTVTrailer.is_enabled == True,
+        ).all() if t.local_path and os.path.exists(t.local_path)]
+
+    if not rows:
+        return []
+
+    if mode == "sequential":
+        # Deterministic: soonest release first (None dates sort last).
+        rows.sort(key=lambda t: (t.release_date is None, t.release_date))
+        return rows[:count]
+    # Random (default, and the historical behavior): shuffle the selected
+    # source pool, then take count.
+    if len(rows) > count:
+        return random.sample(rows, count)
+    random.shuffle(rows)
+    return rows
+
+
+def _relocate_nexup_trailers(db, new_storage_path: str):
+    """Move existing trailer files into new_storage_path and update their DB
+    local_path. Movies -> <new>/movies, TV -> <new>/tv. Called when the NeX-Up
+    storage path changes so downloads don't stay scattered in the old folder.
+
+    Returns (moved_count, failed_count). Safe/idempotent: files already under
+    the new path are left alone; a missing source is skipped (not an error).
+    """
+    import shutil
+    moved = 0
+    failed = 0
+    new_root = os.path.normpath(new_storage_path)
+
+    def _move(rows, subdir):
+        nonlocal moved, failed
+        dest_dir = os.path.join(new_root, subdir)
+        for t in rows:
+            src = t.local_path
+            if not src or not os.path.exists(src):
+                continue  # nothing to move (already gone / missing)
+            # Already under the new storage root? leave it.
+            if os.path.normcase(os.path.normpath(src)).startswith(os.path.normcase(new_root) + os.sep):
+                continue
+            try:
+                os.makedirs(dest_dir, exist_ok=True)
+                dest = os.path.join(dest_dir, os.path.basename(src))
+                # Avoid clobbering a different file with the same name.
+                if os.path.exists(dest) and os.path.abspath(dest) != os.path.abspath(src):
+                    base, ext = os.path.splitext(os.path.basename(src))
+                    dest = os.path.join(dest_dir, f"{base}_{t.id}{ext}")
+                shutil.move(src, dest)
+                t.local_path = dest
+                moved += 1
+            except Exception as e:
+                failed += 1
+                _file_log(f"NeX-Up relocate: failed to move {src} -> {dest_dir}: {e}")
+
+    _move(db.query(models.ComingSoonTrailer).all(), "movies")
+    _move(db.query(models.ComingSoonTVTrailer).all(), "tv")
+    if moved:
+        db.commit()
+    return moved, failed
+
 
 def calculate_file_hash(file_path: str) -> str:
     """Calculate SHA256 hash of a file for duplicate detection"""
@@ -1111,6 +1300,73 @@ def _run_subprocess(cmd, **kwargs):
         # Fallback if anything above fails
         import subprocess as _sp
         return _sp.run(cmd, **kwargs)
+
+
+def _potoken_home() -> str:
+    """Directory the YouTube PO-token provider is installed/managed under.
+
+    Deliberately the DB directory, NOT data_dir/PREROLLS_DIR. On Windows
+    data_dir == prerolls_dir (both ...\\NeXroll\\Prerolls), so installing the
+    provider under data_dir dropped its node_modules *inside* the scanned
+    library and the scanner choked on the TypeScript files. The DB dir is always
+    one level up (ProgramData\\NeXroll on Windows, /data on Docker) and is never
+    scanned. Falls back to data_dir if DB_PATH can't be resolved.
+    """
+    try:
+        d = os.path.dirname(DB_PATH)
+        return d or data_dir
+    except Exception:
+        return data_dir
+
+
+def _is_running_in_docker() -> bool:
+    """Best-effort detection of running inside a container. Used to disable the
+    dependency-install actions there (deps are baked into the image; a runtime
+    install would be lost on container recreate)."""
+    try:
+        if os.environ.get("NEXROLL_IN_DOCKER") == "1":
+            return True
+        if os.path.exists("/.dockerenv"):
+            return True
+        # cgroup check (Linux containers)
+        if sys.platform.startswith("linux"):
+            try:
+                with open("/proc/1/cgroup", "rt") as f:
+                    if any(("docker" in line or "containerd" in line or "kubepods" in line) for line in f):
+                        return True
+            except Exception:
+                pass
+    except Exception:
+        pass
+    return False
+
+
+def _find_deno() -> str:
+    """Locate the deno executable. Checks PATH first, then the standard install
+    locations the official installer uses — so a deno that was installed after
+    the backend started (and thus isn't on the backend process's inherited
+    PATH) is still found without a restart. Returns a path or None."""
+    import shutil
+    p = shutil.which("deno")
+    if p:
+        return p
+    exe = "deno.exe" if sys.platform.startswith("win") else "deno"
+    candidates = []
+    home = os.path.expanduser("~")
+    candidates.append(os.path.join(home, ".deno", "bin", exe))
+    if sys.platform.startswith("win"):
+        la = os.environ.get("LOCALAPPDATA")
+        if la:
+            candidates.append(os.path.join(la, "deno", exe))
+    else:
+        candidates.append("/usr/local/bin/deno")
+        candidates.append("/root/.deno/bin/deno")
+    for c in candidates:
+        if c and os.path.exists(c):
+            return c
+    return None
+
+
 def _resolve_tool(tool_name: str) -> str:
     """
     Return an absolute path or the bare tool name that can be executed.
@@ -1402,6 +1658,7 @@ class ScheduleCreate(BaseModel):
     exclusive: bool = False  # When active, this schedule wins exclusively (no blending)
     holiday_name: Optional[str] = None  # Holiday name for dynamic date lookup
     holiday_country: Optional[str] = None  # Country code for holiday lookup
+    source_sequence_id: Optional[int] = None  # Saved sequence this was built from (for edit propagation)
 
 class ScheduleResponse(BaseModel):
     id: int
@@ -1766,7 +2023,36 @@ def _community_headers(extra=None) -> dict:
     return h
 
 # Local index for Typical Nerds prerolls (faster than remote scraping)
-PREROLLS_INDEX_PATH = Path(os.environ.get("PROGRAMDATA", os.path.expanduser("~"))) / "NeXroll" / "prerolls_index.json"
+def _resolve_prerolls_index_path() -> Path:
+    """Persistent home for the community prerolls index.
+
+    Docker/Linux: NEXROLL_DB_DIR (/data in the official image) is the mounted
+    volume — the index must live there. The old code fell back to the home dir
+    when PROGRAMDATA was unset, which on Docker is inside the container
+    filesystem, so every image update wiped the index ("No index" after each
+    upgrade). Windows keeps using ProgramData as before.
+    """
+    db_dir = os.environ.get("NEXROLL_DB_DIR")
+    if db_dir and db_dir.strip():
+        return Path(db_dir.strip()) / "prerolls_index.json"
+    pd = os.environ.get("PROGRAMDATA")
+    if pd:
+        return Path(pd) / "NeXroll" / "prerolls_index.json"
+    return Path(os.path.expanduser("~")) / "NeXroll" / "prerolls_index.json"
+
+PREROLLS_INDEX_PATH = _resolve_prerolls_index_path()
+
+# One-time migration: adopt an index left at the old home-dir location by
+# pre-beta.3 builds (only helps containers that haven't been recreated yet;
+# already-wiped installs just rebuild the index once).
+_legacy_index = Path(os.path.expanduser("~")) / "NeXroll" / "prerolls_index.json"
+if _legacy_index != PREROLLS_INDEX_PATH and _legacy_index.exists() and not PREROLLS_INDEX_PATH.exists():
+    try:
+        PREROLLS_INDEX_PATH.parent.mkdir(parents=True, exist_ok=True)
+        shutil.move(str(_legacy_index), str(PREROLLS_INDEX_PATH))
+    except Exception:
+        pass
+
 PREROLLS_INDEX_MAX_AGE = 7 * 24 * 3600  # 7 days in seconds (refresh weekly recommended)
 
 # Smart search synonym mapping - helps find related content
@@ -1790,12 +2076,49 @@ SEARCH_SYNONYMS = {
     "pumpkin": ["halloween", "october", "autumn", "fall"],
 }
 
+_community_default_server_cache = {"url": None, "at": 0.0}
+_COMMUNITY_DEFAULT_SERVER_TTL = 600  # 10 minutes
+
+
+def _resolve_default_community_server() -> Optional[str]:
+    """Resolve an active community *file* server from servers.json.
+
+    The bare prerolls.uk domain is now the project website — its directory paths
+    302-redirect and its root is a landing page, so the index scrape and file
+    downloads must target one of the mirror file servers it advertises (e.g.
+    https://usa.prerolls.uk). Cached 10 min; returns None if servers.json can't
+    be reached.
+    """
+    import time as _t
+    now = _t.time()
+    cached = _community_default_server_cache.get("url")
+    if cached and (now - _community_default_server_cache.get("at", 0)) < _COMMUNITY_DEFAULT_SERVER_TTL:
+        return cached
+    try:
+        import requests as _r
+        resp = _r.get(COMMUNITY_SERVERS_JSON_URL, timeout=10, headers=_community_headers())
+        if resp.ok:
+            servers = (resp.json() or {}).get("servers", []) or []
+            pick = next((s for s in servers
+                         if str(s.get("status", "")).lower() == "active" and s.get("baseUrl")), None)
+            if not pick:
+                pick = next((s for s in servers if s.get("baseUrl")), None)
+            if pick:
+                url = str(pick["baseUrl"]).rstrip("/")
+                _community_default_server_cache.update({"url": url, "at": now})
+                return url
+    except Exception as e:
+        _file_log(f"Could not resolve community file server from servers.json: {e}")
+    return None
+
+
 def _get_community_base_url(db=None) -> str:
-    """Get the configured community server base URL.
-    
-    Returns the user's custom community server URL if set in settings,
-    otherwise returns the DEFAULT_COMMUNITY_BASE_URL constant.
-    The returned URL never has a trailing slash.
+    """Get the effective community server base URL (never trailing-slashed).
+
+    Priority: the user's explicitly-chosen server, then an active mirror from
+    servers.json, then the DEFAULT_COMMUNITY_BASE_URL constant as a last resort.
+    Resolving via servers.json matters because the bare prerolls.uk default is
+    the website now and won't serve the preroll directory tree.
     """
     if db is not None:
         try:
@@ -1804,6 +2127,9 @@ def _get_community_base_url(db=None) -> str:
                 return setting.community_server_url.rstrip("/")
         except Exception:
             pass
+    resolved = _resolve_default_community_server()
+    if resolved:
+        return resolved
     return DEFAULT_COMMUNITY_BASE_URL
 
 # NOTE: Wildcard CORS removed for security. Specific-origin CORS middleware is defined below.
@@ -1920,6 +2246,101 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# ---------------------------------------------------------------------------
+# Global auth gate
+# ---------------------------------------------------------------------------
+# When "Require Login" is enabled (Settings > Users), every request must carry
+# a valid session cookie or API key. Before this gate, only a handful of
+# endpoints enforced auth via Depends(require_auth), so enabling login
+# protected the UI but left most of the API (uploads, deletes, settings)
+# callable unauthenticated.
+#
+# Exemptions, kept minimal:
+#   - the pre-login surface the login screen itself needs (/auth/status,
+#     login, logout, register, reset-password — each self-guards internally)
+#   - /health for Docker/uptime probes
+#   - /plugin/*, /jellyfin/plugin/*, /emby/plugin/*: the Jellyfin/Emby plugin
+#     endpoints do their own optional API-key auth; session-gating them would
+#     break every existing plugin install
+#   - the SPA shell + static assets, so the login screen can load at all
+#     (/data thumbnails are deliberately NOT exempt — preroll content stays
+#     behind the gate)
+#
+# Requests with a valid API key (X-Api-Key header or ?api_key=) also pass:
+# GET/HEAD requires a "read" key, anything else a "write" key — so external
+# automation keeps working when login is required.
+_AUTH_GATE_EXEMPT_EXACT = {
+    "/", "/health", "/favicon.ico", "/manifest.json", "/asset-manifest.json",
+    "/sw.js", "/robots.txt", "/logo192.png", "/logo512.png",
+    "/auth/status", "/auth/login", "/auth/logout", "/auth/register",
+    "/auth/reset-password",
+}
+_AUTH_GATE_EXEMPT_PREFIXES = (
+    "/static/",
+    "/plugin/", "/jellyfin/plugin/", "/emby/plugin/",
+)
+
+# auth_enabled is read on every gated request; cache it briefly so static-ish
+# traffic doesn't hammer SQLite. The /auth/settings PUT resets the cache so a
+# toggle takes effect immediately.
+_auth_gate_cache = {"enabled": None, "ts": 0.0}
+_AUTH_GATE_CACHE_TTL = 5.0
+
+
+def _auth_gate_invalidate():
+    _auth_gate_cache["ts"] = 0.0
+
+
+def _auth_gate_enabled() -> bool:
+    now = time.monotonic()
+    if _auth_gate_cache["enabled"] is None or (now - _auth_gate_cache["ts"]) > _AUTH_GATE_CACHE_TTL:
+        try:
+            db = SessionLocal()
+            try:
+                setting = db.query(models.Setting).first()
+                _auth_gate_cache["enabled"] = bool(getattr(setting, "auth_enabled", False)) if setting else False
+            finally:
+                db.close()
+        except Exception:
+            # Transient DB error: keep the last known answer rather than either
+            # silently dropping protection or bricking the UI. A fresh DB with
+            # no answer yet defaults to disabled (it has no users to log in as).
+            if _auth_gate_cache["enabled"] is None:
+                _auth_gate_cache["enabled"] = False
+        _auth_gate_cache["ts"] = now
+    return _auth_gate_cache["enabled"]
+
+
+@app.middleware("http")
+async def _auth_gate_mw(request: Request, call_next):
+    path = request.url.path or "/"
+    if (
+        request.method == "OPTIONS"
+        or path in _AUTH_GATE_EXEMPT_EXACT
+        or path.startswith(_AUTH_GATE_EXEMPT_PREFIXES)
+    ):
+        return await call_next(request)
+    if not _auth_gate_enabled():
+        return await call_next(request)
+
+    # Validate and close the session BEFORE forwarding: holding a SQLite read
+    # transaction open across call_next would contend with downstream writes.
+    allowed = False
+    db = SessionLocal()
+    try:
+        allowed = _validate_session(request.cookies.get("nexroll_session"), db) is not None
+        if not allowed:
+            api_key_value = request.headers.get("X-Api-Key") or request.query_params.get("api_key")
+            if api_key_value:
+                needed = "read" if request.method in ("GET", "HEAD") else "write"
+                allowed = validate_api_key(api_key_value, needed, db) is not None
+    finally:
+        db.close()
+    if allowed:
+        return await call_next(request)
+    return JSONResponse(status_code=401, content={"detail": "Authentication required"})
+
 
 # Log unhandled exceptions and 4xx/5xx responses to writable logs (with fallback)
 @app.middleware("http")
@@ -2286,6 +2707,40 @@ def startup_event():
     # Log startup banner
     _log_startup_banner()
 
+    # PO-Token provider (bgutil) for YouTube downloads. Init always so status
+    # endpoints work; start the local token server in the background when NeX-Up
+    # is enabled and the provider is present, so trailer downloads can mint
+    # Proof-of-Origin tokens and get past YouTube's "confirm you're not a bot"
+    # wall without cookies. Fully optional — absence just means no PO tokens.
+    try:
+        import threading as _threading
+        from backend import nexup_potoken
+        nexup_potoken.init(_potoken_home(), _file_log)
+
+        def _start_potoken():
+            try:
+                _db = SessionLocal()
+                try:
+                    _s = _db.query(models.Setting).first()
+                    nexup_on = bool(getattr(_s, "nexup_enabled", False)) if _s else False
+                finally:
+                    _db.close()
+                mgr = nexup_potoken.get_manager()
+                if mgr and nexup_on:
+                    mgr.start()
+            except Exception as e:
+                try:
+                    _file_log(f"PO-token provider start error: {e}")
+                except Exception:
+                    pass
+
+        _threading.Thread(target=_start_potoken, daemon=True).start()
+    except Exception as e:
+        try:
+            _file_log(f"PO-token provider init error: {e}")
+        except Exception:
+            pass
+
     scheduler.start()
 
 @app.on_event("startup")
@@ -2418,6 +2873,13 @@ def _auto_refresh_holiday_dates():
 @app.on_event("shutdown")
 def shutdown_event():
     scheduler.stop()
+    try:
+        from backend import nexup_potoken
+        mgr = nexup_potoken.get_manager()
+        if mgr:
+            mgr.stop()
+    except Exception:
+        pass
 
 # Dependency to get DB session
 def get_db():
@@ -2484,6 +2946,18 @@ def system_dependencies():
             "version": None,
             "description": "JavaScript runtime for YouTube extraction",
             "path": None
+        },
+        "node": {
+            "available": False,
+            "version": None,
+            "description": "JavaScript runtime for the YouTube PO-token provider",
+            "path": None
+        },
+        "potoken": {
+            "available": False,
+            "version": None,
+            "description": "YouTube PO-token provider (beats bot detection)",
+            "path": None
         }
     }
     
@@ -2515,28 +2989,409 @@ def system_dependencies():
             dependencies["yt_dlp"]["version"] = f"yt-dlp {yt_ver}" if yt_ver else "yt-dlp (version unknown)"
             dependencies["yt_dlp"]["path"] = yt_dlp_path
     
-    # Check Deno (required for yt-dlp YouTube extraction)
-    deno_path = shutil.which('deno')
+    # Check Deno (required for yt-dlp YouTube extraction). Use _find_deno so a
+    # deno installed after the backend started (not yet on the process PATH) is
+    # still detected — and flag whether it was found off-PATH so the UI can hint
+    # at a restart.
+    deno_path = _find_deno()
     if deno_path:
         dependencies["deno"]["available"] = True
-        deno_ok, deno_ver = probe_version('deno', '--version')
-        if deno_ver:
-            # deno --version returns multiple lines, first line is "deno X.X.X"
-            dependencies["deno"]["version"] = deno_ver
         dependencies["deno"]["path"] = deno_path
-    
+        ok, ver = probe_version(deno_path, '--version')
+        if ver:
+            dependencies["deno"]["version"] = ver
+        # On PATH? if not, the running process still won't pick it up for
+        # subprocess calls that rely on PATH resolution.
+        dependencies["deno"]["on_path"] = shutil.which('deno') is not None
+
+    # Which deps can be installed from this page, given the platform.
+    is_docker = _is_running_in_docker()
+    dependencies["deno"]["installable"] = (not is_docker) and (not dependencies["deno"]["available"] or not dependencies["deno"].get("on_path", True))
+
+    # Node + PO-token provider (bgutil) — the modern fix for YouTube's bot wall.
+    try:
+        from backend import nexup_potoken
+        node_path = nexup_potoken.find_node()
+        if node_path:
+            dependencies["node"]["available"] = True
+            dependencies["node"]["path"] = node_path
+            _nok, _nver = probe_version(node_path, '--version')
+            if _nver:
+                dependencies["node"]["version"] = _nver
+            dependencies["node"]["on_path"] = shutil.which('node') is not None
+        dependencies["node"]["installable"] = (not is_docker) and (not dependencies["node"]["available"] or not dependencies["node"].get("on_path", True))
+
+        mgr = nexup_potoken.get_manager()
+        pot_status = mgr.status() if mgr else {
+            "plugin_installed": nexup_potoken.is_plugin_installed(),
+            "provider_present": bool(nexup_potoken.provider_server_dir(_potoken_home())),
+            "node_available": bool(node_path),
+            "usable": False,
+            "healthy": False,
+        }
+        dependencies["potoken"]["available"] = bool(pot_status.get("usable"))
+        dependencies["potoken"]["version"] = pot_status.get("version")
+        dependencies["potoken"]["path"] = pot_status.get("server_dir")
+        dependencies["potoken"]["detail"] = pot_status
+        dependencies["potoken"]["installable"] = (not is_docker) and not bool(pot_status.get("usable"))
+    except Exception as _pe:
+        print(f"potoken dependency probe failed: {_pe}")
+
     # Add system info
     system_info = {
         "platform": platform.system(),
         "platform_version": platform.version(),
         "architecture": platform.machine(),
-        "hostname": platform.node()
+        "hostname": platform.node(),
+        "is_docker": is_docker
     }
-    
+
     return {
         "dependencies": dependencies,
         "system": system_info
     }
+
+
+@app.post("/system/dependencies/install/deno")
+def install_deno():
+    # Auth (when enabled) is enforced by the global auth-gate middleware, so we
+    # don't add Depends(require_auth) here — require_auth is defined later in
+    # this module, and referencing it in the decorator's default would NameError
+    # at import time.
+    """Install the Deno runtime (needed for YouTube/NeX-Up extraction).
+
+    Windows: runs the official PowerShell installer.
+    Linux/macOS (non-Docker): runs the official shell installer.
+    Docker: refused — dependencies are baked into the image; pull a newer image
+    instead (a runtime install would be lost when the container is recreated).
+
+    After installing, we add Deno's bin dir to THIS process's PATH and re-probe,
+    so it's usable immediately for most cases without a NeXroll restart.
+    """
+    if _is_running_in_docker():
+        return {
+            "success": False,
+            "docker": True,
+            "message": "Running in Docker — Deno is provided by the image. Pull the latest NeXroll image to update it; runtime installs don't persist across container recreation.",
+        }
+
+    # Already present and on PATH? Nothing to do.
+    existing = _find_deno()
+    if existing and shutil.which("deno"):
+        return {"success": True, "already_installed": True, "path": existing, "message": "Deno is already installed."}
+
+    try:
+        if sys.platform.startswith("win"):
+            # Official Windows installer (irm https://deno.land/install.ps1 | iex)
+            ps_cmd = "$ErrorActionPreference='Stop'; irm https://deno.land/install.ps1 | iex"
+            r = _run_subprocess(
+                ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", ps_cmd],
+                capture_output=True, text=True, timeout=180,
+            )
+        else:
+            r = _run_subprocess(
+                ["sh", "-c", "curl -fsSL https://deno.land/install.sh | sh"],
+                capture_output=True, text=True, timeout=180,
+            )
+        out = (r.stdout or "") + "\n" + (r.stderr or "")
+        if r.returncode != 0:
+            _file_log(f"Deno install failed (rc={r.returncode}): {out[-500:]}")
+            return {"success": False, "message": f"Install failed: {out.strip()[-300:] or 'unknown error'}"}
+    except Exception as e:
+        _file_log(f"Deno install exception: {e}")
+        return {"success": False, "message": f"Install error: {e}"}
+
+    # Locate the freshly installed deno and add its dir to this process's PATH
+    # so subprocesses that resolve via PATH can find it now.
+    deno_path = _find_deno()
+    if deno_path:
+        bin_dir = os.path.dirname(deno_path)
+        if bin_dir and bin_dir not in os.environ.get("PATH", "").split(os.pathsep):
+            os.environ["PATH"] = bin_dir + os.pathsep + os.environ.get("PATH", "")
+        on_path_now = shutil.which("deno") is not None
+        ver = None
+        try:
+            vr = _run_subprocess([deno_path, "--version"], capture_output=True, text=True, timeout=20)
+            if vr.returncode == 0 and vr.stdout:
+                ver = vr.stdout.splitlines()[0].strip()
+        except Exception:
+            pass
+        _file_log(f"Deno installed at {deno_path} (on_path={on_path_now}, version={ver})")
+        return {
+            "success": True,
+            "path": deno_path,
+            "version": ver,
+            "active_now": on_path_now,
+            "message": ("Deno installed and active." if on_path_now
+                        else "Deno installed. Restart NeXroll if YouTube extraction still reports it missing."),
+        }
+
+    return {"success": False, "message": "Install ran but Deno could not be located afterward. A NeXroll restart may be required."}
+
+
+# Pinned Node LTS. 22.12+ is required so `require()` of ESM works by default:
+# the provider's jsdom stack pulls an ESM-only @exodus/bytes that older Node
+# (e.g. the previously-bundled 20.18.1) refused to require(), crashing the
+# provider at startup with ERR_REQUIRE_ESM. 22.x also keeps prebuilt binaries
+# for node-canvas so no C/C++ toolchain is needed. Existing installs that kept
+# an older Node are handled at launch via --experimental-require-module
+# (see nexup_potoken._needs_require_module_flag).
+_NODE_VERSION = "22.12.0"
+# Keep in sync with the bgutil-ytdlp-pot-provider pin in requirements.txt.
+_BGUTIL_VERSION = "1.3.1"
+
+
+def _nexroll_node_dir() -> str:
+    return os.path.join(os.path.expanduser("~"), ".nexroll", "node")
+
+
+def _download_to(url: str, dest_path: str, timeout: int = 300) -> None:
+    import urllib.request
+    req = urllib.request.Request(url, headers={"User-Agent": "NeXroll"})
+    with urllib.request.urlopen(req, timeout=timeout) as r, open(dest_path, "wb") as f:
+        shutil.copyfileobj(r, f)
+
+
+@app.post("/system/dependencies/install/potoken")
+def install_potoken():
+    """Install the YouTube PO-token provider (Node.js + bgutil server).
+
+    This is the component that gets NeX-Up past YouTube's "Sign in to confirm
+    you're not a bot" wall. Docker bakes it into the image, so this endpoint
+    targets non-Docker (Windows/dev) installs:
+      1. Ensure Node.js (download a pinned LTS into ~/.nexroll/node if missing).
+      2. Download + build the bgutil provider into <data_dir>/bgutil-provider.
+      3. Start the local token server.
+    """
+    if _is_running_in_docker():
+        return {"success": False, "docker": True,
+                "message": "Running in Docker — the PO-token provider is baked into the image. Pull the latest NeXroll image to update it."}
+
+    from backend import nexup_potoken
+    import tempfile, zipfile as _zip
+    steps = []
+    try:
+        # --- 1. Node.js ---
+        node = nexup_potoken.find_node()
+        if node:
+            steps.append(f"Node found: {node}")
+        elif not sys.platform.startswith("win"):
+            return {"success": False, "steps": steps,
+                    "message": "Node.js (>=20) not found. Install it via your package manager, then retry."}
+        else:
+            steps.append("Downloading Node.js LTS...")
+            node_dir = _nexroll_node_dir()
+            os.makedirs(node_dir, exist_ok=True)
+            arch = "x64" if sys.maxsize > 2 ** 32 else "x86"
+            fn = f"node-v{_NODE_VERSION}-win-{arch}"
+            url = f"https://nodejs.org/dist/v{_NODE_VERSION}/{fn}.zip"
+            tmpzip = os.path.join(tempfile.gettempdir(), fn + ".zip")
+            _download_to(url, tmpzip, timeout=300)
+            with _zip.ZipFile(tmpzip, "r") as z:
+                z.extractall(tempfile.gettempdir())
+            src = os.path.join(tempfile.gettempdir(), fn)
+            for item in os.listdir(src):  # flatten node-vX-win-x64/* into node_dir
+                s = os.path.join(src, item)
+                d = os.path.join(node_dir, item)
+                if os.path.isdir(d):
+                    shutil.rmtree(d, ignore_errors=True)
+                elif os.path.exists(d):
+                    os.remove(d)
+                shutil.move(s, d)
+            try:
+                os.remove(tmpzip)
+                shutil.rmtree(src, ignore_errors=True)
+            except Exception:
+                pass
+            node = nexup_potoken.find_node()
+            if not node:
+                return {"success": False, "steps": steps, "message": "Node.js download/extract failed."}
+            steps.append(f"Node installed: {node}")
+
+        node_dir = os.path.dirname(node)
+        env = dict(os.environ)
+        env["PATH"] = node_dir + os.pathsep + env.get("PATH", "")
+
+        # --- 2. Provider source + build ---
+        provider_root = os.path.join(_potoken_home(), "bgutil-provider")
+        server_dir = os.path.join(provider_root, "server")
+        if os.path.isfile(os.path.join(server_dir, "build", "main.js")):
+            steps.append("Provider already built.")
+        else:
+            steps.append("Downloading PO-token provider...")
+            url = f"https://github.com/Brainicism/bgutil-ytdlp-pot-provider/archive/refs/tags/{_BGUTIL_VERSION}.zip"
+            tmpzip = os.path.join(tempfile.gettempdir(), f"bgutil-{_BGUTIL_VERSION}.zip")
+            _download_to(url, tmpzip, timeout=300)
+            extract_to = os.path.join(tempfile.gettempdir(), f"bgutil-extract-{_BGUTIL_VERSION}")
+            shutil.rmtree(extract_to, ignore_errors=True)
+            with _zip.ZipFile(tmpzip, "r") as z:
+                z.extractall(extract_to)
+            srcrepo = next((os.path.join(extract_to, d) for d in os.listdir(extract_to)
+                            if os.path.isdir(os.path.join(extract_to, d))), None)
+            if not srcrepo or not os.path.isdir(os.path.join(srcrepo, "server")):
+                return {"success": False, "steps": steps, "message": "Provider download malformed."}
+            os.makedirs(provider_root, exist_ok=True)
+            if os.path.isdir(server_dir):
+                shutil.rmtree(server_dir, ignore_errors=True)
+            shutil.move(os.path.join(srcrepo, "server"), server_dir)
+            try:
+                os.remove(tmpzip)
+                shutil.rmtree(extract_to, ignore_errors=True)
+            except Exception:
+                pass
+
+            steps.append("Installing provider dependencies (npm install)...")
+            npm = os.path.join(node_dir, "npm.cmd" if sys.platform.startswith("win") else "npm")
+            if not os.path.exists(npm):
+                npm = "npm"
+            r1 = _run_subprocess([npm, "install", "--no-audit", "--no-fund"],
+                                 cwd=server_dir, env=env, capture_output=True, text=True, timeout=900)
+            if r1.returncode != 0:
+                _file_log(f"PO-token npm install failed: {(r1.stderr or '')[-800:]}")
+                return {"success": False, "steps": steps,
+                        "message": f"npm install failed: {(r1.stderr or r1.stdout or '')[-300:]}"}
+            steps.append("Compiling provider (tsc)...")
+            npx = os.path.join(node_dir, "npx.cmd" if sys.platform.startswith("win") else "npx")
+            if not os.path.exists(npx):
+                npx = "npx"
+            r2 = _run_subprocess([npx, "tsc"], cwd=server_dir, env=env,
+                                 capture_output=True, text=True, timeout=300)
+            if r2.returncode != 0 or not os.path.isfile(os.path.join(server_dir, "build", "main.js")):
+                _file_log(f"PO-token tsc build failed: {(r2.stderr or '')[-800:]}")
+                return {"success": False, "steps": steps,
+                        "message": f"Build failed: {(r2.stderr or r2.stdout or '')[-300:]}"}
+            steps.append("Provider built.")
+
+        # --- 3. Start ---
+        mgr = nexup_potoken.get_manager() or nexup_potoken.init(_potoken_home(), _file_log)
+        status = mgr.start()
+        steps.append("Provider started." if status.get("usable") else "Provider built but not healthy yet.")
+        return {
+            "success": bool(status.get("usable")),
+            "steps": steps,
+            "status": status,
+            "message": ("YouTube PO-token provider installed and active."
+                        if status.get("usable")
+                        else "Components installed; provider not healthy yet — restart NeXroll or check bgutil-provider.log."),
+        }
+    except Exception as e:
+        _file_log(f"PO-token install error: {e}")
+        import traceback
+        _file_log(traceback.format_exc())
+        return {"success": False, "steps": steps, "message": f"Install error: {e}"}
+
+
+class FactoryResetRequest(BaseModel):
+    confirm: str = ""           # must equal "RESET"
+    wipe_trailers: bool = False  # delete downloaded NeX-Up trailer files
+    wipe_prerolls: bool = False  # delete uploaded preroll files
+    wipe_provider: bool = False  # delete the bgutil PO-token provider
+
+
+@app.post("/admin/factory-reset")
+def factory_reset(req: FactoryResetRequest, request: Request, db: Session = Depends(get_db)):
+    """Reset NeXroll to a fresh-install state.
+
+    Always: empties every database table (schedules, categories, prerolls,
+    trailers, settings, users, logs…) and clears saved connections from the
+    secure store — leaving the app at first-run onboarding. Optionally also
+    deletes downloaded trailers, uploaded prerolls, and the PO-token provider
+    from disk. Admin-only; requires confirm == "RESET".
+
+    Tables are emptied row-by-row (not dropped) so the full schema — including
+    every runtime-migrated column — is preserved without needing a restart.
+    """
+    user = get_current_user_optional(request, db)
+    if _check_auth_enabled(db) and not _is_local_request(request):
+        if not user or user.role != 'admin':
+            raise HTTPException(status_code=403, detail="Admin access required")
+    if (req.confirm or "").strip().upper() != "RESET":
+        raise HTTPException(status_code=400, detail='Confirmation text must be "RESET".')
+
+    removed = []
+
+    # Capture disk paths before the settings row is wiped.
+    setting = db.query(models.Setting).first()
+    nexup_storage = getattr(setting, 'nexup_storage_path', None) if setting else None
+
+    # Pause the scheduler so it can't act on half-wiped state.
+    try:
+        scheduler.stop()
+    except Exception:
+        pass
+
+    # 1. Clear saved connections (tokens/keys live in the secure store).
+    try:
+        secure_store.delete_plex_token()
+        secure_store.delete_jellyfin_api_key()
+        secure_store.delete_emby_api_key()
+        sf = secure_store._secrets_file_path()
+        if sf and os.path.exists(sf):
+            os.remove(sf)
+        removed.append("saved connections")
+    except Exception as e:
+        _file_log(f"factory-reset: secret clear error: {e}")
+
+    # 2. Empty every table (keeps schema + runtime-migrated columns). Delete in
+    #    reverse dependency order so foreign keys are satisfied.
+    try:
+        for table in reversed(models.Base.metadata.sorted_tables):
+            db.execute(table.delete())
+        db.commit()
+        removed.append("database")
+    except Exception as e:
+        db.rollback()
+        _file_log(f"factory-reset: db wipe failed: {e}")
+        raise HTTPException(status_code=500, detail=f"Database wipe failed: {e}")
+    # Reclaim the freed space (a long-lived DB can be hundreds of MB).
+    try:
+        with engine.connect().execution_options(isolation_level="AUTOCOMMIT") as conn:
+            conn.exec_driver_sql("VACUUM")
+    except Exception as e:
+        _file_log(f"factory-reset: VACUUM skipped: {e}")
+
+    # 3. Optional on-disk deletions.
+    def _wipe_dir_contents(path):
+        if not path or not os.path.isdir(path):
+            return
+        for entry in os.listdir(path):
+            fp = os.path.join(path, entry)
+            try:
+                if os.path.isdir(fp):
+                    shutil.rmtree(fp, ignore_errors=True)
+                else:
+                    os.remove(fp)
+            except Exception:
+                pass
+
+    if req.wipe_prerolls:
+        _wipe_dir_contents(PREROLLS_DIR)
+        removed.append("uploaded prerolls")
+    if req.wipe_trailers:
+        roots = [p for p in (nexup_storage, os.path.join(os.path.dirname(DB_PATH), "NeXup")) if p]
+        for root in roots:
+            for sub in ("movies", "tv"):
+                d = os.path.join(root, sub)
+                if os.path.isdir(d):
+                    shutil.rmtree(d, ignore_errors=True)
+        removed.append("downloaded trailers")
+    if req.wipe_provider:
+        try:
+            prov = os.path.join(_potoken_home(), "bgutil-provider")
+            if os.path.isdir(prov):
+                shutil.rmtree(prov, ignore_errors=True)
+                removed.append("PO-token provider")
+        except Exception as e:
+            _file_log(f"factory-reset: provider remove error: {e}")
+
+    # Restart the scheduler against the now-empty database.
+    try:
+        scheduler.start()
+    except Exception:
+        pass
+
+    _file_log(f"Factory reset performed. Removed: {', '.join(removed) or 'nothing'}")
+    return {"success": True, "removed": removed}
 
 
 @app.get("/system/ffmpeg-info")
@@ -2706,13 +3561,13 @@ def get_changelog(db: Session = Depends(get_db)):
             if os.path.exists(abs_path):
                 with open(abs_path, 'r', encoding='utf-8') as f:
                     changelog_content = f.read()
-                _file_log(f"✓ Found CHANGELOG.md at: {abs_path}")
+                _file_log(f"Found CHANGELOG.md at: {abs_path}")
                 break
             else:
-                _file_log(f"  ✗ Not found: {abs_path}")
+                _file_log(f"  Not found: {abs_path}")
         
         if not changelog_content:
-            _file_log("⚠ CHANGELOG.md not found in any location", level="WARNING")
+            _file_log("CHANGELOG.md not found in any location", level="WARNING")
     except Exception as e:
         _file_log(f"Failed to read CHANGELOG.md: {e}", level="ERROR")
         _file_log(f"Changelog read error: {e}", level="ERROR")
@@ -4883,6 +5738,62 @@ async def auth_status(request: Request, db: Session = Depends(get_db)):
     }
 
 
+@app.get("/onboarding/status")
+async def onboarding_status(request: Request, db: Session = Depends(get_db)):
+    """
+    Report whether the first-run onboarding wizard should be shown.
+    Always accessible (the wizard must load before any user/auth exists).
+
+    `needs_onboarding` is True only for a genuinely fresh install: the
+    onboarding flag is unset AND there is no prior configuration. Upgraders are
+    backfilled to complete during schema migration, so they never see the wizard.
+    """
+    setting = db.query(models.Setting).first()
+    complete = bool(getattr(setting, 'onboarding_complete', False)) if setting else False
+
+    # Defensive: even if the migration backfill didn't run (e.g. very old path),
+    # treat an install with existing config as already onboarded.
+    has_server = False
+    if setting:
+        has_server = any([
+            getattr(setting, 'plex_token', None),
+            getattr(setting, 'plex_url', None),
+            getattr(setting, 'jellyfin_url', None),
+            getattr(setting, 'emby_url', None),
+        ])
+    preroll_count = db.query(models.Preroll).count()
+    user_count = db.query(models.User).count()
+
+    has_prior_config = has_server or preroll_count > 0 or user_count > 0
+    needs_onboarding = (not complete) and (not has_prior_config)
+
+    return {
+        "onboarding_complete": complete or has_prior_config,
+        "needs_onboarding": needs_onboarding,
+        "has_server": has_server,
+        "preroll_count": preroll_count,
+        "users_exist": user_count > 0,
+    }
+
+
+@app.post("/onboarding/complete")
+async def onboarding_complete(request: Request, db: Session = Depends(get_db)):
+    """
+    Mark the first-run onboarding wizard as complete (or skipped). Idempotent.
+    """
+    setting = db.query(models.Setting).first()
+    if not setting:
+        setting = models.Setting()
+        db.add(setting)
+    setting.onboarding_complete = True
+    try:
+        setting.updated_at = datetime.datetime.utcnow()
+    except Exception:
+        pass
+    db.commit()
+    return {"success": True, "onboarding_complete": True}
+
+
 @app.post("/auth/reset-password")
 async def auth_reset_password(
     request: Request,
@@ -5483,9 +6394,10 @@ async def auth_update_settings(
         setting.auth_allow_registration = bool(body['allow_registration'])
     if 'require_https' in body:
         setting.auth_require_https = bool(body['require_https'])
-    
+
     db.commit()
-    
+    _auth_gate_invalidate()  # gate caches auth_enabled; apply the toggle now
+
     return {
         "success": True,
         "auth_enabled": setting.auth_enabled,
@@ -5768,6 +6680,123 @@ async def update_check_now(
 # ENHANCED LOGGING SYSTEM ENDPOINTS
 # ============================================================================
 
+# ---------------------------------------------------------------------------
+# Log redaction. Strips secrets and IP addresses from any log text that leaves
+# the app — the /logs viewer, exports, the diagnostics bundle — so logs can be
+# shared or copied without leaking API keys, tokens, or network addresses.
+# ---------------------------------------------------------------------------
+_REDACT_PARAM_RE = re.compile(
+    r'([?&](?:api_key|apikey|token|X-Plex-Token|api-key|access_token|secret|password)=)'
+    r'([^&\s"\']+)',
+    re.IGNORECASE,
+)
+_REDACT_HEADER_RE = re.compile(
+    r'((?:X-Plex-Token|X-Api-Key|ApiKey|X-Emby-Token|X-MediaBrowser-Token)\s*[:=]\s*)(\S+)',
+    re.IGNORECASE,
+)
+# Authorization is special: keep the scheme (Bearer/Basic/…) but redact the
+# credential after it, since "(\S+)" would otherwise only catch the scheme word.
+_REDACT_AUTH_RE = re.compile(
+    r'(Authorization\s*[:=]\s*)(?:(Bearer|Basic|Token|Digest|Negotiate)\s+)?(\S+)',
+    re.IGNORECASE,
+)
+
+
+def _redact_auth_match(m):
+    scheme = m.group(2)
+    return m.group(1) + (scheme + ' ' if scheme else '') + '[REDACTED]'
+_REDACT_IPV4_RE = re.compile(r'\b(?:\d{1,3}\.){3}\d{1,3}\b')
+# IPv6: only the unambiguous '::' compressed form or a full 8-group address.
+# Requiring '::' (or 7 colons) avoids matching "HH:MM:SS" timestamps. Addresses
+# that *start* with '::' (e.g. ::1 loopback, :: unspecified) aren't matched and
+# so are preserved.
+_REDACT_IPV6_RE = re.compile(
+    r'\b(?:[0-9A-Fa-f]{1,4}:){7}[0-9A-Fa-f]{1,4}\b'
+    r'|(?<![\w:])(?:[0-9A-Fa-f]{1,4}:){1,7}:(?:[0-9A-Fa-f]{1,4}(?::[0-9A-Fa-f]{1,4})*)?(?![\w:])',
+    re.IGNORECASE,
+)
+
+
+def _redact_ipv4_match(m):
+    ip = m.group(0)
+    # Loopback / unspecified carry no privacy risk and aid debugging — keep them.
+    if ip.startswith('127.') or ip == '0.0.0.0':
+        return ip
+    try:
+        if all(0 <= int(o) <= 255 for o in ip.split('.')):
+            return '[REDACTED-IP]'
+    except ValueError:
+        pass
+    return ip  # not a real IPv4 (e.g. a version-like number) — leave as-is
+
+
+def collect_sensitive_values(db) -> set:
+    """The user's actual configured secrets (server URLs, tokens, API keys),
+    gathered from settings + the secure store, for literal redaction."""
+    vals = set()
+    try:
+        setting = db.query(models.Setting).first()
+        if setting:
+            for attr in (
+                "plex_token", "plex_url", "plex_server_base_url",
+                "jellyfin_url", "jellyfin_api_key",
+                "nexup_radarr_url", "nexup_radarr_api_key",
+                "nexup_sonarr_url", "nexup_sonarr_api_key",
+                "nexup_tmdb_api_key",
+            ):
+                val = getattr(setting, attr, None)
+                if val and str(val).strip():
+                    vals.add(str(val).strip())
+                    vals.add(str(val).strip().rstrip("/"))
+    except Exception:
+        pass
+    for getter in (
+        secure_store.get_plex_token,
+        secure_store.get_jellyfin_api_key,
+        secure_store.get_emby_api_key,
+    ):
+        try:
+            v = getter()
+            if v and len(v) >= 6:
+                vals.add(v)
+        except Exception:
+            pass
+    return vals
+
+
+def redact_log_text(text, sensitive_values=None):
+    """Redact secrets and IP addresses from log text. Safe on anything about to
+    leave the app."""
+    if text is None:
+        return text
+    if not isinstance(text, str):
+        text = str(text)
+    text = _REDACT_PARAM_RE.sub(r'\1[REDACTED]', text)
+    text = _REDACT_HEADER_RE.sub(r'\1[REDACTED]', text)
+    text = _REDACT_AUTH_RE.sub(_redact_auth_match, text)
+    if sensitive_values:
+        # Longest first so a URL isn't partially clobbered before its token.
+        for sv in sorted((s for s in sensitive_values if s and len(s) >= 6), key=len, reverse=True):
+            try:
+                text = re.sub(re.escape(sv), '[REDACTED]', text, flags=re.IGNORECASE)
+            except re.error:
+                text = text.replace(sv, '[REDACTED]')
+    text = _REDACT_IPV4_RE.sub(_redact_ipv4_match, text)
+    text = _REDACT_IPV6_RE.sub('[REDACTED-IP]', text)
+    return text
+
+
+def _redact_details(raw, sensitive_values=None):
+    """Redact a JSON 'details' string, returning parsed JSON when still valid."""
+    if not raw:
+        return None
+    red = redact_log_text(raw, sensitive_values)
+    try:
+        return json.loads(red)
+    except Exception:
+        return red
+
+
 @app.get("/logs")
 async def logs_get(
     request: Request,
@@ -5824,7 +6853,8 @@ async def logs_get(
     
     # Order by most recent first and apply limit
     logs = query.order_by(models.LogEntry.timestamp.desc()).limit(min(limit, 1000)).all()
-    
+
+    svals = collect_sensitive_values(db)
     return {
         "logs": [
             {
@@ -5833,12 +6863,12 @@ async def logs_get(
                 "level": log.level,
                 "category": log.category,
                 "source": log.source,
-                "message": log.message,
-                "details": json.loads(log.details) if log.details else None,
+                "message": redact_log_text(log.message, svals),
+                "details": _redact_details(log.details, svals),
                 "request_id": log.request_id,
                 "user_id": log.user_id,
                 "duration_ms": log.duration_ms,
-                "ip_address": log.ip_address
+                "ip_address": redact_log_text(log.ip_address, svals)
             }
             for log in logs
         ],
@@ -5938,29 +6968,32 @@ async def logs_export(
     
     # Get logs
     logs = query.order_by(models.LogEntry.timestamp.desc()).limit(min(limit, 50000)).all()
-    
+
     timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-    
+
+    # Redact secrets/IPs before anything is written to the export file.
+    svals = collect_sensitive_values(db)
+
     if format.lower() == "csv":
         # Export as CSV
         import csv
         import io
-        
+
         output = io.StringIO()
         writer = csv.writer(output)
         writer.writerow(["timestamp", "level", "category", "source", "message", "details", "request_id", "duration_ms", "ip_address"])
-        
+
         for log in logs:
             writer.writerow([
                 log.timestamp.isoformat() if log.timestamp else "",
                 log.level,
                 log.category,
                 log.source or "",
-                log.message,
-                log.details or "",
+                redact_log_text(log.message, svals),
+                redact_log_text(log.details or "", svals),
                 log.request_id or "",
                 log.duration_ms or "",
-                log.ip_address or ""
+                redact_log_text(log.ip_address or "", svals)
             ])
         
         content = output.getvalue()
@@ -5980,11 +7013,11 @@ async def logs_export(
                     "level": log.level,
                     "category": log.category,
                     "source": log.source,
-                    "message": log.message,
-                    "details": json.loads(log.details) if log.details else None,
+                    "message": redact_log_text(log.message, svals),
+                    "details": _redact_details(log.details, svals),
                     "request_id": log.request_id,
                     "duration_ms": log.duration_ms,
-                    "ip_address": log.ip_address
+                    "ip_address": redact_log_text(log.ip_address, svals)
                 }
                 for log in logs
             ]
@@ -6025,6 +7058,7 @@ async def logs_get_file(
         if not os.path.exists(log_path):
             return {"logs": [], "file_path": log_path, "file_exists": False}
         
+        svals = collect_sensitive_values(db)
         # Read file in reverse order to get most recent entries first
         with open(log_path, "r", encoding="utf-8", errors="ignore") as f:
             lines = f.readlines()
@@ -6049,7 +7083,7 @@ async def logs_get_file(
                 logs.append({
                     "timestamp": timestamp_str,
                     "level": log_level.upper(),
-                    "message": message,
+                    "message": redact_log_text(message, svals),
                     "source": "app.log"
                 })
                 
@@ -6242,20 +7276,20 @@ def connect_plex(request: PlexConnectRequest, db: Session = Depends(get_db)):
             try:
                 if secure_store.set_plex_token(token):
                     provider_name = secure_store.provider_info()[1]
-                    _file_log(f"/plex/connect: ✓ Token saved to secure store ({provider_name})")
+                    _file_log(f"/plex/connect: Token saved to secure store ({provider_name})")
                 else:
-                    _file_log(f"/plex/connect: ⚠ Failed to save token to secure store", level="ERROR")
+                    _file_log(f"/plex/connect: Failed to save token to secure store", level="ERROR")
                     log_event('ERROR', 'plex', 'Failed to save Plex token to secure store', source='connect_plex', details={'url': url})
                     raise HTTPException(status_code=500, detail="Failed to save token to secure storage. Please ensure Windows Credential Manager is available.")
             except HTTPException:
                 raise
             except Exception as e:
-                _file_log(f"/plex/connect: ⚠ Exception saving token: {e}", level="ERROR")
+                _file_log(f"/plex/connect: Exception saving token: {e}", level="ERROR")
                 log_event('ERROR', 'plex', f'Plex token save exception: {e}', source='connect_plex')
                 raise HTTPException(status_code=500, detail=f"Failed to save token securely: {str(e)}")
 
             db.commit()
-            _file_log(f"/plex/connect: ✓ Connection successful - URL: {url}, Token storage: {provider_name}")
+            _file_log(f"/plex/connect: Connection successful - URL: {url}, Token storage: {provider_name}")
             log_event('INFO', 'plex', 'Plex server connected successfully', details={"url": url})
             return {
                 "connected": True,
@@ -6263,7 +7297,7 @@ def connect_plex(request: PlexConnectRequest, db: Session = Depends(get_db)):
                 "token_storage": provider_name
             }
         else:
-            _file_log(f"/plex/connect: ✗ Connection test failed for {url}", level="ERROR")
+            _file_log(f"/plex/connect: Connection test failed for {url}", level="ERROR")
             log_event('WARNING', 'plex', f'Plex connection test failed for {url}', source='connect_plex')
             raise HTTPException(status_code=422, detail="Failed to connect to Plex server. Please check your URL and token.")
     except Exception as e:
@@ -8341,10 +9375,14 @@ def auto_match_single_preroll(preroll_id: int, db: Session = Depends(get_db)):
         log_event('ERROR', 'user', f'Auto-match failed for preroll {preroll_id}: {e}', source='auto_match_community')
         raise HTTPException(status_code=500, detail=f"Auto-match failed: {str(e)}")
 
-@app.post("/prerolls/{preroll_id}/link-community/{community_id}")
-def link_preroll_to_community(preroll_id: int, community_id: str, db: Session = Depends(get_db)):
+@app.post("/prerolls/{preroll_id}/link-community")
+def link_preroll_to_community(preroll_id: int, community_id: str = Body(..., embed=True), db: Session = Depends(get_db)):
     """
     Manually link a preroll to a community preroll ID.
+
+    community_id arrives in the request body (not the URL) because community IDs
+    are URL paths — they contain slashes and URL-encoded characters (e.g. %20)
+    that can't survive as a path parameter.
     """
     preroll = db.query(models.Preroll).filter(models.Preroll.id == preroll_id).first()
     if not preroll:
@@ -9301,7 +10339,8 @@ def create_schedule(schedule: ScheduleCreate, db: Session = Depends(get_db)):
         priority=schedule.priority,
         exclusive=schedule.exclusive,
         holiday_name=schedule.holiday_name,
-        holiday_country=schedule.holiday_country
+        holiday_country=schedule.holiday_country,
+        source_sequence_id=schedule.source_sequence_id
     )
     db.add(db_schedule)
     try:
@@ -9513,7 +10552,25 @@ def update_schedule(schedule_id: int, schedule: ScheduleCreate, db: Session = De
         _file_log(f"Schedule update failed for id={schedule_id}: {e}")
         log_event('ERROR', 'scheduler', f'Schedule update failed: {e}', source='update_schedule', details={'schedule_id': schedule_id})
         raise HTTPException(status_code=500, detail=f"Failed to update schedule: {str(e)}")
-    
+
+    # If we just disabled the schedule that the dashboard is pointing at, clear
+    # the pointer now. The scheduler only advances active_schedule_id on a
+    # successful Plex apply of a NEW winner, so without this the dashboard would
+    # keep showing this (now-disabled) schedule as "currently showing" until
+    # something else successfully applies — which may never happen (e.g. no
+    # active schedule, or Plex unreachable).
+    if is_being_disabled:
+        try:
+            setting = db.query(models.Setting).first()
+            if setting and getattr(setting, "active_schedule_id", None) == schedule_id:
+                setting.active_schedule_id = None
+                db.commit()
+        except Exception:
+            try:
+                db.rollback()
+            except Exception:
+                pass
+
     # Re-evaluate the scheduler immediately so dashboard + Plex reflect the change without
     # waiting up to 60 seconds for the next tick. (Pre-v1.13.5 this called a ~410-line
     # parallel reimplementation of scheduler logic — `_apply_schedule_win_lose_logic` —
@@ -9657,13 +10714,26 @@ def update_saved_sequence(sequence_id: int, sequence: SavedSequenceUpdate, db: S
             db_sequence.name = sequence.name
         if sequence.description is not None:
             db_sequence.description = sequence.description
+        synced_schedules = 0
         if sequence.blocks is not None:
             db_sequence.blocks = json.dumps(sequence.blocks)
-        
+            # Propagate the edit into any schedule built from this saved sequence
+            # (schedules keep their own embedded copy of the blocks; without this,
+            # editing the library sequence wouldn't update the schedule using it).
+            linked = db.query(models.Schedule).filter(
+                models.Schedule.source_sequence_id == sequence_id
+            ).all()
+            new_seq_json = json.dumps(sequence.blocks)
+            for sched in linked:
+                sched.sequence = new_seq_json
+                synced_schedules += 1
+
         db_sequence.updated_at = datetime.datetime.utcnow()
         db.commit()
         db.refresh(db_sequence)
-        
+
+        if synced_schedules:
+            _file_log(f"Sequence {sequence_id} edit propagated to {synced_schedules} linked schedule(s)")
         _file_log(f"Updated sequence: {db_sequence.name} (ID: {sequence_id})")
         log_event('INFO', 'nexup', f"NeX-Up sequence '{db_sequence.name}' updated", 
                   source='update_sequence', details={"sequence_id": sequence_id}, db=db)
@@ -9802,30 +10872,8 @@ def apply_sequence_to_server(sequence_id: int, db: Session = Depends(get_db)):
                     paths.append(os.path.abspath(p.path))
 
         elif block_type == "nexup_trailers":
-            source = str(block.get("source", "both")).lower()
-            count = int(block.get("count") or 2)
-            now = datetime.datetime.now()
-            trailer_paths = []
-            if source in ("movies", "both"):
-                for t in db.query(models.ComingSoonTrailer).filter(
-                    models.ComingSoonTrailer.status == 'downloaded',
-                    models.ComingSoonTrailer.is_enabled == True,
-                    models.ComingSoonTrailer.release_date >= now
-                ).all():
-                    if t.local_path and os.path.exists(t.local_path):
-                        trailer_paths.append(os.path.abspath(t.local_path))
-            if source in ("tv", "both"):
-                for t in db.query(models.ComingSoonTVTrailer).filter(
-                    models.ComingSoonTVTrailer.status == 'downloaded',
-                    models.ComingSoonTVTrailer.is_enabled == True,
-                    models.ComingSoonTVTrailer.release_date >= now
-                ).all():
-                    if t.local_path and os.path.exists(t.local_path):
-                        trailer_paths.append(os.path.abspath(t.local_path))
-            if trailer_paths:
-                k = min(max(count, 1), len(trailer_paths))
-                picks = random.sample(trailer_paths, k) if len(trailer_paths) > k else trailer_paths
-                paths.extend(picks)
+            for t in resolve_nexup_trailer_block(block, db):
+                paths.append(os.path.abspath(t.local_path))
 
         elif block_type == "coming_soon_list":
             layout = str(block.get("layout", "grid")).lower()
@@ -9935,6 +10983,30 @@ def apply_sequence_to_server(sequence_id: int, db: Session = Depends(get_db)):
         "applied_to": applied_to
     }
 
+def _is_within_directory(directory: str, target: str) -> bool:
+    """Return True only if `target` resolves to a path inside `directory`.
+
+    Used to defend zip extraction (and preview serving) against zip-slip /
+    path-traversal entries like "../../etc/passwd" or absolute paths.
+    """
+    try:
+        abs_dir = os.path.abspath(directory)
+        abs_target = os.path.abspath(target)
+        return os.path.commonpath([abs_dir]) == os.path.commonpath([abs_dir, abs_target])
+    except (ValueError, TypeError):
+        # commonpath raises ValueError for paths on different drives (Windows)
+        return False
+
+
+def _safe_extractall(zip_ref: "zipfile.ZipFile", dest_dir: str) -> None:
+    """zipfile.extractall that rejects any member escaping dest_dir (zip-slip)."""
+    for member in zip_ref.namelist():
+        target = os.path.join(dest_dir, member)
+        if not _is_within_directory(dest_dir, target):
+            raise HTTPException(status_code=400, detail=f"Unsafe path in archive: {member}")
+    zip_ref.extractall(dest_dir)
+
+
 @app.get("/sequences/preview-video/{preview_id}/{video_path:path}")
 async def get_preview_video(preview_id: str, video_path: str):
     """
@@ -9950,15 +11022,16 @@ async def get_preview_video(preview_id: str, video_path: str):
     if not re.match(r'^[a-zA-Z0-9]{1,8}$', preview_id):
         raise HTTPException(status_code=400, detail="Invalid preview ID")
     
-    # Sanitize video_path to prevent directory traversal
-    video_path = os.path.basename(video_path)
-    
-    # Build the full path
+    # Build the full path. Bundle videos live in subfolders (e.g.
+    # "categories/Christmas/file.mp4"), so we must preserve the relative path
+    # rather than collapsing it with basename(). Traversal is blocked by the
+    # containment check below.
     preview_dir = os.path.join(tempfile.gettempdir(), f"nexroll_preview_{preview_id}")
-    full_path = os.path.join(preview_dir, video_path)
-    
-    # Security check - ensure the path is within the preview directory
-    if not os.path.abspath(full_path).startswith(os.path.abspath(preview_dir)):
+    rel_path = video_path.replace("\\", "/").lstrip("/")
+    full_path = os.path.normpath(os.path.join(preview_dir, rel_path))
+
+    # Security check - ensure the resolved path is within the preview directory
+    if not _is_within_directory(preview_dir, full_path):
         raise HTTPException(status_code=403, detail="Access denied")
     
     if not os.path.exists(full_path):
@@ -10061,9 +11134,9 @@ async def import_sequence_pattern(
             
             try:
                 with zipfile.ZipFile(tmp_path, 'r') as zip_ref:
-                    # Extract to temporary directory
+                    # Extract to temporary directory (zip-slip safe)
                     extract_dir = tempfile.mkdtemp()
-                    zip_ref.extractall(extract_dir)
+                    _safe_extractall(zip_ref, extract_dir)
                     
                     # Find the .nexseq file
                     nexseq_file = None
@@ -10940,7 +12013,7 @@ async def import_sequence_pattern(
                                     models.Preroll.community_preroll_id == preroll_ref['community_id']
                                 ).first()
                                 if matched_preroll:
-                                    _file_log(f"Successfully downloaded preroll: {matched_preroll.name} (ID {matched_preroll.id})")
+                                    _file_log(f"Successfully downloaded preroll: {matched_preroll.display_name or matched_preroll.filename} (ID {matched_preroll.id})")
                                 else:
                                     _file_log(f"Download completed but preroll not found in database")
                             except Exception as e:
@@ -11327,32 +12400,21 @@ def _unmangle_community_id(mangled_id: str) -> Optional[str]:
         return None
 
 
-@app.post("/sequences/{sequence_id}/export")
-def export_sequence_pattern(
-    sequence_id: int, 
-    export_mode: str = Query("pattern_only", regex="^(pattern_only|with_community_ids|with_preroll_data|full_bundle)$"),
-    db: Session = Depends(get_db)
-):
-    """
-    Export a saved sequence as a .nexseq pattern file with various levels of detail.
-    
+def _build_sequence_export(sequence_name, sequence_description, blocks, export_mode, db):
+    """Build a .nexseq pattern (dict) or a full-bundle ZIP (StreamingResponse)
+    from a list of sequence blocks.
+
+    Shared by the saved-sequence export endpoint and the ad-hoc blocks export
+    endpoint so both produce identical output. Category/preroll names and
+    (optionally) community IDs and video files are resolved from the live DB by id.
+
     Export modes:
     - pattern_only: Structure only (category names, no preroll details)
     - with_community_ids: Include community preroll IDs for easy re-downloading
     - with_preroll_data: Include full preroll metadata (name, tags, duration, etc.)
     - full_bundle: ZIP file with pattern + all preroll video files (large!)
-    
-    Returns JSON pattern or ZIP file depending on mode
     """
     try:
-        # Get the sequence
-        sequence = db.query(models.SavedSequence).filter(models.SavedSequence.id == sequence_id).first()
-        if not sequence:
-            raise HTTPException(status_code=404, detail="Sequence not found")
-        
-        # Parse the sequence blocks
-        blocks = sequence.get_blocks()
-        
         # Convert blocks to pattern format
         pattern_blocks = []
         all_preroll_ids = []  # Collect for full bundle mode
@@ -11483,8 +12545,8 @@ def export_sequence_pattern(
         
         # Create pattern data
         pattern_data = {
-            'pattern_name': sequence.name,
-            'pattern_description': sequence.description,
+            'pattern_name': sequence_name,
+            'pattern_description': sequence_description,
             'created_by': 'NeXroll',
             'export_mode': export_mode,
             'nexroll_version': app_version,
@@ -11499,7 +12561,7 @@ def export_sequence_pattern(
                 with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zip_file:
                     # Add pattern JSON
                     zip_file.writestr(
-                        f"{sequence.name.replace(' ', '_')}.nexseq",
+                        f"{sequence_name.replace(' ', '_')}.nexseq",
                         json.dumps(pattern_data, indent=2)
                     )
                     
@@ -11591,7 +12653,7 @@ def export_sequence_pattern(
                     
                     # Add a manifest file with export details
                     manifest = {
-                        'sequence_name': sequence.name,
+                        'sequence_name': sequence_name,
                         'exported_at': datetime.datetime.utcnow().isoformat() + 'Z',
                         'nexroll_version': app_version,
                         'total_files': len(added_files),
@@ -11609,13 +12671,13 @@ def export_sequence_pattern(
                     zip_file.writestr('MANIFEST.json', json.dumps(manifest, indent=2))
                 
                 zip_buffer.seek(0)
-                _file_log(f"Exported full bundle: {sequence.name} - {len(categories_exported)} categories, {len(fixed_prerolls_exported)} fixed prerolls, {len(added_files)} total files")
-                
+                _file_log(f"Exported full bundle: {sequence_name} - {len(categories_exported)} categories, {len(fixed_prerolls_exported)} fixed prerolls, {len(added_files)} total files")
+
                 return StreamingResponse(
                     zip_buffer,
                     media_type="application/zip",
                     headers={
-                        "Content-Disposition": f"attachment; filename={sequence.name.replace(' ', '_')}_bundle.zip"
+                        "Content-Disposition": f"attachment; filename={sequence_name.replace(' ', '_')}_bundle.zip"
                     }
                 )
             except Exception as e:
@@ -11623,13 +12685,55 @@ def export_sequence_pattern(
                 log_event('ERROR', 'nexup', f'Bundle export failed: {e}', source='export_sequence_pattern')
                 raise HTTPException(status_code=500, detail=f"Bundle creation failed: {str(e)}")
         
-        _file_log(f"Exported sequence pattern ({export_mode}): {sequence.name} with {len(pattern_blocks)} blocks")
+        _file_log(f"Exported sequence pattern ({export_mode}): {sequence_name} with {len(pattern_blocks)} blocks")
         return pattern_data
-        
+
+    except HTTPException:
+        raise
     except Exception as e:
         _file_log(f"Failed to export sequence pattern: {e}")
-        log_event('ERROR', 'nexup', f'Sequence export failed: {e}', source='export_sequence_pattern')
+        log_event('ERROR', 'nexup', f'Sequence export failed: {e}', source='_build_sequence_export')
         raise HTTPException(status_code=500, detail=f"Export failed: {str(e)}")
+
+
+@app.post("/sequences/{sequence_id}/export")
+def export_sequence_pattern(
+    sequence_id: int,
+    export_mode: str = Query("pattern_only", regex="^(pattern_only|with_community_ids|with_preroll_data|full_bundle)$"),
+    db: Session = Depends(get_db)
+):
+    """Export a saved sequence as a .nexseq pattern file (or full-bundle ZIP)."""
+    sequence = db.query(models.SavedSequence).filter(models.SavedSequence.id == sequence_id).first()
+    if not sequence:
+        raise HTTPException(status_code=404, detail="Sequence not found")
+    return _build_sequence_export(sequence.name, sequence.description, sequence.get_blocks(), export_mode, db)
+
+
+class SequenceBlocksExportRequest(BaseModel):
+    name: Optional[str] = "Sequence"
+    description: Optional[str] = ""
+    blocks: List[dict] = []
+    export_mode: Optional[str] = "pattern_only"
+
+
+@app.post("/sequences/export-pattern")
+def export_sequence_blocks(request: SequenceBlocksExportRequest, db: Session = Depends(get_db)):
+    """Export an ad-hoc list of sequence blocks (e.g. the in-progress builder or a
+    schedule's inline sequence) without requiring a saved SavedSequence row. Mirrors
+    /sequences/{id}/export but takes the blocks in the request body, which avoids the
+    id-space mismatch that occurred when a Schedule id was passed to the by-id route.
+    """
+    valid_modes = ("pattern_only", "with_community_ids", "with_preroll_data", "full_bundle")
+    mode = request.export_mode or "pattern_only"
+    if mode not in valid_modes:
+        raise HTTPException(status_code=400, detail=f"Invalid export_mode: {mode}")
+    return _build_sequence_export(
+        request.name or "Sequence",
+        request.description or "",
+        request.blocks or [],
+        mode,
+        db,
+    )
 
 # Holiday presets
 @app.post("/holiday-presets/init")
@@ -12735,44 +13839,18 @@ def _preview_payload_from_intent(setting, db) -> Optional[dict]:
             elif btype == "nexup_trailers":
                 # Mirror /sequences/resolve-preview-blocks so the dashboard preview
                 # includes trailer blocks instead of silently dropping them.
-                source = str(block.get("source", "both")).lower()
-                count = int(block.get("count") or 2)
-                storage_path = getattr(setting, "nexup_storage_path", None)
-                now = datetime.datetime.now()
-                trailer_items = []
-                if source in ("movies", "both"):
-                    for t in db.query(models.ComingSoonTrailer).filter(
-                        models.ComingSoonTrailer.status == 'downloaded',
-                        models.ComingSoonTrailer.is_enabled == True,
-                        models.ComingSoonTrailer.release_date >= now
-                    ).all():
-                        if t.local_path and os.path.exists(t.local_path):
-                            trailer_items.append({
-                                "id": None,
-                                "filename": (t.title or f"movie_trailer_{t.id}"),
-                                "display_name": t.title or f"Movie Trailer #{t.id}",
-                                "category_name": "Coming Soon",
-                                "path": t.local_path,
-                                "preview_url": f"/nexup/trailer/video/movie/{t.id}",
-                            })
-                if source in ("tv", "both"):
-                    for t in db.query(models.ComingSoonTVTrailer).filter(
-                        models.ComingSoonTVTrailer.status == 'downloaded',
-                        models.ComingSoonTVTrailer.is_enabled == True,
-                        models.ComingSoonTVTrailer.release_date >= now
-                    ).all():
-                        if t.local_path and os.path.exists(t.local_path):
-                            trailer_items.append({
-                                "id": None,
-                                "filename": (t.title or f"tv_trailer_{t.id}"),
-                                "display_name": t.title or f"TV Trailer #{t.id}",
-                                "category_name": "Coming Soon",
-                                "path": t.local_path,
-                                "preview_url": f"/nexup/trailer/video/tv/{t.id}",
-                            })
-                if len(trailer_items) > count:
-                    trailer_items = random.sample(trailer_items, count)
-                rows.extend(trailer_items)
+                # Shared helper applies source/mode/count; map rows -> preview dicts.
+                for t in resolve_nexup_trailer_block(block, db):
+                    is_tv = isinstance(t, models.ComingSoonTVTrailer)
+                    kind = "tv" if is_tv else "movie"
+                    rows.append({
+                        "id": None,
+                        "filename": (t.title or f"{kind}_trailer_{t.id}"),
+                        "display_name": t.title or f"{'TV' if is_tv else 'Movie'} Trailer #{t.id}",
+                        "category_name": "Coming Soon",
+                        "path": t.local_path,
+                        "preview_url": f"/nexup/trailer/video/{kind}/{t.id}",
+                    })
             elif btype == "coming_soon_list":
                 layout = str(block.get("layout", "grid")).lower()
                 storage_path = getattr(setting, "nexup_storage_path", None)
@@ -13024,16 +14102,32 @@ def get_current_preroll_details(db: Session = Depends(get_db)):
             })
             continue
 
-        # Try to match to a NeX-Up movie trailer
+        # Try to match to a NeX-Up movie/TV trailer. Exact path first, then by
+        # filename (basename, then stem) so a trailer still resolves when its
+        # recorded path drifted — storage folder moved, or it was re-downloaded
+        # with a different extension. Without this, older trailers produce no
+        # preview_url and get silently skipped in the dashboard preview.
+        target_base = os.path.basename(norm_local).lower()
+        target_stem = os.path.splitext(target_base)[0]
+
+        def _trailer_matches(t):
+            if not t.local_path:
+                return False
+            tp = os.path.normpath(t.local_path)
+            if tp == norm_local:
+                return True
+            tb = os.path.basename(tp).lower()
+            return tb == target_base or os.path.splitext(tb)[0] == target_stem
+
         matched_trailer = None
         for t in all_movie_trailers:
-            if t.local_path and os.path.normpath(t.local_path) == norm_local:
+            if _trailer_matches(t):
                 matched_trailer = ("movie", t)
                 break
         # Try TV trailers if no movie match
         if not matched_trailer:
             for t in all_tv_trailers:
-                if t.local_path and os.path.normpath(t.local_path) == norm_local:
+                if _trailer_matches(t):
                     matched_trailer = ("tv", t)
                     break
 
@@ -13707,6 +14801,111 @@ def _set_last_scan_stats(stats: dict) -> None:
         pass
 
 
+def _scanner_exclude_trees(db: Session) -> list:
+    """Trees the library scanner must not index (scanner.exclude_trees).
+
+    NeX-Up's trailer storage is owned by NeX-Up — it registers downloads under
+    its system categories itself. When that storage sits inside the prerolls
+    dir (the norm on Docker, where both live under /data), the scanner used to
+    index the same files again and created a second, Uncategorized row per
+    trailer.
+    """
+    trees = []
+    try:
+        setting = db.query(models.Setting).first()
+        sp = getattr(setting, "nexup_storage_path", None) if setting else None
+        if sp and str(sp).strip():
+            trees.append(str(sp).strip())
+    except Exception:
+        pass
+    return trees
+
+
+def _looks_like_dependency_file(path: str) -> bool:
+    """True for paths that are Node/TypeScript dependency files, not prerolls —
+    e.g. *.d.ts / *.ts sources under node_modules or the bgutil PO-token
+    provider. '.ts' doubles as the MPEG-TS video extension, so a scan from
+    before the scanner learned to skip those trees could import them as
+    prerolls; this lets us find and purge the junk rows."""
+    if not path:
+        return False
+    p = str(path).replace("\\", "/").lower()
+    # Match as a path *segment* so relative paths (no leading slash) are caught
+    # too — preroll paths are often stored relative to the prerolls dir.
+    segs = [s for s in p.split("/") if s]
+    if "node_modules" in segs or "bgutil-provider" in segs:
+        return True
+    if p.endswith(".d.ts"):
+        return True
+    return False
+
+
+def _purge_dependency_prerolls(db: Session) -> int:
+    """Delete preroll rows that point at Node/TypeScript dependency files and
+    remove their generated thumbnails. Returns how many were purged. Safe to run
+    repeatedly; a no-op once the junk is gone."""
+    removed = 0
+    try:
+        rows = db.query(models.Preroll).all()
+    except Exception:
+        return 0
+    for p in rows:
+        if not (_looks_like_dependency_file(getattr(p, "path", "") or "")
+                or _looks_like_dependency_file(getattr(p, "filename", "") or "")):
+            continue
+        try:
+            thumb = getattr(p, "thumbnail", None)
+            if thumb:
+                tabs = thumb if os.path.isabs(thumb) else os.path.join(data_dir, thumb)
+                if os.path.exists(tabs):
+                    os.remove(tabs)
+        except Exception:
+            pass
+        try:
+            db.delete(p)
+            removed += 1
+        except Exception:
+            pass
+    if removed:
+        try:
+            db.commit()
+            _file_log(f"Purged {removed} dependency-file preroll record(s) (node_modules / *.d.ts).")
+        except Exception:
+            db.rollback()
+            return 0
+    return removed
+
+
+def _sweep_orphan_thumbnails(db: Session) -> int:
+    """Delete thumbnail files whose '<id>_…' prefix no longer maps to a preroll
+    row — e.g. the '<id>_index.d.ts.jpg' files left on disk after junk rows are
+    purged (the row's stored thumbnail path can be wrong/missing, so we clean up
+    by scanning the folder). Returns the count removed."""
+    removed = 0
+    try:
+        valid_ids = {row[0] for row in db.query(models.Preroll.id).all()}
+    except Exception:
+        return 0
+    if not THUMBNAILS_DIR or not os.path.isdir(THUMBNAILS_DIR):
+        return 0
+    pat = re.compile(r'^(\d+)_')
+    for root, _dirs, files in os.walk(THUMBNAILS_DIR):
+        for f in files:
+            if not f.lower().endswith(".jpg"):
+                continue
+            m = pat.match(f)
+            if not m or int(m.group(1)) in valid_ids:
+                continue
+            try:
+                os.remove(os.path.join(root, f))
+                removed += 1
+            except Exception:
+                pass
+    if removed:
+        _file_log(f"Removed {removed} orphan thumbnail file(s).")
+    return removed
+
+
 def scan_preroll_library(db: Session = None, delete_missing: bool = False, dedupe: bool = False,
                          auto_prune_missing: bool = True) -> dict:
     """
@@ -13724,6 +14923,12 @@ def scan_preroll_library(db: Session = None, delete_missing: bool = False, dedup
         db = SessionLocal()
         close_db = True
     try:
+        # Purge junk rows from any pre-fix scan (TypeScript/node_modules files
+        # imported as prerolls) before reconciling, so they don't linger.
+        try:
+            _purge_dependency_prerolls(db)
+        except Exception:
+            pass
         stats = fs_scanner.reconcile_prerolls(
             db,
             prerolls_dir=PREROLLS_DIR,
@@ -13733,7 +14938,13 @@ def scan_preroll_library(db: Session = None, delete_missing: bool = False, dedup
             delete_missing=delete_missing,
             dedupe=dedupe,
             auto_prune_missing=auto_prune_missing,
+            exclude_trees=_scanner_exclude_trees(db),
         )
+        # Clean up thumbnail files left orphaned by the purge / removed prerolls.
+        try:
+            _sweep_orphan_thumbnails(db)
+        except Exception:
+            pass
         try:
             _set_last_scan_stats(stats)
         except Exception:
@@ -13936,6 +15147,7 @@ def rescan_prerolls(
             # automatically (safely). The explicit "Remove Missing Rows" button
             # passes delete_missing=true to force-remove without the threshold.
             auto_prune_missing=(not delete_missing),
+            exclude_trees=_scanner_exclude_trees(db),
         )
         _set_last_scan_stats(stats)
         log_event(
@@ -14042,6 +15254,16 @@ def backup_database(db: Session = Depends(get_db)):
                     "updated_at": seq.updated_at.isoformat() if seq.updated_at else None
                 } for seq in db.query(models.SavedSequence).all()
             ],
+            # genre_maps: user-configured genre -> category routing. Restore deletes
+            # these (FK to categories), so they must be backed up to avoid silent
+            # data loss. category_id is the source-DB id; restore remaps it by name.
+            "genre_maps": [
+                {
+                    "genre": gm.genre,
+                    "genre_norm": getattr(gm, "genre_norm", None),
+                    "category_id": gm.category_id,
+                } for gm in db.query(models.GenreMap).all()
+            ],
             "exported_at": datetime.datetime.utcnow().isoformat(),
             "exported_by_version": "1.13.13",
         }
@@ -14051,120 +15273,175 @@ def backup_database(db: Session = Depends(get_db)):
         log_event('ERROR', 'system', f'Database backup failed: {e}', source='backup_database')
         raise HTTPException(status_code=500, detail=f"Backup failed: {str(e)}")
 
+class _ZipDrainSink:
+    """A write-only, non-seekable file object for streaming a zip out as it's
+    built. zipfile writes here; we drain the buffer after each chunk and yield
+    it to the client, so the download reflects real compression progress instead
+    of waiting for the whole archive to be staged to a temp file first."""
+    def __init__(self):
+        self.buf = bytearray()
+        self._pos = 0
+    def write(self, b):
+        self.buf += bytes(b)
+        self._pos += len(b)
+        return len(b)
+    def tell(self):
+        return self._pos
+    def flush(self):
+        pass
+    def seekable(self):
+        return False
+    def drain(self):
+        if not self.buf:
+            return b""
+        out = bytes(self.buf)
+        self.buf.clear()
+        return out
+
+
 @app.post("/backup/files")
 def backup_files():
-    """Create comprehensive ZIP archive of all system files including database, prerolls, and thumbnails"""
+    """Stream a comprehensive system backup ZIP (database, prerolls, thumbnails,
+    settings) and compress it on the fly.
+
+    Unlike the old version (which staged the whole archive to a temp file before
+    sending a single byte), this yields the zip incrementally as each file is
+    compressed, so the client can show real progress. `X-Estimated-Total`
+    advertises the expected size — media files (mp4) barely deflate, so the sum
+    of input sizes is a close estimate of the final zip size.
+    """
     try:
         from backend.database import DB_PATH
-        
-        # Create temp file for ZIP (streaming large files)
-        import tempfile
-        temp_dir = tempfile.gettempdir()
         timestamp = datetime.datetime.now().strftime('%Y%m%d_%H%M%S')
         zip_filename = f"nexroll_system_backup_{timestamp}.zip"
-        zip_path = os.path.join(temp_dir, zip_filename)
-        
-        with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as zip_file:
-            # 1. Add database file
-            if os.path.exists(DB_PATH):
-                zip_file.write(DB_PATH, "database/nexroll.db")
-            
-            # 2. Add database JSON export (for cross-version compatibility)
+
+        # Build the cross-version JSON export up front (needs a DB session).
+        json_bytes = b""
+        try:
+            db = SessionLocal()
             try:
-                db = SessionLocal()
+                db_export = {
+                    "prerolls": [
+                        {
+                            "filename": p.filename,
+                            "display_name": getattr(p, "display_name", None),
+                            "path": p.path,
+                            "thumbnail": p.thumbnail,
+                            "tags": p.tags,
+                            "category_id": p.category_id,
+                            "categories": [{"id": c.id, "name": c.name} for c in (p.categories or [])],
+                            "description": p.description,
+                            "managed": getattr(p, "managed", True),
+                            "upload_date": p.upload_date.isoformat() if p.upload_date else None
+                        } for p in db.query(models.Preroll).all()
+                    ],
+                    "categories": [
+                        {"id": c.id, "name": c.name, "description": c.description}
+                        for c in db.query(models.Category).all()
+                    ],
+                    "schedules": [
+                        {
+                            "name": s.name, "type": s.type,
+                            "start_date": s.start_date.isoformat() if s.start_date else None,
+                            "end_date": s.end_date.isoformat() if s.end_date else None,
+                            "category_id": s.category_id,
+                            "fallback_category_id": getattr(s, "fallback_category_id", None),
+                            "shuffle": s.shuffle, "playlist": s.playlist, "is_active": s.is_active,
+                            "recurrence_pattern": s.recurrence_pattern, "preroll_ids": s.preroll_ids
+                        } for s in db.query(models.Schedule).all()
+                    ],
+                    "holiday_presets": [
+                        {"name": h.name, "description": h.description, "month": h.month,
+                         "day": h.day, "category_id": h.category_id}
+                        for h in db.query(models.HolidayPreset).all()
+                    ],
+                    "saved_sequences": [
+                        {"name": seq.name, "description": seq.description, "blocks": seq.get_blocks(),
+                         "created_at": seq.created_at.isoformat() if seq.created_at else None,
+                         "updated_at": seq.updated_at.isoformat() if seq.updated_at else None}
+                        for seq in db.query(models.SavedSequence).all()
+                    ],
+                    "exported_at": datetime.datetime.utcnow().isoformat(),
+                    "version": "1.10.14",
+                }
+                json_bytes = json.dumps(db_export, indent=2).encode("utf-8")
+            finally:
+                db.close()
+        except Exception as db_err:
+            print(f"Warning: Could not export database JSON: {db_err}")
+
+        # Enumerate the files to include as (abs_path, arcname). Skip the provider
+        # tree / node_modules so a backup never sweeps in thousands of those files.
+        _skip = {"node_modules", "bgutil-provider"}
+        entries = []
+        if os.path.exists(DB_PATH):
+            entries.append((DB_PATH, "database/nexroll.db"))
+        if os.path.exists(PREROLLS_DIR):
+            for root, dirs, files in os.walk(PREROLLS_DIR):
+                dirs[:] = [d for d in dirs if d.lower() not in _skip]
+                for f in files:
+                    fp = os.path.join(root, f)
+                    rel = os.path.relpath(fp, PREROLLS_DIR)
+                    if rel.split(os.sep)[0].lower() == "thumbnails":
+                        continue  # added under thumbnails/ below
+                    entries.append((fp, "prerolls/" + rel.replace(os.sep, "/")))
+        if os.path.exists(THUMBNAILS_DIR):
+            for root, dirs, files in os.walk(THUMBNAILS_DIR):
+                for f in files:
+                    fp = os.path.join(root, f)
+                    rel = os.path.relpath(fp, THUMBNAILS_DIR)
+                    entries.append((fp, "thumbnails/" + rel.replace(os.sep, "/")))
+        settings_path = os.path.join(data_dir, "settings.json")
+        if os.path.exists(settings_path):
+            entries.append((settings_path, "settings/settings.json"))
+
+        est_total = len(json_bytes)
+        for fp, _arc in entries:
+            try:
+                est_total += os.path.getsize(fp)
+            except Exception:
+                pass
+
+        def _gen():
+            sink = _ZipDrainSink()
+            zf = zipfile.ZipFile(sink, "w", zipfile.ZIP_DEFLATED)
+            try:
+                if json_bytes:
+                    zf.writestr("database/nexroll_data.json", json_bytes)
+                    d = sink.drain()
+                    if d:
+                        yield d
+                for fp, arc in entries:
+                    try:
+                        with zf.open(arc, "w") as dest, open(fp, "rb") as src:
+                            while True:
+                                chunk = src.read(1024 * 1024)
+                                if not chunk:
+                                    break
+                                dest.write(chunk)
+                                d = sink.drain()
+                                if d:
+                                    yield d
+                    except Exception as fe:
+                        print(f"backup_files: skipped {fp}: {fe}")
+                    d = sink.drain()
+                    if d:
+                        yield d
+            finally:
                 try:
-                    db_export = {
-                        "prerolls": [
-                            {
-                                "filename": p.filename,
-                                "display_name": getattr(p, "display_name", None),
-                                "path": p.path,
-                                "thumbnail": p.thumbnail,
-                                "tags": p.tags,
-                                "category_id": p.category_id,
-                                "categories": [{"id": c.id, "name": c.name} for c in (p.categories or [])],
-                                "description": p.description,
-                                "managed": getattr(p, "managed", True),
-                                "upload_date": p.upload_date.isoformat() if p.upload_date else None
-                            } for p in db.query(models.Preroll).all()
-                        ],
-                        "categories": [
-                            {
-                                "id": c.id,
-                                "name": c.name,
-                                "description": c.description
-                            } for c in db.query(models.Category).all()
-                        ],
-                        "schedules": [
-                            {
-                                "name": s.name,
-                                "type": s.type,
-                                "start_date": s.start_date.isoformat() if s.start_date else None,
-                                "end_date": s.end_date.isoformat() if s.end_date else None,
-                                "category_id": s.category_id,
-                                "fallback_category_id": getattr(s, "fallback_category_id", None),
-                                "shuffle": s.shuffle,
-                                "playlist": s.playlist,
-                                "is_active": s.is_active,
-                                "recurrence_pattern": s.recurrence_pattern,
-                                "preroll_ids": s.preroll_ids
-                            } for s in db.query(models.Schedule).all()
-                        ],
-                        "holiday_presets": [
-                            {
-                                "name": h.name,
-                                "description": h.description,
-                                "month": h.month,
-                                "day": h.day,
-                                "category_id": h.category_id
-                            } for h in db.query(models.HolidayPreset).all()
-                        ],
-                        "saved_sequences": [
-                            {
-                                "name": seq.name,
-                                "description": seq.description,
-                                "blocks": seq.get_blocks(),
-                                "created_at": seq.created_at.isoformat() if seq.created_at else None,
-                                "updated_at": seq.updated_at.isoformat() if seq.updated_at else None
-                            } for seq in db.query(models.SavedSequence).all()
-                        ],
-                        "exported_at": datetime.datetime.utcnow().isoformat(),
-                        "version": "1.10.14"
-                    }
-                    zip_file.writestr("database/nexroll_data.json", json.dumps(db_export, indent=2))
-                finally:
-                    db.close()
-            except Exception as db_err:
-                print(f"Warning: Could not export database JSON: {db_err}")
-            
-            # 3. Add all preroll video files
-            if os.path.exists(PREROLLS_DIR):
-                for file_path in Path(PREROLLS_DIR).rglob("*"):
-                    if file_path.is_file():
-                        # Skip thumbnails folder - we'll add it separately
-                        rel_path = file_path.relative_to(Path(PREROLLS_DIR))
-                        if not str(rel_path).startswith("thumbnails"):
-                            zip_file.write(file_path, f"prerolls/{rel_path}")
-            
-            # 4. Add thumbnails
-            if os.path.exists(THUMBNAILS_DIR):
-                for file_path in Path(THUMBNAILS_DIR).rglob("*"):
-                    if file_path.is_file():
-                        rel_path = file_path.relative_to(Path(THUMBNAILS_DIR))
-                        zip_file.write(file_path, f"thumbnails/{rel_path}")
-            
-            # 5. Add settings.json if exists
-            settings_path = os.path.join(data_dir, "settings.json")
-            if os.path.exists(settings_path):
-                zip_file.write(settings_path, "settings/settings.json")
-        
-        # Return as streaming response
-        return FileResponse(
-            path=zip_path,
-            filename=zip_filename,
-            media_type="application/zip",
-            background=BackgroundTask(lambda: os.unlink(zip_path) if os.path.exists(zip_path) else None)
-        )
+                    zf.close()
+                except Exception:
+                    pass
+            d = sink.drain()
+            if d:
+                yield d
+
+        headers = {
+            "Content-Disposition": f'attachment; filename="{zip_filename}"',
+            "X-Estimated-Total": str(est_total),
+            "Access-Control-Expose-Headers": "X-Estimated-Total, Content-Disposition",
+        }
+        return StreamingResponse(_gen(), media_type="application/zip", headers=headers)
     except Exception as e:
         log_event('ERROR', 'system', f'System backup failed: {e}', source='backup_files')
         raise HTTPException(status_code=500, detail=f"System backup failed: {str(e)}")
@@ -14185,14 +15462,16 @@ def restore_database(backup_data: dict, db: Session = Depends(get_db)):
         print("RESTORE: Deleting genre maps...")
         db.query(models.GenreMap).delete(synchronize_session=False)
         
-        # 3. Clear every category FK on settings (each has FK to categories).
-        # Missing on Windows restores because SQLite there defaults to
-        # foreign_keys=OFF; Docker enforces them, so a non-NULL nexup_category_id
-        # / nexup_tv_category_id / filler_category_id made "DELETE FROM categories"
-        # fail. NULL each independently so schema drift on one column can't abort
-        # the whole restore.
-        print("RESTORE: Clearing category references from settings...")
-        for _col in ("active_category", "nexup_category_id", "nexup_tv_category_id", "filler_category_id"):
+        # 3. Clear every FK on settings that points at a table we are about to
+        # delete. SQLite enforces foreign_keys=ON here (see database.py pragma),
+        # so a non-NULL nexup_category_id / nexup_tv_category_id / filler_category_id
+        # made "DELETE FROM categories" fail, and filler_sequence_id (FK ->
+        # saved_sequences) made "DELETE FROM saved_sequences" fail and aborted the
+        # whole restore. NULL each independently so schema drift on one column
+        # can't abort the others.
+        print("RESTORE: Clearing category/sequence references from settings...")
+        for _col in ("active_category", "nexup_category_id", "nexup_tv_category_id",
+                     "filler_category_id", "filler_sequence_id"):
             try:
                 db.execute(text(f"UPDATE settings SET {_col} = NULL"))
             except Exception as _col_err:
@@ -14228,80 +15507,106 @@ def restore_database(backup_data: dict, db: Session = Depends(get_db)):
         print("RESTORE: Restoring categories...")
         old_id_to_new_id = {}  # Map old category IDs to new IDs
         for cat_data in backup_data.get("categories", []):
+            old_id = cat_data.get("id")
             try:
-                old_id = cat_data.get("id")
-                category = models.Category(
-                    name=cat_data.get("name"),
-                    description=cat_data.get("description"),
-                    plex_mode=cat_data.get("plex_mode") or "shuffle",
-                    apply_to_plex=bool(cat_data.get("apply_to_plex", False)),
-                    is_system=bool(cat_data.get("is_system", False)),
-                )
-                db.add(category)
-                db.flush()  # Get the new ID
+                # Per-row SAVEPOINT: a single bad row (e.g. duplicate name) only
+                # rolls back itself, instead of discarding every category already
+                # staged in this batch (which a plain db.rollback() would do).
+                with db.begin_nested():
+                    category = models.Category(
+                        name=cat_data.get("name"),
+                        description=cat_data.get("description"),
+                        plex_mode=cat_data.get("plex_mode") or "shuffle",
+                        apply_to_plex=bool(cat_data.get("apply_to_plex", False)),
+                        is_system=bool(cat_data.get("is_system", False)),
+                    )
+                    db.add(category)
+                    db.flush()  # Get the new ID (surfaces IntegrityError inside the savepoint)
                 if old_id:
                     old_id_to_new_id[old_id] = category.id
                 print(f"RESTORE: Category '{category.name}' - old ID {old_id} -> new ID {category.id}")
             except Exception as cat_err:
-                print(f"Error adding category: {cat_err}")
-                db.rollback()
+                print(f"Error adding category '{cat_data.get('name')}': {cat_err}")
                 continue
         db.commit()
 
         # Build quick lookup by name
         name_to_category = {c.name: c for c in db.query(models.Category).all()}
 
+        # Restore genre maps (genre -> category routing). These were deleted above
+        # for FK safety; re-create them with category_id remapped to the new IDs.
+        # Pre-v2 backups have no "genre_maps" key, so this is a no-op for them.
+        print("RESTORE: Restoring genre maps...")
+        for gm_data in backup_data.get("genre_maps", []):
+            old_cat_id = gm_data.get("category_id")
+            new_cat_id = old_id_to_new_id.get(old_cat_id) if old_cat_id else None
+            if not new_cat_id:
+                # GenreMap.category_id is NOT NULL; skip entries whose category
+                # didn't make it into the restore.
+                print(f"RESTORE: skipping genre map '{gm_data.get('genre')}' - category not found")
+                continue
+            try:
+                with db.begin_nested():
+                    db.add(models.GenreMap(
+                        genre=gm_data.get("genre"),
+                        genre_norm=gm_data.get("genre_norm"),
+                        category_id=new_cat_id,
+                    ))
+                    db.flush()
+            except Exception as gm_err:
+                print(f"Error adding genre map '{gm_data.get('genre')}': {gm_err}")
+                continue
+        db.commit()
+
         # Restore prerolls (including display_name and many-to-many categories if present)
         for preroll_data in backup_data.get("prerolls", []):
             try:
-                # Safe datetime parsing
-                upload_date = None
-                if preroll_data.get("upload_date"):
-                    try:
-                        upload_date = datetime.datetime.fromisoformat(str(preroll_data["upload_date"]).replace('Z', '+00:00'))
-                    except (ValueError, TypeError):
-                        upload_date = None
-                
-                # Map old category_id to new category_id
-                old_cat_id = preroll_data.get("category_id")
-                new_cat_id = old_id_to_new_id.get(old_cat_id) if old_cat_id else None
-                
-                p = models.Preroll(
-                    filename=preroll_data.get("filename"),
-                    display_name=preroll_data.get("display_name"),
-                    path=preroll_data.get("path"),
-                    thumbnail=preroll_data.get("thumbnail"),
-                    tags=preroll_data.get("tags"),
-                    category_id=new_cat_id,
-                    description=preroll_data.get("description"),
-                    duration=preroll_data.get("duration"),
-                    file_size=preroll_data.get("file_size"),
-                    upload_date=upload_date,
-                    managed=preroll_data.get("managed", True),
-                    # v1.13.13: previously-missing fields restored
-                    enabled=bool(preroll_data.get("enabled", True)),
-                    community_preroll_id=preroll_data.get("community_preroll_id"),
-                    exclude_from_matching=bool(preroll_data.get("exclude_from_matching", False)),
-                    file_hash=preroll_data.get("file_hash"),
-                )
-                db.add(p)
-                db.flush()  # get p.id without full commit
+                # Per-row SAVEPOINT so one bad preroll can't discard the batch.
+                with db.begin_nested():
+                    # Safe datetime parsing
+                    upload_date = None
+                    if preroll_data.get("upload_date"):
+                        try:
+                            upload_date = datetime.datetime.fromisoformat(str(preroll_data["upload_date"]).replace('Z', '+00:00'))
+                        except (ValueError, TypeError):
+                            upload_date = None
 
-                # Restore associated categories by name (IDs in backup may not match new DB)
-                assoc = []
-                try:
+                    # Map old category_id to new category_id
+                    old_cat_id = preroll_data.get("category_id")
+                    new_cat_id = old_id_to_new_id.get(old_cat_id) if old_cat_id else None
+
+                    p = models.Preroll(
+                        filename=preroll_data.get("filename"),
+                        display_name=preroll_data.get("display_name"),
+                        path=preroll_data.get("path"),
+                        thumbnail=preroll_data.get("thumbnail"),
+                        tags=preroll_data.get("tags"),
+                        category_id=new_cat_id,
+                        description=preroll_data.get("description"),
+                        duration=preroll_data.get("duration"),
+                        file_size=preroll_data.get("file_size"),
+                        upload_date=upload_date,
+                        managed=preroll_data.get("managed", True),
+                        # v1.13.13: previously-missing fields restored
+                        enabled=bool(preroll_data.get("enabled", True)),
+                        community_preroll_id=preroll_data.get("community_preroll_id"),
+                        exclude_from_matching=bool(preroll_data.get("exclude_from_matching", False)),
+                        file_hash=preroll_data.get("file_hash"),
+                    )
+                    db.add(p)
+                    db.flush()  # get p.id without full commit
+
+                    # Restore associated categories by name (IDs in backup may not match new DB)
+                    assoc = []
                     for c in preroll_data.get("categories", []):
                         nm = c.get("name") if isinstance(c, dict) else c
                         if nm and nm in name_to_category:
                             assoc.append(name_to_category[nm])
-                except Exception as cat_assoc_err:
-                    print(f"Error associating categories to preroll: {cat_assoc_err}")
-                    assoc = []
-                if assoc:
-                    p.categories = assoc
+                    if assoc:
+                        p.categories = assoc
+                        db.flush()
             except Exception as preroll_err:
                 print(f"Error adding preroll {preroll_data.get('filename')}: {preroll_err}")
-                db.rollback()
                 continue
 
         db.commit()
@@ -14329,33 +15634,34 @@ def restore_database(backup_data: dict, db: Session = Depends(get_db)):
                 old_fallback_id = schedule_data.get("fallback_category_id")
                 new_fallback_id = old_id_to_new_id.get(old_fallback_id) if old_fallback_id else None
                 
-                schedule = models.Schedule(
-                    name=schedule_data.get("name"),
-                    type=schedule_data.get("type"),
-                    start_date=start_date,
-                    end_date=end_date,
-                    category_id=new_cat_id,
-                    fallback_category_id=new_fallback_id,
-                    shuffle=schedule_data.get("shuffle", False),
-                    playlist=schedule_data.get("playlist", False),
-                    is_active=schedule_data.get("is_active", True),
-                    recurrence_pattern=schedule_data.get("recurrence_pattern"),
-                    preroll_ids=schedule_data.get("preroll_ids"),
-                    # v1.13.13: previously-missing fields restored. Without these, sequence
-                    # schedules came back as plain category schedules, blend/exclusive/priority
-                    # were lost, and holiday-API auto-update bindings were dropped.
-                    sequence=schedule_data.get("sequence"),
-                    color=schedule_data.get("color"),
-                    blend_enabled=bool(schedule_data.get("blend_enabled", False)),
-                    priority=schedule_data.get("priority") if schedule_data.get("priority") is not None else 5,
-                    exclusive=bool(schedule_data.get("exclusive", False)),
-                    holiday_name=schedule_data.get("holiday_name"),
-                    holiday_country=schedule_data.get("holiday_country"),
-                )
-                db.add(schedule)
+                with db.begin_nested():
+                    schedule = models.Schedule(
+                        name=schedule_data.get("name"),
+                        type=schedule_data.get("type"),
+                        start_date=start_date,
+                        end_date=end_date,
+                        category_id=new_cat_id,
+                        fallback_category_id=new_fallback_id,
+                        shuffle=schedule_data.get("shuffle", False),
+                        playlist=schedule_data.get("playlist", False),
+                        is_active=schedule_data.get("is_active", True),
+                        recurrence_pattern=schedule_data.get("recurrence_pattern"),
+                        preroll_ids=schedule_data.get("preroll_ids"),
+                        # v1.13.13: previously-missing fields restored. Without these, sequence
+                        # schedules came back as plain category schedules, blend/exclusive/priority
+                        # were lost, and holiday-API auto-update bindings were dropped.
+                        sequence=schedule_data.get("sequence"),
+                        color=schedule_data.get("color"),
+                        blend_enabled=bool(schedule_data.get("blend_enabled", False)),
+                        priority=schedule_data.get("priority") if schedule_data.get("priority") is not None else 5,
+                        exclusive=bool(schedule_data.get("exclusive", False)),
+                        holiday_name=schedule_data.get("holiday_name"),
+                        holiday_country=schedule_data.get("holiday_country"),
+                    )
+                    db.add(schedule)
+                    db.flush()
             except Exception as schedule_err:
                 print(f"Error adding schedule {schedule_data.get('name')}: {schedule_err}")
-                db.rollback()
                 continue
 
         # Restore holiday presets
@@ -14365,23 +15671,24 @@ def restore_database(backup_data: dict, db: Session = Depends(get_db)):
                 old_cat_id = holiday_data.get("category_id")
                 new_cat_id = old_id_to_new_id.get(old_cat_id) if old_cat_id else None
                 
-                holiday = models.HolidayPreset(
-                    name=holiday_data.get("name"),
-                    description=holiday_data.get("description"),
-                    month=holiday_data.get("month"),
-                    day=holiday_data.get("day"),
-                    # v1.13.13: date-range and is_recurring fields, previously dropped
-                    start_month=holiday_data.get("start_month"),
-                    start_day=holiday_data.get("start_day"),
-                    end_month=holiday_data.get("end_month"),
-                    end_day=holiday_data.get("end_day"),
-                    is_recurring=bool(holiday_data.get("is_recurring", True)),
-                    category_id=new_cat_id
-                )
-                db.add(holiday)
+                with db.begin_nested():
+                    holiday = models.HolidayPreset(
+                        name=holiday_data.get("name"),
+                        description=holiday_data.get("description"),
+                        month=holiday_data.get("month"),
+                        day=holiday_data.get("day"),
+                        # v1.13.13: date-range and is_recurring fields, previously dropped
+                        start_month=holiday_data.get("start_month"),
+                        start_day=holiday_data.get("start_day"),
+                        end_month=holiday_data.get("end_month"),
+                        end_day=holiday_data.get("end_day"),
+                        is_recurring=bool(holiday_data.get("is_recurring", True)),
+                        category_id=new_cat_id
+                    )
+                    db.add(holiday)
+                    db.flush()
             except Exception as holiday_err:
                 print(f"Error adding holiday preset {holiday_data.get('name')}: {holiday_err}")
-                db.rollback()
                 continue
 
         # Restore saved sequences
@@ -14402,18 +15709,19 @@ def restore_database(backup_data: dict, db: Session = Depends(get_db)):
                     except (ValueError, TypeError):
                         updated_at = None
                 
-                sequence = models.SavedSequence(
-                    name=seq_data.get("name"),
-                    description=seq_data.get("description"),
-                    blocks=json.dumps(seq_data.get("blocks", [])),
-                    created_at=created_at or datetime.datetime.utcnow(),
-                    updated_at=updated_at or datetime.datetime.utcnow()
-                )
-                db.add(sequence)
+                with db.begin_nested():
+                    sequence = models.SavedSequence(
+                        name=seq_data.get("name"),
+                        description=seq_data.get("description"),
+                        blocks=json.dumps(seq_data.get("blocks", [])),
+                        created_at=created_at or datetime.datetime.utcnow(),
+                        updated_at=updated_at or datetime.datetime.utcnow()
+                    )
+                    db.add(sequence)
+                    db.flush()
                 print(f"RESTORE: Added sequence '{seq_data.get('name')}'")
             except Exception as seq_err:
                 print(f"Error adding saved sequence {seq_data.get('name')}: {seq_err}")
-                db.rollback()
                 continue
 
         db.commit()
@@ -14432,6 +15740,7 @@ def restore_database(backup_data: dict, db: Session = Depends(get_db)):
                 data_dir=data_dir,
                 generate_thumbnail_fn=_generate_thumbnail_for_preroll,
                 file_log=_file_log,
+                exclude_trees=_scanner_exclude_trees(db),
             )
             _set_last_scan_stats(scan_stats)
             print(f"RESTORE: post-restore scan complete: {scan_stats}")
@@ -14482,11 +15791,20 @@ def restore_files(file: UploadFile = File(...), db: Session = Depends(get_db)):
                 # 1. Restore database file if present
                 if "database/nexroll.db" in namelist:
                     print("RESTORE: Restoring database file...")
+                    from backend.database import engine as _engine
                     # Extract to temp location first
                     db_temp = os.path.join(temp_dir, "nexroll_restore.db")
                     with zip_ref.open("database/nexroll.db") as src:
                         with open(db_temp, "wb") as dst:
                             dst.write(src.read())
+                    # Release all pooled SQLite connections BEFORE touching the file.
+                    # Without this, Windows may refuse to overwrite an open DB handle,
+                    # and the OLD database's WAL/SHM sidecars could be replayed over
+                    # the freshly-restored file. Disposing checkpoints + closes them.
+                    try:
+                        _engine.dispose()
+                    except Exception as _eng_err:
+                        print(f"RESTORE: engine.dispose failed (non-fatal): {_eng_err}")
                     # Copy to actual location (backup existing first)
                     if os.path.exists(DB_PATH):
                         backup_db = DB_PATH + ".backup"
@@ -14494,6 +15812,14 @@ def restore_files(file: UploadFile = File(...), db: Session = Depends(get_db)):
                             shutil.copy2(DB_PATH, backup_db)
                         except Exception:
                             pass
+                    # Drop stale WAL/SHM sidecars that belong to the old database.
+                    for _side in ("-wal", "-shm"):
+                        try:
+                            _sp = DB_PATH + _side
+                            if os.path.exists(_sp):
+                                os.remove(_sp)
+                        except Exception as _side_err:
+                            print(f"RESTORE: could not remove {DB_PATH + _side}: {_side_err}")
                     shutil.copy2(db_temp, DB_PATH)
                     os.unlink(db_temp)
                     restored_items.append("database")
@@ -14502,28 +15828,40 @@ def restore_files(file: UploadFile = File(...), db: Session = Depends(get_db)):
                 preroll_files = [n for n in namelist if n.startswith("prerolls/") and not n.endswith("/")]
                 if preroll_files:
                     print(f"RESTORE: Restoring {len(preroll_files)} preroll files...")
+                    written = 0
                     for name in preroll_files:
                         # Extract relative path after "prerolls/"
                         rel_path = name[len("prerolls/"):]
                         target_path = os.path.join(PREROLLS_DIR, rel_path)
+                        # Zip-slip guard: never write outside PREROLLS_DIR
+                        if not _is_within_directory(PREROLLS_DIR, target_path):
+                            print(f"RESTORE: skipping unsafe archive entry: {name}")
+                            continue
                         os.makedirs(os.path.dirname(target_path), exist_ok=True)
                         with zip_ref.open(name) as src:
                             with open(target_path, "wb") as dst:
                                 dst.write(src.read())
-                    restored_items.append(f"{len(preroll_files)} preroll files")
+                        written += 1
+                    restored_items.append(f"{written} preroll files")
                 
                 # 3. Restore thumbnails
                 thumb_files = [n for n in namelist if n.startswith("thumbnails/") and not n.endswith("/")]
                 if thumb_files:
                     print(f"RESTORE: Restoring {len(thumb_files)} thumbnail files...")
+                    written = 0
                     for name in thumb_files:
                         rel_path = name[len("thumbnails/"):]
                         target_path = os.path.join(THUMBNAILS_DIR, rel_path)
+                        # Zip-slip guard: never write outside THUMBNAILS_DIR
+                        if not _is_within_directory(THUMBNAILS_DIR, target_path):
+                            print(f"RESTORE: skipping unsafe archive entry: {name}")
+                            continue
                         os.makedirs(os.path.dirname(target_path), exist_ok=True)
                         with zip_ref.open(name) as src:
                             with open(target_path, "wb") as dst:
                                 dst.write(src.read())
-                    restored_items.append(f"{len(thumb_files)} thumbnails")
+                        written += 1
+                    restored_items.append(f"{written} thumbnails")
                 
                 # 4. Restore settings if present
                 if "settings/settings.json" in namelist:
@@ -14535,9 +15873,9 @@ def restore_files(file: UploadFile = File(...), db: Session = Depends(get_db)):
                     restored_items.append("settings")
                 
             else:
-                # Legacy format - just prerolls folder directly
+                # Legacy format - just prerolls folder directly (zip-slip safe)
                 print("RESTORE: Detected legacy backup format")
-                zip_ref.extractall(PREROLLS_DIR)
+                _safe_extractall(zip_ref, PREROLLS_DIR)
                 restored_items.append("preroll files (legacy format)")
         
         # Clean up temp file
@@ -14603,6 +15941,10 @@ def thumbnails_rebuild(category: str = None, force: bool = False, db: Session = 
     failures = []
 
     try:
+        # Drop junk rows (TypeScript/node_modules files mis-imported as prerolls)
+        # first, so re-initializing thumbnails doesn't regenerate *.d.ts.jpg etc.
+        purged = _purge_dependency_prerolls(db)
+
         # Query prerolls with optional category name filter
         query = db.query(models.Preroll).join(models.Category, isouter=True)
         if category and category.strip():
@@ -14711,10 +16053,15 @@ def thumbnails_rebuild(category: str = None, force: bool = False, db: Session = 
             log_event('ERROR', 'system', f'Thumbnail rebuild commit failed: {e}', source='thumbnails_rebuild')
             raise HTTPException(status_code=500, detail=f"Thumbnail rebuild failed to commit: {str(e)}")
 
+        # Remove thumbnail files left orphaned on disk (e.g. by the purge above).
+        orphans = _sweep_orphan_thumbnails(db)
+
         return {
             "processed": processed,
             "generated": generated,
             "skipped": skipped,
+            "purged": purged,  # junk dependency-file rows removed before rebuilding
+            "orphans_removed": orphans,  # orphan thumbnail files deleted from disk
             "failures": len(failures),
             "failure_details": failures[:15],  # cap details
             "category": category or None,
@@ -15131,7 +16478,10 @@ def get_or_create_thumbnail(category: str, thumb_name: str):
         pass
 
     for frag in (category, thumb_name):
-        if ".." in frag or "/" in frag or "\\" in frag:
+        # Block path separators and the exact "."/".." traversal segments, but
+        # NOT filenames that merely contain ".." (e.g. "Caaable Guy... - Plex"):
+        # with no separators allowed, a dotted name can't escape the directory.
+        if "/" in frag or "\\" in frag or frag in (".", ".."):
             raise HTTPException(status_code=400, detail="Invalid path")
 
     # Resolve target thumbnail path and ensure category directory exists (case-insensitive)
@@ -15324,7 +16674,10 @@ def get_preroll_video(category: str, filename: str, db: Session = Depends(get_db
         pass
 
     for frag in (category, filename):
-        if ".." in frag or "/" in frag or "\\" in frag:
+        # Block path separators and the exact "."/".." traversal segments, but
+        # NOT filenames that merely contain ".." (e.g. "Caaable Guy... - Plex"):
+        # with no separators allowed, a dotted name can't escape the directory.
+        if "/" in frag or "\\" in frag or frag in (".", ".."):
             raise HTTPException(status_code=400, detail="Invalid path")
 
     # Resolve target video path and ensure category directory exists (case-insensitive)
@@ -15778,6 +17131,26 @@ def apply_preroll_by_genres(req: ResolveGenresRequest, ttl: int = 15, db: Sessio
         "override_ttl_minutes": ttl
     }
 
+def _schedule_has_sequence(schedule) -> bool:
+    """True if a schedule carries a valid, non-empty inline sequence definition.
+    Mirrors scheduler._has_valid_sequence (kept local to avoid cross-import)."""
+    raw = getattr(schedule, "sequence", None) if schedule else None
+    if not raw:
+        return False
+    if isinstance(raw, str):
+        s = raw.strip()
+        if not s or s in ("null", "[]", "''", '""'):
+            return False
+        try:
+            parsed = json.loads(s)
+            return isinstance(parsed, list) and len(parsed) > 0
+        except Exception:
+            return False
+    if isinstance(raw, list):
+        return len(raw) > 0
+    return False
+
+
 @app.get("/settings/active-category")
 def get_active_category(db: Session = Depends(get_db)):
     """Get the currently applied category"""
@@ -15867,6 +17240,33 @@ def get_active_category(db: Session = Depends(get_db)):
         category_id = getattr(setting, "active_category", None)
         active_sched_id = getattr(setting, "active_schedule_id", None)
 
+        # Guard against a STALE active_schedule_id. The scheduler only advances
+        # this pointer as a side effect of a successful Plex apply, and it isn't
+        # cleared when the pointed-to schedule is disabled or falls out of its
+        # window. So it can keep pointing at a schedule the user has since turned
+        # off (the dashboard would then show a disabled schedule as "currently
+        # showing"). Validate it here before we trust it, and self-heal settings
+        # so the next tick / read is clean.
+        if active_sched_id:
+            try:
+                _ptr = db.query(models.Schedule).filter(models.Schedule.id == active_sched_id).first()
+                _now = datetime.datetime.now()
+                _ptr_valid = bool(
+                    _ptr
+                    and getattr(_ptr, "is_active", False)
+                    and _schedule_in_date_window(_ptr, _now)
+                )
+                if not _ptr_valid:
+                    active_sched_id = None
+                    if getattr(setting, "active_schedule_id", None) is not None:
+                        try:
+                            setting.active_schedule_id = None
+                            db.commit()
+                        except Exception:
+                            db.rollback()
+            except Exception:
+                pass
+
         # Detect blend mode. The scheduler sets last_run on ALL blend partners in the same DB commit
         # on every tick — sequence blend, category blend, and mixed alike — so last_run is the
         # single reliable signal for all blend types (avoids _schedule_in_date_window divergence).
@@ -15890,6 +17290,21 @@ def get_active_category(db: Session = Depends(get_db)):
                     blend_schedules_info = [{"id": s.id, "name": s.name} for s in recently_run_blend]
         except Exception:
             pass
+
+        # Sequence-only active schedule: a schedule that runs a sequence has
+        # category_id = None (by design), so it would otherwise fall into the
+        # "category_id is None -> no active_category" branch below and the
+        # dashboard would show nothing. Detect it here, before that branch, so
+        # the Currently Showing tile renders the sequence. (Skipped for blend,
+        # which has its own handling below.)
+        if not applied_sequence and not blend_schedules_info and active_sched_id:
+            _seq_sched = db.query(models.Schedule).filter(models.Schedule.id == active_sched_id).first()
+            if _seq_sched and _schedule_has_sequence(_seq_sched):
+                applied_sequence = {
+                    "id": _seq_sched.id,
+                    "name": _seq_sched.name,
+                    "via_schedule": True,
+                }
 
         if category_id is None:
             if blend_schedules_info:
@@ -15926,6 +17341,17 @@ def get_active_category(db: Session = Depends(get_db)):
             active_sched = db.query(models.Schedule).filter(models.Schedule.id == active_sched_id).first()
             if active_sched:
                 result["active_schedule_name"] = active_sched.name
+                # If the active schedule runs a SEQUENCE (e.g. NeX-Up trailer
+                # blocks), report it as applied_sequence so the Currently
+                # Showing tile shows the sequence view instead of the schedule's
+                # category ("Holidays / Shuffle / 0 Prerolls" was the category
+                # being shown for a sequence-based schedule).
+                if not applied_sequence and _schedule_has_sequence(active_sched):
+                    applied_sequence = {
+                        "id": active_sched.id,
+                        "name": active_sched.name,
+                        "via_schedule": True,
+                    }
         elif category_id:
             # Fallback for users upgrading from older versions where active_schedule_id was not yet
             # written to the DB (scheduler hasn't ticked since restart). Find the most recently run
@@ -16516,6 +17942,7 @@ def update_nexup_settings(
     if sonarr_enabled is not None:
         setting.nexup_sonarr_enabled = sonarr_enabled
     if storage_path is not None:
+        old_storage_path = getattr(setting, "nexup_storage_path", None)
         setting.nexup_storage_path = storage_path
         # Create directory if it doesn't exist
         if storage_path:
@@ -16523,6 +17950,19 @@ def update_nexup_settings(
                 Path(storage_path).mkdir(parents=True, exist_ok=True)
             except Exception as e:
                 _file_log(f"Failed to create NeX-Up storage path: {e}")
+
+        # If the storage path actually changed, relocate existing trailer files
+        # into the new location and update their DB paths, so everything stays
+        # consolidated (otherwise old downloads stay scattered in the previous
+        # folder after a path change).
+        try:
+            if storage_path and old_storage_path and \
+               os.path.normcase(os.path.normpath(old_storage_path)) != os.path.normcase(os.path.normpath(storage_path)):
+                moved, failed = _relocate_nexup_trailers(db, storage_path)
+                if moved or failed:
+                    _file_log(f"NeX-Up: storage path changed; relocated {moved} trailer file(s), {failed} failed")
+        except Exception as e:
+            _file_log(f"NeX-Up: trailer relocation after path change failed: {e}")
         
         # Auto-create the NeX-Up Trailers system category for movies if it doesn't exist
         nexup_category = db.query(models.Category).filter(
@@ -16962,7 +18402,29 @@ def get_sonarr_trailers(db: Session = Depends(get_db)):
     trailers = db.query(models.ComingSoonTVTrailer).filter(
         models.ComingSoonTVTrailer.status == 'downloaded'
     ).order_by(models.ComingSoonTVTrailer.release_date.asc()).all()
-    
+
+    setting = db.query(models.Setting).first()
+    retention_days = getattr(setting, "nexup_trailer_retention_days", 7) if setting else 7
+    try:
+        retention_days = int(retention_days)
+    except Exception:
+        retention_days = 7
+
+    def calc_removal(downloaded_at, release_date=None):
+        # Anchor on the later of download time and release date so an upcoming
+        # movie's trailer is never shown as "removed" before it even releases.
+        if not downloaded_at or retention_days <= 0:
+            return None
+        try:
+            anchor = downloaded_at
+            if release_date:
+                rd = release_date if isinstance(release_date, datetime.datetime) else datetime.datetime(release_date.year, release_date.month, release_date.day)
+                if rd > anchor:
+                    anchor = rd
+            return (anchor + datetime.timedelta(days=retention_days)).isoformat()
+        except Exception:
+            return None
+
     return [{
         "id": t.id,
         "sonarr_series_id": t.sonarr_series_id,
@@ -16977,16 +18439,52 @@ def get_sonarr_trailers(db: Session = Depends(get_db)):
         "file_size_mb": t.file_size_mb,
         "poster_url": t.poster_url,
         "is_enabled": t.is_enabled,
-        "status": t.status
+        "status": t.status,
+        "downloaded_at": t.downloaded_at.isoformat() if t.downloaded_at else None,
+        "removal_date": calc_removal(t.downloaded_at, t.release_date)
     } for t in trailers]
+
+@app.get("/nexup/sonarr/trailers/search")
+async def search_tv_trailers(sonarr_series_id: int, season_number: int = 1, db: Session = Depends(get_db)):
+    """Find alternate YouTube trailers for a Sonarr series (top 3) for the user to
+    preview and pick when the auto-discovered trailer is unavailable."""
+    setting = db.query(models.Setting).first()
+    if not setting or not getattr(setting, 'nexup_sonarr_url', None):
+        raise HTTPException(status_code=400, detail="Sonarr not connected")
+    from backend.sonarr_connector import SonarrConnector
+    from backend.radarr_connector import search_youtube_trailers
+    try:
+        connector = SonarrConnector(setting.nexup_sonarr_url, setting.nexup_sonarr_api_key)
+        all_series = await connector.get_all_series()
+        show = next((s for s in all_series if s.get('id') == sonarr_series_id), None)
+        if not show:
+            raise HTTPException(status_code=404, detail="Show not found in Sonarr")
+        title = show.get('title', '') or ''
+        year = show.get('year')
+        season_str = f"season {season_number}" if season_number and season_number > 1 else ""
+        query = " ".join(p for p in [title, str(year) if year else "", season_str, "official trailer"] if p).strip()
+        candidates = await asyncio.get_event_loop().run_in_executor(
+            None, search_youtube_trailers, query, 3)
+        return {"title": title, "year": year, "season_number": season_number, "query": query, "candidates": candidates}
+    except HTTPException:
+        raise
+    except Exception as e:
+        log_event('ERROR', 'nexup', f'TV trailer search failed: {e}', source='search_tv_trailers')
+        raise HTTPException(status_code=500, detail=f"TV trailer search failed: {e}")
+
 
 @app.get("/nexup/trailers/download/tv")
 async def download_tv_trailer(
     sonarr_series_id: int,
     season_number: int = 1,
+    trailer_url: Optional[str] = None,
     db: Session = Depends(get_db)
 ):
-    """Download a trailer for a TV show from Sonarr"""
+    """Download a trailer for a TV show from Sonarr.
+
+    Pass `trailer_url` to download a user-chosen alternate (from
+    /nexup/sonarr/trailers/search) instead of the auto-discovered one.
+    """
     _file_log(f"Sonarr: Download request for series_id={sonarr_series_id}, season={season_number}")
     setting = db.query(models.Setting).first()
     if not setting or not getattr(setting, 'nexup_sonarr_url', None):
@@ -17036,34 +18534,58 @@ async def download_tv_trailer(
     
     _file_log(f"Sonarr: Found show '{show_info.get('title')}' (TVDB: {show_info.get('tvdbId')}, IMDB: {show_info.get('imdbId')})")
     
-    # Get trailer URL from TMDB or IMDB
+    # Get trailer URL from TMDB or IMDB (skipped when the caller chose an alternate)
     tmdb_api_key = getattr(setting, 'nexup_tmdb_api_key', None)
-    fetcher = TVTrailerFetcher(tmdb_api_key=tmdb_api_key)
-    _file_log(f"Sonarr: Searching for trailers for '{show_info.get('title')}' S{season_number}")
-    trailers = await fetcher.get_season_trailers(
-        tmdb_id=None,
-        tvdb_id=show_info.get('tvdbId'),
-        imdb_id=show_info.get('imdbId'),
-        season_number=season_number
-    ) if show_info.get('tvdbId') or show_info.get('imdbId') else []
-    
-    # If no season-specific trailers, try show-level trailers
-    if not trailers:
-        _file_log(f"Sonarr: No season-specific trailers found, trying show-level trailers")
-        trailers = await fetcher.get_tv_trailers(
+    trailers = []
+    if not trailer_url:
+        fetcher = TVTrailerFetcher(tmdb_api_key=tmdb_api_key)
+        _file_log(f"Sonarr: Searching for trailers for '{show_info.get('title')}' S{season_number}")
+        trailers = await fetcher.get_season_trailers(
+            tmdb_id=None,
             tvdb_id=show_info.get('tvdbId'),
-            imdb_id=show_info.get('imdbId')
-        )
-    
-    if not trailers:
-        _file_log(f"Sonarr: No trailers found for '{show_info.get('title')}'")
-        raise HTTPException(status_code=404, detail="No trailer found for this show")
-    
-    _file_log(f"Sonarr: Found {len(trailers)} trailer(s) for '{show_info.get('title')}'")
-    
-    # Use first available trailer
-    trailer_info = trailers[0]
-    trailer_url = trailer_info['url']
+            imdb_id=show_info.get('imdbId'),
+            season_number=season_number
+        ) if show_info.get('tvdbId') or show_info.get('imdbId') else []
+
+        # For an upcoming season (>1), TMDB usually only has the show's original
+        # (season-1) trailer — flagged season_specific=False. Prefer a
+        # season-specific YouTube result in that case, so e.g. "The Bear" S5
+        # downloads the S5 trailer instead of the S1 one.
+        if season_number and season_number > 1 and (not trailers or not trailers[0].get('season_specific')):
+            try:
+                from backend.radarr_connector import search_youtube_trailers
+                _title = show_info.get('title', '') or ''
+                _year = show_info.get('year')
+                yq = " ".join(p for p in [_title, str(_year) if _year else "",
+                                          f"season {season_number}", "official trailer"] if p).strip()
+                _file_log(f"Sonarr: Season-aware YouTube search: {yq}")
+                yt = await asyncio.get_event_loop().run_in_executor(None, search_youtube_trailers, yq, 1)
+                if yt and yt[0].get('url'):
+                    trailers = [{
+                        'source': 'youtube',
+                        'url': yt[0]['url'],
+                        'name': yt[0].get('title') or f"Season {season_number} Trailer",
+                        'season_specific': True,
+                    }]
+                    _file_log(f"Sonarr: Season-aware YouTube match: {yt[0]['url']}")
+            except Exception as e:
+                _file_log(f"Sonarr: Season-aware YouTube search failed: {e}")
+
+        # If still nothing, try show-level trailers (last resort)
+        if not trailers:
+            _file_log(f"Sonarr: No season-specific trailers found, trying show-level trailers")
+            trailers = await fetcher.get_tv_trailers(
+                tvdb_id=show_info.get('tvdbId'),
+                imdb_id=show_info.get('imdbId')
+            )
+
+        if not trailers:
+            _file_log(f"Sonarr: No trailers found for '{show_info.get('title')}'")
+            raise HTTPException(status_code=404, detail="No trailer found for this show")
+
+        _file_log(f"Sonarr: Found {len(trailers)} trailer(s) for '{show_info.get('title')}'")
+        # Use first available trailer
+        trailer_url = trailers[0]['url']
     
     # Create trailer record
     trailer = models.ComingSoonTVTrailer(
@@ -17889,6 +19411,63 @@ async def download_diagnostics(db: Session = Depends(get_db)):
     
     return diagnostics
 
+@app.get("/nexup/potoken/status")
+def get_potoken_status():
+    """Status of the YouTube PO-token provider (bgutil).
+
+    `usable: true` means yt-dlp will get Proof-of-Origin tokens (plugin importable
+    AND a healthy local token server), which is what defeats the bot wall.
+    """
+    try:
+        from backend import nexup_potoken
+        mgr = nexup_potoken.get_manager()
+        if mgr is None:
+            mgr = nexup_potoken.init(_potoken_home(), _file_log)
+        return mgr.status()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"PO-token status failed: {e}")
+
+
+@app.post("/nexup/potoken/start")
+def start_potoken():
+    """Start (or adopt) the local PO-token provider server. Idempotent."""
+    try:
+        from backend import nexup_potoken
+        mgr = nexup_potoken.get_manager()
+        if mgr is None:
+            mgr = nexup_potoken.init(_potoken_home(), _file_log)
+        status = mgr.start()
+        if not status.get("usable"):
+            # Give the caller a precise reason so the UI can guide the user.
+            if not status.get("plugin_installed"):
+                status["hint"] = "PO-token yt-dlp plugin not installed (bgutil-ytdlp-pot-provider)."
+            elif not status.get("node_available"):
+                status["hint"] = "Node.js not found — install it from the System page."
+            elif not status.get("provider_present"):
+                status["hint"] = "PO-token provider files not found — install the YouTube downloader components."
+            elif not status.get("healthy"):
+                status["hint"] = "Provider server failed to start; check bgutil-provider.log."
+        return status
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"PO-token start failed: {e}")
+
+
+@app.post("/nexup/potoken/test")
+def test_potoken():
+    """Mint a PO token right now to prove the provider is actively working."""
+    try:
+        from backend import nexup_potoken
+        mgr = nexup_potoken.get_manager()
+        if mgr is None:
+            mgr = nexup_potoken.init(_potoken_home(), _file_log)
+        mgr.ensure_running()
+        result = mgr.test_mint()
+        result["status"] = mgr.status()
+        return result
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"PO-token test failed: {e}")
+
+
 @app.get("/nexup/youtube/status")
 def get_youtube_status(db: Session = Depends(get_db)):
     """Check if YouTube authentication is set up and working"""
@@ -17969,57 +19548,102 @@ def get_youtube_status(db: Session = Depends(get_db)):
     
     return status
 
+def _find_browser_executable(browser: str) -> Optional[str]:
+    """Resolve the path to a specific browser's executable, or None.
+
+    Checks PATH first (shutil.which), then the standard per-OS install
+    locations. Needed because the open-browser endpoint must launch the
+    browser the user picked, not the OS default.
+    """
+    import shutil
+    candidates = {
+        'win32': {
+            'chrome':  ['chrome', r'C:\Program Files\Google\Chrome\Application\chrome.exe',
+                        r'C:\Program Files (x86)\Google\Chrome\Application\chrome.exe',
+                        os.path.expandvars(r'%LOCALAPPDATA%\Google\Chrome\Application\chrome.exe')],
+            'edge':    ['msedge', r'C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe',
+                        r'C:\Program Files\Microsoft\Edge\Application\msedge.exe'],
+            'firefox': ['firefox', r'C:\Program Files\Mozilla Firefox\firefox.exe',
+                        r'C:\Program Files (x86)\Mozilla Firefox\firefox.exe'],
+            'brave':   ['brave', r'C:\Program Files\BraveSoftware\Brave-Browser\Application\brave.exe',
+                        r'C:\Program Files (x86)\BraveSoftware\Brave-Browser\Application\brave.exe',
+                        os.path.expandvars(r'%LOCALAPPDATA%\BraveSoftware\Brave-Browser\Application\brave.exe')],
+        },
+        'darwin': {
+            'chrome':  ['/Applications/Google Chrome.app/Contents/MacOS/Google Chrome'],
+            'edge':    ['/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge'],
+            'firefox': ['/Applications/Firefox.app/Contents/MacOS/firefox'],
+            'brave':   ['/Applications/Brave Browser.app/Contents/MacOS/Brave Browser'],
+        },
+        'linux': {
+            'chrome':  ['google-chrome', 'google-chrome-stable', 'chromium', 'chromium-browser'],
+            'edge':    ['microsoft-edge', 'microsoft-edge-stable'],
+            'firefox': ['firefox'],
+            'brave':   ['brave-browser', 'brave'],
+        },
+    }
+    osk = 'win32' if sys.platform == 'win32' else ('darwin' if sys.platform == 'darwin' else 'linux')
+    for c in candidates.get(osk, {}).get(browser, []):
+        found = shutil.which(c) if (os.sep not in c and '/' not in c) else (c if os.path.exists(c) else None)
+        if found:
+            return found
+    # Windows: consult the App Paths registry for non-standard installs.
+    if sys.platform == 'win32':
+        exe_name = {'chrome': 'chrome.exe', 'edge': 'msedge.exe',
+                    'firefox': 'firefox.exe', 'brave': 'brave.exe'}.get(browser)
+        if exe_name:
+            try:
+                import winreg
+                for root in (winreg.HKEY_CURRENT_USER, winreg.HKEY_LOCAL_MACHINE):
+                    try:
+                        with winreg.OpenKey(root, rf"SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths\{exe_name}") as k:
+                            path = winreg.QueryValue(k, None)
+                            if path and os.path.exists(path):
+                                return path
+                    except OSError:
+                        continue
+            except Exception:
+                pass
+    return None
+
+
 @app.post("/nexup/youtube/open-browser")
 def open_youtube_browser(browser: str = Query('chrome', description="Browser to open")):
-    """Open YouTube in a specific browser for user to sign in"""
+    """Open YouTube in the SPECIFIC browser the user picked, so they sign in
+    where NeXroll will later read cookies from. Previously, on Windows, this
+    built the right command but then fell back to webbrowser.open(), which
+    opens the OS default browser — so picking Firefox opened Chrome.
+
+    NOTE: this launches a browser on the machine NeXroll runs on. It is only
+    meaningful for a local (same-machine) install; on a remote/Docker server
+    it cannot open a browser on the user's device (see the response 'note').
+    """
     import webbrowser
     import subprocess
-    import sys
-    
+
     youtube_url = 'https://www.youtube.com'
-    
-    # Try to open in specific browser
-    browser_commands = {
-        'chrome': {
-            'windows': ['start', 'chrome', youtube_url],
-            'darwin': ['open', '-a', 'Google Chrome', youtube_url],
-            'linux': ['google-chrome', youtube_url]
-        },
-        'edge': {
-            'windows': ['start', 'msedge', youtube_url],
-            'darwin': ['open', '-a', 'Microsoft Edge', youtube_url],
-            'linux': ['microsoft-edge', youtube_url]
-        },
-        'firefox': {
-            'windows': ['start', 'firefox', youtube_url],
-            'darwin': ['open', '-a', 'Firefox', youtube_url],
-            'linux': ['firefox', youtube_url]
-        },
-        'brave': {
-            'windows': ['start', 'brave', youtube_url],
-            'darwin': ['open', '-a', 'Brave Browser', youtube_url],
-            'linux': ['brave-browser', youtube_url]
-        }
+    browser = (browser or 'chrome').lower()
+
+    exe = _find_browser_executable(browser)
+    if exe:
+        try:
+            subprocess.Popen([exe, youtube_url])
+            return {"success": True, "message": f"Opened YouTube in {browser}. Sign in if you're not already."}
+        except Exception as e:
+            _file_log(f"Failed to launch {browser} at {exe}: {e}")
+
+    # Could not find/launch the requested browser. Don't silently open a
+    # different one — that's the bug we're fixing. Tell the UI so it can guide
+    # the user (open it manually, or just continue if already signed in).
+    _file_log(f"open-browser: requested '{browser}' not found on the server")
+    return {
+        "success": False,
+        "browser_not_found": True,
+        "message": f"Couldn't find {browser.capitalize()} on the machine running NeXroll. "
+                   f"Open {browser.capitalize()} yourself and sign in to YouTube, then continue — "
+                   f"or, if NeXroll runs on a different machine/Docker, sign in there or upload a "
+                   f"cookies.txt file instead.",
     }
-    
-    platform = 'windows' if sys.platform == 'win32' else ('darwin' if sys.platform == 'darwin' else 'linux')
-    
-    try:
-        if browser in browser_commands:
-            cmd = browser_commands[browser].get(platform)
-            if cmd and sys.platform == 'win32':
-                # Use os.startfile or webbrowser instead of shell=True for security
-                webbrowser.open(youtube_url)
-                return {"success": True, "message": f"Opened YouTube in {browser}. Please sign in if not already."}
-            elif cmd:
-                subprocess.run(cmd)
-                return {"success": True, "message": f"Opened YouTube in {browser}. Please sign in if not already."}
-    except Exception as e:
-        _file_log(f"Failed to open specific browser {browser}: {e}")
-    
-    # Fallback to default browser
-    webbrowser.open(youtube_url)
-    return {"success": True, "message": "Opened YouTube in default browser. Please sign in if not already."}
 
 @app.post("/nexup/youtube/upload-cookies")
 async def upload_youtube_cookies(file: UploadFile = File(...), user: models.User = Depends(require_auth), db: Session = Depends(get_db)):
@@ -18217,59 +19841,73 @@ async def extract_youtube_cookies(browser: str = Query(None, description="Specif
     }
 
 @app.post("/nexup/youtube/test-download")
-async def test_youtube_download(db: Session = Depends(get_db)):
-    """Test if YouTube downloads are working with current configuration"""
+async def test_youtube_download(payload: dict = Body(default=None), db: Session = Depends(get_db)):
+    """Test YouTube authentication using the same yt-dlp Python module the real
+    downloads use (the old version shelled out to a `yt-dlp` CLI binary, which
+    doesn't exist in Docker/PyInstaller builds — so it failed even with valid
+    cookies). Probes a known-good control video to prove auth works, and
+    optionally the specific URL the user passes, so the UI can tell
+    "auth is broken" apart from "that one video is unavailable".
+
+    Optional body: { "url": "<youtube url the user is trying>" }
+    """
     setting = db.query(models.Setting).first()
     storage_path = getattr(setting, 'nexup_storage_path', None)
-    
     if not storage_path:
         return {"success": False, "error": "Storage path not configured"}
-    
-    import subprocess
-    import sys
-    
-    creationflags = 0
-    if sys.platform == 'win32':
-        creationflags = subprocess.CREATE_NO_WINDOW
-    
-    test_url = "https://www.youtube.com/watch?v=dQw4w9WgXcQ"  # Short test video
+
+    from backend.radarr_connector import TrailerDownloader, probe_youtube
     cookies_file = Path(storage_path) / 'youtube_cookies.txt'
-    
-    # Build command - we need to actually try to get video info, not just simulate
-    # This properly tests if authentication is working
-    base_cmd = ['yt-dlp', '--dump-json', '--no-download', test_url]
-    
-    if cookies_file.exists():
-        cmd = ['yt-dlp', '--cookies', str(cookies_file), '--dump-json', '--no-download', test_url]
-    else:
-        from backend.radarr_connector import TrailerDownloader
-        downloader = TrailerDownloader(storage_path, '1080')
-        browser = downloader.get_cookie_browser()
-        if browser:
-            cmd = ['yt-dlp', '--cookies-from-browser', browser, '--dump-json', '--no-download', test_url]
-        else:
-            cmd = base_cmd
-    
-    try:
-        result = subprocess.run(
-            cmd,
-            capture_output=True,
-            text=True,
-            timeout=30,
-            creationflags=creationflags
-        )
-        
-        if result.returncode == 0:
-            return {"success": True, "message": "YouTube downloads are working!"}
-        else:
-            error = result.stderr or "Unknown error"
-            if "Sign in to confirm" in error:
-                return {"success": False, "error": "Authentication required", "hint": "Please complete the YouTube setup process"}
-            return {"success": False, "error": error[:200]}
-    except subprocess.TimeoutExpired:
-        return {"success": False, "error": "Test timed out"}
-    except Exception as e:
-        return {"success": False, "error": str(e)}
+    have_cookies_file = cookies_file.exists()
+    downloader = TrailerDownloader(storage_path, '1080')
+    browser = None if have_cookies_file else downloader.get_cookie_browser()
+    cf = str(cookies_file) if have_cookies_file else None
+
+    auth_method = ('cookies file' if have_cookies_file
+                   else f'browser cookies ({browser})' if browser
+                   else 'no authentication')
+
+    # Run the (blocking) probes off the event loop.
+    loop = asyncio.get_event_loop()
+    control_url = "https://www.youtube.com/watch?v=dQw4w9WgXcQ"  # always-available control
+    control = await loop.run_in_executor(None, lambda: probe_youtube(control_url, cf, browser))
+
+    user_url = (payload or {}).get('url') if isinstance(payload, dict) else None
+    target = None
+    if user_url:
+        target = await loop.run_in_executor(None, lambda: probe_youtube(user_url, cf, browser))
+
+    # Interpret results.
+    if control.get('ok'):
+        if target is not None and not target.get('ok'):
+            # Auth works but the specific video doesn't — the key distinction.
+            return {
+                "success": False,
+                "auth_ok": True,
+                "auth_method": auth_method,
+                "category": target.get('category'),
+                "error": f"Authentication is working ({auth_method}), but that specific video failed: {target.get('reason')}",
+                "hint": "Try a different trailer — this one looks unavailable rather than a cookie problem.",
+            }
+        return {
+            "success": True,
+            "auth_ok": True,
+            "auth_method": auth_method,
+            "message": f"YouTube authentication is working via {auth_method}." + (
+                f" Target video OK: {target.get('title')}." if target and target.get('ok') else ""),
+        }
+
+    # Control failed → auth itself is the problem.
+    return {
+        "success": False,
+        "auth_ok": False,
+        "auth_method": auth_method,
+        "category": control.get('category'),
+        "error": control.get('reason'),
+        "hint": ("Re-export cookies from an Incognito window while signed in to YouTube, "
+                 "then upload youtube_cookies.txt."
+                 if control.get('category') in ('auth', 'rate_limited') else None),
+    }
 
 # YouTube OAuth state storage
 YOUTUBE_OAUTH_SESSIONS: dict = {}
@@ -18530,13 +20168,31 @@ def delete_youtube_oauth(db: Session = Depends(get_db)):
     except Exception as e:
         return {"success": False, "error": str(e)}
 
+def _trailer_matches_preference(release_type, preference) -> bool:
+    """Whether a downloaded trailer should appear given the release-date preference.
+
+    Only 'digital_only' is exclusive: it hides trailers that are explicitly
+    non-digital (e.g. a theatrical-only movie that was downloaded under a prior
+    preference). Legacy/unknown release types (None) are kept. The other
+    preferences are fallback orderings that accept any type, so nothing is hidden.
+    This filter is non-destructive — switching the preference back restores them.
+    """
+    if preference == 'digital_only':
+        return release_type not in ('physical', 'theatrical')
+    return True
+
+
 @app.get("/nexup/trailers")
 def get_nexup_trailers(db: Session = Depends(get_db)):
     """Get all downloaded trailers"""
-    trailers = db.query(models.ComingSoonTrailer).order_by(
+    _pref_setting = db.query(models.Setting).first()
+    _pref = getattr(_pref_setting, 'nexup_release_date_preference', 'digital_first') if _pref_setting else 'digital_first'
+    _all_trailers = db.query(models.ComingSoonTrailer).order_by(
         models.ComingSoonTrailer.release_date.asc()
     ).all()
-    
+    trailers = [t for t in _all_trailers if _trailer_matches_preference(t.release_type, _pref)]
+    hidden_by_preference = len(_all_trailers) - len(trailers)
+
     def calc_days_until(release_dt):
         if not release_dt:
             return None
@@ -18548,8 +20204,35 @@ def get_nexup_trailers(db: Session = Depends(get_db)):
             return (release_date - datetime.datetime.now().date()).days
         except:
             return None
-    
+
+    # Time-based retention: a downloaded trailer is auto-removed once it's older
+    # than nexup_trailer_retention_days (0 = keep forever). Surface the date so
+    # the UI can show when each trailer will be removed.
+    setting = db.query(models.Setting).first()
+    retention_days = getattr(setting, "nexup_trailer_retention_days", 7) if setting else 7
+    try:
+        retention_days = int(retention_days)
+    except Exception:
+        retention_days = 7
+
+    def calc_removal(downloaded_at, release_date=None):
+        # Anchor on the later of download time and release date so an upcoming
+        # movie's trailer is never shown as "removed" before it even releases.
+        if not downloaded_at or retention_days <= 0:
+            return None
+        try:
+            anchor = downloaded_at
+            if release_date:
+                rd = release_date if isinstance(release_date, datetime.datetime) else datetime.datetime(release_date.year, release_date.month, release_date.day)
+                if rd > anchor:
+                    anchor = rd
+            return (anchor + datetime.timedelta(days=retention_days)).isoformat()
+        except Exception:
+            return None
+
     return {
+        "retention_days": retention_days,  # 0 = never auto-removed
+        "hidden_by_preference": hidden_by_preference,  # count hidden by Digital Only
         "trailers": [
             {
                 "id": t.id,
@@ -18569,12 +20252,64 @@ def get_nexup_trailers(db: Session = Depends(get_db)):
                 "status": t.status,
                 "is_enabled": t.is_enabled,
                 "play_count": t.play_count,
-                "downloaded_at": t.downloaded_at.isoformat() if t.downloaded_at else None
+                "downloaded_at": t.downloaded_at.isoformat() if t.downloaded_at else None,
+                "removal_date": calc_removal(t.downloaded_at, t.release_date)
             }
             for t in trailers
         ],
         "total": len(trailers)
     }
+
+
+def _resolve_trailer_file(trailer, trailer_type: str, db: Session) -> Optional[Path]:
+    """Return the on-disk trailer file, self-healing a stale ``local_path``.
+
+    The recorded path drifts when the NeX-Up storage folder is moved or the
+    trailer is re-downloaded with a different container/extension — and then
+    older trailers stop previewing even though the file is sitting right there.
+    We fall back to locating it in the *current* storage by filename stem and by
+    the TMDB/TVDB id baked into the download filename
+    (``{title}_{tmdb_id}_trailer.ext`` / ``{title}_tvdb{tvdb_id}_trailer.ext``).
+    """
+    lp = getattr(trailer, 'local_path', None)
+    try:
+        if lp and Path(lp).exists():
+            return Path(lp)
+    except Exception:
+        pass
+
+    setting = db.query(models.Setting).first()
+    storage = getattr(setting, 'nexup_storage_path', None) if setting else None
+    if not storage:
+        return None
+    subdir = 'movies' if trailer_type == 'movie' else 'tv'
+    search_dir = Path(storage) / subdir
+    if not search_dir.is_dir():
+        return None
+
+    patterns = []
+    # 1. Same filename, any extension (handles e.g. a .webm -> .mp4 re-download).
+    if lp:
+        stem = Path(lp).stem
+        if stem:
+            patterns.append(f"{stem}.*")
+    # 2. The id is embedded in the download filename — robust to title changes.
+    if trailer_type == 'movie':
+        tmdb = getattr(trailer, 'tmdb_id', None)
+        if tmdb:
+            patterns.append(f"*_{tmdb}_trailer.*")
+    else:
+        tvdb = getattr(trailer, 'tvdb_id', None)
+        if tvdb:
+            patterns.append(f"*_tvdb{tvdb}_trailer.*")
+    for pat in patterns:
+        try:
+            for f in sorted(search_dir.glob(pat)):
+                if f.is_file():
+                    return f
+        except Exception:
+            continue
+    return None
 
 
 @app.get("/nexup/trailer/video/{trailer_type}/{trailer_id}")
@@ -18599,14 +20334,19 @@ def serve_trailer_video(trailer_type: str, trailer_id: int, db: Session = Depend
     if not trailer:
         raise HTTPException(status_code=404, detail="Trailer not found")
     
-    local_path = getattr(trailer, 'local_path', None)
-    if not local_path:
-        raise HTTPException(status_code=404, detail="Trailer video not available")
-    
-    video_path = Path(local_path)
-    if not video_path.exists():
+    video_path = _resolve_trailer_file(trailer, trailer_type, db)
+    if not video_path:
         raise HTTPException(status_code=404, detail="Trailer video file not found")
-    
+
+    # Self-heal the DB when we recovered the file at a new path, so future
+    # previews (and the next Plex apply) use the correct location.
+    try:
+        if str(getattr(trailer, 'local_path', '') or '') != str(video_path):
+            trailer.local_path = str(video_path)
+            db.commit()
+    except Exception:
+        db.rollback()
+
     import mimetypes
     mime_type, _ = mimetypes.guess_type(str(video_path))
     if not mime_type or not mime_type.startswith("video/"):
@@ -18620,9 +20360,46 @@ def serve_trailer_video(trailer_type: str, trailer_id: int, db: Session = Depend
     return response
 
 
+@app.get("/nexup/trailers/search")
+async def search_movie_trailers(radarr_movie_id: int, db: Session = Depends(get_db)):
+    """Find alternate YouTube trailers for a Radarr movie (top 3) so the user can
+    preview and pick one when the default trailer is unavailable."""
+    setting = db.query(models.Setting).first()
+    if not setting or not setting.nexup_radarr_url or not setting.nexup_radarr_api_key:
+        raise HTTPException(status_code=400, detail="Radarr not connected")
+    from backend.radarr_connector import RadarrConnector, search_youtube_trailers
+    try:
+        connector = RadarrConnector(setting.nexup_radarr_url, setting.nexup_radarr_api_key)
+        movie = await connector.get_movie_by_id(radarr_movie_id)
+        if not movie:
+            raise HTTPException(status_code=404, detail="Movie not found in Radarr")
+        title = movie.get('title', '') or ''
+        year = movie.get('year')
+        query = (f"{title} {year} official trailer" if year else f"{title} official trailer").strip()
+        candidates = await asyncio.get_event_loop().run_in_executor(
+            None, search_youtube_trailers, query, 3)
+        return {
+            "title": title,
+            "year": year,
+            "query": query,
+            "radarr_youtube_id": movie.get('youTubeTrailerId'),
+            "candidates": candidates,
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        log_event('ERROR', 'nexup', f'Trailer search failed: {e}', source='search_movie_trailers')
+        raise HTTPException(status_code=500, detail=f"Trailer search failed: {e}")
+
+
 @app.post("/nexup/trailers/download")
-async def download_trailer(radarr_movie_id: int, db: Session = Depends(get_db)):
-    """Download a specific trailer by Radarr movie ID"""
+async def download_trailer(radarr_movie_id: int, trailer_url: Optional[str] = None, db: Session = Depends(get_db)):
+    """Download a trailer for a Radarr movie.
+
+    By default uses Radarr's youTubeTrailerId. Pass `trailer_url` to download a
+    user-chosen alternate (from /nexup/trailers/search) when the default one is
+    unavailable.
+    """
     
     setting = db.query(models.Setting).first()
     if not setting or not setting.nexup_radarr_url or not setting.nexup_radarr_api_key:
@@ -18658,13 +20435,14 @@ async def download_trailer(radarr_movie_id: int, db: Session = Depends(get_db)):
         if not movie:
             raise HTTPException(status_code=404, detail="Movie not found in Radarr")
         
-        trailer_url = None
+        # Honor a caller-provided alternate URL; otherwise derive from Radarr.
+        _user_chose_url = trailer_url is not None  # explicit pick from the alternate-trailer picker
         youtube_id = movie.get('youTubeTrailerId')
-        if youtube_id:
+        if not trailer_url and youtube_id:
             trailer_url = f"https://www.youtube.com/watch?v={youtube_id}"
-        
+
         _file_log(f"Downloading trailer for: {movie.get('title')} (TMDB: {movie.get('tmdbId')}, YouTube ID: {youtube_id}, URL: {trailer_url})")
-        
+
         if not trailer_url:
             raise HTTPException(status_code=400, detail="No trailer available for this movie in Radarr")
         
@@ -18681,21 +20459,43 @@ async def download_trailer(radarr_movie_id: int, db: Session = Depends(get_db)):
             trailer_url,
             movie.get('title', 'Unknown'),
             movie.get('tmdbId', 0),
-            year=movie.get('year')
+            year=movie.get('year'),
+            only_provided_url=_user_chose_url
         )
-        
-        if not result:
-            # Provide helpful error message
-            help_msg = "YouTube is blocking the download. "
-            if not cookies_file.exists() and not browser:
-                help_msg += "Export your browser cookies to 'youtube_cookies.txt' in your NeX-Up storage folder, or close your browser and try again."
-            elif not cookies_file.exists():
-                help_msg += f"Detected browser: {browser}. Try closing {browser} completely and retry, or export cookies to youtube_cookies.txt."
+
+        if not (result and isinstance(result, dict) and result.get('path')):
+            # download_trailer returns {'error': <CODE>, 'message': '<CODE>: ...'}.
+            err_code = (result.get('error') if isinstance(result, dict) else '') or ''
+            fail_detail = (result.get('message') if isinstance(result, dict) else '') or ''
+            # The message starts with the internal CODE; strip it for display.
+            clean = fail_detail
+            if ':' in fail_detail:
+                head, rest = fail_detail.split(':', 1)
+                if head.strip().replace('_', '').isalpha() and head.strip().isupper():
+                    clean = rest.strip()
+
+            if err_code in ('VIDEO_UNAVAILABLE', 'AGE_RESTRICTED', 'RATE_LIMITED'):
+                # Concrete, known reason from YouTube — show it verbatim (already
+                # written for users, and NOT "try again", which would mislead).
+                help_msg = clean
+            elif (err_code in ('YOUTUBE_BOT_BLOCK', 'STALE_COOKIES')
+                  or any(s in fail_detail.lower() for s in ['sign in to confirm', 'not a bot', 'bot detection'])):
+                if not cookies_file.exists() and not browser:
+                    help_msg = ("YouTube is requiring sign-in for this trailer (usually age-restricted). "
+                                "Most trailers don't need this — for the ones that do, add cookies via "
+                                "'Advanced: sign in for age-restricted trailers' on the YouTube Downloads card.")
+                elif not cookies_file.exists():
+                    help_msg = (f"YouTube is requiring sign-in. Detected browser: {browser}. Close {browser} "
+                                "completely and retry, or add cookies via 'Advanced: sign in' on the YouTube Downloads card.")
+                else:
+                    help_msg = "YouTube is requiring sign-in and your cookies may be expired. Re-export fresh cookies from an Incognito window."
             else:
-                help_msg += "Cookies file exists but may be expired. Re-export fresh cookies from your browser."
-            
-            _file_log(f"Failed to download trailer for {movie.get('title')} - {help_msg}")
-            log_event('ERROR', 'nexup', f'Trailer download failed: {movie.get("title")} - YouTube bot block', source='download_trailer', db=db)
+                help_msg = "Couldn't download this trailer right now — this is often a transient YouTube block, so try again in a moment."
+                if clean and clean != help_msg:
+                    help_msg += f" (Details: {clean[:180]})"
+
+            _file_log(f"Failed to download trailer for {movie.get('title')} - err={err_code} detail={fail_detail[:200]}")
+            log_event('ERROR', 'nexup', f'Trailer download failed: {movie.get("title")} - {err_code or "unknown"}', source='download_trailer', db=db)
             raise HTTPException(status_code=500, detail=help_msg)
     except HTTPException:
         raise
@@ -18704,16 +20504,19 @@ async def download_trailer(radarr_movie_id: int, db: Session = Depends(get_db)):
         log_event('ERROR', 'nexup', f'Trailer download error: {e}', source='download_trailer', db=db)
         raise HTTPException(status_code=500, detail=f"Error downloading trailer: {str(e)}")
     
-    # Parse release date
+    # Parse release date — record which field it came from so the Digital Only
+    # filter can recognise (and hide) non-digital trailers later.
     release_date = None
-    for date_field in ['digitalRelease', 'physicalRelease', 'inCinemas']:
+    release_type = None
+    for date_field, rtype in [('digitalRelease', 'digital'), ('physicalRelease', 'physical'), ('inCinemas', 'theatrical')]:
         if movie.get(date_field):
             try:
                 release_date = datetime.datetime.fromisoformat(movie[date_field].replace('Z', '+00:00')).date()
+                release_type = rtype
                 break
             except:
                 pass
-    
+
     # Create database entry
     trailer = models.ComingSoonTrailer(
         radarr_movie_id=radarr_movie_id,
@@ -18723,6 +20526,7 @@ async def download_trailer(radarr_movie_id: int, db: Session = Depends(get_db)):
         year=movie.get('year'),
         overview=movie.get('overview', ''),
         release_date=release_date,
+        release_type=release_type,
         trailer_url=trailer_url,
         local_path=result['path'],
         file_size_mb=result['size_mb'],
@@ -18853,11 +20657,14 @@ async def add_manual_trailer(
         _file_log(f"NeX-Up: Starting manual download for '{title}' from {url}")
         try:
             result = await downloader.download_trailer(url, title, tmdb_id)
-            if not result:
-                _file_log(f"NeX-Up: Manual download failed for '{title}' - no result returned")
+            # download_trailer now returns an {'error','message'} dict on
+            # failure (not None), so check for a real path, not just truthiness.
+            if not (result and isinstance(result, dict) and result.get('path')):
+                detail = (result.get('message') if isinstance(result, dict) else '') or ''
+                _file_log(f"NeX-Up: Manual download failed for '{title}' - {detail or 'no result returned'}")
                 log_event('ERROR', 'nexup', f'Manual trailer download failed: {title}', source='add_manual_trailer', db=db)
-                raise HTTPException(status_code=500, detail=f"Failed to download trailer from {url}. Check if YouTube authentication is configured.")
-            
+                raise HTTPException(status_code=500, detail=f"Failed to download trailer from {url}. {detail[:160] if detail else 'Check if YouTube authentication is configured.'}")
+
             final_path = result['path']
             file_size_mb = result['size_mb']
         except HTTPException:
@@ -19304,17 +21111,28 @@ async def sync_nexup(db: Session = Depends(get_db)):
                 else:
                     # Check if result contains YouTube bot block error
                     error_code = str(result.get('error', '')) if result and isinstance(result, dict) else ''
+                    detail_msg = str(result.get('message', '')) if result and isinstance(result, dict) else ''
                     if 'YOUTUBE_BOT_BLOCK' in error_code or 'STALE_COOKIES' in error_code:
-                        error_msg = "⚠️ YouTube bot detection. Re-export cookies from Incognito: login → youtube.com/robots.txt → export"
+                        error_msg = "YouTube bot detection. Re-export cookies from Incognito: login → youtube.com/robots.txt → export"
                         _nexup_sync_progress["status"] = f"YouTube blocked '{movie['title']}' - try re-exporting cookies"
                         _nexup_sync_progress["cookie_error"] = True  # Flag for UI to show help
                         results["errors"].append(f"{movie['title']}: {error_msg}")
                         _file_log(f"NeX-Up sync: YOUTUBE BOT BLOCK - '{movie['title']}' - cookies may be invalid or IP is rate-limited")
                         log_event('ERROR', 'nexup', f'YouTube bot block during Radarr sync: {movie["title"]}', source='sync_nexup', db=db)
                     else:
+                        # The movie HAD a trailer URL (it was eligible), so the
+                        # download itself failed. Report the real reason instead
+                        # of the old misleading "No trailer source available".
+                        had_url = bool(movie.get('trailer_url'))
+                        if had_url:
+                            error_msg = "Trailer found but the download failed (YouTube may be serving formats yt-dlp can't fetch right now). Try syncing again later."
+                        else:
+                            error_msg = "No trailer URL from Radarr or TMDB for this title yet"
+                        if detail_msg:
+                            error_msg += f" [{detail_msg[:120]}]"
                         _nexup_sync_progress["status"] = f"Failed to download '{movie['title']}'"
-                        results["errors"].append(f"{movie['title']}: No trailer source available")
-                        _file_log(f"NeX-Up sync: Download FAILED for '{movie['title']}' - no trailer source worked")
+                        results["errors"].append(f"{movie['title']}: {error_msg}")
+                        _file_log(f"NeX-Up sync: Download FAILED for '{movie['title']}' (had_url={had_url}) - {detail_msg or 'all strategies failed'}")
                     _nexup_sync_progress["errors"] = len(results["errors"])
                     
             except Exception as e:
@@ -19398,7 +21216,16 @@ def get_nexup_playback_trailers(db: Session = Depends(get_db)):
         models.ComingSoonTrailer.is_enabled == True,
         models.ComingSoonTrailer.status == 'downloaded'
     )
-    
+
+    # With 'Digital Only', don't play trailers that are explicitly non-digital
+    # (e.g. a theatrical-only movie downloaded under a prior preference). Keep
+    # legacy/unknown (NULL) release types. Non-destructive — reversible.
+    if (getattr(setting, 'nexup_release_date_preference', 'digital_first') or 'digital_first') == 'digital_only':
+        query = query.filter(or_(
+            models.ComingSoonTrailer.release_type.is_(None),
+            models.ComingSoonTrailer.release_type.notin_(['physical', 'theatrical'])
+        ))
+
     if order == 'release_date':
         query = query.order_by(models.ComingSoonTrailer.release_date.asc())
     elif order == 'random':
@@ -20122,8 +21949,19 @@ async def generate_coming_soon_list(
     
     # Generate the video
     output_dir = Path(storage_path) / "dynamic_prerolls"
-    output_dir.mkdir(parents=True, exist_ok=True)
-    
+    try:
+        output_dir.mkdir(parents=True, exist_ok=True)
+    except OSError as e:
+        # e.g. the configured storage path is on an unreachable network drive
+        # or isn't writable. Return a clear reason instead of a bare 500
+        # (which surfaced in the UI as "Unexpected token 'I'").
+        _file_log(f"[COMING-SOON-LIST] storage path not writable: {storage_path} ({e})")
+        raise HTTPException(
+            status_code=400,
+            detail=f"NeX-Up storage path is not accessible: {storage_path}. "
+                   f"Check the path exists and is writable (Settings > NeX-Up > Storage). [{e.strerror or e}]"
+        )
+
     generator = DynamicPrerollGenerator(str(output_dir))
     
     if not generator.check_ffmpeg_available():
@@ -20537,7 +22375,7 @@ def delete_specific_preroll(filename: str, db: Session = Depends(get_db)):
         return {"success": False, "message": "Storage path not configured"}
     
     # Sanitize filename
-    if ".." in filename or "/" in filename or "\\" in filename:
+    if "/" in filename or "\\" in filename or filename in (".", ".."):
         return {"success": False, "message": "Invalid filename"}
     
     file_path = Path(storage_path) / "dynamic_prerolls" / filename
@@ -20575,35 +22413,14 @@ def resolve_preview_blocks(blocks: list = Body(...), db: Session = Depends(get_d
         block_type = str(block.get("type", "")).lower()
         items = []
         if block_type == "nexup_trailers":
-            source = str(block.get("source", "both")).lower()
-            count = int(block.get("count") or 2)
-            if source in ("movies", "both"):
-                for t in db.query(models.ComingSoonTrailer).filter(
-                    models.ComingSoonTrailer.status == 'downloaded',
-                    models.ComingSoonTrailer.is_enabled == True,
-                    models.ComingSoonTrailer.release_date >= now
-                ).all():
-                    if t.local_path and os.path.exists(t.local_path):
-                        items.append({
-                            "title": t.title,
-                            "url": f"/nexup/trailer/video/movie/{t.id}",
-                            "type": "movie_trailer"
-                        })
-            if source in ("tv", "both"):
-                for t in db.query(models.ComingSoonTVTrailer).filter(
-                    models.ComingSoonTVTrailer.status == 'downloaded',
-                    models.ComingSoonTVTrailer.is_enabled == True,
-                    models.ComingSoonTVTrailer.release_date >= now
-                ).all():
-                    if t.local_path and os.path.exists(t.local_path):
-                        items.append({
-                            "title": t.title,
-                            "url": f"/nexup/trailer/video/tv/{t.id}",
-                            "type": "tv_trailer"
-                        })
-            if len(items) > count:
-                import random as _rand
-                items = _rand.sample(items, count)
+            for t in resolve_nexup_trailer_block(block, db):
+                is_tv = isinstance(t, models.ComingSoonTVTrailer)
+                kind = "tv" if is_tv else "movie"
+                items.append({
+                    "title": t.title,
+                    "url": f"/nexup/trailer/video/{kind}/{t.id}",
+                    "type": "tv_trailer" if is_tv else "movie_trailer"
+                })
         elif block_type == "coming_soon_list":
             layout = str(block.get("layout", "grid")).lower()
             filename = f"coming_soon_{layout}.mp4"
@@ -20663,7 +22480,7 @@ def serve_dynamic_preroll_video(filename: str, db: Session = Depends(get_db)):
         raise HTTPException(status_code=404, detail="Storage path not configured")
     
     # Sanitize filename
-    if ".." in filename or "/" in filename or "\\" in filename:
+    if "/" in filename or "\\" in filename or filename in (".", ".."):
         raise HTTPException(status_code=400, detail="Invalid filename")
     
     video_path = Path(storage_path) / "dynamic_prerolls" / filename
@@ -20783,7 +22600,7 @@ def get_nexup_sequence_presets(db: Session = Depends(get_db)):
     if nexup_category and movie_trailer_count > 0:
         presets.append({
             "id": "coming_soon_trailers",
-            "name": "🎬 Coming Soon + Movie Trailers",
+            "name": "Coming Soon + Movie Trailers",
             "description": f"Plays your Coming Soon intro followed by {trailers_per_playback} random movie trailer(s)",
             "requires_dynamic_preroll": True,
             "has_requirements": has_dynamic_preroll,
@@ -20809,7 +22626,7 @@ def get_nexup_sequence_presets(db: Session = Depends(get_db)):
     if tv_category and tv_trailer_count > 0:
         presets.append({
             "id": "coming_soon_tv_trailers",
-            "name": "📺 Coming Soon + TV Trailers",
+            "name": "Coming Soon + TV Trailers",
             "description": f"Plays your Coming Soon intro followed by {trailers_per_playback} random TV show trailer(s)",
             "requires_dynamic_preroll": True,
             "has_requirements": has_dynamic_preroll,
@@ -20833,7 +22650,7 @@ def get_nexup_sequence_presets(db: Session = Depends(get_db)):
     if nexup_category and tv_category and movie_trailer_count > 0 and tv_trailer_count > 0:
         presets.append({
             "id": "mixed_trailers",
-            "name": "🎭 Mixed: Movies + TV",
+            "name": "Mixed: Movies + TV",
             "description": f"Coming Soon intro, then 1 movie trailer and 1 TV trailer",
             "requires_dynamic_preroll": True,
             "has_requirements": has_dynamic_preroll,
@@ -20863,7 +22680,7 @@ def get_nexup_sequence_presets(db: Session = Depends(get_db)):
     if nexup_category and movie_trailer_count > 0:
         presets.append({
             "id": "movie_trailers_only",
-            "name": "🎞️ Movie Trailers Only",
+            "name": "Movie Trailers Only",
             "description": f"Plays {trailers_per_playback} random movie trailer(s) without an intro",
             "requires_dynamic_preroll": False,
             "has_requirements": True,
@@ -20882,7 +22699,7 @@ def get_nexup_sequence_presets(db: Session = Depends(get_db)):
     if tv_category and tv_trailer_count > 0:
         presets.append({
             "id": "tv_trailers_only",
-            "name": "📺 TV Trailers Only",
+            "name": "TV Trailers Only",
             "description": f"Plays {trailers_per_playback} random TV show trailer(s) without an intro",
             "requires_dynamic_preroll": False,
             "has_requirements": True,
@@ -20901,7 +22718,7 @@ def get_nexup_sequence_presets(db: Session = Depends(get_db)):
     if nexup_category and movie_trailer_count > 0:
         presets.append({
             "id": "theater_experience",
-            "name": "🌟 Theater Experience",
+            "name": "Theater Experience",
             "description": "Full cinema experience with Coming Soon intro and 4 movie trailers",
             "requires_dynamic_preroll": True,
             "has_requirements": has_dynamic_preroll,
@@ -22114,67 +23931,14 @@ def diagnostics_bundle(db: Session = Depends(get_db)):
         ts = datetime.datetime.utcnow().strftime("%Y%m%d_%H%M%S")
         tmp_path = os.path.join(tempfile.gettempdir(), f"NeXroll_Diagnostics_{ts}.zip")
 
-        # ---- sensitive-value inventory from DB settings ----
-        _sensitive_values = set()
-        try:
-            setting = db.query(models.Setting).first()
-            if setting:
-                for attr in (
-                    "plex_token", "plex_url", "plex_server_base_url",
-                    "jellyfin_url", "jellyfin_api_key",
-                    "nexup_radarr_url", "nexup_radarr_api_key",
-                    "nexup_sonarr_url", "nexup_sonarr_api_key",
-                    "nexup_tmdb_api_key",
-                ):
-                    val = getattr(setting, attr, None)
-                    if val and str(val).strip():
-                        _sensitive_values.add(str(val).strip())
-                        # Also catch the value without trailing slash
-                        _sensitive_values.add(str(val).strip().rstrip("/"))
-        except Exception:
-            pass
-
-        # Also pull from secure store (tokens/keys may only live there)
-        for _ss_getter in (
-            secure_store.get_plex_token,
-            secure_store.get_jellyfin_api_key,
-            secure_store.get_emby_api_key,
-        ):
-            try:
-                _ss_val = _ss_getter()
-                if _ss_val and len(_ss_val) >= 6:
-                    _sensitive_values.add(_ss_val)
-            except Exception:
-                pass
-
-        # Build compiled regex patterns for scrubbing
-        # 1) Known URL-parameter keys that carry secrets
-        _param_re = _re.compile(
-            r'([?&](?:api_key|apikey|token|X-Plex-Token|api-key|access_token|secret|password)'
-            r'=)([^&\s"\']+)',
-            _re.IGNORECASE,
-        )
-        # 2) Authorization / media-server token headers
-        _header_re = _re.compile(
-            r'((?:Authorization|X-Plex-Token|X-Api-Key|ApiKey|X-Emby-Token|X-MediaBrowser-Token)\s*[:=]\s*)(\S+)',
-            _re.IGNORECASE,
-        )
-        # 3) Literal known values
-        _literal_res = []
-        for sv in _sensitive_values:
-            if len(sv) >= 6:  # Don't match very short strings
-                _literal_res.append(_re.compile(_re.escape(sv), _re.IGNORECASE))
+        # Sensitive-value inventory (settings + secure store) and the scrubber are
+        # shared with the /logs endpoints so the bundle redacts identically —
+        # URL/header secrets, the user's literal keys/URLs, and IP addresses.
+        _sensitive_values = collect_sensitive_values(db)
 
         def _scrub(text: str) -> str:
-            """Redact sensitive data from a block of text."""
-            # URL query-parameter secrets
-            text = _param_re.sub(r'\1[REDACTED]', text)
-            # Header values
-            text = _header_re.sub(r'\1[REDACTED]', text)
-            # Known literal sensitive values (longest first to avoid partial matches)
-            for pat in sorted(_literal_res, key=lambda p: -len(p.pattern)):
-                text = pat.sub('[REDACTED]', text)
-            return text
+            """Redact secrets and IP addresses from a block of text."""
+            return redact_log_text(text, _sensitive_values)
 
         # ---- info.json (redact db_url which may embed credentials) ----
         raw_paths = system_paths()
@@ -22231,6 +23995,18 @@ def diagnostics_bundle(db: Session = Depends(get_db)):
                         with open(svc_log, "r", encoding="utf-8", errors="replace") as lf:
                             scrubbed_svc = _scrub(lf.read())
                         z.writestr(os.path.join("logs", "service.log"), scrubbed_svc)
+            except Exception:
+                pass
+            # PO-token provider (bgutil) server log — the Node server's stdout/stderr,
+            # which holds the reason it crashed (rc=1). Check the current home and the
+            # legacy under-prerolls location so older installs are covered too.
+            try:
+                for _bg in {os.path.join(_potoken_home(), "bgutil-provider.log"),
+                            os.path.join(PREROLLS_DIR, "bgutil-provider.log")}:
+                    if _bg and os.path.exists(_bg):
+                        with open(_bg, "r", encoding="utf-8", errors="replace") as lf:
+                            z.writestr(os.path.join("logs", "bgutil-provider.log"), _scrub(lf.read()))
+                        break
             except Exception:
                 pass
 
@@ -22649,6 +24425,64 @@ def configure_jellyfin_plugin(req: JellyfinPluginConfigureRequest, db: Session =
             pass
         log_event('WARNING', 'jellyfin', f'Plugin configuration failed: {e}', source='configure_jellyfin_plugin')
         raise HTTPException(status_code=500, detail=str(e))
+
+
+def _resolve_jellyfin_plugin_zip() -> Optional[str]:
+    """Locate the bundled NeXroll Intros (Jellyfin) plugin zip to offer for download.
+
+    Checked in order: explicit override, the PyInstaller frozen bundle, a
+    'plugins' dir next to the app (Docker copies it to /app/plugins), the CWD, and
+    the dev source tree. The zip ships the plugin DLL + meta.json + thumb.png — the
+    full folder Jellyfin needs (a bare DLL won't register in the plugin list).
+    """
+    bases: list = []
+    env = os.environ.get("NEXROLL_PLUGIN_ZIP")
+    if env:
+        bases.append(env)  # may point at the zip directly or a containing dir
+    mei = getattr(sys, "_MEIPASS", None)
+    if mei:
+        bases.append(os.path.join(mei, "plugins"))
+    try:
+        bases.append(os.path.join(os.path.dirname(sys.executable), "plugins"))
+    except Exception:
+        pass
+    bases.append("/app/plugins")
+    bases.append(os.path.join(os.getcwd(), "plugins"))
+    # Dev source tree: NeXroll/backend/main.py -> ../../Plugins/NeXroll.Jellyfin
+    here = os.path.dirname(os.path.abspath(__file__))
+    bases.append(os.path.abspath(os.path.join(here, "..", "..", "Plugins", "NeXroll.Jellyfin")))
+    for base in bases:
+        try:
+            if not base:
+                continue
+            if os.path.isfile(base) and base.lower().endswith(".zip"):
+                return base
+            if os.path.isdir(base):
+                matches = sorted(Path(base).glob("NeXroll.Jellyfin*.zip"))
+                if matches:
+                    return str(matches[-1])  # newest by version-sorted name
+        except Exception:
+            continue
+    return None
+
+
+@app.get("/jellyfin/plugin/download")
+def download_jellyfin_plugin():
+    """Download the NeXroll Intros (Jellyfin) plugin package — a zip of the DLL +
+    meta.json + thumb.png. Served by the running NeXroll so it always matches this
+    build and needs no GitHub/external access."""
+    zip_path = _resolve_jellyfin_plugin_zip()
+    if not zip_path or not os.path.isfile(zip_path):
+        raise HTTPException(
+            status_code=404,
+            detail="Plugin package isn't bundled with this build. Get it from the NeXroll GitHub releases page (NeXroll.Jellyfin-<version>.zip).",
+        )
+    from fastapi.responses import FileResponse
+    return FileResponse(
+        zip_path,
+        media_type="application/zip",
+        filename=os.path.basename(zip_path),
+    )
 
 
 # --- Emby Integration ---
@@ -23457,13 +25291,19 @@ def get_community_servers():
 
 @app.get("/community-prerolls/server-url")
 def get_community_server_url(db: Session = Depends(get_db)):
-    """Return the currently configured community server URL."""
+    """Return the effective community server URL.
+
+    When no custom server is chosen, report the resolved active mirror (e.g.
+    https://usa.prerolls.uk) rather than the bare prerolls.uk constant, so the UI
+    shows — and highlights — the server that index builds/downloads actually use.
+    """
     setting = db.query(models.Setting).first()
     custom_url = getattr(setting, "community_server_url", None) if setting else None
+    resolved_default = _resolve_default_community_server() or DEFAULT_COMMUNITY_BASE_URL
     return {
-        "server_url": custom_url or DEFAULT_COMMUNITY_BASE_URL,
+        "server_url": (custom_url.rstrip("/") if custom_url else resolved_default),
         "is_custom": bool(custom_url),
-        "default_url": DEFAULT_COMMUNITY_BASE_URL
+        "default_url": resolved_default
     }
 
 @app.put("/community-prerolls/server-url")
@@ -23485,12 +25325,13 @@ def set_community_server_url(
     setting.community_server_url = clean_url if clean_url else None
     db.commit()
 
-    effective = clean_url or DEFAULT_COMMUNITY_BASE_URL
+    resolved_default = _resolve_default_community_server() or DEFAULT_COMMUNITY_BASE_URL
+    effective = clean_url or resolved_default
     _file_log(f"Community server URL updated to: {effective}")
     return {
         "server_url": effective,
         "is_custom": bool(clean_url),
-        "default_url": DEFAULT_COMMUNITY_BASE_URL
+        "default_url": resolved_default
     }
 
 @app.get("/community-prerolls/fair-use-policy")
@@ -23582,6 +25423,31 @@ _index_build_progress = {
     "message": ""
 }
 
+
+def _parse_caddy_mod_time(s):
+    """Convert a Caddy listing 'mod_time' (RFC3339, often with nanosecond
+    precision and a trailing Z) into a (unix_timestamp_float, iso_string) pair —
+    the timestamp for sorting newest/oldest, the ISO string for display. Returns
+    (0.0, None) when absent or unparseable."""
+    if not s:
+        return 0.0, None
+    try:
+        t = str(s).strip().replace("Z", "+00:00")
+        # fromisoformat accepts at most microseconds; trim Caddy's nanoseconds.
+        if "." in t:
+            head, rest = t.split(".", 1)
+            frac = ""
+            i = 0
+            while i < len(rest) and rest[i].isdigit():
+                frac += rest[i]
+                i += 1
+            t = f"{head}.{frac[:6]}{rest[i:]}"
+        dt = datetime.datetime.fromisoformat(t)
+        return dt.timestamp(), dt.isoformat()
+    except Exception:
+        return 0.0, None
+
+
 def _build_prerolls_index(progress_callback=None, base_url=None) -> dict:
     """
     Build a complete index of Typical Nerds prerolls by scraping the directory.
@@ -23615,23 +25481,37 @@ def _build_prerolls_index(progress_callback=None, base_url=None) -> dict:
     }
     
     visited_urls = set()
+    discovered_urls = set()  # every directory URL we've seen (>= visited)
     prerolls = []
     json_count = 0
     html_count = 0
-    estimated_total_dirs = 400  # Rough estimate for progress calculation
-    
+
     def update_progress():
-        """Update global progress state"""
+        """Update global progress state.
+
+        The crawl is depth-first with no known total, so a true percentage is
+        impossible. Instead we map "directories visited" through a smooth
+        asymptotic curve that climbs quickly at first and eases toward — but
+        never reaches — 90% while scanning. The finalize step then advances
+        90→98→100%. This gives steady, honest-feeling motion proportional to
+        real crawl work (no fixed estimate, no instant jump to done).
+
+            progress = 90 * (1 - e^(-dirs_visited / DECAY))
+
+        DECAY ~150 suits the Typical Nerds tree (~270 dirs): ~33 dirs → 18%,
+        ~110 → 48%, ~270 → 75%, trailing off slowly thereafter.
+        """
+        import math
         dirs_done = len(visited_urls)
-        # Progress is 0-95% during scanning, then 95-100% for final processing
-        # Only update progress percentage if it hasn't been manually set higher
         current_progress = _index_build_progress.get("progress", 0)
-        if current_progress < 95:
-            progress_pct = min(95, int((dirs_done / estimated_total_dirs) * 95))
-            _index_build_progress["progress"] = progress_pct
+        if current_progress < 90:
+            DECAY = 150.0
+            progress_pct = int(90 * (1 - math.exp(-dirs_done / DECAY)))
+            if progress_pct > current_progress:
+                _index_build_progress["progress"] = progress_pct
         _index_build_progress["dirs_visited"] = dirs_done
         _index_build_progress["files_found"] = len(prerolls)
-        
+
         if progress_callback:
             progress_callback(_index_build_progress.copy())
     
@@ -23650,6 +25530,7 @@ def _build_prerolls_index(progress_callback=None, base_url=None) -> dict:
         if url in visited_urls:
             return
         visited_urls.add(url)
+        discovered_urls.add(url)  # the root/entry dir counts as discovered too
         
         # Update progress
         path_display = url.replace(base_url, '') or '/'
@@ -23664,7 +25545,7 @@ def _build_prerolls_index(progress_callback=None, base_url=None) -> dict:
         try:
             response = requests.get(url, headers=headers, timeout=10)
             if response.status_code != 200:
-                _file_log(f"⚠ HTTP {response.status_code} for {url}")
+                _file_log(f"HTTP {response.status_code} for {url}")
                 return
             
             # Caddy can return either HTML or JSON depending on context
@@ -23677,7 +25558,7 @@ def _build_prerolls_index(progress_callback=None, base_url=None) -> dict:
                 json_count += 1
                 try:
                     items = json.loads(response.text)
-                    _file_log(f"  📋 JSON format detected, parsing {len(items)} items")
+                    _file_log(f"  JSON format detected, parsing {len(items)} items")
                     
                     for item in items:
                         name = item.get('name', '')
@@ -23695,6 +25576,8 @@ def _build_prerolls_index(progress_callback=None, base_url=None) -> dict:
                         
                         # Recursively explore directories
                         if is_dir:
+                            discovered_urls.add(full_url.rstrip('/') + '/')
+                            update_progress()
                             scrape_directory(full_url, depth + 1, max_depth)
                         # Index video files
                         elif any(name.lower().endswith(ext) for ext in ['.mp4', '.mkv', '.avi', '.mov', '.webm']):
@@ -23723,7 +25606,8 @@ def _build_prerolls_index(progress_callback=None, base_url=None) -> dict:
                                 keywords.extend(words)
                             keywords.extend(title.lower().replace('_', ' ').replace('-', ' ').split())
                             keywords = list(set([k for k in keywords if len(k) > 2]))  # Deduplicate and filter short words
-                            
+
+                            _mt, _miso = _parse_caddy_mod_time(item.get('mod_time'))
                             preroll_entry = {
                                 "id": full_url.replace(base_url, ''),  # Use URL path as ID (e.g., "/Holidays/Christmas/file.mp4")
                                 "title": title.replace('.mp4', '').replace('.mkv', '').replace('_', ' ').replace('-', ' ').title(),
@@ -23732,13 +25616,15 @@ def _build_prerolls_index(progress_callback=None, base_url=None) -> dict:
                                 "url": full_url,
                                 "path": full_url.replace(base_url, ''),
                                 "keywords": keywords,  # For fast local searching
-                                "tags": folder_category.lower()
+                                "tags": folder_category.lower(),
+                                "modified_time": _mt,   # unix ts for sorting (0 if unknown)
+                                "modified_iso": _miso,  # ISO string for display
                             }
-                            
+
                             prerolls.append(preroll_entry)
-                            _file_log(f"  ✓ Found: {title[:60]}")
+                            _file_log(f"  Found: {title[:60]}")
                 except json.JSONDecodeError as e:
-                    _file_log(f"✗ Failed to parse JSON from {url}: {e}")
+                    _file_log(f"Failed to parse JSON from {url}: {e}")
                     return
             else:
                 # Parse HTML response with BeautifulSoup
@@ -23763,6 +25649,8 @@ def _build_prerolls_index(progress_callback=None, base_url=None) -> dict:
                     
                     # Recursively explore directories
                     if href.endswith('/'):
+                        discovered_urls.add(full_url.rstrip('/') + '/')
+                        update_progress()
                         scrape_directory(full_url, depth + 1, max_depth)
                     # Index video files
                     elif any(href.lower().endswith(ext) for ext in ['.mp4', '.mkv', '.avi', '.mov', '.webm']):
@@ -23801,16 +25689,18 @@ def _build_prerolls_index(progress_callback=None, base_url=None) -> dict:
                             "url": full_url,
                             "path": full_url.replace(base_url, ''),
                             "keywords": keywords,  # For fast local searching
-                            "tags": folder_category.lower()
+                            "tags": folder_category.lower(),
+                            "modified_time": 0.0,   # HTML listings carry no per-file date
+                            "modified_iso": None,
                         }
-                        
+
                         prerolls.append(preroll_entry)
-                        _file_log(f"  ✓ Found: {title[:60]}")
+                        _file_log(f"  Found: {title[:60]}")
         except json.JSONDecodeError as e:
-            _file_log(f"✗ JSON parse error for {url}: {e}")
+            _file_log(f"JSON parse error for {url}: {e}")
         except Exception as e:
             import traceback
-            _file_log(f"✗ Error indexing {url}: {e}")
+            _file_log(f"Error indexing {url}: {e}")
             _file_log(f"  Traceback: {traceback.format_exc()}")
     
     # Build the index by scraping from root to discover all folders
@@ -23836,7 +25726,7 @@ def _build_prerolls_index(progress_callback=None, base_url=None) -> dict:
     update_progress()
     
     _file_log(f"{'='*60}")
-    _file_log(f"✓ Index building complete!")
+    _file_log(f"Index building complete!")
     _file_log(f"  Total prerolls indexed: {len(prerolls)}")
     _file_log(f"  Directories scanned: {len(visited_urls)}")
     _file_log(f"  HTML responses: {html_count}")
@@ -23885,76 +25775,92 @@ def _load_prerolls_index() -> Optional[dict]:
         return None
 
 
-def _search_local_index(index_data: dict, query: str = "", category: str = "", platform: str = "", limit: int = 50) -> List[dict]:
+def _detect_platform(preroll) -> Optional[str]:
+    """Best-effort platform tag (Plex / Jellyfin / Emby) from a preroll's path or
+    title; None means it isn't platform-specific (universal)."""
+    blob = ((preroll.get("path", "") or "") + " " + (preroll.get("title", "") or "")).lower()
+    for plat in ("plex", "jellyfin", "emby"):
+        if plat in blob:
+            return plat.capitalize()
+    return None
+
+
+def _search_local_index(index_data: dict, query: str = "", category: str = "", platform: str = "",
+                        creator: str = "", sort: str = "relevance", limit: int = 50, offset: int = 0) -> tuple:
     """
-    Search the local prerolls index (FAST - milliseconds vs seconds)
-    
+    Search/browse the local prerolls index (FAST - milliseconds vs seconds).
+
     Args:
         index_data: The loaded index dict
-        query: Search term to match against keywords
-        category: Filter by category
-        platform: Filter by platform name in title
-        limit: Maximum results to return
-    
+        query: Search term to match against keywords/title
+        category: Filter by category (substring)
+        platform: Filter by platform (plex/jellyfin/emby; matched in path or title)
+        creator: Filter by creator (substring)
+        sort: relevance (index order) | newest | oldest | name
+        limit: Maximum results to return (page size)
+        offset: How many matches to skip (for pagination)
+
     Returns:
-        List of matching preroll dicts
+        (page_of_matches, total_match_count) — the slice for this page plus the
+        full number of matches, so the caller can drive pagination.
     """
     prerolls = index_data.get("prerolls", [])
     results = []
-    
+
     query_lower = query.lower() if query else ""
     category_lower = category.lower() if category else ""
     platform_lower = platform.lower() if platform else ""
-    
+    creator_lower = creator.lower() if creator else ""
+
     # Build expanded search terms using synonyms
     search_terms = [query_lower] if query_lower else []
     if query_lower:
-        # Check if query matches any synonym groups
         for key, synonyms in SEARCH_SYNONYMS.items():
             if query_lower in key or key in query_lower:
-                # Add all related terms
                 search_terms.extend(synonyms)
                 search_terms.append(key)
                 break
-        # Remove duplicates
         search_terms = list(set(search_terms))
-    
+
     for preroll in prerolls:
-        # Apply filters
         if search_terms:
-            # Check if ANY search term matches keywords or title
             match_found = False
             preroll_title = preroll.get("title", "").lower()
             preroll_keywords = preroll.get("keywords", [])
-            
             for term in search_terms:
-                # Check keywords
-                if any(term in keyword for keyword in preroll_keywords):
+                if any(term in keyword for keyword in preroll_keywords) or term in preroll_title:
                     match_found = True
                     break
-                # Check title
-                if term in preroll_title:
-                    match_found = True
-                    break
-            
             if not match_found:
                 continue
-        
-        if category_lower:
-            if category_lower not in preroll.get("category", "").lower():
-                continue
-        
+
+        if category_lower and category_lower not in preroll.get("category", "").lower():
+            continue
+
         if platform_lower:
-            title_lower = preroll.get("title", "").lower()
-            if platform_lower not in title_lower:
+            # Platform lives in the path (e.g. /Plex/) or the filename — check both.
+            blob = ((preroll.get("path", "") or "") + " " + (preroll.get("title", "") or "")).lower()
+            if platform_lower not in blob:
                 continue
-        
+
+        if creator_lower and creator_lower not in (preroll.get("creator", "") or "").lower():
+            continue
+
         results.append(preroll)
-        
-        if len(results) >= limit:
-            break
-    
-    return results
+
+    # Sort (relevance = keep index order). Collect-then-sort so newest/name aren't
+    # truncated by an early limit; the index is small (~2k), so this is instant.
+    if sort == "newest":
+        results.sort(key=lambda x: x.get("modified_time", 0) or 0, reverse=True)
+    elif sort == "oldest":
+        results.sort(key=lambda x: x.get("modified_time", 0) or 0)
+    elif sort == "name":
+        results.sort(key=lambda x: (x.get("title", "") or "").lower())
+
+    total = len(results)
+    if offset < 0:
+        offset = 0
+    return results[offset:offset + limit], total
 
 
 @app.get("/community-prerolls/build-index")
@@ -24001,31 +25907,50 @@ def build_community_prerolls_index(request: Request, db: Session = Depends(get_d
             )
     
     community_search_rate_limit[rate_limit_key] = current_time
+
+    # Resolve the base URL on the request thread (needs the db session), then run
+    # the multi-minute scrape on a background thread so this request returns
+    # immediately. The frontend tracks completion via the /build-progress SSE
+    # stream — running the build inline would block the worker for minutes and
+    # make the progress stream/UI appear stuck.
+    base_url = _get_community_base_url(db)
+
+    # Reset progress so the SSE stream reflects a fresh build from the start.
+    _index_build_progress["building"] = True
+    _index_build_progress["progress"] = 0
+    _index_build_progress["current_dir"] = ""
+    _index_build_progress["files_found"] = 0
+    _index_build_progress["dirs_visited"] = 0
+    _index_build_progress["message"] = "Starting index build..."
+
+    def _run_build():
+        global _index_build_lock
+        try:
+            index_data = _build_prerolls_index(base_url=base_url)
+            saved = _save_prerolls_index(index_data)
+            if not saved:
+                _index_build_progress["building"] = False
+                _index_build_progress["message"] = "Failed to save index to disk"
+                _file_log("Community index build: failed to save index to disk")
+        except Exception as e:
+            _index_build_progress["building"] = False
+            _index_build_progress["message"] = f"Build failed: {e}"
+            _file_log(f"Error building prerolls index: {e}")
+            try:
+                log_event('ERROR', 'system', f'Community index build failed: {e}', source='build_community_index')
+            except Exception:
+                pass
+        finally:
+            _index_build_lock = False
+
     _index_build_lock = True
-    
-    try:
-        index_data = _build_prerolls_index(base_url=_get_community_base_url(db))
-        success = _save_prerolls_index(index_data)
-        
-        if success:
-            return {
-                "status": "success",
-                "message": "Prerolls index built successfully",
-                "total_prerolls": index_data.get("total_prerolls", 0),
-                "directories_visited": index_data.get("directories_visited", 0),
-                "created_at": index_data.get("created_at"),
-                "index_path": str(PREROLLS_INDEX_PATH)
-            }
-        else:
-            raise HTTPException(status_code=500, detail="Failed to save index to disk")
-    except HTTPException:
-        raise
-    except Exception as e:
-        _file_log(f"Error building prerolls index: {e}")
-        log_event('ERROR', 'system', f'Community index build failed: {e}', source='build_community_index')
-        raise HTTPException(status_code=500, detail=f"Failed to build index: {str(e)}")
-    finally:
-        _index_build_lock = False
+    threading.Thread(target=_run_build, daemon=True).start()
+
+    return {
+        "status": "started",
+        "message": "Index build started. Track progress via the build-progress stream.",
+        "index_path": str(PREROLLS_INDEX_PATH)
+    }
 
 
 @app.get("/community-prerolls/build-progress")
@@ -24099,8 +26024,43 @@ def get_community_prerolls_index_status():
         }
 
 
+@app.get("/community-prerolls/facets")
+def get_community_facets():
+    """Distinct categories, creators, and platforms (with counts) from the local
+    index — powers the Browse filters. Instant; no network calls."""
+    index_data = _load_prerolls_index()
+    if not index_data:
+        return {"available": False, "categories": [], "creators": [], "platforms": [],
+                "total": 0, "has_dates": False,
+                "message": "Build the community index to browse."}
+    prerolls = index_data.get("prerolls", []) or []
+    from collections import Counter
+    cats, creators, platforms = Counter(), Counter(), Counter()
+    has_dates = False
+    for p in prerolls:
+        cats[(p.get("category") or "Other")] += 1
+        creators[(p.get("creator") or "Unknown")] += 1
+        platforms[_detect_platform(p) or "Universal"] += 1
+        if p.get("modified_time"):
+            has_dates = True
+
+    def _as_list(counter):
+        return [{"name": k, "count": v}
+                for k, v in sorted(counter.items(), key=lambda kv: (-kv[1], kv[0].lower()))]
+
+    return {
+        "available": True,
+        "total": len(prerolls),
+        "categories": _as_list(cats),
+        "platforms": _as_list(platforms),
+        "creators": _as_list(creators),
+        "has_dates": has_dates,  # False until a re-index has captured modified_time
+        "created_at": index_data.get("created_at"),
+    }
+
+
 @app.get("/community-prerolls/search")
-def search_community_prerolls(request: Request, query: str = "", category: str = "", platform: str = "", limit: int = 50, db: Session = Depends(get_db)):
+def search_community_prerolls(request: Request, query: str = "", category: str = "", platform: str = "", creator: str = "", sort: str = "relevance", limit: int = 50, offset: int = 0, db: Session = Depends(get_db)):
     """
     Search the Typical Nerds preroll library (LOCAL INDEX PREFERRED - FAST!).
     
@@ -24129,24 +26089,33 @@ def search_community_prerolls(request: Request, query: str = "", category: str =
     from bs4 import BeautifulSoup
     import time
     
-    if limit > 100:
-        limit = 100
-    
+    if limit > 200:
+        limit = 200
+    if limit < 1:
+        limit = 1
+    if offset < 0:
+        offset = 0
+
     # ===== NEW: TRY LOCAL INDEX FIRST (FAST!) =====
-    _file_log(f"Community search: query='{query}' category='{category}' platform='{platform}' limit={limit}")
-    
+    _file_log(f"Community search: query='{query}' category='{category}' platform='{platform}' creator='{creator}' sort='{sort}' limit={limit}")
+
     index_data = _load_prerolls_index()
     if index_data:
         # LOCAL INDEX FOUND - Use it for instant search!
         _file_log("Using local prerolls index for fast search")
-        results = _search_local_index(index_data, query, category, platform, limit)
-        
+        results, total = _search_local_index(index_data, query=query, category=category, platform=platform,
+                                             creator=creator, sort=sort, limit=limit, offset=offset)
+
         return {
             "found": len(results),
             "results": results,
-            "total": len(results),
+            "total": total,
+            "offset": offset,
+            "limit": limit,
             "query": query,
             "category": category,
+            "creator": creator,
+            "sort": sort,
             "source": "local_index",
             "index_created": index_data.get("created_at"),
             "message": f"Searched {index_data.get('total_prerolls', 0)} prerolls from local index (instant!)"
@@ -24313,7 +26282,7 @@ def search_community_prerolls(request: Request, query: str = "", category: str =
                                 if not matches:
                                     continue
                                 
-                                _file_log(f"✓ Matched '{query}': {title}")
+                                _file_log(f"Matched '{query}': {title}")
                             
                             # Apply category filter
                             if category:
@@ -24442,9 +26411,11 @@ def search_community_prerolls(request: Request, query: str = "", category: str =
         _file_log(f"Community preroll demo search: query='{query}' category='{category}' found {len(filtered_results)} results")
         
         return {
-            "found": len(filtered_results),
-            "results": filtered_results[:limit],
+            "found": len(filtered_results[offset:offset + limit]),
+            "results": filtered_results[offset:offset + limit],
             "total": len(filtered_results),
+            "offset": offset,
+            "limit": limit,
             "query": query,
             "category": category,
             "note": f"API currently unavailable - showing demo results. Visit {_get_community_base_url(db)}/ to browse the live library."
@@ -25029,7 +27000,7 @@ def get_random_community_preroll(
                     "found": True,
                     "result": random_preroll,
                     "source": "local_index",
-                    "message": "⚡ Instant random selection from local index"
+                    "message": "Instant random selection from local index"
                 }
             else:
                 _file_log(f"No matching prerolls in index for filters")
@@ -25230,7 +27201,7 @@ def get_top5_community_prerolls(
                         "url": full_url,
                         "creator": category_name,
                         "category": category_name,
-                        "thumbnail": "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='200' height='120'%3E%3Crect fill='%23FFD700'/%3E%3Ctext x='100' y='60' text-anchor='middle' fill='%23000' font-size='14'%3E⭐ Top 5%3C/text%3E%3C/svg%3E",
+                        "thumbnail": "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='200' height='120'%3E%3Crect fill='%23FFD700'/%3E%3Ctext x='100' y='60' text-anchor='middle' fill='%23000' font-size='14'%3ETop 5%3C/text%3E%3C/svg%3E",
                         "featured": True
                     })
                     
@@ -25302,7 +27273,7 @@ def _fetch_movie_poster(title: str) -> str:
                     poster_url = image.get("original") or image.get("medium")
                     
                     if poster_url:
-                        _file_log(f"✅ Found TVMaze poster for '{clean_title}': {poster_url}")
+                        _file_log(f"Found TVMaze poster for '{clean_title}': {poster_url}")
                         return poster_url
         except Exception as e:
             _file_log(f"TVMaze search failed for '{clean_title}': {e}")
@@ -25324,12 +27295,12 @@ def _fetch_movie_poster(title: str) -> str:
                         poster_url = image.get("original") or image.get("medium")
                         
                         if poster_url:
-                            _file_log(f"✅ Found TVMaze poster with short title '{short_title}': {poster_url}")
+                            _file_log(f"Found TVMaze poster with short title '{short_title}': {poster_url}")
                             return poster_url
             except Exception as e:
                 _file_log(f"TVMaze short search failed: {e}")
         
-        _file_log(f"❌ No poster found for '{clean_title}'")
+        _file_log(f"No poster found for '{clean_title}'")
         return None
         
     except Exception as e:
@@ -25365,7 +27336,7 @@ def get_latest_community_prerolls(
             return {
                 "found": False,
                 "results": [],
-                "message": "⚠️ Build local index to see latest prerolls",
+                "message": "Build local index to see latest prerolls",
                 "needs_index": True
             }
         
@@ -25429,7 +27400,7 @@ def get_latest_community_prerolls(
                         </linearGradient>
                     </defs>
                     <rect width='300' height='180' fill='url(#grad{idx})'/>
-                    <text x='150' y='80' text-anchor='middle' fill='#fff' font-size='40' font-weight='bold' opacity='0.9'>🎬</text>
+                    <text x='150' y='80' text-anchor='middle' fill='#fff' font-size='40' font-weight='bold' opacity='0.9'></text>
                     <text x='150' y='110' text-anchor='middle' fill='#fff' font-size='16' font-weight='bold' opacity='0.8'>NEW</text>
                     <text x='150' y='130' text-anchor='middle' fill='#fff' font-size='12' opacity='0.7'>Latest Addition</text>
                 </svg>"""
@@ -25444,7 +27415,7 @@ def get_latest_community_prerolls(
             "found": True,
             "results": latest_prerolls,
             "total": len(latest_prerolls),
-            "message": f"✨ Showing {len(latest_prerolls)} latest prerolls",
+            "message": f"Showing {len(latest_prerolls)} latest prerolls",
             "source": "local_index"
         }
     
@@ -26080,30 +28051,8 @@ def _resolve_current_intros(db: Session) -> dict:
                     if p:
                         paths.append(os.path.abspath(p.path))
             elif btype == "nexup_trailers":
-                source = str(block.get("source", "both")).lower()
-                count = int(block.get("count") or 2)
-                now = datetime.datetime.now()
-                trailer_paths = []
-                if source in ("movies", "both"):
-                    for t in db.query(models.ComingSoonTrailer).filter(
-                        models.ComingSoonTrailer.status == 'downloaded',
-                        models.ComingSoonTrailer.is_enabled == True,
-                        models.ComingSoonTrailer.release_date >= now
-                    ).all():
-                        if t.local_path and os.path.exists(t.local_path):
-                            trailer_paths.append(os.path.abspath(t.local_path))
-                if source in ("tv", "both"):
-                    for t in db.query(models.ComingSoonTVTrailer).filter(
-                        models.ComingSoonTVTrailer.status == 'downloaded',
-                        models.ComingSoonTVTrailer.is_enabled == True,
-                        models.ComingSoonTVTrailer.release_date >= now
-                    ).all():
-                        if t.local_path and os.path.exists(t.local_path):
-                            trailer_paths.append(os.path.abspath(t.local_path))
-                if trailer_paths:
-                    k = min(max(count, 1), len(trailer_paths))
-                    picks = random.sample(trailer_paths, k) if len(trailer_paths) > k else trailer_paths
-                    paths.extend(picks)
+                for t in resolve_nexup_trailer_block(block, db):
+                    paths.append(os.path.abspath(t.local_path))
             elif btype == "coming_soon_list":
                 layout = str(block.get("layout", "grid")).lower()
                 _setting = db.query(models.Setting).first()

@@ -5,9 +5,8 @@ uvicorn[standard]>=0.34.0
 python-multipart>=0.0.20
 starlette>=0.46.0
 
-# Database
+# Database (schema migrations run at startup via ensure_schema(); alembic unused)
 sqlalchemy>=2.0.40
-alembic>=1.14.1
 
 # Plex API
 PlexAPI>=4.15.16
@@ -21,8 +20,7 @@ urllib3>=2.4.0
 # Data Validation
 pydantic>=2.11.1
 
-# Scheduling
-APScheduler>=3.11.0
+# Scheduling is a custom thread loop in backend/scheduler.py (no APScheduler)
 
 # Utilities
 python-dotenv>=1.1.0
@@ -34,6 +32,10 @@ pytz>=2025.1
 httpx>=0.28.1
 yt-dlp>=2025.3.21
 psutil>=7.0.0
+# YouTube PO-token provider plugin (defeats "Sign in to confirm you're not a bot").
+# This is the yt-dlp side; the token-generating server (Node) is provided
+# separately (baked into Docker, one-click install on Windows).
+bgutil-ytdlp-pot-provider>=1.3.0
 
 # Authentication
 bcrypt>=4.3.0

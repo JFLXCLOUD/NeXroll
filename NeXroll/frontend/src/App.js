@@ -9,7 +9,10 @@ import SequenceBuilder from './components/SequenceBuilder';
 import PatternImport from './components/PatternImport';
 import PatternExport from './components/PatternExport';
 import SequencePreviewModal from './components/SequencePreviewModal';
-import { validateSequence, stringifySequence, parseSequence, cloneSequenceWithIds } from './utils/sequenceValidator';
+import Sidebar from './components/Sidebar';
+import OnboardingWizard from './components/OnboardingWizard';
+import ToastHost from './components/Toast';
+import { validateSequence, stringifySequence, parseSequence, cloneSequenceWithIds, estimatePrerollCount } from './utils/sequenceValidator';
 import { 
     Calendar, CalendarDays, ChevronLeft, Clock, Play, Edit, Save, Trash, Trash2, Upload, 
     Search, Folder, Film, BookOpen, Star, Plus, PlusCircle, Settings, Target, CheckCircle, Link, Link2,
@@ -17,18 +20,11 @@ import {
     ListOrdered, Palette, Lightbulb, Inbox, FolderOpen, Wrench, FileText, Sliders, FolderSync,
     Bug, Zap, Loader2, Package, FlaskConical, TreePine, Check, XCircle, Video, ChevronRight, ChevronDown,
     Library, Clapperboard, Sparkles, PartyPopper, Users2, Theater, Eye, EyeOff, X, User, RefreshCcw, Menu,
-    Youtube, Globe, Key, Rocket, FileUp, ArrowRight, HardDrive, ListChecks, Unlink, LinkIcon,
+    Youtube, Globe, Key, Rocket, FileUp, ArrowRight, HardDrive, ListChecks, Unlink, LinkIcon, ExternalLink,
     Tv, ClipboardList, Info, RotateCw, LayoutDashboard, BarChart3, PieChart as PieChartIcon, Activity, TrendingUp, Server, Timer,
     Database, Archive, Shield, UserPlus, Users, LayoutGrid, List, Layers, Terminal, AlertCircle, Filter, BarChart2, HelpCircle,
     Music, Wand2, GitCompare, Square, Plug
   } from 'lucide-react';
-import { BarChart, Bar, XAxis, YAxis, ResponsiveContainer, Cell, Tooltip } from 'recharts';
-import { Responsive as ResponsiveGrid, WidthProvider } from 'react-grid-layout';
-import 'react-resizable/css/styles.css';
-
-// react-grid-layout that auto-measures its container width (responsive dashboard).
-const DashGrid = WidthProvider(ResponsiveGrid);
-
 // Grid units. A small rowHeight lets a tile's height land close to its measured
 // content height. Tile HEIGHT is always auto-fit to content (so no scrollbars);
 // only WIDTH and POSITION are user-controlled.
@@ -58,7 +54,7 @@ const TILE_DEFAULT_ROWS = 14; // fallback height before the first measurement
 
 // Tidy-grid tile sizes. The grid uses auto-fill columns of a fixed target width
 // plus a measured base row height, so size is expressed as a column/row span:
-//   Small  = 1 col x 1 row   Medium = 2 cols x 1 row   Large = 2 cols x 2 rows
+//   Small = 1 col x 1 row   Medium = 2 cols x 1 row   Large = 2 cols x 2 rows
 const SIZE_SPAN = { sm: 1, md: 2, lg: 2 };   // column span
 const SIZE_ROWS = { sm: 1, md: 1, lg: 2 };   // row span (applied in the locked layout)
 const SIZE_LABEL = { sm: 'Small', md: 'Medium', lg: 'Large' };
@@ -71,10 +67,64 @@ const FEATURE_SIZE_OPTIONS = ['md', 'lg'];
 // Small; the chart/list feature tiles are Large (2x2).
 const DEFAULT_SIZES = {
   servers: 'sm', prerolls: 'sm', storage: 'sm', schedules: 'sm', scheduler: 'sm',
-  current_category: 'sm', community: 'sm', nexup: 'sm', upcoming: 'lg', resolution_chart: 'lg',
+  current_category: 'sm', community: 'sm', nexup: 'sm', upcoming: 'lg', resolution_chart: 'md',
 };
 const DEFAULT_ORDER = ['servers', 'prerolls', 'storage', 'schedules', 'scheduler', 'current_category', 'community', 'nexup', 'upcoming', 'resolution_chart', 'weekly_calendar'];
 const DEFAULT_HIDDEN = [];
+
+// Theater-style boot quotes: one is picked per page load and shown on the
+// loading screen, in the spirit of the pre-show bumpers NeXroll exists to
+// serve. Module-level so the pick is stable across re-renders of the loader.
+const BOOT_QUOTES = [
+  'Please silence your cell phone, and your inner monologue',
+  'Now showing: a loading screen',
+  'Reminder: the exits are wherever you came in',
+  'Assembling pixels in the correct order',
+  'Warming up the projector bulb (it has feelings)',
+  'Please enjoy four minutes of prerolls you did not ask for',
+  'Buttering the popcorn. Digitally.',
+  'No refunds once the dashboard loads',
+  'Counting your prerolls. Twice, to be safe.',
+  'If you can read this, the snack bar is closed',
+  'Cuing up prerolls nobody will skip',
+  'The prerolls are coming. The movie can wait.',
+  'Shuffling your intros into a pleasing order',
+  'Every great movie deserves a worse intro first',
+  'Loading the part you fast-forward at home',
+  'Your prerolls have been waiting all day for this',
+  "Selecting tonight's mandatory viewing",
+  "Queuing trailers for movies you'll forget to watch",
+  'Dusting off the holiday prerolls',
+];
+const BOOT_QUOTE = BOOT_QUOTES[Math.floor(Math.random() * BOOT_QUOTES.length)];
+
+// Quick-pick chips rendered under the native time inputs in the schedule
+// create/edit forms. One click fills the input; the native picker stays for
+// arbitrary times (and follows the dark theme now via color-scheme in CSS).
+const TIME_QUICK_PRESETS = [
+  { label: '9:00 AM', value: '09:00' },
+  { label: '12:00 PM', value: '12:00' },
+  { label: '6:00 PM', value: '18:00' },
+  { label: '9:00 PM', value: '21:00' },
+];
+const TIME_QUICK_PRESETS_END = [
+  { label: '11:59 PM', value: '23:59' },
+  { label: 'Clear', value: '' },
+];
+const TimeQuickPicks = ({ current, onPick, end = false }) => (
+  <div className="nx-timepicks">
+    {(end ? [...TIME_QUICK_PRESETS, ...TIME_QUICK_PRESETS_END] : TIME_QUICK_PRESETS).map(p => (
+      <button
+        key={p.label}
+        type="button"
+        className={`nx-timepick ${current === p.value && p.value !== '' ? 'active' : ''}`}
+        onClick={() => onPick(p.value)}
+      >
+        {p.label}
+      </button>
+    ))}
+  </div>
+);
 
 // Wraps a tile and reports its natural content height (in grid rows). The card is
 // height:auto here, so the measurement is independent of the cell size — no
@@ -120,11 +170,53 @@ const apiUrl = (path) => {
 // URL onto the local /static/ path and cause WinError 123 on Windows when the backend
 // tried to serve it as a file. With ~50 trailers and ~20 visits per session that was
 // the source of 99% of the noise in the error log.
+// Bumped after a thumbnail rebuild so the browser re-fetches regenerated images
+// (otherwise it shows the cached old picture — or a cached pre-fix 404/400 — at
+// the same URL).
+let _thumbCacheBust = 0;
+const bustThumbCache = () => { _thumbCacheBust = Date.now(); };
 const thumbnailUrl = (thumbnail) => {
   if (!thumbnail) return '';
   const t = String(thumbnail);
   if (/^https?:\/\//i.test(t)) return t;
-  return apiUrl(`static/${t}`);
+  const u = apiUrl(`static/${t}`);
+  return _thumbCacheBust ? `${u}${u.includes('?') ? '&' : '?'}cb=${_thumbCacheBust}` : u;
+};
+// Render a NeX-Up release/air date as a stable calendar date. These are
+// date-only values (a movie releases "on June 17", not at an instant), but the
+// backend sends them either as "YYYY-MM-DD" or a naive "YYYY-MM-DDT00:00:00".
+// Passing those to `new Date(...)` applies a UTC/local shift that lands the day
+// off by one depending on the viewer's timezone (and disagreeing with Radarr).
+// Parse the Y-M-D parts directly so the displayed day never drifts.
+const formatReleaseDate = (val, opts) => {
+  if (!val) return '';
+  const s = String(val);
+  const m = s.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (m) {
+    return new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3])).toLocaleDateString(undefined, opts);
+  }
+  const d = new Date(s);
+  return isNaN(d.getTime()) ? s : d.toLocaleDateString(undefined, opts);
+};
+
+// Preview players remember the last volume the user set instead of snapping back
+// to max on every preview. The level is persisted in localStorage and applied
+// through a callback ref the moment each <video> mounts (works even though the
+// players start muted for autoplay — unmuting then plays at the saved level).
+const PREVIEW_VOLUME_KEY = 'nexroll_preview_volume';
+const _getSavedPreviewVolume = () => {
+  try {
+    const v = parseFloat(window.localStorage.getItem(PREVIEW_VOLUME_KEY));
+    return (Number.isFinite(v) && v >= 0 && v <= 1) ? v : 1;
+  } catch (e) { return 1; }
+};
+const previewVideoRef = (el) => {
+  if (!el || el.__nxVolBound) return;
+  el.__nxVolBound = true;
+  try { el.volume = _getSavedPreviewVolume(); } catch (e) {}
+  el.addEventListener('volumechange', () => {
+    try { window.localStorage.setItem(PREVIEW_VOLUME_KEY, String(el.volume)); } catch (e) {}
+  });
 };
 // Runtime API base resolver + CORS shield: rewrite hardcoded http://localhost:9393 to same-origin or configured base
 (function setupNeXrollApiBase() {
@@ -243,7 +335,7 @@ const compareVersions = (a, b) => {
   if (va.patch !== vb.patch) return va.patch > vb.patch ? 1 : -1;
   // Same base version — compare pre-release
   if (!va.preTag && !vb.preTag) return 0; // both stable
-  if (!va.preTag) return 1;  // a is stable, b is pre-release
+  if (!va.preTag) return 1; // a is stable, b is pre-release
   if (!vb.preTag) return -1; // b is stable, a is pre-release
   // Both have pre-release tags
   const preOrder = { alpha: 0, beta: 1, rc: 2 };
@@ -279,7 +371,7 @@ const Modal = ({ title, onClose, children, width = 700, zIndex = 1000, allowBack
       <div className="nx-modal" style={{ maxWidth: width, position: 'relative', zIndex: 1, pointerEvents: 'auto' }} onClick={(e) => e.stopPropagation()}>
         <div className="nx-modal-header">
           <h3 className="nx-modal-title">{title}</h3>
-          <button className="nx-modal-close" type="button" onClick={onClose} aria-label="Close">✕</button>
+          <button className="nx-modal-close" type="button" onClick={onClose} aria-label="Close"><X size={18} /></button>
         </div>
         <div className="nx-modal-body">
           {children}
@@ -431,7 +523,7 @@ const CategoryPicker = ({ categories, primaryId, secondaryIds, onChange, onCreat
               aria-label={`Remove ${i.name}`}
               title="Remove"
             >
-              ×
+              <X size={12} />
             </button>
           </span>
         ))}
@@ -517,8 +609,64 @@ function App() {
   const [holidayPresets, setHolidayPresets] = useState([]);
   const [files, setFiles] = useState([]);
   const [uploadProgress, setUploadProgress] = useState({});
-  const [activeTab, setActiveTab] = useState('dashboard');
+  // Hash-based routing: the current page lives in the URL hash (#/settings/storage)
+  // so pages are deep-linkable, refresh-safe, and Back/Forward works. Tab IDs
+  // already mirror paths (e.g. 'settings/storage'), so the mapping is 1:1.
+  const tabFromHash = () => {
+    try {
+      const h = (window.location.hash || '').replace(/^#\/?/, '').trim();
+      return h || 'dashboard';
+    } catch {
+      return 'dashboard';
+    }
+  };
+  const [activeTab, setActiveTab] = useState(tabFromHash);
+  // Keep the URL hash and activeTab in sync, both directions:
+  //  - activeTab changes (sidebar click, tile arrow, programmatic) -> write hash
+  //  - hash changes (Back/Forward, manual edit, shared link) -> update activeTab
+  // The guard prevents a feedback loop between the two updates.
+  const _suppressHashWrite = useRef(false);
+  useEffect(() => {
+    const desired = '#/' + (activeTab || 'dashboard');
+    if (window.location.hash !== desired) {
+      _suppressHashWrite.current = true;
+      window.location.hash = desired;
+    }
+  }, [activeTab]);
+  useEffect(() => {
+    const onHashChange = () => {
+      if (_suppressHashWrite.current) {
+        // This hashchange was caused by our own activeTab->hash write; ignore.
+        _suppressHashWrite.current = false;
+        return;
+      }
+      const t = tabFromHash();
+      setActiveTab(prev => (prev === t ? prev : t));
+    };
+    window.addEventListener('hashchange', onHashChange);
+    return () => window.removeEventListener('hashchange', onHashChange);
+  }, []);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false); // Mobile navigation menu
+  // v2 sidebar: collapsed (icon-only) state, persisted across sessions
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(() => {
+    try { return localStorage.getItem('nx_sidebar_collapsed') === '1'; } catch { return false; }
+  });
+  const toggleSidebarCollapsed = useCallback(() => {
+    setSidebarCollapsed(prev => {
+      const next = !prev;
+      try { localStorage.setItem('nx_sidebar_collapsed', next ? '1' : '0'); } catch { /* ignore */ }
+      return next;
+    });
+  }, []);
+  // v2 first-run onboarding wizard gate. null = unknown (still checking).
+  const [needsOnboarding, setNeedsOnboarding] = useState(null);
+  // Keep the boot splash (theater quote) up a beat longer than the actual
+  // load so the line can land. Cleared by a one-shot timer.
+  const [bootHold, setBootHold] = useState(true);
+  useEffect(() => {
+    const t = setTimeout(() => setBootHold(false), 3000);
+    return () => clearTimeout(t);
+  }, []);
   const [openDropdown, setOpenDropdown] = useState(null); // For dropdown navigation
   const [plexConfig, setPlexConfig] = useState({
     url: '',
@@ -528,7 +676,8 @@ function App() {
   const [schedulerStatus, setSchedulerStatus] = useState({ running: false, active_schedules: 0 });
   const [nextScheduleCountdown, setNextScheduleCountdown] = useState(null);
   const [backupFile, setBackupFile] = useState(null);
-  const [backupProgress, setBackupProgress] = useState({ active: false, type: '', message: '' });
+  const [backupProgress, setBackupProgress] = useState({ active: false, type: '', message: '', percent: null, loaded: 0, total: 0 });
+  const [factoryReset, setFactoryReset] = useState({ open: false, wipeTrailers: false, wipePrerolls: false, wipeProvider: false, confirm: '', busy: false });
   const [communityTemplates, setCommunityTemplates] = useState([]);
   const [selectedSchedules, setSelectedSchedules] = useState([]);
   const [darkMode, setDarkMode] = useState(() => {
@@ -539,7 +688,7 @@ function App() {
       return false;
     }
   });
-  const [darkModeLoaded, setDarkModeLoaded] = useState(true);  // Mark as loaded since we init from localStorage
+  const [darkModeLoaded, setDarkModeLoaded] = useState(true); // Mark as loaded since we init from localStorage
   const [editingSchedule, setEditingSchedule] = useState(null);
   const [editingPreroll, setEditingPreroll] = useState(null);
   const [editingCategory, setEditingCategory] = useState(null);
@@ -586,6 +735,10 @@ function App() {
   const [jellyfinPluginNexrollUrl, setJellyfinPluginNexrollUrl] = useState('');
   const [jellyfinPluginPathFrom, setJellyfinPluginPathFrom] = useState('');
   const [jellyfinPluginPathTo, setJellyfinPluginPathTo] = useState('');
+  const [jellyfinPluginMaxIntros, setJellyfinPluginMaxIntros] = useState(0);
+  const [jellyfinPluginEnableMovies, setJellyfinPluginEnableMovies] = useState(true);
+  const [jellyfinPluginEnableEpisodes, setJellyfinPluginEnableEpisodes] = useState(true);
+  const [jellyfinPluginTimeout, setJellyfinPluginTimeout] = useState(5);
 
   // Emby connection UI state
   const [embyStatus, setEmbyStatus] = useState('Disconnected');
@@ -610,10 +763,13 @@ function App() {
   // File upload ref for clearing input
   const fileInputRef = React.useRef(null);
   const [stableTokenInput, setStableTokenInput] = useState('');
+  // Which Plex alternative-connect disclosure to auto-open (e.g. 'oauth' from the Docker hint)
+  const [plexAltOpen, setPlexAltOpen] = useState(null);
   const [systemVersion, setSystemVersion] = useState(null);
   const [ffmpegInfo, setFfmpegInfo] = useState(null);
   const [systemDependencies, setSystemDependencies] = useState(null);
   const [dependenciesLoading, setDependenciesLoading] = useState(false);
+  const [installingDep, setInstallingDep] = useState(null); // e.g. 'deno' while installing
   const [updateInfo, setUpdateInfo] = useState(null);
   const [showUpdateBanner, setShowUpdateBanner] = useState(false);
   const [updateSettings, setUpdateSettings] = useState({ check_interval: 'daily', include_prerelease: false, last_check: null, dismissed_version: null });
@@ -625,10 +781,12 @@ function App() {
   const [activeCategory, setActiveCategory] = useState(null);
   const [appliedSequence, setAppliedSequence] = useState(null); // Manually applied sequence info
   const [currentPrerollPreview, setCurrentPrerollPreview] = useState(null); // {prerolls: [...], index: 0} for preview modal
+  const [previewError, setPreviewError] = useState(null); // { code } when the current preview clip can't be played
   const dashboardVideoRef = useRef(null);
 
   // Load new src into the dashboard preview video when track index changes
   useEffect(() => {
+    setPreviewError(null); // fresh clip — clear any prior "can't play" message
     if (!currentPrerollPreview || !dashboardVideoRef.current) return;
     const current = currentPrerollPreview.prerolls[currentPrerollPreview.index];
     if (!current || !current.preview_url) return;
@@ -637,7 +795,7 @@ function App() {
     dashboardVideoRef.current.load();
     dashboardVideoRef.current.play().catch(() => {});
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [currentPrerollPreview?.index]);
+  }, [currentPrerollPreview?.index, currentPrerollPreview?.prerolls]);
 
   const [activeScheduleIds, setActiveScheduleIds] = useState([]);
   
@@ -654,12 +812,22 @@ function App() {
   const [communitySearchPlatform, setCommunitySearchPlatform] = useState('');
   const [communitySearchResults, setCommunitySearchResults] = useState([]);
   const [communityIsSearching, setCommunityIsSearching] = useState(false);
+  // Browse-by-facet state (Community Prerolls)
+  const [communityFacets, setCommunityFacets] = useState(null);
+  const [browseCategory, setBrowseCategory] = useState('');
+  const [browseCreator, setBrowseCreator] = useState('');
+  const [browsePlatform, setBrowsePlatform] = useState('');
+  const [browseSort, setBrowseSort] = useState('name');
   const [communityIsDownloading, setCommunityIsDownloading] = useState({});
   const [communityBuildProgress, setCommunityBuildProgress] = useState(null);
   const [communitySelectedCategory, setCommunitySelectedCategory] = useState(null);
   const [communityShowAddToCategory, setCommunityShowAddToCategory] = useState({});
   const [communityResultLimit, setCommunityResultLimit] = useState(50);
   const [communityTotalResults, setCommunityTotalResults] = useState(0);
+  // Pagination for community search/browse results.
+  const [communityOffset, setCommunityOffset] = useState(0);
+  const [communityPageLimit, setCommunityPageLimit] = useState(50); // page size of the current results
+  const [communityActiveMode, setCommunityActiveMode] = useState(null); // 'search' | 'browse'
   const [communityPreviewingPreroll, setCommunityPreviewingPreroll] = useState(null);
   const [communityTop5Prerolls, setCommunityTop5Prerolls] = useState([]);
   const [communityRandomPreroll, setCommunityRandomPreroll] = useState(null);
@@ -669,6 +837,17 @@ function App() {
   const [communityIsLoadingLatest, setCommunityIsLoadingLatest] = useState(false);
   // Rename preroll before download
   const [communityRenamingPreroll, setCommunityRenamingPreroll] = useState(null);
+  // Remember where the user was in the community list: the rename/download modal
+  // is a full-view swap (early return in renderCommunityPrerolls), so without
+  // this the list snaps back to the top when the modal closes. Capture the scroll
+  // position on open, restore it once the modal closes.
+  const communityScrollRef = React.useRef(0);
+  React.useEffect(() => {
+    if (communityRenamingPreroll === null && communityScrollRef.current) {
+      const y = communityScrollRef.current;
+      requestAnimationFrame(() => requestAnimationFrame(() => window.scrollTo(0, y)));
+    }
+  }, [communityRenamingPreroll]);
   const [communityNewPrerollName, setCommunityNewPrerollName] = useState('');
   // Index status for local fast search
   const [communityIndexStatus, setCommunityIndexStatus] = useState(null);
@@ -856,6 +1035,7 @@ const [applyingToServer, setApplyingToServer] = useState(false);
   const [nexupRadarrUrl, setNexupRadarrUrl] = useState('');
   const [nexupRadarrApiKey, setNexupRadarrApiKey] = useState('');
   const [nexupTrailers, setNexupTrailers] = useState([]);
+  const [nexupHiddenByPref, setNexupHiddenByPref] = useState(0);
   const [nexupUpcoming, setNexupUpcoming] = useState([]);
   const [nexupStorage, setNexupStorage] = useState(null);
   const [showNexupUpcoming, setShowNexupUpcoming] = useState(false);
@@ -899,30 +1079,30 @@ const [applyingToServer, setApplyingToServer] = useState(false);
   
   // Coming Soon List Generator State
   const [comingSoonListSettings, setComingSoonListSettings] = useState({
-    layout: 'grid',  // 'list' or 'grid'
-    source: 'both',  // 'movies', 'shows', or 'both'
+    layout: 'grid', // 'list' or 'grid'
+    source: 'both', // 'movies', 'shows', or 'both'
     duration: 10,
     maxItems: 8,
     bgColor: '#141428',
     textColor: '#ffffff',
     accentColor: '#00d4ff',
     serverName: '',
-    autoRegen: false,  // Auto-regenerate when Radarr/Sonarr syncs
-    autoRegenLayout: 'both',  // Which layout(s) to auto-regenerate: 'grid', 'list', or 'both'
-    includeAudio: false,  // Include background music in generated video
-    customAudioFilename: null,  // User-uploaded custom audio filename
-    customLogoFilename: null,  // User-uploaded custom logo filename
-    logoMode: 'watermark',  // 'watermark' = faded bg, 'right' = right of header, 'below' = below header
-    language: 'en',  // Text language: en, fr, es, de
-    availableDays: 1,  // Days to show "Available Now!" before auto-removal
-    maxAvailableNow: 0  // Max "Available Now!" items to show (0 = no limit)
+    autoRegen: false, // Auto-regenerate when Radarr/Sonarr syncs
+    autoRegenLayout: 'both', // Which layout(s) to auto-regenerate: 'grid', 'list', or 'both'
+    includeAudio: false, // Include background music in generated video
+    customAudioFilename: null, // User-uploaded custom audio filename
+    customLogoFilename: null, // User-uploaded custom logo filename
+    logoMode: 'watermark', // 'watermark' = faded bg, 'right' = right of header, 'below' = below header
+    language: 'en', // Text language: en, fr, es, de
+    availableDays: 1, // Days to show "Available Now!" before auto-removal
+    maxAvailableNow: 0 // Max "Available Now!" items to show (0 = no limit)
   });
   const [comingSoonListGenerating, setComingSoonListGenerating] = useState(false);
   const [generatedComingSoonLists, setGeneratedComingSoonLists] = useState([]);
   const [comingSoonListsCollapsed, setComingSoonListsCollapsed] = useState(false);
   const [previewingComingSoonList, setPreviewingComingSoonList] = useState(null);
-  const comingSoonListSettingsLoadedRef = React.useRef(false);  // Track if initial load done
-  const dynamicPrerollSettingsLoadedRef = React.useRef(false);  // Track if initial load done
+  const comingSoonListSettingsLoadedRef = React.useRef(false); // Track if initial load done
+  const dynamicPrerollSettingsLoadedRef = React.useRef(false); // Track if initial load done
   
   // Translation lookup for live preview text
   const prerollTranslations = {
@@ -1011,8 +1191,20 @@ const [applyingToServer, setApplyingToServer] = useState(false);
     extracting: false,
     testing: false,
     testResult: null,
-    selectedBrowser: 'chrome',  // Browser to sign in to
+    selectedBrowser: 'chrome', // Browser to sign in to
     uploading: false
+  });
+
+  // YouTube PO-token provider (bgutil) — the primary, automatic download method.
+  const [potoken, setPotoken] = useState({ status: null, loading: false, testing: false, testResult: null });
+
+  // Alternate-trailer picker: when the default trailer is unavailable, show the
+  // top 3 YouTube candidates for the user to preview and choose.
+  const [altTrailers, setAltTrailers] = useState({
+    open: false, loading: false, kind: 'movie', id: null, season: 1,
+    title: '', candidates: [], error: null, downloadingUrl: null, previewId: null,
+    failedUrls: {}, // url -> reason, so we can mark candidates that can't be fetched
+    defaultReason: '', // why the default trailer couldn't be downloaded
   });
 
   // UI Preferences state (stored in localStorage)
@@ -1042,6 +1234,17 @@ const [applyingToServer, setApplyingToServer] = useState(false);
     message: '',
     type: 'info' // 'info' | 'success' | 'warning' | 'error'
   });
+  // v2 toasts: non-blocking success/info feedback (errors/confirms use the dialog)
+  const [toasts, setToasts] = useState([]);
+  const dismissToast = useCallback((id) => {
+    setToasts(prev => prev.filter(t => t.id !== id));
+  }, []);
+  const pushToast = useCallback((message, type = 'info') => {
+    const id = (typeof crypto !== 'undefined' && crypto.randomUUID)
+      ? crypto.randomUUID()
+      : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    setToasts(prev => [...prev.slice(-4), { id, type, message }]); // cap stack at ~5
+  }, []);
   
   // Category preroll management UI state
   const [categoryPrerolls, setCategoryPrerolls] = useState({});
@@ -1214,7 +1417,7 @@ const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
       // Schedule wraps around year end
       return (dayMonth === schedStartMonth && dayDay >= schedStartDay) ||
              (dayMonth === schedEndMonth && dayDay <= schedEndDay) ||
-             (dayMonth > schedStartMonth) ||  // After start month in same year
+             (dayMonth > schedStartMonth) || // After start month in same year
              (dayMonth < schedEndMonth);       // Before end month in next year
     }
     
@@ -1299,7 +1502,7 @@ const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
   const [loadedSavedSequenceId, setLoadedSavedSequenceId] = useState(null); // Track when a saved sequence is loaded in schedule creation
 
   // Recurrence pattern state
-  const [weekDays, setWeekDays] = useState([]);  // For weekly: ['monday', 'wednesday', 'friday']
+  const [weekDays, setWeekDays] = useState([]); // For weekly: ['monday', 'wednesday', 'friday']
   const [selectedMonths, setSelectedMonths] = useState([]); // For monthly: which months are active [1-12]
   const [monthDays, setMonthDays] = useState([]); // For monthly: which days of the month [1-31]
   const [timeRange, setTimeRange] = useState({ start: '', end: '' }); // For daily time ranges
@@ -1481,16 +1684,31 @@ const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
       else if (isError) dialogType = 'error';
     }
     
-    // Always show errors, but respect showNotifications for success/info messages
-    if (isError || showNotifications) {
+    // v2 routing: errors and warnings always use the blocking styled dialog (the
+    // user must acknowledge them). Success/info become non-blocking toasts —
+    // except long/multi-paragraph messages (detailed stat summaries) which read
+    // better in the dialog. The showNotifications setting still gates success/info.
+    const msgStr = typeof message === 'string' ? message : String(message ?? '');
+    const isLongDetailed = msgStr.includes('\n\n') || msgStr.length > 160;
+
+    if (dialogType === 'error' || dialogType === 'warning') {
       setAlertDialog({
         open: true,
-        title: dialogType === 'error' ? 'Error' : 
-               dialogType === 'success' ? 'Success' : 
-               dialogType === 'warning' ? 'Warning' : 'Notice',
+        title: dialogType === 'error' ? 'Error' : 'Warning',
         message: message,
         type: dialogType
       });
+    } else if (showNotifications) {
+      if (isLongDetailed) {
+        setAlertDialog({
+          open: true,
+          title: dialogType === 'success' ? 'Success' : 'Notice',
+          message: message,
+          type: dialogType
+        });
+      } else {
+        pushToast(msgStr, dialogType === 'success' ? 'success' : 'info');
+      }
     }
   };
 
@@ -1809,18 +2027,18 @@ const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
       });
       const data = await safeJson(res);
       if (res.ok) {
-        alert(`✅ Schedule "${holiday.name}" created successfully!`);
+        alert(`Schedule "${holiday.name}" created successfully!`);
         // Refresh schedules
         const schedRes = await fetch(apiUrl('/schedules'));
         const schedData = await safeJson(schedRes);
         if (schedRes.ok) setSchedules(schedData);
         setShowHolidayBrowser(false);
       } else {
-        alert(`❌ Failed to create schedule: ${data?.detail || 'Unknown error'}`);
+        alert(`Failed to create schedule: ${data?.detail || 'Unknown error'}`);
       }
     } catch (e) {
       console.error('Create holiday schedule error:', e);
-      alert(`❌ Error: ${e.message}`);
+      alert(`Error: ${e.message}`);
     }
   };
 
@@ -1840,17 +2058,15 @@ const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
     );
     
     try {
-      // Format dates correctly for backend
-      const formatDateForBackend = (dateStr) => {
-        if (!dateStr) return '';
-        try {
-          const d = new Date(dateStr);
-          return d.toISOString().slice(0, 16);
-        } catch {
-          return '';
-        }
-      };
-      
+      // Format dates for the backend WITHOUT timezone conversion. Schedules are
+      // stored as naive local datetimes; using new Date(dateStr).toISOString()
+      // here parses the naive string as local time and re-emits it as UTC, which
+      // shifts start_date/end_date by the local offset EVERY time a schedule is
+      // toggled (the times drift further on each enable/disable, and can even
+      // roll the date for users far from UTC). toLocalInputValue just strips any
+      // tz suffix and keeps the wall-clock value unchanged.
+      const formatDateForBackend = toLocalInputValue;
+
       const requestData = {
         name: schedule.name,
         type: schedule.type,
@@ -2046,6 +2262,18 @@ const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // Per-location storage breakdown (prerolls / NeX-Up / thumbnails / database).
+  // Backend caches 5 min, so this is cheap to call when opening the Storage page.
+  const refreshStorageBreakdown = React.useCallback(async () => {
+    try {
+      const res = await fetch(apiUrl('system/storage/breakdown'));
+      if (!res.ok) return;
+      const data = await res.json();
+      if (data && !data.__error) setStorageBreakdown(data);
+    } catch (_) { /* ignore */ }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   useEffect(() => {
     fetchStorageHealth();
   }, [fetchStorageHealth]);
@@ -2185,16 +2413,27 @@ const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
         }
       }
 
-      if (!nearest) { setNextScheduleCountdown(null); return; }
-      const diff = nearest - now;
-      const days = Math.floor(diff / 86400000);
-      const hours = Math.floor((diff % 86400000) / 3600000);
-      const minutes = Math.floor((diff % 3600000) / 60000);
-      const seconds = Math.floor((diff % 60000) / 1000);
-      setNextScheduleCountdown({ days, hours, minutes, seconds, name: nearestName, categoryId: nearestCatId, targetTime: nearest });
+      // Only name/targetTime are displayed now (the D/H/M/S countdown boxes
+      // are gone), so bail out with the previous state object when nothing
+      // changed. Returning the same reference makes React skip the re-render
+      // entirely - the old code created a fresh object every second, which
+      // re-rendered the whole app each tick and reset scroll positions and
+      // text selection on the dashboard.
+      if (!nearest) {
+        setNextScheduleCountdown(prev => (prev === null ? prev : null));
+        return;
+      }
+      setNextScheduleCountdown(prev => (
+        prev &&
+        prev.name === nearestName &&
+        prev.categoryId === nearestCatId &&
+        prev.targetTime instanceof Date && prev.targetTime.getTime() === nearest.getTime()
+          ? prev
+          : { name: nearestName, categoryId: nearestCatId, targetTime: nearest }
+      ));
     };
     computeCountdown();
-    const countdownInterval = setInterval(computeCountdown, 1000);
+    const countdownInterval = setInterval(computeCountdown, 15000);
     return () => clearInterval(countdownInterval);
   }, [schedules]);
 
@@ -2210,10 +2449,12 @@ const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
         try {
           const data = JSON.parse(ev.data);
           if (data && data.scheduler) {
-            setSchedulerStatus(prev => ({
-              ...prev,
-              running: !!data.scheduler.running
-            }));
+            // The backend heartbeats every ~5s; bail out with the previous
+            // state object unless `running` actually flipped. A fresh object
+            // per message re-rendered the entire app every 5 seconds, which
+            // reset scroll positions and text selection on the dashboard.
+            const running = !!data.scheduler.running;
+            setSchedulerStatus(prev => (prev && prev.running === running ? prev : { ...prev, running }));
           }
         } catch (e) {
           // ignore parse errors
@@ -2246,6 +2487,12 @@ const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
             }
             setJellyfinPluginPathFrom(prev => prev || pluginData.config?.PathPrefixFrom || '');
             setJellyfinPluginPathTo(prev => prev || pluginData.config?.PathPrefixTo || '');
+            if (pluginData.config) {
+              setJellyfinPluginMaxIntros(pluginData.config.MaxIntros ?? 0);
+              setJellyfinPluginEnableMovies(pluginData.config.EnableForMovies ?? true);
+              setJellyfinPluginEnableEpisodes(pluginData.config.EnableForEpisodes ?? true);
+              setJellyfinPluginTimeout(pluginData.config.TimeoutSeconds ?? 5);
+            }
           }
         })
         .catch(() => setJellyfinPluginInfo(null));
@@ -2383,6 +2630,14 @@ const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
               } catch (indexError) {
                 console.error('Failed to load index status:', indexError);
               }
+              // Load browse facets (categories / creators / platforms + counts)
+              try {
+                const facetsRes = await fetch(apiUrl('community-prerolls/facets'));
+                const facetsData = await facetsRes.json();
+                setCommunityFacets(facetsData && facetsData.available ? facetsData : null);
+              } catch (facetsError) {
+                console.error('Failed to load community facets:', facetsError);
+              }
               // Fetch community server info
               try {
                 const [serverUrlRes, serversRes] = await Promise.all([
@@ -2412,6 +2667,49 @@ const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
       checkFairUseStatus();
     }
   }, [activeTab, communityFairUseStatus]);
+
+  // While the Community page is open, reflect an index build that was started
+  // elsewhere (e.g. the dashboard "Rebuild Index" button) so its progress shows
+  // without re-clicking. Opens the progress stream once; closes immediately when
+  // nothing is building.
+  useEffect(() => {
+    if (activeTab !== 'community-prerolls') return undefined;
+    let es = null;
+    let closed = false;
+    let sawBuilding = false;
+    const close = () => { if (!closed) { closed = true; try { es && es.close(); } catch {} } };
+    try {
+      es = new EventSource(apiUrl('community-prerolls/build-progress'));
+    } catch { return undefined; }
+    es.onmessage = (ev) => {
+      let d;
+      try { d = JSON.parse(ev.data); } catch { return; }
+      if (d.building === true) {
+        sawBuilding = true;
+        setCommunityIsBuilding(true);
+        setCommunityBuildProgress(d);
+      } else if (sawBuilding) {
+        // A build we were watching just finished.
+        setCommunityIsBuilding(false);
+        if (d.progress === 100) {
+          setCommunityBuildProgress({ ...d, progress: 100 });
+          setTimeout(() => setCommunityBuildProgress(null), 1000);
+          (async () => {
+            try { const r = await fetch(apiUrl('community-prerolls/index-status')); setCommunityIndexStatus(await r.json()); } catch {}
+            try { const r = await fetch(apiUrl('community-prerolls/facets')); const f = await r.json(); setCommunityFacets(f && f.available ? f : null); } catch {}
+          })();
+        } else {
+          setCommunityBuildProgress(null);
+        }
+        close();
+      } else {
+        // First frame and nothing is building — stop listening.
+        close();
+      }
+    };
+    es.onerror = () => close();
+    return close;
+  }, [activeTab]);
 
   // Function to load Top 5 prerolls
   const loadTop5Prerolls = async () => {
@@ -2518,7 +2816,7 @@ const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
     // If there are duplicates, ask user what to do
     let duplicateAction = 'allow'; // Default: allow duplicates
     if (duplicates.length > 0) {
-      const duplicateNames = duplicates.map(d => `  • ${d.file.name}`).join('\n');
+      const duplicateNames = duplicates.map(d => ` • ${d.file.name}`).join('\n');
       const message = `The following ${duplicates.length} file(s) already exist in your library:\n\n${duplicateNames}\n\nClick OK to SKIP these duplicates\nClick Cancel to UPLOAD them anyway`;
       
       const userChoice = await showConfirm(message, { title: 'Duplicate Files Detected', type: 'warning', confirmText: 'Skip Duplicates', cancelText: 'Upload Anyway' });
@@ -2599,12 +2897,12 @@ const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
 
     let message = '';
     if (failed === 0 && skipped === 0) {
-      message = `✓ All ${totalFiles} files uploaded successfully!`;
+      message = `All ${totalFiles} files uploaded successfully!`;
     } else if (successful === 0 && skipped > 0 && failed === 0) {
-      const skippedNames = skippedResults.map(r => `  • ${r.file}`).join('\n');
+      const skippedNames = skippedResults.map(r => ` • ${r.file}`).join('\n');
       message = `ℹ️ All ${totalFiles} file(s) were skipped (duplicates):\n\n${skippedNames}`;
     } else if (successful === 0 && failed > 0) {
-      message = `❌ Failed to upload any files. Please check the errors.`;
+      message = `Failed to upload any files. Please check the errors.`;
     } else {
       const parts = [];
       if (successful > 0) parts.push(`${successful} uploaded`);
@@ -2684,13 +2982,13 @@ const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
     const normalizedStartDate = (scheduleForm.type === 'yearly' || scheduleForm.type === 'holiday')
       ? normalizeRecurringDate(scheduleForm.start_date)
       : scheduleForm.type === 'monthly'
-        ? '2000-01-01T00:00'  // monthly schedules are controlled by months/monthDays recurrence, not date range
+        ? '2000-01-01T00:00' // monthly schedules are controlled by months/monthDays recurrence, not date range
         : scheduleForm.start_date;
 
     const normalizedEndDate = (scheduleForm.type === 'yearly' || scheduleForm.type === 'holiday')
       ? normalizeRecurringDate(scheduleForm.end_date)
       : scheduleForm.type === 'monthly'
-        ? ''  // no end date — runs indefinitely, recurrence pattern controls active months
+        ? '' // no end date — runs indefinitely, recurrence pattern controls active months
         : scheduleForm.end_date;
 
     const data = {
@@ -2828,6 +3126,11 @@ const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
       // Backend expects category_id, so we'll use first category from sequence or null
       const firstCategory = blocks.find(b => b.type === 'random')?.category_id;
       scheduleData.category_id = firstCategory || null;
+      // Link to the saved sequence (if this was built from one) so edits to that
+      // sequence propagate back into this schedule.
+      if (loadedSavedSequenceId) {
+        scheduleData.source_sequence_id = loadedSavedSequenceId;
+      }
     }
 
     fetch(apiUrl('schedules'), {
@@ -2850,7 +3153,7 @@ const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
         
         if (potentialConflicts.length > 0) {
           const conflictNames = potentialConflicts.map(c => c.schedule.name).join(', ');
-          alert(`⚠️ Schedule created, but it conflicts with: ${conflictNames}\n\nBoth schedules have the same priority (${scheduleData.priority || 5}) and are exclusive. NeXroll will randomly choose one during overlap.\n\nTo fix: Edit one schedule to have a different priority.`);
+          alert(`Schedule created, but it conflicts with: ${conflictNames}\n\nBoth schedules have the same priority (${scheduleData.priority || 5}) and are exclusive. NeXroll will randomly choose one during overlap.\n\nTo fix: Edit one schedule to have a different priority.`);
         } else {
           alert('Schedule created successfully!');
         }
@@ -2892,8 +3195,8 @@ const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
       })
       .then(data => {
         const msg = data.categories_created > 0 
-          ? `Holiday categories created successfully!\n\n✓ ${data.categories_created} new categories\n✓ ${data.presets_created} new presets\n✓ ${data.total_categories} total categories available\n\nThe categories should now appear in your list.`
-          : `Holiday categories already exist!\n\n✓ ${data.total_categories} categories available\n\nNo new categories were created.`;
+          ? `Holiday categories created successfully!\n\n${data.categories_created} new categories\n${data.presets_created} new presets\n${data.total_categories} total categories available\n\nThe categories should now appear in your list.`
+          : `Holiday categories already exist!\n\n${data.total_categories} categories available\n\nNo new categories were created.`;
         alert(msg);
         fetchData();
       })
@@ -2914,17 +3217,17 @@ const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
           const updates = data.updated_schedules.map(s => 
             `• ${s.name}: ${s.old_date} → ${s.new_date}`
           ).join('\n');
-          alert(`✅ Holiday dates refreshed for ${data.year}!\n\n${data.updated_count} schedule(s) updated:\n${updates}`);
+          alert(`Holiday dates refreshed for ${data.year}!\n\n${data.updated_count} schedule(s) updated:\n${updates}`);
         } else {
-          alert(`✅ All holiday schedules are up to date for ${data.year}.\n\n${data.total_holiday_schedules} holiday-linked schedule(s) checked.`);
+          alert(`All holiday schedules are up to date for ${data.year}.\n\n${data.total_holiday_schedules} holiday-linked schedule(s) checked.`);
         }
         fetchData();
       } else {
-        alert(`❌ Failed to refresh: ${data?.detail || 'Unknown error'}`);
+        alert(`Failed to refresh: ${data?.detail || 'Unknown error'}`);
       }
     } catch (e) {
       console.error('Refresh holiday dates error:', e);
-      alert(`❌ Error: ${e.message}`);
+      alert(`Error: ${e.message}`);
     }
   };
 
@@ -3107,7 +3410,7 @@ const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
     const associatedPrerolls = prerolls.filter(p => 
       p.categories && 
       p.categories.some(c => c.id === category.id) &&
-      p.category_id !== category.id  // Exclude primary to avoid double counting
+      p.category_id !== category.id // Exclude primary to avoid double counting
     );
     const totalPrerolls = categoryPrerollsList.length + associatedPrerolls.length;
     
@@ -4072,69 +4375,106 @@ const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
       });
   };
 
-  const handleBackupDatabase = () => {
-    setBackupProgress({ active: true, type: 'database-backup', message: 'Preparing database export...' });
-    fetch(apiUrl('backup/database'))
-      .then(res => res.json())
-      .then(data => {
-        setBackupProgress({ active: true, type: 'database-backup', message: 'Creating download...' });
-        const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = `nexroll_database_${new Date().toISOString().split('T')[0]}.json`;
-        document.body.appendChild(a);
-        a.click();
-        document.body.removeChild(a);
-        URL.revokeObjectURL(url);
-        setBackupProgress({ active: false, type: '', message: '' });
-        showAlert('Database backup downloaded successfully!', 'success');
-      })
-      .catch(error => {
-        console.error('Backup error:', error);
-        setBackupProgress({ active: false, type: '', message: '' });
-        showAlert('Backup failed: ' + error.message, 'error');
-      });
+  const resetBackupProgress = () => setBackupProgress({ active: false, type: '', message: '', percent: null, loaded: 0, total: 0 });
+
+  // Stream a download so we can show real byte progress. Returns the assembled
+  // Blob. `total` comes from X-Estimated-Total (backups compress on the fly so
+  // there's no exact Content-Length) or Content-Length, else indeterminate.
+  const downloadWithProgress = async (url, opts, type, label) => {
+    const res = await fetch(url, opts);
+    if (!res.ok) {
+      let detail = `HTTP ${res.status}`;
+      try { detail = (await res.json()).detail || detail; } catch (_) {}
+      throw new Error(detail);
+    }
+    const cd = res.headers.get('content-disposition');
+    let filename = null;
+    if (cd) { const m = cd.match(/filename="?([^"]+)"?/); if (m) filename = m[1]; }
+    const total = Number(res.headers.get('x-estimated-total') || res.headers.get('content-length') || 0);
+    if (!res.body || !res.body.getReader) {
+      // Streaming unsupported — fall back to a plain blob.
+      return { blob: await res.blob(), filename };
+    }
+    const reader = res.body.getReader();
+    const chunks = [];
+    let loaded = 0;
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      chunks.push(value);
+      loaded += value.length;
+      const percent = total > 0 ? Math.min(99, Math.round((loaded / total) * 100)) : null;
+      setBackupProgress({ active: true, type, message: label, percent, loaded, total });
+    }
+    return { blob: new Blob(chunks), filename };
   };
 
-  const handleBackupFiles = () => {
-    setBackupProgress({ active: true, type: 'system-backup', message: 'Creating comprehensive system backup... This may take a few minutes for large libraries.' });
-    
-    // Use fetch with blob response for large files
-    fetch(apiUrl('backup/files'), {
-      method: 'POST'
-    })
-      .then(res => {
-        if (!res.ok) {
-          throw new Error(`HTTP error! status: ${res.status}`);
+  const triggerDownload = (blob, filename) => {
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  };
+
+  const handleBackupDatabase = async () => {
+    setBackupProgress({ active: true, type: 'database-backup', message: 'Exporting database…', percent: null, loaded: 0, total: 0 });
+    try {
+      const { blob } = await downloadWithProgress(apiUrl('backup/database'), {}, 'database-backup', 'Downloading database export…');
+      triggerDownload(blob, `nexroll_database_${new Date().toISOString().split('T')[0]}.json`);
+      resetBackupProgress();
+      showAlert('Database backup downloaded successfully!', 'success');
+    } catch (error) {
+      console.error('Backup error:', error);
+      resetBackupProgress();
+      showAlert('Backup failed: ' + error.message, 'error');
+    }
+  };
+
+  const handleBackupFiles = async () => {
+    setBackupProgress({ active: true, type: 'system-backup', message: 'Compressing system backup…', percent: 0, loaded: 0, total: 0 });
+    try {
+      const { blob, filename } = await downloadWithProgress(
+        apiUrl('backup/files'), { method: 'POST' }, 'system-backup', 'Compressing & downloading…');
+      const name = filename || `nexroll_system_backup_${new Date().toISOString().split('T')[0]}.zip`;
+      setBackupProgress({ active: true, type: 'system-backup', message: 'Saving file…', percent: 100, loaded: blob.size, total: blob.size });
+      triggerDownload(blob, name);
+      resetBackupProgress();
+      showAlert('System backup downloaded successfully!', 'success');
+    } catch (error) {
+      console.error('System backup error:', error);
+      resetBackupProgress();
+      showAlert('System backup failed: ' + error.message, 'error');
+    }
+  };
+
+  // Upload via XHR so we get real upload progress, then flip to an
+  // indeterminate "processing" state while the server extracts/restores.
+  const uploadWithProgress = (url, body, type, uploadLabel, processingLabel) => {
+    return new Promise((resolve, reject) => {
+      const xhr = new XMLHttpRequest();
+      xhr.open('POST', url);
+      xhr.upload.onprogress = (e) => {
+        if (e.lengthComputable) {
+          const percent = Math.min(99, Math.round((e.loaded / e.total) * 100));
+          setBackupProgress({ active: true, type, message: uploadLabel, percent, loaded: e.loaded, total: e.total });
         }
-        // Get filename from content-disposition header if available
-        const contentDisposition = res.headers.get('content-disposition');
-        let filename = `nexroll_system_backup_${new Date().toISOString().split('T')[0]}.zip`;
-        if (contentDisposition) {
-          const match = contentDisposition.match(/filename="?([^"]+)"?/);
-          if (match) filename = match[1];
-        }
-        return res.blob().then(blob => ({ blob, filename }));
-      })
-      .then(({ blob, filename }) => {
-        setBackupProgress({ active: true, type: 'system-backup', message: 'Download ready! Starting download...' });
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = filename;
-        document.body.appendChild(a);
-        a.click();
-        document.body.removeChild(a);
-        URL.revokeObjectURL(url);
-        setBackupProgress({ active: false, type: '', message: '' });
-        showAlert('System backup downloaded successfully!', 'success');
-      })
-      .catch(error => {
-        console.error('System backup error:', error);
-        setBackupProgress({ active: false, type: '', message: '' });
-        showAlert('System backup failed: ' + error.message, 'error');
-      });
+      };
+      xhr.upload.onload = () => {
+        setBackupProgress({ active: true, type, message: processingLabel, percent: null, loaded: 0, total: 0 });
+      };
+      xhr.onload = () => {
+        let data = {};
+        try { data = JSON.parse(xhr.responseText); } catch (_) {}
+        if (xhr.status >= 200 && xhr.status < 300) resolve(data);
+        else reject(new Error(data.detail || `HTTP ${xhr.status}: request failed`));
+      };
+      xhr.onerror = () => reject(new Error('Network error during upload'));
+      xhr.send(body);
+    });
   };
 
   const handleRestoreDatabase = () => {
@@ -4143,52 +4483,38 @@ const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
       return;
     }
 
-    setBackupProgress({ active: true, type: 'database-restore', message: 'Reading backup file...' });
+    setBackupProgress({ active: true, type: 'database-restore', message: 'Reading backup file…', percent: null, loaded: 0, total: 0 });
     const reader = new FileReader();
-    reader.onload = (e) => {
+    reader.onload = async (e) => {
       try {
-        const backupData = JSON.parse(e.target.result);
-        setBackupProgress({ active: true, type: 'database-restore', message: 'Restoring database...' });
-        fetch(apiUrl('restore/database'), {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(backupData)
-        })
-          .then(res => {
-            if (!res.ok) {
-              return res.json().then(error => {
-                throw new Error(error.detail || `HTTP ${res.status}: Restore failed`);
-              });
-            }
-            return res.json();
-          })
-          .then(data => {
-            setBackupProgress({ active: false, type: '', message: '' });
-            let msg = 'Database restored successfully!';
-            const rs = data && data.rescan;
-            if (rs) {
-              const parts = [];
-              if (rs.paths_updated) parts.push(`${rs.paths_updated} path${rs.paths_updated === 1 ? '' : 's'} relinked`);
-              if (rs.thumbnails_generated) parts.push(`${rs.thumbnails_generated} thumbnail${rs.thumbnails_generated === 1 ? '' : 's'} generated`);
-              if (rs.new_prerolls) parts.push(`${rs.new_prerolls} new file${rs.new_prerolls === 1 ? '' : 's'} found`);
-              if (rs.missing_files) parts.push(`${rs.missing_files} file${rs.missing_files === 1 ? '' : 's'} still missing`);
-              if (parts.length) msg += ` Scan: ${parts.join(', ')}.`;
-            }
-            showAlert(msg + ' Refreshing data...', 'success');
-            setBackupFile(null);
-            // Reset file input
-            const fileInput = document.querySelector('input[type="file"][accept=".json,.zip"]');
-            if (fileInput) fileInput.value = '';
-            fetchData();
-          })
-          .catch(error => {
-            console.error('Restore error:', error);
-            setBackupProgress({ active: false, type: '', message: '' });
-            showAlert('Restore failed: ' + error.message, 'error');
-          });
+        const backupData = JSON.parse(e.target.result);  // validate before sending
+        const payload = JSON.stringify(backupData);
+        const blob = new Blob([payload], { type: 'application/json' });
+        const data = await uploadWithProgress(apiUrl('restore/database'), blob, 'database-restore',
+          'Uploading database backup…', 'Restoring database…');
+        {
+          resetBackupProgress();
+          let msg = 'Database restored successfully!';
+          const rs = data && data.rescan;
+          if (rs) {
+            const parts = [];
+            if (rs.paths_updated) parts.push(`${rs.paths_updated} path${rs.paths_updated === 1 ? '' : 's'} relinked`);
+            if (rs.thumbnails_generated) parts.push(`${rs.thumbnails_generated} thumbnail${rs.thumbnails_generated === 1 ? '' : 's'} generated`);
+            if (rs.new_prerolls) parts.push(`${rs.new_prerolls} new file${rs.new_prerolls === 1 ? '' : 's'} found`);
+            if (rs.missing_files) parts.push(`${rs.missing_files} file${rs.missing_files === 1 ? '' : 's'} still missing`);
+            if (parts.length) msg += ` Scan: ${parts.join(', ')}.`;
+          }
+          showAlert(msg + ' Refreshing data...', 'success');
+          setBackupFile(null);
+          const fileInput = document.querySelector('input[type="file"][accept=".json,.zip"]');
+          if (fileInput) fileInput.value = '';
+          fetchData();
+        }
       } catch (error) {
-        setBackupProgress({ active: false, type: '', message: '' });
-        showAlert('Invalid backup file format', 'error');
+        console.error('Restore error:', error);
+        resetBackupProgress();
+        const msg = (error instanceof SyntaxError) ? 'Invalid backup file format' : ('Restore failed: ' + error.message);
+        showAlert(msg, 'error');
       }
     };
     reader.readAsText(backupFile);
@@ -4277,42 +4603,30 @@ const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
     }
   };
 
-  const handleRestoreFiles = () => {
+  const handleRestoreFiles = async () => {
     if (!backupFile) {
       showAlert('Please select a ZIP file first', 'warning');
       return;
     }
 
-    setBackupProgress({ active: true, type: 'system-restore', message: 'Uploading and restoring system backup... This may take a few minutes.' });
+    setBackupProgress({ active: true, type: 'system-restore', message: 'Uploading backup…', percent: 0, loaded: 0, total: backupFile.size });
     const formData = new FormData();
     formData.append('file', backupFile);
-    fetch(apiUrl('restore/files'), {
-      method: 'POST',
-      body: formData
-    })
-      .then(res => {
-        if (!res.ok) {
-          return res.json().then(error => {
-            throw new Error(error.detail || `HTTP ${res.status}: Restore failed`);
-          });
-        }
-        return res.json();
-      })
-      .then(data => {
-        setBackupProgress({ active: false, type: '', message: '' });
-        const restoredItems = data.restored ? data.restored.join(', ') : 'files';
-        showAlert(`System restored successfully! Restored: ${restoredItems}`, 'success');
-        setBackupFile(null);
-        // Reset file input
-        const fileInput = document.querySelector('input[type="file"][accept=".json,.zip"]');
-        if (fileInput) fileInput.value = '';
-        fetchData();
-      })
-      .catch(error => {
-        console.error('System restore error:', error);
-        setBackupProgress({ active: false, type: '', message: '' });
-        showAlert('System restore failed: ' + error.message, 'error');
-      });
+    try {
+      const data = await uploadWithProgress(apiUrl('restore/files'), formData, 'system-restore',
+        'Uploading backup…', 'Extracting & restoring… (this can take a bit)');
+      resetBackupProgress();
+      const restoredItems = data.restored ? data.restored.join(', ') : 'files';
+      showAlert(`System restored successfully! Restored: ${restoredItems}`, 'success');
+      setBackupFile(null);
+      const fileInput = document.querySelector('input[type="file"][accept=".json,.zip"]');
+      if (fileInput) fileInput.value = '';
+      fetchData();
+    } catch (error) {
+      console.error('System restore error:', error);
+      resetBackupProgress();
+      showAlert('System restore failed: ' + error.message, 'error');
+    }
   };
 
   const handleInitTemplates = () => {
@@ -4651,7 +4965,7 @@ const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
         if (result.skipped) {
           alert(`ℹ️ ${result.message}`);
         } else {
-          alert(`✅ Successfully scaled to ${resolution}!\n\nNew size: ${result.new_size_mb} MB`);
+          alert(`Successfully scaled to ${resolution}!\n\nNew size: ${result.new_size_mb} MB`);
           // Refresh video info
           const infoRes = await fetch(apiUrl(`prerolls/${editingPreroll.id}/video-info`));
           const info = await infoRes.json();
@@ -4703,7 +5017,7 @@ const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
         
         // Show warning if present (e.g., for external file renames)
         if (result.warning) {
-          alert('⚠️ ' + result.warning + '\n\nPreroll updated successfully.');
+          alert('' + result.warning + '\n\nPreroll updated successfully.');
         } else {
           alert('Preroll updated successfully!');
         }
@@ -4768,13 +5082,13 @@ const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
       
       if (data.matched) {
         if (data.already_matched) {
-          alert(`✓ This preroll is already matched to the Community Prerolls library!\n\nCommunity ID: ${data.community_preroll_id}`);
+          alert(`This preroll is already matched to the Community Prerolls library!\n\nCommunity ID: ${data.community_preroll_id}`);
         } else {
           const matchInfo = data.match_type === 'exact' 
             ? '(exact match)' 
             : `(fuzzy match - ${data.match_score * 100}% confidence)`;
           
-          alert(`✓ Successfully matched!\n\nMatched to: ${data.matched_title}\n${matchInfo}\n\nThe preroll will now show the community match indicator.`);
+          alert(`Successfully matched!\n\nMatched to: ${data.matched_title}\n${matchInfo}\n\nThe preroll will now show the community match indicator.`);
           
           // Update the editing preroll state to reflect the new match
           setEditingPreroll({
@@ -4797,7 +5111,7 @@ const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
         } else {
           console.log('No similar matches found');
           alert(
-            `✗ No match found\n\n` +
+            `No match found\n\n` +
             `Could not find any matching prerolls in the Community Prerolls library.\n\n` +
             `Suggestions:\n` +
             `• Try adjusting the filename to match the community title\n` +
@@ -4824,8 +5138,10 @@ const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
     if (!confirmed) return;
     
     try {
-      const response = await fetch(apiUrl(`prerolls/${editingPreroll.id}/link-community/${communityId}`), {
-        method: 'POST'
+      const response = await fetch(apiUrl(`prerolls/${editingPreroll.id}/link-community`), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ community_id: communityId })
       });
       
       if (!response.ok) {
@@ -4835,7 +5151,7 @@ const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
       const data = await response.json();
       
       if (data.success) {
-        alert(`✓ Successfully linked to: ${title}\n\nThe preroll will now show the community match indicator.`);
+        alert(`Successfully linked to: ${title}\n\nThe preroll will now show the community match indicator.`);
         
         // Update the editing preroll state
         setEditingPreroll({
@@ -4880,12 +5196,12 @@ const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
       } else {
         lines.push('This will:');
         if (prerollN > 0) {
-          lines.push(`  • Remove this category from ${prerollN} preroll${prerollN === 1 ? '' : 's'}`);
+          lines.push(` • Remove this category from ${prerollN} preroll${prerollN === 1 ? '' : 's'}`);
           if (uncatN > 0) lines.push(`     (${uncatN} of those will become uncategorized — this is their only category)`);
         }
-        if (schedN > 0)   lines.push(`  • Disable ${schedN} schedule${schedN === 1 ? '' : 's'} that target this category (they will need a new category before re-enabling)`);
-        if (fallbackN > 0)lines.push(`  • Clear this category from ${fallbackN} schedule fallback${fallbackN === 1 ? '' : 's'}`);
-        if (holidayN > 0) lines.push(`  • Delete ${holidayN} holiday preset${holidayN === 1 ? '' : 's'} that reference this category`);
+        if (schedN > 0)   lines.push(` • Disable ${schedN} schedule${schedN === 1 ? '' : 's'} that target this category (they will need a new category before re-enabling)`);
+        if (fallbackN > 0)lines.push(` • Clear this category from ${fallbackN} schedule fallback${fallbackN === 1 ? '' : 's'}`);
+        if (holidayN > 0) lines.push(` • Delete ${holidayN} holiday preset${holidayN === 1 ? '' : 's'} that reference this category`);
         lines.push('');
         lines.push('Preroll video files on disk will NOT be deleted.');
       }
@@ -5271,8 +5587,8 @@ const DASH_KEYS = ["servers","prerolls","storage","schedules","scheduler","curre
 
 // Tile span configuration - which tiles take multiple columns
 const TILE_SPANS = {
-  upcoming: 2,  // Upcoming Schedules spans 2 columns
-  resolution_chart: 2  // Resolution chart spans 2 columns
+  upcoming: 2, // Upcoming Schedules spans 2 columns
+  resolution_chart: 2 // Resolution chart spans 2 columns
 };
 
 // Initialize dashboard layout from localStorage synchronously to avoid render flash
@@ -5296,6 +5612,15 @@ const [dashLayout, setDashLayout] = useState(() => {
           if (!allKeys.includes(k) && !storedHidden.includes(k)) {
             allKeys.push(k);
           }
+        }
+        // One-time migration: the Video Quality tile used to default to Large (2x2)
+        // and showed a lot of empty space. It's now a content-sized Medium (2x1).
+        // Bump existing saved 'lg' down to 'md' once, then mark it done so we don't
+        // override a user who deliberately re-enlarges it afterward.
+        if (data.sizes && data.sizes.resolution_chart === 'lg' &&
+            !localStorage.getItem('dashMigratedResChartMd')) {
+          data.sizes = { ...data.sizes, resolution_chart: 'md' };
+          try { localStorage.setItem('dashMigratedResChartMd', '1'); } catch (_) {}
         }
         return {
           grid: {
@@ -5325,27 +5650,58 @@ const [dashSaving, setDashSaving] = useState(false);
 // as grid-auto-rows and tiles span 1 row (S/M) or 2 rows (L). The full-width
 // calendar gets its own measured row span (calRows).
 const dashGridRef = useRef(null);
+// Callback ref: the dashboard grid mounts AFTER the boot splash / login early
+// returns, long after this component's effects first ran. A plain ref left the
+// measurement effect with grid=null forever (its deps never retriggered it),
+// so the row unit was never measured at all. Tracking the node in state makes
+// the effect re-run the moment the grid actually exists.
+const [dashGridEl, setDashGridEl] = useState(null);
+const setDashGridRef = useCallback((el) => {
+  dashGridRef.current = el;
+  setDashGridEl(el);
+}, []);
 const [uniformRowH, setUniformRowH] = useState(0);
 const [calRows, setCalRows] = useState(1);
 useEffect(() => {
-  const grid = dashGridRef.current;
+  const grid = dashGridEl;
   if (!grid) return undefined;
-  const GAP = 16;
+  const GAP = 12; // must match the grid's inline `gap` (condensed tiles)
   let raf = 0;
   const recompute = () => {
     cancelAnimationFrame(raf);
     raf = requestAnimationFrame(() => {
       let rowH = 0;
-      grid.querySelectorAll('.nx-tile-sized').forEach((t) => {
+      // Only single-row tiles define the row unit. Feature tiles (span 2)
+      // must purely INHERIT it - including them in the measurement let their
+      // content height feed back into the row unit, so moving them around in
+      // edit mode could ratchet the whole grid taller.
+      grid.querySelectorAll('.nx-tile-sized[data-rows="1"]:not(.nx-tile-wide)').forEach((t) => {
         const card = t.querySelector('.card'); if (!card) return;
-        const r = Number(t.dataset.rows) || 1;
-        rowH = Math.max(rowH, (card.offsetHeight - (r - 1) * GAP) / r);
+        // The card is normally height-locked to its grid cell, which hides its
+        // true content height from every metric (scrollHeight included, since
+        // the flex children shrink to fit). Briefly release it to height:auto
+        // inside this animation frame - measured and restored before paint,
+        // so nothing flickers - to get the real natural height.
+        const prevH = card.style.height;
+        card.style.height = 'auto';
+        const natural = card.offsetHeight;
+        card.style.height = prevH;
+        rowH = Math.max(rowH, natural + 8);
       });
       // Tolerance guard: ignore sub-pixel jitter so the measure/apply loop settles.
       if (rowH > 0) setUniformRowH((prev) => (Math.abs(prev - rowH) > 1 ? rowH : prev));
       const calCard = grid.querySelector('.nx-tile-cal > .card');
       if (calCard && rowH > 0) {
-        const span = Math.max(1, Math.ceil((calCard.offsetHeight + GAP) / (rowH + GAP)));
+        // The card is height-locked to its grid cell, so offsetHeight reports
+        // the CLIPPED height and the span never grew to fit the whole week.
+        // The card's last child is the schedule-rows wrapper with overflow-y:
+        // auto, so its scrollHeight is the true content height. Real height =
+        // card chrome (header + day row) + that wrapper's full scroll height.
+        const inner = calCard.querySelector(':scope > div:last-child');
+        const natural = inner
+          ? (calCard.offsetHeight - inner.offsetHeight) + inner.scrollHeight
+          : calCard.offsetHeight;
+        const span = Math.max(1, Math.ceil((natural + GAP) / (rowH + GAP)));
         setCalRows((prev) => (prev !== span ? span : prev));
       }
     });
@@ -5355,7 +5711,7 @@ useEffect(() => {
   grid.querySelectorAll('.nx-tile .card').forEach((c) => ro.observe(c));
   recompute();
   return () => { cancelAnimationFrame(raf); ro.disconnect(); };
-}, [dashLayout]);
+}, [dashLayout, dashGridEl]);
 
 const visibleOrder = React.useMemo(
   () => (dashLayout?.order || DASH_KEYS).filter(k => !(dashLayout?.hidden || []).includes(k)),
@@ -5365,7 +5721,6 @@ const visibleOrder = React.useMemo(
 const dashSensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 5 } }));
 // Bumping this remounts the grid — used by "Reset layout" so RGL actually drops
 // its cached internal layout and rebuilds from the default.
-const [dashGridKey, setDashGridKey] = useState(0);
 // Per-tile content height (in grid rows), measured live. This is the single
 // source of truth for tile HEIGHT — the layout below always uses it — so tiles
 // fit their content exactly and never scroll, independent of RGL's own state.
@@ -5513,7 +5868,7 @@ const SortableTile = ({ id, disabled, cols = 1, rows = 1, fullWidth, onHide, chi
       ref={setNodeRef}
       style={style}
       data-rows={rows}
-      className={`nx-tile ${fullWidth ? 'nx-tile-cal' : 'nx-tile-sized'} ${isDragging ? 'dragging' : ''} ${disabled ? '' : 'editing'}`}
+      className={`nx-tile ${fullWidth ? 'nx-tile-cal' : 'nx-tile-sized'} ${cols === 2 ? 'nx-tile-wide' : ''} ${isDragging ? 'dragging' : ''} ${disabled ? '' : 'editing'}`}
       {...attributes}
       {...listeners}
     >
@@ -5535,100 +5890,122 @@ const SortableTile = ({ id, disabled, cols = 1, rows = 1, fullWidth, onHide, chi
 
 // Tile renderers: content mirrors the original dashboard cards
 const DashboardTiles = {
-  servers: () => (
-    <div className="card">
-      <h2 style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}><Server size={18} /> Servers</h2>
-      <div style={{ display: 'grid', gap: '0.35rem' }}>
-        {(() => {
-          const s = getActiveConnectedServer();
-          if (s === 'plex') {
-            return (
-              <div>
-                <strong>Plex:</strong>
-                <span className={`nx-chip nx-status ok`} style={{ marginLeft: '0.35rem' }}>Connected</span>
-                {plexServerInfo?.name && (
-                  <span style={{ fontSize: '0.9rem', marginLeft: '0.5rem', color: 'var(--text-color)' }}>
-                    - {plexServerInfo.name}{plexServerInfo.version ? ` (${plexServerInfo.version})` : ''}
-                  </span>
-                )}
-              </div>
-            );
-          }
-          if (s === 'jellyfin') {
-            return (
-              <div>
-                <strong>Jellyfin:</strong>
-                <span className={`nx-chip nx-status ok`} style={{ marginLeft: '0.35rem' }}>Connected</span>
-                {jellyfinServerInfo?.name && (
-                  <span style={{ fontSize: '0.9rem', marginLeft: '0.5rem', color: 'var(--text-color)' }}>
-                    - {jellyfinServerInfo.name}{jellyfinServerInfo.version ? ` (${jellyfinServerInfo.version})` : ''}
-                  </span>
-                )}
-              </div>
-            );
-          }
-          if (s === 'emby') {
-            return (
-              <div>
-                <strong>Emby:</strong>
-                <span className={`nx-chip nx-status ok`} style={{ marginLeft: '0.35rem' }}>Connected</span>
-                {embyServerInfo?.name && (
-                  <span style={{ fontSize: '0.9rem', marginLeft: '0.5rem', color: 'var(--text-color)' }}>
-                    - {embyServerInfo.name}{embyServerInfo.version ? ` (${embyServerInfo.version})` : ''}
-                  </span>
-                )}
-              </div>
-            );
-          }
-          if (s === 'conflict') {
-            return (
-              <div style={{ fontSize: '0.9rem', color: '#dc3545' }}>
-                Multiple servers connected. Disconnect extras on the Connect tab.
-              </div>
-            );
-          }
-          return (
-            <div style={{ fontSize: '0.9rem', color: 'var(--text-secondary, #666)' }}>
-              No media server connected. Connect to Plex, Jellyfin, or Emby on the Connect tab.
+  servers: () => {
+    const s = getActiveConnectedServer();
+    const INFO = { plex: plexServerInfo, jellyfin: jellyfinServerInfo, emby: embyServerInfo };
+    const LABEL = { plex: 'Plex', jellyfin: 'Jellyfin', emby: 'Emby' };
+    const info = INFO[s];
+    return (
+      <div className="card">
+        <div className="nx-tile-head">
+          <h2 style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}><Server size={18} /> Servers</h2>
+          <button className="nx-tile-headbtn" onClick={() => setActiveTab('connect')} title="Open Connections">
+            <ArrowRight size={14} />
+          </button>
+        </div>
+        {LABEL[s] ? (
+          <>
+            <p className="nx-tile-status" style={{ color: 'var(--success-color, #28a745)', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+              {LABEL[s]}
+              <span className="nx-chip nx-status ok" style={{ fontSize: '0.72rem' }}>Connected</span>
+            </p>
+            <div className="nx-tile-rows">
+              {(info?.name || info?.friendlyName) && (
+                <div className="nx-tile-row">
+                  <span className="nx-tile-row-k"><Server size={14} /> Server</span>
+                  <span className="nx-tile-row-v">{info.name || info.friendlyName}</span>
+                </div>
+              )}
+              {info?.url && (
+                <div className="nx-tile-row">
+                  <span className="nx-tile-row-k"><Globe size={14} /> Address</span>
+                  <span className="nx-tile-row-v" title={info.url}>{info.url.replace(/^https?:\/\//, '')}</span>
+                </div>
+              )}
+              {info?.version && (
+                <div className="nx-tile-row">
+                  <span className="nx-tile-row-k"><Info size={14} /> Version</span>
+                  <span className="nx-tile-row-v">{info.version}</span>
+                </div>
+              )}
             </div>
-          );
-        })()}
+          </>
+        ) : s === 'conflict' ? (
+          <>
+            <p className="nx-tile-status" style={{ color: '#dc3545' }}>Conflict</p>
+            <p style={{ fontSize: '0.88rem', color: 'var(--text-secondary, #666)', margin: 0 }}>
+              Multiple servers connected. Disconnect extras on the Connections page.
+            </p>
+          </>
+        ) : (
+          <>
+            <p className="nx-tile-status" style={{ color: 'var(--text-secondary, #888)' }}>Not connected</p>
+            <p style={{ fontSize: '0.88rem', color: 'var(--text-secondary, #666)', margin: 0 }}>
+              Connect to Plex, Jellyfin, or Emby to start serving prerolls.
+            </p>
+          </>
+        )}
       </div>
-    </div>
-  ),
+    );
+  },
   prerolls: () => {
     const total = prerolls.length;
     const totalCats = categories.length;
     const usedCats = categories.filter(cat => prerolls.some(p => p.category_id === cat.id)).length;
     const uncategorized = prerolls.filter(p => !p.category_id).length;
     const sizeBytes = prerolls.reduce((s, p) => s + (p.file_size || 0), 0);
+    const externalCount = prerolls.filter(p => p.managed === false).length;
+    // Freshness: most recent upload/import across the library.
+    const lastAddedTs = prerolls.reduce((latest, p) => {
+      const t = p.upload_date ? new Date(p.upload_date).getTime() : 0;
+      return t > latest ? t : latest;
+    }, 0);
+    const lastAddedLabel = (() => {
+      if (!lastAddedTs) return null;
+      const days = (Date.now() - lastAddedTs) / 86400000;
+      if (days < 1 / 24) return 'just now';
+      if (days < 1) return `${Math.round(days * 24)}h ago`;
+      if (days < 60) return `${Math.round(days)}d ago`;
+      return new Date(lastAddedTs).toLocaleDateString();
+    })();
     return (
       <div className="card">
-        <h2 style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}><Film size={18} /> Prerolls</h2>
-        <p style={{ fontSize: '1.6rem', fontWeight: 'bold', margin: '0.15rem 0 0.5rem' }}>
-          {total} <span style={{ fontSize: '0.85rem', fontWeight: 'normal', color: 'var(--text-secondary, #666)' }}>preroll{total === 1 ? '' : 's'}</span>
+        <div className="nx-tile-head">
+          <h2 style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}><Film size={18} /> Prerolls</h2>
+          <button className="nx-tile-headbtn" onClick={() => setActiveTab('library')} title="Open Library">
+            <ArrowRight size={14} />
+          </button>
+        </div>
+        <p className="nx-tile-bignum">
+          {total} <span className="nx-tile-bignum-unit">preroll{total === 1 ? '' : 's'}</span>
         </p>
-        <div style={{ display: 'grid', gap: '0.4rem' }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '0.9rem' }}>
-            <span style={{ color: 'var(--text-secondary, #666)', display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
-              <Folder size={14} /> Categories
-            </span>
-            <span><strong>{usedCats}</strong> <span style={{ color: 'var(--text-secondary, #888)' }}>of {totalCats} used</span></span>
+        <div className="nx-tile-rows">
+          <div className="nx-tile-row">
+            <span className="nx-tile-row-k"><Folder size={14} /> Categories</span>
+            <span className="nx-tile-row-v">{usedCats} <span className="muted" style={{ color: 'var(--text-secondary)', fontWeight: 400 }}>of {totalCats} used</span></span>
           </div>
           {sizeBytes > 0 && (
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '0.9rem' }}>
-              <span style={{ color: 'var(--text-secondary, #666)', display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
-                <HardDrive size={14} /> Library size
-              </span>
-              <strong>{formatBytes(sizeBytes)}</strong>
+            <div className="nx-tile-row">
+              <span className="nx-tile-row-k"><HardDrive size={14} /> Library size</span>
+              <span className="nx-tile-row-v">{formatBytes(sizeBytes)}</span>
+            </div>
+          )}
+          {externalCount > 0 && (
+            <div className="nx-tile-row">
+              <span className="nx-tile-row-k"><FolderOpen size={14} /> External (mapped)</span>
+              <span className="nx-tile-row-v">{externalCount}</span>
+            </div>
+          )}
+          {lastAddedLabel && (
+            <div className="nx-tile-row">
+              <span className="nx-tile-row-k"><Clock size={14} /> Last added</span>
+              <span className="nx-tile-row-v">{lastAddedLabel}</span>
             </div>
           )}
           {uncategorized > 0 && (
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '0.9rem' }}>
-              <span style={{ color: '#f59e0b', display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
-                <AlertTriangle size={14} /> Uncategorized
-              </span>
-              <strong style={{ color: '#f59e0b' }}>{uncategorized}</strong>
+            <div className="nx-tile-row">
+              <span className="nx-tile-row-k" style={{ color: '#f59e0b' }}><AlertTriangle size={14} /> Uncategorized</span>
+              <span className="nx-tile-row-v" style={{ color: '#f59e0b' }}>{uncategorized}</span>
             </div>
           )}
         </div>
@@ -5642,26 +6019,31 @@ const DashboardTiles = {
     const shown = locs.filter(l => l.bytes > 0).sort((a, b) => b.bytes - a.bytes);
     return (
       <div className="card">
-        <h2 style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}><HardDrive size={18} /> Storage</h2>
-        <p style={{ fontSize: '1.6rem', fontWeight: 'bold', margin: '0.15rem 0 0.5rem' }}>
-          {formatBytes(totalBytes)} <span style={{ fontSize: '0.85rem', fontWeight: 'normal', color: 'var(--text-secondary, #666)' }}>used</span>
+        <div className="nx-tile-head">
+          <h2 style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}><HardDrive size={18} /> Storage</h2>
+          <button className="nx-tile-headbtn" onClick={() => setActiveTab('settings/storage')} title="Open Storage settings">
+            <ArrowRight size={14} />
+          </button>
+        </div>
+        <p className="nx-tile-bignum">
+          {formatBytes(totalBytes)} <span className="nx-tile-bignum-unit">used</span>
         </p>
         {!storageBreakdown ? (
-          <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary, #888)' }}>Calculating…</p>
+          <p style={{ fontSize: '0.88rem', color: 'var(--text-secondary, #888)', margin: 0 }}>Calculating…</p>
         ) : shown.length === 0 ? (
-          <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary, #888)' }}>No stored files yet</p>
+          <p style={{ fontSize: '0.88rem', color: 'var(--text-secondary, #888)', margin: 0 }}>No stored files yet</p>
         ) : (
-          <div style={{ display: 'grid', gap: '0.45rem' }}>
+          <div className="nx-tile-rows">
             {shown.map(l => {
               const pct = totalBytes > 0 ? Math.round((l.bytes / totalBytes) * 100) : 0;
               return (
                 <div key={l.key} title={l.path || ''}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '0.9rem' }}>
-                    <span style={{ color: 'var(--text-secondary, #666)', display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+                  <div className="nx-tile-row">
+                    <span className="nx-tile-row-k">
                       <span style={{ width: 8, height: 8, borderRadius: 2, background: colors[l.key] || 'var(--accent-color, #00d4ff)', flexShrink: 0 }} />
                       {l.label}
                     </span>
-                    <strong>{formatBytes(l.bytes)}</strong>
+                    <span className="nx-tile-row-v">{formatBytes(l.bytes)}</span>
                   </div>
                   <div style={{ height: 4, borderRadius: 2, background: 'var(--hover-bg)', marginTop: '0.2rem', overflow: 'hidden' }}>
                     <div style={{ width: `${pct}%`, height: '100%', background: colors[l.key] || 'var(--accent-color, #00d4ff)' }} />
@@ -5680,19 +6062,29 @@ const DashboardTiles = {
     const withConflicts = enabled.filter(s => getScheduleConflicts(s).length > 0);
     return (
       <div className="card">
-        <h2 style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}><Calendar size={18} /> Schedules</h2>
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', marginTop: '0.5rem' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '1.05rem' }}>
-            <CheckCircle size={18} style={{ color: 'var(--success-color, #28a745)', flexShrink: 0 }} />
-            <span>{enabled.length} Enabled</span>
+        <div className="nx-tile-head">
+          <h2 style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}><Calendar size={18} /> Schedules</h2>
+          <button className="nx-tile-headbtn" onClick={() => setActiveTab('schedules')} title="Open Schedules">
+            <ArrowRight size={14} />
+          </button>
+        </div>
+        <p className="nx-tile-bignum">
+          {schedules.length} <span className="nx-tile-bignum-unit">total</span>
+        </p>
+        <div className="nx-tile-rows">
+          <div className="nx-tile-row">
+            <span className="nx-tile-row-k"><CheckCircle size={14} style={{ color: 'var(--success-color, #28a745)' }} /> Enabled</span>
+            <span className="nx-tile-row-v">{enabled.length}</span>
           </div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '1.05rem' }}>
-            <Ban size={18} style={{ color: 'var(--text-secondary, #888)', flexShrink: 0 }} />
-            <span>{disabled.length} Disabled</span>
+          <div className="nx-tile-row">
+            <span className="nx-tile-row-k"><Ban size={14} /> Disabled</span>
+            <span className="nx-tile-row-v">{disabled.length}</span>
           </div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '1.05rem' }}>
-            <AlertTriangle size={18} style={{ color: withConflicts.length > 0 ? '#ff9800' : 'var(--text-secondary, #888)', flexShrink: 0 }} />
-            <span style={{ color: withConflicts.length > 0 ? '#ff9800' : undefined }}>{withConflicts.length} Conflicting</span>
+          <div className="nx-tile-row">
+            <span className="nx-tile-row-k" style={withConflicts.length > 0 ? { color: '#ff9800' } : undefined}>
+              <AlertTriangle size={14} style={withConflicts.length > 0 ? { color: '#ff9800' } : undefined} /> Conflicting
+            </span>
+            <span className="nx-tile-row-v" style={withConflicts.length > 0 ? { color: '#ff9800' } : undefined}>{withConflicts.length}</span>
           </div>
           {withConflicts.length > 0 && (
             <button
@@ -5716,153 +6108,122 @@ const DashboardTiles = {
       </div>
     );
   },
-  scheduler: () => (
+  scheduler: () => {
+    // Most recently applied schedule. last_run is stamped every time the scheduler
+    // applies a schedule, so this reliably confirms the loop is actually acting —
+    // unlike the old next_run-based "Firing today", which stayed 0 because next_run
+    // is only computed for monthly/yearly/holiday schedules.
+    const lastApplied = (() => {
+      let best = null;
+      for (const s of schedules) {
+        if (!s.last_run) continue;
+        const t = new Date(s.last_run);
+        if (isNaN(t.getTime())) continue;
+        if (!best || t > best.time) best = { time: t, name: s.name };
+      }
+      return best;
+    })();
+    const fmtLastApplied = (d) => {
+      const n = new Date();
+      const startToday = new Date(n.getFullYear(), n.getMonth(), n.getDate());
+      const startYest = new Date(startToday);
+      startYest.setDate(startYest.getDate() - 1);
+      const time = d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+      if (d >= startToday) return `Today, ${time}`;
+      if (d >= startYest) return `Yesterday, ${time}`;
+      return `${d.toLocaleDateString([], { month: 'short', day: 'numeric' })}, ${time}`;
+    };
+    return (
     <div className="card">
-      <h2 style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}><Timer size={18} /> Scheduler</h2>
-      <p style={{ color: schedulerStatus.running ? 'var(--success-color, #28a745)' : 'var(--error-color, #dc3545)' }}>
+      <div className="nx-tile-head">
+        <h2 style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}><Timer size={18} /> Scheduler</h2>
+        <button
+          className="nx-tile-headbtn"
+          onClick={toggleScheduler}
+          title={schedulerStatus.running ? 'Stop scheduler' : 'Start scheduler'}
+          style={{ color: schedulerStatus.running ? 'var(--error-color, #dc3545)' : 'var(--success-color, #28a745)' }}
+        >
+          {schedulerStatus.running ? <Square size={14} /> : <Play size={14} />}
+        </button>
+      </div>
+      <p className="nx-tile-status" style={{ color: schedulerStatus.running ? 'var(--success-color, #28a745)' : 'var(--error-color, #dc3545)' }}>
         {schedulerStatus.running ? 'Running' : 'Stopped'}
       </p>
-      {/* Currently-active line. Lets the user see what's playing right now alongside
-          "what's next" — without this, the countdown's name flip from schedule A to
-          schedule B at the moment A activates looked like A's countdown just expired
-          without applying. */}
-      {schedulerStatus.running && activeCategory && (activeCategory.active_schedule_name || activeCategory.name) && (
-        <p style={{ fontSize: '0.75rem', color: 'var(--text-secondary, #888)', margin: '0 0 0.2rem', fontWeight: 600 }}>
-          Now: <span style={{ color: 'var(--success-color, #28a745)', fontWeight: 'bold' }}>
-            {activeCategory.active_schedule_name || activeCategory.name}
+      <div className="nx-tile-rows">
+        <div className="nx-tile-row">
+          <span className="nx-tile-row-k">
+            <Globe size={14} /> Timezone
           </span>
-        </p>
-      )}
-      {schedulerStatus.running && nextScheduleCountdown && (
-        <div style={{ marginTop: '0.5rem' }}>
-          <p style={{ fontSize: '0.75rem', color: 'var(--text-secondary, #888)', margin: '0 0 0.15rem', fontWeight: 600 }}>
-            Next: <span style={{ color: '#007bff', fontWeight: 'bold' }}>{nextScheduleCountdown.name}</span>
-            {nextScheduleCountdown.targetTime && (
-              <span style={{ color: 'var(--text-secondary, #888)', fontWeight: 400, marginLeft: '0.35rem' }}>
-                @ {new Date(nextScheduleCountdown.targetTime).toLocaleString([], {
-                  month: 'short', day: 'numeric',
-                  hour: '2-digit', minute: '2-digit'
-                })}
-              </span>
-            )}
-          </p>
-          <div style={{ display: 'flex', justifyContent: 'center', gap: '0.35rem', marginTop: '0.4rem' }}>
-            {[
-              { val: nextScheduleCountdown.days, label: 'D' },
-              { val: nextScheduleCountdown.hours, label: 'H' },
-              { val: nextScheduleCountdown.minutes, label: 'M' },
-              { val: nextScheduleCountdown.seconds, label: 'S' }
-            ].filter((seg, i) => i > 0 || seg.val > 0).map((seg, i) => (
-              <div key={i} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', minWidth: '36px' }}>
-                <span style={{
-                  fontSize: '1.15rem', fontWeight: 'bold', fontFamily: 'monospace',
-                  color: 'var(--text-color, #fff)',
-                  background: 'var(--card-bg, rgba(0,0,0,0.15))',
-                  borderRadius: '6px', padding: '0.15rem 0.35rem',
-                  border: '1px solid var(--border-color, #333)',
-                  lineHeight: 1.2
-                }}>{String(seg.val).padStart(2, '0')}</span>
-                <span style={{ fontSize: '0.55rem', color: 'var(--text-secondary, #888)', marginTop: '0.1rem', fontWeight: 600 }}>{seg.label}</span>
-              </div>
-            ))}
-          </div>
+          <span className="nx-tile-row-v">{currentTimezone}</span>
         </div>
-      )}
-      {schedulerStatus.running && !nextScheduleCountdown && (
-        <p style={{ fontSize: '0.7rem', color: 'var(--text-secondary, #888)', margin: '0.5rem 0 0', fontStyle: 'italic' }}>No upcoming schedules</p>
-      )}
-      <button onClick={toggleScheduler} className="button" style={{
-        marginTop: '0.5rem',
-        padding: '0.3rem 0.6rem',
-        fontSize: '0.8rem',
-        backgroundColor: '#6366f1',
-        borderColor: '#6366f1',
-        display: 'inline-flex',
-        alignItems: 'center',
-        justifyContent: 'center',
-        gap: '0.3rem'
-      }}>
-        {schedulerStatus.running ? <><Square size={13} /> Stop</> : <><Play size={13} /> Start</>} Scheduler
-      </button>
+        {schedulerStatus.running && (
+          <div className="nx-tile-row">
+            <span className="nx-tile-row-k">
+              <CheckCircle size={14} /> Last applied
+            </span>
+            <span className="nx-tile-row-v">
+              {lastApplied ? (
+                <>
+                  <span>{fmtLastApplied(lastApplied.time)}</span>
+                  <span style={{ color: 'var(--text-secondary, #888)', marginLeft: '0.35rem' }}>{lastApplied.name}</span>
+                </>
+              ) : (
+                <span style={{ color: 'var(--text-secondary, #888)', fontStyle: 'italic' }}>Never</span>
+              )}
+            </span>
+          </div>
+        )}
+        {/* "Now" beside "what's next": without it, the next-schedule name flipping
+            from A to B at the moment A activates looked like A never applied. */}
+        {schedulerStatus.running && activeCategory && (activeCategory.active_schedule_name || activeCategory.name) && (
+          <div className="nx-tile-row">
+            <span className="nx-tile-row-k">
+              <Play size={14} /> Now
+            </span>
+            <span className="nx-tile-row-v" style={{ color: 'var(--success-color, #28a745)' }}>
+              {activeCategory.active_schedule_name || activeCategory.name}
+            </span>
+          </div>
+        )}
+        {schedulerStatus.running && nextScheduleCountdown && (
+          <div className="nx-tile-row">
+            <span className="nx-tile-row-k">
+              <ArrowRight size={14} /> Next
+            </span>
+            <span className="nx-tile-row-v">
+              <span style={{ color: '#007bff', fontWeight: 600 }}>{nextScheduleCountdown.name}</span>
+              {nextScheduleCountdown.targetTime && (
+                <span style={{ color: 'var(--text-secondary, #888)', marginLeft: '0.35rem' }}>
+                  {new Date(nextScheduleCountdown.targetTime).toLocaleString([], {
+                    month: 'short', day: 'numeric',
+                    hour: '2-digit', minute: '2-digit'
+                  })}
+                </span>
+              )}
+            </span>
+          </div>
+        )}
+        {schedulerStatus.running && !nextScheduleCountdown && (
+          <div className="nx-tile-row">
+            <span className="nx-tile-row-k">
+              <ArrowRight size={14} /> Next
+            </span>
+            <span style={{ color: 'var(--text-secondary, #888)', fontStyle: 'italic' }}>No upcoming schedules</span>
+          </div>
+        )}
+      </div>
     </div>
-  ),
+    );
+  },
   current_category: () => (
     <div className="card">
-      <h2 style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}><Folder size={18} /> Currently Showing</h2>
-      {appliedSequence ? (
-        <div>
-          <p style={{ fontWeight: 'bold', color: '#8b5cf6' }}>
-            {appliedSequence.name}
-          </p>
-          <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary, #666)' }}>
-            Mode: Sequence (Manual Apply)
-          </p>
-          {activeCategory && (
-            <p style={{ fontSize: '0.8rem', color: 'var(--text-secondary, #666)', fontStyle: 'italic', marginTop: '0.25rem' }}>
-              Scheduled: {activeCategory.name}
-            </p>
-          )}
-        </div>
-      ) : activeCategory ? (
-        <div>
-          {activeCategory.blend_schedules && activeCategory.blend_schedules.length >= 2 ? (
-            <>
-              <p style={{ fontWeight: 'bold', color: 'var(--success-color, #28a745)' }}>
-                Blending
-              </p>
-              <p style={{ fontSize: '0.85rem', color: '#f59e0b', fontStyle: 'italic' }}>
-                {activeCategory.blend_schedules.map(s => s.name).join(' + ')}
-              </p>
-              {activeCategory.active_schedule_name && (
-                <p style={{ fontSize: '0.8rem', color: 'var(--text-secondary, #666)' }}>
-                  Playing: {activeCategory.active_schedule_name}
-                </p>
-              )}
-            </>
-          ) : (
-            <>
-              <p style={{ fontWeight: 'bold', color: 'var(--success-color, #28a745)' }}>
-                {activeCategory.active_schedule_name || activeCategory.name}
-              </p>
-              {activeCategory.active_schedule_name && (
-                <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary, #666)' }}>
-                  Category: {activeCategory.name}
-                </p>
-              )}
-              <p style={{ fontSize: '0.9rem', color: 'var(--text-secondary, #666)' }}>
-                Mode: {activeCategory.plex_mode === 'playlist' ? 'Sequential' :
-                       activeCategory.plex_mode === 'single' ? 'Single File' :
-                       activeCategory.plex_mode === 'sequence' ? 'Sequence' : 'Shuffle'}
-              </p>
-              {/* Only show preroll count for regular categories, not filler/sequence/blend */}
-              {!activeCategory.is_filler && activeCategory.id != null && activeCategory.plex_mode !== 'single' && activeCategory.plex_mode !== 'sequence' && (
-                <p style={{ fontSize: '0.9rem', color: 'var(--text-secondary, #666)' }}>
-                  Prerolls: {(() => {
-                    const primaryCount = prerolls.filter(p => p.category_id === activeCategory.id).length;
-                    const secondaryCount = prerolls.filter(p =>
-                      p.categories &&
-                      p.categories.some(c => c.id === activeCategory.id) &&
-                      p.category_id !== activeCategory.id
-                    ).length;
-                    return primaryCount + secondaryCount;
-                  })()}
-                </p>
-              )}
-              {activeCategory.is_filler && (
-                <p style={{ fontSize: '0.85rem', color: '#00d4ff', fontStyle: 'italic' }}>
-                  Gap filler active
-                </p>
-              )}
-            </>
-          )}
-        </div>
-      ) : (
-        <p style={{ color: 'var(--text-secondary, #666)' }}>No category applied</p>
-      )}
-      {(activeCategory || appliedSequence) && (
-        <button
-          className="button"
-          onClick={async () => {
+      <div className="nx-tile-head">
+        <h2 style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}><Folder size={18} /> Currently Showing</h2>
+        {(activeCategory || appliedSequence) && (
+          <button
+            className="nx-tile-headbtn"
+            title="Preview what's currently applied to the server"
+            onClick={async () => {
             try {
               const resp = await fetch(apiUrl('plex/current-preroll-details'));
               const data = await resp.json();
@@ -5886,21 +6247,113 @@ const DashboardTiles = {
               showAlert('Failed to fetch current preroll details', 'error');
             }
           }}
-          style={{
-            marginTop: '0.5rem',
-            padding: '0.3rem 0.6rem',
-            fontSize: '0.8rem',
-            backgroundColor: '#6366f1',
-            borderColor: '#6366f1',
-            display: 'inline-flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            gap: '0.3rem'
-          }}
-          title="Preview what's currently applied to the server"
-        >
-          <Play size={13} /> Preview
-        </button>
+          >
+            <Eye size={14} />
+          </button>
+        )}
+      </div>
+      {appliedSequence ? (
+        <div>
+          <p className="nx-tile-status" style={{ color: '#8b5cf6' }}>
+            {appliedSequence.name}
+          </p>
+          <div className="nx-tile-rows">
+            <div className="nx-tile-row">
+              <span className="nx-tile-row-k">
+                <Layers size={14} /> Mode
+              </span>
+              <span className="nx-tile-row-v">
+                {appliedSequence.via_schedule ? 'Sequence (Scheduled)' : 'Sequence (Manual Apply)'}
+              </span>
+            </div>
+            {activeCategory && !appliedSequence.via_schedule && (
+              <div className="nx-tile-row">
+                <span className="nx-tile-row-k">
+                  <Calendar size={14} /> Scheduled
+                </span>
+                <span className="nx-tile-row-v">{activeCategory.name}</span>
+              </div>
+            )}
+          </div>
+        </div>
+      ) : activeCategory ? (
+        <div>
+          {activeCategory.blend_schedules && activeCategory.blend_schedules.length >= 2 ? (
+            <>
+              <p className="nx-tile-status" style={{ color: 'var(--success-color, #28a745)' }}>
+                Blending
+              </p>
+              <div className="nx-tile-rows">
+                <div className="nx-tile-row">
+                  <span className="nx-tile-row-k">
+                    <Layers size={14} /> Blend
+                  </span>
+                  <span style={{ color: '#f59e0b', fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', marginLeft: '0.5rem' }}>
+                    {activeCategory.blend_schedules.map(s => s.name).join(' + ')}
+                  </span>
+                </div>
+                {activeCategory.active_schedule_name && (
+                  <div className="nx-tile-row">
+                    <span className="nx-tile-row-k">
+                      <Play size={14} /> Playing
+                    </span>
+                    <span className="nx-tile-row-v">{activeCategory.active_schedule_name}</span>
+                  </div>
+                )}
+              </div>
+            </>
+          ) : (
+            <>
+              <p className="nx-tile-status" style={{ color: 'var(--success-color, #28a745)' }}>
+                {activeCategory.active_schedule_name || activeCategory.name}
+              </p>
+              <div className="nx-tile-rows">
+                {activeCategory.active_schedule_name && (
+                  <div className="nx-tile-row">
+                    <span className="nx-tile-row-k">
+                      <Folder size={14} /> Category
+                    </span>
+                    <span className="nx-tile-row-v">{activeCategory.name}</span>
+                  </div>
+                )}
+                <div className="nx-tile-row">
+                  <span className="nx-tile-row-k">
+                    <Shuffle size={14} /> Mode
+                  </span>
+                  <span className="nx-tile-row-v">
+                    {activeCategory.plex_mode === 'playlist' ? 'Sequential' :
+                     activeCategory.plex_mode === 'single' ? 'Single File' :
+                     activeCategory.plex_mode === 'sequence' ? 'Sequence' : 'Shuffle'}
+                  </span>
+                </div>
+                {/* Only show preroll count for regular categories, not filler/sequence/blend */}
+                {!activeCategory.is_filler && activeCategory.id != null && activeCategory.plex_mode !== 'single' && activeCategory.plex_mode !== 'sequence' && (
+                  <div className="nx-tile-row">
+                    <span className="nx-tile-row-k">
+                      <Film size={14} /> Prerolls
+                    </span>
+                    <span className="nx-tile-row-v">{(() => {
+                      const primaryCount = prerolls.filter(p => p.category_id === activeCategory.id).length;
+                      const secondaryCount = prerolls.filter(p =>
+                        p.categories &&
+                        p.categories.some(c => c.id === activeCategory.id) &&
+                        p.category_id !== activeCategory.id
+                      ).length;
+                      return primaryCount + secondaryCount;
+                    })()}</span>
+                  </div>
+                )}
+                {activeCategory.is_filler && (
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.35rem', fontSize: '0.85rem', color: '#00d4ff', fontStyle: 'italic' }}>
+                    <Zap size={14} /> Gap filler active
+                  </div>
+                )}
+              </div>
+            </>
+          )}
+        </div>
+      ) : (
+        <p style={{ fontSize: '0.88rem', color: 'var(--text-secondary, #666)', margin: 0 }}>No category applied</p>
       )}
     </div>
   ),
@@ -5938,36 +6391,41 @@ const DashboardTiles = {
             if (!a.isActiveNow && b.isActiveNow) return 1;
             return a.sortTime - b.sortTime;
           })
-          .slice(0, 5);  // Show up to 5 schedules
-        
+          .slice(0, 30); // Sanity cap; the list scrolls past ~6 entries
+
         return allUpcomingSchedules.length > 0 ? (
-          <div style={{ display: 'grid', gap: '0.35rem' }}>
-            {allUpcomingSchedules.map(schedule => {
-              const category = categories.find(c => c.id === schedule.category_id);
-              const displayTime = schedule.next_run || schedule.start_date;
-              return (
-                <div key={schedule.id} style={{ fontSize: '0.8rem', padding: '0.35rem 0.5rem', backgroundColor: 'var(--card-bg)', borderRadius: '4px', border: schedule.isActiveNow ? '1px solid #28a745' : '1px solid var(--border-color)' }}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                    <span style={{ fontWeight: 'bold', color: '#007bff', fontSize: '0.85rem' }}>
-                      {schedule.name}
-                    </span>
-                    <span style={{ 
-                      fontSize: '0.65rem', 
-                      padding: '0.1rem 0.4rem', 
-                      borderRadius: '8px', 
-                      backgroundColor: schedule.isActiveNow ? '#28a745' : '#6c757d',
-                      color: '#fff',
-                      fontWeight: '600'
-                    }}>
-                      {schedule.isActiveNow ? 'Active Now' : 'Coming Up'}
-                    </span>
+          <div className="nx-upcoming-list">
+            <div style={{ display: 'grid', gap: '0.35rem' }}>
+              {allUpcomingSchedules.map(schedule => {
+                const category = categories.find(c => c.id === schedule.category_id);
+                const displayTime = schedule.next_run || schedule.start_date;
+                return (
+                  <div key={schedule.id} style={{ fontSize: '0.8rem', padding: '0.35rem 0.5rem', backgroundColor: 'var(--card-bg)', borderRadius: '4px', border: schedule.isActiveNow ? '1px solid #28a745' : '1px solid var(--border-color)' }}>
+                    <div className="nx-tile-row">
+                      <span style={{ fontWeight: 'bold', color: '#007bff', fontSize: '0.85rem' }}>
+                        {schedule.name}
+                      </span>
+                      <span style={{
+                        fontSize: '0.65rem',
+                        padding: '0.1rem 0.4rem',
+                        borderRadius: '8px',
+                        backgroundColor: schedule.isActiveNow ? '#28a745' : '#6c757d',
+                        color: '#fff',
+                        fontWeight: '600'
+                      }}>
+                        {schedule.isActiveNow ? 'Active Now' : 'Coming Up'}
+                      </span>
+                    </div>
+                    <div style={{ color: 'var(--text-secondary, #666)', fontSize: '0.75rem', marginTop: '0.1rem' }}>
+                      {toLocalDisplay(displayTime)} → {category?.name || 'Unknown'}
+                    </div>
                   </div>
-                  <div style={{ color: 'var(--text-secondary, #666)', fontSize: '0.75rem', marginTop: '0.1rem' }}>
-                    {toLocalDisplay(displayTime)} → {category?.name || 'Unknown'}
-                  </div>
-                </div>
-              );
-            })}
+                );
+              })}
+            </div>
+            {/* Fade hint: only rendered when more entries exist than the
+                ~4-row viewport shows, so the cutoff reads as "scroll for more". */}
+            {allUpcomingSchedules.length > 4 && <div className="nx-upcoming-fade" />}
           </div>
         ) : (
           <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary, #666)', margin: 0 }}>No upcoming schedules</p>
@@ -5979,7 +6437,7 @@ const DashboardTiles = {
     <div className="card">
       <h2 style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}><Palette size={18} /> Recent Genre Prerolls</h2>
       {recentGenreApplications.length > 0 ? (
-        <div style={{ display: 'grid', gap: '0.5rem' }}>
+        <div className="nx-tile-rows">
           {recentGenreApplications.map((app, idx) => (
             <div key={idx} style={{ fontSize: '0.9rem', padding: '0.5rem', backgroundColor: 'var(--card-bg)', border: '1px solid var(--border-color)', borderRadius: '4px' }}>
               <div style={{ fontWeight: 'bold', color: '#28a745' }}>
@@ -6001,13 +6459,25 @@ const DashboardTiles = {
     const matchedCount = communityMatchedCount || 0;
     const isStale = communityIndexStatus?.is_stale || false;
     const ageDays = communityIndexStatus?.age_days || 0;
+    const indexExists = communityIndexStatus?.exists || false;
+    const indexSizeMb = communityIndexStatus?.size_mb || 0;
     const online = communityHealth?.online;
+    const pingMs = communityHealth?.response_time_ms;
+    // "today" / "Nh ago" under a day; "Nd ago" after.
+    const ageLabel = ageDays < (1 / 24) ? 'just now'
+      : ageDays < 1 ? `${Math.round(ageDays * 24)}h ago`
+      : `${Math.round(ageDays)}d ago`;
 
     return (
       <div className="card">
-        <h2 style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}><Users2 size={18} /> Community Prerolls</h2>
+        <div className="nx-tile-head">
+          <h2 style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}><Users2 size={18} /> Community Prerolls</h2>
+          <button className="nx-tile-headbtn" onClick={() => setActiveTab('community-prerolls')} title="Browse Community Prerolls">
+            <ArrowRight size={14} />
+          </button>
+        </div>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.6rem' }}>
-          <span style={{ fontSize: '0.9rem', color: 'var(--text-secondary, #666)', display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
+          <span className="nx-tile-row-k">
             <Globe size={14} /> prerolls.uk
           </span>
           {online === undefined ? (
@@ -6017,35 +6487,51 @@ const DashboardTiles = {
               className={`nx-chip nx-status ${online ? 'ok' : 'bad'}`}
               style={{ fontSize: '0.75rem' }}
               title={online
-                ? `Reachable${communityHealth?.response_time_ms ? ` (${communityHealth.response_time_ms} ms)` : ''}`
+                ? `Reachable${pingMs ? ` (${pingMs} ms)` : ''}`
                 : (communityHealth?.error || 'Unreachable')}
             >
-              {online ? 'Online' : 'Offline'}
+              {online ? (pingMs ? `Online · ${pingMs}ms` : 'Online') : 'Offline'}
             </span>
           )}
         </div>
         {indexedCount > 0 || matchedCount > 0 ? (
-          <div style={{ display: 'grid', gap: '0.5rem' }}>
+          <div className="nx-tile-rows">
             {indexedCount > 0 && (
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                <span style={{ fontSize: '0.9rem', color: 'var(--text-secondary, #666)', display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
+              <div className="nx-tile-row">
+                <span className="nx-tile-row-k">
                   <BookOpen size={14} /> Indexed:
                 </span>
-                <span style={{ fontWeight: 'bold', color: '#22c55e' }}>{indexedCount}</span>
+                <span className="nx-tile-row-v" style={{ color: '#22c55e' }}>{indexedCount}</span>
               </div>
             )}
             {matchedCount > 0 && (
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                <span style={{ fontSize: '0.9rem', color: 'var(--text-secondary, #666)', display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
+              <div className="nx-tile-row">
+                <span className="nx-tile-row-k">
                   <Link size={14} /> Matched:
                 </span>
-                <span style={{ fontWeight: 'bold', color: '#3b82f6' }}>{matchedCount}</span>
+                <span className="nx-tile-row-v" style={{ color: '#3b82f6' }}>{matchedCount}</span>
+              </div>
+            )}
+            {indexExists && (
+              <div className="nx-tile-row">
+                <span className="nx-tile-row-k">
+                  <Clock size={14} /> Index updated:
+                </span>
+                <span className="nx-tile-row-v" style={isStale ? { color: '#f59e0b' } : undefined}>{ageLabel}</span>
+              </div>
+            )}
+            {indexSizeMb > 0 && (
+              <div className="nx-tile-row">
+                <span className="nx-tile-row-k">
+                  <Database size={14} /> Index size:
+                </span>
+                <span className="nx-tile-row-v">{indexSizeMb} MB</span>
               </div>
             )}
             {isStale && (
-              <div style={{ 
-                display: 'flex', 
-                alignItems: 'center', 
+              <div style={{
+                display: 'flex',
+                alignItems: 'center',
                 gap: '0.35rem',
                 marginTop: '0.25rem',
                 padding: '0.35rem 0.5rem',
@@ -6056,7 +6542,7 @@ const DashboardTiles = {
                 color: '#f59e0b'
               }}>
                 <AlertTriangle size={12} />
-                <span>Stale ({Math.round(ageDays)}d old)</span>
+                <span>Stale ({Math.round(ageDays)}d old) — rebuild recommended</span>
               </div>
             )}
           </div>
@@ -6073,24 +6559,37 @@ const DashboardTiles = {
     const tvCount = nexupTVTrailers?.length || 0;
     const radarrConnected = nexupSettings?.radarr_connected || false;
     const sonarrConnected = nexupSettings?.sonarr_connected || false;
-    
+
+    // Storage used by trailers vs the configured cap (file sizes are in MB).
+    const usedMb = [...(nexupTrailers || []), ...(nexupTVTrailers || [])]
+      .reduce((s, t) => s + (t?.file_size_mb || 0), 0);
+    const capGb = nexupSettings?.max_storage_gb || 0;
+    const usedGb = usedMb / 1024;
+    const storagePct = capGb > 0 ? Math.min(100, Math.round((usedGb / capGb) * 100)) : 0;
+    const fmtGb = (gb) => gb >= 10 ? gb.toFixed(0) : gb.toFixed(1);
+
     return (
       <div className="card">
-        <h2 style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-          <Clapperboard size={18} /> NeX-Up
-        </h2>
-        <div style={{ display: 'grid', gap: '0.5rem' }}>
+        <div className="nx-tile-head">
+          <h2 style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+            <Clapperboard size={18} /> NeX-Up
+          </h2>
+          <button className="nx-tile-headbtn" onClick={() => setActiveTab('nexup')} title="Open NeX-Up">
+            <ArrowRight size={14} />
+          </button>
+        </div>
+        <div className="nx-tile-rows">
           {/* Connection Status */}
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-            <span style={{ fontSize: '0.9rem', color: 'var(--text-secondary, #666)', display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
+          <div className="nx-tile-row">
+            <span className="nx-tile-row-k">
               <Video size={14} /> Radarr:
             </span>
             <span className={`nx-chip nx-status ${radarrConnected ? 'ok' : ''}`} style={{ fontSize: '0.75rem' }}>
               {radarrConnected ? 'Connected' : 'Not Connected'}
             </span>
           </div>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-            <span style={{ fontSize: '0.9rem', color: 'var(--text-secondary, #666)', display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
+          <div className="nx-tile-row">
+            <span className="nx-tile-row-k">
               <Tv size={14} /> Sonarr:
             </span>
             <span className={`nx-chip nx-status ${sonarrConnected ? 'ok' : ''}`} style={{ fontSize: '0.75rem' }}>
@@ -6100,13 +6599,27 @@ const DashboardTiles = {
           {/* Trailer Counts */}
           {(movieCount > 0 || tvCount > 0) && (
             <div style={{ borderTop: '1px solid var(--border-color)', paddingTop: '0.5rem', marginTop: '0.25rem' }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                <span style={{ fontSize: '0.9rem', color: 'var(--text-secondary, #666)' }}>Movie Trailers:</span>
-                <span style={{ fontWeight: 'bold', color: '#ffc230' }}>{movieCount}</span>
+              <div className="nx-tile-row">
+                <span className="nx-tile-row-k">Movie Trailers:</span>
+                <span className="nx-tile-row-v" style={{ color: '#ffc230' }}>{movieCount}</span>
               </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                <span style={{ fontSize: '0.9rem', color: 'var(--text-secondary, #666)' }}>TV Trailers:</span>
-                <span style={{ fontWeight: 'bold', color: '#ffc230' }}>{tvCount}</span>
+              <div className="nx-tile-row">
+                <span className="nx-tile-row-k">TV Trailers:</span>
+                <span className="nx-tile-row-v" style={{ color: '#ffc230' }}>{tvCount}</span>
+              </div>
+            </div>
+          )}
+          {/* Storage used vs cap (thin bar, matching the Storage tile style) */}
+          {capGb > 0 && (movieCount > 0 || tvCount > 0) && (
+            <div>
+              <div className="nx-tile-row">
+                <span className="nx-tile-row-k">
+                  <HardDrive size={14} /> Storage
+                </span>
+                <span className="nx-tile-row-v">{fmtGb(usedGb)} <span style={{ color: 'var(--text-secondary, #888)', fontWeight: 400 }}>of {fmtGb(capGb)} GB</span></span>
+              </div>
+              <div style={{ height: 4, borderRadius: 2, background: 'var(--hover-bg)', marginTop: '0.25rem', overflow: 'hidden' }}>
+                <div style={{ width: `${storagePct}%`, height: '100%', background: storagePct >= 90 ? '#ef4444' : '#ffc230' }} />
               </div>
             </div>
           )}
@@ -6212,82 +6725,76 @@ const DashboardTiles = {
     
     return (
       <div className="card">
-        <h2 style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.75rem' }}>
-          <BarChart3 size={18} /> Video Quality
-        </h2>
+        <div className="nx-tile-head">
+          <h2 style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+            <BarChart3 size={18} /> Video Quality
+          </h2>
+          <button className="nx-tile-headbtn" onClick={() => setActiveTab('library/scaling')} title="Open Video Scaling">
+            <ArrowRight size={14} />
+          </button>
+        </div>
         {total === 0 ? (
-          <p style={{ fontSize: '0.9rem', color: 'var(--text-secondary)' }}>No prerolls uploaded</p>
+          <p style={{ fontSize: '0.88rem', color: 'var(--text-secondary)', margin: 0 }}>No prerolls uploaded</p>
         ) : loaded === 0 ? (
-          <div style={{ fontSize: '0.9rem', color: 'var(--text-secondary)' }}>
-            <p style={{ margin: '0 0 0.5rem' }}>Resolution data not loaded</p>
-            <button
-              className="button button-secondary"
-              style={{ fontSize: '0.8rem', padding: '4px 10px' }}
-              onClick={() => setActiveTab('dashboard-video-scaling')}
-            >
-              Load in Video Scaling
-            </button>
-          </div>
+          <p style={{ fontSize: '0.88rem', color: 'var(--text-secondary)', margin: 0 }}>
+            Resolution data not loaded — open Video Scaling to analyze the library.
+          </p>
         ) : (
           <>
-            <div style={{ height: 130, minHeight: 130 }}>
-              <ResponsiveContainer width="100%" height="100%" minWidth={100} minHeight={100}>
-                <BarChart data={chartData} layout="vertical" margin={{ top: 0, right: 10, bottom: 0, left: 0 }}>
-                  <XAxis type="number" hide />
-                  <YAxis type="category" dataKey="name" width={45} tick={{ fontSize: 11, fill: 'var(--text-secondary)' }} axisLine={false} tickLine={false} />
-                  <Tooltip
-                    contentStyle={{ background: 'var(--card-bg)', border: '1px solid var(--border-color)', borderRadius: 6, fontSize: 12, color: 'var(--text-color)' }}
-                    labelStyle={{ color: 'var(--text-color)' }}
-                    itemStyle={{ color: 'var(--text-color)' }}
-                    formatter={(value) => [value, 'Count']}
-                    cursor={{ fill: 'transparent' }}
-                  />
-                  <Bar dataKey="count" radius={[0, 4, 4, 0]} isAnimationActive={false}>
-                    {chartData.map((entry, index) => (
-                      <Cell key={`cell-${index}`} fill={entry.color} />
-                    ))}
-                  </Bar>
-                </BarChart>
-              </ResponsiveContainer>
+            {/* Segmented distribution bar (same visual language as the Storage
+                tile's usage bars) with a legend; replaces the recharts bar
+                chart, which was this tile's only recharts usage. */}
+            <div style={{ display: 'flex', height: 10, borderRadius: 5, overflow: 'hidden', background: 'var(--hover-bg)', marginBottom: '0.6rem' }}>
+              {chartData.map(d => (
+                <div
+                  key={d.name}
+                  title={`${d.name}: ${d.count} (${Math.round((d.count / loaded) * 100)}%)`}
+                  style={{ width: `${(d.count / loaded) * 100}%`, background: d.color }}
+                />
+              ))}
             </div>
-            <div style={{ 
-              display: 'grid', 
-              gridTemplateColumns: '1fr 1fr', 
-              gap: '0.4rem 1rem', 
-              fontSize: '0.78rem', 
-              color: 'var(--text-secondary)',
-              marginTop: '0.5rem',
-              paddingTop: '0.5rem',
-              borderTop: '1px solid var(--border-color)'
-            }}>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.35rem 1.25rem' }}>
+              {chartData.map(d => (
+                <div key={d.name} className="nx-tile-row">
+                  <span className="nx-tile-row-k">
+                    <span style={{ width: 8, height: 8, borderRadius: 2, background: d.color, flexShrink: 0 }} />
+                    {d.name}
+                  </span>
+                  <span className="nx-tile-row-v">
+                    {d.count} <span style={{ color: 'var(--text-secondary)', fontWeight: 400 }}>({Math.round((d.count / loaded) * 100)}%)</span>
+                  </span>
+                </div>
+              ))}
+            </div>
+            <div className="nx-tile-rows" style={{ gridTemplateColumns: '1fr 1fr', columnGap: '1.25rem', marginTop: '0.6rem', paddingTop: '0.55rem', borderTop: '1px solid var(--border-color)' }}>
               {topCodecs && (
-                <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                  <span>Codecs:</span>
-                  <span style={{ color: 'var(--text-color)', fontWeight: 500 }}>{topCodecs}</span>
+                <div className="nx-tile-row">
+                  <span className="nx-tile-row-k">Codecs</span>
+                  <span className="nx-tile-row-v">{topCodecs}</span>
                 </div>
               )}
               {totalDuration > 0 && (
-                <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                  <span>Duration:</span>
-                  <span style={{ color: 'var(--text-color)', fontWeight: 500 }}>{formatDuration(totalDuration)}</span>
+                <div className="nx-tile-row">
+                  <span className="nx-tile-row-k">Duration</span>
+                  <span className="nx-tile-row-v">{formatDuration(totalDuration)}</span>
                 </div>
               )}
               {totalFileSize > 0 && (
-                <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                  <span>Total Size:</span>
-                  <span style={{ color: 'var(--text-color)', fontWeight: 500 }}>{formatFileSize(totalFileSize)}</span>
+                <div className="nx-tile-row">
+                  <span className="nx-tile-row-k">Total size</span>
+                  <span className="nx-tile-row-v">{formatFileSize(totalFileSize)}</span>
                 </div>
               )}
               {analyzedCount > 0 && totalDuration > 0 && (
-                <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                  <span>Avg Length:</span>
-                  <span style={{ color: 'var(--text-color)', fontWeight: 500 }}>{formatDuration(totalDuration / analyzedCount)}</span>
+                <div className="nx-tile-row">
+                  <span className="nx-tile-row-k">Avg length</span>
+                  <span className="nx-tile-row-v">{formatDuration(totalDuration / analyzedCount)}</span>
                 </div>
               )}
             </div>
           </>
         )}
-        <p style={{ fontSize: '0.78rem', color: 'var(--text-secondary)', marginTop: '0.5rem', display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+        <p style={{ flex: '0 0 auto', fontSize: '0.75rem', color: 'var(--text-secondary)', marginTop: '0.5rem', display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
           {loaded}/{total} prerolls analyzed
           {loadingVideoInfo && <Loader2 size={12} className="spin" />}
         </p>
@@ -6299,26 +6806,70 @@ const DashboardTiles = {
   // ============================================
   // RENDER: Dashboard with Sub-Navigation
   // ============================================
-  const renderDashboard = () => {
-    // Route based on activeTab
-    if (activeTab === 'dashboard/add') {
+  // Dashboard is now standalone (Overview only). Add Prerolls / All Prerolls /
+  // Categories / Video Scaling moved under the Library section; Quick Actions is
+  // its own top-level page. See renderLibrary() and the content router.
+  const renderDashboard = () => (
+    <>
+      {renderDashboardOverview()}
+      {showConflictWizard && renderConflictWizard()}
+    </>
+  );
+
+  // Library section router (v2 reorg). Maps the library/* tabs to the existing
+  // render functions (kept under their original names to minimize churn).
+  const renderLibrary = () => {
+    if (activeTab === 'library/add') {
       return renderDashboardAddPrerolls();
     }
-    if (activeTab === 'dashboard/library') {
-      return renderDashboardLibrary();
+    if (activeTab === 'library/categories') {
+      return renderCategories();
     }
-    if (activeTab === 'dashboard/scaling') {
+    if (activeTab === 'library/scaling') {
       return renderDashboardVideoScaling();
     }
-    if (activeTab === 'dashboard/actions') {
-      return renderDashboardQuickActions();
-    }
-    // Default: Overview (tiles)
+    // Default: All Prerolls grid
+    return renderDashboardLibrary();
+  };
+
+  // v2 sticky page header. A single header band rendered at the top of the
+  // content column (direct child of .nx-content) so it stays pinned under the
+  // topbar while the page scrolls. Keyed by activeTab; falls back to the
+  // section default. Deep sub-views not listed here keep their in-page header.
+  const PAGE_HEADERS = {
+    'dashboard':        { icon: LayoutDashboard, title: 'Dashboard',       desc: 'Overview of your prerolls, schedules, and server status.' },
+    'library':          { icon: Library,         title: 'Preroll Library', desc: 'Browse, search, and manage your preroll collection.' },
+    'library/add':      { icon: Upload,          title: 'Add Prerolls',    desc: 'Upload videos or import prerolls into your library.' },
+    'library/categories': { icon: Folder,        title: 'Categories',      desc: 'Organize your prerolls into categories.' },
+    'library/scaling':  { icon: Video,           title: 'Video Scaling',   desc: 'Review and rescale preroll resolutions.' },
+    'connect':          { icon: Link2,           title: 'Connections',     desc: 'Connect to your Plex, Jellyfin, or Emby media server.' },
+    'community-prerolls': { icon: Globe,         title: 'Community Prerolls', desc: 'Discover and import community-made prerolls.' },
+    'settings':         { icon: Settings,        title: 'General Settings',  desc: 'Theme, timezone, and general application preferences.' },
+    'settings/paths':   { icon: ArrowRight,      title: 'Path Mappings',     desc: 'Translate NeXroll paths to what your media server sees.' },
+    'settings/storage': { icon: HardDrive,       title: 'Storage',           desc: 'Configure where prerolls are stored and auto-scanned.' },
+    'settings/apikeys': { icon: Key,             title: 'API Keys',          desc: 'Manage API keys for external integrations and automation.' },
+    'settings/logs':    { icon: FileText,        title: 'Logs',              desc: 'View, filter, and export system logs.' },
+    'settings/users':   { icon: Users,           title: 'Users',             desc: 'Manage user accounts and login requirements.' },
+    'settings/backup':  { icon: Download,        title: 'Backup & Restore',  desc: 'Export and import your NeXroll data.' },
+    'settings/system':  { icon: Info,            title: 'System',            desc: 'System information and diagnostics.' },
+  };
+  const renderPageHeader = () => {
+    // EXPERIMENT: page header band hidden app-wide. Flip this to false (or delete
+    // the line) to restore the per-page title + description headers.
+    const HIDE_PAGE_HEADER = true;
+    if (HIDE_PAGE_HEADER) return null;
+    const cfg = PAGE_HEADERS[activeTab];
+    if (!cfg) return null;
+    const Icon = cfg.icon;
     return (
-      <>
-        {renderDashboardOverview()}
-        {showConflictWizard && renderConflictWizard()}
-      </>
+      <div className="nx-page-header">
+        <div className="nx-page-header-inner">
+          <h1 className="nx-page-header-title">
+            <Icon size={24} className="header-icon" /> {cfg.title}
+          </h1>
+          {cfg.desc && <p className="nx-page-header-desc">{cfg.desc}</p>}
+        </div>
+      </div>
     );
   };
 
@@ -6357,7 +6908,7 @@ const DashboardTiles = {
 
   // Auto-load video info when on dashboard or scaling page
   React.useEffect(() => {
-    if ((activeTab === 'dashboard' || activeTab === 'dashboard/scaling') && prerolls.length > 0) {
+    if ((activeTab === 'dashboard' || activeTab === 'library/scaling') && prerolls.length > 0) {
       // Exclude NeX-Up trailers and dynamic prerolls from video info loading
       const nexupCatIds = [nexupSettings.category_id, nexupSettings.tv_category_id].filter(id => id != null);
       const isDynamic = (p) => {
@@ -6443,7 +6994,7 @@ const DashboardTiles = {
     if (errors.length > 0) {
       alert(`Scaling complete with ${errors.length} error(s):\n\n${errors.map(e => `• ${e.name}: ${e.error}`).join('\n')}`);
     } else {
-      alert(`✅ Successfully scaled ${toScale.length} preroll${toScale.length !== 1 ? 's' : ''} to ${targetResolution}!`);
+      alert(`Successfully scaled ${toScale.length} preroll${toScale.length !== 1 ? 's' : ''} to ${targetResolution}!`);
     }
   };
 
@@ -6520,16 +7071,6 @@ const DashboardTiles = {
     
     return (
       <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
-        {/* Header */}
-        <div>
-          <h1 className="header" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.5rem' }}>
-            <Video size={32} className="header-icon" /> Video Scaling
-          </h1>
-          <p style={{ color: 'var(--text-secondary)', fontSize: '0.95rem', margin: 0 }}>
-            Scale prerolls to optimize for remote streaming. Lower resolutions reduce buffering.
-          </p>
-        </div>
-        
         {/* Info Banner */}
         <div className="card" style={{ 
           backgroundColor: 'rgba(99, 102, 241, 0.08)', 
@@ -6672,7 +7213,7 @@ const DashboardTiles = {
                     fontSize: '0.85rem'
                   }}
                 >
-                  <Star size={14} style={{ marginRight: '0.35rem' }} /> 720p ⭐
+                  <Star size={14} style={{ marginRight: '0.35rem' }} /> 720p 
                 </button>
                 <button
                   onClick={() => handleBulkScale('480p')}
@@ -6876,9 +7417,19 @@ const DashboardTiles = {
         </div>
         
         {filteredPrerolls.length === 0 && (
-          <div className="card" style={{ textAlign: 'center', padding: '2rem', color: 'var(--text-secondary)' }}>
-            <Video size={32} style={{ opacity: 0.5, marginBottom: '0.5rem' }} />
-            <div>No prerolls found{scalingFilterResolution ? ` at ${scalingFilterResolution}` : ''}</div>
+          <div className="nx-empty">
+            <span className="nx-empty-icon"><Video size={48} /></span>
+            <h3 className="nx-empty-title">No prerolls to scale</h3>
+            <p className="nx-empty-text">
+              {scalingFilterResolution
+                ? `No prerolls found at ${scalingFilterResolution}. Try a different resolution filter.`
+                : 'Add prerolls to your library to scale their resolution here.'}
+            </p>
+            {!scalingFilterResolution && (
+              <button className="button" onClick={() => setActiveTab('library/add')}>
+                <Upload size={16} /> Add Prerolls
+              </button>
+            )}
           </div>
         )}
         
@@ -6913,566 +7464,96 @@ const DashboardTiles = {
   };
 
   // Dashboard Quick Actions Sub-Page
-  const renderDashboardQuickActions = () => (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
-      {/* Header */}
-      <div>
-        <h1 className="header" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.5rem' }}>
-          <Zap size={32} className="header-icon" /> Quick Actions
-        </h1>
-        <p style={{ color: 'var(--text-secondary)', fontSize: '0.95rem', margin: 0 }}>
-          Common operations and maintenance tasks for your preroll library.
-        </p>
-      </div>
+  // Lifted from the removed Quick Actions page; now powers the dashboard
+  // Quick Actions tile. Syncs Radarr then Sonarr and summarizes both.
+  const handleNexupFullSync = async () => {
+    if (nexupSyncProgress?.phase === 'init') return;
+    setNexupSyncProgress({ status: 'Syncing Radarr...', phase: 'init' });
+    let radarrResult = null;
+    let sonarrResult = null;
+    let radarrError = null;
+    let sonarrError = null;
+    try {
+      const res = await fetch(apiUrl('/nexup/sync'), { method: 'POST' });
+      if (res.ok) {
+        radarrResult = await res.json();
+      } else {
+        const err = await res.json().catch(() => ({}));
+        radarrError = err.detail || 'Radarr sync failed';
+      }
+    } catch (e) {
+      radarrError = e.message || 'Radarr sync failed';
+    }
+    setNexupSyncProgress({ status: 'Syncing Sonarr...', phase: 'init' });
+    try {
+      const res = await fetch(apiUrl('/nexup/sonarr/sync'), { method: 'POST' });
+      if (res.ok) {
+        sonarrResult = await res.json();
+      } else {
+        const err = await res.json().catch(() => ({}));
+        sonarrError = err.detail || 'Sonarr sync failed';
+      }
+    } catch (e) {
+      sonarrError = e.message || 'Sonarr sync failed';
+    }
+    const radarrDownloaded = radarrResult?.downloaded || 0;
+    const sonarrDownloaded = sonarrResult?.downloaded || 0;
+    const totalDownloaded = radarrDownloaded + sonarrDownloaded;
+    const radarrCookieError = radarrResult?.errors?.some(e => e.includes('bot detection') || e.includes('cookies'));
+    const sonarrCookieError = sonarrResult?.errors?.some(e => e.includes('bot detection') || e.includes('cookies'));
+    const hasCookieError = radarrCookieError || sonarrCookieError;
+    if (radarrError && sonarrError) {
+      setNexupSyncProgress({ status: 'Both syncs failed', phase: 'error' });
+    } else if (hasCookieError) {
+      setNexupSyncProgress({
+        status: 'YouTube blocked - re-export cookies from Incognito (login, then robots.txt, then export)',
+        phase: 'error',
+        cookieError: true
+      });
+    } else if (radarrError || sonarrError) {
+      setNexupSyncProgress({ status: `Done! ${totalDownloaded} trailers (${radarrError ? 'Radarr failed' : 'Sonarr failed'})`, phase: 'done' });
+    } else {
+      setNexupSyncProgress({ status: `Done! ${totalDownloaded} new trailers (${radarrDownloaded} movies, ${sonarrDownloaded} TV)`, phase: 'done' });
+    }
+    setTimeout(() => setNexupSyncProgress(null), hasCookieError ? 15000 : 5000);
+  };
 
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: '1rem' }}>
-        {/* Apply to Plex/Jellyfin */}
-        <div className="card">
-          <h3 style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.75rem' }}>
-            <Target size={18} /> Apply to Server
-          </h3>
-          <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginBottom: '1rem' }}>
-            Apply the currently active category to your Plex or Jellyfin server.
-          </p>
-          <button
-            onClick={() => activeCategory && handleApplyCategoryToActiveServer(activeCategory.id, activeCategory.name)}
-            className="button"
-            disabled={!activeCategory}
-            style={{ width: '100%' }}
-          >
-            <Target size={14} style={{ marginRight: '0.35rem' }} />
-            {activeCategory ? `Apply "${activeCategory.name}"` : 'No Category Selected'}
-          </button>
-        </div>
-
-        {/* Refresh Thumbnails */}
-        <div className="card">
-          <h3 style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.75rem' }}>
-            <RefreshCw size={18} /> Regenerate Thumbnails
-          </h3>
-          <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginBottom: '1rem' }}>
-            Regenerate thumbnails for all prerolls in your library.
-          </p>
-          <button
-            onClick={handleReinitThumbnails}
-            className="button button-secondary"
-            disabled={thumbnailProgress && thumbnailProgress.phase === 'init'}
-            style={{ width: '100%' }}
-          >
-            {thumbnailProgress && thumbnailProgress.phase === 'init' ? (
-              <><Loader2 size={14} className="spin" style={{ marginRight: '0.35rem' }} /> Rebuilding...</>
-            ) : (
-              <><RefreshCw size={14} style={{ marginRight: '0.35rem' }} /> Reinitialize Thumbnails</>
-            )}
-          </button>
-          {thumbnailProgress && (
-            <div style={{ 
-              marginTop: '0.75rem', 
-              padding: '0.5rem 0.75rem', 
-              backgroundColor: 'var(--bg-color)', 
-              borderRadius: '6px',
-              display: 'flex',
-              alignItems: 'center',
-              gap: '0.5rem',
-              fontSize: '0.9rem',
-              color: thumbnailProgress.phase === 'error' ? '#dc3545' : 
-                     thumbnailProgress.phase === 'done' ? '#28a745' : 'var(--text-secondary)'
-            }}>
-              {thumbnailProgress.phase === 'init' && (
-                <Loader2 size={16} className="spin" style={{ color: '#ffc230' }} />
-              )}
-              {thumbnailProgress.phase === 'done' && (
-                <Check size={16} style={{ color: '#28a745' }} />
-              )}
-              {thumbnailProgress.phase === 'error' && (
-                <AlertTriangle size={16} style={{ color: '#dc3545' }} />
-              )}
-              {thumbnailProgress.status}
-            </div>
-          )}
-        </div>
-
-        {/* Sync with Server */}
-        <div className="card">
-          <h3 style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.75rem' }}>
-            <RefreshCcw size={18} /> Sync Library
-          </h3>
-          <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginBottom: '1rem' }}>
-            Refresh all data from the backend - prerolls, categories, schedules.
-          </p>
-          <button
-            onClick={async () => {
-              if (librarySyncProgress?.phase === 'init') return;
-              setLibrarySyncProgress({ status: 'Syncing...', phase: 'init' });
-              try {
-                await fetchData();
-                setLibrarySyncProgress({ status: 'Synced!', phase: 'done' });
-                setTimeout(() => setLibrarySyncProgress(null), 3000);
-              } catch (err) {
-                setLibrarySyncProgress({ status: 'Sync failed', phase: 'error' });
-                setTimeout(() => setLibrarySyncProgress(null), 5000);
-              }
-            }}
-            disabled={librarySyncProgress?.phase === 'init'}
-            className="button button-secondary"
-            style={{ width: '100%' }}
-          >
-            {librarySyncProgress?.phase === 'init' ? (
-              <Loader2 size={14} className="spin" style={{ marginRight: '0.35rem' }} />
-            ) : (
-              <RefreshCcw size={14} style={{ marginRight: '0.35rem' }} />
-            )}
-            {librarySyncProgress?.phase === 'init' ? 'Syncing...' : 'Refresh All Data'}
-          </button>
-          {librarySyncProgress && (
-            <div style={{
-              marginTop: '0.5rem',
-              padding: '0.5rem',
-              borderRadius: '6px',
-              backgroundColor: 'var(--bg-color)',
-              fontSize: '0.8rem',
-              display: 'flex',
-              alignItems: 'center',
-              gap: '0.5rem',
-              color: librarySyncProgress.phase === 'error' ? '#dc3545' : (librarySyncProgress.phase === 'done' ? '#28a745' : 'var(--text-secondary)')
-            }}>
-              {librarySyncProgress.phase === 'init' && (
-                <Loader2 size={16} className="spin" style={{ color: '#f0ad4e' }} />
-              )}
-              {librarySyncProgress.phase === 'done' && (
-                <Check size={16} style={{ color: '#28a745' }} />
-              )}
-              {librarySyncProgress.phase === 'error' && (
-                <AlertTriangle size={16} style={{ color: '#dc3545' }} />
-              )}
-              {librarySyncProgress.status}
-            </div>
-          )}
-        </div>
-
-        {/* Navigate to Categories */}
-        <div className="card">
-          <h3 style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.75rem' }}>
-            <Folder size={18} /> Manage Categories
-          </h3>
-          <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginBottom: '1rem' }}>
-            Create, edit, and organize your preroll categories.
-          </p>
-          <button
-            onClick={() => setActiveTab('categories')}
-            className="button button-secondary"
-            style={{ width: '100%' }}
-          >
-            <Folder size={14} style={{ marginRight: '0.35rem' }} />
-            Go to Categories
-          </button>
-        </div>
-
-        {/* Navigate to Schedules */}
-        <div className="card">
-          <h3 style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.75rem' }}>
-            <Calendar size={18} /> Manage Schedules
-          </h3>
-          <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginBottom: '1rem' }}>
-            Create and manage automated schedule rotations.
-          </p>
-          <button
-            onClick={() => setActiveTab('schedules')}
-            className="button button-secondary"
-            style={{ width: '100%' }}
-          >
-            <Calendar size={14} style={{ marginRight: '0.35rem' }} />
-            Go to Schedules
-          </button>
-        </div>
-
-        {/* NeX-Up Sync */}
-        <div className="card">
-          <h3 style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.75rem' }}>
-            <Clapperboard size={18} /> NeX-Up Sync
-          </h3>
-          <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginBottom: '1rem' }}>
-            Sync trailers from both Radarr and Sonarr.
-          </p>
-          <button
-            onClick={async () => {
-              if (nexupSyncProgress?.phase === 'init') return;
-              setNexupSyncProgress({ status: 'Syncing Radarr...', phase: 'init' });
-              let radarrResult = null;
-              let sonarrResult = null;
-              let radarrError = null;
-              let sonarrError = null;
-              
-              // Sync Radarr
-              try {
-                const res = await fetch(apiUrl('/nexup/sync'), { method: 'POST' });
-                if (res.ok) {
-                  radarrResult = await res.json();
-                } else {
-                  const err = await res.json().catch(() => ({}));
-                  radarrError = err.detail || 'Radarr sync failed';
-                }
-              } catch (e) {
-                radarrError = e.message || 'Radarr sync failed';
-              }
-              
-              // Sync Sonarr
-              setNexupSyncProgress({ status: 'Syncing Sonarr...', phase: 'init' });
-              try {
-                const res = await fetch(apiUrl('/nexup/sonarr/sync'), { method: 'POST' });
-                if (res.ok) {
-                  sonarrResult = await res.json();
-                } else {
-                  const err = await res.json().catch(() => ({}));
-                  sonarrError = err.detail || 'Sonarr sync failed';
-                }
-              } catch (e) {
-                sonarrError = e.message || 'Sonarr sync failed';
-              }
-              
-              // Build summary
-              const radarrDownloaded = radarrResult?.downloaded || 0;
-              const sonarrDownloaded = sonarrResult?.downloaded || 0;
-              const totalDownloaded = radarrDownloaded + sonarrDownloaded;
-              
-              // Check for YouTube bot block/cookie errors in the results
-              const radarrCookieError = radarrResult?.errors?.some(e => e.includes('bot detection') || e.includes('⚠️') || e.includes('cookies'));
-              const sonarrCookieError = sonarrResult?.errors?.some(e => e.includes('bot detection') || e.includes('⚠️') || e.includes('cookies'));
-              const hasCookieError = radarrCookieError || sonarrCookieError;
-              
-              if (radarrError && sonarrError) {
-                setNexupSyncProgress({ status: 'Both syncs failed', phase: 'error' });
-              } else if (hasCookieError) {
-                setNexupSyncProgress({ 
-                  status: `⚠️ YouTube blocked - re-export cookies from Incognito (login → robots.txt → export)`, 
-                  phase: 'error',
-                  cookieError: true
-                });
-              } else if (radarrError || sonarrError) {
-                setNexupSyncProgress({ 
-                  status: `Done! ${totalDownloaded} trailers (${radarrError ? 'Radarr failed' : 'Sonarr failed'})`, 
-                  phase: 'done' 
-                });
-              } else {
-                setNexupSyncProgress({ 
-                  status: `Done! ${totalDownloaded} new trailers (${radarrDownloaded} movies, ${sonarrDownloaded} TV)`, 
-                  phase: 'done' 
-                });
-              }
-              setTimeout(() => setNexupSyncProgress(null), hasCookieError ? 15000 : 5000);
-            }}
-            disabled={nexupSyncProgress?.phase === 'init'}
-            className="button button-secondary"
-            style={{ width: '100%' }}
-          >
-            {nexupSyncProgress?.phase === 'init' ? (
-              <Loader2 size={14} className="spin" style={{ marginRight: '0.35rem' }} />
-            ) : (
-              <Download size={14} style={{ marginRight: '0.35rem' }} />
-            )}
-            {nexupSyncProgress?.phase === 'init' ? 'Syncing...' : 'Sync All Trailers'}
-          </button>
-          {nexupSyncProgress && (
-            <div style={{
-              marginTop: '0.5rem',
-              padding: '0.5rem',
-              borderRadius: '6px',
-              backgroundColor: 'var(--bg-color)',
-              fontSize: '0.8rem',
-              display: 'flex',
-              alignItems: 'center',
-              gap: '0.5rem',
-              color: nexupSyncProgress.phase === 'error' ? '#dc3545' : (nexupSyncProgress.phase === 'done' ? '#28a745' : 'var(--text-secondary)')
-            }}>
-              {nexupSyncProgress.phase === 'init' && (
-                <Loader2 size={16} className="spin" style={{ color: '#f0ad4e' }} />
-              )}
-              {nexupSyncProgress.phase === 'done' && (
-                <Check size={16} style={{ color: '#28a745' }} />
-              )}
-              {nexupSyncProgress.phase === 'error' && (
-                <AlertTriangle size={16} style={{ color: '#dc3545' }} />
-              )}
-              {nexupSyncProgress.status}
-            </div>
-          )}
-        </div>
-
-        {/* Check for Updates */}
-        <div className="card">
-          <h3 style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.75rem' }}>
-            <RefreshCw size={18} /> Check for Updates
-          </h3>
-          <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginBottom: '1rem' }}>
-            Check if a new version of NeXroll is available.
-          </p>
-          <button
-            onClick={async () => {
-              if (updateCheckProgress?.phase === 'init') return;
-              setUpdateCheckProgress({ status: 'Checking GitHub...', phase: 'init' });
-              try {
-                // Clear cache to force fresh check
-                localStorage.removeItem('nx_update_checked_at');
-                localStorage.removeItem('nx_latest_release_info');
-                
-                // Use backend endpoint which respects include_prerelease setting
-                const res = await fetch(apiUrl('update/check'), {
-                  method: 'POST',
-                  headers: { 'Content-Type': 'application/json' }
-                });
-                
-                if (!res.ok) throw new Error('Failed to check for updates');
-                
-                const data = await res.json();
-                
-                if (!data.success) {
-                  throw new Error(data.error || 'Update check failed');
-                }
-                
-                const latestVersion = (data.latest_version || data.version || '').replace(/^v/, '');
-                const currentVersion = data.current_version || systemVersion?.api_version || '0.0.0';
-                
-                if (data.update_available) {
-                  const prereleaseLabel = data.prerelease ? ' (Pre-release)' : '';
-                  setUpdateCheckProgress({ status: `Update available: v${latestVersion}${prereleaseLabel}`, phase: 'done' });
-                  setUpdateInfo({ version: latestVersion, url: data.html_url, name: data.name, prerelease: data.prerelease });
-                  setShowUpdateBanner(true);
-                } else {
-                  setUpdateCheckProgress({ status: `You're up to date! (v${currentVersion})`, phase: 'done' });
-                }
-                setTimeout(() => setUpdateCheckProgress(null), 5000);
-              } catch (err) {
-                setUpdateCheckProgress({ status: 'Check failed: ' + (err.message || err), phase: 'error' });
-                setTimeout(() => setUpdateCheckProgress(null), 5000);
-              }
-            }}
-            disabled={updateCheckProgress?.phase === 'init'}
-            className="button button-secondary"
-            style={{ width: '100%' }}
-          >
-            {updateCheckProgress?.phase === 'init' ? (
-              <Loader2 size={14} className="spin" style={{ marginRight: '0.35rem' }} />
-            ) : (
-              <RefreshCw size={14} style={{ marginRight: '0.35rem' }} />
-            )}
-            {updateCheckProgress?.phase === 'init' ? 'Checking...' : 'Check for Updates'}
-          </button>
-          {updateCheckProgress && (
-            <div style={{
-              marginTop: '0.5rem',
-              padding: '0.5rem',
-              borderRadius: '6px',
-              backgroundColor: 'var(--bg-color)',
-              fontSize: '0.8rem',
-              display: 'flex',
-              alignItems: 'center',
-              gap: '0.5rem',
-              color: updateCheckProgress.phase === 'error' ? '#dc3545' : (updateCheckProgress.phase === 'done' ? '#28a745' : 'var(--text-secondary)')
-            }}>
-              {updateCheckProgress.phase === 'init' && (
-                <Loader2 size={16} className="spin" style={{ color: '#f0ad4e' }} />
-              )}
-              {updateCheckProgress.phase === 'done' && (
-                <Check size={16} style={{ color: '#28a745' }} />
-              )}
-              {updateCheckProgress.phase === 'error' && (
-                <AlertTriangle size={16} style={{ color: '#dc3545' }} />
-              )}
-              {updateCheckProgress.status}
-            </div>
-          )}
-        </div>
-
-        {/* Community Prerolls */}
-        <div className="card">
-          <h3 style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.75rem' }}>
-            <Users2 size={18} /> Community Prerolls
-          </h3>
-          <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginBottom: '1rem' }}>
-            Discover and download prerolls shared by the community.
-          </p>
-          <button
-            onClick={() => setActiveTab('community-prerolls')}
-            className="button button-secondary"
-            style={{ width: '100%' }}
-          >
-            <Users2 size={14} style={{ marginRight: '0.35rem' }} />
-            Browse Community
-          </button>
-        </div>
-
-        {/* Build Community Index */}
-        <div className="card">
-          <h3 style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.75rem' }}>
-            <Zap size={18} /> Community Index
-          </h3>
-          <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginBottom: '1rem' }}>
-            Build/refresh the community prerolls index for faster searches.
-          </p>
-          <button
-            onClick={async () => {
-              if (communityIndexProgress?.phase === 'init' || communityIsBuilding) return;
-              setCommunityIndexProgress({ status: 'Building index...', phase: 'init' });
-              setCommunityIsBuilding(true);
-              setCommunityBuildProgress({
-                progress: 0,
-                current_dir: '',
-                files_found: 0,
-                dirs_visited: 0,
-                message: 'Starting...'
-              });
-              
-              // Start listening to progress updates via SSE
-              const eventSource = new EventSource(apiUrl('community-prerolls/build-progress'));
-              
-              eventSource.onmessage = (event) => {
-                const data = JSON.parse(event.data);
-                setCommunityBuildProgress(data);
-                setCommunityIndexProgress({ 
-                  status: data.message || `${data.progress}% - ${data.files_found} files found`, 
-                  phase: 'init' 
-                });
-                
-                if (!data.building && data.progress === 100) {
-                  eventSource.close();
-                  setTimeout(() => {
-                    setCommunityBuildProgress(null);
-                  }, 1000);
-                }
-              };
-              
-              eventSource.onerror = (error) => {
-                console.error('SSE error:', error);
-                eventSource.close();
-                setCommunityBuildProgress(null);
-                setCommunityIsBuilding(false);
-                setCommunityIndexProgress({ status: 'Index build failed', phase: 'error' });
-                setTimeout(() => setCommunityIndexProgress(null), 5000);
-              };
-              
-              try {
-                const response = await fetch(apiUrl('community-prerolls/build-index'));
-                
-                if (response.status === 429) {
-                  const error = await response.json();
-                  eventSource.close();
-                  setCommunityBuildProgress(null);
-                  setCommunityIsBuilding(false);
-                  setCommunityIndexProgress({ status: error.detail || 'Please wait before rebuilding', phase: 'error' });
-                  setTimeout(() => setCommunityIndexProgress(null), 5000);
-                  return;
-                }
-                
-                const data = await response.json();
-                
-                setTimeout(() => {
-                  setCommunityIsBuilding(false);
-                  setCommunityIndexProgress({ 
-                    status: `Done! ${data.total_prerolls} prerolls indexed`, 
-                    phase: 'done' 
-                  });
-                  fetchData(); // Refresh to get new index status
-                  setTimeout(() => setCommunityIndexProgress(null), 5000);
-                }, 1500);
-                
-              } catch (error) {
-                setCommunityBuildProgress(null);
-                eventSource.close();
-                setCommunityIsBuilding(false);
-                setCommunityIndexProgress({ status: `Failed: ${error.message}`, phase: 'error' });
-                setTimeout(() => setCommunityIndexProgress(null), 5000);
-              }
-            }}
-            disabled={communityIndexProgress?.phase === 'init' || communityIsBuilding}
-            className="button button-secondary"
-            style={{ width: '100%' }}
-          >
-            {(communityIndexProgress?.phase === 'init' || communityIsBuilding) ? (
-              <Loader2 size={14} className="spin" style={{ marginRight: '0.35rem' }} />
-            ) : (
-              <Zap size={14} style={{ marginRight: '0.35rem' }} />
-            )}
-            {(communityIndexProgress?.phase === 'init' || communityIsBuilding) ? 'Building...' : (communityIndexStatus?.exists ? 'Refresh Index' : 'Build Index')}
-          </button>
-          {communityIndexProgress && (
-            <div style={{
-              marginTop: '0.5rem',
-              padding: '0.5rem',
-              borderRadius: '6px',
-              backgroundColor: 'var(--bg-color)',
-              fontSize: '0.8rem',
-              display: 'flex',
-              alignItems: 'center',
-              gap: '0.5rem',
-              color: communityIndexProgress.phase === 'error' ? '#dc3545' : (communityIndexProgress.phase === 'done' ? '#28a745' : 'var(--text-secondary)')
-            }}>
-              {communityIndexProgress.phase === 'init' && (
-                <Loader2 size={16} className="spin" style={{ color: '#f0ad4e' }} />
-              )}
-              {communityIndexProgress.phase === 'done' && (
-                <Check size={16} style={{ color: '#28a745' }} />
-              )}
-              {communityIndexProgress.phase === 'error' && (
-                <AlertTriangle size={16} style={{ color: '#dc3545' }} />
-              )}
-              {communityIndexProgress.status}
-            </div>
-          )}
-          {communityBuildProgress && communityIndexProgress?.phase === 'init' && (
-            <div style={{ marginTop: '0.5rem' }}>
-              <div style={{
-                height: '4px',
-                backgroundColor: 'var(--border-color)',
-                borderRadius: '2px',
-                overflow: 'hidden'
-              }}>
-                <div style={{
-                  height: '100%',
-                  width: `${communityBuildProgress.progress}%`,
-                  backgroundColor: '#14B8A6',
-                  transition: 'width 0.3s ease'
-                }} />
-              </div>
-              <div style={{ fontSize: '0.7rem', color: 'var(--text-secondary)', marginTop: '0.25rem' }}>
-                {communityBuildProgress.files_found} files • {communityBuildProgress.dirs_visited} dirs
-              </div>
-            </div>
-          )}
-        </div>
-
-        {/* Settings */}
-        <div className="card">
-          <h3 style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.75rem' }}>
-            <Settings size={18} /> Settings
-          </h3>
-          <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginBottom: '1rem' }}>
-            Configure paths, backup/restore, and app preferences.
-          </p>
-          <button
-            onClick={() => setActiveTab('settings')}
-            className="button button-secondary"
-            style={{ width: '100%' }}
-          >
-            <Settings size={14} style={{ marginRight: '0.35rem' }} />
-            Go to Settings
-          </button>
-        </div>
-      </div>
-    </div>
-  );
+  // Lifted from the removed Quick Actions page: force a fresh update check.
+  const handleForceUpdateCheck = async () => {
+    if (updateCheckProgress?.phase === 'init') return;
+    setUpdateCheckProgress({ status: 'Checking GitHub...', phase: 'init' });
+    try {
+      localStorage.removeItem('nx_update_checked_at');
+      localStorage.removeItem('nx_latest_release_info');
+      const res = await fetch(apiUrl('update/check'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' }
+      });
+      if (!res.ok) throw new Error('Failed to check for updates');
+      const data = await res.json();
+      if (!data.success) {
+        throw new Error(data.error || 'Update check failed');
+      }
+      const latestVersion = (data.latest_version || data.version || '').replace(/^v/, '');
+      const currentVersion = data.current_version || systemVersion?.api_version || '0.0.0';
+      if (data.update_available) {
+        const prereleaseLabel = data.prerelease ? ' (Pre-release)' : '';
+        setUpdateCheckProgress({ status: `Update available: v${latestVersion}${prereleaseLabel}`, phase: 'done' });
+        setUpdateInfo({ version: latestVersion, url: data.html_url, name: data.name, prerelease: data.prerelease });
+        setShowUpdateBanner(true);
+      } else {
+        setUpdateCheckProgress({ status: `You're up to date! (v${currentVersion})`, phase: 'done' });
+      }
+      setTimeout(() => setUpdateCheckProgress(null), 5000);
+    } catch (err) {
+      setUpdateCheckProgress({ status: 'Check failed: ' + (err.message || err), phase: 'error' });
+      setTimeout(() => setUpdateCheckProgress(null), 5000);
+    }
+  };
 
   // Dashboard Overview Sub-Page (Tiles)
   const renderDashboardOverview = () => (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem', maxWidth: '1320px', width: '100%', margin: '0 auto' }}>
-      {/* Header */}
-      <div>
-        <h1 className="header" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.5rem' }}>
-          <LayoutDashboard size={32} className="header-icon" /> Dashboard
-        </h1>
-        <p style={{ color: 'var(--text-secondary)', fontSize: '0.95rem', margin: 0 }}>
-          Overview of your NeXroll preroll library and system status.
-        </p>
-      </div>
 
       {/* Storage Health Banner — surfaces missing files / duplicate rows
           from the most recent scanner pass. Dismissible per session. */}
@@ -7536,8 +7617,7 @@ const DashboardTiles = {
                   there's no safe action to take, the message says to wait. */}
               {!(storageHealth.storage_maybe_offline && storageHealth.duplicate_rows === 0) && (
               <button
-                className="button"
-                style={{ backgroundColor: '#f59e0b' }}
+                className="button button-warn"
                 onClick={() => {
                   // Prefer dedupe target during a suspected outage (never push deletion).
                   const action = (storageHealth.duplicate_rows > 0 || storageHealth.storage_maybe_offline)
@@ -7571,80 +7651,93 @@ const DashboardTiles = {
         )
       )}
 
-      {/* Update Available Notification Card */}
-      {updateInfo && showUpdateBanner && (
-        <div className="card" style={{
-          marginBottom: '1rem',
-          background: 'linear-gradient(135deg, rgba(40, 167, 69, 0.15) 0%, rgba(40, 167, 69, 0.05) 100%)',
-          border: '1px solid rgba(40, 167, 69, 0.4)',
-        }}>
-          <div style={{ 
-            display: 'flex', 
-            alignItems: 'center', 
-            justifyContent: 'space-between',
-            flexWrap: 'wrap',
-            gap: '1rem'
-          }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
-              <div style={{
-                width: '48px',
-                height: '48px',
-                borderRadius: '12px',
-                backgroundColor: 'rgba(40, 167, 69, 0.2)',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center'
-              }}>
-                <Download size={24} style={{ color: '#28a745' }} />
-              </div>
-              <div>
-                <h3 style={{ margin: 0, marginBottom: '0.25rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                  Update Available
-                  {updateInfo.prerelease && (
-                    <span style={{ 
-                      fontSize: '0.7rem', 
-                      padding: '2px 6px', 
-                      borderRadius: '4px', 
-                      backgroundColor: 'rgba(255, 193, 7, 0.2)', 
-                      color: '#ffc107' 
-                    }}>
-                      Pre-release
-                    </span>
-                  )}
-                </h3>
-                <div style={{ fontSize: '0.9rem', color: 'var(--text-secondary)' }}>
-                  <strong>v{updateInfo.version}</strong> is available (current: v{systemVersion?.api_version || 'unknown'})
-                </div>
-                {updateInfo.name && updateInfo.name !== `v${updateInfo.version}` && (
-                  <div style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginTop: '0.25rem' }}>
-                    {updateInfo.name}
-                  </div>
-                )}
-              </div>
-            </div>
-            <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
-              <a 
-                href={updateInfo.url}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="button"
-                style={{ textDecoration: 'none', backgroundColor: '#28a745' }}
-              >
-                <Download size={14} style={{ marginRight: '0.35rem' }} /> View Release
-              </a>
-              <button 
-                onClick={handleDismissUpdate}
-                className="button button-secondary"
-              >
-                <X size={14} style={{ marginRight: '0.35rem' }} /> Dismiss
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
  
+      {/* Dashboard toolbar: quick actions on the left, layout/edit controls on
+          the right. Replaces both the lonely edit-toggle card and the removed
+          Quick Actions page/tile. */}
       <div className="card nx-dashboard-controls" style={{ marginBottom: '10px' }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem', flexWrap: 'wrap' }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.75rem', flexWrap: 'wrap' }}>
+          <div className="nx-qa-bar">
+            <button
+              className="button button-outline nx-qa-btn"
+              disabled={thumbnailProgress?.phase === 'init'}
+              title="Regenerate thumbnails for all prerolls"
+              onClick={handleReinitThumbnails}
+            >
+              {thumbnailProgress?.phase === 'init' ? <Loader2 size={14} className="spin" /> : <RefreshCw size={14} />} Rebuild Thumbs
+            </button>
+            <button
+              className="button button-outline nx-qa-btn"
+              disabled={librarySyncProgress?.phase === 'init'}
+              title="Refresh all data from the backend"
+              onClick={async () => {
+                if (librarySyncProgress?.phase === 'init') return;
+                setLibrarySyncProgress({ status: 'Syncing...', phase: 'init' });
+                try {
+                  await fetchData();
+                  setLibrarySyncProgress({ status: 'Synced!', phase: 'done' });
+                  setTimeout(() => setLibrarySyncProgress(null), 3000);
+                } catch (err) {
+                  setLibrarySyncProgress({ status: 'Sync failed', phase: 'error' });
+                  setTimeout(() => setLibrarySyncProgress(null), 5000);
+                }
+              }}
+            >
+              {librarySyncProgress?.phase === 'init' ? <Loader2 size={14} className="spin" /> : <RefreshCcw size={14} />} Refresh Data
+            </button>
+            <button
+              className="button button-outline nx-qa-btn"
+              disabled={nexupSyncProgress?.phase === 'init'}
+              title="Sync trailers from Radarr and Sonarr"
+              onClick={handleNexupFullSync}
+            >
+              {nexupSyncProgress?.phase === 'init' ? <Loader2 size={14} className="spin" /> : <Download size={14} />} NeX-Up Sync
+            </button>
+            <button
+              className="button button-outline nx-qa-btn"
+              title="Scan the storage folder for added/removed prerolls"
+              onClick={() => handleRescanPrerolls()}
+            >
+              <HardDrive size={14} /> Scan Files
+            </button>
+            <button
+              className="button button-outline nx-qa-btn"
+              title="Rebuild the community prerolls index (runs in the background; progress shows on the Community page)"
+              onClick={async () => {
+                try {
+                  const res = await fetch(apiUrl('community-prerolls/build-index'));
+                  if (res.ok) {
+                    showAlert('Community index build started - progress on the Community page', 'success');
+                  } else {
+                    let detail = `Failed to start index build (HTTP ${res.status})`;
+                    try { const err = await res.json(); if (err?.detail) detail = err.detail; } catch {}
+                    showAlert(detail, 'error');
+                  }
+                } catch (e) {
+                  showAlert('Failed to start index build: ' + (e.message || e), 'error');
+                }
+              }}
+            >
+              <BookOpen size={14} /> Rebuild Index
+            </button>
+            <button
+              className="button button-outline nx-qa-btn"
+              disabled={backupProgress?.active}
+              title="Download a database backup (settings, schedules, categories)"
+              onClick={handleBackupDatabase}
+            >
+              {backupProgress?.active ? <Loader2 size={14} className="spin" /> : <Database size={14} />} Backup DB
+            </button>
+            <button
+              className="button button-outline nx-qa-btn"
+              disabled={updateCheckProgress?.phase === 'init'}
+              title="Check GitHub for a newer NeXroll release"
+              onClick={handleForceUpdateCheck}
+            >
+              {updateCheckProgress?.phase === 'init' ? <Loader2 size={14} className="spin" /> : <Rocket size={14} />} Check Updates
+            </button>
+          </div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem', flexShrink: 0 }}>
           <label className="nx-rockerswitch" title={dashLayout.locked ? 'Unlock to rearrange' : 'Lock to finish'}>
             <input
               type="checkbox"
@@ -7679,7 +7772,7 @@ const DashboardTiles = {
               className="nx-dash-hint"
               style={{ color: 'var(--text-secondary)', fontSize: '0.78rem', opacity: 0.72 }}
             >
-              Drag to move • use S / M / L to set tile size • lock to save
+              Drag to move • lock to save
             </span>
           )}
           {!dashLayout.locked && (
@@ -7693,26 +7786,45 @@ const DashboardTiles = {
               <RotateCw size={12} /> Reset layout
             </button>
           )}
-          {!dashLayout.locked && (dashLayout?.hidden || []).length > 0 && (
-            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginLeft: '1rem' }}>
-              <span style={{ fontSize: '0.78rem', color: 'var(--text-secondary)' }}>Hidden tiles:</span>
-              {(dashLayout?.hidden || []).map(tileKey => (
-                <button
-                  key={tileKey}
-                  onClick={() => {
-                    const newHidden = (dashLayout.hidden || []).filter(h => h !== tileKey);
-                    setDashLayout({ ...dashLayout, hidden: newHidden });
-                  }}
-                  className="button button-secondary"
-                  style={{ padding: '2px 8px', fontSize: '0.72rem', display: 'flex', alignItems: 'center', gap: '4px' }}
-                  title={`Show ${tileKey} tile`}
-                >
-                  <Plus size={12} /> {tileKey}
-                </button>
-              ))}
-            </div>
-          )}
+          </div>
         </div>
+        {(() => {
+          const qaStatus = thumbnailProgress || librarySyncProgress || nexupSyncProgress || updateCheckProgress;
+          return qaStatus ? (
+            <p style={{
+              margin: '0.5rem 0 0',
+              fontSize: '0.78rem',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '0.4rem',
+              color: qaStatus.phase === 'error' ? '#dc3545' : qaStatus.phase === 'done' ? '#28a745' : 'var(--text-secondary)'
+            }}>
+              {qaStatus.phase === 'init' && <Loader2 size={13} className="spin" />}
+              {qaStatus.phase === 'done' && <Check size={13} />}
+              {qaStatus.phase === 'error' && <AlertTriangle size={13} />}
+              {qaStatus.status}
+            </p>
+          ) : null;
+        })()}
+        {!dashLayout.locked && (dashLayout?.hidden || []).length > 0 && (
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginTop: '0.6rem', flexWrap: 'wrap' }}>
+            <span style={{ fontSize: '0.78rem', color: 'var(--text-secondary)' }}>Hidden tiles:</span>
+            {(dashLayout?.hidden || []).map(tileKey => (
+              <button
+                key={tileKey}
+                onClick={() => {
+                  const newHidden = (dashLayout.hidden || []).filter(h => h !== tileKey);
+                  setDashLayout({ ...dashLayout, hidden: newHidden });
+                }}
+                className="button button-secondary"
+                style={{ padding: '2px 8px', fontSize: '0.72rem', display: 'flex', alignItems: 'center', gap: '4px' }}
+                title={`Show ${tileKey} tile`}
+              >
+                <Plus size={12} /> {tileKey}
+              </button>
+            ))}
+          </div>
+        )}
       </div>
 
       {(() => {
@@ -7721,7 +7833,7 @@ const DashboardTiles = {
           <DndContext sensors={dashSensors} collisionDetection={closestCenter} onDragEnd={handleDashDragEnd}>
             <SortableContext items={renderKeys} strategy={rectSortingStrategy}>
               <div
-                ref={dashGridRef}
+                ref={setDashGridRef}
                 className={`nx-dash-grid ${dashLayout.locked ? '' : 'editing'}`}
                 style={{
                   display: 'grid',
@@ -7729,10 +7841,13 @@ const DashboardTiles = {
                   // responsive). Stat tiles = 1 cell; feature tiles span 2 cols x
                   // 2 rows; calendar is full-width. The measured base row height
                   // keeps every tile aligned to the same vertical rhythm.
-                  gridAutoRows: uniformRowH ? `${uniformRowH}px` : 'auto',
+                  // Never fall back to 'auto': content-sized rows make tile
+                  // height depend on position and content (the exact bug where
+                  // feature tiles grew when moved in edit mode).
+                  gridAutoRows: `${uniformRowH || 176}px`,
                   gridAutoFlow: dashLayout.locked ? 'row dense' : 'row',
                   alignItems: 'stretch',
-                  gap: '16px'
+                  gap: '12px'
                 }}
               >
                 {renderKeys.map((key) => {
@@ -7745,7 +7860,7 @@ const DashboardTiles = {
                       disabled={dashLayout.locked}
                       fullWidth={isCal}
                       cols={isFeature ? 2 : 1}
-                      rows={isCal ? calRows : (isFeature ? 2 : 1)}
+                      rows={isCal ? calRows : 1}
                       onHide={(tileId) => setDashLayout(prev => ({ ...prev, hidden: [...(prev.hidden || []), tileId] }))}
                     >
                       {isCal ? renderWeeklyCalendar() : DashboardTiles[key]()}
@@ -7887,6 +8002,23 @@ const DashboardTiles = {
                       <Lock size={12} /> Exclusive
                     </div>
                   )}
+                  {fillerSettings.enabled && (
+                    <div
+                      title={`Filler plays in any gap with no active schedule — ${fillerSettings.type === 'category'
+                        ? (categories.find(c => c.id === fillerSettings.category_id)?.name || 'Category')
+                        : fillerSettings.type === 'sequence'
+                        ? (savedSequences.find(s => s.id === fillerSettings.sequence_id)?.name || 'Sequence')
+                        : `Coming Soon (${fillerSettings.coming_soon_layout})`}`}
+                      style={{
+                        display: 'flex', alignItems: 'center', gap: '5px',
+                        padding: '4px 10px', borderRadius: '20px',
+                        backgroundColor: 'rgba(0,212,255,0.12)', color: '#00d4ff',
+                        fontSize: '0.75rem', fontWeight: 600
+                      }}
+                    >
+                      <Zap size={12} /> Filler
+                    </div>
+                  )}
                   {hasAnyConflicts && (
                     <div style={{
                       display: 'flex', alignItems: 'center', gap: '5px',
@@ -7912,9 +8044,9 @@ const DashboardTiles = {
                       <Wand2 size={12} /> Fix
                     </button>
                   )}
-                  <button 
-                    className="button button-secondary" 
-                    onClick={() => { setActiveTab('schedules'); setShowCalendar(true); setCalendarMode('week'); }}
+                  <button
+                    className="button button-secondary"
+                    onClick={() => { setActiveTab('schedules/calendar'); setShowCalendar(true); setCalendarMode('week'); }}
                     style={{ fontSize: '0.75rem', padding: '4px 10px', display: 'flex', alignItems: 'center', gap: '4px' }}
                   >
                     Full Calendar <ChevronRight size={12} />
@@ -8018,7 +8150,13 @@ const DashboardTiles = {
                   <Calendar size={36} style={{ opacity: 0.2, marginBottom: '0.5rem' }} />
                   <div style={{ fontSize: '0.95rem', fontWeight: 500 }}>No active schedules this week</div>
                   <div style={{ fontSize: '0.8rem', marginTop: '0.25rem', opacity: 0.7 }}>
-                    Create a schedule to see it here
+                    <button
+                      type="button"
+                      onClick={() => setActiveTab('schedules/create')}
+                      style={{ background: 'none', border: 'none', padding: 0, font: 'inherit', color: 'var(--button-bg)', textDecoration: 'underline', cursor: 'pointer' }}
+                    >
+                      Create a schedule
+                    </button> to see it here
                   </div>
                 </div>
               ) : scheds.map((sched, idx) => {
@@ -8180,10 +8318,10 @@ const DashboardTiles = {
                         }
 
                         let tooltipText = `${sched.name} — ${activeDayCount} day${activeDayCount !== 1 ? 's' : ''} this week`;
-                        if (spanIsExclusive) tooltipText = `🔒 ${sched.name} — Exclusive${schedTimeRange ? ` (${schedTimeRange})` : ''}`;
-                        else if (spanIsWinner) tooltipText = `👑 ${sched.name} — Active (wins)`;
-                        else if (spanIsInBlend) tooltipText = `🔀 ${sched.name} — Blending`;
-                        else if (spanIsLoser) tooltipText = `⚠️ ${sched.name} — Overridden`;
+                        if (spanIsExclusive) tooltipText = `${sched.name} — Exclusive${schedTimeRange ? ` (${schedTimeRange})` : ''}`;
+                        else if (spanIsWinner) tooltipText = `${sched.name} — Active (wins)`;
+                        else if (spanIsInBlend) tooltipText = `${sched.name} — Blending`;
+                        else if (spanIsLoser) tooltipText = `${sched.name} — Overridden`;
 
                         const barColor = sched.color || sched.cat.color;
 
@@ -8216,69 +8354,6 @@ const DashboardTiles = {
                 );
               }).filter(Boolean)}
               
-              {/* Filler row */}
-              {fillerSettings.enabled && (
-                <div style={{
-                  display: 'grid', gridTemplateColumns: '150px 1fr',
-                  borderBottom: '1px solid var(--border-color)', minHeight: '42px',
-                }}>
-                  <div style={{
-                    padding: '6px 10px', display: 'flex', alignItems: 'center', gap: '7px',
-                    borderRight: '1px solid var(--border-color)',
-                  }}>
-                    <div style={{
-                      width: '8px', height: '8px', borderRadius: '50%',
-                      backgroundColor: '#00d4ff', flexShrink: 0,
-                      boxShadow: '0 0 4px rgba(0,212,255,0.4)',
-                    }} />
-                    <div style={{ minWidth: 0 }}>
-                      <div style={{ fontSize: '0.8rem', fontWeight: 600, color: '#00d4ff' }}>Filler</div>
-                      <span style={{
-                        fontSize: '0.55rem', fontWeight: 600, textTransform: 'uppercase',
-                        padding: '0px 4px', borderRadius: '3px',
-                        backgroundColor: 'rgba(0,212,255,0.1)', color: '#00d4ff',
-                      }}>fallback</span>
-                    </div>
-                  </div>
-                  <div style={{ position: 'relative', display: 'flex', alignItems: 'center', padding: '5px 0' }}>
-                    {days.map((day, dayIdx) => {
-                      const t = new Date(day.getFullYear(), day.getMonth(), day.getDate()).getTime();
-                      const dd = dayData.get(t);
-                      const hasSchedules = dd?.contentScheds?.length > 0;
-                      const isToday = t === todayTime;
-                      
-                      return (
-                        <div key={dayIdx} style={{
-                          flex: 1, height: '100%', position: 'relative',
-                          borderRight: dayIdx < 6 ? '1px solid var(--border-color)' : 'none',
-                          backgroundColor: isToday ? (darkMode ? 'rgba(59,130,246,0.05)' : 'rgba(59,130,246,0.03)') : 'transparent',
-                          display: 'flex', alignItems: 'center', justifyContent: 'center',
-                        }}>
-                          {!hasSchedules && (
-                            <div 
-                              title={`Filler: ${fillerSettings.type === 'category' 
-                                ? (categories.find(c => c.id === fillerSettings.category_id)?.name || 'Category')
-                                : fillerSettings.type === 'sequence'
-                                ? (savedSequences.find(s => s.id === fillerSettings.sequence_id)?.name || 'Sequence')
-                                : `Coming Soon (${fillerSettings.coming_soon_layout})`}`}
-                              style={{
-                                width: '88%', height: '70%',
-                                backgroundColor: 'rgba(0,212,255,0.12)',
-                                border: '2px dashed rgba(0,212,255,0.5)',
-                                borderRadius: '5px',
-                                display: 'flex', alignItems: 'center', justifyContent: 'center',
-                                fontSize: '0.6rem', color: '#00d4ff', fontStyle: 'italic',
-                              }}
-                            >
-                              Active
-                            </div>
-                          )}
-                        </div>
-                      );
-                    })}
-                  </div>
-                </div>
-              )}
             </div>
 
             {/* Compact legend footer */}
@@ -8312,16 +8387,6 @@ const DashboardTiles = {
   // Dashboard Add Prerolls Sub-Page
   const renderDashboardAddPrerolls = () => (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
-      {/* Header */}
-      <div>
-        <h1 className="header" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.5rem' }}>
-          <Upload size={32} className="header-icon" /> Add Prerolls
-        </h1>
-        <p style={{ color: 'var(--text-secondary)', fontSize: '0.95rem', margin: 0 }}>
-          Upload new video files or import from an existing folder on your system.
-        </p>
-      </div>
-
       {/* Method Toggle */}
       <div className="card" style={{ padding: '0' }}>
         <div style={{ display: 'flex', borderBottom: '1px solid var(--border-color)' }}>
@@ -8587,7 +8652,49 @@ const DashboardTiles = {
             <p style={{ marginBottom: '1rem', color: 'var(--text-secondary)', fontSize: '0.9rem' }}>
               Index video files from an existing folder into NeXroll without moving them. Files are marked as external (managed=false).
             </p>
-            
+
+            {/* Heads-up: imported folders are indexed once. To keep them in sync as
+                files are added/removed outside NeXroll, the user enables Automatic
+                Folder Monitoring under Settings > Storage. Surfaced here so they can
+                make that decision while choosing a folder to import. */}
+            <div style={{
+              marginBottom: '1rem',
+              padding: '0.85rem 1rem',
+              backgroundColor: 'rgba(23, 162, 184, 0.1)',
+              borderRadius: '8px',
+              border: '1px solid #17a2b8',
+              fontSize: '0.85rem'
+            }}>
+              <div style={{ display: 'flex', alignItems: 'flex-start', gap: '0.6rem' }}>
+                <Info size={18} color="#17a2b8" style={{ flexShrink: 0, marginTop: '1px' }} />
+                <div style={{ color: 'var(--text-secondary)', lineHeight: 1.5 }}>
+                  <strong style={{ color: 'var(--text-color)' }}>Keeping this folder in sync:</strong>{' '}
+                  An imported folder is indexed once. If you'll add or remove files in it later
+                  (drop new clips in, sync from another tool), turn on{' '}
+                  <strong>Automatic Folder Monitoring</strong> so NeXroll re-scans it on a schedule
+                  and picks up the changes — otherwise you'll need to import or rescan again manually.
+                  <button
+                    type="button"
+                    onClick={() => setActiveTab('settings/storage')}
+                    style={{
+                      display: 'inline',
+                      padding: 0,
+                      marginLeft: '0.35rem',
+                      background: 'none',
+                      border: 'none',
+                      color: '#17a2b8',
+                      fontWeight: 600,
+                      cursor: 'pointer',
+                      textDecoration: 'underline',
+                      fontSize: 'inherit'
+                    }}
+                  >
+                    Settings &gt; Storage
+                  </button>
+                </div>
+              </div>
+            </div>
+
             <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
               {/* Path Input */}
               <div>
@@ -8952,15 +9059,6 @@ const DashboardTiles = {
   // Dashboard Library Sub-Page (Prerolls list/grid)
   const renderDashboardLibrary = () => (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
-      {/* Header */}
-      <div>
-        <h1 className="header" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.5rem' }}>
-          <Library size={32} className="header-icon" /> Preroll Library
-        </h1>
-        <p style={{ color: 'var(--text-secondary)', fontSize: '0.95rem', margin: 0 }}>
-          Browse, search, and manage your preroll collection.
-        </p>
-      </div>
 
       {/* Stats Bar */}
       <div style={{ display: 'flex', gap: '1rem', flexWrap: 'wrap' }}>
@@ -8992,15 +9090,34 @@ const DashboardTiles = {
             <span style={{ color: 'var(--text-secondary)', fontSize: '0.9rem' }}>selected</span>
           </div>
         )}
-        <button 
-          onClick={handleReinitThumbnails} 
-          className="button button-secondary" 
+        <button
+          onClick={handleReinitThumbnails}
+          className="button button-secondary"
           style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: '0.35rem' }}
+          disabled={thumbnailProgress?.phase === 'init'}
           title="Reinitialize all preroll thumbnails"
         >
-          <RefreshCw size={14} /> Reinitialize Thumbnails
+          {thumbnailProgress?.phase === 'init' ? <Loader2 size={14} className="spin" /> : <RefreshCw size={14} />} Reinitialize Thumbnails
         </button>
       </div>
+
+      {/* Reinitialize-thumbnails status, right where the button is (also mirrored
+          in the dashboard quick-actions). */}
+      {thumbnailProgress && (
+        <div style={{
+          display: 'flex', alignItems: 'center', gap: '0.5rem',
+          padding: '0.6rem 1rem', marginBottom: '0.75rem', borderRadius: '8px',
+          background: thumbnailProgress.phase === 'error' ? 'rgba(239,68,68,0.12)' : 'rgba(0,212,255,0.1)',
+          border: '1px solid ' + (thumbnailProgress.phase === 'error' ? 'rgba(239,68,68,0.4)' : 'var(--accent-color)'),
+        }}>
+          {thumbnailProgress.phase === 'init'
+            ? <Loader2 size={15} className="spin" />
+            : thumbnailProgress.phase === 'error'
+              ? <AlertTriangle size={15} style={{ color: '#ef4444' }} />
+              : <CheckCircle size={15} style={{ color: 'var(--accent-color)' }} />}
+          <span style={{ fontSize: '0.88rem' }}>{thumbnailProgress.status}</span>
+        </div>
+      )}
 
       {/* Control Bar Card */}
       <div className="card" style={{ padding: '1rem 1.25rem' }}>
@@ -9325,8 +9442,33 @@ const DashboardTiles = {
         </div>
       )}
 
+      {/* Empty state */}
+      {totalPrerolls === 0 && (
+        <div className="nx-empty">
+          {prerolls.length === 0 ? (
+            <>
+              <span className="nx-empty-icon"><Film size={48} /></span>
+              <h3 className="nx-empty-title">No prerolls yet</h3>
+              <p className="nx-empty-text">Upload your first preroll to start building your library.</p>
+              <button className="button" onClick={() => setActiveTab('library/add')}>
+                <Upload size={16} /> Add Prerolls
+              </button>
+            </>
+          ) : (
+            <>
+              <span className="nx-empty-icon"><Search size={48} /></span>
+              <h3 className="nx-empty-title">No matches</h3>
+              <p className="nx-empty-text">No prerolls match your current filters.</p>
+              <button className="button button-secondary" onClick={() => { setFilterCategory(''); setFilterTags(''); setFilterMatchStatus(''); }}>
+                Clear filters
+              </button>
+            </>
+          )}
+        </div>
+      )}
+
       {/* Preroll Grid */}
-      <div className="preroll-grid" style={{ display: prerollView === 'grid' ? 'grid' : 'none' }}>
+      <div className="preroll-grid" style={{ display: (prerollView === 'grid' && totalPrerolls > 0) ? 'grid' : 'none' }}>
           {visiblePrerolls.map(preroll => (
             <div key={preroll.id} className="preroll-item">
               <div className="preroll-header" style={{ marginBottom: '0.5rem' }}>
@@ -9399,7 +9541,7 @@ const DashboardTiles = {
                   fontWeight: '500',
                   marginBottom: '0.5rem'
                 }}>
-                  ✅ Matched to Community
+                  Matched to Community
                 </p>
               )}
               {preroll.exclude_from_matching && (
@@ -9414,7 +9556,7 @@ const DashboardTiles = {
                   marginBottom: '0.5rem',
                   marginLeft: '0.5rem'
                 }}>
-                  🚫 Excluded from Matching
+                  Excluded from Matching
                 </p>
               )}
               {preroll.category && <p style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>Primary: {preroll.category.name}</p>}
@@ -9495,7 +9637,7 @@ const DashboardTiles = {
                 onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
                 style={{ padding: '0.4rem 0.75rem', fontSize: '0.85rem' }}
               >
-                ◀ Prev
+                <ChevronLeft size={15} /> Prev
               </button>
               <span style={{ fontSize: '0.9rem', padding: '0 0.5rem', color: 'var(--text-color)' }}>
                 Page <span style={{ fontWeight: 600 }}>{currentPageClamped}</span> of <span style={{ fontWeight: 600 }}>{totalPages}</span>
@@ -9506,14 +9648,14 @@ const DashboardTiles = {
                 onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
                 style={{ padding: '0.4rem 0.75rem', fontSize: '0.85rem' }}
               >
-                Next ▶
+                Next <ChevronRight size={15} />
               </button>
             </div>
           </div>
         )}
 
       {/* List View */}
-      <div className="card" style={{ display: prerollView === 'list' ? 'block' : 'none', padding: '1rem' }}>
+      <div className="card" style={{ display: (prerollView === 'list' && totalPrerolls > 0) ? 'block' : 'none', padding: '1rem' }}>
        {visiblePrerolls.map(preroll => (
          <div key={preroll.id} style={{ display: 'flex', gap: '1rem', alignItems: 'center', padding: '0.75rem 0', borderBottom: '1px solid var(--border-color)' }}>
            <input
@@ -9555,7 +9697,7 @@ const DashboardTiles = {
                  fontWeight: '500',
                  marginBottom: '0.5rem'
                }}>
-                 ✅ Matched to Community
+                 Matched to Community
                </div>
              )}
              {preroll.exclude_from_matching && (
@@ -9570,7 +9712,7 @@ const DashboardTiles = {
                  marginBottom: '0.5rem',
                  marginLeft: '0.5rem'
                }}>
-                 🚫 Excluded from Matching
+                 Excluded from Matching
                </div>
              )}
              {preroll.category && <div style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>Primary: {preroll.category.name}</div>}
@@ -9678,7 +9820,7 @@ const DashboardTiles = {
              onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
              style={{ padding: '0.4rem 0.75rem', fontSize: '0.85rem' }}
            >
-             ◀ Prev
+             <ChevronLeft size={15} /> Prev
            </button>
            <span style={{ fontSize: '0.9rem', padding: '0 0.5rem', color: 'var(--text-color)' }}>
              Page <span style={{ fontWeight: 600 }}>{currentPageClamped}</span> of <span style={{ fontWeight: 600 }}>{totalPages}</span>
@@ -9689,7 +9831,7 @@ const DashboardTiles = {
              onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
              style={{ padding: '0.4rem 0.75rem', fontSize: '0.85rem' }}
            >
-             Next ▶
+             Next <ChevronRight size={15} />
            </button>
          </div>
        </div>
@@ -10195,7 +10337,7 @@ const DashboardTiles = {
                             <div style={{ fontSize: '0.85rem', fontWeight: 600, color: 'var(--text-color)', marginBottom: '0.3rem' }}>{sched.name}</div>
                             <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', display: 'flex', flexDirection: 'column', gap: '0.15rem' }}>
                               <span>Category: {cat}</span>
-                              <span>Priority: {p} · {sched.exclusive ? '🔒 Exclusive' : sched.blend_enabled ? '🔀 Blend' : 'Standard'}</span>
+                              <span>Priority: {p} · {sched.exclusive ? 'Exclusive' : sched.blend_enabled ? 'Blend' : 'Standard'}</span>
                               <span>Type: {sched.type}</span>
                             </div>
                           </div>
@@ -10629,7 +10771,7 @@ const DashboardTiles = {
                               <div style={{ fontSize: '0.85rem', fontWeight: 600, color: 'var(--text-color)', marginBottom: '0.3rem' }}>{sched.name}</div>
                               <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', display: 'flex', flexDirection: 'column', gap: '0.15rem' }}>
                                 <span>Category: {cat}</span>
-                                <span>Priority: {p} · {sched.exclusive ? '🔒 Exclusive' : sched.blend_enabled ? '🔀 Blend' : 'Standard'}</span>
+                                <span>Priority: {p} · {sched.exclusive ? 'Exclusive' : sched.blend_enabled ? 'Blend' : 'Standard'}</span>
                                 <span>Type: {sched.type}</span>
                               </div>
                             </div>
@@ -10881,7 +11023,7 @@ const DashboardTiles = {
             title="Previous Day"
             style={{ padding: '0.5rem 1rem', fontWeight: 500 }}
           >
-            <span className="view-icon">◀</span>
+            <span className="view-icon" style={{ display: 'inline-flex' }}><ChevronLeft size={15} /></span>
             Previous
           </button>
           <button
@@ -10905,7 +11047,7 @@ const DashboardTiles = {
             style={{ padding: '0.5rem 1rem', fontWeight: 500 }}
           >
             Next
-            <span className="view-icon">▶</span>
+            <span className="view-icon" style={{ display: 'inline-flex' }}><ChevronRight size={15} /></span>
           </button>
         </div>
       </div>
@@ -10939,7 +11081,7 @@ const DashboardTiles = {
             title="Previous Week"
             style={{ padding: '0.5rem 1rem', fontWeight: 500 }}
           >
-            <span className="view-icon">◀</span>
+            <span className="view-icon" style={{ display: 'inline-flex' }}><ChevronLeft size={15} /></span>
             Previous
           </button>
           <button
@@ -10968,7 +11110,7 @@ const DashboardTiles = {
             style={{ padding: '0.5rem 1rem', fontWeight: 500 }}
           >
             Next
-            <span className="view-icon">▶</span>
+            <span className="view-icon" style={{ display: 'inline-flex' }}><ChevronRight size={15} /></span>
           </button>
         </div>
       </div>
@@ -10986,7 +11128,7 @@ const DashboardTiles = {
             title="Previous Month"
             style={{ padding: '0.5rem 1rem', fontWeight: 500 }}
           >
-            <span className="view-icon">◀</span>
+            <span className="view-icon" style={{ display: 'inline-flex' }}><ChevronLeft size={15} /></span>
             Previous
           </button>
           <button
@@ -11010,7 +11152,7 @@ const DashboardTiles = {
             style={{ padding: '0.5rem 1rem', fontWeight: 500 }}
           >
             Next
-            <span className="view-icon">▶</span>
+            <span className="view-icon" style={{ display: 'inline-flex' }}><ChevronRight size={15} /></span>
           </button>
         </div>
       </div>
@@ -11067,7 +11209,7 @@ const DashboardTiles = {
           title="Previous Year"
           style={{ padding: '0.5rem 1rem', fontWeight: 500 }}
         >
-          <span className="view-icon">◀</span>
+          <span className="view-icon" style={{ display: 'inline-flex' }}><ChevronLeft size={15} /></span>
           {calendarYear - 1}
         </button>
         <button
@@ -11087,7 +11229,7 @@ const DashboardTiles = {
           style={{ padding: '0.5rem 1rem', fontWeight: 500 }}
         >
           {calendarYear + 1}
-          <span className="view-icon">▶</span>
+          <span className="view-icon" style={{ display: 'inline-flex' }}><ChevronRight size={15} /></span>
         </button>
       </div>
 
@@ -11660,7 +11802,7 @@ const DashboardTiles = {
                     border: hasSamePriorityConflict ? '2px solid #ff9800' : 'none',
                     boxShadow: hasSamePriorityConflict ? '0 0 8px rgba(255, 152, 0, 0.5)' : 'none'
                   }}
-                  title={hasSamePriorityConflict ? `⚠️ Same priority conflict with: ${samePriorityConflicts.map(c => c.schedule.name).join(', ')}\n\nBoth schedules are exclusive with the same priority.\nNeXroll will randomly pick one during overlapping times.\nSet different priorities to have deterministic behavior.` : ''}
+                  title={hasSamePriorityConflict ? `Same priority conflict with: ${samePriorityConflicts.map(c => c.schedule.name).join(', ')}\n\nBoth schedules are exclusive with the same priority.\nNeXroll will randomly pick one during overlapping times.\nSet different priorities to have deterministic behavior.` : ''}
                   >
                     {hasSamePriorityConflict && <AlertTriangle size={12} style={{ color: '#ffeb3b' }} />}
                     {sched.exclusive && !hasSamePriorityConflict && <Lock size={12} />}
@@ -11781,15 +11923,15 @@ const DashboardTiles = {
                     // Build tooltip
                     let tooltipText = `${sched.name}\nCategory: ${categoryName}\nType: ${sched.type}\nPriority: ${sched.priority ?? 5}`;
                     if (hasSamePriorityConflict) {
-                      tooltipText += `\n\n⚠️ SAME PRIORITY CONFLICT\nConflicts with: ${samePriorityConflicts.map(c => c.schedule.name).join(', ')}\n${isWinner ? '👑 Currently selected (random)' : '❌ Not selected (random)'}\nSet different priorities for deterministic behavior.`;
+                      tooltipText += `\n\nSAME PRIORITY CONFLICT\nConflicts with: ${samePriorityConflicts.map(c => c.schedule.name).join(', ')}\n${isWinner ? 'Currently selected (random)' : 'Not selected (random)'}\nSet different priorities for deterministic behavior.`;
                     } else if (isExclusive && isWinner) {
-                      tooltipText += '\n\n🔒 EXCLUSIVE - ACTIVE\nHighest priority exclusive schedule';
+                      tooltipText += '\n\nEXCLUSIVE - ACTIVE\nHighest priority exclusive schedule';
                     } else if (isExclusive && isLoser) {
-                      tooltipText += '\n\n❌ OVERRIDDEN\nAnother exclusive schedule has higher priority';
+                      tooltipText += '\n\nOVERRIDDEN\nAnother exclusive schedule has higher priority';
                     } else if (isBlending) {
-                      tooltipText += '\n🔀 Blending with other schedules';
+                      tooltipText += '\nBlending with other schedules';
                     } else if (isLoser) {
-                      tooltipText += '\n⚠️ Overridden by higher priority schedule';
+                      tooltipText += '\nOverridden by higher priority schedule';
                     }
                     
                     return (
@@ -11874,7 +12016,7 @@ const DashboardTiles = {
               <span>Blending</span>
             </div>
             <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-              <span style={{ opacity: 0.5, textDecoration: 'line-through' }}>⚠️ Overridden</span>
+              <span style={{ opacity: 0.5, textDecoration: 'line-through' }}>Overridden</span>
             </div>
             <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
               <div style={{ 
@@ -12361,7 +12503,7 @@ const DashboardTiles = {
                   borderRight: '1px solid var(--border-color)',
                   overflow: 'hidden',
                 }}
-                title={hasSamePriorityConflict ? `⚠️ Same priority conflict with: ${samePriorityConflicts.map(c => c.schedule.name).join(', ')}\n\nBoth schedules are exclusive with the same priority.\nNeXroll will randomly pick one during overlapping times.\nSet different priorities to have deterministic behavior.` : sched.name}
+                title={hasSamePriorityConflict ? `Same priority conflict with: ${samePriorityConflicts.map(c => c.schedule.name).join(', ')}\n\nBoth schedules are exclusive with the same priority.\nNeXroll will randomly pick one during overlapping times.\nSet different priorities to have deterministic behavior.` : sched.name}
                 >
                   {/* Color dot */}
                   <div style={{
@@ -12475,17 +12617,17 @@ const DashboardTiles = {
                     // Tooltip
                     let tooltipText = `${sched.name} — ${activeDayCount} day${activeDayCount !== 1 ? 's' : ''} this week`;
                     if (spanIsExclusive) {
-                      tooltipText = `🔒 ${sched.name} — EXCLUSIVE${schedTimeRange ? ` (${schedTimeRange})` : ''}\nWins over all other schedules${schedTimeRange ? ' during this time window' : ''}`;
+                      tooltipText = `${sched.name} — EXCLUSIVE${schedTimeRange ? ` (${schedTimeRange})` : ''}\nWins over all other schedules${schedTimeRange ? ' during this time window' : ''}`;
                     } else if (spanIsWinner) {
-                      tooltipText = `👑 ${sched.name} — ACTIVE (wins conflict)\nHighest priority among overlapping schedules`;
+                      tooltipText = `${sched.name} — ACTIVE (wins conflict)\nHighest priority among overlapping schedules`;
                     } else if (spanIsInBlend) {
                       tooltipText = spanHasTimeRestrictedExclusive
-                        ? `🔀 ${sched.name} — BLENDING\nActive outside exclusive schedule's time window`
-                        : `🔀 ${sched.name} — BLENDING\nPlays together with other blend-enabled schedules`;
+                        ? `${sched.name} — BLENDING\nActive outside exclusive schedule's time window`
+                        : `${sched.name} — BLENDING\nPlays together with other blend-enabled schedules`;
                     } else if (spanHasTimeRestrictedExclusive && !spanIsExclusive) {
-                      tooltipText = `✓ ${sched.name} — ACTIVE\nRuns outside exclusive schedule's time window`;
+                      tooltipText = `${sched.name} — ACTIVE\nRuns outside exclusive schedule's time window`;
                     } else if (spanIsLoser) {
-                      tooltipText = `⚠️ ${sched.name} — OVERRIDDEN\nAnother schedule has higher priority`;
+                      tooltipText = `${sched.name} — OVERRIDDEN\nAnother schedule has higher priority`;
                     }
 
                     const barColor = sched.color || sched.cat.color;
@@ -12700,7 +12842,7 @@ const DashboardTiles = {
                   alignItems: 'center',
                   gap: '6px'
                 }}
-                title={hasSamePriorityConflict ? `⚠️ Same priority conflict with: ${samePriorityConflicts.map(c => c.schedule.name).join(', ')}\n\nBoth schedules are exclusive with the same priority.\nNeXroll will randomly pick one during overlapping times.\nSet different priorities to have deterministic behavior.` : ''}
+                title={hasSamePriorityConflict ? `Same priority conflict with: ${samePriorityConflicts.map(c => c.schedule.name).join(', ')}\n\nBoth schedules are exclusive with the same priority.\nNeXroll will randomly pick one during overlapping times.\nSet different priorities to have deterministic behavior.` : ''}
                 >
                   {hasSamePriorityConflict && <AlertTriangle size={14} style={{ color: '#ff9800', flexShrink: 0 }} />}
                   {sched.exclusive && !hasSamePriorityConflict && <Lock size={14} style={{ color: '#14B8A6', flexShrink: 0 }} />}
@@ -13261,8 +13403,8 @@ const DashboardTiles = {
                 {dayData.hasBlend && !dayData.hasConflict && (
                   <div 
                     title={dayData.hasExclusive 
-                      ? `🔀 BLEND + EXCLUSIVE\n\n${dayData.blendScheds.length} blending schedule${dayData.blendScheds.length > 1 ? 's' : ''}:\n${dayData.blendScheds.map((s, i) => `${i + 1}. ${s.name}`).join('\n')}\n\n${dayData.exclusiveScheds?.length || 0} exclusive schedule${(dayData.exclusiveScheds?.length || 0) > 1 ? 's' : ''}:\n${(dayData.exclusiveScheds || []).map((s, i) => `${i + 1}. ${s.name}`).join('\n')}\n\nExclusive runs during its time window.\nBlend schedules mix prerolls outside that window.`
-                      : `🔀 BLEND MODE ACTIVE\n\n${dayData.blendScheds.length} schedules blending:\n${dayData.blendScheds.map((s, i) => `${i + 1}. ${s.name}`).join('\n')}\n\nPrerolls from all blending schedules are mixed together!\nNo conflicts - all schedules contribute.`}
+                      ? `BLEND + EXCLUSIVE\n\n${dayData.blendScheds.length} blending schedule${dayData.blendScheds.length > 1 ? 's' : ''}:\n${dayData.blendScheds.map((s, i) => `${i + 1}. ${s.name}`).join('\n')}\n\n${dayData.exclusiveScheds?.length || 0} exclusive schedule${(dayData.exclusiveScheds?.length || 0) > 1 ? 's' : ''}:\n${(dayData.exclusiveScheds || []).map((s, i) => `${i + 1}. ${s.name}`).join('\n')}\n\nExclusive runs during its time window.\nBlend schedules mix prerolls outside that window.`
+                      : `BLEND MODE ACTIVE\n\n${dayData.blendScheds.length} schedules blending:\n${dayData.blendScheds.map((s, i) => `${i + 1}. ${s.name}`).join('\n')}\n\nPrerolls from all blending schedules are mixed together!\nNo conflicts - all schedules contribute.`}
                     style={{ 
                       position: 'absolute', 
                       top: 6, 
@@ -13287,8 +13429,8 @@ const DashboardTiles = {
                 {dayData.hasExclusive && !dayData.hasBlend && !dayData.hasConflict && (
                   <div 
                     title={dayData.exclusiveHasTimeRange 
-                      ? `🔒 TIME-RESTRICTED EXCLUSIVE\n\n${(dayData.exclusiveScheds || []).map(s => s.name).join(', ')}\n\nExclusive during specific hours only.\nOther schedules may run outside this window.`
-                      : `🔒 EXCLUSIVE MODE\n\n${(dayData.exclusiveScheds || []).map(s => s.name).join(', ')}\n\nThis schedule takes priority all day.\nOther schedules on this day are overridden.`}
+                      ? `TIME-RESTRICTED EXCLUSIVE\n\n${(dayData.exclusiveScheds || []).map(s => s.name).join(', ')}\n\nExclusive during specific hours only.\nOther schedules may run outside this window.`
+                      : `EXCLUSIVE MODE\n\n${(dayData.exclusiveScheds || []).map(s => s.name).join(', ')}\n\nThis schedule takes priority all day.\nOther schedules on this day are overridden.`}
                     style={{ 
                       position: 'absolute', 
                       top: 6, 
@@ -13312,8 +13454,8 @@ const DashboardTiles = {
                 {dayData.hasConflict && (
                   <div 
                     title={dayData.hasExclusive 
-                      ? `⚠️ MULTIPLE EXCLUSIVE SCHEDULES\n\n${dayData.exclusiveScheds?.length || 0} exclusive schedules competing:\n${(dayData.exclusiveScheds || []).map((s, i) => `${i + 1}. ${s.name}`).join('\n')}\n\nOnly one exclusive schedule can be active at a time.`
-                      : `⚠️ SCHEDULE CONFLICT\n\n${schedArray.length} schedules active on this day:\n${schedArray.map((s, i) => `${i + 1}. ${s.name}${s === winningSchedule ? ' ← ACTIVE' : ' (overridden)'}`).join('\n')}\n\nTip: Enable "Blend Mode" on schedules to mix their prerolls together!\n\nPriority Rules:\n1. Higher priority value\n2. Ends soonest\n3. Started earliest\n4. Lowest ID`}
+                      ? `MULTIPLE EXCLUSIVE SCHEDULES\n\n${dayData.exclusiveScheds?.length || 0} exclusive schedules competing:\n${(dayData.exclusiveScheds || []).map((s, i) => `${i + 1}. ${s.name}`).join('\n')}\n\nOnly one exclusive schedule can be active at a time.`
+                      : `SCHEDULE CONFLICT\n\n${schedArray.length} schedules active on this day:\n${schedArray.map((s, i) => `${i + 1}. ${s.name}${s === winningSchedule ? ' ← ACTIVE' : ' (overridden)'}`).join('\n')}\n\nTip: Enable "Blend Mode" on schedules to mix their prerolls together!\n\nPriority Rules:\n1. Higher priority value\n2. Ends soonest\n3. Started earliest\n4. Lowest ID`}
                     style={{ 
                       position: 'absolute', 
                       top: 6, 
@@ -13402,7 +13544,7 @@ const DashboardTiles = {
                     // Add same-priority conflict warning to tooltip
                     if (hasSamePriorityConflict) {
                       const conflictNames = [...new Set(samePriorityConflicts.map(c => c.schedule.name))].join(', ');
-                      tooltipText += `\n\n⚠️ SAME PRIORITY CONFLICT with: ${conflictNames}\nNeXroll will randomly pick one. Set different priorities for deterministic behavior.`;
+                      tooltipText += `\n\nSAME PRIORITY CONFLICT with: ${conflictNames}\nNeXroll will randomly pick one. Set different priorities for deterministic behavior.`;
                     }
                     
                     if (isExclusive) {
@@ -13584,17 +13726,17 @@ const DashboardTiles = {
               <span>Today</span>
             </div>
             <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-              <div style={{ 
-                width: 16, 
-                height: 16, 
+              <div style={{
+                width: 16,
+                height: 16,
                 border: '2px solid #ff9800',
                 borderRadius: 3,
                 display: 'flex',
                 alignItems: 'center',
                 justifyContent: 'center',
-                fontSize: '0.7rem'
-              }}>⚠️</div>
-              <span>Schedule Conflict (👑 = Active)</span>
+                color: '#ff9800'
+              }}><AlertTriangle size={10} /></div>
+              <span style={{ display: 'inline-flex', alignItems: 'center', gap: '4px' }}>Schedule Conflict (<Crown size={12} /> = Active)</span>
             </div>
           </div>
         </div>
@@ -13886,13 +14028,14 @@ const DashboardTiles = {
                   }}>
                     {monthName}
                     {entry.conflictDays > 0 && (
-                      <span 
-                        title={`⚠️ ${entry.conflictDays} day${entry.conflictDays > 1 ? 's' : ''} with schedule conflicts`}
-                        style={{ 
-                          fontSize: '0.9rem',
+                      <span
+                        title={`${entry.conflictDays} day${entry.conflictDays > 1 ? 's' : ''} with schedule conflicts`}
+                        style={{
                           color: '#ff9800',
-                          cursor: 'help'
-                        }}>⚠️</span>
+                          cursor: 'help',
+                          display: 'inline-flex',
+                          alignItems: 'center'
+                        }}><AlertTriangle size={14} /></span>
                     )}
                   </div>
                   {isCurrentMonth && (
@@ -14051,264 +14194,74 @@ const DashboardTiles = {
 
   // Create Schedule page - separate view  
   const renderCreateSchedulePage = () => (
-    <div>
-      <div className="upload-section" style={{ maxWidth: '1200px', margin: '30px auto' }}>
-        {/* Header with Progress Steps */}
-        <div style={{ marginBottom: '2rem' }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
-            <div>
-              <h1 className="header" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.5rem', margin: 0, fontSize: '1.8rem', fontWeight: 700 }}>
-                <PlusCircle size={32} className="header-icon" /> Create New Schedule
-              </h1>
-              <p style={{ color: 'var(--text-secondary)', fontSize: '0.95rem', margin: 0 }}>
-                Set up a new preroll schedule with step-by-step guidance.
-              </p>
-            </div>
-          </div>
-          
-          {/* Visual Step Progress Indicator */}
-          <div style={{
-            display: 'flex',
-            alignItems: 'center',
-            gap: '1rem',
-            padding: '1rem',
-            backgroundColor: 'var(--bg-color)',
-            borderRadius: '8px',
-            border: '1px solid var(--border-color)'
-          }}>
-            {[
-              { num: 1, label: 'Mode', icon: <Target size={16} /> },
-              { num: 2, label: 'Basic Info', icon: <Edit size={16} /> },
-              { num: 3, label: 'Recurrence', icon: <Calendar size={16} /> },
-              { num: 4, label: scheduleMode === 'simple' ? 'Content' : 'Sequence', icon: scheduleMode === 'simple' ? <Folder size={16} /> : <Film size={16} /> },
-              { num: 5, label: 'Settings', icon: <Settings size={16} /> }
-            ].map((step, index, arr) => (
-              <React.Fragment key={step.num}>
-                <div style={{
-                  flex: 1,
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: '0.5rem'
-                }}>
-                  <div style={{
-                    width: '32px',
-                    height: '32px',
-                    borderRadius: '50%',
-                    backgroundColor: 'var(--button-bg)',
-                    color: 'white',
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    fontWeight: 600,
-                    fontSize: '0.9rem'
-                  }}>
-                    {step.num}
-                  </div>
-                  <div style={{ flex: 1 }}>
-                    <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>Step {step.num}</div>
-                    <div style={{ fontSize: '0.9rem', fontWeight: 600, color: 'var(--text-color)', display: 'flex', alignItems: 'center', gap: '0.25rem' }}>
-                      <span>{step.icon}</span>
-                      {step.label}
-                    </div>
-                  </div>
-                </div>
-                {index < arr.length - 1 && (
-                  <div style={{
-                    width: '40px',
-                    height: '2px',
-                    backgroundColor: 'var(--border-color)'
-                  }} />
-                )}
-              </React.Fragment>
-            ))}
-          </div>
+    <div className="nx-sched">
+      <div>
+        {/* Header */}
+        <div style={{ marginBottom: '1rem' }}>
+          <h1 className="header" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', margin: 0, fontSize: '1.6rem', fontWeight: 700 }}>
+            <PlusCircle size={28} className="header-icon" /> Create New Schedule
+          </h1>
+          <p style={{ color: 'var(--text-secondary)', fontSize: '0.95rem', margin: '0.35rem 0 0' }}>
+            Configure each section below, then create your schedule.
+          </p>
         </div>
-        
+
+        {/* Quick Start: Browse Holidays */}
+        <div
+          onClick={() => {
+            loadHolidayCountries();
+            loadHolidays(holidaySelectedCountry, holidaySelectedYear);
+            checkHolidayApiStatus();
+            setShowHolidayBrowser(true);
+          }}
+          className="nx-conn-hint"
+          style={{ cursor: 'pointer', marginTop: 0, marginBottom: '1rem', alignItems: 'center', justifyContent: 'space-between' }}
+        >
+          <span style={{ display: 'flex', alignItems: 'center', gap: '0.6rem' }}>
+            <Globe size={18} className="nx-conn-hint-icon" />
+            <span><strong style={{ color: 'var(--text-color)' }}>Quick start:</strong> browse 100+ countries' holidays to auto-fill dates.</span>
+          </span>
+          <span style={{ display: 'inline-flex', alignItems: 'center', gap: '0.25rem', color: 'var(--button-bg)', fontWeight: 600 }}>
+            Browse <ChevronRight size={15} />
+          </span>
+        </div>
+
         <form onSubmit={handleCreateSchedule}>
-          {/* Step 1: Mode Selection */}
-          <div style={{ 
-            marginBottom: '2rem', 
-            padding: '1.5rem', 
-            backgroundColor: 'var(--card-bg)', 
-            borderRadius: '12px', 
-            border: '2px solid var(--border-color)',
-            boxShadow: '0 2px 8px rgba(0,0,0,0.08)'
-          }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', marginBottom: '1.25rem' }}>
-              <div style={{ 
-                display: 'flex', 
-                alignItems: 'center', 
-                justifyContent: 'center',
-                width: '32px', 
-                height: '32px', 
-                borderRadius: '50%', 
-                backgroundColor: 'var(--button-bg)',
-                color: 'white',
-                fontWeight: 700,
-                fontSize: '1rem'
-              }}>1</div>
-              <h3 style={{ margin: 0, fontSize: '1.2rem', fontWeight: 600 }}>Schedule Mode</h3>
-            </div>
-            
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem', marginBottom: '1rem' }}>
-              <label style={{ 
-                display: 'flex', 
-                flexDirection: 'column',
-                cursor: 'pointer', 
-                padding: '1.25rem', 
-                backgroundColor: scheduleMode === 'simple' ? 'var(--button-bg)' : 'var(--bg-color)', 
-                color: scheduleMode === 'simple' ? 'white' : 'var(--text-color)', 
-                borderRadius: '8px', 
-                border: '3px solid ' + (scheduleMode === 'simple' ? 'var(--button-bg)' : 'var(--border-color)'), 
-                transition: 'all 0.2s',
-                position: 'relative'
-              }}>
-                <div style={{ display: 'flex', alignItems: 'center', marginBottom: '0.5rem' }}>
-                  <input
-                    type="radio"
-                    value="simple"
-                    checked={scheduleMode === 'simple'}
-                    onChange={(e) => setScheduleMode(e.target.value)}
-                    style={{ marginRight: '0.75rem', width: '18px', height: '18px' }}
-                  />
-                  <span style={{ display: 'flex', alignItems: 'center', marginRight: '0.5rem' }}><Folder size={24} /></span>
-                  <span style={{ fontSize: '1.1rem', fontWeight: 600 }}>Simple Mode</span>
-                </div>
-                <p style={{ margin: '0 0 0 2.25rem', fontSize: '0.9rem', opacity: 0.9 }}>
-                  Select a single category with random or sequential playback. Perfect for basic scheduling needs.
-                </p>
-              </label>
-              
-              <label style={{ 
-                display: 'flex', 
-                flexDirection: 'column',
-                cursor: 'pointer', 
-                padding: '1.25rem', 
-                backgroundColor: scheduleMode === 'advanced' ? 'var(--button-bg)' : 'var(--bg-color)', 
-                color: scheduleMode === 'advanced' ? 'white' : 'var(--text-color)', 
-                borderRadius: '8px', 
-                border: '3px solid ' + (scheduleMode === 'advanced' ? 'var(--button-bg)' : 'var(--border-color)'), 
-                transition: 'all 0.2s',
-                position: 'relative'
-              }}>
-                <div style={{ display: 'flex', alignItems: 'center', marginBottom: '0.5rem' }}>
-                  <input
-                    type="radio"
-                    value="advanced"
-                    checked={scheduleMode === 'advanced'}
-                    onChange={(e) => setScheduleMode(e.target.value)}
-                    style={{ marginRight: '0.75rem', width: '18px', height: '18px' }}
-                  />
-                  <span style={{ display: 'flex', alignItems: 'center', marginRight: '0.5rem' }}><Film size={24} /></span>
-                  <span style={{ fontSize: '1.1rem', fontWeight: 600 }}>Sequence Mode</span>
-                </div>
-                <p style={{ margin: '0 0 0 2.25rem', fontSize: '0.9rem', opacity: 0.9 }}>
-                  Build custom sequences with multiple categories and fixed prerolls. Full creative control.
-                </p>
-              </label>
+          {/* Section 1: Mode */}
+          <div className="nx-sched-section">
+            <div className="nx-sched-section-head">
+              <span className="nx-sched-step">1</span>
+              <h3>Schedule Mode</h3>
             </div>
 
-            {/* Helpful comparison guide */}
-            <div style={{
-              marginTop: '1rem',
-              padding: '1rem',
-              backgroundColor: 'rgba(59, 130, 246, 0.05)',
-              borderRadius: '8px',
-              border: '1px solid rgba(59, 130, 246, 0.2)'
-            }}>
-              <div style={{ display: 'flex', alignItems: 'flex-start', gap: '0.75rem' }}>
-                <span style={{ fontSize: '1.25rem' }}>ℹ️</span>
-                <div style={{ flex: 1 }}>
-                  <strong style={{ fontSize: '0.9rem', color: 'var(--text-color)' }}>When to use each mode:</strong>
-                  <ul style={{ margin: '0.5rem 0 0 0', paddingLeft: '1.25rem', fontSize: '0.85rem', color: 'var(--text-secondary)', lineHeight: '1.6' }}>
-                    <li><strong>Simple Mode:</strong> Quick setup for basic needs - "Play all prerolls from my Holiday category during December"</li>
-                    <li><strong>Sequence Mode:</strong> Advanced control - "Play Studio Logo + Random Trailer + Holiday Message in that exact order"</li>
-                  </ul>
-                </div>
-              </div>
+            <div className="nx-sched-choices">
+              <label className={`nx-sched-choice${scheduleMode === 'simple' ? ' active' : ''}`}>
+                <span className="nx-sched-choice-title">
+                  <input type="radio" value="simple" checked={scheduleMode === 'simple'} onChange={(e) => setScheduleMode(e.target.value)} style={{ width: 16, height: 16 }} />
+                  <Folder size={18} /> Simple Mode
+                  {scheduleMode === 'simple' && <Check size={16} className="nx-sched-choice-check" />}
+                </span>
+                <p className="nx-sched-choice-desc">A single category with random or sequential playback. Best for basic needs.</p>
+              </label>
+
+              <label className={`nx-sched-choice${scheduleMode === 'advanced' ? ' active' : ''}`}>
+                <span className="nx-sched-choice-title">
+                  <input type="radio" value="advanced" checked={scheduleMode === 'advanced'} onChange={(e) => setScheduleMode(e.target.value)} style={{ width: 16, height: 16 }} />
+                  <Film size={18} /> Sequence Mode
+                  {scheduleMode === 'advanced' && <Check size={16} className="nx-sched-choice-check" />}
+                </span>
+                <p className="nx-sched-choice-desc">Build a custom sequence of categories and fixed prerolls in an exact order.</p>
+              </label>
             </div>
           </div>
 
-          {/* Holiday Browser Banner - Between Steps 1 & 2 */}
-          <div 
-            onClick={() => {
-              loadHolidayCountries();
-              loadHolidays(holidaySelectedCountry, holidaySelectedYear);
-              checkHolidayApiStatus();
-              setShowHolidayBrowser(true);
-            }}
-            style={{ 
-              marginBottom: '2rem', 
-              padding: '1rem 1.5rem', 
-              backgroundColor: darkMode ? 'rgba(59, 130, 246, 0.15)' : 'rgba(59, 130, 246, 0.08)', 
-              borderRadius: '12px', 
-              border: '2px dashed rgba(59, 130, 246, 0.4)',
-              cursor: 'pointer',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'space-between',
-              transition: 'all 0.2s ease'
-            }}
-            onMouseEnter={(e) => {
-              e.currentTarget.style.backgroundColor = darkMode ? 'rgba(59, 130, 246, 0.25)' : 'rgba(59, 130, 246, 0.12)';
-              e.currentTarget.style.borderColor = 'rgba(59, 130, 246, 0.6)';
-            }}
-            onMouseLeave={(e) => {
-              e.currentTarget.style.backgroundColor = darkMode ? 'rgba(59, 130, 246, 0.15)' : 'rgba(59, 130, 246, 0.08)';
-              e.currentTarget.style.borderColor = 'rgba(59, 130, 246, 0.4)';
-            }}
-          >
-            <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
-              <Globe size={32} style={{ color: '#3b82f6' }} />
-              <div>
-                <div style={{ fontSize: '1.1rem', fontWeight: 600, color: 'var(--text-color)', marginBottom: '0.25rem' }}>
-                  Quick Start: Browse Holidays
-                </div>
-                <div style={{ fontSize: '0.9rem', color: 'var(--text-secondary)' }}>
-                  Select from 100+ countries to auto-fill your schedule with holiday dates
-                </div>
-              </div>
+          {/* Section 2: Basic Information */}
+          <div className="nx-sched-section">
+            <div className="nx-sched-section-head">
+              <span className="nx-sched-step">2</span>
+              <h3>Basic Information</h3>
             </div>
-            <div style={{ 
-              display: 'flex', 
-              alignItems: 'center', 
-              gap: '0.5rem',
-              padding: '0.5rem 1rem',
-              backgroundColor: 'var(--button-bg)',
-              color: 'white',
-              borderRadius: '6px',
-              fontWeight: 600,
-              fontSize: '0.9rem'
-            }}>
-              Browse <ChevronRight size={16} />
-            </div>
-          </div>
 
-          {/* Step 2: Basic Information */}
-          <div style={{ 
-            marginBottom: '2rem', 
-            padding: '1.5rem', 
-            backgroundColor: 'var(--card-bg)', 
-            borderRadius: '12px', 
-            border: '2px solid var(--border-color)',
-            boxShadow: '0 2px 8px rgba(0,0,0,0.08)'
-          }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', marginBottom: '1.25rem' }}>
-              <div style={{ 
-                display: 'flex', 
-                alignItems: 'center', 
-                justifyContent: 'center',
-                width: '32px', 
-                height: '32px', 
-                borderRadius: '50%', 
-                backgroundColor: 'var(--button-bg)',
-                color: 'white',
-                fontWeight: 700,
-                fontSize: '1rem'
-              }}>2</div>
-              <h3 style={{ margin: 0, fontSize: '1.2rem', fontWeight: 600 }}>Basic Information</h3>
-            </div>
-            
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1.25rem' }}>
               <div>
                 <label style={{ display: 'block', marginBottom: '0.5rem', fontSize: '0.95rem', fontWeight: 600, color: 'var(--text-color)' }}>
@@ -14324,9 +14277,8 @@ const DashboardTiles = {
                   style={{ 
                     padding: '0.75rem', 
                     fontSize: '1rem',
-                    border: '2px solid var(--border-color)',
                     borderRadius: '6px',
-                    width: '90%'
+                    width: '100%'
                   }}
                 />
               </div>
@@ -14342,7 +14294,6 @@ const DashboardTiles = {
                   style={{ 
                     padding: '0.75rem', 
                     fontSize: '1rem',
-                    border: '2px solid var(--border-color)',
                     borderRadius: '6px',
                     width: '95%'
                   }}
@@ -14366,7 +14317,7 @@ const DashboardTiles = {
                     value={scheduleForm.start_date}
                     onChange={(e) => setScheduleForm({...scheduleForm, start_date: e.target.value})}
                     required
-                    style={{ padding: '0.75rem', fontSize: '1rem', border: '2px solid var(--border-color)', borderRadius: '6px', width: '90%' }}
+                    style={{ padding: '0.75rem', fontSize: '1rem', border: '2px solid var(--border-color)', borderRadius: '6px', width: '100%' }}
                   />
                 </div>
               )}
@@ -14381,7 +14332,7 @@ const DashboardTiles = {
                     type="datetime-local"
                     value={scheduleForm.end_date}
                     onChange={(e) => setScheduleForm({...scheduleForm, end_date: e.target.value})}
-                    style={{ padding: '0.75rem', fontSize: '1rem', border: '2px solid var(--border-color)', borderRadius: '6px', width: '90%' }}
+                    style={{ padding: '0.75rem', fontSize: '1rem', border: '2px solid var(--border-color)', borderRadius: '6px', width: '100%' }}
                   />
                   <p style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', margin: '0.25rem 0 0 0' }}>
                     Leave blank for indefinite schedule
@@ -14434,7 +14385,7 @@ const DashboardTiles = {
                   )}
                   {selectedMonths.length > 0 && (
                     <p style={{ fontSize: '0.85rem', color: '#28a745', marginTop: '0.5rem' }}>
-                      ✓ Active during: {selectedMonths.map(m => ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][m-1]).join(', ')}
+                      Active during: {selectedMonths.map(m => ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][m-1]).join(', ')}
                     </p>
                   )}
                 </div>
@@ -14480,7 +14431,6 @@ const DashboardTiles = {
                     style={{ 
                       padding: '0.75rem', 
                       fontSize: '1rem',
-                      border: '2px solid var(--border-color)',
                       borderRadius: '6px',
                       width: '100%'
                     }}
@@ -14490,13 +14440,13 @@ const DashboardTiles = {
                       const isRange = preset.start_month && preset.start_day && preset.end_month && preset.end_day;
                       return (
                         <option key={preset.id} value={preset.id}>
-                          {preset.name} — {isRange ? `📋 Yearly ${preset.start_month}/${preset.start_day}–${preset.end_month}/${preset.end_day}` : `🎉 Holiday ${preset.month}/${preset.day}`}
+                          {preset.name} — {isRange ? `Yearly ${preset.start_month}/${preset.start_day}–${preset.end_month}/${preset.end_day}` : `Holiday ${preset.month}/${preset.day}`}
                         </option>
                       );
                     })}
                   </select>
                   <p style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', margin: '0.25rem 0 0 0' }}>
-                    📋 Date-range presets automatically switch to <strong>Yearly</strong> type. 🎉 Single-day presets use <strong>Holiday</strong> type.
+                    Date-range presets automatically switch to <strong>Yearly</strong> type. Single-day presets use <strong>Holiday</strong> type.
                   </p>
                 </div>
               )}
@@ -14505,27 +14455,9 @@ const DashboardTiles = {
 
           {/* Step 3: Recurrence Pattern - Daily */}
           {scheduleForm.type === 'daily' && (
-            <div style={{ 
-              marginBottom: '2rem', 
-              padding: '1.5rem', 
-              backgroundColor: 'var(--card-bg)', 
-              borderRadius: '12px', 
-              border: '2px solid var(--border-color)',
-              boxShadow: '0 2px 8px rgba(0,0,0,0.08)'
-            }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', marginBottom: '1.25rem' }}>
-                <div style={{ 
-                  display: 'flex', 
-                  alignItems: 'center', 
-                  justifyContent: 'center',
-                  width: '32px', 
-                  height: '32px', 
-                  borderRadius: '50%', 
-                  backgroundColor: 'var(--button-bg)',
-                  color: 'white',
-                  fontWeight: 700,
-                  fontSize: '1rem'
-                }}>3</div>
+            <div className="nx-sched-section">
+              <div className="nx-sched-section-head">
+                <span className="nx-sched-step">3</span>
                 <h3 style={{ margin: 0, fontSize: '1.2rem', fontWeight: 600, display: 'flex', alignItems: 'center', gap: '0.5rem' }}><Clock size={20} /> Daily Recurrence</h3>
               </div>
               
@@ -14542,11 +14474,11 @@ const DashboardTiles = {
                     style={{ 
                       padding: '0.75rem', 
                       fontSize: '1rem',
-                      border: '2px solid var(--border-color)',
                       borderRadius: '6px',
                       width: '100%'
                     }}
                   />
+                  <TimeQuickPicks current={timeRange.start} onPick={(v) => setTimeRange({ ...timeRange, start: v })} />
                   <p style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', margin: '0.25rem 0 0 0' }}>
                     When should this schedule activate?
                   </p>
@@ -14564,11 +14496,11 @@ const DashboardTiles = {
                     style={{ 
                       padding: '0.75rem', 
                       fontSize: '1rem',
-                      border: '2px solid var(--border-color)',
                       borderRadius: '6px',
                       width: '100%'
                     }}
                   />
+                  <TimeQuickPicks end current={timeRange.end} onPick={(v) => setTimeRange({ ...timeRange, end: v })} />
                   <p style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', margin: '0.25rem 0 0 0' }}>
                     Leave blank for specific time trigger
                   </p>
@@ -14583,8 +14515,8 @@ const DashboardTiles = {
                 border: '1px solid ' + (timeRange.start ? 'rgba(40, 167, 69, 0.3)' : 'rgba(220, 53, 69, 0.3)')
               }}>
                 <p style={{ fontSize: '0.9rem', color: timeRange.start ? '#28a745' : '#dc3545', margin: 0, display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                  <span style={{ fontSize: '1.2rem' }}>{timeRange.start ? '✓' : '⚠️'}</span>
-                  {timeRange.start 
+                  <span style={{ display: 'flex', alignItems: 'center' }}>{timeRange.start ? <CheckCircle size={18} /> : <AlertTriangle size={18} />}</span>
+                  {timeRange.start
                     ? `Schedule will run daily ${timeRange.end ? `from ${timeRange.start} to ${timeRange.end}` : `at ${timeRange.start}`}`
                     : 'Please select at least a start time to continue'}
                 </p>
@@ -14594,27 +14526,9 @@ const DashboardTiles = {
 
           {/* Step 3: Recurrence Pattern - Weekly */}
           {scheduleForm.type === 'weekly' && (
-            <div style={{ 
-              marginBottom: '2rem', 
-              padding: '1.5rem', 
-              backgroundColor: 'var(--card-bg)', 
-              borderRadius: '12px', 
-              border: '2px solid var(--border-color)',
-              boxShadow: '0 2px 8px rgba(0,0,0,0.08)'
-            }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', marginBottom: '1.25rem' }}>
-                <div style={{ 
-                  display: 'flex', 
-                  alignItems: 'center', 
-                  justifyContent: 'center',
-                  width: '32px', 
-                  height: '32px', 
-                  borderRadius: '50%', 
-                  backgroundColor: 'var(--button-bg)',
-                  color: 'white',
-                  fontWeight: 700,
-                  fontSize: '1rem'
-                }}>3</div>
+            <div className="nx-sched-section">
+              <div className="nx-sched-section-head">
+                <span className="nx-sched-step">3</span>
                 <h3 style={{ margin: 0, fontSize: '1.2rem', fontWeight: 600 }}><CalendarDays size={20} style={{marginRight: '0.5rem', verticalAlign: 'middle'}} /> Weekly Recurrence</h3>
               </div>
               
@@ -14626,7 +14540,6 @@ const DashboardTiles = {
                 {['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'].map((day, index) => {
                   const dayLower = day.toLowerCase();
                   const isSelected = weekDays.includes(dayLower);
-                  const dayEmojis = ['☀️', '🌙', '💼', '📚', '⚡', '🎉', '🌟'];
                   return (
                     <label
                       key={day}
@@ -14660,8 +14573,7 @@ const DashboardTiles = {
                         }}
                         style={{ position: 'absolute', opacity: 0 }}
                       />
-                      <span style={{ fontSize: '1.5rem', marginBottom: '0.25rem' }}>{dayEmojis[index]}</span>
-                      <span style={{ fontSize: '0.95rem' }}>{day.substring(0, 3)}</span>
+                      <span style={{ fontSize: '1.1rem', fontWeight: 700, letterSpacing: '0.02em' }}>{day.substring(0, 3)}</span>
                     </label>
                   );
                 })}
@@ -14675,8 +14587,8 @@ const DashboardTiles = {
                 border: '1px solid ' + (weekDays.length > 0 ? 'rgba(40, 167, 69, 0.3)' : 'rgba(220, 53, 69, 0.3)')
               }}>
                 <p style={{ fontSize: '0.9rem', color: weekDays.length > 0 ? '#28a745' : '#dc3545', margin: 0, display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                  <span style={{ fontSize: '1.2rem' }}>{weekDays.length > 0 ? '✓' : '⚠️'}</span>
-                  {weekDays.length > 0 
+                  <span style={{ display: 'flex', alignItems: 'center' }}>{weekDays.length > 0 ? <CheckCircle size={18} /> : <AlertTriangle size={18} />}</span>
+                  {weekDays.length > 0
                     ? `Schedule will run every ${weekDays.map(d => d.charAt(0).toUpperCase() + d.slice(1, 3)).join(', ')}`
                     : 'Please select at least one day of the week'}
                 </p>
@@ -14703,11 +14615,11 @@ const DashboardTiles = {
                       style={{ 
                         padding: '0.5rem', 
                         borderRadius: '6px', 
-                        border: '2px solid var(--border-color)',
                         width: '100%',
                         fontSize: '0.95rem'
                       }}
                     />
+                    <TimeQuickPicks current={timeRange.start} onPick={(v) => setTimeRange({ ...timeRange, start: v })} />
                   </div>
                   <div>
                     <label style={{ display: 'block', marginBottom: '0.25rem', fontSize: '0.85rem', color: 'var(--text-color)' }}>
@@ -14720,11 +14632,11 @@ const DashboardTiles = {
                       style={{ 
                         padding: '0.5rem', 
                         borderRadius: '6px', 
-                        border: '2px solid var(--border-color)',
                         width: '100%',
                         fontSize: '0.95rem'
                       }}
                     />
+                    <TimeQuickPicks end current={timeRange.end} onPick={(v) => setTimeRange({ ...timeRange, end: v })} />
                   </div>
                 </div>
                 {timeRange.start && timeRange.end && (
@@ -14739,27 +14651,9 @@ const DashboardTiles = {
 
           {/* Step 3: Recurrence Pattern - Monthly */}
           {scheduleForm.type === 'monthly' && (
-            <div style={{ 
-              marginBottom: '2rem', 
-              padding: '1.5rem', 
-              backgroundColor: 'var(--card-bg)', 
-              borderRadius: '12px', 
-              border: '2px solid var(--border-color)',
-              boxShadow: '0 2px 8px rgba(0,0,0,0.08)'
-            }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', marginBottom: '1.25rem' }}>
-                <div style={{ 
-                  display: 'flex', 
-                  alignItems: 'center', 
-                  justifyContent: 'center',
-                  width: '32px', 
-                  height: '32px', 
-                  borderRadius: '50%', 
-                  backgroundColor: 'var(--button-bg)',
-                  color: 'white',
-                  fontWeight: 700,
-                  fontSize: '1rem'
-                }}>3</div>
+            <div className="nx-sched-section">
+              <div className="nx-sched-section-head">
+                <span className="nx-sched-step">3</span>
                 <h3 style={{ margin: 0, fontSize: '1.2rem', fontWeight: 600 }}><Calendar size={20} style={{marginRight: '0.5rem', verticalAlign: 'middle'}} /> Monthly Recurrence</h3>
               </div>
               
@@ -14785,7 +14679,7 @@ const DashboardTiles = {
                     onMouseEnter={(e) => e.currentTarget.style.backgroundColor = '#218838'}
                     onMouseLeave={(e) => e.currentTarget.style.backgroundColor = '#28a745'}
                   >
-                    ✓ Select All
+                    Select All
                   </button>
                   <button
                     type="button"
@@ -14804,7 +14698,7 @@ const DashboardTiles = {
                     onMouseEnter={(e) => e.currentTarget.style.backgroundColor = '#5a6268'}
                     onMouseLeave={(e) => e.currentTarget.style.backgroundColor = '#6c757d'}
                   >
-                    ✗ Clear All
+                    Clear All
                   </button>
                 </div>
               </div>
@@ -14860,7 +14754,7 @@ const DashboardTiles = {
                 border: '1px solid ' + (monthDays.length > 0 ? 'rgba(40, 167, 69, 0.3)' : 'rgba(220, 53, 69, 0.3)')
               }}>
                 <p style={{ fontSize: '0.9rem', color: monthDays.length > 0 ? '#28a745' : '#dc3545', margin: 0, display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                  <span style={{ fontSize: '1.2rem' }}>{monthDays.length > 0 ? '✓' : '⚠️'}</span>
+                  <span style={{ display: 'flex', alignItems: 'center' }}>{monthDays.length > 0 ? <CheckCircle size={18} /> : <AlertTriangle size={18} />}</span>
                   {monthDays.length > 0
                     ? `Schedule will run on day${monthDays.length > 1 ? 's' : ''} ${monthDays.join(', ')} of the selected months`
                     : 'Please select at least one day of the month'}
@@ -14883,6 +14777,7 @@ const DashboardTiles = {
                       onChange={(e) => setTimeRange({...timeRange, start: e.target.value})}
                       style={{ padding: '0.75rem', fontSize: '1rem', border: '2px solid var(--border-color)', borderRadius: '6px', width: '100%' }}
                     />
+                    <TimeQuickPicks current={timeRange.start} onPick={(v) => setTimeRange({ ...timeRange, start: v })} />
                   </div>
                   <div>
                     <label style={{ display: 'block', marginBottom: '0.4rem', fontSize: '0.85rem', color: 'var(--text-secondary)' }}>End Time</label>
@@ -14893,6 +14788,7 @@ const DashboardTiles = {
                       onChange={(e) => setTimeRange({...timeRange, end: e.target.value})}
                       style={{ padding: '0.75rem', fontSize: '1rem', border: '2px solid var(--border-color)', borderRadius: '6px', width: '100%' }}
                     />
+                    <TimeQuickPicks end current={timeRange.end} onPick={(v) => setTimeRange({ ...timeRange, end: v })} />
                   </div>
                 </div>
               </div>
@@ -14900,27 +14796,9 @@ const DashboardTiles = {
           )}
 
           {/* Step 4: Content Configuration */}
-          <div style={{ 
-            marginBottom: '2rem', 
-            padding: '1.5rem', 
-            backgroundColor: 'var(--card-bg)', 
-            borderRadius: '12px', 
-            border: '2px solid var(--border-color)',
-            boxShadow: '0 2px 8px rgba(0,0,0,0.08)'
-          }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', marginBottom: '1.25rem' }}>
-              <div style={{ 
-                display: 'flex', 
-                alignItems: 'center', 
-                justifyContent: 'center',
-                width: '32px', 
-                height: '32px', 
-                borderRadius: '50%', 
-                backgroundColor: 'var(--button-bg)',
-                color: 'white',
-                fontWeight: 700,
-                fontSize: '1rem'
-              }}>4</div>
+          <div className="nx-sched-section">
+            <div className="nx-sched-section-head">
+              <span className="nx-sched-step">4</span>
               <h3 style={{ margin: 0, fontSize: '1.2rem', fontWeight: 600, display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
                 {scheduleMode === 'simple' ? <><Folder size={20} /> Content Selection</> : <><Film size={20} /> Sequence Builder</>}
               </h3>
@@ -14979,9 +14857,8 @@ const DashboardTiles = {
                       style={{ 
                         padding: '0.65rem', 
                         fontSize: '0.95rem',
-                        border: '2px solid var(--border-color)',
                         borderRadius: '6px',
-                        width: '90%'
+                        width: '100%'
                       }}
                     />
                   </div>
@@ -14998,9 +14875,8 @@ const DashboardTiles = {
                       style={{ 
                         padding: '0.65rem', 
                         fontSize: '0.95rem',
-                        border: '2px solid var(--border-color)',
                         borderRadius: '6px',
-                        width: '90%'
+                        width: '100%'
                       }}
                     />
                   </div>
@@ -15053,7 +14929,6 @@ const DashboardTiles = {
                       style={{ 
                         padding: '0.75rem', 
                         fontSize: '1rem',
-                        border: '2px solid var(--border-color)',
                         borderRadius: '6px',
                         width: '100%'
                       }}
@@ -15172,7 +15047,6 @@ const DashboardTiles = {
                         flex: 1,
                         padding: '0.75rem', 
                         fontSize: '0.95rem',
-                        border: '2px solid var(--border-color)',
                         borderRadius: '6px'
                       }}
                     >
@@ -15231,27 +15105,9 @@ const DashboardTiles = {
             )}
           </div>
           {/* Step 5: Optional Settings */}
-          <div style={{ 
-            marginBottom: '2rem', 
-            padding: '1.5rem', 
-            backgroundColor: 'var(--card-bg)', 
-            borderRadius: '12px', 
-            border: '2px solid var(--border-color)',
-            boxShadow: '0 2px 8px rgba(0,0,0,0.08)'
-          }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', marginBottom: '1.25rem' }}>
-              <div style={{ 
-                display: 'flex', 
-                alignItems: 'center', 
-                justifyContent: 'center',
-                width: '32px', 
-                height: '32px', 
-                borderRadius: '50%', 
-                backgroundColor: '#6c757d',
-                color: 'white',
-                fontWeight: 700,
-                fontSize: '1rem'
-              }}>5</div>
+          <div className="nx-sched-section">
+            <div className="nx-sched-section-head">
+              <span className="nx-sched-step">5</span>
               <h3 style={{ margin: 0, fontSize: '1.2rem', fontWeight: 600, display: 'flex', alignItems: 'center', gap: '0.5rem' }}><Settings size={20} /> Optional Settings</h3>
             </div>
             
@@ -15332,7 +15188,6 @@ const DashboardTiles = {
                   style={{ 
                     padding: '0.75rem', 
                     fontSize: '1rem',
-                    border: '2px solid var(--border-color)',
                     borderRadius: '6px',
                     width: '100%'
                   }}
@@ -15359,8 +15214,7 @@ const DashboardTiles = {
                     onChange={(e) => setScheduleForm({...scheduleForm, color: e.target.value})}
                     style={{ 
                       width: '60px', 
-                      height: '48px', 
-                      border: '2px solid var(--border-color)', 
+                      height: '48px',  
                       borderRadius: '6px', 
                       cursor: 'pointer',
                       padding: '4px'
@@ -15377,7 +15231,6 @@ const DashboardTiles = {
                       flex: 1,
                       fontFamily: 'monospace',
                       fontSize: '0.95rem',
-                      border: '2px solid var(--border-color)',
                       borderRadius: '6px'
                     }}
                   />
@@ -15404,17 +15257,14 @@ const DashboardTiles = {
             </div>
           </div>
           
-          {/* Submit Button */}
-          <div style={{ 
-            display: 'flex', 
-            justifyContent: 'flex-end', 
-            gap: '1rem',
-            paddingTop: '1rem',
-            borderTop: '2px solid var(--border-color)'
-          }}>
-            <button 
-              type="button" 
-              className="button"
+          {/* Sticky create bar */}
+          <div className="nx-sched-bar">
+            <span className="nx-sched-bar-info">
+              {scheduleForm.name ? <>Creating <strong style={{ color: 'var(--text-color)' }}>{scheduleForm.name}</strong></> : 'Give your schedule a name to continue'}
+            </span>
+            <button
+              type="button"
+              className="button button-secondary"
               onClick={() => {
                 setScheduleForm({
                   name: '', type: 'monthly', start_date: '', end_date: '',
@@ -15427,40 +15277,15 @@ const DashboardTiles = {
                 setSelectedMonths([]); setMonthDays([]);
                 setTimeRange({ start: '', end: '' });
               }}
-              style={{ 
-                padding: '1rem 2rem', 
-                backgroundColor: '#6c757d',
-                fontSize: '1.05rem',
-                fontWeight: 600,
-                borderRadius: '8px',
-                minWidth: '150px'
-              }}
             >
-              Cancel
+              Reset
             </button>
-            <button 
-              type="submit" 
-              className="button"
-              style={{ 
-                padding: '1rem 2rem', 
-                backgroundColor: 'var(--button-bg)',
-                fontSize: '1.05rem',
-                fontWeight: 600,
-                borderRadius: '8px',
-                minWidth: '200px',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                gap: '0.5rem'
-              }}
-            >
-              <span style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                {editingSchedule 
-                  ? <><Save size={18} /> Update Schedule</> 
-                  : scheduleMode === 'advanced' 
-                    ? <><CheckCircle size={18} /> Create Custom Schedule</> 
-                    : <><CheckCircle size={18} /> Create Schedule</>}
-              </span>
+            <button type="submit" className="button">
+              {editingSchedule
+                ? <><Save size={16} /> Update Schedule</>
+                : scheduleMode === 'advanced'
+                  ? <><CheckCircle size={16} /> Create Custom Schedule</>
+                  : <><CheckCircle size={16} /> Create Schedule</>}
             </button>
           </div>
           {/* edit handled via modal */}
@@ -15471,7 +15296,7 @@ const DashboardTiles = {
 
   // Schedule List page (default view)
   const renderScheduleListPage = () => (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
+    <div className="nx-sched-list" style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
       {/* Header */}
       <div>
         <h1 className="header" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.5rem' }}>
@@ -15659,17 +15484,16 @@ const DashboardTiles = {
           <div>
             <input
               type="text"
-              placeholder="🔍 Search schedules by name..."
+              placeholder="Search schedules by name..."
               value={scheduleSearchQuery}
               onChange={(e) => {
                 setScheduleSearchQuery(e.target.value);
                 setScheduleCurrentPage(1); // Reset to first page on search
               }}
               style={{
-                width: '70%',
+                width: '100%',
                 padding: '0.75rem 1rem',
                 fontSize: '0.95rem',
-                border: '2px solid var(--border-color)',
                 borderRadius: '0.5rem',
                 backgroundColor: 'var(--bg-color)',
                 color: 'var(--text-color)'
@@ -15687,7 +15511,6 @@ const DashboardTiles = {
                 width: '100%',
                 padding: '0.75rem 1rem',
                 fontSize: '0.95rem',
-                border: '2px solid var(--border-color)',
                 borderRadius: '0.5rem',
                 backgroundColor: 'var(--bg-color)',
                 color: 'var(--text-color)',
@@ -15700,7 +15523,7 @@ const DashboardTiles = {
               <option value="monthly">Monthly Only</option>
               <option value="yearly">Yearly Only</option>
               <option value="holiday">Holiday Only</option>
-              <option value="custom">⚙️ Custom Only</option>
+              <option value="custom">Custom Only</option>
             </select>
           </div>
         </div>
@@ -15722,21 +15545,17 @@ const DashboardTiles = {
             // Show message if no schedules found
             if (filteredSchedules.length === 0) {
               return (
-                <div style={{ 
-                  textAlign: 'center', 
-                  padding: '3rem', 
-                  color: 'var(--text-secondary)',
-                  backgroundColor: 'var(--bg-color)',
-                  borderRadius: '0.5rem',
-                  border: '2px dashed var(--border-color)'
-                }}>
-                  <div style={{ fontSize: '3rem', marginBottom: '1rem' }}><Inbox size={48} /></div>
-                  <div style={{ fontSize: '1.1rem', fontWeight: 600, marginBottom: '0.5rem' }}>
-                    No schedules found
-                  </div>
-                  <div style={{ fontSize: '0.9rem' }}>
-                    {scheduleSearchQuery ? `Try adjusting your search or filter` : `Create your first schedule above`}
-                  </div>
+                <div className="nx-empty">
+                  <span className="nx-empty-icon"><Inbox size={48} /></span>
+                  <h3 className="nx-empty-title">No schedules found</h3>
+                  <p className="nx-empty-text">
+                    {scheduleSearchQuery || scheduleFilterType !== 'all' ? 'Try adjusting your search or filter.' : 'Create your first schedule to get started.'}
+                  </p>
+                  {!scheduleSearchQuery && scheduleFilterType === 'all' && (
+                    <button className="button" onClick={() => setActiveTab('schedules/create')}>
+                      <Plus size={16} /> Create Schedule
+                    </button>
+                  )}
                 </div>
               );
             }
@@ -15908,7 +15727,7 @@ const DashboardTiles = {
                                   gap: '0.25rem',
                                   cursor: 'help'
                                 }}
-                                title={`⚠️ Conflict with: ${conflicts.map(c => c.schedule.name).join(', ')}\n\nBoth schedules have the same priority (${schedule.priority || 5}) and are exclusive. NeXroll will randomly choose one during overlap.\n\nFix: Set different priorities for these schedules.`}
+                                title={`Conflict with: ${conflicts.map(c => c.schedule.name).join(', ')}\n\nBoth schedules have the same priority (${schedule.priority || 5}) and are exclusive. NeXroll will randomly choose one during overlap.\n\nFix: Set different priorities for these schedules.`}
                               >
                                 <AlertTriangle size={12} /> Conflict
                               </span>
@@ -16164,7 +15983,7 @@ const DashboardTiles = {
                               gap: '0.25rem',
                               cursor: 'help'
                             }}
-                            title={`⚠️ Conflict with: ${conflicts.map(c => c.schedule.name).join(', ')}\n\nBoth schedules have the same priority (${schedule.priority || 5}) and are exclusive. NeXroll will randomly choose one during overlap.\n\nFix: Set different priorities for these schedules.`}
+                            title={`Conflict with: ${conflicts.map(c => c.schedule.name).join(', ')}\n\nBoth schedules have the same priority (${schedule.priority || 5}) and are exclusive. NeXroll will randomly choose one during overlap.\n\nFix: Set different priorities for these schedules.`}
                           >
                             <AlertTriangle size={14} /> Conflict ({conflicts.length})
                           </span>
@@ -16475,15 +16294,6 @@ const DashboardTiles = {
 
   const renderCategories = () => (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
-      {/* Header */}
-      <div>
-        <h1 className="header" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.5rem' }}>
-          <Folder size={32} className="header-icon" /> Category Management
-        </h1>
-        <p style={{ color: 'var(--text-secondary)', fontSize: '0.95rem', margin: 0 }}>
-          Create and manage categories to organize your prerolls.
-        </p>
-      </div>
 
       {editingCategory && (
         <Modal
@@ -16533,7 +16343,7 @@ const DashboardTiles = {
             </div>
 
             {categoryPrerollsLoading[editingCategory.id] ? (
-              <div style={{ fontSize: '0.9rem', color: '#666' }}>Loading prerolls…</div>
+              <div style={{ fontSize: '0.9rem', color: 'var(--text-secondary)', display: 'flex', alignItems: 'center', gap: '0.5rem' }}><Loader2 size={16} className="spin" /> Loading prerolls…</div>
             ) : (
               <>
                 <div className="nx-field nx-span-2" style={{ marginBottom: '0.5rem' }}>
@@ -16557,7 +16367,7 @@ const DashboardTiles = {
                               style={{ marginRight: '0.25rem' }}
                               title="Edit preroll"
                             >
-                              ✏️
+                              <Edit size={14} />
                             </button>
                             <button
                               type="button"
@@ -16810,9 +16620,8 @@ const DashboardTiles = {
               <button type="submit" className="button">Update Category</button>
               <button
                 type="button"
-                className="button"
+                className="button button-success"
                 onClick={handleUpdateCategoryAndApply}
-                style={{ backgroundColor: '#28a745' }}
                 title="Save changes and apply to connected server"
               >
                 Save & Apply to Server
@@ -16836,7 +16645,7 @@ const DashboardTiles = {
         </p>
         <div style={{ display: 'flex', gap: '0.5rem' }}>
           <button onClick={handleInitHolidays} className="button">Initialize Holiday Presets</button>
-          <button onClick={() => setActiveTab('schedules')} className="button" style={{ backgroundColor: '#6c757d' }}>
+          <button onClick={() => setActiveTab('schedules')} className="button button-secondary">
             Go to Schedules
           </button>
         </div>
@@ -16857,146 +16666,77 @@ const DashboardTiles = {
       </div>)}
 
       <div className="card">
-        <h2>Categories</h2>
-        
         {/* Action Buttons */}
-        <div style={{ display: 'flex', gap: '1rem', marginBottom: '1.5rem', flexWrap: 'wrap' }}>
-          <button 
+        <div style={{ display: 'flex', gap: '0.6rem', marginBottom: '1.25rem', flexWrap: 'wrap' }}>
+          <button
             type="button"
-            onClick={() => setShowCreateCategoryModal(true)} 
-            className="button" 
-            style={{ 
-              backgroundColor: '#28a745', 
-              borderColor: '#28a745',
-              display: 'flex',
-              alignItems: 'center',
-              gap: '0.5rem'
-            }}
+            onClick={() => setShowCreateCategoryModal(true)}
+            className="button button-success"
+            style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}
           >
-            <span style={{ fontSize: '1.2rem', fontWeight: 'bold' }}>+</span>
-            Create Category
+            <Plus size={15} /> Create Category
           </button>
-          <button 
+          <button
             type="button"
-            onClick={handleInitHolidays} 
-            className="button" 
-            style={{ 
-              backgroundColor: '#dc3545', 
-              borderColor: '#dc3545',
-              display: 'flex',
-              alignItems: 'center',
-              gap: '0.5rem'
-            }}
+            onClick={handleInitHolidays}
+            className="button button-secondary"
+            style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}
           >
-            <TreePine size={14} style={{marginRight: '0.35rem'}} /> Load Holiday Categories
+            <TreePine size={15} /> Load Holiday Categories
           </button>
-          <button 
+          <button
             type="button"
-            onClick={handleRefreshHolidayDates} 
-            className="button" 
-            style={{ 
-              backgroundColor: '#17a2b8', 
-              borderColor: '#17a2b8',
-              display: 'flex',
-              alignItems: 'center',
-              gap: '0.5rem'
-            }}
+            onClick={handleRefreshHolidayDates}
+            className="button button-secondary"
+            style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}
             title="Update dates for variable holidays (Thanksgiving, Easter, etc.)"
           >
-            <RefreshCw size={14} style={{marginRight: '0.35rem'}} /> Refresh Holiday Dates
+            <RefreshCw size={15} /> Refresh Holiday Dates
           </button>
-          <button 
+          <button
             type="button"
-            onClick={() => setBulkActionMode(!bulkActionMode)} 
-            className="button" 
-            style={{ 
-              backgroundColor: bulkActionMode ? '#ffc107' : '#6c757d', 
-              borderColor: bulkActionMode ? '#ffc107' : '#6c757d',
-              display: 'flex',
-              alignItems: 'center',
-              gap: '0.5rem'
-            }}
+            onClick={() => setBulkActionMode(!bulkActionMode)}
+            className={`button ${bulkActionMode ? 'button-warn' : 'button-outline'}`}
+            style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}
           >
-            {bulkActionMode ? '✓' : '☑'} {bulkActionMode ? 'Exit' : 'Bulk Select'}
+            <ListChecks size={15} /> {bulkActionMode ? 'Exit Bulk Select' : 'Bulk Select'}
           </button>
           {bulkActionMode && selectedCategoryIds.length > 0 && (
             <>
-              <button 
+              <button
                 type="button"
-                onClick={handleBulkApplyToPlex} 
-                className="button" 
-                style={{ 
-                  backgroundColor: '#007bff', 
-                  borderColor: '#007bff',
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: '0.5rem'
-                }}
+                onClick={handleBulkApplyToPlex}
+                className="button button-info"
+                style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}
               >
-                <Upload size={14} style={{marginRight: '0.35rem'}} /> Apply Selected ({selectedCategoryIds.length})
+                <Upload size={15} /> Apply Selected ({selectedCategoryIds.length})
               </button>
-              <button 
+              <button
                 type="button"
-                onClick={handleBulkDelete} 
-                className="button" 
-                style={{ 
-                  backgroundColor: '#dc3545', 
-                  borderColor: '#dc3545',
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: '0.5rem'
-                }}
+                onClick={handleBulkDelete}
+                className="button button-danger"
+                style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}
               >
-                <Trash size={14} style={{marginRight: '0.35rem'}} /> Delete Selected ({selectedCategoryIds.length})
+                <Trash size={15} /> Delete Selected ({selectedCategoryIds.length})
               </button>
             </>
           )}
         </div>
         
         {/* Search, Filter and View Controls */}
-        <div style={{ 
-          display: 'flex', 
-          gap: '1rem', 
-          marginBottom: '1.5rem', 
-          alignItems: 'center',
-          backgroundColor: 'var(--card-bg)',
-          padding: '1rem',
-          borderRadius: '0.5rem',
-          border: '1px solid var(--border-color)'
-        }}>
-          {/* Search Bar - 65% width */}
+        <div className="nx-cat-toolbar">
           <input
             type="text"
-            placeholder="🔍 Search categories by name or description..."
+            className="nx-cat-search"
+            placeholder="Search categories by name or description..."
             value={categorySearchQuery}
             onChange={(e) => setCategorySearchQuery(e.target.value)}
-            style={{
-              width: '65%',
-              padding: '0.75rem 1rem',
-              fontSize: '0.95rem',
-              border: '2px solid var(--border-color)',
-              borderRadius: '0.5rem',
-              backgroundColor: 'var(--bg-color)',
-              color: 'var(--text-color)',
-              boxSizing: 'border-box'
-            }}
           />
 
-          {/* Filter Dropdown - 20% width */}
           <select
+            className="nx-cat-filter"
             value={categoryFilter}
             onChange={(e) => setCategoryFilter(e.target.value)}
-            style={{
-              width: '20%',
-              padding: '0.75rem',
-              fontSize: '0.95rem',
-              border: '2px solid var(--border-color)',
-              borderRadius: '0.5rem',
-              backgroundColor: 'var(--bg-color)',
-              color: 'var(--text-color)',
-              cursor: 'pointer',
-              boxSizing: 'border-box'
-            }}
           >
             <option value="all">All Categories</option>
             <option value="active">Active Only</option>
@@ -17005,14 +16745,14 @@ const DashboardTiles = {
           </select>
 
           {/* View Toggle */}
-          <div className="view-toggle" style={{ marginLeft: 'auto' }}>
+          <div className="view-toggle">
               <button
                 type="button"
                 className={`view-btn ${categoryView === 'grid' ? 'active' : ''}`}
                 onClick={() => setCategoryView('grid')}
                 title="Grid view"
               >
-                <span className="view-icon">⊞</span>
+                <span className="view-icon" style={{ display: 'inline-flex' }}><LayoutGrid size={15} /></span>
                 Grid
               </button>
               <button
@@ -17021,7 +16761,7 @@ const DashboardTiles = {
                 onClick={() => setCategoryView('list')}
                 title="List view"
               >
-                <span className="view-icon">☰</span>
+                <span className="view-icon" style={{ display: 'inline-flex' }}><List size={15} /></span>
                 List
               </button>
             </div>
@@ -17029,32 +16769,18 @@ const DashboardTiles = {
         
         {/* Bulk Selection Info */}
         {bulkActionMode && (
-          <div style={{
-            backgroundColor: '#fff3cd',
-            border: '1px solid #ffc107',
-            borderRadius: '0.5rem',
-            padding: '0.75rem 1rem',
-            marginBottom: '1rem',
-            color: '#856404',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'space-between'
-          }}>
-            <span>
-                          <Lightbulb size={16} style={{marginRight: '0.35rem', verticalAlign: 'middle', color: '#14B8A6'}} /> <strong>Bulk Selection Mode:</strong> Click categories to select them, then use the action buttons above.
-              {selectedCategoryIds.length > 0 && ` (${selectedCategoryIds.length} selected)`}
+          <div className="nx-cat-bulkbar">
+            <span style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+              <Lightbulb size={16} style={{ color: '#f59e0b', flexShrink: 0 }} />
+              <span><strong>Bulk Selection Mode:</strong> Click categories to select them, then use the action buttons above.
+              {selectedCategoryIds.length > 0 && ` (${selectedCategoryIds.length} selected)`}</span>
             </span>
             {getFilteredCategories().length > 0 && (
               <button
                 type="button"
                 onClick={toggleSelectAll}
-                className="button"
-                style={{
-                  padding: '0.25rem 0.75rem',
-                  fontSize: '0.85rem',
-                  backgroundColor: '#6c757d',
-                  borderColor: '#6c757d'
-                }}
+                className="button button-secondary"
+                style={{ padding: '0.3rem 0.75rem', fontSize: '0.82rem' }}
               >
                 {selectedCategoryIds.length === getFilteredCategories().length ? 'Deselect All' : 'Select All'}
               </button>
@@ -17067,9 +16793,10 @@ const DashboardTiles = {
           <div style={{
             display: 'flex',
             alignItems: 'center',
-            gap: '1.5rem',
+            flexWrap: 'wrap',
+            gap: '0.5rem 1.5rem',
             padding: '0.75rem 1rem',
-            backgroundColor: 'var(--bg-secondary)',
+            backgroundColor: 'var(--bg-color)',
             borderRadius: '0.5rem',
             border: '1px solid var(--border-color)',
             marginBottom: '1rem',
@@ -17106,26 +16833,18 @@ const DashboardTiles = {
             
             if (filtered.length === 0) {
               return (
-                <div style={{ textAlign: 'center', padding: '3rem 1rem', color: 'var(--text-secondary)' }}>
+                <div className="nx-empty">
                   {categorySearchQuery ? (
                     <>
-                      <div style={{ fontSize: '3rem', marginBottom: '1rem' }}><Search size={48} /></div>
-                      <div style={{ fontSize: '1.1rem', marginBottom: '0.5rem', color: 'var(--text-color)' }}>
-                        No categories found matching "{categorySearchQuery}"
-                      </div>
-                      <div style={{ fontSize: '0.9rem' }}>
-                        Try adjusting your search or create a new category below
-                      </div>
+                      <span className="nx-empty-icon"><Search size={48} /></span>
+                      <h3 className="nx-empty-title">No categories found</h3>
+                      <p className="nx-empty-text">Nothing matches "{categorySearchQuery}". Try a different search, or create a new category below.</p>
                     </>
                   ) : (
                     <>
-                      <div style={{ fontSize: '3rem', marginBottom: '1rem' }}><Folder size={48} /></div>
-                      <div style={{ fontSize: '1.1rem', marginBottom: '0.5rem', color: 'var(--text-color)' }}>
-                        No categories yet
-                      </div>
-                      <div style={{ fontSize: '0.9rem' }}>
-                        Create your first category below to organize your prerolls
-                      </div>
+                      <span className="nx-empty-icon"><Folder size={48} /></span>
+                      <h3 className="nx-empty-title">No categories yet</h3>
+                      <p className="nx-empty-text">Create your first category below to organize your prerolls.</p>
                     </>
                   )}
                 </div>
@@ -17220,7 +16939,7 @@ const DashboardTiles = {
                   fontWeight: 'bold',
                   color: isSelected ? 'white' : 'transparent'
                 }}>
-                  ✓
+                  
                 </div>
               )}
               
@@ -17447,8 +17166,12 @@ const DashboardTiles = {
           })()}
         </div>
         
-        {/* List View */}
-        <div style={{ display: categoryView === 'list' ? 'block' : 'none' }}>
+        {/* List View. Below 768px the .preroll-table CSS converts this to a
+            stacked-card layout (no horizontal scroll). The .nx-cat-tablewrap
+            scroll container is a safety net for the in-between widths. Do NOT
+            set a table min-width here — it overrides that mobile card-stack and
+            forces horizontal overflow on phones. */}
+        <div className="nx-cat-tablewrap" style={{ display: categoryView === 'list' ? 'block' : 'none' }}>
           <table className="preroll-table" style={{ width: '100%', borderCollapse: 'collapse' }}>
             <thead>
               <tr>
@@ -17556,28 +17279,22 @@ const DashboardTiles = {
                 if (filtered.length === 0) {
                   return (
                     <tr>
-                      <td colSpan="5" style={{ textAlign: 'center', padding: '3rem 1rem', color: 'var(--text-secondary)' }}>
-                        {categorySearchQuery ? (
-                          <>
-                            <div style={{ fontSize: '2rem', marginBottom: '0.5rem' }}><Search size={32} /></div>
-                            <div style={{ fontSize: '1rem', marginBottom: '0.5rem', color: 'var(--text-color)' }}>
-                              No categories found matching "{categorySearchQuery}"
-                            </div>
-                            <div style={{ fontSize: '0.85rem' }}>
-                              Try adjusting your search or create a new category below
-                            </div>
-                          </>
-                        ) : (
-                          <>
-                            <div style={{ fontSize: '2rem', marginBottom: '0.5rem' }}><Folder size={32} /></div>
-                            <div style={{ fontSize: '1rem', marginBottom: '0.5rem', color: 'var(--text-color)' }}>
-                              No categories yet
-                            </div>
-                            <div style={{ fontSize: '0.85rem' }}>
-                              Create your first category below to organize your prerolls
-                            </div>
-                          </>
-                        )}
+                      <td colSpan="5" style={{ padding: 0, border: 'none' }}>
+                        <div className="nx-empty">
+                          {categorySearchQuery ? (
+                            <>
+                              <span className="nx-empty-icon"><Search size={48} /></span>
+                              <h3 className="nx-empty-title">No categories found</h3>
+                              <p className="nx-empty-text">Nothing matches "{categorySearchQuery}". Try a different search, or create a new category below.</p>
+                            </>
+                          ) : (
+                            <>
+                              <span className="nx-empty-icon"><Folder size={48} /></span>
+                              <h3 className="nx-empty-title">No categories yet</h3>
+                              <p className="nx-empty-text">Create your first category below to organize your prerolls.</p>
+                            </>
+                          )}
+                        </div>
                       </td>
                     </tr>
                   );
@@ -17616,7 +17333,7 @@ const DashboardTiles = {
                           style={{ marginLeft: '0.5rem', fontSize: '0.85rem' }}
                           title={`Active Schedules: ${stats.scheduleNames.join(', ')}`}
                         >
-                          📅
+                          
                         </span>
                       )}
                     </td>
@@ -17664,7 +17381,7 @@ const DashboardTiles = {
                         }}
                         title={stats.scheduleNames.join(', ')}
                         >
-                          ✓ {stats.activeSchedules} schedule{stats.activeSchedules !== 1 ? 's' : ''}
+                          {stats.activeSchedules} schedule{stats.activeSchedules !== 1 ? 's' : ''}
                         </span>
                       ) : (
                         <span style={{ color: 'var(--text-secondary)', fontSize: '0.85rem' }}>Inactive</span>
@@ -17696,7 +17413,7 @@ const DashboardTiles = {
                                 title="Edit category"
                                 style={{ fontSize: '0.9rem' }}
                               >
-                                ✏️
+                                <Edit size={14} />
                               </button>
                               <button
                                 onClick={(e) => {
@@ -17954,6 +17671,10 @@ const DashboardTiles = {
           }
           setJellyfinPluginPathFrom(data.config?.PathPrefixFrom || '');
           setJellyfinPluginPathTo(data.config?.PathPrefixTo || '');
+          setJellyfinPluginMaxIntros(data.config?.MaxIntros ?? 0);
+          setJellyfinPluginEnableMovies(data.config?.EnableForMovies ?? true);
+          setJellyfinPluginEnableEpisodes(data.config?.EnableForEpisodes ?? true);
+          setJellyfinPluginTimeout(data.config?.TimeoutSeconds ?? 5);
         }
       })
       .catch(err => {
@@ -17975,6 +17696,10 @@ const DashboardTiles = {
         nexroll_url: jellyfinPluginNexrollUrl,
         path_prefix_from: jellyfinPluginPathFrom,
         path_prefix_to: jellyfinPluginPathTo,
+        max_intros: Number(jellyfinPluginMaxIntros) || 0,
+        enable_for_movies: jellyfinPluginEnableMovies,
+        enable_for_episodes: jellyfinPluginEnableEpisodes,
+        timeout_seconds: Number(jellyfinPluginTimeout) || 5,
       })
     })
       .then(res => {
@@ -18208,236 +17933,253 @@ const DashboardTiles = {
     return () => { clearOAuthPoll(); };
   }, []);
 
-  const renderPlex = () => (
-    <div>
-      <div className="card nx-plex-card">
-        <h2>Connect to Plex Server</h2>
-        <p style={{ marginTop: 0, marginBottom: '1.25rem', color: 'var(--text-secondary)', fontSize: '0.9rem' }}>
-          Choose an option below — Stable Token is recommended.
-        </p>
-        {/* Stable Token Connection */}
-        <div className="upload-section nx-plex-method" style={{ marginBottom: '1.5rem' }}>
-          <h3 style={{ marginBottom: '0.5rem', color: 'var(--text-color)' }}><Star size={18} style={{marginRight: '0.5rem', verticalAlign: 'middle', color: '#14B8A6'}} /> Option 1: Stable Token <span className="nx-chip recommend" style={{ marginLeft: '0.5rem' }}>RECOMMENDED</span></h3>
-          <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginBottom: '0.75rem' }}>
-            Non-expiring token stored securely. Resilient to password changes.
-          </p>
-          <div style={{ marginBottom: '0.75rem', fontSize: '0.85rem' }}>
-            <strong>Status:</strong> <span style={{ color: stableTokenStatus.has_stable_token ? '#22c55e' : '#f59e0b' }}>{stableTokenStatus.has_stable_token ? 'Configured' : 'Not Configured'}</span>
-            {stableTokenStatus.provider && <span style={{ marginLeft: '1rem' }}><strong>Storage:</strong> {stableTokenStatus.provider}</span>}
+  const renderPlex = () => {
+    const connected = plexStatus === 'Connected';
+    return (
+    <div className="nx-conn-panel" style={{ '--brand': '#f6685e' }}>
+      {/* Hero status header */}
+      <div className={`nx-conn-hero${connected ? ' connected' : ''}`}>
+        <div className={`nx-conn-hero-badge${connected ? '' : ' idle'}`}>
+          <Server size={24} />
+        </div>
+        <div className="nx-conn-hero-body">
+          <h2 className="nx-conn-hero-title">
+            Plex
+            <span className={`nx-conn-hero-state ${connected ? 'ok' : 'bad'}`}>
+              <span className={`nx-dot ${connected ? 'ok' : 'bad'}`} aria-hidden="true" />
+              {connected ? 'Connected' : 'Not connected'}
+            </span>
+          </h2>
+          <div className="nx-conn-hero-meta">
+            {connected ? (
+              <>
+                {plexServerInfo?.friendlyName && <span>{plexServerInfo.friendlyName}</span>}
+                {plexServerInfo?.version && <><span className="sep">·</span><span>v{plexServerInfo.version}</span></>}
+                {plexServerInfo?.url && <><span className="sep">·</span><span>{plexServerInfo.url}</span></>}
+                {plexServerInfo?.token_source && (
+                  <><span className="sep">·</span><span>{plexServerInfo.token_source === 'secure_store' ? 'Secure token' : plexServerInfo.token_source === 'database' ? 'DB token' : plexServerInfo.token_source}</span></>
+                )}
+              </>
+            ) : (
+              <span>Connect with a Stable Token (recommended) or another method below.</span>
+            )}
           </div>
+        </div>
+        {connected && (
+          <div className="nx-conn-hero-actions">
+            <button onClick={handleDisconnectPlex} className="button button-danger">
+              <Unlink size={15} /> Disconnect
+            </button>
+          </div>
+        )}
+      </div>
 
-          <form onSubmit={handleConnectPlexStableToken}>
-            <div style={{ display: 'grid', gap: '1rem', marginBottom: '1rem' }}>
-              <div>
-                <label style={{ display: 'block', marginBottom: '0.5rem', fontWeight: 'bold' }}>
-                  Plex Server URL
-                </label>
-                <input
-                  type="url"
-                  placeholder="http://192.168.1.100:32400"
-                  value={plexConfig.url}
-                  onChange={(e) => setPlexConfig({...plexConfig, url: e.target.value})}
-                  required
-                  style={{ width: '100%', padding: '0.5rem' }}
-                />
-              </div>
-            </div>
+      {/* Connection-problem notices (shown even when "connected" flag is off but info exists) */}
+      {plexServerInfo?.message && !plexServerInfo.connected && (
+        <div className="nx-notice warn" style={{ marginBottom: '1rem' }}>
+          <strong>Status:</strong> {plexServerInfo.message}
+        </div>
+      )}
+      {plexServerInfo?.error && (
+        <div className="nx-notice danger" style={{ marginBottom: '1rem' }}>
+          <strong>Error:</strong> {plexServerInfo.error}{plexServerInfo.message ? ` — ${plexServerInfo.message}` : ''}
+        </div>
+      )}
 
-            <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
-              <button
-                type="submit"
-                className="button button-success"
-              >
-                Connect
-              </button>
-              
-            </div>
-          </form>
+      {/* Connect methods — only when not connected */}
+      {!connected && (
+      <div className="card nx-plex-card">
+        {/* Primary: Stable Token */}
+        <div className="nx-conn-method-lead">
+          <Star size={18} style={{ color: '#14B8A6' }} /> Stable Token
+          <span className="nx-chip recommend">Recommended</span>
+        </div>
+        <p className="nx-conn-method-sub">
+          A non-expiring token stored securely — resilient to password changes. Best for local and Windows installs.
+          {' '}Current status:{' '}
+          <strong style={{ color: stableTokenStatus.has_stable_token ? 'var(--success-color)' : '#f59e0b' }}>
+            {stableTokenStatus.has_stable_token ? 'Configured' : 'Not configured'}
+          </strong>
+          {stableTokenStatus.provider ? ` (${stableTokenStatus.provider})` : ''}
+        </p>
 
-          {/* Advanced: Save/Update stable token locally */}
-          <details style={{ marginTop: '0.75rem' }}>
-            <summary style={{ cursor: 'pointer', fontSize: '0.85rem', color: 'var(--text-color)' }}>
-              Advanced: Save/Update Stable Token
-            </summary>
-            <form onSubmit={handleSaveStableToken} style={{ marginTop: '0.5rem', display: 'grid', gap: '0.5rem' }}>
-              <input
-                type="password"
-                placeholder="Paste your stable token"
-                value={stableTokenInput}
-                onChange={(e) => setStableTokenInput(e.target.value)}
-                style={{ width: '100%', padding: '0.5rem' }}
-              />
-              <button type="submit" className="button" style={{ backgroundColor: '#17a2b8' }}>
-                Save Stable Token
-              </button>
-            </form>
-          </details>
-          <details className="nx-plex-help" style={{ marginTop: '0.75rem' }}>
-            <summary>Docker/Remote: save token headlessly</summary>
-            <div style={{ fontSize: '0.9rem', color: '#666', marginTop: '0.25rem' }}>
-              If NeXroll runs in Docker or on a different host than Plex, you can paste your Plex token via “Advanced: Save/Update Stable Token” above,
-              or run this from any machine that can reach NeXroll:
-            </div>
-            <pre className="nx-code" style={{ whiteSpace: 'pre-wrap', marginTop: '0.5rem' }}>
-curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN"
-            </pre>
-            <div style={{ fontSize: '0.9rem', color: '#666' }}>
-              Then click “Connect” and enter your Plex Server URL (e.g., http://192.168.1.100:32400). Make sure your Plex server is claimed and Remote Access is enabled if it’s off-LAN.
-            </div>
-          </details>
+        <form onSubmit={handleConnectPlexStableToken}>
+          <div style={{ marginBottom: '1rem' }}>
+            <label className="nx-conn-field-label">Plex Server URL</label>
+            <input
+              type="url"
+              placeholder="http://192.168.1.100:32400"
+              value={plexConfig.url}
+              onChange={(e) => setPlexConfig({...plexConfig, url: e.target.value})}
+              required
+            />
+          </div>
+          <button type="submit" className="button button-success">
+            <Plug size={15} /> Connect
+          </button>
+        </form>
+
+        {/* Docker / remote hint */}
+        <div className="nx-conn-hint">
+          <Info size={15} className="nx-conn-hint-icon" />
+          <span>
+            Running NeXroll in <strong>Docker</strong> or on a different host than Plex?
+            {' '}<button type="button" onClick={() => { setPlexAltOpen('oauth'); }}>Use “Sign in with Plex”</button>{' '}
+            below — it auto-discovers a reachable server.
+          </span>
         </div>
 
-        {/* Option 2: Manual Token */}
-        <details className="upload-section nx-plex-method" style={{ marginBottom: '2rem' }}>
-          <summary style={{ cursor: 'pointer', fontWeight: 'bold', color: 'var(--text-color)', padding: '0.5rem 0' }}>
-            <Wrench size={18} style={{marginRight: '0.5rem', verticalAlign: 'middle'}} /> Option 2: Manual Token
-          </summary>
-          <p style={{ fontSize: '0.9rem', color: 'var(--text-color)', marginBottom: '1rem', marginTop: '0.5rem' }}>
-            Enter your Plex server URL and authentication token manually.
-          </p>
+        {/* Other ways to connect */}
+        <div className="nx-conn-alts">
+          <div className="nx-conn-alts-title">Other ways to connect</div>
 
-          <form onSubmit={handleConnectPlex}>
-            <div style={{ display: 'grid', gap: '1rem', marginBottom: '1rem' }}>
-              <div>
-                <label style={{ display: 'block', marginBottom: '0.5rem', fontWeight: 'bold' }}>
-                  Plex Server URL
-                </label>
-                <input
-                  type="url"
-                  placeholder="http://192.168.1.100:32400"
-                  value={plexConfig.url}
-                  onChange={(e) => setPlexConfig({ ...plexConfig, url: e.target.value })}
-                  required
-                  style={{ width: '100%', padding: '0.5rem' }}
-                />
-              </div>
-
-              <div>
-                <label style={{ display: 'block', marginBottom: '0.5rem', fontWeight: 'bold' }}>
-                  X-Plex-Token
-                </label>
+          {/* Advanced: save stable token directly */}
+          <details className="nx-conn-alt">
+            <summary><Key size={16} /> Paste a Stable Token <ChevronRight size={15} className="nx-conn-alt-chev" /></summary>
+            <div className="nx-conn-alt-body">
+              <p className="nx-conn-method-sub" style={{ marginTop: 0 }}>
+                Already have a Plex token? Save it directly (useful for Docker/headless — or run
+                {' '}<code>curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN"</code>).
+              </p>
+              <form onSubmit={handleSaveStableToken} style={{ display: 'grid', gap: '0.5rem' }}>
                 <input
                   type="password"
-                  placeholder="Enter your X-Plex-Token"
-                  value={plexConfig.token}
-                  onChange={(e) => setPlexConfig({ ...plexConfig, token: e.target.value })}
-                  required
-                  style={{ width: '100%', padding: '0.5rem' }}
+                  placeholder="Paste your stable token"
+                  value={stableTokenInput}
+                  onChange={(e) => setStableTokenInput(e.target.value)}
                 />
-                <details className="nx-plex-help">
-                  <summary>How to get your X-Plex-Token</summary>
-                  <ol style={{ marginTop: '0.5rem' }}>
-                    <li>Open Plex Web at your server's URL (e.g., http://your-plex-server:32400/web)</li>
-                    <li>Sign in to your Plex account</li>
-                    <li>Go to Settings → General → Advanced</li>
-                    <li>Enable "Show Advanced" if needed</li>
-                    <li>Copy the "Authentication Token" (X-Plex-Token)</li>
-                  </ol>
-                  <p style={{ fontSize: '0.85rem', color: '#666' }}>
-                    Note: For remote servers, ensure you can access the Plex Web interface from your current location.
-                  </p>
-                </details>
-              </div>
+                <div>
+                  <button type="submit" className="button button-info"><Key size={15} /> Save Stable Token</button>
+                </div>
+              </form>
             </div>
+          </details>
 
-            <button type="submit" className="button">Connect with Manual Token</button>
-          </form>
-        </details>
-
-        {/* Plex.tv Authentication */}
-        <details className="upload-section nx-plex-method" style={{ marginTop: '1rem' }}>
-          <summary style={{ cursor: 'pointer', fontWeight: 'bold', color: 'var(--text-color)', padding: '0.5rem 0' }}>
-            Option 3: Sign in with Plex
-          </summary>
-          <p style={{ fontSize: '0.9rem', color: 'var(--text-color)', marginBottom: '0.75rem', marginTop: '0.5rem' }}>
-            Sign in with Plex.tv to auto-discover a reachable server and save credentials securely.
-          </p>
-
-          {(plexOAuth.status === 'idle' || plexOAuth.status === 'error') && (
-            <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
-              <button
-                type="button"
-                className="button button-warn"
-                onClick={startPlexOAuth}
-                title="Start Plex.tv device login"
-              >
-                Start Plex.tv Login
-              </button>
-              {plexOAuth.status === 'error' && (
-                <span style={{ color: '#dc3545', fontSize: '0.85rem' }}>{plexOAuth.error}</span>
-              )}
+          {/* Manual token */}
+          <details className="nx-conn-alt">
+            <summary><Wrench size={16} /> Manual Token <ChevronRight size={15} className="nx-conn-alt-chev" /></summary>
+            <div className="nx-conn-alt-body">
+              <p className="nx-conn-method-sub" style={{ marginTop: 0 }}>
+                Enter your Plex server URL and X-Plex-Token manually.
+              </p>
+              <form onSubmit={handleConnectPlex}>
+                <div style={{ display: 'grid', gap: '1rem', marginBottom: '1rem' }}>
+                  <div>
+                    <label className="nx-conn-field-label">Plex Server URL</label>
+                    <input
+                      type="url"
+                      placeholder="http://192.168.1.100:32400"
+                      value={plexConfig.url}
+                      onChange={(e) => setPlexConfig({ ...plexConfig, url: e.target.value })}
+                      required
+                    />
+                  </div>
+                  <div>
+                    <label className="nx-conn-field-label">X-Plex-Token</label>
+                    <input
+                      type="password"
+                      placeholder="Enter your X-Plex-Token"
+                      value={plexConfig.token}
+                      onChange={(e) => setPlexConfig({ ...plexConfig, token: e.target.value })}
+                      required
+                    />
+                    <details className="nx-plex-help">
+                      <summary>How to get your X-Plex-Token</summary>
+                      <ol style={{ marginTop: '0.5rem' }}>
+                        <li>Open Plex Web at your server's URL (e.g., http://your-plex-server:32400/web)</li>
+                        <li>Sign in to your Plex account</li>
+                        <li>Go to Settings → General → Advanced</li>
+                        <li>Enable "Show Advanced" if needed</li>
+                        <li>Copy the "Authentication Token" (X-Plex-Token)</li>
+                      </ol>
+                      <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
+                        Note: For remote servers, ensure you can access the Plex Web interface from your current location.
+                      </p>
+                    </details>
+                  </div>
+                </div>
+                <button type="submit" className="button">Connect with Manual Token</button>
+              </form>
             </div>
-          )}
+          </details>
 
-          {(plexOAuth.status === 'starting' || plexOAuth.status === 'pending') && (
-            <div style={{ display: 'grid', gap: '0.5rem' }}>
-              <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
-                {plexOAuth.url && (
-                  <a
-                    href={plexOAuth.url}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="button"
-                    style={{ backgroundColor: '#0ea5e9' }}
+          {/* Sign in with Plex (OAuth) */}
+          <details className="nx-conn-alt" open={plexAltOpen === 'oauth'}>
+            <summary><ExternalLink size={16} /> Sign in with Plex <ChevronRight size={15} className="nx-conn-alt-chev" /></summary>
+            <div className="nx-conn-alt-body">
+              <p className="nx-conn-method-sub" style={{ marginTop: 0 }}>
+                Sign in with Plex.tv to auto-discover a reachable server and save credentials securely.
+                {' '}<strong>Recommended for Docker and remote setups.</strong>
+              </p>
+
+              {(plexOAuth.status === 'idle' || plexOAuth.status === 'error') && (
+                <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+                  <button
+                    type="button"
+                    className="button button-warn"
+                    onClick={startPlexOAuth}
+                    title="Start Plex.tv device login"
                   >
-                    Open Login
-                  </a>
-                )}
-                <button type="button" className="button-secondary" onClick={cancelPlexOAuth}>
-                  Cancel
-                </button>
-              </div>
-              <div style={{ fontSize: '0.9rem', color: '#666' }}>
-                Waiting for authorization from Plex.tv…
-              </div>
-            </div>
-          )}
+                    Start Plex.tv Login
+                  </button>
+                  {plexOAuth.status === 'error' && (
+                    <span style={{ color: 'var(--error-color)', fontSize: '0.85rem' }}>{plexOAuth.error}</span>
+                  )}
+                </div>
+              )}
 
-          {plexOAuth.status === 'authorized' && (
-            <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
-              <button
-                type="button"
-                className="button button-success"
-                onClick={() => finishPlexOAuth(plexOAuth.id)}
-              >
-                Connect Now
-              </button>
-              {plexOAuth.url && (
-                <a
-                  href={plexOAuth.url}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="button-secondary"
-                >
-                  Open Login
-                </a>
+              {(plexOAuth.status === 'starting' || plexOAuth.status === 'pending') && (
+                <div style={{ display: 'grid', gap: '0.5rem' }}>
+                  <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+                    {plexOAuth.url && (
+                      <a href={plexOAuth.url} target="_blank" rel="noopener noreferrer" className="button button-info">
+                        <ExternalLink size={15} /> Open Login
+                      </a>
+                    )}
+                    <button type="button" className="button-secondary" onClick={cancelPlexOAuth}>
+                      Cancel
+                    </button>
+                  </div>
+                  <div style={{ fontSize: '0.9rem', color: 'var(--text-secondary)', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                    <Loader2 size={15} className="spin" /> Waiting for authorization from Plex.tv…
+                  </div>
+                </div>
+              )}
+
+              {plexOAuth.status === 'authorized' && (
+                <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+                  <button type="button" className="button button-success" onClick={() => finishPlexOAuth(plexOAuth.id)}>
+                    <Plug size={15} /> Connect Now
+                  </button>
+                  {plexOAuth.url && (
+                    <a href={plexOAuth.url} target="_blank" rel="noopener noreferrer" className="button-secondary">
+                      Open Login
+                    </a>
+                  )}
+                </div>
+              )}
+
+              {plexOAuth.status === 'connecting' && (
+                <div style={{ fontSize: '0.9rem', color: 'var(--text-secondary)', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                  <Loader2 size={15} className="spin" /> Connecting to your Plex server…
+                </div>
+              )}
+
+              {plexOAuth.status === 'connected' && (
+                <div style={{ fontSize: '0.9rem', color: 'var(--success-color)', fontWeight: 'bold' }}>
+                  Connected via Plex.tv!
+                </div>
               )}
             </div>
-          )}
+          </details>
 
-          {plexOAuth.status === 'connecting' && (
-            <div style={{ fontSize: '0.9rem', color: '#666' }}>
-              Connecting to your Plex server…
-            </div>
-          )}
-
-          {plexOAuth.status === 'connected' && (
-            <div style={{ fontSize: '0.9rem', color: 'green', fontWeight: 'bold' }}>
-              Connected via Plex.tv!
-            </div>
-          )}
-        </details>
-
-        {/* Help: Docker & remote servers — collapsed by default to keep the tab tidy */}
-        <details className="upload-section nx-plex-method" style={{ marginTop: '1rem' }}>
-          <summary style={{ cursor: 'pointer', fontWeight: 'bold', color: 'var(--text-color)', padding: '0.5rem 0' }}>
-            <HelpCircle size={16} style={{ marginRight: '0.5rem', verticalAlign: 'middle' }} /> Help: Docker &amp; remote servers
-          </summary>
-
-          <div style={{ marginTop: '0.75rem' }}>
-            <h3 style={{ marginBottom: '0.5rem', color: 'var(--text-color)', fontSize: '0.95rem' }}>🐳 Docker</h3>
-            <p style={{ fontSize: '0.9rem', color: 'var(--text-color)' }}>
-              When running NeXroll in Docker, use <strong>Option 3: Sign in with Plex</strong> above to connect.
+          {/* Help: Docker & remote */}
+          <details className="nx-conn-alt">
+            <summary><HelpCircle size={16} /> Help: Docker &amp; remote servers <ChevronRight size={15} className="nx-conn-alt-chev" /></summary>
+            <div className="nx-conn-alt-body">
+            <h3 style={{ marginBottom: '0.5rem', color: 'var(--text-color)', fontSize: '0.95rem' }}>Docker</h3>
+            <p style={{ fontSize: '0.9rem', color: 'var(--text-secondary)' }}>
+              When running NeXroll in Docker, use <strong>Sign in with Plex</strong> above to connect.
               After connecting, configure <em>UNC/Local → Plex Path Mappings</em> in Settings to translate container/local paths
               (e.g., <code>/data/prerolls</code>) to the path Plex can see on its host
               (e.g., <code>Z:\Prerolls</code> or <code>\\NAS\share\Prerolls</code> on Windows, or <code>/mnt/prerolls</code> on Linux).
@@ -18461,51 +18203,11 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
               Remote: https://my-plex-server.example.com:32400<br/>
               Plex Cloud: https://app.plex.tv/desktop (use your server's URL)
             </p>
-          </div>
-        </details>
-      </div>
-
-      <div className="card">
-        <h2>Plex Status</h2>
-        <div style={{ display: 'grid', gap: '0.5rem' }}>
-          <div><strong>Connection:</strong> <span className={`nx-chip nx-status ${plexStatus === 'Connected' ? 'ok' : 'bad'}`}>{plexStatus}</span></div>
-          <div><strong>Server URL:</strong> {plexServerInfo?.url || 'Not configured'}</div>
-          <div><strong>Token:</strong> {plexServerInfo?.has_token ? '••••••••' : 'Not configured'}</div>
-          {plexServerInfo?.token_source && (
-            <div><strong>Token Source:</strong> {plexServerInfo.token_source === 'secure_store' ? 'Secure Store (Windows Credential Manager)' : plexServerInfo.token_source === 'database' ? 'Database' : plexServerInfo.token_source}</div>
-          )}
-          {plexServerInfo?.provider && (
-            <div><strong>Storage Provider:</strong> {plexServerInfo.provider}</div>
-          )}
-          {plexServerInfo?.friendlyName && (
-            <div><strong>Server Name:</strong> {plexServerInfo.friendlyName}</div>
-          )}
-          {plexServerInfo?.version && (
-            <div><strong>Server Version:</strong> {plexServerInfo.version}</div>
-          )}
-          {plexServerInfo?.message && !plexServerInfo.connected && (
-            <div style={{ marginTop: '0.5rem', padding: '0.75rem', backgroundColor: 'rgba(255, 193, 7, 0.1)', borderRadius: '8px', border: '1px solid rgba(255, 193, 7, 0.3)' }}>
-              <strong>⚠️ Status:</strong> {plexServerInfo.message}
             </div>
-          )}
-          {plexServerInfo?.error && (
-            <div style={{ marginTop: '0.5rem', padding: '0.75rem', backgroundColor: 'rgba(244, 67, 54, 0.1)', borderRadius: '8px', border: '1px solid rgba(244, 67, 54, 0.3)' }}>
-              <strong>Error Type:</strong> {plexServerInfo.error}<br />
-              {plexServerInfo.message && <span>{plexServerInfo.message}</span>}
-            </div>
-          )}
+          </details>
         </div>
-        {plexStatus === 'Connected' && (
-          <div style={{ marginTop: '1rem', paddingTop: '1rem', borderTop: '1px solid var(--border-color)' }}>
-            <button
-              onClick={handleDisconnectPlex}
-              className="button button-danger"
-            >
-              Disconnect from Plex
-            </button>
-          </div>
-        )}
       </div>
+      )}
 
       {/* Cinema Trailers — Plex server settings controlled from NeXroll */}
       {plexStatus === 'Connected' && (
@@ -18520,7 +18222,7 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
           </p>
 
           {cinemaTrailersLoading && !cinemaTrailers && (
-            <div style={{ color: 'var(--text-secondary)', fontSize: '0.9rem' }}>Loading Plex settings…</div>
+            <div style={{ color: 'var(--text-secondary)', fontSize: '0.9rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}><Loader2 size={16} className="spin" /> Loading Plex settings…</div>
           )}
 
           {cinemaTrailers && Array.isArray(cinemaTrailers.fields) && (
@@ -18600,7 +18302,8 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
       )}
 
     </div>
-  );
+    );
+  };
 
   const handleDownloadDiagnostics = async () => {
     try {
@@ -18619,6 +18322,49 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
       URL.revokeObjectURL(url);
     } catch (e) {
       alert('Failed to download diagnostics: ' + (e && e.message ? e.message : e));
+    }
+  };
+
+  const handleInstallDeno = async () => {
+    setInstallingDep('deno');
+    try {
+      const res = await fetch(apiUrl('system/dependencies/install/deno'), {
+        method: 'POST', credentials: 'include'
+      });
+      const data = await res.json().catch(() => ({}));
+      if (data.success) {
+        showAlert(data.message || 'Deno installed.', 'success');
+        await recheckFfmpeg(); // re-probe dependencies so the card updates
+      } else {
+        showAlert(data.message || 'Failed to install Deno.', 'error');
+      }
+    } catch (e) {
+      showAlert('Failed to install Deno: ' + (e?.message || e), 'error');
+    } finally {
+      setInstallingDep(null);
+    }
+  };
+
+  const handleInstallPotoken = async () => {
+    setInstallingDep('potoken');
+    try {
+      // Downloads Node + builds the bgutil provider, so this can take a couple
+      // of minutes on first run.
+      showAlert('Installing YouTube PO-token provider (this can take a few minutes)…', 'info');
+      const res = await fetch(apiUrl('system/dependencies/install/potoken'), {
+        method: 'POST', credentials: 'include'
+      });
+      const data = await res.json().catch(() => ({}));
+      if (data.success) {
+        showAlert(data.message || 'PO-token provider installed.', 'success');
+        await recheckFfmpeg();
+      } else {
+        showAlert(data.message || 'Failed to install PO-token provider.', 'error');
+      }
+    } catch (e) {
+      showAlert('Failed to install PO-token provider: ' + (e?.message || e), 'error');
+    } finally {
+      setInstallingDep(null);
     }
   };
 
@@ -18688,11 +18434,14 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
         const msg = (data && (data.detail || data.message)) || text || `HTTP ${res.status}`;
         throw new Error(msg);
       }
-      setThumbnailProgress({ 
-        status: `Complete! Processed: ${data.processed}, Generated: ${data.generated}, Skipped: ${data.skipped}`, 
+      const purgedNote = data.purged ? `, Purged: ${data.purged}` : '';
+      const orphanNote = data.orphans_removed ? `, Cleaned: ${data.orphans_removed}` : '';
+      setThumbnailProgress({
+        status: `Complete! Processed: ${data.processed}, Generated: ${data.generated}, Skipped: ${data.skipped}${purgedNote}${orphanNote}`,
         phase: 'done',
-        data 
+        data
       });
+      bustThumbCache();  // force the browser to re-fetch regenerated thumbnails
       fetchData();
       // Clear the success message after 5 seconds
       setTimeout(() => setThumbnailProgress(null), 5000);
@@ -18766,7 +18515,7 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
           `Files transferred: ${data.files_transferred}\n` +
           `Database paths updated: ${data.db_paths_updated}\n` +
           `Size: ${data.total_size_mb} MB` +
-          (data.errors > 0 ? `\n⚠ Errors: ${data.errors}` : '')
+          (data.errors > 0 ? `\nErrors: ${data.errors}` : '')
         );
         await loadPrerollFolder();
       }
@@ -19182,13 +18931,11 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
       });
       const data = await safeJson(res);
       if (res.ok && data?.success) {
-        setAuthStatus(prev => ({
-          ...prev,
-          authenticated: true,
-          user: data.user
-        }));
-        setLoginForm({ username: '', password: '', remember_me: false });
-        showAlert('Logged in successfully!', 'success');
+        // Full reload instead of patching authenticated=true: the mount-time
+        // data fetches ran before login and got 401s from the global auth
+        // gate, so revealing the app without remounting would show empty
+        // state everywhere. A reload re-runs them all with the session cookie.
+        window.location.reload();
       } else {
         setLoginError(data?.detail || 'Login failed');
       }
@@ -19795,6 +19542,7 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
       if (res.ok) {
         const data = await res.json();
         setNexupTrailers(data.trailers || []);
+        setNexupHiddenByPref(data.hidden_by_preference || 0);
       }
     } catch (err) {
       console.error('Failed to load NeX-Up trailers:', err);
@@ -19828,12 +19576,87 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
     }
   };
 
+  const loadPotoken = async () => {
+    setPotoken(prev => ({ ...prev, loading: true }));
+    try {
+      const res = await fetch(apiUrl('/nexup/potoken/status'));
+      if (res.ok) {
+        const data = await res.json();
+        setPotoken(prev => ({ ...prev, status: data, loading: false }));
+      } else {
+        setPotoken(prev => ({ ...prev, loading: false }));
+      }
+    } catch (err) {
+      console.error('Failed to load PO-token status:', err);
+      setPotoken(prev => ({ ...prev, loading: false }));
+    }
+  };
+
+  // Install the provider from the NeX-Up card (reuses the System-page installer).
+  const handleInstallPotokenFromNexup = async () => {
+    setInstallingDep('potoken');
+    try {
+      showAlert('Installing YouTube downloader (this can take a few minutes)…', 'info');
+      const res = await fetch(apiUrl('system/dependencies/install/potoken'), { method: 'POST', credentials: 'include' });
+      const data = await res.json().catch(() => ({}));
+      showAlert(data.message || (data.success ? 'Installed.' : 'Install failed.'), data.success ? 'success' : 'error');
+      await loadPotoken();
+    } catch (e) {
+      showAlert('Install failed: ' + (e?.message || e), 'error');
+    } finally {
+      setInstallingDep(null);
+    }
+  };
+
+  const handleStartPotoken = async () => {
+    setPotoken(prev => ({ ...prev, loading: true }));
+    try {
+      const res = await fetch(apiUrl('nexup/potoken/start'), { method: 'POST', credentials: 'include' });
+      const data = await res.json().catch(() => ({}));
+      if (data && data.usable) showAlert('YouTube downloader started.', 'success');
+      else showAlert(data.hint || 'Could not start the provider.', 'warning');
+      setPotoken(prev => ({ ...prev, status: data, loading: false }));
+    } catch (e) {
+      showAlert('Failed to start provider: ' + (e?.message || e), 'error');
+      setPotoken(prev => ({ ...prev, loading: false }));
+    }
+  };
+
+  const handleTestPotoken = async () => {
+    setPotoken(prev => ({ ...prev, testing: true, testResult: null }));
+    try {
+      const res = await fetch(apiUrl('nexup/potoken/test'), { method: 'POST', credentials: 'include' });
+      const data = await res.json().catch(() => ({}));
+      setPotoken(prev => ({
+        ...prev,
+        testing: false,
+        testResult: data,
+        status: data.status || prev.status,
+      }));
+      showAlert(data.ok ? 'Working — minted a fresh YouTube token.' : ('Test failed: ' + (data.reason || 'unknown')), data.ok ? 'success' : 'error');
+    } catch (e) {
+      setPotoken(prev => ({ ...prev, testing: false, testResult: { ok: false, reason: String(e?.message || e) } }));
+      showAlert('Test failed: ' + (e?.message || e), 'error');
+    }
+  };
+
   const handleYoutubeOpenBrowser = async () => {
     try {
-      await fetch(apiUrl(`/nexup/youtube/open-browser?browser=${youtubeSetup.selectedBrowser}`), { method: 'POST' });
+      const res = await fetch(apiUrl(`/nexup/youtube/open-browser?browser=${youtubeSetup.selectedBrowser}`), {
+        method: 'POST', credentials: 'include'
+      });
+      const data = await res.json().catch(() => ({}));
+      // If the chosen browser isn't on the NeXroll machine, the server no
+      // longer silently opens the default browser — tell the user so they can
+      // open it themselves (or upload a cookies file instead).
+      if (data && data.browser_not_found) {
+        showAlert(data.message || `Couldn't open ${youtubeSetup.selectedBrowser} on the server.`, 'error');
+      }
+      // Advance regardless: "Open" is a convenience; the user can also just
+      // sign in manually and continue.
       setYoutubeSetup(prev => ({ ...prev, wizardStep: 2 }));
     } catch (err) {
-      alert('Failed to open browser: ' + (err?.message || err));
+      showAlert('Failed to open browser: ' + (err?.message || err), 'error');
     }
   };
 
@@ -19909,22 +19732,30 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
   const handleYoutubeTestDownload = async () => {
     setYoutubeSetup(prev => ({ ...prev, testing: true }));
     try {
-      const res = await fetch(apiUrl('/nexup/youtube/test-download'), { method: 'POST' });
+      // Pass the optional "specific trailer" URL so the backend can tell auth
+      // failures apart from a single unavailable video.
+      const testUrl = (youtubeSetup.testUrl || '').trim();
+      const res = await fetch(apiUrl('/nexup/youtube/test-download'), {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(testUrl ? { url: testUrl } : {})
+      });
       const data = await res.json();
-      
-      setYoutubeSetup(prev => ({ 
-        ...prev, 
+
+      setYoutubeSetup(prev => ({
+        ...prev,
         testing: false,
         testResult: data,
         wizardStep: data.success ? 4 : prev.wizardStep
       }));
-      
+
       if (data.success) {
         loadYoutubeStatus();
       }
     } catch (err) {
-      setYoutubeSetup(prev => ({ 
-        ...prev, 
+      setYoutubeSetup(prev => ({
+        ...prev,
         testing: false,
         testResult: { success: false, message: err?.message || 'Test failed' }
       }));
@@ -20140,10 +19971,10 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
         loadNexupTVTrailers();
         loadNexupUpcomingTV();
       } else {
-        alert('Download failed: ' + (data.message || 'Unknown error'));
+        openAltTrailers({ kind: 'tv', id: sonarrId, season: seasonNumber, title: showTitle, reason: data.message || '' });
       }
     } catch (err) {
-      alert('Download error: ' + (err?.message || err));
+      openAltTrailers({ kind: 'tv', id: sonarrId, season: seasonNumber, title: showTitle, reason: err?.message || String(err) });
     } finally {
       setDownloadingTrailerId(null);
       setDownloadProgress(null);
@@ -20222,14 +20053,14 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
       }
       
       if (data.errors && data.errors.length > 0) {
-        message += `\n\n⚠️ Errors:\n${data.errors.slice(0, 3).join('\n')}`;
+        message += `\n\nErrors:\n${data.errors.slice(0, 3).join('\n')}`;
         if (data.errors.length > 3) {
           message += `\n...and ${data.errors.length - 3} more`;
         }
       }
       
       if (data.help) {
-        message += `\n\n💡 ${data.help}`;
+        message += `\n\n${data.help}`;
       }
       
       alert(message);
@@ -20390,14 +20221,14 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
       message += `• Expired: ${data.expired} (movies now in library)`;
       
       if (data.errors && data.errors.length > 0) {
-        message += `\n\n⚠️ Errors:\n${data.errors.slice(0, 3).join('\n')}`;
+        message += `\n\nErrors:\n${data.errors.slice(0, 3).join('\n')}`;
         if (data.errors.length > 3) {
           message += `\n...and ${data.errors.length - 3} more`;
         }
       }
       
       if (data.help) {
-        message += `\n\n💡 ${data.help}`;
+        message += `\n\n${data.help}`;
       }
       
       alert(message);
@@ -20428,6 +20259,55 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
     }
   };
 
+  // Open the alternate-trailer picker (top 3 YouTube candidates to preview/choose).
+  const openAltTrailers = async ({ kind, id, season = 1, title, reason = '' }) => {
+    setAltTrailers({ open: true, loading: true, kind, id, season, title: title || '', candidates: [], error: null, downloadingUrl: null, previewId: null, failedUrls: {}, defaultReason: reason || '' });
+    try {
+      const url = kind === 'tv'
+        ? apiUrl(`/nexup/sonarr/trailers/search?sonarr_series_id=${id}&season_number=${season}`)
+        : apiUrl(`/nexup/trailers/search?radarr_movie_id=${id}`);
+      const res = await fetch(url);
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.detail || 'Trailer search failed');
+      setAltTrailers(prev => ({ ...prev, loading: false, candidates: data.candidates || [] }));
+    } catch (e) {
+      setAltTrailers(prev => ({ ...prev, loading: false, error: e?.message || String(e) }));
+    }
+  };
+
+  const closeAltTrailers = () => setAltTrailers(prev => ({ ...prev, open: false, previewId: null }));
+
+  const downloadAlternateTrailer = async (candidate) => {
+    setAltTrailers(prev => ({ ...prev, downloadingUrl: candidate.url, error: null }));
+    try {
+      const { kind, id, season } = altTrailers;
+      const isTv = kind === 'tv';
+      const base = isTv
+        ? `/nexup/trailers/download/tv?sonarr_series_id=${id}&season_number=${season}`
+        : `/nexup/trailers/download?radarr_movie_id=${id}`;
+      const res = await fetch(apiUrl(`${base}&trailer_url=${encodeURIComponent(candidate.url)}`), { method: isTv ? 'GET' : 'POST' });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.detail || 'Download failed');
+      if (data.success === false) throw new Error(data.message || 'Download failed');
+      showAlert(`Downloaded "${candidate.title}".`, 'success');
+      setAltTrailers(prev => ({ ...prev, open: false, downloadingUrl: null, previewId: null }));
+      loadNexupTrailers();
+      loadNexupStorage();
+      if (typeof handleLoadNexupUpcoming === 'function') handleLoadNexupUpcoming();
+    } catch (e) {
+      // Keep the modal open and surface the failure INSIDE it (a toast would
+      // render behind the overlay), and mark this candidate so the user can
+      // immediately try a different one.
+      const reason = e?.message || String(e);
+      setAltTrailers(prev => ({
+        ...prev,
+        downloadingUrl: null,
+        error: reason,
+        failedUrls: { ...(prev.failedUrls || {}), [candidate.url]: reason },
+      }));
+    }
+  };
+
   const handleDownloadTrailer = async (radarrMovieId, movieTitle) => {
     if (!nexupSettings.storage_path) {
       alert('Please configure a storage path in NeX-Up settings first');
@@ -20451,22 +20331,20 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
       const data = await res.json();
       
       if (data.success) {
-        alert(`✅ Downloaded trailer for "${data.message || movieTitle || 'movie'}" (${data.file_size_mb?.toFixed(1) || '?'} MB)`);
+        alert(`Downloaded trailer for "${data.message || movieTitle || 'movie'}" (${data.file_size_mb?.toFixed(1) || '?'} MB)`);
         loadNexupTrailers();
         loadNexupStorage();
         handleLoadNexupUpcoming(); // Refresh to show downloaded status
       } else {
-        alert('⚠️ Download failed: ' + (data.message || 'Unknown error'));
+        openAltTrailers({ kind: 'movie', id: radarrMovieId, title: movieTitle, reason: data.message || '' });
       }
     } catch (err) {
-      // More descriptive error messages
-      let errorMsg = err?.message || String(err);
-      if (errorMsg.includes('Failed to download trailer')) {
-        errorMsg = `Could not download trailer for "${movieTitle || 'this movie'}".\n\nPossible reasons:\n• YouTube bot detection (try again later)\n• Trailer video is age-restricted\n• Video is not available in your region\n\n💡 Tip: Export browser cookies to a youtube_cookies.txt file in your NeX-Up storage folder for better reliability.`;
-      } else if (errorMsg.includes('No trailer available')) {
-        errorMsg = `No trailer URL found for "${movieTitle || 'this movie'}". The movie may not have a trailer available in Radarr yet.`;
-      }
-      alert('❌ Download error:\n\n' + errorMsg);
+      const errorMsg = err?.message || String(err);
+      // Don't fire a scary error toast — the *default* trailer just couldn't be
+      // fetched. Open the picker with the reason so the user can choose a working
+      // alternate. (Showing an error AND then a success when the alternate
+      // downloaded was the confusing part testers hit.)
+      openAltTrailers({ kind: 'movie', id: radarrMovieId, title: movieTitle, reason: errorMsg });
     } finally {
       setDownloadingTrailerId(null);
       setDownloadProgress(null);
@@ -20556,6 +20434,7 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
     loadGeneratedPrerolls();
     loadGeneratedComingSoonLists();
     loadYoutubeStatus();
+    loadPotoken();
   }, []);
 
   // Dynamic Preroll Generator Functions
@@ -20683,7 +20562,7 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
       const canvas = await html2canvas(previewContainerRef.current, {
         scale: scaleFactor,
         useCORS: true,
-        backgroundColor: null,  // Let the CSS background show through
+        backgroundColor: null, // Let the CSS background show through
         logging: false,
         allowTaint: true,
         width: previewEl.offsetWidth,
@@ -20723,7 +20602,7 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
       const data = await res.json();
       
       if (data.success) {
-        alert(`✨ Generated preroll from preview successfully!\n\nThe video is an exact match of what you see in the preview with smooth fade in/out effects.`);
+        alert(`Generated preroll from preview successfully!\n\nThe video is an exact match of what you see in the preview with smooth fade in/out effects.`);
         setDynamicPrerollSettings(prev => ({
           ...prev,
           preroll_path: data.path
@@ -20835,8 +20714,18 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
         loadGeneratedComingSoonLists();
         loadGeneratedPrerolls();
       } else {
-        const err = await res.json();
-        showAlert(err.detail || 'Failed to generate Coming Soon List', 'error');
+        // A 500 returns plain "Internal Server Error" text, not JSON — reading
+        // it as JSON used to throw "Unexpected token 'I'". Read as text and try
+        // to parse, so the real reason shows instead of a confusing parse error.
+        const raw = await res.text();
+        let detail = `Failed to generate Coming Soon List (HTTP ${res.status})`;
+        try {
+          const parsed = JSON.parse(raw);
+          if (parsed && parsed.detail) detail = parsed.detail;
+        } catch {
+          if (raw && raw.length < 300) detail += `: ${raw.trim()}`;
+        }
+        showAlert(detail, 'error');
       }
     } catch (err) {
       showAlert('Error generating Coming Soon List: ' + (err?.message || err), 'error');
@@ -21296,6 +21185,21 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
     checkAuthStatus();
   }, [checkAuthStatus]);
 
+  // v2: check whether the first-run onboarding wizard should be shown
+  React.useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch(apiUrl('/onboarding/status'), { credentials: 'include' });
+        const data = await safeJson(res);
+        if (!cancelled) setNeedsOnboarding(res.ok ? !!(data && data.needs_onboarding) : false);
+      } catch {
+        if (!cancelled) setNeedsOnboarding(false); // fail open: never block the app
+      }
+    })();
+    return () => { cancelled = true; };
+  }, []);
+
   // Load filler settings and NeX-Up data at startup (needed for calendar and dashboard tiles)
   React.useEffect(() => {
     try { 
@@ -21332,8 +21236,9 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
   React.useEffect(() => {
     if (activeTab === 'settings/storage') {
       loadAutoScan();
+      refreshStorageBreakdown();
     }
-  }, [activeTab, loadAutoScan]);
+  }, [activeTab, loadAutoScan, refreshStorageBreakdown]);
 
   // Auto-load users when opening Users tab
   React.useEffect(() => {
@@ -21536,7 +21441,7 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
                       </h3>
                       {movie.release_date && (
                         <p style={{ margin: '0 0 0.5rem 0', fontSize: '0.9rem' }}>
-                          <strong>Release:</strong> {new Date(movie.release_date).toLocaleDateString()} 
+                          <strong>Release:</strong> {formatReleaseDate(movie.release_date)} 
                           {movie.available_now ? (
                             <span style={{ 
                               marginLeft: '0.5rem',
@@ -21550,7 +21455,7 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
                               alignItems: 'center',
                               gap: '0.25rem'
                             }}>
-                              🎬 Available Now!
+                              Available Now!
                             </span>
                           ) : movie.days_until_release !== null && (
                             <span style={{ 
@@ -21581,7 +21486,7 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
                           fontSize: '0.85rem',
                           fontWeight: 500
                         }}>
-                          ✓ Trailer Downloaded
+                          Trailer Downloaded
                         </span>
                       ) : movie.trailer_url ? (
                         <button
@@ -21751,7 +21656,7 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
                                 textOverflow: 'ellipsis',
                                 cursor: 'default'
                               }}
-                            >{isMovie ? '🎬' : '📺'} {label}</div>
+                            >{label}</div>
                           );
                         })}
                         {dayItems.length > 3 && (
@@ -21830,7 +21735,7 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
                       )}
                       {(show.release_date || show.air_date) && (
                         <p style={{ margin: '0 0 0.5rem 0', fontSize: '0.9rem' }}>
-                          <strong>Release:</strong> {new Date(show.release_date || show.air_date).toLocaleDateString()}
+                          <strong>Release:</strong> {formatReleaseDate(show.release_date || show.air_date)}
                           {show.available_now ? (
                             <span style={{ 
                               marginLeft: '0.5rem',
@@ -21844,7 +21749,7 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
                               alignItems: 'center',
                               gap: '0.25rem'
                             }}>
-                              🎬 Available Now!
+                              Available Now!
                             </span>
                           ) : show.days_until_release !== null && show.days_until_release !== undefined && (
                             <span style={{ 
@@ -21862,7 +21767,7 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
                       )}
                       {show.network && (
                         <p style={{ margin: '0 0 0.25rem 0', fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
-                          📺 {show.network}
+                          {show.network}
                         </p>
                       )}
                     </div>
@@ -21876,7 +21781,7 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
                           fontSize: '0.85rem',
                           fontWeight: 500
                         }}>
-                          ✓ Trailer Downloaded
+                          Trailer Downloaded
                         </span>
                       ) : (
                         <button
@@ -22170,8 +22075,7 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
                 </div>
                 <button
                   onClick={handleDisconnectRadarr}
-                  className="button"
-                  style={{ backgroundColor: '#dc3545' }}
+                  className="button button-danger"
                 >
                   Disconnect
                 </button>
@@ -22312,8 +22216,7 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
               <button
                 onClick={handleConnectSonarr}
                 disabled={nexupLoading || !nexupSonarrUrl || !nexupSonarrApiKey}
-                className="button"
-                style={{ backgroundColor: '#17a2b8' }}
+                className="button button-info"
               >
                 {nexupLoading ? 'Connecting...' : 'Connect to Sonarr'}
               </button>
@@ -22354,8 +22257,7 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
                 </div>
                 <button
                   onClick={handleDisconnectSonarr}
-                  className="button"
-                  style={{ backgroundColor: '#dc3545' }}
+                  className="button button-danger"
                 >
                   Disconnect
                 </button>
@@ -22499,7 +22401,12 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
             {nexupTrailers.length} trailer{nexupTrailers.length !== 1 ? 's' : ''}
           </span>
         </h2>
-        
+        {nexupHiddenByPref > 0 && (
+          <div style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginTop: '-0.25rem', marginBottom: '0.5rem' }}>
+            {nexupHiddenByPref} trailer{nexupHiddenByPref !== 1 ? 's' : ''} hidden by your “Digital Only” release-date setting (switch it back to show them again).
+          </div>
+        )}
+
         {!nexupSettings.radarr_connected ? (
           <div style={{ 
             padding: '2rem', 
@@ -22519,22 +22426,17 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
             </button>
           </div>
         ) : nexupTrailers.length === 0 ? (
-          <div style={{ 
-            padding: '2rem', 
-            textAlign: 'center', 
-            backgroundColor: 'var(--bg-color)', 
-            borderRadius: '8px',
-            border: '1px dashed var(--border-color)'
-          }}>
-            <Film size={48} style={{ color: '#666', marginBottom: '1rem' }} />
-            <p style={{ color: '#888', marginBottom: '1rem' }}>No movie trailers downloaded yet</p>
+          <div className="nx-empty">
+            <span className="nx-empty-icon"><Film size={48} /></span>
+            <h3 className="nx-empty-title">No movie trailers yet</h3>
+            <p className="nx-empty-text">Download trailers for your upcoming movies from Radarr to use them as prerolls.</p>
             <button
               onClick={handleSyncNexup}
               disabled={nexupLoading || syncProgress}
               className="button"
-              style={{ backgroundColor: '#ffc230' }}
+              style={{ backgroundColor: '#ffc230', color: '#1a1a1a' }}
             >
-              {syncProgress ? <><Loader2 size={16} className="spin" style={{ marginRight: '0.5rem' }} />Syncing...</> : 'Download Trailers'}
+              {syncProgress ? <><Loader2 size={16} className="spin" />Syncing...</> : 'Download Trailers'}
             </button>
             {syncProgress && (
               <div style={{ 
@@ -22680,14 +22582,19 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
                       <div style={{ fontWeight: 'bold', color: 'var(--text-color)', marginBottom: '0.25rem', fontSize: '0.95rem' }}>
                         {trailer.title}
                       </div>
-                      <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', marginBottom: '0.5rem' }}>
-                        {trailer.release_date ? `Releases: ${new Date(trailer.release_date).toLocaleDateString()}` : 'Release date unknown'}
+                      <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', marginBottom: trailer.removal_date ? '0.25rem' : '0.5rem' }}>
+                        {trailer.release_date ? `Releases: ${formatReleaseDate(trailer.release_date)}` : 'Release date unknown'}
                       </div>
+                      {trailer.removal_date && (
+                        <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: '0.5rem', opacity: 0.85 }} title="Auto-removed by NeX-Up retention cleanup">
+                          {`Removed: ${formatReleaseDate(trailer.removal_date)}`}
+                        </div>
+                      )}
                       <div style={{ display: 'flex', gap: '0.5rem' }}>
                         <button
                           onClick={() => handleToggleTrailer(trailer.id)}
                           className="button"
-                          style={{ 
+                          style={{
                             flex: 1,
                             backgroundColor: trailer.is_enabled ? '#28a745' : '#6c757d',
                             padding: '0.35rem 0.5rem',
@@ -22724,7 +22631,12 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
                     <div style={{ flex: 1 }}>
                       <div style={{ fontWeight: 'bold', color: 'var(--text-color)' }}>{trailer.title}</div>
                       <div style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
-                        {trailer.release_date ? `Releases: ${new Date(trailer.release_date).toLocaleDateString()}` : 'Release date unknown'}
+                        {trailer.release_date ? `Releases: ${formatReleaseDate(trailer.release_date)}` : 'Release date unknown'}
+                        {trailer.removal_date && (
+                          <span style={{ opacity: 0.85 }} title="Auto-removed by NeX-Up retention cleanup">
+                            {`  ·  Removed: ${formatReleaseDate(trailer.removal_date)}`}
+                          </span>
+                        )}
                       </div>
                     </div>
                     <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
@@ -22788,27 +22700,20 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
             <p style={{ color: '#888', marginBottom: '1rem' }}>Connect to Sonarr to download TV trailers</p>
             <button
               onClick={() => setActiveTab('nexup')}
-              className="button"
-              style={{ backgroundColor: '#17a2b8' }}
+              className="button button-info"
             >
               Go to Connections
             </button>
           </div>
         ) : nexupTVTrailers.length === 0 ? (
-          <div style={{ 
-            padding: '2rem', 
-            textAlign: 'center', 
-            backgroundColor: 'var(--bg-color)', 
-            borderRadius: '8px',
-            border: '1px dashed var(--border-color)'
-          }}>
-            <Tv size={48} style={{ color: '#666', marginBottom: '1rem' }} />
-            <p style={{ color: '#888', marginBottom: '1rem' }}>No TV trailers downloaded yet</p>
+          <div className="nx-empty">
+            <span className="nx-empty-icon"><Tv size={48} /></span>
+            <h3 className="nx-empty-title">No TV trailers yet</h3>
+            <p className="nx-empty-text">Download trailers for your upcoming shows from Sonarr to use them as prerolls.</p>
             <button
               onClick={handleSyncSonarr}
               disabled={nexupLoading || tvSyncProgress}
-              className="button"
-              style={{ backgroundColor: '#17a2b8' }}
+              className="button button-info"
             >
               {tvSyncProgress ? <><Loader2 size={16} className="spin" style={{ marginRight: '0.5rem' }} />Syncing...</> : 'Download Trailers'}
             </button>
@@ -22949,9 +22854,14 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
                       <div style={{ fontWeight: 'bold', color: 'var(--text-color)', marginBottom: '0.25rem', fontSize: '0.95rem' }}>
                         {trailer.title}
                       </div>
-                      <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', marginBottom: '0.5rem' }}>
-                        {trailer.release_date ? `Airs: ${new Date(trailer.release_date).toLocaleDateString()}` : 'Air date unknown'}
+                      <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', marginBottom: trailer.removal_date ? '0.25rem' : '0.5rem' }}>
+                        {trailer.release_date ? `Airs: ${formatReleaseDate(trailer.release_date)}` : 'Air date unknown'}
                       </div>
+                      {trailer.removal_date && (
+                        <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: '0.5rem', opacity: 0.85 }} title="Auto-removed by NeX-Up retention cleanup">
+                          {`Removed: ${formatReleaseDate(trailer.removal_date)}`}
+                        </div>
+                      )}
                       <div style={{ display: 'flex', gap: '0.5rem' }}>
                         <button
                           onClick={() => handleToggleTVTrailer(trailer.id)}
@@ -22993,7 +22903,12 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
                     <div style={{ flex: 1 }}>
                       <div style={{ fontWeight: 'bold', color: 'var(--text-color)' }}>{trailer.title}</div>
                       <div style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
-                        {trailer.release_date ? `Airs: ${new Date(trailer.release_date).toLocaleDateString()}` : 'Air date unknown'}
+                        {trailer.release_date ? `Airs: ${formatReleaseDate(trailer.release_date)}` : 'Air date unknown'}
+                        {trailer.removal_date && (
+                          <span style={{ opacity: 0.85 }} title="Auto-removed by NeX-Up retention cleanup">
+                            {`  ·  Removed: ${formatReleaseDate(trailer.removal_date)}`}
+                          </span>
+                        )}
                       </div>
                     </div>
                     <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
@@ -23098,95 +23013,146 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
           {/* YouTube Authentication Card */}
           <div className="card">
             <h2 style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-              <Youtube size={24} /> YouTube Authentication
+              <Youtube size={24} /> YouTube Downloads
             </h2>
             <p style={{ color: '#888', marginBottom: '1rem' }}>
-              YouTube requires authentication to download trailers. Set this up with one click.
+              Trailers download automatically using a Proof-of-Origin (PO) token provider —
+              no YouTube sign-in or cookies needed for most trailers.
             </p>
-            
-            <div style={{ 
-              display: 'flex', 
-              alignItems: 'center', 
-              gap: '1rem',
-              padding: '1rem',
-              backgroundColor: youtubeSetup.status?.configured 
-                ? 'rgba(40, 167, 69, 0.1)' 
-                : 'rgba(255, 193, 7, 0.1)',
+
+            {/* PRIMARY METHOD: PO-Token Provider */}
+            <div style={{
+              display: 'flex', alignItems: 'center', gap: '1rem', padding: '1rem',
+              backgroundColor: potoken.status?.usable ? 'rgba(40, 167, 69, 0.1)' : 'rgba(255, 193, 7, 0.1)',
               borderRadius: '8px',
-              border: `1px solid ${youtubeSetup.status?.configured ? '#28a745' : '#ffc107'}`
+              border: `1px solid ${potoken.status?.usable ? '#28a745' : '#ffc107'}`
             }}>
-              <div style={{ 
-                width: '50px',
-                display: 'flex',
-                justifyContent: 'center'
-              }}>
-                {youtubeSetup.loading 
+              <div style={{ width: '50px', display: 'flex', justifyContent: 'center' }}>
+                {potoken.loading
                   ? <Loader2 size={32} className="spin" color="#ffc107" />
-                  : youtubeSetup.status?.configured 
+                  : potoken.status?.usable
                     ? <CheckCircle size={32} color="#28a745" />
                     : <AlertTriangle size={32} color="#ffc107" />}
               </div>
               <div style={{ flex: 1 }}>
                 <div style={{ fontWeight: 'bold', marginBottom: '0.25rem' }}>
-                  {youtubeSetup.loading 
-                    ? 'Checking status...' 
-                    : youtubeSetup.status?.configured 
-                      ? 'YouTube Ready' 
-                      : 'Setup Required'}
+                  {potoken.loading ? 'Checking…' : potoken.status?.usable ? 'YouTube downloads active' : 'Setup needed'}
                 </div>
                 <div style={{ fontSize: '0.85rem', color: '#888' }}>
-                  {youtubeSetup.status?.message || 'Loading...'}
+                  {potoken.status?.usable
+                    ? `Cookieless downloads enabled${potoken.status?.version ? ' · bgutil ' + potoken.status.version : ''}.`
+                    : (potoken.status?.provider_present
+                        ? 'The token provider is installed but not running — Start it below.'
+                        : 'Install the YouTube downloader to fetch trailers without signing in.')}
                 </div>
-                {youtubeSetup.status?.method && (
-                  <div style={{ fontSize: '0.8rem', color: '#666', marginTop: '0.25rem' }}>
-                    Method: {
-                      youtubeSetup.status.method === 'oauth' ? '🔐 OAuth (Recommended)' :
-                      youtubeSetup.status.method === 'cookies_file' ? '🍪 Exported cookies file' : 
-                      `🌐 ${youtubeSetup.status.browser} browser cookies`
-                    }
+                {/* Installed / Enabled / Working indicators */}
+                <div style={{ display: 'flex', gap: '0.5rem', marginTop: '0.5rem', flexWrap: 'wrap' }}>
+                  {[
+                    { label: 'Installed', on: !!potoken.status?.provider_present },
+                    { label: 'Enabled', on: !!potoken.status?.healthy },
+                    { label: 'Working', on: potoken.testResult?.ok === true || (!!potoken.status?.usable && potoken.testResult == null) },
+                  ].map(chip => (
+                    <span key={chip.label} style={{
+                      display: 'inline-flex', alignItems: 'center', gap: '0.3rem',
+                      fontSize: '0.75rem', padding: '0.15rem 0.5rem', borderRadius: '999px',
+                      backgroundColor: chip.on ? 'rgba(40,167,69,0.15)' : 'rgba(255,255,255,0.06)',
+                      color: chip.on ? '#28a745' : '#999',
+                      border: `1px solid ${chip.on ? '#28a745' : 'var(--border-color)'}`
+                    }}>
+                      {chip.on ? <CheckCircle size={12} /> : <AlertTriangle size={12} />} {chip.label}
+                    </span>
+                  ))}
+                </div>
+                {potoken.testResult && (
+                  <div style={{ fontSize: '0.78rem', marginTop: '0.4rem', color: potoken.testResult.ok ? '#28a745' : 'var(--error-color)' }}>
+                    {potoken.testResult.ok
+                      ? `✓ Minted a fresh token${potoken.testResult.token_preview ? ' (' + potoken.testResult.token_preview + ')' : ''}.`
+                      : `✗ ${potoken.testResult.reason || 'Test failed.'}`}
                   </div>
                 )}
               </div>
-              <button
-                onClick={() => setYoutubeSetup(prev => ({ ...prev, showWizard: true, wizardStep: 1, testResult: null }))}
-                className="button"
-                style={{ 
-                  backgroundColor: youtubeSetup.status?.configured ? '#6c757d' : 'var(--button-bg)',
-                  whiteSpace: 'nowrap',
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: '0.5rem'
-                }}
-              >
-                {youtubeSetup.status?.configured 
-                  ? <><RefreshCw size={16} /> Reconfigure</> 
-                  : <><Rocket size={16} /> Setup YouTube</>}
-              </button>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', alignItems: 'stretch' }}>
+                {!potoken.status?.provider_present && (
+                  <button onClick={handleInstallPotokenFromNexup} className="button" disabled={installingDep === 'potoken'}
+                    style={{ whiteSpace: 'nowrap', display: 'flex', alignItems: 'center', gap: '0.4rem', justifyContent: 'center' }}>
+                    {installingDep === 'potoken' ? <><Loader2 size={16} className="spin" /> Installing…</> : <><Download size={16} /> Install</>}
+                  </button>
+                )}
+                {potoken.status?.provider_present && !potoken.status?.healthy && (
+                  <button onClick={handleStartPotoken} className="button" disabled={potoken.loading}
+                    style={{ whiteSpace: 'nowrap', display: 'flex', alignItems: 'center', gap: '0.4rem', justifyContent: 'center' }}>
+                    <Rocket size={16} /> Start
+                  </button>
+                )}
+                {potoken.status?.usable && (
+                  <button onClick={handleTestPotoken} className="button button-secondary" disabled={potoken.testing}
+                    style={{ whiteSpace: 'nowrap', display: 'flex', alignItems: 'center', gap: '0.4rem', justifyContent: 'center' }}>
+                    {potoken.testing ? <><Loader2 size={16} className="spin" /> Testing…</> : <><RefreshCw size={16} /> Test</>}
+                  </button>
+                )}
+              </div>
             </div>
-            
-            {/* YouTube Bot Detection Warning */}
-            <div style={{ 
-              marginTop: '1rem',
-              padding: '1rem',
-              backgroundColor: 'rgba(23, 162, 184, 0.1)',
-              borderRadius: '8px',
-              border: '1px solid #17a2b8',
-              fontSize: '0.9rem'
+
+            {/* ADVANCED: cookie / OAuth sign-in (only for age-restricted) */}
+            <details style={{ marginTop: '1rem' }}>
+              <summary style={{ cursor: 'pointer', fontWeight: 600, color: 'var(--text-secondary)' }}>
+                Advanced: sign in for age-restricted trailers
+              </summary>
+              <div style={{
+                display: 'flex', alignItems: 'center', gap: '1rem', padding: '1rem', marginTop: '0.75rem',
+                backgroundColor: youtubeSetup.status?.configured ? 'rgba(40, 167, 69, 0.1)' : 'rgba(255, 255, 255, 0.04)',
+                borderRadius: '8px',
+                border: `1px solid ${youtubeSetup.status?.configured ? '#28a745' : 'var(--border-color)'}`
+              }}>
+                <div style={{ width: '40px', display: 'flex', justifyContent: 'center' }}>
+                  {youtubeSetup.loading
+                    ? <Loader2 size={24} className="spin" color="#ffc107" />
+                    : youtubeSetup.status?.configured
+                      ? <CheckCircle size={24} color="#28a745" />
+                      : <Info size={24} color="#888" />}
+                </div>
+                <div style={{ flex: 1 }}>
+                  <div style={{ fontWeight: 'bold', marginBottom: '0.25rem' }}>
+                    {youtubeSetup.status?.configured ? 'Signed in' : 'Optional sign-in'}
+                  </div>
+                  <div style={{ fontSize: '0.85rem', color: '#888' }}>
+                    {youtubeSetup.status?.configured
+                      ? (youtubeSetup.status?.message || 'Cookies configured.')
+                      : 'Only needed for age-restricted trailers. Most trailers download without this.'}
+                  </div>
+                  {youtubeSetup.status?.method && (
+                    <div style={{ fontSize: '0.8rem', color: '#666', marginTop: '0.25rem' }}>
+                      Method: {
+                        youtubeSetup.status.method === 'oauth' ? 'OAuth' :
+                        youtubeSetup.status.method === 'cookies_file' ? 'Exported cookies file' :
+                        `${youtubeSetup.status.browser} browser cookies`
+                      }
+                    </div>
+                  )}
+                </div>
+                <button
+                  onClick={() => setYoutubeSetup(prev => ({ ...prev, showWizard: true, wizardStep: 1, testResult: null }))}
+                  className="button button-secondary"
+                  style={{ whiteSpace: 'nowrap', display: 'flex', alignItems: 'center', gap: '0.5rem' }}
+                >
+                  {youtubeSetup.status?.configured ? <><RefreshCw size={16} /> Reconfigure</> : <><Rocket size={16} /> Set up sign-in</>}
+                </button>
+              </div>
+            </details>
+
+            {/* How it works */}
+            <div style={{
+              marginTop: '1rem', padding: '1rem',
+              backgroundColor: 'rgba(23, 162, 184, 0.1)', borderRadius: '8px',
+              border: '1px solid #17a2b8', fontSize: '0.9rem'
             }}>
               <div style={{ display: 'flex', alignItems: 'flex-start', gap: '0.75rem' }}>
                 <Info size={20} color="#17a2b8" style={{ flexShrink: 0, marginTop: '2px' }} />
-                <div>
-                  <div style={{ fontWeight: 'bold', marginBottom: '0.5rem', color: '#17a2b8' }}>
-                    YouTube Bot Detection
-                  </div>
-                  <div style={{ color: '#aaa', lineHeight: '1.5' }}>
-                    YouTube actively blocks automated trailer downloads. If downloads fail with "Sign in to confirm you're not a bot":
-                    <ul style={{ margin: '0.5rem 0 0 1rem', paddingLeft: '0' }}>
-                      <li><strong>VPN users:</strong> Try refreshing your IP or disconnecting temporarily</li>
-                      <li><strong>Rate limiting:</strong> Wait a few hours if you've downloaded many trailers</li>
-                      <li><strong>Cookie export:</strong> Use Incognito → login → go to youtube.com/robots.txt → export cookies</li>
-                    </ul>
-                  </div>
+                <div style={{ color: '#aaa', lineHeight: '1.5' }}>
+                  <strong style={{ color: '#17a2b8' }}>How this works.</strong> The PO-token provider answers
+                  YouTube's "confirm you're not a bot" challenge automatically, so trailers download without
+                  signing in. If a specific trailer still fails it's usually age-restricted (use Advanced
+                  sign-in above), region-locked, or your IP is briefly rate-limited.
                 </div>
               </div>
             </div>
@@ -23241,9 +23207,12 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
                       cursor: 'pointer',
                       color: 'var(--text-color)',
                       lineHeight: 1,
-                      padding: '0 0.5rem'
+                      padding: '0 0.5rem',
+                      display: 'inline-flex',
+                      alignItems: 'center'
                     }}
-                  >×</button>
+                    aria-label="Close"
+                  ><X size={20} /></button>
                 </div>
                 <div style={{ padding: '1.5rem' }}>
                   {/* Progress Indicator */}
@@ -23339,7 +23308,7 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
                             Use extensions like "Get cookies.txt LOCALLY" for Chrome/Edge.
                           </p>
                           <p style={{ margin: '0.5rem 0 0 0', fontSize: '0.85rem', color: '#6c757d', fontStyle: 'italic' }}>
-                            💡 Tip: Use an Incognito/Private browser window when logging into YouTube and exporting cookies for best results.
+                            Tip: Use an Incognito/Private browser window when logging into YouTube and exporting cookies for best results.
                           </p>
                         </div>
                       </div>
@@ -23462,8 +23431,7 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
                       <div style={{ marginTop: '1.5rem', display: 'flex', gap: '1rem', justifyContent: 'center' }}>
                         <button
                           onClick={() => setYoutubeSetup(prev => ({ ...prev, wizardStep: 1 }))}
-                          className="button"
-                          style={{ backgroundColor: '#6c757d' }}
+                          className="button button-secondary"
                         >
                           ← Back
                         </button>
@@ -23531,8 +23499,7 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
                       <div style={{ display: 'flex', gap: '1rem', justifyContent: 'center' }}>
                         <button
                           onClick={() => setYoutubeSetup(prev => ({ ...prev, wizardStep: 2 }))}
-                          className="button"
-                          style={{ backgroundColor: '#6c757d' }}
+                          className="button button-secondary"
                         >
                           ← Back
                         </button>
@@ -23564,32 +23531,57 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
                       </p>
                       
                       {youtubeSetup.testResult && (
-                        <div style={{ 
-                          padding: '1rem', 
-                          backgroundColor: youtubeSetup.testResult.success ? '#d4edda' : '#f8d7da', 
+                        <div style={{
+                          padding: '0.85rem 1rem',
                           borderRadius: '8px',
                           marginBottom: '1.5rem',
-                          color: youtubeSetup.testResult.success ? '#155724' : '#721c24'
+                          fontSize: '0.9rem',
+                          color: youtubeSetup.testResult.success ? 'var(--success-color, #28a745)' : '#dc3545',
+                          background: youtubeSetup.testResult.success
+                            ? 'color-mix(in srgb, var(--success-color, #28a745) 12%, transparent)'
+                            : 'color-mix(in srgb, #dc3545 12%, transparent)',
+                          border: `1px solid ${youtubeSetup.testResult.success ? 'color-mix(in srgb, var(--success-color, #28a745) 40%, transparent)' : 'color-mix(in srgb, #dc3545 40%, transparent)'}`,
                         }}>
-                          {youtubeSetup.testResult.message}
+                          <div style={{ fontWeight: 600 }}>
+                            {youtubeSetup.testResult.message || youtubeSetup.testResult.error || 'Test failed'}
+                          </div>
+                          {youtubeSetup.testResult.hint && (
+                            <div style={{ marginTop: '0.4rem', color: 'var(--text-secondary)', fontWeight: 400 }}>
+                              {youtubeSetup.testResult.hint}
+                            </div>
+                          )}
                         </div>
                       )}
-                      
+
+                      {/* Optional: test the exact trailer that's failing, so a
+                          single bad video can be told apart from broken auth. */}
+                      <div style={{ marginBottom: '1rem' }}>
+                        <label style={{ display: 'block', marginBottom: '0.35rem', fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
+                          Test a specific trailer URL <span style={{ opacity: 0.7 }}>(optional)</span>
+                        </label>
+                        <input
+                          type="text"
+                          className="nx-input"
+                          placeholder="https://www.youtube.com/watch?v=... (leave blank to test sign-in only)"
+                          value={youtubeSetup.testUrl || ''}
+                          onChange={(e) => setYoutubeSetup(prev => ({ ...prev, testUrl: e.target.value }))}
+                          style={{ width: '100%', padding: '0.55rem 0.7rem', borderRadius: '6px', border: '1px solid var(--border-color)', boxSizing: 'border-box' }}
+                        />
+                      </div>
+
                       <div style={{ display: 'flex', gap: '1rem', justifyContent: 'center' }}>
                         <button
                           onClick={handleYoutubeTestDownload}
-                          className="button"
+                          className="button button-secondary"
                           disabled={youtubeSetup.testing}
-                          style={{ backgroundColor: '#6c757d' }}
                         >
-                          {youtubeSetup.testing 
+                          {youtubeSetup.testing
                             ? <><Loader2 size={16} className="spin" /> Testing...</>
                             : <><FlaskConical size={16} /> Test Download</>}
                         </button>
                         <button
                           onClick={() => setYoutubeSetup(prev => ({ ...prev, showWizard: false }))}
-                          className="button"
-                          style={{ backgroundColor: '#28a745' }}
+                          className="button button-success"
                         >
                                                     <Check size={16} /> Done
                         </button>
@@ -23614,10 +23606,12 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
                 <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
                   <input
                     type="text"
-                    placeholder="C:\NeXroll\Trailers or /opt/nexroll/trailers"
+                    readOnly
+                    placeholder="Click Browse to select an existing folder"
                     value={nexupSettings.storage_path || ''}
-                    onChange={(e) => handleUpdateNexupSettings({ storage_path: e.target.value })}
-                    style={{ flex: 1, padding: '0.5rem', borderRadius: '4px', border: '1px solid var(--border-color)' }}
+                    onClick={() => openFolderBrowser('nexup-storage')}
+                    title={nexupSettings.storage_path || 'Click Browse to choose an existing folder'}
+                    style={{ flex: 1, padding: '0.5rem', borderRadius: '4px', border: '1px solid var(--border-color)', backgroundColor: 'var(--hover-bg)', color: 'var(--text-secondary)', cursor: 'pointer' }}
                   />
                   <button
                     type="button"
@@ -23645,11 +23639,11 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
                     <span>Storage Used:</span>
                     <strong>{nexupStorage.total_size_gb.toFixed(2)} GB / {nexupStorage.max_gb} GB</strong>
                   </div>
-                  <div style={{ 
-                    height: '10px', 
-                    backgroundColor: '#e0e0e0', 
-                    borderRadius: '5px', 
-                    overflow: 'hidden' 
+                  <div style={{
+                    height: '10px',
+                    backgroundColor: 'var(--hover-bg)',
+                    borderRadius: '5px',
+                    overflow: 'hidden'
                   }}>
                     <div style={{ 
                       height: '100%', 
@@ -23894,7 +23888,7 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
                   border: '1px solid rgba(255, 193, 7, 0.3)'
                 }}>
                   <p style={{ fontSize: '0.85rem', color: '#ffc107', margin: 0 }}>
-                    <strong>💡 Tip:</strong> If YouTube blocks your downloads, try increasing the delay 
+                    <strong>Tip:</strong> If YouTube blocks your downloads, try increasing the delay 
                     or wait a few hours before trying again. Using authenticated cookies can help prevent blocks.
                   </p>
                 </div>
@@ -23904,7 +23898,7 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
             {/* TMDB API Key Card */}
             <div className="card">
               <h2 style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                🎬 TMDB API Key (Optional)
+                TMDB API Key (Optional)
               </h2>
               <p style={{ marginBottom: '1rem', color: '#888' }}>
                 Provide your own TMDB API key for more reliable trailer fetching. Without this, the built-in key may hit rate limits.
@@ -23937,7 +23931,7 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
                     border: '1px solid rgba(40, 167, 69, 0.3)'
                   }}>
                     <p style={{ fontSize: '0.85rem', color: '#28a745', margin: 0 }}>
-                      ✓ Custom TMDB API key configured
+                      Custom TMDB API key configured
                     </p>
                   </div>
                 )}
@@ -23949,7 +23943,7 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
                   border: '1px solid rgba(255, 193, 7, 0.3)'
                 }}>
                   <p style={{ fontSize: '0.85rem', color: '#ffc107', margin: 0 }}>
-                    <strong>💡 Note:</strong> TMDB is used to find trailer URLs for movies and TV shows. 
+                    <strong>Note:</strong> TMDB is used to find trailer URLs for movies and TV shows. 
                     If trailers aren't being found, try adding your own API key. For TV shows, IMDB is used as a fallback.
                   </p>
                 </div>
@@ -24245,13 +24239,13 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
                         }}
                       >
                         {dynamicPrerollSettings.template === t.id && (
-                          <span style={{ 
-                            position: 'absolute', 
-                            top: '8px', 
+                          <span style={{
+                            position: 'absolute',
+                            top: '8px',
                             right: '8px',
                             color: '#00d4ff',
-                            fontWeight: 'bold'
-                          }}>✓</span>
+                            display: 'inline-flex'
+                          }}><CheckCircle size={16} /></span>
                         )}
                         <div style={{ fontWeight: 'bold', marginBottom: '0.25rem', color: 'var(--text-color, #fff)' }}>
                           {t.name}
@@ -24330,10 +24324,10 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
                   </label>
                   <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
                     {[
-                      { id: 'en', label: 'English', flag: '🇬🇧' },
-                      { id: 'fr', label: 'Français', flag: '🇫🇷' },
-                      { id: 'es', label: 'Español', flag: '🇪🇸' },
-                      { id: 'de', label: 'Deutsch', flag: '🇩🇪' }
+                      { id: 'en', label: 'English' },
+                      { id: 'fr', label: 'Français' },
+                      { id: 'es', label: 'Español' },
+                      { id: 'de', label: 'Deutsch' }
                     ].map(lang => (
                       <button
                         key={lang.id}
@@ -24354,7 +24348,7 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
                           gap: '0.5rem'
                         }}
                       >
-                        <span>{lang.flag}</span> {lang.label}
+                        {lang.label}
                       </button>
                     ))}
                   </div>
@@ -24968,10 +24962,10 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
                   </label>
                   <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
                     {[
-                      { id: 'en', label: 'English', flag: '🇬🇧' },
-                      { id: 'fr', label: 'Français', flag: '🇫🇷' },
-                      { id: 'es', label: 'Español', flag: '🇪🇸' },
-                      { id: 'de', label: 'Deutsch', flag: '🇩🇪' }
+                      { id: 'en', label: 'English' },
+                      { id: 'fr', label: 'Français' },
+                      { id: 'es', label: 'Español' },
+                      { id: 'de', label: 'Deutsch' }
                     ].map(lang => (
                       <button
                         key={lang.id}
@@ -24992,7 +24986,7 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
                           gap: '0.5rem'
                         }}
                       >
-                        <span>{lang.flag}</span> {lang.label}
+                        {lang.label}
                       </button>
                     ))}
                   </div>
@@ -25723,168 +25717,19 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
     </div>
   );
 
-  // Settings Sub-Navigation
-  const renderSettingsSubNav = () => {
-    const tabs = [
-      { 
-        id: 'settings', 
-        icon: <Settings size={16} />, 
-        label: 'General', 
-        description: 'Theme, timezone, notifications, and preferences'
-      },
-      { 
-        id: 'settings/paths', 
-        icon: <ArrowRight size={16} />, 
-        label: 'Path Mappings', 
-        description: 'Configure path translations for Plex'
-      },
-      { 
-        id: 'settings/storage', 
-        icon: <HardDrive size={16} />, 
-        label: 'Storage', 
-        description: 'Configure preroll storage folder'
-      },
-      { 
-        id: 'settings/apikeys', 
-        icon: <Key size={16} />, 
-        label: 'API Keys', 
-        description: 'Manage API keys for external access'
-      },
-      { 
-        id: 'settings/logs', 
-        icon: <FileText size={16} />, 
-        label: 'Logs', 
-        description: 'View and export system logs'
-      },
-      { 
-        id: 'settings/users', 
-        icon: <Users size={16} />, 
-        label: 'Users', 
-        description: 'Manage user accounts and permissions'
-      },
-      { 
-        id: 'settings/backup', 
-        icon: <Download size={16} />, 
-        label: 'Backup & Restore', 
-        description: 'Export and import your NeXroll data'
-      },
-      { 
-        id: 'settings/system', 
-        icon: <Info size={16} />, 
-        label: 'System', 
-        description: 'System information and diagnostics'
-      }
-    ];
-
-    return (
-      <>
-        {/* Main Tab Bar */}
-        <div style={{ 
-          position: 'sticky',
-          top: '50px',
-          zIndex: 800,
-          backgroundColor: 'var(--bg-color)',
-          borderBottom: '2px solid var(--border-color)',
-          display: 'flex',
-          gap: '0.25rem',
-          marginBottom: '0.75rem',
-          paddingTop: '0.5rem'
-        }}>
-          {tabs.map(tab => (
-            <button
-              key={tab.id}
-              onClick={() => setActiveTab(tab.id)}
-              style={{
-                padding: '0.875rem 1.25rem',
-                border: 'none',
-                borderBottom: activeTab === tab.id ? '3px solid var(--button-bg)' : '3px solid transparent',
-                backgroundColor: activeTab === tab.id ? 'var(--bg-color)' : 'transparent',
-                color: activeTab === tab.id ? 'var(--button-bg)' : 'var(--text-color)',
-                cursor: 'pointer',
-                fontSize: '0.9rem',
-                fontWeight: activeTab === tab.id ? 600 : 400,
-                transition: 'all 0.2s',
-                marginBottom: '-2px',
-                display: 'flex',
-                alignItems: 'center',
-                gap: '0.5rem',
-                borderRadius: '8px 8px 0 0'
-              }}
-              onMouseEnter={(e) => {
-                if (activeTab !== tab.id) {
-                  e.currentTarget.style.backgroundColor = 'var(--bg-color)';
-                  e.currentTarget.style.color = 'var(--button-bg)';
-                }
-              }}
-              onMouseLeave={(e) => {
-                if (activeTab !== tab.id) {
-                  e.currentTarget.style.backgroundColor = 'transparent';
-                  e.currentTarget.style.color = 'var(--text-color)';
-                }
-              }}
-              title={tab.description}
-            >
-              <span style={{ display: 'flex', alignItems: 'center' }}>{tab.icon}</span>
-              <span>{tab.label}</span>
-            </button>
-          ))}
-        </div>
-
-        {/* Context Bar */}
-        <div style={{
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'space-between',
-          padding: '0.75rem 1rem',
-          backgroundColor: 'var(--bg-color)',
-          borderRadius: '8px',
-          border: '1px solid var(--border-color)',
-          marginBottom: '1rem'
-        }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
-            <span style={{ display: 'flex', alignItems: 'center' }}>
-              {tabs.find(t => t.id === activeTab)?.icon || <Settings size={20} />}
-            </span>
-            <div>
-              <div style={{ fontSize: '0.95rem', fontWeight: 600, color: 'var(--text-color)' }}>
-                {tabs.find(t => t.id === activeTab)?.label || 'General'}
-              </div>
-              <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', marginTop: '0.15rem' }}>
-                {tabs.find(t => t.id === activeTab)?.description || ''}
-              </div>
-            </div>
-          </div>
-        </div>
-      </>
-    );
-  };
 
   // Settings - NeX-Up Content Settings Tab
   // Settings - General Tab
   const renderSettingsGeneral = () => (
     <>
-    <div style={{ marginBottom: '1rem' }}>
-      <h1 className="header" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.5rem' }}>
-        <Settings size={32} className="header-icon" /> General Settings
-      </h1>
-      <p style={{ color: 'var(--text-secondary)', fontSize: '0.95rem', margin: 0 }}>
-        Configure general application preferences and behavior.
-      </p>
-    </div>
     <div className="card">
       {/* Theme Settings */}
-      <div style={{ 
-        padding: '1rem', 
-        backgroundColor: 'var(--bg-color)', 
-        borderRadius: '8px',
-        border: '1px solid var(--border-color)',
-        marginBottom: '1rem'
-      }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.5rem' }}>
+      <div className="nx-setting-row">
+        <div className="nx-setting-row-head">
           {darkMode ? <Moon size={16} style={{ color: '#a78bfa' }} /> : <Sun size={16} style={{ color: '#fbbf24' }} />}
-          <h3 style={{ margin: 0, fontSize: '1rem' }}>Theme</h3>
+          <h3>Theme</h3>
         </div>
-        <p style={{ marginBottom: '0.75rem', color: 'var(--text-secondary)', fontSize: '0.85rem' }}>
+        <p className="nx-setting-row-desc">
           Choose between light and dark themes for the interface.
         </p>
         <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
@@ -25903,18 +25748,12 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
       </div>
 
       {/* Timezone Settings */}
-      <div style={{ 
-        padding: '1rem', 
-        backgroundColor: 'var(--bg-color)', 
-        borderRadius: '8px',
-        border: '1px solid var(--border-color)',
-        marginBottom: '1rem'
-      }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.5rem' }}>
+      <div className="nx-setting-row">
+        <div className="nx-setting-row-head">
           <Globe size={16} style={{ color: '#00d4ff' }} />
-          <h3 style={{ margin: 0, fontSize: '1rem' }}>Timezone</h3>
+          <h3>Timezone</h3>
         </div>
-        <p style={{ marginBottom: '0.75rem', color: 'var(--text-secondary)', fontSize: '0.85rem' }}>
+        <p className="nx-setting-row-desc">
           Set your timezone to ensure schedules run at the correct local time.
         </p>
         <div style={{ maxWidth: '400px' }}>
@@ -25947,18 +25786,12 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
       </div>
 
       {/* Confirmation Dialogs */}
-      <div style={{ 
-        padding: '1rem', 
-        backgroundColor: 'var(--bg-color)', 
-        borderRadius: '8px',
-        border: '1px solid var(--border-color)',
-        marginBottom: '1rem'
-      }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.5rem' }}>
+      <div className="nx-setting-row">
+        <div className="nx-setting-row-head">
           <AlertCircle size={16} style={{ color: '#f59e0b' }} />
-          <h3 style={{ margin: 0, fontSize: '1rem' }}>Confirmation Dialogs</h3>
+          <h3>Confirmation Dialogs</h3>
         </div>
-        <p style={{ marginBottom: '0.75rem', color: 'var(--text-secondary)', fontSize: '0.85rem' }}>
+        <p className="nx-setting-row-desc">
           Control whether you see confirmation prompts before deleting items.
         </p>
         <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
@@ -25977,18 +25810,12 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
       </div>
 
       {/* Notification Preferences */}
-      <div style={{ 
-        padding: '1rem', 
-        backgroundColor: 'var(--bg-color)', 
-        borderRadius: '8px',
-        border: '1px solid var(--border-color)',
-        marginBottom: '1rem'
-      }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.5rem' }}>
+      <div className="nx-setting-row">
+        <div className="nx-setting-row-head">
           <Bell size={16} style={{ color: '#22c55e' }} />
-          <h3 style={{ margin: 0, fontSize: '1rem' }}>Notifications</h3>
+          <h3>Notifications</h3>
         </div>
-        <p style={{ marginBottom: '0.75rem', color: 'var(--text-secondary)', fontSize: '0.85rem' }}>
+        <p className="nx-setting-row-desc">
           Control success and informational alert notifications.
         </p>
         <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
@@ -26019,16 +25846,10 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
       </h2>
 
       {/* Verbose Logging */}
-      <div style={{ 
-        padding: '1rem', 
-        backgroundColor: 'var(--bg-color)', 
-        borderRadius: '8px',
-        border: '1px solid var(--border-color)',
-        marginBottom: '1rem'
-      }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.5rem' }}>
+      <div className="nx-setting-row">
+        <div className="nx-setting-row-head">
           <Terminal size={16} style={{ color: '#a78bfa' }} />
-          <h3 style={{ margin: 0, fontSize: '1rem' }}>Verbose Logging</h3>
+          <h3>Verbose Logging</h3>
           <span style={{ 
             fontSize: '0.65rem', 
             padding: '0.15rem 0.4rem', 
@@ -26040,7 +25861,7 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
             BETA
           </span>
         </div>
-        <p style={{ marginBottom: '0.75rem', color: 'var(--text-secondary)', fontSize: '0.85rem' }}>
+        <p className="nx-setting-row-desc">
           Enable verbose logging to see detailed debug information in the console and logs.
         </p>
         <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
@@ -26067,18 +25888,12 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
       </div>
 
       {/* Coexistence Mode (Passive Mode) */}
-      <div style={{ 
-        padding: '1rem', 
-        backgroundColor: 'var(--bg-color)', 
-        borderRadius: '8px',
-        border: '1px solid var(--border-color)',
-        marginBottom: '1rem'
-      }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.5rem' }}>
+      <div className="nx-setting-row">
+        <div className="nx-setting-row-head">
           <Users size={16} style={{ color: '#3b82f6' }} />
-          <h3 style={{ margin: 0, fontSize: '1rem' }}>Coexistence Mode</h3>
+          <h3>Coexistence Mode</h3>
         </div>
-        <p style={{ marginBottom: '0.75rem', color: 'var(--text-secondary)', fontSize: '0.85rem' }}>
+        <p className="nx-setting-row-desc">
           Enable if you use another preroll manager alongside NeXroll. NeXroll will only manage prerolls during active schedules.
         </p>
         <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
@@ -26112,18 +25927,12 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
       </div>
 
       {/* Clear When Inactive */}
-      <div style={{ 
-        padding: '1rem', 
-        backgroundColor: 'var(--bg-color)', 
-        borderRadius: '8px',
-        border: '1px solid var(--border-color)',
-        marginBottom: '1rem'
-      }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.5rem' }}>
+      <div className="nx-setting-row">
+        <div className="nx-setting-row-head">
           <XCircle size={16} style={{ color: '#ef4444' }} />
-          <h3 style={{ margin: 0, fontSize: '1rem' }}>Clear Prerolls When Inactive</h3>
+          <h3>Clear Prerolls When Inactive</h3>
         </div>
-        <p style={{ marginBottom: '0.75rem', color: 'var(--text-secondary)', fontSize: '0.85rem' }}>
+        <p className="nx-setting-row-desc">
           Clear the Plex preroll field when no schedules are active. No prerolls will play outside scheduled times.
         </p>
         <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
@@ -26170,12 +25979,7 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
         When no schedules are active, NeXroll can apply a filler category, sequence, or Coming Soon content to fill gaps in your calendar.
       </p>
 
-      <div style={{ 
-        padding: '1rem', 
-        backgroundColor: 'var(--bg-color)', 
-        borderRadius: '8px',
-        border: '1px solid var(--border-color)'
-      }}>
+      <div className="nx-setting-row">
         <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.75rem' }}>
           <label className="nx-rockerswitch">
             <input
@@ -26328,14 +26132,6 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
   // Settings - Path Mappings Tab
   const renderSettingsPaths = () => (
     <>
-    <div style={{ marginBottom: '1rem' }}>
-      <h1 className="header" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.5rem' }}>
-        <FolderSync size={32} className="header-icon" /> Path Mappings
-      </h1>
-      <p style={{ color: 'var(--text-secondary)', fontSize: '0.95rem', margin: 0 }}>
-        Define how local paths should be translated to media server paths.
-      </p>
-    </div>
     {/* Path Mappings Card */}
     <div className="card" style={{ marginBottom: '1.5rem' }}>
       <h2 style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.5rem' }}>
@@ -26347,13 +26143,7 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
       </p>
 
       {/* Mappings List */}
-      <div style={{
-        padding: '1rem',
-        backgroundColor: 'var(--bg-color)',
-        borderRadius: '8px',
-        border: '1px solid var(--border-color)',
-        marginBottom: '1rem'
-      }}>
+      <div className="nx-setting-row">
         <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '1rem' }}>
           <Layers size={16} style={{ color: '#00d4ff' }} />
           <span style={{ fontWeight: 600, color: 'var(--text-color)' }}>Path Translation Rules</span>
@@ -26465,12 +26255,7 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
         Paste one or more local/UNC paths below to preview their translated Plex paths.
       </p>
 
-      <div style={{
-        padding: '1rem',
-        backgroundColor: 'var(--bg-color)',
-        borderRadius: '8px',
-        border: '1px solid var(--border-color)'
-      }}>
+      <div className="nx-setting-row">
         <textarea
           rows="4"
           className="input"
@@ -26536,14 +26321,6 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
   // Settings - Backup & Restore Tab
   const renderSettingsBackup = () => (
     <>
-    <div style={{ marginBottom: '1rem' }}>
-      <h1 className="header" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.5rem' }}>
-        <Archive size={32} className="header-icon" /> Backup & Restore
-      </h1>
-      <p style={{ color: 'var(--text-secondary)', fontSize: '0.95rem', margin: 0 }}>
-        Create backups of your NeXroll data and restore from previous backups.
-      </p>
-    </div>
     <div className="card">
       {/* Progress Indicator */}
       {backupProgress.active && (
@@ -26552,32 +26329,49 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
           marginBottom: '1.5rem',
           backgroundColor: 'rgba(59, 130, 246, 0.1)',
           border: '1px solid rgba(59, 130, 246, 0.3)',
-          borderRadius: '8px',
-          display: 'flex',
-          alignItems: 'center',
-          gap: '0.75rem'
+          borderRadius: '8px'
         }}>
-          <div style={{
-            width: '24px',
-            height: '24px',
-            border: '3px solid rgba(59, 130, 246, 0.3)',
-            borderTopColor: '#3b82f6',
-            borderRadius: '50%',
-            animation: 'spin 1s linear infinite'
-          }} />
-          <div>
-            <div style={{ fontWeight: 600, color: '#3b82f6' }}>
-              {(() => {
-                const t = backupProgress.type || '';
-                if (t.includes('backup')) return 'Creating Backup...';
-                if (t === 'rescan') return 'Rescanning...';
-                return 'Restoring...';
-              })()}
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+            <div style={{
+              width: '24px',
+              height: '24px',
+              border: '3px solid rgba(59, 130, 246, 0.3)',
+              borderTopColor: '#3b82f6',
+              borderRadius: '50%',
+              animation: 'spin 1s linear infinite',
+              flexShrink: 0
+            }} />
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ fontWeight: 600, color: '#3b82f6' }}>
+                {(() => {
+                  const t = backupProgress.type || '';
+                  if (t.includes('backup')) return 'Backing up…';
+                  if (t === 'rescan') return 'Rescanning…';
+                  return 'Restoring…';
+                })()}
+              </div>
+              <div style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
+                {backupProgress.message}
+              </div>
             </div>
-            <div style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
-              {backupProgress.message}
-            </div>
+            {backupProgress.percent != null && (
+              <div style={{ fontWeight: 700, color: '#3b82f6', fontSize: '1.1rem', minWidth: '3.2rem', textAlign: 'right', flexShrink: 0 }}>
+                {backupProgress.percent}%
+              </div>
+            )}
           </div>
+          {backupProgress.percent != null && (
+            <div style={{ marginTop: '0.75rem' }}>
+              <div style={{ height: '8px', backgroundColor: 'rgba(59, 130, 246, 0.2)', borderRadius: '999px', overflow: 'hidden' }}>
+                <div style={{ height: '100%', width: `${backupProgress.percent}%`, backgroundColor: '#3b82f6', borderRadius: '999px', transition: 'width 0.2s ease' }} />
+              </div>
+              {backupProgress.total > 0 && (
+                <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginTop: '0.3rem', textAlign: 'right' }}>
+                  {(backupProgress.loaded / 1048576).toFixed(1)} MB / {(backupProgress.total / 1048576).toFixed(1)} MB
+                </div>
+              )}
+            </div>
+          )}
         </div>
       )}
 
@@ -26593,7 +26387,7 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
         }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.75rem' }}>
             <Database size={18} style={{ color: '#3b82f6' }} />
-            <h3 style={{ margin: 0, fontSize: '1rem' }}>Database Backup</h3>
+            <h3>Database Backup</h3>
           </div>
           <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginBottom: '1rem', flex: 1 }}>
             Export all schedules, categories, preroll metadata, sequences, and settings to a portable JSON file.
@@ -26619,7 +26413,7 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
         }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.75rem' }}>
             <HardDrive size={18} style={{ color: '#22c55e' }} />
-            <h3 style={{ margin: 0, fontSize: '1rem' }}>System & Files Backup</h3>
+            <h3>System & Files Backup</h3>
           </div>
           <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginBottom: '0.5rem' }}>
             Comprehensive backup including:
@@ -26651,7 +26445,7 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
       }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.75rem' }}>
           <RotateCw size={18} style={{ color: '#f59e0b' }} />
-          <h3 style={{ margin: 0, fontSize: '1rem' }}>Restore from Backup</h3>
+          <h3>Restore from Backup</h3>
         </div>
         <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginBottom: '1rem' }}>
           Select a backup file to restore. Use <strong>.json</strong> files for database-only restore, or <strong>.zip</strong> files for full system restore.
@@ -26727,7 +26521,7 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
           fontSize: '0.8rem',
           color: '#d97706'
         }}>
-          <strong>⚠️ Warning:</strong> Restoring will overwrite existing data. Make sure you have a current backup before proceeding.
+          <strong>Warning:</strong> Restoring will overwrite existing data. Make sure you have a current backup before proceeding.
         </div>
       </div>
 
@@ -26743,7 +26537,7 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
       }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.75rem' }}>
           <RefreshCw size={18} style={{ color: '#22c55e' }} />
-          <h3 style={{ margin: 0, fontSize: '1rem' }}>Rescan Preroll Files</h3>
+          <h3>Rescan Preroll Files</h3>
         </div>
         <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginBottom: '0.5rem' }}>
           Walks the preroll storage folder and reconciles it against the database. Use this after a migration (e.g. Windows to Docker)
@@ -26804,14 +26598,6 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
   // Settings - API Keys Tab
   const renderSettingsApiKeys = () => (
     <>
-    <div style={{ marginBottom: '1rem' }}>
-      <h1 className="header" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.5rem' }}>
-        <Key size={32} className="header-icon" /> API Keys
-      </h1>
-      <p style={{ color: 'var(--text-secondary)', fontSize: '0.95rem', margin: 0 }}>
-        Manage API keys for external integrations and automation.
-      </p>
-    </div>
     <div>
       {/* Created Key Display (only shown once after creation) */}
       {createdApiKey && (
@@ -27177,14 +26963,6 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
   // Settings - Logs Tab
   const renderSettingsLogs = () => (
     <>
-    <div style={{ marginBottom: '1rem' }}>
-      <h1 className="header" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.5rem' }}>
-        <FileText size={32} className="header-icon" /> Event Log
-      </h1>
-      <p style={{ color: 'var(--text-secondary)', fontSize: '0.95rem', margin: 0 }}>
-        View application logs and system events.
-      </p>
-    </div>
     <div>
       {/* Log Stats Overview */}
       {logStats && (
@@ -27341,7 +27119,20 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
             >
               <Download size={14} /> CSV
             </button>
-            <button 
+            <button
+              className="button"
+              style={{
+                backgroundColor: 'transparent',
+                border: '1px solid var(--border-color)',
+                fontSize: '0.8rem',
+                padding: '0.4rem 0.75rem'
+              }}
+              onClick={handleDownloadDiagnostics}
+              title="Download a diagnostics bundle (logs + system info, with secrets redacted)"
+            >
+              <Wrench size={14} /> Diagnostics
+            </button>
+            <button
               className="button"
               style={{
                 backgroundColor: 'rgba(0, 212, 255, 0.1)',
@@ -27357,6 +27148,11 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
             </button>
           </div>
         </div>
+
+        <p style={{ fontSize: '0.78rem', color: 'var(--text-secondary)', margin: '0 0 0.85rem', display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+          <Shield size={13} style={{ color: 'var(--success-color, #28a745)', flexShrink: 0 }} />
+          API keys, tokens, and IP addresses are automatically redacted from logs when viewed, copied, or exported.
+        </p>
 
         {/* Filters Bar */}
         <div style={{ 
@@ -27469,16 +27265,10 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
             <p style={{ marginTop: '0.75rem', color: 'var(--text-secondary)' }}>Loading logs...</p>
           </div>
         ) : logs.length === 0 ? (
-          <div style={{ 
-            textAlign: 'center', 
-            padding: '3rem',
-            backgroundColor: 'var(--bg-color)',
-            borderRadius: '8px',
-            border: '1px dashed var(--border-color)'
-          }}>
-            <Terminal size={40} style={{ color: 'var(--text-secondary)', opacity: 0.4, marginBottom: '0.75rem' }} />
-            <p style={{ color: 'var(--text-secondary)', margin: 0 }}>No logs found matching your filters.</p>
-            <p style={{ color: 'var(--text-secondary)', fontSize: '0.85rem', marginTop: '0.5rem', opacity: 0.7 }}>Try adjusting the filter settings above.</p>
+          <div className="nx-empty">
+            <span className="nx-empty-icon"><Terminal size={48} /></span>
+            <h3 className="nx-empty-title">No logs found</h3>
+            <p className="nx-empty-text">Nothing matches your current filters. Try adjusting the filter settings above.</p>
           </div>
         ) : (
           <div style={{ 
@@ -27548,12 +27338,7 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
           </h2>
           
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '1rem' }}>
-            <div style={{ 
-              padding: '1rem', 
-              backgroundColor: 'var(--bg-color)', 
-              borderRadius: '8px',
-              border: '1px solid var(--border-color)'
-            }}>
+            <div className="nx-setting-row">
               <label style={{ display: 'block', marginBottom: '0.5rem', fontWeight: 600, fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
                 Minimum Log Level
               </label>
@@ -27573,12 +27358,7 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
               </p>
             </div>
             
-            <div style={{ 
-              padding: '1rem', 
-              backgroundColor: 'var(--bg-color)', 
-              borderRadius: '8px',
-              border: '1px solid var(--border-color)'
-            }}>
+            <div className="nx-setting-row">
               <label style={{ display: 'block', marginBottom: '0.5rem', fontWeight: 600, fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
                 Log Retention
               </label>
@@ -27661,9 +27441,9 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
             borderRadius: '8px',
             border: '1px solid var(--border-color)'
           }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.5rem' }}>
+            <div className="nx-setting-row-head">
               <Terminal size={16} style={{ color: '#a78bfa' }} />
-              <h3 style={{ margin: 0, fontSize: '1rem' }}>Verbose Logging</h3>
+              <h3>Verbose Logging</h3>
               <span style={{
                 fontSize: '0.65rem', padding: '0.15rem 0.4rem',
                 backgroundColor: 'rgba(139, 92, 246, 0.2)', color: '#a78bfa',
@@ -27672,7 +27452,7 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
                 BETA
               </span>
             </div>
-            <p style={{ marginBottom: '0.75rem', color: 'var(--text-secondary)', fontSize: '0.85rem' }}>
+            <p className="nx-setting-row-desc">
               Enable verbose logging to see detailed debug information in the console and logs.
             </p>
             <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
@@ -27741,14 +27521,6 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
   // Settings - Users Tab
   const renderSettingsUsers = () => (
     <>
-    <div style={{ marginBottom: '1rem' }}>
-      <h1 className="header" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.5rem' }}>
-        <Users size={32} className="header-icon" /> User Management
-      </h1>
-      <p style={{ color: 'var(--text-secondary)', fontSize: '0.95rem', margin: 0 }}>
-        Manage user accounts and authentication settings.
-      </p>
-    </div>
     <div>
       {/* User Management */}
       <div className="card">
@@ -27969,12 +27741,7 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
           gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', 
           gap: '1rem' 
         }}>
-          <div style={{
-            padding: '1rem',
-            backgroundColor: 'var(--bg-color)',
-            borderRadius: '8px',
-            border: '1px solid var(--border-color)'
-          }}>
+          <div className="nx-setting-row">
             <div style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginBottom: '0.25rem' }}>
               Current User
             </div>
@@ -27982,12 +27749,7 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
               {authStatus.user?.display_name || authStatus.user?.username || 'Not logged in'}
             </div>
           </div>
-          <div style={{
-            padding: '1rem',
-            backgroundColor: 'var(--bg-color)',
-            borderRadius: '8px',
-            border: '1px solid var(--border-color)'
-          }}>
+          <div className="nx-setting-row">
             <div style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginBottom: '0.25rem' }}>
               Total Users
             </div>
@@ -27995,12 +27757,7 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
               {users.length}
             </div>
           </div>
-          <div style={{
-            padding: '1rem',
-            backgroundColor: 'var(--bg-color)',
-            borderRadius: '8px',
-            border: '1px solid var(--border-color)'
-          }}>
+          <div className="nx-setting-row">
             <div style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginBottom: '0.25rem' }}>
               Admin Users
             </div>
@@ -28235,16 +27992,33 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
   );
 
   // Settings - System Tab
+  const handleFactoryReset = async () => {
+    if (factoryReset.confirm.trim().toUpperCase() !== 'RESET') return;
+    setFactoryReset(prev => ({ ...prev, busy: true }));
+    try {
+      const res = await fetch(apiUrl('admin/factory-reset'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          confirm: 'RESET',
+          wipe_trailers: factoryReset.wipeTrailers,
+          wipe_prerolls: factoryReset.wipePrerolls,
+          wipe_provider: factoryReset.wipeProvider,
+        }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.detail || 'Reset failed');
+      showAlert('Factory reset complete — restarting at onboarding…', 'success');
+      // App is now a fresh install; reload to the root to trigger first-run onboarding.
+      setTimeout(() => window.location.assign('/'), 1200);
+    } catch (e) {
+      setFactoryReset(prev => ({ ...prev, busy: false }));
+      showAlert('Factory reset failed: ' + (e.message || e), 'error');
+    }
+  };
+
   const renderSettingsSystem = () => (
     <>
-    <div style={{ marginBottom: '1rem' }}>
-      <h1 className="header" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.5rem' }}>
-        <Info size={32} className="header-icon" /> System Information
-      </h1>
-      <p style={{ color: 'var(--text-secondary)', fontSize: '0.95rem', margin: 0 }}>
-        View version info, scheduler status, and system diagnostics.
-      </p>
-    </div>
     <div>
       {/* Version & Application Info */}
       <div className="card">
@@ -28620,14 +28394,103 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
               <div>
                 <div style={{ fontWeight: '500' }}>Deno</div>
                 <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>
-                  {systemDependencies?.dependencies?.deno?.available 
-                    ? systemDependencies.dependencies.deno.version 
-                    : (systemDependencies ? 'Not installed (optional)' : 'Detecting...')}
+                  {systemDependencies?.dependencies?.deno?.available
+                    ? (systemDependencies.dependencies.deno.version
+                        + (systemDependencies.dependencies.deno.on_path === false ? ' — installed but not on PATH (restart NeXroll)' : ''))
+                    : (systemDependencies ? 'Not installed (needed for YouTube/NeX-Up extraction)' : 'Detecting...')}
                 </div>
               </div>
             </div>
-            <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>
-              JavaScript runtime for YouTube extraction
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap' }}>
+              <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>
+                JavaScript runtime for YouTube extraction
+              </div>
+              {/* Install action — only when this NeXroll can actually install it
+                  (missing or off-PATH, and not in Docker). Docker shows a note. */}
+              {systemDependencies?.system?.is_docker ? (
+                (!systemDependencies?.dependencies?.deno?.available) && (
+                  <span style={{ fontSize: '0.72rem', color: 'var(--text-secondary)', fontStyle: 'italic' }}>
+                    Managed by the Docker image — pull the latest image to update
+                  </span>
+                )
+              ) : systemDependencies?.dependencies?.deno?.installable && (
+                <button
+                  className="button button-secondary"
+                  disabled={installingDep === 'deno'}
+                  onClick={handleInstallDeno}
+                  style={{ fontSize: '0.78rem', padding: '0.35rem 0.7rem', display: 'inline-flex', alignItems: 'center', gap: '0.35rem', whiteSpace: 'nowrap' }}
+                >
+                  {installingDep === 'deno'
+                    ? <><Loader2 size={14} className="spin" /> Installing…</>
+                    : <><Download size={14} /> Install Deno</>}
+                </button>
+              )}
+            </div>
+          </div>
+
+          {/* YouTube PO-Token Provider Status — the modern fix for YouTube's
+              "Sign in to confirm you're not a bot" wall on trailer downloads. */}
+          <div style={{
+            padding: '0.75rem 1rem',
+            backgroundColor: 'var(--card-bg)',
+            border: '1px solid var(--border-color)',
+            borderRadius: '8px',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            flexWrap: 'wrap',
+            gap: '0.5rem'
+          }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+              <div style={{
+                width: '32px',
+                height: '32px',
+                borderRadius: '6px',
+                backgroundColor: systemDependencies?.dependencies?.potoken?.available ? 'rgba(40, 167, 69, 0.15)' : 'rgba(255, 193, 7, 0.15)',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center'
+              }}>
+                {systemDependencies?.dependencies?.potoken?.available ?
+                  <CheckCircle size={18} style={{ color: '#28a745' }} /> :
+                  <AlertTriangle size={18} style={{ color: '#ffc107' }} />
+                }
+              </div>
+              <div>
+                <div style={{ fontWeight: '500' }}>YouTube PO-Token Provider</div>
+                <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>
+                  {systemDependencies?.dependencies?.potoken?.available
+                    ? `Active${systemDependencies.dependencies.potoken.version ? ' (bgutil ' + systemDependencies.dependencies.potoken.version + ')' : ''} — cookieless YouTube downloads enabled`
+                    : (systemDependencies
+                        ? (systemDependencies.dependencies?.potoken?.detail?.provider_present
+                            ? 'Installed but not running — restart NeXroll or re-install'
+                            : 'Not installed (defeats YouTube’s bot wall on trailer downloads)')
+                        : 'Detecting...')}
+                </div>
+              </div>
+            </div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap' }}>
+              <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>
+                Mints Proof-of-Origin tokens for yt-dlp
+              </div>
+              {systemDependencies?.system?.is_docker ? (
+                (!systemDependencies?.dependencies?.potoken?.available) && (
+                  <span style={{ fontSize: '0.72rem', color: 'var(--text-secondary)', fontStyle: 'italic' }}>
+                    Managed by the Docker image — pull the latest image to update
+                  </span>
+                )
+              ) : systemDependencies?.dependencies?.potoken?.installable && (
+                <button
+                  className="button button-secondary"
+                  disabled={installingDep === 'potoken'}
+                  onClick={handleInstallPotoken}
+                  style={{ fontSize: '0.78rem', padding: '0.35rem 0.7rem', display: 'inline-flex', alignItems: 'center', gap: '0.35rem', whiteSpace: 'nowrap' }}
+                >
+                  {installingDep === 'potoken'
+                    ? <><Loader2 size={14} className="spin" /> Installing…</>
+                    : <><Download size={14} /> Install Provider</>}
+                </button>
+              )}
             </div>
           </div>
 
@@ -28955,20 +28818,167 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
           </a>
         </div>
       </div>
+
+      {/* Danger Zone — Factory Reset */}
+      <div className="card" style={{ border: '1px solid rgba(239,68,68,0.4)' }}>
+        <h2 style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', color: '#ef4444' }}>
+          <AlertTriangle size={20} /> Danger Zone
+        </h2>
+        <p style={{ color: 'var(--text-secondary)', fontSize: '0.88rem', marginBottom: '1rem' }}>
+          <strong>Factory reset</strong> returns NeXroll to a fresh-install state: it empties the
+          database (schedules, categories, prerolls, settings) and clears saved connections,
+          dropping you back at first-run onboarding. You can optionally also delete downloaded
+          trailers, uploaded prerolls, and the PO-token provider from disk. <strong>This cannot be
+          undone</strong> — make a backup first if you want to keep anything.
+        </p>
+        <button
+          className="button"
+          style={{ backgroundColor: '#dc2626', borderColor: '#dc2626' }}
+          onClick={() => setFactoryReset({ open: true, wipeTrailers: false, wipePrerolls: false, wipeProvider: false, confirm: '', busy: false })}
+        >
+          <Trash2 size={14} style={{ marginRight: '0.35rem' }} /> Factory Reset…
+        </button>
+      </div>
     </div>
+
+    {factoryReset.open && (
+      <div
+        style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000, padding: '1rem' }}
+        onClick={() => { if (!factoryReset.busy) setFactoryReset(prev => ({ ...prev, open: false })); }}
+      >
+        <div className="card" style={{ maxWidth: '520px', width: '100%', border: '1px solid rgba(239,68,68,0.5)', margin: 0 }} onClick={e => e.stopPropagation()}>
+          <h3 style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', color: '#ef4444', marginTop: 0 }}>
+            <AlertTriangle size={18} /> Factory Reset
+          </h3>
+          <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', margin: '0 0 0.5rem' }}>
+            Always removed: the <strong>database</strong> (schedules, categories, prerolls, settings)
+            and <strong>saved connections</strong>. You'll return to first-run onboarding.
+          </p>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', margin: '0.75rem 0', padding: '0.75rem', background: 'var(--bg-color)', borderRadius: '8px' }}>
+            <div style={{ fontSize: '0.8rem', fontWeight: 600, color: 'var(--text-secondary)' }}>Also delete from disk (optional):</div>
+            <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '0.88rem', cursor: 'pointer' }}>
+              <input type="checkbox" checked={factoryReset.wipeTrailers} disabled={factoryReset.busy} onChange={e => setFactoryReset(prev => ({ ...prev, wipeTrailers: e.target.checked }))} />
+              Downloaded trailers (NeX-Up)
+            </label>
+            <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '0.88rem', cursor: 'pointer' }}>
+              <input type="checkbox" checked={factoryReset.wipePrerolls} disabled={factoryReset.busy} onChange={e => setFactoryReset(prev => ({ ...prev, wipePrerolls: e.target.checked }))} />
+              Uploaded prerolls
+            </label>
+            <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '0.88rem', cursor: 'pointer' }}>
+              <input type="checkbox" checked={factoryReset.wipeProvider} disabled={factoryReset.busy} onChange={e => setFactoryReset(prev => ({ ...prev, wipeProvider: e.target.checked }))} />
+              PO-token provider (re-installs next time)
+            </label>
+          </div>
+          <p style={{ fontSize: '0.85rem', margin: '0 0 0.35rem' }}>Type <code>RESET</code> to confirm:</p>
+          <input
+            className="input"
+            value={factoryReset.confirm}
+            disabled={factoryReset.busy}
+            onChange={e => setFactoryReset(prev => ({ ...prev, confirm: e.target.value }))}
+            placeholder="RESET"
+            style={{ width: '100%', marginBottom: '1rem' }}
+          />
+          <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.5rem' }}>
+            <button className="button button-secondary" disabled={factoryReset.busy} onClick={() => setFactoryReset(prev => ({ ...prev, open: false }))}>Cancel</button>
+            <button
+              className="button"
+              style={{ backgroundColor: '#dc2626', borderColor: '#dc2626', opacity: (factoryReset.confirm.trim().toUpperCase() === 'RESET' && !factoryReset.busy) ? 1 : 0.5 }}
+              disabled={factoryReset.confirm.trim().toUpperCase() !== 'RESET' || factoryReset.busy}
+              onClick={handleFactoryReset}
+            >
+              {factoryReset.busy ? 'Resetting…' : 'Factory Reset'}
+            </button>
+          </div>
+        </div>
+      </div>
+    )}
     </>
   );
 
   const renderSettingsStorage = () => (
     <>
-    <div style={{ marginBottom: '1rem' }}>
-      <h1 className="header" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.5rem' }}>
-        <HardDrive size={32} className="header-icon" /> Storage Settings
-      </h1>
-      <p style={{ color: 'var(--text-secondary)', fontSize: '0.95rem', margin: 0 }}>
-        Configure where NeXroll stores preroll video files and thumbnails.
+    {/* Storage Usage overview — same data as the dashboard Storage tile, expanded */}
+    <div className="card">
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '0.5rem' }}>
+        <h2 style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', margin: 0 }}>
+          <HardDrive size={20} style={{ color: 'var(--accent-color)' }} /> Storage Usage
+        </h2>
+        <button
+          type="button"
+          className="button button-secondary"
+          onClick={refreshStorageBreakdown}
+          style={{ fontSize: '0.78rem', padding: '0.35rem 0.7rem', display: 'inline-flex', alignItems: 'center', gap: '0.35rem' }}
+        >
+          <RefreshCw size={14} /> Refresh
+        </button>
+      </div>
+      <p style={{ color: 'var(--text-secondary)', fontSize: '0.85rem', margin: '0.4rem 0 1rem' }}>
+        How disk space is used across prerolls, NeX-Up trailers, thumbnails, and the database.
       </p>
+      {!storageBreakdown ? (
+        <p style={{ color: 'var(--text-secondary)', fontSize: '0.88rem', margin: 0 }}>Calculating…</p>
+      ) : (() => {
+        const colors = { prerolls: '#3b82f6', nexup: '#ffc230', thumbnails: '#8b5cf6', database: '#22c55e' };
+        const total = storageBreakdown.total_bytes || 0;
+        const all = (storageBreakdown.locations || []).slice().sort((a, b) => b.bytes - a.bytes);
+        const shown = all.filter(l => l.bytes > 0);
+        if (shown.length === 0) {
+          return <p style={{ color: 'var(--text-secondary)', fontSize: '0.88rem', margin: 0 }}>No stored files yet.</p>;
+        }
+        return (
+          <>
+            <div style={{ display: 'flex', alignItems: 'baseline', gap: '0.5rem', marginBottom: '0.85rem' }}>
+              <span style={{ fontSize: '1.9rem', fontWeight: 700 }}>{formatBytes(total)}</span>
+              <span style={{ color: 'var(--text-secondary)' }}>used across {shown.length} location{shown.length === 1 ? '' : 's'}</span>
+            </div>
+            {/* Single segmented bar (disk-usage style) */}
+            <div style={{ display: 'flex', height: '16px', borderRadius: '8px', overflow: 'hidden', background: 'var(--hover-bg)', marginBottom: '1.1rem' }}>
+              {shown.map(l => {
+                const pct = total > 0 ? (l.bytes / total) * 100 : 0;
+                return (
+                  <div
+                    key={l.key}
+                    title={`${l.label}: ${formatBytes(l.bytes)} (${Math.round(pct)}%)`}
+                    style={{ width: `${pct}%`, background: colors[l.key] || 'var(--accent-color, #00d4ff)', transition: 'width 0.3s ease' }}
+                  />
+                );
+              })}
+            </div>
+            {/* Per-location legend cards */}
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(230px, 1fr))', gap: '0.75rem' }}>
+              {all.map(l => {
+                const pct = total > 0 ? Math.round((l.bytes / total) * 100) : 0;
+                return (
+                  <div key={l.key} style={{ padding: '0.7rem 0.8rem', background: 'var(--bg-color)', border: '1px solid var(--border-color)', borderRadius: '8px', opacity: l.bytes > 0 ? 1 : 0.6 }}>
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.5rem', marginBottom: '0.3rem' }}>
+                      <span style={{ display: 'flex', alignItems: 'center', gap: '0.45rem', fontWeight: 600 }}>
+                        <span style={{ width: 11, height: 11, borderRadius: 3, background: colors[l.key] || 'var(--accent-color, #00d4ff)', flexShrink: 0 }} />
+                        {l.label}
+                      </span>
+                      <span style={{ fontWeight: 600, whiteSpace: 'nowrap' }}>{formatBytes(l.bytes)}</span>
+                    </div>
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.5rem', fontSize: '0.76rem', color: 'var(--text-secondary)' }}>
+                      <span>{pct}% of total</span>
+                      {l.path && (
+                        <span title={l.path} style={{ maxWidth: '62%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontFamily: 'monospace' }}>
+                          {l.path}
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+            {storageBreakdown.checked_at && (
+              <div style={{ marginTop: '0.85rem', fontSize: '0.72rem', color: 'var(--text-secondary)' }}>
+                Updated {new Date(storageBreakdown.checked_at).toLocaleTimeString()}{storageBreakdown.cached ? ' (cached)' : ''}
+              </div>
+            )}
+          </>
+        );
+      })()}
     </div>
+
     <div className="card">
       <h2 style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
         <FolderOpen size={20} style={{ color: 'var(--accent-color)' }} /> Preroll Storage Folder
@@ -28986,7 +28996,7 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
           borderRadius: '8px',
           marginBottom: '1rem'
         }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.5rem' }}>
+          <div className="nx-setting-row-head">
             <FolderOpen size={16} style={{ color: 'var(--accent-color)' }} />
             <span style={{ fontWeight: '500' }}>Current Location</span>
             {prerollFolderInfo.is_custom && (
@@ -29026,11 +29036,11 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
         borderRadius: '8px',
         marginBottom: '1rem'
       }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.5rem' }}>
+        <div className="nx-setting-row-head">
           <FolderOpen size={16} style={{ color: '#f59e0b' }} />
-          <h3 style={{ margin: 0, fontSize: '1rem' }}>Change Storage Folder</h3>
+          <h3>Change Storage Folder</h3>
         </div>
-        <p style={{ marginBottom: '0.75rem', color: 'var(--text-secondary)', fontSize: '0.85rem' }}>
+        <p className="nx-setting-row-desc">
           Enter the full path to a folder where you want to store preroll files. The folder must exist and be writable.
         </p>
         <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '0.75rem' }}>
@@ -29083,11 +29093,11 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
           borderRadius: '8px',
           marginBottom: '1rem'
         }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.5rem' }}>
+          <div className="nx-setting-row-head">
             <ArrowRight size={16} style={{ color: '#22c55e' }} />
-            <h3 style={{ margin: 0, fontSize: '1rem' }}>Transfer Files</h3>
+            <h3>Transfer Files</h3>
           </div>
-          <p style={{ marginBottom: '0.75rem', color: 'var(--text-secondary)', fontSize: '0.85rem' }}>
+          <p className="nx-setting-row-desc">
             Move or copy files from the previous default location to the current custom folder. Database paths will be automatically updated.
           </p>
           {prerollFolderMoving && (
@@ -29197,124 +29207,119 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
 
   // Main Settings Router
   const renderSettings = () => {
-    if (activeTab === 'settings/paths') {
-      return renderSettingsPaths();
-    }
-    if (activeTab === 'settings/storage') {
-      return renderSettingsStorage();
-    }
-    if (activeTab === 'settings/backup') {
-      return renderSettingsBackup();
-    }
-    if (activeTab === 'settings/apikeys') {
-      return renderSettingsApiKeys();
-    }
-    if (activeTab === 'settings/logs') {
-      return renderSettingsLogs();
-    }
-    if (activeTab === 'settings/users') {
-      return renderSettingsUsers();
-    }
-    if (activeTab === 'settings/system') {
-      return renderSettingsSystem();
-    }
-    // Default: General settings
-    return renderSettingsGeneral();
+    const inner =
+      activeTab === 'settings/paths' ? renderSettingsPaths() :
+      activeTab === 'settings/storage' ? renderSettingsStorage() :
+      activeTab === 'settings/backup' ? renderSettingsBackup() :
+      activeTab === 'settings/apikeys' ? renderSettingsApiKeys() :
+      activeTab === 'settings/logs' ? renderSettingsLogs() :
+      activeTab === 'settings/users' ? renderSettingsUsers() :
+      activeTab === 'settings/system' ? renderSettingsSystem() :
+      renderSettingsGeneral();
+    return <div className="nx-settings">{inner}</div>;
   };
 
-  const renderJellyfin = () => (
-    <div>
-      <div className="card">
-        <h2>Connect to Jellyfin Server</h2>
-        <p style={{ marginBottom: '1rem', color: 'var(--text-color)' }}>
-          Connect your Jellyfin server to enable preroll management for Jellyfin.
-        </p>
-        <form onSubmit={handleConnectJellyfin}>
-          <div style={{ display: 'grid', gap: '1rem', marginBottom: '1rem' }}>
-            <div>
-              <label style={{ display: 'block', marginBottom: '0.5rem', fontWeight: 'bold' }}>
-                Jellyfin Server URL
-              </label>
-              <input
-                type="url"
-                placeholder="http://127.0.0.1:8096"
-                value={jellyfinConfig.url}
-                onChange={(e) => setJellyfinConfig({ ...jellyfinConfig, url: e.target.value })}
-                required
-                style={{ width: '100%', padding: '0.5rem' }}
-              />
-            </div>
-            <div>
-              <label style={{ display: 'block', marginBottom: '0.5rem', fontWeight: 'bold' }}>
-                API Key
-              </label>
-              <input
-                type="password"
-                placeholder="Enter your Jellyfin API key"
-                value={jellyfinConfig.api_key}
-                onChange={(e) => setJellyfinConfig({ ...jellyfinConfig, api_key: e.target.value })}
-                required
-                style={{ width: '100%', padding: '0.5rem' }}
-              />
-              <details className="nx-plex-help" style={{ marginTop: '0.5rem' }}>
-                <summary>How to create a Jellyfin API key</summary>
-                <ol style={{ marginTop: '0.5rem' }}>
-                  <li>Open Jellyfin Web</li>
-                  <li>Go to Dashboard → Advanced → API Keys</li>
-                  <li>Create a new API key and copy it</li>
-                </ol>
-              </details>
-            </div>
-          </div>
-          <button type="submit" className="button button-success">
-            Connect to Jellyfin
-          </button>
-        </form>
-      </div>
-
-      <div className="card">
-        <h2>Jellyfin Status</h2>
-        <div style={{ display: 'grid', gap: '0.5rem' }}>
-          <div><strong>Connection:</strong> <span className={`nx-chip nx-status ${jellyfinStatus === 'Connected' ? 'ok' : 'bad'}`}>{jellyfinStatus}</span>
-            {jellyfinServerInfo?.connection_type === 'plugin' && (
-              <span className="nx-chip accent" style={{ marginLeft: '0.5rem' }}>
-                via Plugin (API Key)
-              </span>
-            )}
-            {jellyfinServerInfo?.connection_type === 'direct' && (
-              <span className="nx-chip success" style={{ marginLeft: '0.5rem' }}>
-                Direct Connection
-              </span>
-            )}
-          </div>
-          {jellyfinServerInfo && (
-            <>
-              {jellyfinServerInfo.name && <div><strong>Server:</strong> {jellyfinServerInfo.name}</div>}
-              {jellyfinServerInfo.version && <div><strong>Version:</strong> {jellyfinServerInfo.version}</div>}
-            </>
-          )}
-          {jellyfinServerInfo?.plugin_clients?.length > 0 && (
-            <div className="nx-notice accent" style={{ marginTop: '0.5rem' }}>
-              <strong style={{ color: '#6c5ce7' }}><Plug size={14} style={{ verticalAlign: 'middle', marginRight: '0.25rem' }} /> Plugin Clients:</strong>
-              {jellyfinServerInfo.plugin_clients.map((client, idx) => (
-                <div key={idx} style={{ marginTop: '0.25rem', fontSize: '0.9rem' }}>
-                  {client.server_name || 'Jellyfin'} {client.server_version ? `(v${client.server_version})` : ''}
-                  <span style={{ color: 'var(--text-secondary)', marginLeft: '0.5rem', fontSize: '0.8rem' }}>
-                    via key "{client.api_key_name}" — last seen {client.last_seen ? new Date(client.last_seen + 'Z').toLocaleString() : 'N/A'}
-                  </span>
-                </div>
-              ))}
-            </div>
-          )}
+  const renderJellyfin = () => {
+    const connected = jellyfinStatus === 'Connected';
+    return (
+    <div className="nx-conn-panel" style={{ '--brand': '#6c5ce7' }}>
+      {/* Hero status header */}
+      <div className={`nx-conn-hero${connected ? ' connected' : ''}`}>
+        <div className={`nx-conn-hero-badge${connected ? '' : ' idle'}`}>
+          <Server size={24} />
         </div>
-        {jellyfinStatus === 'Connected' && jellyfinServerInfo?.connection_type !== 'plugin' && (
-          <div style={{ marginTop: '1rem', paddingTop: '1rem', borderTop: '1px solid var(--border-color)' }}>
+        <div className="nx-conn-hero-body">
+          <h2 className="nx-conn-hero-title">
+            Jellyfin
+            <span className={`nx-conn-hero-state ${connected ? 'ok' : 'bad'}`}>
+              <span className={`nx-dot ${connected ? 'ok' : 'bad'}`} aria-hidden="true" />
+              {connected ? 'Connected' : 'Not connected'}
+            </span>
+          </h2>
+          <div className="nx-conn-hero-meta">
+            {connected ? (
+              <>
+                {jellyfinServerInfo?.name && <span>{jellyfinServerInfo.name}</span>}
+                {jellyfinServerInfo?.version && <><span className="sep">·</span><span>v{jellyfinServerInfo.version}</span></>}
+                {jellyfinServerInfo?.connection_type === 'plugin'
+                  ? <><span className="sep">·</span><span>via Plugin (API Key)</span></>
+                  : jellyfinServerInfo?.connection_type === 'direct'
+                    ? <><span className="sep">·</span><span>Direct connection</span></>
+                    : null}
+              </>
+            ) : (
+              <span>Enter your server URL and API key below to connect.</span>
+            )}
+          </div>
+        </div>
+        {connected && jellyfinServerInfo?.connection_type !== 'plugin' && (
+          <div className="nx-conn-hero-actions">
             <button onClick={handleDisconnectJellyfin} className="button button-danger">
-              Disconnect from Jellyfin
+              <Unlink size={15} /> Disconnect
             </button>
           </div>
         )}
       </div>
+
+      {/* Plugin clients (when present) */}
+      {jellyfinServerInfo?.plugin_clients?.length > 0 && (
+        <div className="nx-notice accent" style={{ marginBottom: '1rem' }}>
+          <strong style={{ color: '#6c5ce7' }}><Plug size={14} style={{ verticalAlign: 'middle', marginRight: '0.25rem' }} /> Plugin Clients:</strong>
+          {jellyfinServerInfo.plugin_clients.map((client, idx) => (
+            <div key={idx} style={{ marginTop: '0.25rem', fontSize: '0.9rem' }}>
+              {client.server_name || 'Jellyfin'} {client.server_version ? `(v${client.server_version})` : ''}
+              <span style={{ color: 'var(--text-secondary)', marginLeft: '0.5rem', fontSize: '0.8rem' }}>
+                via key "{client.api_key_name}" — last seen {client.last_seen ? new Date(client.last_seen + 'Z').toLocaleString() : 'N/A'}
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* Connect form — only when not connected */}
+      {!connected && (
+        <div className="card">
+          <div className="nx-conn-method-lead">Connect to Jellyfin</div>
+          <p className="nx-conn-method-sub">
+            Connect your Jellyfin server with its URL and an admin API key to enable preroll management.
+          </p>
+          <form onSubmit={handleConnectJellyfin}>
+            <div style={{ display: 'grid', gap: '1rem', marginBottom: '1rem' }}>
+              <div>
+                <label className="nx-conn-field-label">Jellyfin Server URL</label>
+                <input
+                  type="url"
+                  placeholder="http://127.0.0.1:8096"
+                  value={jellyfinConfig.url}
+                  onChange={(e) => setJellyfinConfig({ ...jellyfinConfig, url: e.target.value })}
+                  required
+                />
+              </div>
+              <div>
+                <label className="nx-conn-field-label">API Key</label>
+                <input
+                  type="password"
+                  placeholder="Enter your Jellyfin API key"
+                  value={jellyfinConfig.api_key}
+                  onChange={(e) => setJellyfinConfig({ ...jellyfinConfig, api_key: e.target.value })}
+                  required
+                />
+                <details className="nx-plex-help" style={{ marginTop: '0.5rem' }}>
+                  <summary>How to create a Jellyfin API key</summary>
+                  <ol style={{ marginTop: '0.5rem' }}>
+                    <li>Open Jellyfin Web</li>
+                    <li>Go to Dashboard → Advanced → API Keys</li>
+                    <li>Create a new API key and copy it</li>
+                  </ol>
+                </details>
+              </div>
+            </div>
+            <button type="submit" className="button button-success">
+              <Plug size={15} /> Connect to Jellyfin
+            </button>
+          </form>
+        </div>
+      )}
 
       {/* NeXroll Intros Plugin — Auto-detect & Remote Configure */}
       <div className="card">
@@ -29327,7 +29332,7 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
           <div className="nx-notice" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '0.9rem' }}>
             <Download size={16} style={{ color: 'var(--accent-color, #7c4dff)' }} />
             <span>Download Plugin:</span>
-            <a href="https://github.com/JFLXCLOUD/NeXroll/raw/main/Plugins/NeXroll.Jellyfin.dll" target="_blank" rel="noopener noreferrer" style={{ color: 'var(--accent-color, #7c4dff)', fontWeight: 600 }}>NeXroll.Jellyfin.dll</a>
+            <a href={apiUrl('jellyfin/plugin/download')} download style={{ color: 'var(--accent-color, #7c4dff)', fontWeight: 600 }}>NeXroll.Jellyfin.zip</a>
           </div>
         )}
 
@@ -29367,7 +29372,7 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
               <div className="nx-notice">
                 <h3 style={{ marginTop: 0, marginBottom: '0.75rem', fontSize: '0.95rem' }}>Install the Plugin</h3>
                 <ol style={{ margin: 0, paddingLeft: '1.25rem', lineHeight: '1.7' }}>
-                  <li>Download the <strong>NeXroll Intros</strong> plugin DLL: <a href="https://github.com/JFLXCLOUD/NeXroll/raw/main/Plugins/NeXroll.Jellyfin.dll" target="_blank" rel="noopener noreferrer" style={{ color: 'var(--accent-color, #7c4dff)' }}>NeXroll.Jellyfin.dll</a></li>
+                  <li>Download the <strong>NeXroll Intros</strong> plugin package: <a href={apiUrl('jellyfin/plugin/download')} download style={{ color: 'var(--accent-color, #7c4dff)' }}>NeXroll.Jellyfin.zip</a> (extract the DLL + meta.json + thumb.png into your Jellyfin <code>plugins/NeXroll Intros/</code> folder)</li>
                   <li>Copy it to your Jellyfin plugins folder: <code>plugins/NeXroll Intros/</code></li>
                   <li>Restart Jellyfin</li>
                 </ol>
@@ -29462,6 +29467,57 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
                 </div>
               </details>
 
+              <details style={{ marginBottom: '0.75rem' }}>
+                <summary style={{ cursor: 'pointer', fontWeight: 'bold', padding: '0.25rem 0' }}>
+                  Playback options
+                </summary>
+                <div style={{ padding: '0.75rem 0 0', display: 'grid', gap: '0.6rem' }}>
+                  <div>
+                    <label style={{ display: 'block', marginBottom: '0.25rem' }}>Max intros per playback</label>
+                    <input
+                      type="number"
+                      min="0"
+                      value={jellyfinPluginMaxIntros}
+                      onChange={(e) => setJellyfinPluginMaxIntros(e.target.value)}
+                      style={{ width: '120px', padding: '0.5rem' }}
+                    />
+                    <small style={{ color: 'var(--text-secondary)', display: 'block', marginTop: '0.25rem' }}>
+                      How many prerolls play before each item. <strong>0 = unlimited</strong> — plays the whole active
+                      sequence. Set to 0 (or at least your sequence length) so sequence items aren't skipped.
+                    </small>
+                  </div>
+                  <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', cursor: 'pointer' }}>
+                    <input
+                      type="checkbox"
+                      checked={jellyfinPluginEnableMovies}
+                      onChange={(e) => setJellyfinPluginEnableMovies(e.target.checked)}
+                    />
+                    Play prerolls before movies
+                  </label>
+                  <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', cursor: 'pointer' }}>
+                    <input
+                      type="checkbox"
+                      checked={jellyfinPluginEnableEpisodes}
+                      onChange={(e) => setJellyfinPluginEnableEpisodes(e.target.checked)}
+                    />
+                    Play prerolls before TV episodes
+                  </label>
+                  <div>
+                    <label style={{ display: 'block', marginBottom: '0.25rem' }}>Server request timeout (seconds)</label>
+                    <input
+                      type="number"
+                      min="1"
+                      value={jellyfinPluginTimeout}
+                      onChange={(e) => setJellyfinPluginTimeout(e.target.value)}
+                      style={{ width: '120px', padding: '0.5rem' }}
+                    />
+                    <small style={{ color: 'var(--text-secondary)', display: 'block', marginTop: '0.25rem' }}>
+                      How long the plugin waits for NeXroll to answer before skipping prerolls for that play. Default 5.
+                    </small>
+                  </div>
+                </div>
+              </details>
+
               <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
                 <button
                   onClick={handleConfigureJellyfinPlugin}
@@ -29502,101 +29558,110 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
         )}
       </div>
     </div>
-  );
+    );
+  };
 
-  const renderEmby = () => (
-    <div>
-      <div className="card">
-        <h2>Connect to Emby Server</h2>
-        <p style={{ marginBottom: '1rem', color: 'var(--text-color)' }}>
-          Enter your Emby server URL and API key to establish a connection.
-        </p>
-        <form onSubmit={handleConnectEmby}>
-          <div style={{ display: 'grid', gap: '1rem', marginBottom: '1rem' }}>
-            <div>
-              <label style={{ display: 'block', marginBottom: '0.5rem', fontWeight: 'bold' }}>
-                Emby Server URL
-              </label>
-              <input
-                type="url"
-                placeholder="http://127.0.0.1:8096"
-                value={embyConfig.url}
-                onChange={(e) => setEmbyConfig({ ...embyConfig, url: e.target.value })}
-                required
-                style={{ width: '100%', padding: '0.5rem' }}
-              />
-            </div>
-            <div>
-              <label style={{ display: 'block', marginBottom: '0.5rem', fontWeight: 'bold' }}>
-                API Key
-              </label>
-              <input
-                type="password"
-                placeholder="Enter your Emby API key"
-                value={embyConfig.api_key}
-                onChange={(e) => setEmbyConfig({ ...embyConfig, api_key: e.target.value })}
-                required
-                style={{ width: '100%', padding: '0.5rem' }}
-              />
-              <details className="nx-plex-help" style={{ marginTop: '0.5rem' }}>
-                <summary>How to create an Emby API key</summary>
-                <ol style={{ marginTop: '0.5rem' }}>
-                  <li>Open Emby Web Dashboard</li>
-                  <li>Go to Advanced → API Keys</li>
-                  <li>Create a new API key and copy it</li>
-                </ol>
-              </details>
-            </div>
-          </div>
-          <button type="submit" className="button button-success">
-            Connect to Emby
-          </button>
-        </form>
-      </div>
-
-      <div className="card">
-        <h2>Emby Status</h2>
-        <div style={{ display: 'grid', gap: '0.5rem' }}>
-          <div><strong>Connection:</strong> <span className={`nx-chip nx-status ${embyStatus === 'Connected' ? 'ok' : 'bad'}`}>{embyStatus}</span>
-            {embyServerInfo?.connection_type === 'plugin' && (
-              <span className="nx-chip accent" style={{ marginLeft: '0.5rem' }}>
-                via Plugin (API Key)
-              </span>
-            )}
-            {embyServerInfo?.connection_type === 'direct' && (
-              <span className="nx-chip success" style={{ marginLeft: '0.5rem' }}>
-                Direct Connection
-              </span>
-            )}
-          </div>
-          {embyServerInfo && (
-            <>
-              {embyServerInfo.name && <div><strong>Server:</strong> {embyServerInfo.name}</div>}
-              {embyServerInfo.version && <div><strong>Version:</strong> {embyServerInfo.version}</div>}
-            </>
-          )}
-          {embyServerInfo?.plugin_clients?.length > 0 && (
-            <div className="nx-notice accent" style={{ marginTop: '0.5rem' }}>
-              <strong style={{ color: '#6c5ce7' }}><Plug size={14} style={{ verticalAlign: 'middle', marginRight: '0.25rem' }} /> Plugin Clients:</strong>
-              {embyServerInfo.plugin_clients.map((client, idx) => (
-                <div key={idx} style={{ marginTop: '0.25rem', fontSize: '0.9rem' }}>
-                  {client.server_name || 'Emby'} {client.server_version ? `(v${client.server_version})` : ''}
-                  <span style={{ color: 'var(--text-secondary)', marginLeft: '0.5rem', fontSize: '0.8rem' }}>
-                    via key "{client.api_key_name}" — last seen {client.last_seen ? new Date(client.last_seen + 'Z').toLocaleString() : 'N/A'}
-                  </span>
-                </div>
-              ))}
-            </div>
-          )}
+  const renderEmby = () => {
+    const connected = embyStatus === 'Connected';
+    return (
+    <div className="nx-conn-panel" style={{ '--brand': '#52c41a' }}>
+      {/* Hero status header */}
+      <div className={`nx-conn-hero${connected ? ' connected' : ''}`}>
+        <div className={`nx-conn-hero-badge${connected ? '' : ' idle'}`}>
+          <Server size={24} />
         </div>
-        {embyStatus === 'Connected' && embyServerInfo?.connection_type !== 'plugin' && (
-          <div style={{ marginTop: '1rem', paddingTop: '1rem', borderTop: '1px solid var(--border-color)' }}>
+        <div className="nx-conn-hero-body">
+          <h2 className="nx-conn-hero-title">
+            Emby
+            <span className={`nx-conn-hero-state ${connected ? 'ok' : 'bad'}`}>
+              <span className={`nx-dot ${connected ? 'ok' : 'bad'}`} aria-hidden="true" />
+              {connected ? 'Connected' : 'Not connected'}
+            </span>
+          </h2>
+          <div className="nx-conn-hero-meta">
+            {connected ? (
+              <>
+                {embyServerInfo?.name && <span>{embyServerInfo.name}</span>}
+                {embyServerInfo?.version && <><span className="sep">·</span><span>v{embyServerInfo.version}</span></>}
+                {embyServerInfo?.connection_type === 'plugin'
+                  ? <><span className="sep">·</span><span>via Plugin (API Key)</span></>
+                  : embyServerInfo?.connection_type === 'direct'
+                    ? <><span className="sep">·</span><span>Direct connection</span></>
+                    : null}
+              </>
+            ) : (
+              <span>Enter your server URL and API key below to connect.</span>
+            )}
+          </div>
+        </div>
+        {connected && embyServerInfo?.connection_type !== 'plugin' && (
+          <div className="nx-conn-hero-actions">
             <button onClick={handleDisconnectEmby} className="button button-danger">
-              Disconnect from Emby
+              <Unlink size={15} /> Disconnect
             </button>
           </div>
         )}
       </div>
+
+      {/* Plugin clients (when present) */}
+      {embyServerInfo?.plugin_clients?.length > 0 && (
+        <div className="nx-notice accent" style={{ marginBottom: '1rem' }}>
+          <strong style={{ color: '#6c5ce7' }}><Plug size={14} style={{ verticalAlign: 'middle', marginRight: '0.25rem' }} /> Plugin Clients:</strong>
+          {embyServerInfo.plugin_clients.map((client, idx) => (
+            <div key={idx} style={{ marginTop: '0.25rem', fontSize: '0.9rem' }}>
+              {client.server_name || 'Emby'} {client.server_version ? `(v${client.server_version})` : ''}
+              <span style={{ color: 'var(--text-secondary)', marginLeft: '0.5rem', fontSize: '0.8rem' }}>
+                via key "{client.api_key_name}" — last seen {client.last_seen ? new Date(client.last_seen + 'Z').toLocaleString() : 'N/A'}
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* Connect form — only when not connected */}
+      {!connected && (
+        <div className="card">
+          <div className="nx-conn-method-lead">Connect to Emby</div>
+          <p className="nx-conn-method-sub">
+            Enter your Emby server URL and an admin API key to establish a connection.
+          </p>
+          <form onSubmit={handleConnectEmby}>
+            <div style={{ display: 'grid', gap: '1rem', marginBottom: '1rem' }}>
+              <div>
+                <label className="nx-conn-field-label">Emby Server URL</label>
+                <input
+                  type="url"
+                  placeholder="http://127.0.0.1:8096"
+                  value={embyConfig.url}
+                  onChange={(e) => setEmbyConfig({ ...embyConfig, url: e.target.value })}
+                  required
+                />
+              </div>
+              <div>
+                <label className="nx-conn-field-label">API Key</label>
+                <input
+                  type="password"
+                  placeholder="Enter your Emby API key"
+                  value={embyConfig.api_key}
+                  onChange={(e) => setEmbyConfig({ ...embyConfig, api_key: e.target.value })}
+                  required
+                />
+                <details className="nx-plex-help" style={{ marginTop: '0.5rem' }}>
+                  <summary>How to create an Emby API key</summary>
+                  <ol style={{ marginTop: '0.5rem' }}>
+                    <li>Open Emby Web Dashboard</li>
+                    <li>Go to Advanced → API Keys</li>
+                    <li>Create a new API key and copy it</li>
+                  </ol>
+                </details>
+              </div>
+            </div>
+            <button type="submit" className="button button-success">
+              <Plug size={15} /> Connect to Emby
+            </button>
+          </form>
+        </div>
+      )}
 
       {/* NeXroll Intros Plugin — Auto-detect & Remote Configure */}
       <div className="card">
@@ -29784,17 +29849,11 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
         )}
       </div>
     </div>
-  );
+    );
+  };
 
   const renderConnect = () => (
     <div className="nx-connect">
-      <h1 className="header" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.5rem' }}>
-        <Link2 size={32} className="header-icon" /> Connections
-      </h1>
-      <p style={{ color: 'var(--text-secondary)', fontSize: '0.95rem', margin: 0, marginBottom: '1rem' }}>
-        Connect to your Plex, Jellyfin, or Emby media server.
-      </p>
-
       {/* Segmented media-server selector */}
       <div className="nx-server-seg" role="tablist" aria-label="Media server">
         {[
@@ -29860,52 +29919,6 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
   );
 
   // Render function for Create Schedule page
-  const renderCreateSchedule = () => {
-    return (
-      <div className="upload-section" style={{ maxWidth: '1200px', margin: '30px auto' }}>
-        <div style={{ 
-          display: 'flex', 
-          justifyContent: 'space-between', 
-          alignItems: 'center', 
-          marginBottom: '2rem',
-          paddingBottom: '1rem',
-          borderBottom: '2px solid var(--border-color)'
-        }}>
-          <h2 style={{ margin: 0, fontSize: '1.8rem', fontWeight: 700 }}>
-            {editingSchedule ? 'Edit Schedule' : 'Create New Schedule'}
-          </h2>
-          <div style={{ fontSize: '0.9rem', color: 'var(--text-secondary)' }}>
-            {editingSchedule ? 'Modify your existing schedule' : 'Step-by-step guide to create your perfect schedule'}
-          </div>
-        </div>
-        
-        <form onSubmit={handleCreateSchedule}>
-          {/* Form content will render from renderSchedules - this is the dedicated page version */}
-          {/* Using inline form reference to maintain state */}
-          {(() => {
-            // This renders the same form that's in renderSchedules but on its own page
-            // We'll keep this simple for now and use a navigation approach
-            return (
-              <div style={{ textAlign: 'center', padding: '3rem', opacity: 0.7 }}>
-                <p style={{ fontSize: '1.1rem', marginBottom: '1rem' }}>
-                  The schedule form is currently embedded in the Schedule List page.
-                </p>
-                <button 
-                  type="button"
-                  className="button button-primary"
-                  onClick={() => setActiveTab('schedules')}
-                  style={{ padding: '1rem 2rem', fontSize: '1rem' }}
-                >
-                  Go to Schedule List to Create Schedule
-                </button>
-              </div>
-            );
-          })()}
-        </form>
-      </div>
-    );
-  };
-
   // Render function for Sequence Builder page
   const renderSequenceBuilder = () => {
     return (
@@ -30085,7 +30098,7 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
             borderRadius: '8px',
             border: '1px solid var(--border-color)'
           }}>
-            <h3 style={{ margin: '0 0 0.5rem 0', fontSize: '1rem', fontWeight: 600 }}>💡 Quick Tips</h3>
+            <h3 style={{ margin: '0 0 0.5rem 0', fontSize: '1rem', fontWeight: 600 }}>Quick Tips</h3>
             <ul style={{ margin: 0, paddingLeft: '1.25rem', fontSize: '0.9rem', opacity: 0.8 }}>
               <li>Use category blocks for randomized prerolls</li>
               <li>Use fixed blocks for specific prerolls in order</li>
@@ -30151,6 +30164,7 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
         } else if (block.type === 'nexup_trailers') {
           cleaned.source = block.source || 'both';
           cleaned.count = block.count || 2;
+          cleaned.mode = block.mode || 'random';
         } else if (block.type === 'coming_soon_list') {
           cleaned.layout = block.layout || 'grid';
         } else if (block.type === 'dynamic_preroll') {
@@ -30326,58 +30340,33 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
     
     return (
       <>
-      <div style={{ padding: '1.5rem', maxWidth: '1400px', margin: '0 auto' }}>
+      <div className="nx-sched-list" style={{ maxWidth: '1320px', margin: '0 auto' }}>
         {/* Header */}
-        <div style={{ 
-          display: 'flex',
-          justifyContent: 'space-between',
-          alignItems: 'center',
-          marginBottom: '1.5rem',
-          paddingBottom: '1rem',
-          borderBottom: '2px solid var(--border-color)'
-        }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '1rem', flexWrap: 'wrap', marginBottom: '1.25rem' }}>
           <div>
-            <h1 className="header" style={{ margin: '0 0 0.5rem 0', fontSize: '2rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}><Library size={28} className="header-icon" /> Saved Sequences</h1>
-            <p style={{ color: 'var(--text-secondary)', fontSize: '0.95rem', margin: 0 }}>
-              Reusable custom sequences you can schedule anytime
+            <h1 className="header" style={{ margin: 0, fontSize: '1.6rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}><Library size={28} className="header-icon" /> Saved Sequences</h1>
+            <p style={{ color: 'var(--text-secondary)', fontSize: '0.95rem', margin: '0.35rem 0 0' }}>
+              Reusable custom sequences you can schedule anytime.
             </p>
           </div>
-          <div style={{ display: 'flex', gap: '0.75rem' }}>
-            <button 
-              className="button"
+          <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
+            <button
+              className="button button-secondary"
               onClick={loadSavedSequences}
               disabled={sequencesLoading}
-              style={{ 
-                padding: '0.75rem 1.25rem', 
-                fontSize: '0.95rem',
-                fontWeight: 600,
-                display: 'flex',
-                alignItems: 'center',
-                gap: '0.5rem'
-              }}
             >
-              <RefreshCw size={16} /> {sequencesLoading ? 'Loading...' : 'Refresh'}
+              {sequencesLoading ? <><Loader2 size={16} className="spin" /> Loading…</> : <><RefreshCw size={16} /> Refresh</>}
             </button>
-            
+
             {/* Import Button - Opens PatternImport Modal */}
-            <button 
-              className="button"
+            <button
+              className="button button-info"
               onClick={() => setShowSequenceImportModal(true)}
-              style={{ 
-                padding: '0.75rem 1.25rem', 
-                fontSize: '0.95rem',
-                fontWeight: 600,
-                display: 'flex',
-                alignItems: 'center',
-                gap: '0.5rem',
-                backgroundColor: '#17a2b8',
-                borderColor: '#17a2b8'
-              }}
               title="Import .nexseq or .nexbundle files"
             >
               <Download size={16} /> Import
             </button>
-            
+
             {/* Export All Button */}
             {savedSequences.length > 0 && (
               <button 
@@ -30443,16 +30432,7 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
                   
                   showAlert(`Exported ${savedSequences.length} sequences as bundle`, 'success');
                 }}
-                style={{ 
-                  padding: '0.75rem 1.25rem', 
-                  fontSize: '0.95rem',
-                  fontWeight: 600,
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: '0.5rem',
-                  backgroundColor: '#6c757d',
-                  borderColor: '#6c757d'
-                }}
+                className="button button-secondary"
                 title="Export all sequences as .nexbundle"
               >
                 <Upload size={16} /> Export All ({savedSequences.length})
@@ -30609,11 +30589,7 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
                     fontWeight: 600,
                     whiteSpace: 'nowrap'
                   }}>
-                    {(sequence.blocks || []).reduce((total, block) => {
-                      if (block.type === 'random') return total + (block.count || 1);
-                      if (block.type === 'fixed') return total + (block.preroll_ids?.length || 0);
-                      return total;
-                    }, 0)} prerolls
+                    {estimatePrerollCount(sequence.blocks || []).max} prerolls
                   </span>
                   <span style={{ 
                     fontSize: '0.75rem',
@@ -30648,15 +30624,18 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
                 {/* Spacer if no description */}
                 {!sequence.description && <div style={{ flex: 1 }} />}
                 
-                {/* Action Buttons */}
-                <div style={{ 
-                  display: 'flex', 
-                  gap: '0.35rem',
+                {/* Action Buttons — wrap as a uniform left-aligned group with a
+                    consistent row gap so wrapped buttons (e.g. Delete on a
+                    narrow tile) line up under the row above instead of floating. */}
+                <div style={{
+                  display: 'flex',
+                  gap: '0.4rem',
                   marginTop: '0.75rem',
                   paddingTop: '0.75rem',
                   borderTop: '1px solid var(--border-color)',
                   flexWrap: 'wrap',
-                  alignItems: 'center'
+                  alignItems: 'stretch',
+                  justifyContent: 'flex-start'
                 }}>
                   <button 
                     className="button"
@@ -30782,13 +30761,15 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
                         deleteSequence(sequence.id, sequence.name);
                       }
                     }}
-                    style={{ 
-                      padding: '0.3rem 0.55rem', 
+                    style={{
+                      padding: '0.3rem 0.55rem',
                       fontSize: '0.75rem',
                       backgroundColor: '#dc3545',
+                      borderColor: '#dc3545',
                       display: 'inline-flex',
                       alignItems: 'center',
-                      marginLeft: 'auto'
+                      justifyContent: 'center',
+                      gap: '0.25rem'
                     }}
                     title="Delete sequence"
                   >
@@ -30864,7 +30845,7 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
           scheduleName={exportingSequence.name}
         />
       )}
-      
+
       {/* Sequence Preview Modal */}
       {previewingSequence && (
         <SequencePreviewModal
@@ -30935,63 +30916,74 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
         message: 'Starting...'
       });
       
-      // Start listening to progress updates via SSE
-      const eventSource = new EventSource(apiUrl('community-prerolls/build-progress'));
-      
-      eventSource.onmessage = (event) => {
-        const data = JSON.parse(event.data);
-        setCommunityBuildProgress(data);
-        
-        // Close connection when done and hide progress bar after showing 100%
-        if (!data.building && data.progress === 100) {
-          eventSource.close();
-          // Show 100% briefly, then hide the progress bar
-          setTimeout(() => {
-            setCommunityBuildProgress(null);
-          }, 1000);
-        }
-      };
-      
-      eventSource.onerror = (error) => {
-        console.error('SSE error:', error);
-        eventSource.close();
-        setCommunityBuildProgress(null);
-        setCommunityIsBuilding(false);
-      };
-      
+      // Kick off the build FIRST, so the server resets its progress state
+      // (building=true, progress=0) before we attach the SSE stream. Otherwise
+      // the stream's first frame is the *previous* build's terminal state
+      // (building=false) and we'd wrongly report "failed" while the new build
+      // actually runs in the background.
       try {
-        // Trigger the build (this will run async on the server)
         const response = await fetch(apiUrl('community-prerolls/build-index'));
-        
-        if (response.status === 429) {
-          const error = await response.json();
-          alert(error.detail || 'Please wait before rebuilding the index.');
-          eventSource.close();
-          setCommunityBuildProgress(null);
+        // 429 = a build is already running (e.g. started from the dashboard
+        // "Rebuild Index" button). Don't error — fall through and attach the
+        // progress stream so this button shows the running build's progress.
+        if (!response.ok && response.status !== 429) {
+          let detail = `Failed to start index build (HTTP ${response.status}).`;
+          try { const err = await response.json(); if (err?.detail) detail = err.detail; } catch {}
           setCommunityIsBuilding(false);
+          setCommunityBuildProgress(null);
+          showAlert(detail, 'error');
           return;
         }
-        
-        const data = await response.json();
-        
-        // Wait for progress bar to finish displaying, then show alert
-        setTimeout(() => {
-          setCommunityIsBuilding(false);
-          alert(
-            `Index built successfully!\n\n` +
-            `Total prerolls: ${data.total_prerolls}\n` +
-            `Directories scanned: ${data.directories_visited}\n\n` +
-            `Searches will now be instant!`
-          );
-          loadIndexStatus();
-        }, 1500);
-        
       } catch (error) {
-        alert(`Failed to build index: ${error.message}`);
-        setCommunityBuildProgress(null);
-        eventSource.close();
         setCommunityIsBuilding(false);
+        setCommunityBuildProgress(null);
+        showAlert(`Failed to build index: ${error.message}`, 'error');
+        return;
       }
+
+      // Now stream progress/completion via SSE.
+      const eventSource = new EventSource(apiUrl('community-prerolls/build-progress'));
+
+      let finished = false;
+      let sawBuilding = false;
+      const finish = (failedMsg) => {
+        if (finished) return;
+        finished = true;
+        try { eventSource.close(); } catch {}
+        setCommunityIsBuilding(false);
+        if (failedMsg) {
+          showAlert(failedMsg, 'error');
+          setCommunityBuildProgress(null);
+        } else {
+          // Show 100% briefly, then hide and refresh status.
+          setTimeout(() => {
+            setCommunityBuildProgress(null);
+            loadIndexStatus();
+          }, 1000);
+          showAlert('Community index built — searches will now be instant.', 'success');
+        }
+      };
+
+      eventSource.onmessage = (event) => {
+        let data;
+        try { data = JSON.parse(event.data); } catch { return; }
+        setCommunityBuildProgress(data);
+        if (data.building === true) sawBuilding = true;
+
+        // The server flips building=false at the end. progress=100 => success;
+        // building=false with progress<100 => the build errored on the server.
+        // Ignore a stale terminal frame that arrives before our build registers.
+        if (data.building === false) {
+          if (data.progress === 100) finish(null);
+          else if (sawBuilding) finish(data.message || 'Index build failed on the server.');
+        }
+      };
+
+      eventSource.onerror = () => {
+        // The stream can drop after completion; only treat as failure if we
+        // haven't already finished.
+        finish(finished ? null : 'Lost connection to the index build progress stream.');
+      };
     };
 
     // Handle rematching all prerolls (clears existing matches first)
@@ -31048,7 +31040,7 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
           await loadDownloadedCommunityIds();
           
           const message = data.matched > 0
-            ? `✓ Successfully rematched ${data.matched} out of ${data.total_scanned} prerolls!\n\n` +
+            ? `Successfully rematched ${data.matched} out of ${data.total_scanned} prerolls!\n\n` +
               (data.failed > 0 ? `${data.failed} prerolls couldn't be matched automatically.` : 'All scanned prerolls were matched!')
             : `No matches found.\n\nScanned ${data.total_scanned} prerolls but couldn't find matching titles in the community library.`;
           
@@ -31111,7 +31103,7 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
           
           // Show success message
           const message = data.matched > 0
-            ? `✓ Successfully matched ${data.matched} out of ${data.total_scanned} prerolls!\n\n` +
+            ? `Successfully matched ${data.matched} out of ${data.total_scanned} prerolls!\n\n` +
               (data.failed > 0 ? `${data.failed} prerolls couldn't be matched automatically.` : 'All scanned prerolls were matched!')
             : `No matches found.\n\nScanned ${data.total_scanned} prerolls but couldn't find matching titles in the community library.`;
           
@@ -31146,44 +31138,49 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
       
       // Clean up common patterns
       cleaned = cleaned
-        .replace(/%2C/g, ',')  // Decode commas
-        .replace(/%20/g, ' ')  // Decode spaces (backup)
+        .replace(/%2C/g, ',') // Decode commas
+        .replace(/%20/g, ' ') // Decode spaces (backup)
         .replace(/,\s*The\s*-\s*AwesomeAustn/gi, '') // Remove "The - AwesomeAustn"
         .replace(/\s*-\s*AwesomeAustn/gi, '') // Remove "- AwesomeAustn"
         .replace(/_/g, ' ')    // Replace underscores with spaces
-        .replace(/\s+/g, ' ')  // Collapse multiple spaces
+        .replace(/\s+/g, ' ') // Collapse multiple spaces
         .trim();
       
       return cleaned;
     };
 
-    // Handle search submission
-    const handleSearch = async () => {
+    // Handle search submission. `offset` drives pagination (0 = first page).
+    const handleSearch = async (offset = 0) => {
       if (!communitySearchQuery.trim() && !communitySearchPlatform.trim()) {
         alert('Please enter a search query or choose a platform');
         return;
       }
 
+      const pageLimit = Number(communityResultLimit) || 50;
       setCommunityIsSearching(true);
       try {
         const params = new URLSearchParams();
         if (communitySearchQuery.trim()) params.append('query', communitySearchQuery.trim());
         if (communitySearchPlatform.trim()) params.append('platform', communitySearchPlatform.trim());
-        params.append('limit', communityResultLimit);
+        params.append('limit', pageLimit);
+        params.append('offset', offset);
 
         const response = await fetch(apiUrl(`community-prerolls/search?${params.toString()}`));
-        
+
         if (response.status === 429) {
           const error = await response.json();
           alert(error.detail || 'Rate limit exceeded. Please wait before searching again.');
           return;
         }
-        
+
         const data = await response.json();
-        
+
         setCommunitySearchResults(data.results || []);
         setCommunityTotalResults(data.total || 0);
-        
+        setCommunityOffset(offset);
+        setCommunityPageLimit(pageLimit);
+        setCommunityActiveMode('search');
+
         // Show message if available (even with results)
         if (data.message) {
           console.log(`Community Prerolls: ${data.message}`);
@@ -31194,6 +31191,50 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
       } finally {
         setCommunityIsSearching(false);
       }
+    };
+
+    // Browse by facet filters (category / creator / platform + sort) into the
+    // same results grid the search uses. `overrides` lets a facet click apply
+    // immediately without waiting for state to settle.
+    const handleBrowse = async (overrides = {}, offset = 0) => {
+      const cat = overrides.category !== undefined ? overrides.category : browseCategory;
+      const creator = overrides.creator !== undefined ? overrides.creator : browseCreator;
+      const platform = overrides.platform !== undefined ? overrides.platform : browsePlatform;
+      const sort = overrides.sort !== undefined ? overrides.sort : browseSort;
+      const pageLimit = Number(communityResultLimit) || 50;
+      setCommunityIsSearching(true);
+      try {
+        const params = new URLSearchParams();
+        if (cat) params.append('category', cat);
+        if (creator) params.append('creator', creator);
+        if (platform) params.append('platform', platform);
+        if (sort) params.append('sort', sort);
+        params.append('limit', pageLimit);
+        params.append('offset', offset);
+        const response = await fetch(apiUrl(`community-prerolls/search?${params.toString()}`));
+        if (response.status === 429) {
+          const err = await response.json();
+          alert(err.detail || 'Rate limit exceeded. Please wait before browsing again.');
+          return;
+        }
+        const data = await response.json();
+        setCommunitySearchResults(data.results || []);
+        setCommunityTotalResults(data.total || 0);
+        setCommunityOffset(offset);
+        setCommunityPageLimit(pageLimit);
+        setCommunityActiveMode('browse');
+      } catch (error) {
+        alert(`Browse failed: ${error.message}`);
+      } finally {
+        setCommunityIsSearching(false);
+      }
+    };
+
+    // Jump to a results page (re-runs the current search/browse at a new offset).
+    const goToCommunityPage = (newOffset) => {
+      const off = Math.max(0, newOffset);
+      if (communityActiveMode === 'browse') handleBrowse({}, off);
+      else handleSearch(off);
     };
 
     // Handle random preroll fetch
@@ -31256,10 +31297,10 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
       
       // Clean the community title (remove bug number prefix, normalize separators, remove extensions)
       const communityTitle = communityPreroll.title
-        .replace(/^\d+\s*-\s*/, '')  // Remove bug number prefix
-        .replace(/\.(mp4|mkv|avi|mov|webm)$/i, '')  // Remove extension if present
-        .replace(/[_\-]/g, ' ')  // Normalize underscores and dashes to spaces
-        .replace(/\s+/g, ' ')  // Normalize multiple spaces to single space
+        .replace(/^\d+\s*-\s*/, '') // Remove bug number prefix
+        .replace(/\.(mp4|mkv|avi|mov|webm)$/i, '') // Remove extension if present
+        .replace(/[_\-]/g, ' ') // Normalize underscores and dashes to spaces
+        .replace(/\s+/g, ' ') // Normalize multiple spaces to single space
         .trim()
         .toLowerCase();
       
@@ -31306,6 +31347,9 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
         return;
       }
 
+      // Remember scroll position — opening this dialog swaps out the whole list
+      // view, so we restore it after the dialog closes (see the effect above).
+      communityScrollRef.current = window.scrollY;
       // Show rename dialog
       setCommunityRenamingPreroll(preroll);
       // Default name removes the bug number prefix if present
@@ -31333,8 +31377,8 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
             url: preroll.url || preroll.download_url,
             category_id: communitySelectedCategory || null,
             add_to_category: communityShowAddToCategory[preroll.id] || false,
-            tags: '',  // Always send empty tags - no auto-tagging
-            description: `Community Preroll ID: ${preroll.id}`  // Add bug number to description
+            tags: '', // Always send empty tags - no auto-tagging
+            description: `Community Preroll ID: ${preroll.id}` // Add bug number to description
           })
         });
 
@@ -31349,7 +31393,7 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
         setCommunityIsDownloading(prev => ({ ...prev, [preroll.id]: 'processing' }));
         await new Promise(resolve => setTimeout(resolve, 500)); // Brief pause to show processing
         
-        alert(`✅ Successfully downloaded "${result.display_name || result.filename}"!`);
+        alert(`Successfully downloaded "${result.display_name || result.filename}"!`);
         
         // Refresh downloaded IDs to update the UI
         await loadDownloadedCommunityIds();
@@ -31362,7 +31406,7 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
         setCommunitySelectedCategory(null);
         
       } catch (error) {
-        alert(`❌ Download failed: ${error.message}`);
+        alert(`Download failed: ${error.message}`);
       } finally {
         setCommunityIsDownloading(prev => ({ ...prev, [preroll.id]: false }));
       }
@@ -31478,7 +31522,7 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
                 onClick={() => setActiveTab('dashboard')}
                 style={{ padding: '0.5rem 1rem' }}
               >
-                ✕ Decline
+                Decline
               </button>
             </div>
           </div>
@@ -31496,88 +31540,155 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
     }
 
     // Main Community Prerolls interface
+    const activeServerMeta = communityServers.find(s => communityServerUrl === (s.baseUrl || '').replace(/\/+$/, ''));
+    const idxExists = communityIndexStatus?.exists;
+    const idxStale = communityIndexStatus?.is_stale;
     return (
-      <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
-        <div>
-          <h1 className="header" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.5rem' }}>
-            <Users2 size={32} className="header-icon" /> Community Prerolls
-          </h1>
-          <p style={{ color: 'var(--text-secondary)', fontSize: '0.95rem', margin: 0 }}>
-            Browse and download prerolls from the community library.
-          </p>
+      <div className="nx-community" style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+        {/* Hero: community server + index status + primary actions */}
+        <div className={`nx-conn-hero${idxExists ? ' connected' : ''}`} style={{ '--brand': '#00d4ff' }}>
+          <div className={`nx-conn-hero-badge${idxExists ? '' : ' idle'}`} style={idxExists ? { background: 'var(--accent-color)', boxShadow: '0 4px 12px rgba(0, 212, 255, 0.35)' } : undefined}>
+            <Globe size={24} />
+          </div>
+          <div className="nx-conn-hero-body">
+            <h2 className="nx-conn-hero-title">
+              Community Prerolls
+              {communityIndexStatus && (
+                <span className={`nx-conn-hero-state ${idxExists && !idxStale ? 'ok' : 'bad'}`}>
+                  <span className={`nx-dot ${idxExists && !idxStale ? 'ok' : 'bad'}`} aria-hidden="true" />
+                  {idxExists ? (idxStale ? 'Index stale' : 'Fast search ready') : 'No index'}
+                </span>
+              )}
+            </h2>
+            <div className="nx-conn-hero-meta" style={{ alignItems: 'center' }}>
+              <span>{activeServerMeta?.name || communityServerUrl || '—'}</span>
+              {idxExists && communityIndexStatus.total_prerolls > 0 && (
+                <span className="nx-comm-chip ok"><Library size={13} /> {communityIndexStatus.total_prerolls} indexed</span>
+              )}
+              {communityMatchedCount > 0 && (
+                <span className="nx-comm-chip link"><Link size={13} /> {communityMatchedCount} matched</span>
+              )}
+              {idxStale && (
+                <span className="nx-comm-chip stale"><AlertTriangle size={13} /> {Math.round(communityIndexStatus.age_days)}d old</span>
+              )}
+            </div>
+          </div>
+          <div className="nx-conn-hero-actions" style={{ flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+            <button
+              onClick={handleBuildIndex}
+              disabled={communityIsBuilding}
+              className="button"
+              title={idxExists ? 'Refresh index to get latest prerolls' : 'Build index for instant searches'}
+            >
+              {communityIsBuilding
+                ? <><Loader2 size={15} className="spin" /> Building…</>
+                : (idxExists ? <><RefreshCw size={15} /> Refresh Index</> : <><Zap size={15} /> Build Index</>)}
+            </button>
+          </div>
         </div>
 
-        {/* Server Selector */}
-        <div className="card" style={{ padding: '0.75rem 1rem' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap' }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', fontSize: '0.9rem', fontWeight: 600 }}>
-              <Server size={15} /> Server
-            </div>
-            {/* Server quick-select buttons */}
-            {communityServers.filter(s => s.status === 'active').map(s => (
-              <button
-                key={s.id}
-                onClick={async () => {
-                  setCommunityServerLoading(true);
-                  setCommunityShowCustomUrl(false);
-                  try {
-                    const url = s.baseUrl.replace(/\/+$/, '');
-                    await fetch(apiUrl('community-prerolls/server-url'), {
-                      method: 'PUT',
-                      headers: { 'Content-Type': 'application/json' },
-                      body: JSON.stringify({ url })
-                    });
-                    setCommunityServerUrl(url);
-                    setCommunityServerIsCustom(true);
-                    setCommunityCustomUrlInput('');
-                  } catch (e) { console.error('Failed to set server:', e); }
-                  setCommunityServerLoading(false);
-                }}
-                disabled={communityServerLoading}
-                className={communityServerUrl === s.baseUrl.replace(/\/+$/, '') ? 'button-primary' : 'button-secondary'}
-                style={{ padding: '0.3rem 0.65rem', fontSize: '0.82rem', display: 'flex', alignItems: 'center', gap: '0.35rem' }}
-                title={`${s.name} — ${s.location?.city || ''}, ${s.location?.country || ''}`}
-              >
-                {s.location?.countryCode && (
-                  <img
-                    src={`https://flagcdn.com/16x12/${s.location.countryCode.toLowerCase()}.png`}
-                    alt={s.location.countryCode}
-                    style={{ width: 16, height: 12, borderRadius: 1 }}
-                  />
-                )}
-                {s.name}
-                {communityServerUrl === s.baseUrl.replace(/\/+$/, '') && <Check size={12} />}
-              </button>
-            ))}
-            {/* Custom URL toggle */}
-            <button
-              onClick={() => setCommunityShowCustomUrl(!communityShowCustomUrl)}
-              className={communityShowCustomUrl ? 'button-primary' : 'button-secondary'}
-              style={{ padding: '0.3rem 0.65rem', fontSize: '0.82rem' }}
-              title="Enter a custom server URL"
-            >
-              <Globe size={13} style={{ marginRight: '0.25rem' }} /> Custom
+        {/* Secondary action bar — visible, one-click */}
+        <div className="nx-comm-actionbar">
+          <button onClick={() => handleMatchExisting(true)} disabled={communityIsMigrating} className="button button-secondary">
+            {communityIsMigrating ? <><Loader2 size={14} className="spin" /> Matching…</> : <><Link size={14} /> Match Existing Prerolls</>}
+          </button>
+          {idxExists && (
+            <button onClick={handleRematchAll} disabled={communityIsMigrating} className="button button-secondary">
+              {communityIsMigrating ? <><Loader2 size={14} className="spin" /> Rematching…</> : <><RefreshCcw size={14} /> Rematch All</>}
             </button>
-            {/* Active URL indicator */}
-            <span style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', marginLeft: 'auto' }}>
-              {communityServerUrl || '—'}
-            </span>
-          </div>
-          {/* Custom URL input row */}
-          {communityShowCustomUrl && (
-            <div style={{ display: 'flex', gap: '0.5rem', marginTop: '0.6rem' }}>
+          )}
+          <div className="nx-comm-actionbar-spacer" />
+          <button
+            onClick={() => setCommunityShowCustomUrl(!communityShowCustomUrl)}
+            className={`nx-comm-linkbtn${communityShowCustomUrl ? ' active' : ''}`}
+            title="Choose a community server or enter a custom URL"
+          >
+            <Server size={14} /> Change Server
+          </button>
+          <button
+            onClick={async () => {
+              if (!communityPolicyText) {
+                try {
+                  const policyResponse = await fetch(apiUrl('community-prerolls/fair-use-policy'));
+                  const policyData = await policyResponse.json();
+                  setCommunityPolicyText(policyData.policy);
+                } catch (error) {
+                  console.error('Failed to fetch policy text:', error);
+                }
+              }
+              setCommunityFairUseStatus({ accepted: false });
+            }}
+            className="nx-comm-linkbtn"
+            title="View Fair Use Policy"
+          >
+            <FileText size={14} /> Fair Use Policy
+          </button>
+        </div>
+
+        {/* Server picker (toggled from the hero's "Change Server") */}
+        {communityShowCustomUrl && (
+          <div className="card">
+            <div className="nx-conn-method-lead" style={{ fontSize: '0.95rem' }}><Server size={16} /> Community Server</div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap', marginBottom: '0.75rem' }}>
+              {communityServers.filter(s => s.status === 'active').map(s => {
+                const sUrl = (s.baseUrl || '').replace(/\/+$/, '');
+                const sActive = communityServerUrl === sUrl;
+                return (
+                  <button
+                    key={s.id}
+                    onClick={async () => {
+                      setCommunityServerLoading(true);
+                      try {
+                        await fetch(apiUrl('community-prerolls/server-url'), {
+                          method: 'PUT',
+                          headers: { 'Content-Type': 'application/json' },
+                          body: JSON.stringify({ url: sUrl })
+                        });
+                        setCommunityServerUrl(sUrl);
+                        setCommunityServerIsCustom(true);
+                        setCommunityCustomUrlInput('');
+                      } catch (e) { console.error('Failed to set server:', e); }
+                      setCommunityServerLoading(false);
+                    }}
+                    disabled={communityServerLoading}
+                    className={sActive ? 'button' : 'button button-secondary'}
+                    style={{ display: 'flex', alignItems: 'center', gap: '0.35rem' }}
+                    title={`${s.name} — ${s.location?.city || ''}, ${s.location?.country || ''}`}
+                  >
+                    {s.location?.countryCode && (
+                      <img
+                        src={`https://flagcdn.com/16x12/${s.location.countryCode.toLowerCase()}.png`}
+                        alt={s.location.countryCode}
+                        style={{ width: 16, height: 12, borderRadius: 1 }}
+                      />
+                    )}
+                    {s.name}
+                    {sActive && <Check size={13} />}
+                  </button>
+                );
+              })}
+            </div>
+            <label className="nx-conn-field-label">Custom server URL</label>
+            <div style={{ display: 'flex', gap: '0.5rem' }}>
               <input
                 type="text"
                 value={communityCustomUrlInput}
                 onChange={e => setCommunityCustomUrlInput(e.target.value)}
                 placeholder="https://your-mirror.example.com"
-                style={{ flex: 1, padding: '0.35rem 0.6rem', fontSize: '0.85rem', borderRadius: 4, border: '1px solid var(--border-color)', background: 'var(--bg-secondary)', color: 'var(--text-primary)' }}
+                style={{ flex: 1 }}
               />
               <button
                 onClick={async () => {
+                  const url = communityCustomUrlInput.trim().replace(/\/+$/, '');
+                  // Empty field = nothing to save. Don't send null here, or it
+                  // would reset a server you just picked above. Use "Reset to
+                  // default" to clear a custom URL.
+                  if (!url) {
+                    showAlert('Enter a custom server URL, or pick a server above. Use "Reset to default" to clear.', 'info');
+                    return;
+                  }
                   setCommunityServerLoading(true);
                   try {
-                    const url = communityCustomUrlInput.trim().replace(/\/+$/, '') || null;
                     await fetch(apiUrl('community-prerolls/server-url'), {
                       method: 'PUT',
                       headers: { 'Content-Type': 'application/json' },
@@ -31587,15 +31698,13 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
                     const data = await res.json();
                     setCommunityServerUrl(data.server_url || '');
                     setCommunityServerIsCustom(!!data.is_custom);
-                    if (!url) setCommunityCustomUrlInput('');
                   } catch (e) { console.error('Failed to save custom URL:', e); }
                   setCommunityServerLoading(false);
                 }}
                 disabled={communityServerLoading}
-                className="button-primary"
-                style={{ padding: '0.35rem 0.8rem', fontSize: '0.85rem' }}
+                className="button"
               >
-                {communityServerLoading ? <Loader2 size={14} className="spin" /> : 'Save'}
+                {communityServerLoading ? <Loader2 size={15} className="spin" /> : 'Save'}
               </button>
               {communityServerIsCustom && (
                 <button
@@ -31616,156 +31725,17 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
                     setCommunityServerLoading(false);
                   }}
                   disabled={communityServerLoading}
-                  className="button-secondary"
-                  style={{ padding: '0.35rem 0.8rem', fontSize: '0.85rem' }}
+                  className="button button-secondary"
                   title="Reset to default server"
                 >
                   Reset
                 </button>
               )}
             </div>
-          )}
-        </div>
+          </div>
+        )}
 
         <div className="card">
-          <div style={{ display: 'flex', justifyContent: 'flex-end', alignItems: 'center', marginBottom: '1rem' }}>
-            <button
-              onClick={async () => {
-                // Re-show Fair Use Policy - fetch policy text if not already loaded
-                if (!communityPolicyText) {
-                  try {
-                    const policyResponse = await fetch(apiUrl('community-prerolls/fair-use-policy'));
-                    const policyData = await policyResponse.json();
-                    setCommunityPolicyText(policyData.policy);
-                  } catch (error) {
-                    console.error('Failed to fetch policy text:', error);
-                  }
-                }
-                setCommunityFairUseStatus({ accepted: false });
-              }}
-              className="button-secondary"
-              style={{ padding: '0.4rem 0.8rem', fontSize: '0.85rem' }}
-              title="View Fair Use Policy"
-            >
-              <FileText size={14} style={{marginRight: '0.35rem'}} /> Fair Use Policy
-            </button>
-          </div>
-          
-          {/* Index Status & Build Button */}
-          {communityIndexStatus && (
-            <div style={{
-              padding: '0.75rem',
-              backgroundColor: communityIndexStatus.exists 
-                ? (communityIndexStatus.is_stale ? 'rgba(20, 184, 166, 0.1)' : 'rgba(34, 197, 94, 0.1)')
-                : 'rgba(239, 68, 68, 0.1)',
-              border: `1px solid ${communityIndexStatus.exists 
-                ? (communityIndexStatus.is_stale ? 'rgba(20, 184, 166, 0.3)' : 'rgba(34, 197, 94, 0.3)')
-                : 'rgba(239, 68, 68, 0.3)'}`,
-              borderRadius: '4px',
-              marginBottom: '1rem',
-              fontSize: '0.9rem',
-              display: 'flex',
-              justifyContent: 'space-between',
-              alignItems: 'center'
-            }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap' }}>
-                {/* Status Message */}
-                <div>
-                  {communityIndexStatus.exists ? (
-                    <>
-                      {communityIndexStatus.is_stale ? (
-                        <span><AlertTriangle size={14} style={{marginRight: '0.35rem', verticalAlign: 'middle', color: '#14B8A6'}} /> <strong>Index is stale</strong> (last updated {Math.round(communityIndexStatus.age_days)} days ago)</span>
-                      ) : (
-                        <span><Sparkles size={14} style={{marginRight: '0.35rem', verticalAlign: 'middle', color: '#10b981'}} /> <strong>Fast search enabled</strong></span>
-                      )}
-                    </>
-                  ) : (
-                    <span><Lightbulb size={14} style={{marginRight: '0.35rem', verticalAlign: 'middle', color: '#14B8A6'}} /> <strong>Build local index for instant searches</strong></span>
-                  )}
-                </div>
-                
-                {/* Indexed Prerolls Badge */}
-                {communityIndexStatus.exists && communityIndexStatus.total_prerolls > 0 && (
-                  <div style={{
-                    padding: '0.3rem 0.6rem',
-                    backgroundColor: 'rgba(34, 197, 94, 0.1)',
-                    border: '1px solid rgba(34, 197, 94, 0.3)',
-                    borderRadius: '4px',
-                    fontSize: '0.85rem',
-                    whiteSpace: 'nowrap',
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: '0.35rem'
-                  }}>
-                    <Library size={14} /> <strong>{communityIndexStatus.total_prerolls}</strong> indexed
-                  </div>
-                )}
-                
-                {/* Matched Prerolls Badge */}
-                {communityMatchedCount > 0 && (
-                  <div style={{
-                    padding: '0.3rem 0.6rem',
-                    backgroundColor: 'rgba(59, 130, 246, 0.1)',
-                    border: '1px solid rgba(59, 130, 246, 0.3)',
-                    borderRadius: '4px',
-                    fontSize: '0.85rem',
-                    whiteSpace: 'nowrap',
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: '0.35rem'
-                  }}>
-                    <Link size={14} /> <strong>{communityMatchedCount}</strong> matched
-                  </div>
-                )}
-              </div>
-              <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
-                <button
-                  onClick={handleBuildIndex}
-                  disabled={communityIsBuilding}
-                  className="button-secondary"
-                  style={{ 
-                    padding: '0.4rem 0.8rem', 
-                    fontSize: '0.85rem',
-                    whiteSpace: 'nowrap'
-                  }}
-                  title={communityIndexStatus.exists ? 'Refresh index to get latest prerolls' : 'Build index for instant searches'}
-                >
-                  {communityIsBuilding ? <><Loader2 size={14} style={{marginRight: '0.35rem'}} className="spin" /> Building...</> : (communityIndexStatus.exists ? <><RefreshCw size={14} style={{marginRight: '0.35rem'}} /> Refresh Index</> : <><Zap size={14} style={{marginRight: '0.35rem'}} /> Build Index</>)}
-                </button>
-                <button
-                  onClick={() => handleMatchExisting(true)}
-                  disabled={communityIsMigrating}
-                  className="button-secondary"
-                  style={{ 
-                    padding: '0.4rem 0.8rem', 
-                    fontSize: '0.85rem',
-                    whiteSpace: 'nowrap'
-                  }}
-                  title="Match your existing prerolls to the community library"
-                >
-                  {communityIsMigrating ? <><Loader2 size={14} style={{marginRight: '0.35rem'}} className="spin" /> Matching...</> : <><Link size={14} style={{marginRight: '0.35rem'}} /> Match Existing Prerolls</>}
-                </button>
-                {communityIndexStatus.exists && (
-                  <button
-                    onClick={handleRematchAll}
-                    disabled={communityIsMigrating}
-                    className="button-secondary"
-                    style={{ 
-                      padding: '0.4rem 0.8rem', 
-                      fontSize: '0.85rem',
-                      whiteSpace: 'nowrap',
-                      backgroundColor: darkMode ? 'rgba(20, 184, 166, 0.1)' : 'rgba(20, 184, 166, 0.15)',
-                      border: darkMode ? '1px solid rgba(20, 184, 166, 0.3)' : '1px solid rgba(20, 184, 166, 0.4)',
-                      color: darkMode ? 'rgba(20, 184, 166, 0.9)' : '#b45309'
-                    }}
-                    title="Clear all existing matches and rematch with improved algorithm"
-                  >
-                    {communityIsMigrating ? <><Loader2 size={14} style={{marginRight: '0.35rem'}} className="spin" /> Rematching...</> : <><RefreshCcw size={14} style={{marginRight: '0.35rem'}} /> Rematch All</>}
-                  </button>
-                )}
-              </div>
-            </div>
-          )}
 
           {/* Retro Progress Bar */}
           {communityBuildProgress && (
@@ -31814,181 +31784,40 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
             </div>
           )}
 
-          {/* Search Controls */}
-          <div style={{ marginBottom: '1.5rem' }}>
-            {/* Search Bar - 60% Width */}
-            <div style={{ marginBottom: '1rem', width: '60%' }}>
-              <div style={{ position: 'relative' }}>
-                <div style={{
-                  position: 'absolute',
-                  left: '14px',
-                  top: '50%',
-                  transform: 'translateY(-50%)',
-                  color: '#888',
-                  pointerEvents: 'none',
-                  zIndex: 1,
-                  display: 'flex',
-                  alignItems: 'center'
-                }}>
-                  <Search size={18} />
-                </div>
-                <input
-                  type="text"
-                  placeholder="Search for prerolls... (e.g., Halloween, Christmas, Scary, Turkey)"
-                  value={communitySearchQuery}
-                  onChange={(e) => setCommunitySearchQuery(e.target.value)}
-                  onKeyPress={(e) => e.key === 'Enter' && !communityIsSearching && handleSearch()}
-                  style={{
-                    width: '100%',
-                    padding: '16px 16px 16px 48px',
-                    border: '2px solid transparent',
-                    borderRadius: '12px',
-                    backgroundColor: 'rgba(255, 255, 255, 0.05)',
-                    color: 'var(--text-color)',
-                    fontSize: '16px',
-                    transition: 'all 0.2s ease',
-                    outline: 'none',
-                    boxShadow: '0 2px 8px rgba(0, 0, 0, 0.1)'
-                  }}
-                  onFocus={(e) => {
-                    e.target.style.borderColor = '#4f46e5';
-                    e.target.style.backgroundColor = 'rgba(255, 255, 255, 0.08)';
-                    e.target.style.boxShadow = '0 4px 12px rgba(79, 70, 229, 0.2)';
-                  }}
-                  onBlur={(e) => {
-                    e.target.style.borderColor = 'transparent';
-                    e.target.style.backgroundColor = 'rgba(255, 255, 255, 0.05)';
-                    e.target.style.boxShadow = '0 2px 8px rgba(0, 0, 0, 0.1)';
-                  }}
-                />
-              </div>
+          {/* Search toolbar */}
+          <div className="nx-comm-toolbar" style={{ marginBottom: '1.25rem' }}>
+            <div className="nx-comm-search">
+              <span className="nx-comm-search-icon"><Search size={18} /></span>
+              <input
+                type="text"
+                placeholder="Search prerolls — e.g. Halloween, Christmas, Scary, Turkey"
+                value={communitySearchQuery}
+                onChange={(e) => setCommunitySearchQuery(e.target.value)}
+                onKeyPress={(e) => e.key === 'Enter' && !communityIsSearching && handleSearch()}
+              />
             </div>
-
-            {/* Filters and Search Button Row */}
-            <div style={{
-              display: 'grid',
-              gridTemplateColumns: '1fr 1fr 200px',
-              gap: '12px',
-              alignItems: 'end'
-            }}>
-              {/* Platform Dropdown */}
-              <div>
-                <label style={{ display: 'block', marginBottom: '8px', fontWeight: '500', fontSize: '13px', color: '#aaa' }}>
-                  Platform
-                </label>
-                <select
-                  value={communitySearchPlatform}
-                  onChange={(e) => setCommunitySearchPlatform(e.target.value)}
-                  style={{
-                    width: '100%',
-                    padding: '14px',
-                    border: '2px solid transparent',
-                    borderRadius: '12px',
-                    backgroundColor: 'rgba(255, 255, 255, 0.05)',
-                    color: 'var(--text-color)',
-                    fontSize: '15px',
-                    cursor: 'pointer',
-                    outline: 'none',
-                    boxShadow: '0 2px 8px rgba(0, 0, 0, 0.1)',
-                    transition: 'all 0.2s ease'
-                  }}
-                  onFocus={(e) => {
-                    e.target.style.borderColor = '#4f46e5';
-                    e.target.style.backgroundColor = 'rgba(255, 255, 255, 0.08)';
-                    e.target.style.boxShadow = '0 4px 12px rgba(79, 70, 229, 0.2)';
-                  }}
-                  onBlur={(e) => {
-                    e.target.style.borderColor = 'transparent';
-                    e.target.style.backgroundColor = 'rgba(255, 255, 255, 0.05)';
-                    e.target.style.boxShadow = '0 2px 8px rgba(0, 0, 0, 0.1)';
-                  }}
-                >
-                  <option value="" style={{ backgroundColor: '#2a2a2a', color: '#ffffff' }}>All Platforms</option>
-                  <option value="plex" style={{ backgroundColor: '#2a2a2a', color: '#ffffff' }}>Plex</option>
-                  <option value="jellyfin" style={{ backgroundColor: '#2a2a2a', color: '#ffffff' }}>Jellyfin</option>
-                  <option value="emby" style={{ backgroundColor: '#2a2a2a', color: '#ffffff' }}>Emby</option>
-                </select>
-              </div>
-
-              {/* Limit Dropdown */}
-              <div>
-                <label style={{ display: 'block', marginBottom: '8px', fontWeight: '500', fontSize: '13px', color: '#aaa' }}>
-                  Results Limit
-                </label>
-                <select
-                  value={communityResultLimit}
-                  onChange={(e) => setCommunityResultLimit(Number(e.target.value))}
-                  style={{
-                    width: '100%',
-                    padding: '14px',
-                    border: '2px solid transparent',
-                    borderRadius: '12px',
-                    backgroundColor: 'rgba(255, 255, 255, 0.05)',
-                    color: 'var(--text-color)',
-                    fontSize: '15px',
-                    cursor: 'pointer',
-                    outline: 'none',
-                    boxShadow: '0 2px 8px rgba(0, 0, 0, 0.1)',
-                    transition: 'all 0.2s ease'
-                  }}
-                  onFocus={(e) => {
-                    e.target.style.borderColor = '#4f46e5';
-                    e.target.style.backgroundColor = 'rgba(255, 255, 255, 0.08)';
-                    e.target.style.boxShadow = '0 4px 12px rgba(79, 70, 229, 0.2)';
-                  }}
-                  onBlur={(e) => {
-                    e.target.style.borderColor = 'transparent';
-                    e.target.style.backgroundColor = 'rgba(255, 255, 255, 0.05)';
-                    e.target.style.boxShadow = '0 2px 8px rgba(0, 0, 0, 0.1)';
-                  }}
-                >
-                  <option value={10} style={{ backgroundColor: '#2a2a2a', color: '#ffffff' }}>10 Results</option>
-                  <option value={20} style={{ backgroundColor: '#2a2a2a', color: '#ffffff' }}>20 Results</option>
-                  <option value={50} style={{ backgroundColor: '#2a2a2a', color: '#ffffff' }}>50 Results</option>
-                  <option value={100} style={{ backgroundColor: '#2a2a2a', color: '#ffffff' }}>100 Results</option>
-                </select>
-              </div>
-
-              {/* Search Button */}
-              <button
-                onClick={handleSearch}
-                disabled={communityIsSearching}
-                style={{
-                  padding: '14px 24px',
-                  border: 'none',
-                  borderRadius: '12px',
-                  backgroundColor: '#4f46e5',
-                  color: '#ffffff',
-                  fontSize: '15px',
-                  fontWeight: '600',
-                  cursor: communityIsSearching ? 'not-allowed' : 'pointer',
-                  outline: 'none',
-                  boxShadow: '0 2px 8px rgba(79, 70, 229, 0.3)',
-                  transition: 'all 0.2s ease',
-                  opacity: communityIsSearching ? 0.6 : 1,
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  gap: '8px',
-                  height: '52px'
-                }}
-                onMouseEnter={(e) => {
-                  if (!communityIsSearching) {
-                    e.target.style.backgroundColor = '#4338ca';
-                    e.target.style.boxShadow = '0 4px 12px rgba(79, 70, 229, 0.4)';
-                    e.target.style.transform = 'translateY(-1px)';
-                  }
-                }}
-                onMouseLeave={(e) => {
-                  e.target.style.backgroundColor = '#4f46e5';
-                  e.target.style.boxShadow = '0 2px 8px rgba(79, 70, 229, 0.3)';
-                  e.target.style.transform = 'translateY(0)';
-                }}
-              >
-                {communityIsSearching ? <Loader2 size={18} className="spin" /> : <Search size={18} />}
-                <span>{communityIsSearching ? 'Searching...' : 'Search'}</span>
-              </button>
+            <div className="nx-comm-filter">
+              <label>Platform</label>
+              <select value={communitySearchPlatform} onChange={(e) => setCommunitySearchPlatform(e.target.value)}>
+                <option value="">All Platforms</option>
+                <option value="plex">Plex</option>
+                <option value="jellyfin">Jellyfin</option>
+                <option value="emby">Emby</option>
+              </select>
             </div>
+            <div className="nx-comm-filter">
+              <label>Results</label>
+              <select value={communityResultLimit} onChange={(e) => setCommunityResultLimit(Number(e.target.value))}>
+                <option value={10}>10</option>
+                <option value={20}>20</option>
+                <option value={50}>50</option>
+                <option value={100}>100</option>
+              </select>
+            </div>
+            <button onClick={() => handleSearch(0)} disabled={communityIsSearching} className="button" style={{ height: '42px' }}>
+              {communityIsSearching ? <Loader2 size={16} className="spin" /> : <Search size={16} />}
+              <span>{communityIsSearching ? 'Searching…' : 'Search'}</span>
+            </button>
           </div>
 
           {/* Search progress bar */}
@@ -32036,346 +31865,208 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
           )}
         </div>
 
+        {/* Browse the library by facet (category / platform / creator / sort) */}
+        {communityFacets && (
+          <div className="card">
+            <h3 style={{ marginTop: 0, marginBottom: '0.75rem', fontSize: '1rem', display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+              <Filter size={16} /> Browse the Library
+              <span style={{ color: 'var(--text-secondary)', fontWeight: 500, fontSize: '0.85rem' }}>({communityFacets.total} prerolls)</span>
+            </h3>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '0.75rem', marginBottom: '0.75rem' }}>
+              <div>
+                <label className="nx-conn-field-label">Category</label>
+                <select className="input" value={browseCategory} onChange={e => { setBrowseCategory(e.target.value); handleBrowse({ category: e.target.value }); }}>
+                  <option value="">All categories</option>
+                  {communityFacets.categories.map(c => <option key={c.name} value={c.name}>{c.name} ({c.count})</option>)}
+                </select>
+              </div>
+              <div>
+                <label className="nx-conn-field-label">Platform</label>
+                <select className="input" value={browsePlatform} onChange={e => { setBrowsePlatform(e.target.value); handleBrowse({ platform: e.target.value }); }}>
+                  <option value="">All platforms</option>
+                  {communityFacets.platforms.filter(p => p.name !== 'Universal').map(p => <option key={p.name} value={p.name}>{p.name} ({p.count})</option>)}
+                </select>
+              </div>
+              <div>
+                <label className="nx-conn-field-label">Creator</label>
+                <select className="input" value={browseCreator} onChange={e => { setBrowseCreator(e.target.value); handleBrowse({ creator: e.target.value }); }}>
+                  <option value="">All creators</option>
+                  {communityFacets.creators.map(c => <option key={c.name} value={c.name}>{c.name} ({c.count})</option>)}
+                </select>
+              </div>
+              <div>
+                <label className="nx-conn-field-label">Sort</label>
+                <select className="input" value={browseSort} onChange={e => { setBrowseSort(e.target.value); handleBrowse({ sort: e.target.value }); }}>
+                  <option value="name">Name (A–Z)</option>
+                  <option value="newest">Newest{communityFacets.has_dates ? '' : ' (re-index)'}</option>
+                  <option value="oldest">Oldest{communityFacets.has_dates ? '' : ' (re-index)'}</option>
+                </select>
+              </div>
+            </div>
+            <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', flexWrap: 'wrap' }}>
+              <button className="button" onClick={() => handleBrowse()} disabled={communityIsSearching}>
+                <Filter size={14} style={{ marginRight: '0.35rem' }} /> Browse
+              </button>
+              {(browseCategory || browseCreator || browsePlatform) && (
+                <button className="button button-secondary" onClick={() => { setBrowseCategory(''); setBrowseCreator(''); setBrowsePlatform(''); handleBrowse({ category: '', creator: '', platform: '' }); }}>
+                  Clear filters
+                </button>
+              )}
+              {!communityFacets.has_dates && (
+                <span style={{ fontSize: '0.78rem', color: 'var(--text-secondary)' }}>
+                  Re-index to enable date sorting.
+                </span>
+              )}
+            </div>
+          </div>
+        )}
+
         {/* Results List */}
         {communitySearchResults.length > 0 && (
           <div className="card">
-            <h3 style={{ marginTop: 0, marginBottom: '1rem' }}>
-              Results ({communitySearchResults.length})
+            <h3 style={{ marginTop: 0, marginBottom: '0.75rem', fontSize: '1rem' }}>
+              Results <span style={{ color: 'var(--text-secondary)', fontWeight: 500 }}>({communityTotalResults})</span>
             </h3>
 
-            <div style={{
-              display: 'flex',
-              flexDirection: 'column',
-              gap: '0.75rem'
-            }}>
-              {communitySearchResults.map(preroll => (
-                <div
-                  key={preroll.id}
-                  style={{
-                    backgroundColor: 'var(--card-bg)',
-                    border: '1px solid var(--border-color)',
-                    borderRadius: '6px',
-                    overflow: 'hidden',
-                    display: 'flex',
-                    flexDirection: 'row',
-                    transition: 'transform 0.2s, box-shadow 0.2s',
-                    padding: '0.75rem',
-                    alignItems: 'center',
-                    gap: '1rem'
-                  }}
-                  onMouseEnter={(e) => {
-                    e.currentTarget.style.transform = 'translateX(2px)';
-                    e.currentTarget.style.boxShadow = '0 2px 8px rgba(0,0,0,0.15)';
-                  }}
-                  onMouseLeave={(e) => {
-                    e.currentTarget.style.transform = 'translateX(0)';
-                    e.currentTarget.style.boxShadow = 'none';
-                  }}
-                >
-                  {/* Icon */}
-                  <div style={{
-                    width: '60px',
-                    height: '60px',
-                    flexShrink: 0,
-                    backgroundColor: 'rgba(100,100,100,0.2)',
-                    borderRadius: '6px',
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    color: 'var(--text-secondary)'
-                  }}>
-                    <Film size={28} />
-                  </div>
+            <div className="nx-comm-results">
+              {communitySearchResults.map(preroll => {
+                const downloaded = isPrerollAlreadyDownloaded(preroll);
+                const dlState = communityIsDownloading[preroll.id];
+                const catOpen = communityShowAddToCategory[preroll.id];
+                return (
+                <div key={preroll.id} className="nx-comm-row">
+                  <div className="nx-comm-row-icon"><Film size={20} /></div>
 
-                  {/* Content */}
-                  <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minWidth: 0 }}>
-                    <h4 style={{
-                      margin: '0 0 0.25rem 0',
-                      fontSize: '1rem',
-                      fontWeight: '600',
-                      lineHeight: '1.3',
-                      color: 'var(--text-color)',
-                      overflow: 'hidden',
-                      textOverflow: 'ellipsis',
-                      whiteSpace: 'nowrap'
-                    }}>
-                      {cleanDisplayText(preroll.title)}
-                    </h4>
-
-                    <div style={{ display: 'flex', gap: '1rem', flexWrap: 'wrap', fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
-                      {preroll.creator && (
-                        <span style={{ display: 'flex', alignItems: 'center', gap: '0.25rem' }}><User size={14} /> {cleanDisplayText(preroll.creator)}</span>
-                      )}
-                      {preroll.category && (
-                        <span style={{ display: 'flex', alignItems: 'center', gap: '0.25rem' }}><FolderOpen size={14} /> {cleanDisplayText(preroll.category)}</span>
-                      )}
-                      {preroll.duration && (
-                        <span style={{ display: 'flex', alignItems: 'center', gap: '0.25rem' }}><Clock size={14} /> {preroll.duration}s</span>
-                      )}
-                      {preroll.file_size && preroll.file_size !== 'Unknown' && (
-                        <span><Package size={14} style={{marginRight: '0.35rem', verticalAlign: 'middle'}} /> {preroll.file_size}</span>
-                      )}
+                  <div className="nx-comm-row-body">
+                    <div className="nx-comm-row-title">{cleanDisplayText(preroll.title)}</div>
+                    <div className="nx-comm-row-meta">
+                      {preroll.creator && <span style={{ display: 'inline-flex', alignItems: 'center', gap: '0.25rem' }}><User size={13} /> {cleanDisplayText(preroll.creator)}</span>}
+                      {preroll.category && <span style={{ display: 'inline-flex', alignItems: 'center', gap: '0.25rem' }}><FolderOpen size={13} /> {cleanDisplayText(preroll.category)}</span>}
+                      {preroll.duration && <span style={{ display: 'inline-flex', alignItems: 'center', gap: '0.25rem' }}><Clock size={13} /> {preroll.duration}s</span>}
+                      {preroll.file_size && preroll.file_size !== 'Unknown' && <span style={{ display: 'inline-flex', alignItems: 'center', gap: '0.25rem' }}><Package size={13} /> {preroll.file_size}</span>}
                     </div>
                   </div>
 
-                  {/* Actions column */}
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', minWidth: '200px' }}>
-                    {/* Category selector */}
-                    {communityShowAddToCategory[preroll.id] && (
+                  <div className="nx-comm-row-actions">
+                    {catOpen && (
                       <select
+                        className="nx-community-select"
                         value={communitySelectedCategory || ''}
                         onChange={(e) => setCommunitySelectedCategory(e.target.value || null)}
                         style={{
-                          width: '100%',
-                          padding: '0.4rem',
-                          fontSize: '0.85rem',
-                          border: '1px solid var(--border-color)',
-                          borderRadius: '4px',
-                          backgroundColor: darkMode ? '#2a2a2a' : 'white',
-                          color: darkMode ? '#ffffff' : '#333',
-                          cursor: 'pointer'
+                          padding: '0.4rem 0.6rem', fontSize: '0.85rem',
+                          border: '1px solid var(--border-color)', borderRadius: '8px',
+                          backgroundColor: 'var(--input-bg)', color: 'var(--text-color)', cursor: 'pointer'
                         }}
                       >
-                        <option value="" style={{ backgroundColor: darkMode ? '#2a2a2a' : 'white', color: darkMode ? '#ffffff' : '#333' }}>Select category...</option>
+                        <option value="">Select category…</option>
                         {[...categories].sort((a, b) => a.name.localeCompare(b.name)).map(cat => (
-                          <option key={cat.id} value={cat.id} style={{ backgroundColor: darkMode ? '#2a2a2a' : 'white', color: darkMode ? '#ffffff' : '#333' }}>
-                            {cat.name}
-                          </option>
+                          <option key={cat.id} value={cat.id}>{cat.name}</option>
                         ))}
                       </select>
                     )}
-
-                    {/* Action buttons */}
-                    <div style={{ display: 'flex', gap: '0.5rem' }}>
+                    <button onClick={() => setCommunityPreviewingPreroll(preroll)} className="button button-secondary" title="Preview video">
+                      <Play size={14} /> Preview
+                    </button>
+                    {downloaded ? (
+                      <span className="button button-success" style={{ cursor: 'default', pointerEvents: 'none' }} title="Already in your collection">
+                        <CheckCircle size={14} /> Downloaded
+                      </span>
+                    ) : (
                       <button
-                        onClick={() => setCommunityPreviewingPreroll(preroll)}
-                        className="button-secondary"
-                        style={{
-                          padding: '0.5rem',
-                          fontSize: '0.8rem',
-                          minWidth: '60px'
-                        }}
-                        title="Preview video"
+                        onClick={() => handleDownload(preroll)}
+                        disabled={dlState || (catOpen && !communitySelectedCategory)}
+                        className="button"
                       >
-                        <Play size={14} style={{marginRight: '0.25rem'}} /> Preview
+                        {dlState === 'downloading' ? <><Loader2 size={14} className="spin" /> Downloading…</>
+                          : dlState === 'processing' ? <><Settings size={14} className="spin" /> Processing…</>
+                          : <><Download size={14} /> Download</>}
                       </button>
-                      {isPrerollAlreadyDownloaded(preroll) ? (
-                        <div
-                          className="button"
-                          style={{
-                            flex: 1,
-                            padding: '0.5rem',
-                            fontSize: '0.8rem',
-                            backgroundColor: 'rgba(102, 200, 145, 0.2)',
-                            border: '1px solid rgba(102, 200, 145, 0.4)',
-                            color: '#66c891',
-                            cursor: 'default',
-                            display: 'flex',
-                            alignItems: 'center',
-                            justifyContent: 'center',
-                            gap: '0.3rem'
-                          }}
-                          title="This preroll is already in your collection"
-                        >
-                          <CheckCircle size={14} style={{marginRight: '0.25rem'}} /> Downloaded
-                        </div>
-                      ) : (
-                        <button
-                          onClick={() => handleDownload(preroll)}
-                          disabled={communityIsDownloading[preroll.id] || (communityShowAddToCategory[preroll.id] && !communitySelectedCategory)}
-                          className="button"
-                          style={{
-                            flex: 1,
-                            padding: '0.5rem',
-                            fontSize: '0.8rem',
-                            opacity: communityIsDownloading[preroll.id] ? 0.6 : 1
-                          }}
-                        >
-                          {communityIsDownloading[preroll.id] === 'downloading' ? <><Loader2 size={14} style={{marginRight: '0.35rem'}} /> Downloading...</> : 
-                           communityIsDownloading[preroll.id] === 'processing' ? <><Settings size={14} style={{marginRight: '0.35rem'}} /> Processing...</> : 
-                           <><Download size={14} style={{marginRight: '0.35rem'}} /> Download</>}
-                        </button>
-                      )}
-                      <button
-                        onClick={() => setCommunityShowAddToCategory(prev => ({
-                          ...prev,
-                          [preroll.id]: !prev[preroll.id]
-                        }))}
-                        className="button-secondary"
-                        style={{
-                          padding: '0.5rem',
-                          fontSize: '0.8rem',
-                          minWidth: '80px',
-                          backgroundColor: communityShowAddToCategory[preroll.id] ? 'rgba(102, 200, 145, 0.2)' : undefined,
-                          border: communityShowAddToCategory[preroll.id] ? '1px solid rgba(102, 200, 145, 0.4)' : undefined,
-                          color: communityShowAddToCategory[preroll.id] ? '#66c891' : 'white'
-                        }}
-                      >
-                        {communityShowAddToCategory[preroll.id] ? <><CheckCircle size={14} style={{marginRight: '0.25rem'}} /> Category</> : <><Plus size={14} style={{marginRight: '0.25rem'}} /> Category</>}
-                      </button>
-                    </div>
+                    )}
+                    <button
+                      onClick={() => setCommunityShowAddToCategory(prev => ({ ...prev, [preroll.id]: !prev[preroll.id] }))}
+                      className={catOpen ? 'button button-success' : 'button button-secondary'}
+                      title="Add to a category on download"
+                    >
+                      {catOpen ? <><CheckCircle size={14} /> Category</> : <><Plus size={14} /> Category</>}
+                    </button>
                   </div>
                 </div>
-              ))}
+                );
+              })}
             </div>
+            {communityTotalResults > communityPageLimit && (() => {
+              const pageSize = communityPageLimit || 50;
+              const pageCount = Math.max(1, Math.ceil(communityTotalResults / pageSize));
+              const currentPage = Math.floor(communityOffset / pageSize) + 1;
+              const from = communityOffset + 1;
+              const to = Math.min(communityOffset + pageSize, communityTotalResults);
+              return (
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.75rem', marginTop: '0.9rem', paddingTop: '0.9rem', borderTop: '1px solid var(--border-color)', flexWrap: 'wrap' }}>
+                  <span style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
+                    Showing {from}–{to} of {communityTotalResults}
+                  </span>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem' }}>
+                    <button className="button button-secondary" disabled={communityIsSearching || communityOffset <= 0} onClick={() => goToCommunityPage(communityOffset - pageSize)}>← Prev</button>
+                    <span style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', whiteSpace: 'nowrap' }}>Page {currentPage} of {pageCount}</span>
+                    <button className="button button-secondary" disabled={communityIsSearching || to >= communityTotalResults} onClick={() => goToCommunityPage(communityOffset + pageSize)}>Next →</button>
+                  </div>
+                </div>
+              );
+            })()}
           </div>
         )}
 
         {/* Empty state */}
         {communitySearchResults.length === 0 && !communityIsSearching && (
-          <div className="card" style={{
-            textAlign: 'center',
-            padding: '3rem 1rem',
-            backgroundColor: 'var(--input-bg)',
-            borderRadius: '6px'
-          }}>
-            <div style={{ marginBottom: '1rem', color: 'var(--text-secondary)' }}><Film size={48} /></div>
-            <p style={{ margin: '0 0 0.5rem 0', color: 'var(--text-secondary)' }}>
-              {communityTotalResults === 0 && communitySearchQuery ? 
-                `No results found for "${communitySearchQuery}". Try different keywords or browse by category.` :
-                'No results yet. Start searching or browse by category and platform!'}
-            </p>
-            <p style={{ margin: '0.5rem 0 0 0', fontSize: '0.85rem', color: 'var(--text-secondary)', opacity: 0.7, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.35rem' }}>
-              <Lightbulb size={14} /> Tip: Search by theme, holiday, genre, or franchise (e.g., "halloween", "thanksgiving", "christmas", "marvel", "star wars")
+          <div className="nx-empty">
+            <span className="nx-empty-icon"><Film size={48} /></span>
+            <h3 className="nx-empty-title">
+              {communityTotalResults === 0 && communitySearchQuery ? 'No results found' : 'Search the community library'}
+            </h3>
+            <p className="nx-empty-text">
+              {communityTotalResults === 0 && communitySearchQuery
+                ? `Nothing matched "${communitySearchQuery}". Try a different theme, holiday, genre, or franchise.`
+                : 'Search by theme, holiday, genre, or franchise — e.g. "halloween", "thanksgiving", "christmas", "marvel", "star wars".'}
             </p>
           </div>
         )}
 
-        {/* Random Preroll Section - Always Visible */}
+        {/* Random Preroll Section */}
         <div className="card">
-          <h3 style={{ marginTop: 0, marginBottom: '1rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-            <Shuffle size={14} style={{marginRight: '0.35rem'}} /> Random Preroll
+          <h3 style={{ marginTop: 0, marginBottom: '0.85rem', display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '1rem' }}>
+            <Shuffle size={16} /> Random Preroll
           </h3>
-          
-          {/* Random Button */}
-          <div style={{ marginBottom: '1rem', textAlign: 'center' }}>
-            <button
-              onClick={handleRandomPreroll}
-              disabled={communityIsLoadingRandom}
-              className="button"
-              style={{
-                padding: '0.75rem 1.5rem',
-                fontSize: '1rem',
-                backgroundColor: '#9333ea',
-                minWidth: '200px'
-              }}
-            >
-              <span style={{
-                display: 'inline-block',
-                animation: communityIsLoadingRandom ? 'diceRoll 0.8s ease-in-out infinite' : 'none'
-              }}>
-                <Shuffle size={24} />
-              </span>
-              {' '}
-              {communityIsLoadingRandom ? 'Finding...' : 'Random Preroll'}
-            </button>
-          </div>
 
           {/* Dice Roll Animation CSS */}
           <style>{`
             @keyframes diceRoll {
-              0% {
-                transform: rotateX(0deg) rotateY(0deg) rotateZ(0deg);
-              }
-              25% {
-                transform: rotateX(180deg) rotateY(90deg) rotateZ(45deg);
-              }
-              50% {
-                transform: rotateX(360deg) rotateY(180deg) rotateZ(90deg);
-              }
-              75% {
-                transform: rotateX(540deg) rotateY(270deg) rotateZ(135deg);
-              }
-              100% {
-                transform: rotateX(720deg) rotateY(360deg) rotateZ(180deg);
-              }
+              0% { transform: rotateX(0deg) rotateY(0deg) rotateZ(0deg); }
+              25% { transform: rotateX(180deg) rotateY(90deg) rotateZ(45deg); }
+              50% { transform: rotateX(360deg) rotateY(180deg) rotateZ(90deg); }
+              75% { transform: rotateX(540deg) rotateY(270deg) rotateZ(135deg); }
+              100% { transform: rotateX(720deg) rotateY(360deg) rotateZ(180deg); }
             }
           `}</style>
 
-          {/* Show result if exists, placeholder if not */}
           {communityRandomPreroll ? (
-            <div style={{
-              backgroundColor: 'var(--card-bg)',
-              border: '2px solid #9333ea',
-              borderRadius: '8px',
-              padding: '1.5rem',
-              display: 'flex',
-              flexDirection: 'row',
-              gap: '1.5rem',
-              alignItems: 'center'
-            }}>
-              <div style={{
-                width: '80px',
-                height: '80px',
-                flexShrink: 0,
-                backgroundColor: 'rgba(147,51,234,0.2)',
-                borderRadius: '8px',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center'
-              }}>
-                <Film size={36} style={{ color: '#9333ea' }} />
+            <div className="nx-comm-row" style={{ border: '1px solid var(--border-color)', borderRadius: '10px', padding: '1rem', borderBottom: '1px solid var(--border-color)' }}>
+              <div className="nx-comm-row-icon" style={{ width: '52px', height: '52px', background: 'color-mix(in srgb, var(--accent-color) 14%, transparent)', color: 'var(--accent-color)' }}>
+                <Film size={26} />
               </div>
-              
-              <div style={{ flex: 1 }}>
-                <div style={{ fontSize: '1.2rem', fontWeight: '600', marginBottom: '0.5rem', color: 'var(--text-color)' }}>
-                  {cleanDisplayText(communityRandomPreroll.title)}
-                </div>
-                <div style={{ fontSize: '0.9rem', color: 'var(--text-secondary)', marginBottom: '1rem' }}>
-                  {cleanDisplayText(communityRandomPreroll.category)}
-                </div>
-                
-                <div style={{ display: 'flex', gap: '0.75rem' }}>
-                  <button
-                    onClick={() => setCommunityPreviewingPreroll(communityRandomPreroll)}
-                    className="button"
-                    style={{
-                      padding: '0.5rem 1rem',
-                      backgroundColor: '#3b82f6'
-                    }}
-                  >
-                    <Eye size={14} style={{marginRight: '0.35rem'}} /> Preview
-                  </button>
-                  <button
-                    onClick={() => {
-                      setCommunityShowAddToCategory(prev => ({ ...prev, [communityRandomPreroll.id]: true }));
-                    }}
-                    className="button"
-                    style={{
-                      padding: '0.5rem 1rem',
-                      backgroundColor: '#10b981'
-                    }}
-                  >
-                    <Download size={14} style={{marginRight: '0.35rem'}} /> Download
-                  </button>
-                  <button
-                    onClick={() => setCommunityRandomPreroll(null)}
-                    className="button"
-                    style={{
-                      padding: '0.5rem 1rem',
-                      backgroundColor: '#6b7280'
-                    }}
-                  >
-                    <X size={14} style={{marginRight: '0.35rem'}} /> Clear
-                  </button>
-                </div>
-                
-                {/* Download section */}
+              <div className="nx-comm-row-body">
+                <div className="nx-comm-row-title" style={{ fontSize: '1.05rem' }}>{cleanDisplayText(communityRandomPreroll.title)}</div>
+                {communityRandomPreroll.category && (
+                  <div className="nx-comm-row-meta"><span style={{ display: 'inline-flex', alignItems: 'center', gap: '0.25rem' }}><FolderOpen size={13} /> {cleanDisplayText(communityRandomPreroll.category)}</span></div>
+                )}
                 {communityShowAddToCategory[communityRandomPreroll.id] && (
-                  <div style={{ marginTop: '1rem', padding: '1rem', backgroundColor: 'rgba(0,0,0,0.2)', borderRadius: '4px' }}>
+                  <div style={{ marginTop: '0.75rem', display: 'flex', gap: '0.5rem', flexWrap: 'wrap', alignItems: 'center' }}>
                     <select
                       value={communitySelectedCategory || ''}
                       onChange={(e) => setCommunitySelectedCategory(e.target.value ? Number(e.target.value) : null)}
-                      className="form-select"
-                      style={{
-                        width: '100%',
-                        padding: '0.5rem',
-                        marginBottom: '0.75rem',
-                        borderRadius: '4px',
-                        fontSize: '1rem'
-                      }}
+                      style={{ flex: '1 1 180px', padding: '0.45rem 0.6rem', borderRadius: '8px', border: '1px solid var(--border-color)', background: 'var(--input-bg)', color: 'var(--text-color)' }}
                     >
-                      <option value="">Select Category</option>
+                      <option value="">Select category…</option>
                       {[...categories].sort((a, b) => a.name.localeCompare(b.name)).map(cat => (
                         <option key={cat.id} value={cat.id}>{cat.name}</option>
                       ))}
@@ -32383,68 +32074,53 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
                     <button
                       onClick={() => handleDownload(communityRandomPreroll)}
                       disabled={communityIsDownloading[communityRandomPreroll.id]}
-                      className="button"
-                      style={{
-                        width: '100%',
-                        padding: '0.5rem',
-                        backgroundColor: '#10b981',
-                        opacity: communityIsDownloading[communityRandomPreroll.id] ? 0.6 : 1
-                      }}
+                      className="button button-success"
                     >
-                      {communityIsDownloading[communityRandomPreroll.id] === 'downloading' ? <><Loader2 size={14} style={{marginRight: '0.35rem'}} /> Downloading...</> : 
-                       communityIsDownloading[communityRandomPreroll.id] === 'success' ? <><CheckCircle size={14} style={{marginRight: '0.35rem'}} /> Downloaded!</> : 
-                       <><Download size={14} style={{marginRight: '0.35rem'}} /> Confirm Download</>}
+                      {communityIsDownloading[communityRandomPreroll.id] === 'downloading' ? <><Loader2 size={14} className="spin" /> Downloading…</>
+                        : communityIsDownloading[communityRandomPreroll.id] === 'success' ? <><CheckCircle size={14} /> Downloaded!</>
+                        : <><Download size={14} /> Confirm Download</>}
                     </button>
                   </div>
                 )}
               </div>
+              <div className="nx-comm-row-actions">
+                <button onClick={handleRandomPreroll} disabled={communityIsLoadingRandom} className="button button-secondary" title="Roll again">
+                  <span style={{ display: 'inline-flex', animation: communityIsLoadingRandom ? 'diceRoll 0.8s ease-in-out infinite' : 'none' }}><Shuffle size={14} /></span> Reroll
+                </button>
+                <button onClick={() => setCommunityPreviewingPreroll(communityRandomPreroll)} className="button button-secondary">
+                  <Eye size={14} /> Preview
+                </button>
+                {isPrerollAlreadyDownloaded(communityRandomPreroll) ? (
+                  <span className="button button-success" style={{ cursor: 'default', pointerEvents: 'none' }}><CheckCircle size={14} /> Downloaded</span>
+                ) : (
+                  <button onClick={() => setCommunityShowAddToCategory(prev => ({ ...prev, [communityRandomPreroll.id]: true }))} className="button">
+                    <Download size={14} /> Download
+                  </button>
+                )}
+                <button onClick={() => setCommunityRandomPreroll(null)} className="button button-secondary" title="Clear"><X size={14} /></button>
+              </div>
             </div>
           ) : (
-            <div style={{
-              textAlign: 'center',
-              padding: '2rem',
-              color: 'var(--text-secondary)',
-              backgroundColor: 'rgba(147,51,234,0.1)',
-              borderRadius: '8px',
-              border: '1px dashed rgba(147,51,234,0.3)'
-            }}>
-              Click the button above to discover a random preroll from the community library!
+            <div style={{ textAlign: 'center', padding: '1.75rem 1rem', border: '1px dashed var(--border-color)', borderRadius: '10px', background: 'var(--bg-color)' }}>
+              <p style={{ margin: '0 0 1rem', color: 'var(--text-secondary)', fontSize: '0.9rem' }}>
+                Discover a random preroll from the community library.
+              </p>
+              <button onClick={handleRandomPreroll} disabled={communityIsLoadingRandom} className="button" style={{ minWidth: '180px' }}>
+                <span style={{ display: 'inline-flex', animation: communityIsLoadingRandom ? 'diceRoll 0.8s ease-in-out infinite' : 'none' }}><Shuffle size={18} /></span>
+                {communityIsLoadingRandom ? 'Finding…' : 'Surprise Me'}
+              </button>
             </div>
           )}
         </div>
 
-        {/* Attribution Footer */}
-        <div style={{
-          padding: '1rem',
-          backgroundColor: 'var(--card-bg)',
-          border: '1px solid var(--border-color)',
-          borderRadius: '6px',
-          textAlign: 'center',
-          fontSize: '0.85rem',
-          color: 'var(--text-secondary)'
-        }}>
-          <p style={{ margin: '0.25rem 0' }}>
-            Community prerolls powered by{' '}
-            <a
-              href="https://typicalnerds.uk/"
-              target="_blank"
-              rel="noopener noreferrer"
-              style={{
-                color: '#f6685e',
-                textDecoration: 'none',
-                fontWeight: '600',
-                transition: 'opacity 0.2s'
-              }}
-              onMouseEnter={(e) => e.target.style.opacity = '0.8'}
-              onMouseLeave={(e) => e.target.style.opacity = '1'}
-            >
-              Typical Nerds
-            </a>
-          </p>
-          <p style={{ margin: '0.25rem 0', fontSize: '0.8rem' }}>
-            Fair Use Policy applies. See above for details.
-          </p>
-        </div>
+        {/* Attribution */}
+        <p style={{ textAlign: 'center', fontSize: '0.82rem', color: 'var(--text-muted)', margin: '0.25rem 0 0' }}>
+          Community prerolls powered by{' '}
+          <a href="https://typicalnerds.uk/" target="_blank" rel="noopener noreferrer" style={{ color: '#f6685e', textDecoration: 'none', fontWeight: 600 }}>
+            Typical Nerds
+          </a>
+          {' '}· Fair Use Policy applies.
+        </p>
       </div>
     );
   };
@@ -32454,8 +32130,23 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
     return <TestSequenceBuilder />;
   }
 
-  // Show loading while checking auth status
-  if (authStatus.loading) {
+  // v2 first-run onboarding wizard — gated before auth/login. Shown only for a
+  // genuinely fresh install. Upgraders (and anyone who has completed/skipped it)
+  // are reported as not needing onboarding by the backend.
+  if (needsOnboarding === true) {
+    return (
+      <OnboardingWizard
+        apiUrl={apiUrl}
+        darkMode={darkMode}
+        onFinish={() => { setNeedsOnboarding(false); checkAuthStatus(); }}
+        onDeepLink={(tab) => { setNeedsOnboarding(false); setActiveTab(tab); checkAuthStatus(); }}
+      />
+    );
+  }
+
+  // Avoid a flash of the app/login before the onboarding check resolves.
+  // bootHold keeps the splash up ~3s minimum so the quote is readable.
+  if (needsOnboarding === null || authStatus.loading || bootHold) {
     return (
       <div style={{
         display: 'flex',
@@ -32466,7 +32157,9 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
       }}>
         <div style={{ textAlign: 'center', color: darkMode ? '#fff' : '#333' }}>
           <Loader2 size={40} className="spin" style={{ marginBottom: '1rem' }} />
-          <div>Loading NeXroll...</div>
+          <div style={{ fontSize: '1.1rem', fontStyle: 'italic', letterSpacing: '0.01em' }}>
+            {BOOT_QUOTE}
+          </div>
         </div>
       </div>
     );
@@ -32918,68 +32611,32 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
   }
 
   return (
-    <div className="app-container">
-      {/* Tab Navigation with right-aligned logo */}
-      <div
-        className="tab-buttons"
-        style={{ alignItems: 'center', justifyContent: 'space-between', padding: '0 0.5rem' }}
-      >
-        {/* Mobile hamburger menu button */}
-        <button 
-          className="mobile-menu-toggle"
-          onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
-          aria-label="Toggle navigation menu"
-        >
-          {mobileMenuOpen ? <X size={24} /> : <Menu size={24} />}
-        </button>
-        
-        <div className={`tab-group ${mobileMenuOpen ? 'mobile-open' : ''}`}>
+    <>
+    <div className="nx-shell">
+      <Sidebar
+        activeTab={activeTab}
+        setActiveTab={setActiveTab}
+        collapsed={sidebarCollapsed}
+        onToggleCollapse={toggleSidebarCollapsed}
+        mobileOpen={mobileMenuOpen}
+        onCloseMobile={() => setMobileMenuOpen(false)}
+        darkMode={darkMode}
+        version={systemVersion?.api_version}
+        update={showUpdateBanner && updateInfo ? updateInfo : null}
+      />
+      <div className="nx-content">
+        {/* Slim top bar: mobile menu toggle + status/theme/user cluster */}
+        <div className="nx-topbar">
+          <div className="nx-topbar-inner">
           <button
-            className={`tab-button ${activeTab === 'dashboard' ? 'active' : ''}`}
-            onClick={() => { setActiveTab('dashboard'); setMobileMenuOpen(false); }}
+            className="nx-mobile-menu-toggle"
+            onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
+            aria-label="Toggle navigation menu"
           >
-            Dashboard
+            <Menu size={20} />
           </button>
-          
-          <button
-            className={`tab-button ${activeTab.startsWith('schedules') ? 'active' : ''}`}
-            onClick={() => { setActiveTab('schedules'); setMobileMenuOpen(false); }}
-          >
-            Schedules
-          </button>
-          
-          <button
-            className={`tab-button ${activeTab === 'categories' ? 'active' : ''}`}
-            onClick={() => { setActiveTab('categories'); setMobileMenuOpen(false); }}
-          >
-            Categories
-          </button>
-          <button
-            className={`tab-button ${activeTab === 'nexup' ? 'active' : ''}`}
-            onClick={() => { setActiveTab('nexup'); setMobileMenuOpen(false); }}
-          >
-            NeX-Up
-          </button>
-          <button
-            className={`tab-button ${activeTab.startsWith('settings') ? 'active' : ''}`}
-            onClick={() => { setActiveTab('settings'); setMobileMenuOpen(false); }}
-          >
-            Settings
-          </button>
-          <button
-            className={`tab-button ${activeTab === 'connect' ? 'active' : ''}`}
-            onClick={() => { setActiveTab('connect'); setMobileMenuOpen(false); }}
-          >
-            Connect
-          </button>
-          <button
-            className={`tab-button ${activeTab === 'community-prerolls' ? 'active' : ''}`}
-            onClick={() => { setActiveTab('community-prerolls'); setMobileMenuOpen(false); }}
-          >
-            Community Prerolls
-          </button>
-        </div>
-        <div className="tabbar-right" style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', paddingRight: '48px' }}>
+          <div className="nx-topbar-spacer" />
+          <div className="tabbar-right" style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
           {/* Service Status Indicator */}
           <span style={{ 
             display: 'inline-flex', 
@@ -33004,105 +32661,36 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
           {/* Theme Toggle Button */}
           <button
             onClick={toggleTheme}
-            className="button"
+            className="nx-iconbtn"
+            aria-label={darkMode ? 'Switch to Light Mode' : 'Switch to Dark Mode'}
             title={darkMode ? 'Switch to Light Mode' : 'Switch to Dark Mode'}
-            style={{
-              padding: '6px 10px',
-              fontSize: '0.8rem',
-              minWidth: 'auto',
-              display: 'flex',
-              alignItems: 'center',
-              gap: '0.25rem'
-            }}
+            style={{ width: '32px', padding: 0 }}
           >
-            {darkMode ? <Sun size={14} /> : <Moon size={14} />}
+            {darkMode ? <Sun size={15} /> : <Moon size={15} />}
           </button>
-          
+
           {/* User/Logout Button (when authenticated) */}
           {authStatus.auth_enabled && authStatus.authenticated && authStatus.user && (
             <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-              <span style={{ 
-                fontSize: '0.8rem', 
-                color: 'var(--text-secondary)',
-                display: 'flex',
-                alignItems: 'center',
-                gap: '0.25rem'
-              }}>
+              <span className="nx-user">
                 <User size={14} />
                 {authStatus.user.display_name || authStatus.user.username}
               </span>
               <button
                 onClick={handleLogout}
-                className="button"
+                className="nx-iconbtn"
                 title="Logout"
-                style={{
-                  padding: '6px 10px',
-                  fontSize: '0.8rem',
-                  minWidth: 'auto',
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: '0.25rem',
-                  backgroundColor: 'var(--bg-color)',
-                  border: '1px solid var(--text-secondary)',
-                  color: 'var(--text-color)'
-                }}
               >
                 <Lock size={14} /> Logout
               </button>
             </div>
           )}
-          
-          {/* Logo */}
-          <a href="https://github.com/JFLXCLOUD/NeXroll" target="_blank" rel="noopener noreferrer">
-            <img
-              src={darkMode ? "/NeXroll_Logo_WHT.png" : "/NeXroll_Logo_BLK.png"}
-              alt="NeXroll Logo"
-              style={{ height: '50px', width: 'auto', display: 'block' }}
-            />
-          </a>
+          </div>
         </div>
       </div>
 
-      {showUpdateBanner && updateInfo && (
-        <div
-          className="nx-update-banner"
-          style={{
-            backgroundColor: 'var(--card-bg)',
-            border: '1px solid var(--border-color)',
-            padding: '0.5rem 0.75rem',
-            borderRadius: '0.375rem',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'space-between',
-            gap: '0.5rem',
-            margin: '0.5rem 0'
-          }}
-        >
-          <div style={{ fontSize: '0.9rem', color: 'var(--text-color)' }}>
-            New release available: <strong>v{updateInfo.version}</strong>
-            <a
-              href={updateInfo.url}
-              target="_blank"
-              rel="noopener noreferrer"
-              style={{ marginLeft: '0.5rem', textDecoration: 'underline' }}
-              title="View the latest release on GitHub"
-            >
-              View on GitHub
-            </a>
-          </div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-            <button
-              type="button"
-              className="button-secondary"
-              onClick={handleDismissUpdate}
-              style={{ fontSize: '0.8rem' }}
-              title="Dismiss update notice"
-            >
-              Dismiss
-            </button>
-          </div>
-        </div>
-      )}
+      {/* v2: update availability is surfaced by the sidebar footer pill (see Sidebar),
+          so the old top-of-content update banner has been removed. */}
 
       {/* Install banner hidden for now - functionality preserved for future use */}
       {false && showInstallPrompt && !isInstalled && (
@@ -33121,7 +32709,7 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
           }}
         >
           <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
-            <span style={{ fontSize: '1.5rem' }}>📱</span>
+            <Download size={22} />
             <div>
               <div style={{ fontWeight: 'bold', color: '#1976d2', marginBottom: '0.25rem' }}>
                 Install NeXroll
@@ -33158,295 +32746,73 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
         </div>
       )}
 
+     {renderPageHeader()}
+
      <div className="dashboard">
-       {/* Dashboard Sub-Nav Tab Bar */}
-       {activeTab.startsWith('dashboard') && (
-         <div style={{ 
-           position: 'sticky',
-           top: '50px',
-           zIndex: 800,
-           backgroundColor: 'var(--bg-color)',
-           paddingTop: '1rem',
-           borderBottom: '2px solid var(--border-color)',
+       {/* v2: section navigation is handled by the collapsible Sidebar tree. */}
+
+       {/* v2: Schedules section navigation handled by the Sidebar tree. */}
+
+       {/* v2: NeX-Up section navigation handled by the Sidebar tree.
+            The "Create Sequence" action remains, surfaced on the Generator tab. */}
+       {activeTab === 'nexup/generator' && (
+         <div style={{
            display: 'flex',
-           gap: '0.25rem'
+           justifyContent: 'flex-end',
+           paddingTop: '0.5rem',
+           marginBottom: '0.5rem'
          }}>
-           {[
-             { id: 'dashboard', icon: <LayoutDashboard size={16} />, label: 'Overview' },
-             { id: 'dashboard/add', icon: <Upload size={16} />, label: 'Add Prerolls' },
-             { id: 'dashboard/library', icon: <Film size={16} />, label: 'Library' },
-             { id: 'dashboard/scaling', icon: <Video size={16} />, label: 'Video Scaling' },
-             { id: 'dashboard/actions', icon: <Zap size={16} />, label: 'Quick Actions' }
-           ].map(tab => (
-             <button
-               key={tab.id}
-               onClick={() => setActiveTab(tab.id)}
-               style={{
-                 padding: '0.875rem 1.25rem',
-                 border: 'none',
-                 borderBottom: activeTab === tab.id ? '3px solid var(--button-bg)' : '3px solid transparent',
-                 backgroundColor: activeTab === tab.id ? 'var(--bg-color)' : 'transparent',
-                 color: activeTab === tab.id ? 'var(--button-bg)' : 'var(--text-color)',
-                 cursor: 'pointer',
-                 fontSize: '0.9rem',
-                 fontWeight: activeTab === tab.id ? 600 : 400,
-                 transition: 'all 0.2s',
-                 marginBottom: '-2px',
-                 display: 'flex',
-                 alignItems: 'center',
-                 gap: '0.5rem',
-                 borderRadius: '8px 8px 0 0'
-               }}
-               onMouseEnter={(e) => {
-                 if (activeTab !== tab.id) {
-                   e.currentTarget.style.backgroundColor = 'var(--bg-color)';
-                   e.currentTarget.style.color = 'var(--button-bg)';
-                 }
-               }}
-               onMouseLeave={(e) => {
-                 if (activeTab !== tab.id) {
-                   e.currentTarget.style.backgroundColor = 'transparent';
-                   e.currentTarget.style.color = 'var(--text-color)';
-                 }
-               }}
-             >
-               <span style={{ display: 'flex', alignItems: 'center' }}>{tab.icon}</span>
-               <span>{tab.label}</span>
-             </button>
-           ))}
+           <button
+             onClick={() => {
+               loadNexupSequencePresets();
+               setShowNexupSequenceWizard(true);
+             }}
+             disabled={!nexupSettings.storage_path}
+             style={{
+               padding: '0.65rem 1.25rem',
+               border: 'none',
+               background: nexupSettings.storage_path
+                 ? 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)'
+                 : '#555',
+               color: 'white',
+               cursor: nexupSettings.storage_path ? 'pointer' : 'not-allowed',
+               fontSize: '0.9rem',
+               fontWeight: 600,
+               transition: 'all 0.3s',
+               display: 'flex',
+               alignItems: 'center',
+               gap: '0.5rem',
+               borderRadius: '8px',
+               opacity: nexupSettings.storage_path ? 1 : 0.5,
+               boxShadow: nexupSettings.storage_path
+                 ? '0 4px 15px rgba(102, 126, 234, 0.4)'
+                 : 'none'
+             }}
+             onMouseEnter={(e) => {
+               if (nexupSettings.storage_path) {
+                 e.currentTarget.style.transform = 'translateY(-2px)';
+                 e.currentTarget.style.boxShadow = '0 6px 20px rgba(102, 126, 234, 0.5)';
+               }
+             }}
+             onMouseLeave={(e) => {
+               if (nexupSettings.storage_path) {
+                 e.currentTarget.style.transform = 'translateY(0)';
+                 e.currentTarget.style.boxShadow = '0 4px 15px rgba(102, 126, 234, 0.4)';
+               }
+             }}
+             title={nexupSettings.storage_path ? 'Create a NeX-Up sequence for Plex' : 'Configure NeX-Up storage path first'}
+           >
+             <Sparkles size={18} />
+             <span>+ Create Sequence</span>
+           </button>
          </div>
        )}
 
-       {/* Schedule Sub-Nav Tab Bar - Rendered at dashboard level for proper sticky behavior */}
-       {activeTab.startsWith('schedules') && (
-         <div style={{ 
-           position: 'sticky',
-           top: '50px',
-           zIndex: 800,
-           backgroundColor: 'var(--bg-color)',
-           paddingTop: '1rem',
-           borderBottom: '2px solid var(--border-color)',
-           display: 'flex',
-           gap: '0.25rem',
-           flexWrap: 'wrap'
-         }}>
-           {[
-             { id: 'schedules', icon: <Calendar size={16} />, label: 'My Schedules' },
-             { id: 'schedules/create', icon: <Plus size={16} />, label: 'Create New' },
-             { id: 'schedules/calendar', icon: <CalendarDays size={16} />, label: 'Calendar View' },
-             { id: 'schedules/builder', icon: <Film size={16} />, label: 'Sequence Builder' },
-             { id: 'schedules/library', icon: <BookOpen size={16} />, label: 'Saved Sequences' },
-             { id: 'schedules/conflicts', icon: <GitCompare size={16} />, label: 'Conflicts' }
-           ].map(tab => (
-             <button
-               key={tab.id}
-               onClick={() => setActiveTab(tab.id)}
-               style={{
-                 padding: '0.875rem 1.25rem',
-                 border: 'none',
-                 borderBottom: activeTab === tab.id ? '3px solid var(--button-bg)' : '3px solid transparent',
-                 backgroundColor: activeTab === tab.id ? 'var(--bg-color)' : 'transparent',
-                 color: activeTab === tab.id ? 'var(--button-bg)' : 'var(--text-color)',
-                 cursor: 'pointer',
-                 fontSize: '0.9rem',
-                 fontWeight: activeTab === tab.id ? 600 : 400,
-                 transition: 'all 0.2s',
-                 marginBottom: '-2px',
-                 display: 'flex',
-                 alignItems: 'center',
-                 gap: '0.5rem',
-                 borderRadius: '8px 8px 0 0'
-               }}
-               onMouseEnter={(e) => {
-                 if (activeTab !== tab.id) {
-                   e.currentTarget.style.backgroundColor = 'var(--bg-color)';
-                   e.currentTarget.style.color = 'var(--button-bg)';
-                 }
-               }}
-               onMouseLeave={(e) => {
-                 if (activeTab !== tab.id) {
-                   e.currentTarget.style.backgroundColor = 'transparent';
-                   e.currentTarget.style.color = 'var(--text-color)';
-                 }
-               }}
-             >
-               <span style={{ display: 'flex', alignItems: 'center' }}>{tab.icon}</span>
-               <span>{tab.label}</span>
-             </button>
-           ))}
-         </div>
-       )}
-       
-       {/* NeX-Up Sub-Nav Tab Bar */}
-       {activeTab.startsWith('nexup') && (
-         <div style={{ 
-           position: 'sticky',
-           top: '50px',
-           zIndex: 800,
-           backgroundColor: 'var(--bg-color)',
-           paddingTop: '1rem',
-           borderBottom: '2px solid var(--border-color)',
-           display: 'flex',
-           gap: '0.25rem'
-         }}>
-           {[
-             { id: 'nexup', icon: <Link size={16} />, label: 'Connections' },
-             { id: 'nexup/upcoming', icon: <ClipboardList size={16} />, label: 'Upcoming' },
-             { id: 'nexup/trailers', icon: <Film size={16} />, label: 'Your Trailers' },
-             { id: 'nexup/settings', icon: <Settings size={16} />, label: 'Settings' },
-             { id: 'nexup/generator', icon: <Sparkles size={16} />, label: 'Generator' }
-           ].map((tab, index, arr) => (
-             <React.Fragment key={tab.id}>
-               <button
-                 onClick={() => setActiveTab(tab.id)}
-                 style={{
-                   padding: '0.875rem 1.25rem',
-                   border: 'none',
-                   borderBottom: activeTab === tab.id ? '3px solid #ffc230' : '3px solid transparent',
-                   backgroundColor: activeTab === tab.id ? 'var(--bg-color)' : 'transparent',
-                   color: activeTab === tab.id ? '#ffc230' : 'var(--text-color)',
-                   cursor: 'pointer',
-                   fontSize: '0.9rem',
-                   fontWeight: activeTab === tab.id ? 600 : 400,
-                   transition: 'all 0.2s',
-                   marginBottom: '-2px',
-                   display: 'flex',
-                   alignItems: 'center',
-                   gap: '0.5rem',
-                   borderRadius: '8px 8px 0 0'
-                 }}
-                 onMouseEnter={(e) => {
-                   if (activeTab !== tab.id) {
-                     e.currentTarget.style.backgroundColor = 'var(--bg-color)';
-                     e.currentTarget.style.color = '#ffc230';
-                   }
-                 }}
-                 onMouseLeave={(e) => {
-                   if (activeTab !== tab.id) {
-                     e.currentTarget.style.backgroundColor = 'transparent';
-                     e.currentTarget.style.color = 'var(--text-color)';
-                   }
-                 }}
-               >
-                 <span style={{ display: 'flex', alignItems: 'center' }}>{tab.icon}</span>
-                 <span>{tab.label}</span>
-               </button>
-               {/* Create NeX-Up Sequence Button - Right after Generator tab */}
-               {tab.id === 'nexup/generator' && (
-                 <button
-                   onClick={() => {
-                     loadNexupSequencePresets();
-                     setShowNexupSequenceWizard(true);
-                   }}
-                   disabled={!nexupSettings.storage_path}
-                   style={{
-                     padding: '0.65rem 1.25rem',
-                     marginLeft: 'auto',
-                     border: 'none',
-                     background: nexupSettings.storage_path 
-                       ? 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)' 
-                       : '#555',
-                     color: 'white',
-                     cursor: nexupSettings.storage_path ? 'pointer' : 'not-allowed',
-                     fontSize: '0.9rem',
-                     fontWeight: 600,
-                     transition: 'all 0.3s',
-                     display: 'flex',
-                     alignItems: 'center',
-                     gap: '0.5rem',
-                     borderRadius: '8px',
-                     opacity: nexupSettings.storage_path ? 1 : 0.5,
-                     boxShadow: nexupSettings.storage_path 
-                       ? '0 4px 15px rgba(102, 126, 234, 0.4)' 
-                       : 'none'
-                   }}
-                   onMouseEnter={(e) => {
-                     if (nexupSettings.storage_path) {
-                       e.currentTarget.style.transform = 'translateY(-2px)';
-                       e.currentTarget.style.boxShadow = '0 6px 20px rgba(102, 126, 234, 0.5)';
-                     }
-                   }}
-                   onMouseLeave={(e) => {
-                     if (nexupSettings.storage_path) {
-                       e.currentTarget.style.transform = 'translateY(0)';
-                       e.currentTarget.style.boxShadow = '0 4px 15px rgba(102, 126, 234, 0.4)';
-                     }
-                   }}
-                   title={nexupSettings.storage_path ? 'Create a NeX-Up sequence for Plex' : 'Configure NeX-Up storage path first'}
-                 >
-                   <Sparkles size={18} />
-                   <span>+ Create Sequence</span>
-                 </button>
-               )}
-             </React.Fragment>
-           ))}
-         </div>
-       )}
-       
-       {/* Settings Sub-Nav Tab Bar */}
-       {activeTab.startsWith('settings') && (
-         <div style={{ 
-           position: 'sticky',
-           top: '50px',
-           zIndex: 800,
-           backgroundColor: 'var(--bg-color)',
-           paddingTop: '1rem',
-           borderBottom: '2px solid var(--border-color)',
-           display: 'flex',
-           gap: '0.25rem'
-         }}>
-           {[
-             { id: 'settings', icon: <Settings size={16} />, label: 'General' },
-             { id: 'settings/paths', icon: <ArrowRight size={16} />, label: 'Path Mappings' },
-             { id: 'settings/storage', icon: <HardDrive size={16} />, label: 'Storage' },
-             { id: 'settings/apikeys', icon: <Key size={16} />, label: 'API Keys' },
-             { id: 'settings/logs', icon: <FileText size={16} />, label: 'Logs' },
-             { id: 'settings/users', icon: <Users size={16} />, label: 'Users' },
-             { id: 'settings/backup', icon: <Download size={16} />, label: 'Backup & Restore' },
-             { id: 'settings/system', icon: <Info size={16} />, label: 'System' }
-           ].map(tab => (
-             <button
-               key={tab.id}
-               onClick={() => setActiveTab(tab.id)}
-               style={{
-                 padding: '0.875rem 1.25rem',
-                 border: 'none',
-                 borderBottom: activeTab === tab.id ? '3px solid var(--button-bg)' : '3px solid transparent',
-                 backgroundColor: activeTab === tab.id ? 'var(--bg-color)' : 'transparent',
-                 color: activeTab === tab.id ? 'var(--button-bg)' : 'var(--text-color)',
-                 cursor: 'pointer',
-                 fontSize: '0.9rem',
-                 fontWeight: activeTab === tab.id ? 600 : 400,
-                 transition: 'all 0.2s',
-                 marginBottom: '-2px',
-                 display: 'flex',
-                 alignItems: 'center',
-                 gap: '0.5rem',
-                 borderRadius: '8px 8px 0 0'
-               }}
-               onMouseEnter={(e) => {
-                 if (activeTab !== tab.id) {
-                   e.currentTarget.style.backgroundColor = 'var(--bg-color)';
-                   e.currentTarget.style.color = 'var(--button-bg)';
-                 }
-               }}
-               onMouseLeave={(e) => {
-                 if (activeTab !== tab.id) {
-                   e.currentTarget.style.backgroundColor = 'transparent';
-                   e.currentTarget.style.color = 'var(--text-color)';
-                 }
-               }}
-             >
-               <span style={{ display: 'flex', alignItems: 'center' }}>{tab.icon}</span>
-               <span>{tab.label}</span>
-             </button>
-           ))}
-         </div>
-       )}
-       
-       {activeTab.startsWith('dashboard') && renderDashboard()}
+       {/* v2: Settings section navigation handled by the Sidebar tree. */}
+
+       {activeTab === 'dashboard' && renderDashboard()}
+       {(activeTab === 'library' || activeTab.startsWith('library/')) && renderLibrary()}
        {activeTab.startsWith('schedules') && renderSchedules()}
-       {activeTab === 'categories' && renderCategories()}
        {activeTab.startsWith('nexup') && renderNexUp()}
        {activeTab.startsWith('settings') && renderSettings()}
        {activeTab === 'connect' && renderConnect()}
@@ -33483,14 +32849,16 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
              </h2>
              <button
                onClick={() => setShowNexupSequenceWizard(false)}
+               aria-label="Close"
                style={{
                  background: 'none',
                  border: 'none',
-                 fontSize: '1.5rem',
                  cursor: 'pointer',
-                 color: 'var(--text-secondary)'
+                 color: 'var(--text-secondary)',
+                 display: 'inline-flex',
+                 alignItems: 'center'
                }}
-             >×</button>
+             ><X size={20} /></button>
            </div>
            
            {/* Step Indicator */}
@@ -33597,7 +32965,7 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
                    >
                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
                        <div>
-                         <strong style={{ fontSize: '1.1rem', color: 'var(--text-color)' }}>🛠️ Custom</strong>
+                         <strong style={{ fontSize: '1.1rem', color: 'var(--text-color)' }}>Custom</strong>
                          <p style={{ margin: '0.5rem 0 0 0', color: 'var(--text-secondary)' }}>
                            Build your own sequence - choose exactly what preroll and how many trailers to include
                          </p>
@@ -33619,8 +32987,7 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
                <div style={{ marginTop: '2rem', display: 'flex', justifyContent: 'flex-end', gap: '1rem' }}>
                  <button
                    onClick={() => setShowNexupSequenceWizard(false)}
-                   className="button"
-                   style={{ backgroundColor: '#6c757d' }}
+                   className="button button-secondary"
                  >
                    Cancel
                  </button>
@@ -33737,7 +33104,7 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
                    <>
                      <div>
                        <label style={{ display: 'block', marginBottom: '0.5rem', fontWeight: 'bold', color: 'var(--text-color)' }}>
-                         🎬 Movie Trailers
+                         Movie Trailers
                        </label>
                        <select
                          value={nexupSequenceWizard.movieTrailerCount}
@@ -33762,7 +33129,7 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
                      </div>
                      <div>
                        <label style={{ display: 'block', marginBottom: '0.5rem', fontWeight: 'bold', color: 'var(--text-color)' }}>
-                         📺 TV Trailers
+                         TV Trailers
                        </label>
                        <select
                          value={nexupSequenceWizard.tvTrailerCount}
@@ -33857,8 +33224,7 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
                <div style={{ marginTop: '2rem', display: 'flex', justifyContent: 'space-between', gap: '1rem' }}>
                  <button
                    onClick={() => setNexupSequenceWizard(prev => ({ ...prev, step: 1 }))}
-                   className="button"
-                   style={{ backgroundColor: '#6c757d' }}
+                   className="button button-secondary"
                  >
                    ← Back
                  </button>
@@ -33978,18 +33344,16 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
                <div style={{ marginTop: '2rem', display: 'flex', justifyContent: 'space-between', gap: '1rem' }}>
                  <button
                    onClick={() => setNexupSequenceWizard(prev => ({ ...prev, step: 2 }))}
-                   className="button"
-                   style={{ backgroundColor: '#6c757d' }}
+                   className="button button-secondary"
                  >
                    ← Back
                  </button>
                  <button
                    onClick={handleCreateNexupSequence}
                    disabled={nexupSequenceLoading}
-                   className="button"
-                   style={{ backgroundColor: '#28a745' }}
+                   className="button button-success"
                  >
-                   {nexupSequenceLoading ? 'Creating...' : '✓ Create Sequence'}
+                   {nexupSequenceLoading ? 'Creating...' : 'Create Sequence'}
                  </button>
                </div>
              </div>
@@ -34023,7 +33387,7 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
              }}>
                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.5rem' }}>
                  <span style={{ fontSize: '1.2rem' }}>
-                   {editingPreroll.community_preroll_id ? '✅' : '⚠️'}
+                   {editingPreroll.community_preroll_id ? '' : ''}
                  </span>
                  <strong style={{ color: 'var(--text-color)' }}>
                    {editingPreroll.community_preroll_id 
@@ -34068,7 +33432,7 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
                      }}
                      title="Remove the link to Community Prerolls library"
                    >
-                     <span>❌</span>
+                     <Unlink size={14} />
                      Unmatch
                    </button>
                  </div>
@@ -34101,7 +33465,7 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
                        </>
                      ) : (
                        <>
-                         <span>🔍</span>
+                         <Search size={14} />
                          Auto-Match Now
                        </>
                      )}
@@ -34228,8 +33592,9 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
                                    e.currentTarget.style.borderColor = 'rgba(33, 150, 243, 0.3)';
                                  }}
                                  title="Preview video"
+                                 aria-label="Preview video"
                                >
-                                 ▶
+                                 <Play size={16} />
                                </button>
                              )}
                            </div>
@@ -34250,7 +33615,7 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
                            width: '100%'
                          }}
                        >
-                         ✕ Close Suggestions
+                         Close Suggestions
                        </button>
                      </div>
                    )}
@@ -34334,7 +33699,7 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
                    }}
                    title="1280×720 - Recommended for remote streaming"
                  >
-                   {transcodeLoading ? <Loader2 size={12} className="spin" /> : <Star size={12} />} 720p ⭐
+                   {transcodeLoading ? <Loader2 size={12} className="spin" /> : <Star size={12} />} 720p 
                  </button>
                  <button
                    type="button"
@@ -34380,6 +33745,12 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
                color: 'var(--text-color, #333)'
              }}>
                <div><strong>Current file:</strong> {editingPreroll.filename}</div>
+               {editingPreroll.path && (
+                 <div style={{ marginTop: '0.5rem', fontSize: '0.82rem', opacity: 0.85 }}>
+                   <strong>File path:</strong>{' '}
+                   <span style={{ fontFamily: 'monospace', wordBreak: 'break-all' }} title={editingPreroll.path}>{editingPreroll.path}</span>
+                 </div>
+               )}
                {editingPreroll.category?.name && (
                  <div style={{ marginTop: '0.5rem', fontSize: '0.85rem', opacity: 0.8 }}>
                    <strong>Category:</strong> {editingPreroll.category.name}
@@ -34487,8 +33858,9 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
                                alignItems: 'center'
                              }}
                              title={`Remove "${cleanTag}" tag`}
+                             aria-label={`Remove "${cleanTag}" tag`}
                            >
-                             ×
+                             <X size={13} />
                            </button>
                          </span>
                        );
@@ -34587,7 +33959,7 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
                                  fontSize: '0.85rem'
                                }}
                              >
-                               {isAdded ? '✓ ' : '+ '}{tag}
+                               {isAdded ? '' : '+ '}{tag}
                              </button>
                            );
                          })}
@@ -34614,7 +33986,7 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
                  )}
                </div>
                <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginTop: '0.4rem' }}>
-                 💡 Separate multiple tags with commas. Click × on badges to remove tags quickly.
+                 Separate multiple tags with commas. Click × on badges to remove tags quickly.
                </div>
              </div>
              <div className="nx-field nx-span-2">
@@ -34685,14 +34057,16 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
          zIndex: 9999
        }}>
          <div style={{
-           backgroundColor: 'white',
+           backgroundColor: 'var(--card-bg)',
+           color: 'var(--text-color)',
            padding: '20px',
-           borderRadius: '8px',
+           borderRadius: '12px',
+           border: '1px solid var(--border-color)',
            maxWidth: '80%',
            maxHeight: '80%'
          }}>
            <h3>Preview: {previewingPreroll.display_name || previewingPreroll.filename}</h3>
-           <button onClick={() => setPreviewingPreroll(null)} style={{ float: 'right' }}>✕</button>
+           <button onClick={() => setPreviewingPreroll(null)} style={{ float: 'right', background: 'none', border: 'none', color: 'inherit', cursor: 'pointer', display: 'inline-flex' }} aria-label="Close"><X size={18} /></button>
            <div>
              {(() => {
                // v1.13.7: stream by preroll ID instead of reconstructing a category-folder URL.
@@ -34705,6 +34079,7 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
                  : null;
                return videoUrl ? (
                  <video
+                   ref={previewVideoRef}
                    controls
                    autoPlay
                    muted
@@ -34754,7 +34129,7 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
                  </span>
                )}
              </h3>
-             <button onClick={() => setCurrentPrerollPreview(null)} style={{ background: 'none', border: 'none', color: 'var(--text-color, #fff)', cursor: 'pointer', fontSize: '1.2rem' }}>✕</button>
+             <button onClick={() => setCurrentPrerollPreview(null)} style={{ background: 'none', border: 'none', color: 'var(--text-color, #fff)', cursor: 'pointer', display: 'inline-flex' }} aria-label="Close"><X size={18} /></button>
            </div>
            {(() => {
              const current = currentPrerollPreview.prerolls[currentPrerollPreview.index];
@@ -34769,24 +34144,42 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
                    )}
                  </p>
                  {videoUrl ? (
-                   <video
-                     ref={dashboardVideoRef}
-                     controls
-                     autoPlay
-                     style={{ width: '100%', maxHeight: '400px', borderRadius: '8px', backgroundColor: '#000' }}
-                     onEnded={() => {
-                       // Auto-advance only for sequential/playlist mode
-                       if (currentPrerollPreview.mode === 'sequential' && currentPrerollPreview.index < currentPrerollPreview.prerolls.length - 1) {
-                         setCurrentPrerollPreview(prev => ({ ...prev, index: prev.index + 1 }));
-                       }
-                     }}
-                     onError={() => {
-                       // Skip broken videos (404 / missing file)
-                       if (currentPrerollPreview.mode === 'sequential' && currentPrerollPreview.index < currentPrerollPreview.prerolls.length - 1) {
-                         setCurrentPrerollPreview(prev => ({ ...prev, index: prev.index + 1 }));
-                       }
-                     }}
-                   />
+                   <>
+                     <video
+                       ref={(el) => { dashboardVideoRef.current = el; previewVideoRef(el); }}
+                       controls
+                       autoPlay
+                       style={{ width: '100%', maxHeight: '400px', borderRadius: '8px', backgroundColor: '#000', display: previewError ? 'none' : 'block' }}
+                       onEnded={() => {
+                         // Auto-advance only for sequential/playlist mode
+                         if (currentPrerollPreview.mode === 'sequential' && currentPrerollPreview.index < currentPrerollPreview.prerolls.length - 1) {
+                           setCurrentPrerollPreview(prev => ({ ...prev, index: prev.index + 1 }));
+                         }
+                       }}
+                       onError={(e) => {
+                         const code = e?.target?.error?.code || 0;
+                         // In a sequence, skip a broken clip and keep playing the rest;
+                         // otherwise surface a clear, actionable message instead of a
+                         // silent black box.
+                         if (currentPrerollPreview.mode === 'sequential' && currentPrerollPreview.index < currentPrerollPreview.prerolls.length - 1) {
+                           setCurrentPrerollPreview(prev => ({ ...prev, index: prev.index + 1 }));
+                         } else {
+                           setPreviewError({ code });
+                         }
+                       }}
+                     />
+                     {previewError && (
+                       <div style={{ padding: '1.5rem', textAlign: 'center', color: 'var(--text-secondary, #888)', backgroundColor: 'rgba(0,0,0,0.3)', borderRadius: '8px' }}>
+                         <p style={{ fontWeight: 600, color: 'var(--text-color, #fff)', margin: '0 0 0.4rem' }}>This clip couldn’t be played</p>
+                         <p style={{ fontSize: '0.85rem', margin: '0 0 0.5rem' }}>
+                           {previewError.code === 4 /* MEDIA_ERR_SRC_NOT_SUPPORTED */
+                             ? 'Your browser can’t decode this video’s format — older trailers were often saved as AV1. Re-download the trailer to get a browser-friendly (H.264) version.'
+                             : 'The file may be missing or unreadable. Try re-downloading the trailer.'}
+                         </p>
+                         <p style={{ fontSize: '0.78rem', wordBreak: 'break-all', opacity: 0.8 }}>{current.path}</p>
+                       </div>
+                     )}
+                   </>
                  ) : (
                    <div style={{ padding: '2rem', textAlign: 'center', color: 'var(--text-secondary, #888)', backgroundColor: 'rgba(0,0,0,0.3)', borderRadius: '8px' }}>
                      <p>Preview unavailable for this file</p>
@@ -34882,15 +34275,16 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
                }}
                title="Close preview"
              >
-               ✕
+               <X size={20} />
              </button>
            </div>
            <div>
              <video
+               ref={previewVideoRef}
                controls
                autoPlay
-               style={{ 
-                 width: '100%', 
+               style={{
+                 width: '100%',
                  maxHeight: '70vh',
                  borderRadius: '4px'
                }}
@@ -34912,10 +34306,10 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
              flexWrap: 'wrap'
            }}>
              {communityPreviewingPreroll.creator && (
-               <span>👤 Creator: {communityPreviewingPreroll.creator}</span>
+               <span>Creator: {communityPreviewingPreroll.creator}</span>
              )}
              {communityPreviewingPreroll.category && (
-               <span>📁 Category: {communityPreviewingPreroll.category}</span>
+               <span>Category: {communityPreviewingPreroll.category}</span>
              )}
              {communityPreviewingPreroll.duration && (
                <span>⏱️ Duration: {communityPreviewingPreroll.duration}s</span>
@@ -34980,12 +34374,13 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
                }}
                title="Close preview"
              >
-               ✕
+               <X size={20} />
              </button>
            </div>
            <div>
              <video
                key={`video-${previewingDynamicPreroll?.filename}-${previewingDynamicPreroll?.created_at || Date.now()}`}
+               ref={previewVideoRef}
                controls
                autoPlay
                style={{ 
@@ -35013,10 +34408,10 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
              alignItems: 'center'
            }}>
              {previewingDynamicPreroll?.size_bytes && (
-               <span>📁 Size: {(previewingDynamicPreroll.size_bytes / (1024 * 1024)).toFixed(1)} MB</span>
+               <span>Size: {(previewingDynamicPreroll.size_bytes / (1024 * 1024)).toFixed(1)} MB</span>
              )}
              {previewingDynamicPreroll?.created_at && (
-               <span>📅 Created: {new Date(previewingDynamicPreroll.created_at * 1000).toLocaleDateString()}</span>
+               <span>Created: {new Date(previewingDynamicPreroll.created_at * 1000).toLocaleDateString()}</span>
              )}
            </div>
          </div>
@@ -35074,12 +34469,13 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
                }}
                title="Close preview"
              >
-               ✕
+               <X size={20} />
              </button>
            </div>
            <div>
              <video
                key={`video-cs-${previewingComingSoonList?.filename}`}
+               ref={previewVideoRef}
                controls
                autoPlay
                style={{ 
@@ -35107,7 +34503,7 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
              alignItems: 'center'
            }}>
              {previewingComingSoonList?.size && (
-               <span>📁 Size: {(previewingComingSoonList.size / (1024 * 1024)).toFixed(1)} MB</span>
+               <span>Size: {(previewingComingSoonList.size / (1024 * 1024)).toFixed(1)} MB</span>
              )}
            </div>
          </div>
@@ -35170,12 +34566,13 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
                }}
                title="Close"
              >
-               ✕
+               <X size={20} />
              </button>
            </div>
            <div>
              <video
                key={`trailer-${playingTrailer.type}-${playingTrailer.trailer?.id}`}
+               ref={previewVideoRef}
                controls
                autoPlay
                style={{ 
@@ -35206,13 +34603,13 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
              alignItems: 'center'
            }}>
              {playingTrailer.trailer?.release_date && (
-               <span>📅 Release: {new Date(playingTrailer.trailer.release_date).toLocaleDateString()}</span>
+               <span>Release: {formatReleaseDate(playingTrailer.trailer.release_date)}</span>
              )}
              {playingTrailer.trailer?.duration_seconds && (
                <span>⏱️ Duration: {Math.floor(playingTrailer.trailer.duration_seconds / 60)}:{String(playingTrailer.trailer.duration_seconds % 60).padStart(2, '0')}</span>
              )}
              {playingTrailer.trailer?.file_size_mb && (
-               <span>📁 Size: {playingTrailer.trailer.file_size_mb.toFixed(1)} MB</span>
+               <span>Size: {playingTrailer.trailer.file_size_mb.toFixed(1)} MB</span>
              )}
            </div>
          </div>
@@ -35283,74 +34680,7 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
        </Modal>
      )}
 
-     <footer
-        className="nx-footer"
-        aria-label="Site footer"
-        style={{
-          marginTop: '1rem',
-          padding: '0.75rem 0.5rem',
-          borderTop: '1px solid var(--border-color, #e0e0e0)',
-          color: 'var(--text-secondary, #666)'
-        }}
-      >
-        <div
-          className="nx-footer-inner"
-          style={{
-            maxWidth: '1200px',
-            margin: '0 auto',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'space-between',
-            gap: '0.75rem',
-            flexWrap: 'wrap'
-          }}
-        >
-          <div className="nx-footer-left" style={{ fontSize: '0.85rem', color: 'var(--text-muted, #888)' }}>
-            NeXroll {systemVersion?.api_version ? `v${systemVersion.api_version}` : ''}
-          </div>
-          <div className="nx-footer-links" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-            <a
-              href="https://github.com/JFLXCLOUD/NeXroll"
-              target="_blank"
-              rel="noopener noreferrer"
-              title="GitHub repository"
-              style={{ color: 'var(--text-secondary, #666)', textDecoration: 'none' }}
-            >
-              GitHub
-            </a>
-            <span className="nx-footer-sep" aria-hidden="true" style={{ color: 'var(--text-muted, #999)' }}>•</span>
-            <a
-              href="https://discord.gg/R9eH7TbxEk"
-              target="_blank"
-              rel="noopener noreferrer"
-              title="Join our Discord server"
-              style={{ color: 'var(--text-secondary, #666)', textDecoration: 'none' }}
-            >
-              Discord
-            </a>
-            <span className="nx-footer-sep" aria-hidden="true" style={{ color: 'var(--text-muted, #999)' }}>•</span>
-            <a
-              href="https://ko-fi.com/j_b__"
-              target="_blank"
-              rel="noopener noreferrer"
-              title="Support on Ko‑fi"
-              style={{ color: 'var(--text-secondary, #666)', textDecoration: 'none' }}
-            >
-              Ko‑fi
-            </a>
-            <span className="nx-footer-sep" aria-hidden="true" style={{ color: 'var(--text-muted, #999)' }}>•</span>
-            <a
-              href="https://www.reddit.com/r/NeXroll/"
-              target="_blank"
-              rel="noopener noreferrer"
-              title="Join our subreddit"
-              style={{ color: 'var(--text-secondary, #666)', textDecoration: 'none' }}
-            >
-              Reddit
-            </a>
-          </div>
-        </div>
-      </footer>
+      {/* Page footer removed in v2 — resource links + version now live in the sidebar footer. */}
 
       {/* Edit Schedule Modal - Available Globally */}
       {editingSchedule && (
@@ -35371,7 +34701,7 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
             setTimeRange({ start: '', end: '' });
           }}
         >
-          <form onSubmit={handleUpdateSchedule}>
+          <form onSubmit={handleUpdateSchedule} className="nx-sched">
             {/* Mode Toggle */}
             <div style={{ marginBottom: '1.5rem', padding: '1rem', backgroundColor: 'var(--card-bg)', borderRadius: '0.5rem', border: '1px solid var(--border-color)' }}>
               <label style={{ display: 'block', marginBottom: '0.75rem', fontWeight: 600, fontSize: '1rem' }}>Schedule Mode</label>
@@ -35520,6 +34850,7 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
                         onChange={(e) => setTimeRange({...timeRange, start: e.target.value})}
                         style={{ width: '100%' }}
                       />
+                      <TimeQuickPicks current={timeRange.start} onPick={(v) => setTimeRange({ ...timeRange, start: v })} />
                     </div>
                     <div>
                       <label style={{ display: 'block', marginBottom: '0.5rem', fontSize: '0.9rem', color: '#666' }}>End Time (Optional)</label>
@@ -35530,10 +34861,11 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
                         onChange={(e) => setTimeRange({...timeRange, end: e.target.value})}
                         style={{ width: '100%' }}
                       />
+                      <TimeQuickPicks end current={timeRange.end} onPick={(v) => setTimeRange({ ...timeRange, end: v })} />
                     </div>
                   </div>
                   <p style={{ fontSize: '0.85rem', color: '#666', marginTop: '0.5rem', marginBottom: 0 }}>
-                    💡 Leave end time empty to run at a specific time, or set both to create a time window
+                    Leave end time empty to run at a specific time, or set both to create a time window
                   </p>
                   {!timeRange.start && (
                     <p style={{ fontSize: '0.85rem', color: '#dc3545', marginTop: '0.5rem', marginBottom: 0 }}>
@@ -35608,6 +34940,7 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
                           onChange={(e) => setTimeRange({...timeRange, start: e.target.value})}
                           style={{ width: '100%' }}
                         />
+                        <TimeQuickPicks current={timeRange.start} onPick={(v) => setTimeRange({ ...timeRange, start: v })} />
                       </div>
                       <div>
                         <label style={{ display: 'block', marginBottom: '0.5rem', fontSize: '0.9rem', color: '#666' }}>End Time</label>
@@ -35618,14 +34951,15 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
                           onChange={(e) => setTimeRange({...timeRange, end: e.target.value})}
                           style={{ width: '100%' }}
                         />
+                        <TimeQuickPicks end current={timeRange.end} onPick={(v) => setTimeRange({ ...timeRange, end: v })} />
                       </div>
                     </div>
                     <p style={{ fontSize: '0.85rem', color: '#666', marginTop: '0.5rem', marginBottom: 0 }}>
-                      💡 Optionally set a time window for when this schedule is active (e.g., 8:00 AM - 12:00 PM)
+                      Optionally set a time window for when this schedule is active (e.g., 8:00 AM - 12:00 PM)
                     </p>
                     {timeRange.start && timeRange.end && (
                       <p style={{ fontSize: '0.85rem', color: '#10b981', marginTop: '0.5rem', marginBottom: 0, fontWeight: 500 }}>
-                        ✓ Schedule will run from {timeRange.start} to {timeRange.end}
+                        Schedule will run from {timeRange.start} to {timeRange.end}
                       </p>
                     )}
                   </div>
@@ -35722,6 +35056,7 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
                           value={timeRange.start || ''}
                           onChange={(e) => setTimeRange({...timeRange, start: e.target.value})}
                         />
+                        <TimeQuickPicks current={timeRange.start} onPick={(v) => setTimeRange({ ...timeRange, start: v })} />
                       </div>
                       <div>
                         <label style={{ display: 'block', marginBottom: '0.3rem', fontSize: '0.8rem', color: 'var(--text-secondary)' }}>End Time</label>
@@ -35731,6 +35066,7 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
                           value={timeRange.end || ''}
                           onChange={(e) => setTimeRange({...timeRange, end: e.target.value})}
                         />
+                        <TimeQuickPicks end current={timeRange.end} onPick={(v) => setTimeRange({ ...timeRange, end: v })} />
                       </div>
                     </div>
                   </div>
@@ -35859,7 +35195,7 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
                     onChange={(e) => setScheduleForm({...scheduleForm, blend_enabled: e.target.checked})}
                     style={{ width: 'auto' }}
                   />
-                  <span>🔀 Blend Mode</span>
+                  <span>Blend Mode</span>
                 </label>
                 <p style={{ fontSize: '0.85rem', color: '#666', marginTop: '0.25rem' }}>
                   When enabled, this schedule's prerolls will be mixed with other overlapping schedules that also have Blend Mode enabled. 
@@ -35939,6 +35275,7 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
                     scheduleId={editingSchedule?.id || null}
                     apiUrl={apiUrl}
                     hideNameSection={true}
+                    initialName={scheduleForm.name || ''}
                     onSave={(blocks) => {
                       setSequenceBlocks(blocks);
                       console.log('Sequence updated:', blocks);
@@ -36070,6 +35407,7 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
                 )}
                 <button
                   onClick={() => setShowHolidayBrowser(false)}
+                  aria-label="Close"
                   style={{
                     background: 'var(--bg-color)',
                     border: '1px solid var(--border-color)',
@@ -36078,7 +35416,6 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
                     height: '32px',
                     borderRadius: '6px',
                     cursor: 'pointer',
-                    fontSize: '1.1rem',
                     display: 'flex',
                     alignItems: 'center',
                     justifyContent: 'center',
@@ -36086,7 +35423,7 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
                   }}
                   onMouseEnter={(e) => e.currentTarget.style.backgroundColor = 'var(--border-color)'}
                   onMouseLeave={(e) => e.currentTarget.style.backgroundColor = 'var(--bg-color)'}
-                >×</button>
+                ><X size={18} /></button>
               </div>
             </div>
 
@@ -36253,10 +35590,13 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
                           <button
                             type="button"
                             onClick={() => {
-                              // Parse the holiday date
-                              const holidayDate = new Date(holiday.date + 'T00:00:00');
-                              const formattedDate = holidayDate.toISOString().slice(0, 16);
-                              
+                              // holiday.date is already a naive 'YYYY-MM-DD' wall-clock
+                              // date. Build the form values directly from it — do NOT
+                              // round-trip through new Date(...).toISOString(), which
+                              // would convert to UTC and shift the holiday to the wrong
+                              // day/time for users not on UTC.
+                              const formattedDate = holiday.date + 'T00:00';
+
                               // Prefill the schedule form with holiday metadata for auto-updating
                               setScheduleForm(prev => ({
                                 ...prev,
@@ -36273,8 +35613,8 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
                               setShowHolidayBrowser(false);
                               
                               // Show success message with variable date note
-                              const variableNote = !holiday.fixed ? '\n\n🔄 This is a variable-date holiday - NeXroll will auto-update the date each year!' : '';
-                              showAlert(`✅ Form prefilled with "${holiday.name}" - ${holidayDate.toLocaleDateString()}${variableNote}`, 'success');
+                              const variableNote = !holiday.fixed ? '\n\nThis is a variable-date holiday - NeXroll will auto-update the date each year!' : '';
+                              showAlert(`Form prefilled with "${holiday.name}" - ${holidayDate.toLocaleDateString()}${variableNote}`, 'success');
                             }}
                             style={{
                               width: '100%',
@@ -36322,8 +35662,9 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
               <button 
                 onClick={() => setShowNexupUpcoming(false)}
                 className="nx-modal-close"
+                aria-label="Close"
               >
-                ×
+                <X size={18} />
               </button>
             </div>
             <div className="nx-modal-body" style={{ padding: '1rem', overflowY: 'auto' }}>
@@ -36334,7 +35675,7 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
               className="button"
               style={{ marginBottom: '1rem' }}
             >
-              {nexupLoading ? 'Loading...' : '🔄 Refresh List'}
+              {nexupLoading ? 'Loading...' : 'Refresh List'}
             </button>
             
             {nexupUpcoming.length === 0 ? (
@@ -36369,7 +35710,7 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
                       </h3>
                       {movie.release_date && (
                         <p style={{ margin: '0 0 0.5rem 0', fontSize: '0.9rem' }}>
-                          <strong>Release:</strong> {new Date(movie.release_date).toLocaleDateString()} 
+                          <strong>Release:</strong> {formatReleaseDate(movie.release_date)} 
                           {movie.available_now ? (
                             <span style={{ 
                               marginLeft: '0.5rem',
@@ -36383,7 +35724,7 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
                               alignItems: 'center',
                               gap: '0.25rem'
                             }}>
-                              🎬 Available Now!
+                              Available Now!
                             </span>
                           ) : movie.days_until_release !== null && (
                             <span style={{ 
@@ -36413,7 +35754,7 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
                           fontSize: '0.85rem',
                           fontWeight: 500
                         }}>
-                          ✓ Trailer Downloaded
+                          Trailer Downloaded
                         </span>
                       ) : movie.trailer_url ? (
                         <button
@@ -36432,7 +35773,7 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
                           {downloadingTrailerId === movie.radarr_id ? (
                             <><Loader2 size={16} className="spin" /> Downloading...</>
                           ) : (
-                            <>⬇️ Download Trailer</>
+                            <>Download Trailer</>
                           )}
                         </button>
                       ) : (
@@ -36471,8 +35812,9 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
               <button 
                 onClick={() => setShowNexupTrailers(false)}
                 className="nx-modal-close"
+                aria-label="Close"
               >
-                ×
+                <X size={18} />
               </button>
             </div>
             <div className="nx-modal-body" style={{ padding: '1rem', overflowY: 'auto' }}>
@@ -36483,7 +35825,7 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
               className="button"
               style={{ marginBottom: '1rem' }}
             >
-              {nexupLoading ? 'Loading...' : '🔄 Refresh List'}
+              {nexupLoading ? 'Loading...' : 'Refresh List'}
             </button>
             
             {nexupTrailers.length === 0 ? (
@@ -36520,12 +35862,12 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
                       <div style={{ display: 'flex', gap: '1rem', flexWrap: 'wrap', fontSize: '0.85rem', color: '#666' }}>
                         {trailer.release_date && (
                           <span>
-                            📅 {new Date(trailer.release_date).toLocaleDateString()}
+                            {formatReleaseDate(trailer.release_date)}
                             {trailer.days_until !== null && trailer.days_until > 0 && ` (in ${trailer.days_until} days)`}
                           </span>
                         )}
-                        {trailer.file_size_mb && <span>💾 {trailer.file_size_mb.toFixed(1)} MB</span>}
-                        {trailer.resolution && <span>📺 {trailer.resolution}</span>}
+                        {trailer.file_size_mb && <span>{trailer.file_size_mb.toFixed(1)} MB</span>}
+                        {trailer.resolution && <span>{trailer.resolution}</span>}
                         {trailer.play_count > 0 && <span style={{ display: 'inline-flex', alignItems: 'center', gap: '0.25rem' }}><Play size={14} /> Played {trailer.play_count}x</span>}
                       </div>
                     </div>
@@ -36548,7 +35890,7 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
                         className="button"
                         style={{ backgroundColor: '#dc3545', fontSize: '0.85rem', padding: '0.4rem 0.75rem' }}
                       >
-                        🗑️ Delete
+                        Delete
                       </button>
                     </div>
                   </div>
@@ -36575,8 +35917,9 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
               <button 
                 onClick={() => setShowNexupUpcomingTV(false)}
                 className="nx-modal-close"
+                aria-label="Close"
               >
-                ×
+                <X size={18} />
               </button>
             </div>
             <div className="nx-modal-body" style={{ padding: '1rem', overflowY: 'auto' }}>
@@ -36587,7 +35930,7 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
               className="button"
               style={{ marginBottom: '1rem' }}
             >
-              {nexupLoading ? 'Loading...' : '🔄 Refresh List'}
+              {nexupLoading ? 'Loading...' : 'Refresh List'}
             </button>
             
             {nexupUpcomingTV.length === 0 ? (
@@ -36627,7 +35970,7 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
                       )}
                       {(show.release_date || show.air_date) && (
                         <p style={{ margin: '0 0 0.5rem 0', fontSize: '0.9rem' }}>
-                          <strong>Release:</strong> {new Date(show.release_date || show.air_date).toLocaleDateString()}
+                          <strong>Release:</strong> {formatReleaseDate(show.release_date || show.air_date)}
                           {show.available_now ? (
                             <span style={{ 
                               marginLeft: '0.5rem',
@@ -36641,7 +35984,7 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
                               alignItems: 'center',
                               gap: '0.25rem'
                             }}>
-                              🎬 Available Now!
+                              Available Now!
                             </span>
                           ) : show.days_until_release !== null && show.days_until_release !== undefined && (
                             <span style={{ 
@@ -36659,7 +36002,7 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
                       )}
                       {show.network && (
                         <p style={{ margin: '0 0 0.25rem 0', fontSize: '0.85rem', color: '#666' }}>
-                          📺 {show.network}
+                          {show.network}
                         </p>
                       )}
                       <p style={{ margin: '0', fontSize: '0.85rem', color: '#666', maxHeight: '40px', overflow: 'hidden' }}>
@@ -36676,7 +36019,7 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
                           fontSize: '0.85rem',
                           fontWeight: 500
                         }}>
-                          ✓ Trailer Downloaded
+                          Trailer Downloaded
                         </span>
                       ) : show.trailer_url ? (
                         <button
@@ -36695,7 +36038,7 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
                           {downloadingTrailerId === `tv_${show.sonarr_series_id}_${show.season_number}` ? (
                             <><Loader2 size={16} className="spin" /> Downloading...</>
                           ) : (
-                            <>⬇️ Download Trailer</>
+                            <>Download Trailer</>
                           )}
                         </button>
                       ) : (
@@ -36734,8 +36077,9 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
               <button 
                 onClick={() => setShowNexupTVTrailers(false)}
                 className="nx-modal-close"
+                aria-label="Close"
               >
-                ×
+                <X size={18} />
               </button>
             </div>
             <div className="nx-modal-body" style={{ padding: '1rem', overflowY: 'auto' }}>
@@ -36746,7 +36090,7 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
               className="button"
               style={{ marginBottom: '1rem' }}
             >
-              {nexupLoading ? 'Loading...' : '🔄 Refresh List'}
+              {nexupLoading ? 'Loading...' : 'Refresh List'}
             </button>
             
             {nexupTVTrailers.length === 0 ? (
@@ -36788,13 +36132,13 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
                       <div style={{ display: 'flex', gap: '1rem', flexWrap: 'wrap', fontSize: '0.85rem', color: '#666' }}>
                         {trailer.release_date && (
                           <span>
-                            📅 {new Date(trailer.release_date).toLocaleDateString()}
+                            {formatReleaseDate(trailer.release_date)}
                             {trailer.days_until !== null && trailer.days_until > 0 && ` (in ${trailer.days_until} days)`}
                           </span>
                         )}
-                        {trailer.network && <span>📺 {trailer.network}</span>}
-                        {trailer.file_size_mb && <span>💾 {trailer.file_size_mb.toFixed(1)} MB</span>}
-                        {trailer.resolution && <span>🖥️ {trailer.resolution}</span>}
+                        {trailer.network && <span>{trailer.network}</span>}
+                        {trailer.file_size_mb && <span>{trailer.file_size_mb.toFixed(1)} MB</span>}
+                        {trailer.resolution && <span>{trailer.resolution}</span>}
                         {trailer.play_count > 0 && <span style={{ display: 'inline-flex', alignItems: 'center', gap: '0.25rem' }}><Play size={14} /> Played {trailer.play_count}x</span>}
                       </div>
                     </div>
@@ -36817,7 +36161,7 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
                         className="button"
                         style={{ backgroundColor: '#dc3545', fontSize: '0.85rem', padding: '0.4rem 0.75rem' }}
                       >
-                        🗑️ Delete
+                        Delete
                       </button>
                     </div>
                   </div>
@@ -36838,12 +36182,13 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
             style={{ maxWidth: '600px' }}
           >
             <div className="nx-modal-header">
-              <h2 className="nx-modal-title">➕ Add Trailer Manually</h2>
+              <h2 className="nx-modal-title">Add Trailer Manually</h2>
               <button 
                 onClick={() => setShowManualTrailerModal(false)}
                 className="nx-modal-close"
+                aria-label="Close"
               >
-                ×
+                <X size={18} />
               </button>
             </div>
             <div className="nx-modal-body" style={{ padding: '1rem' }}>
@@ -36895,7 +36240,7 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
                 
                 <div style={{ marginBottom: '1rem' }}>
                   <label style={{ display: 'block', marginBottom: '0.3rem' }}>
-                    🔗 URL (YouTube, Vimeo, etc.)
+                    URL (YouTube, Vimeo, etc.)
                   </label>
                   <input
                     type="text"
@@ -36912,7 +36257,7 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
                 
                 <div>
                   <label style={{ display: 'block', marginBottom: '0.3rem' }}>
-                    📁 Local File Path
+                    Local File Path
                   </label>
                   <input
                     type="text"
@@ -36931,18 +36276,16 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
                 <button
                   type="button"
                   onClick={() => setShowManualTrailerModal(false)}
-                  className="button"
-                  style={{ backgroundColor: '#6c757d' }}
+                  className="button button-secondary"
                 >
                   Cancel
                 </button>
                 <button
                   type="submit"
                   disabled={nexupLoading}
-                  className="button"
-                  style={{ backgroundColor: '#28a745' }}
+                  className="button button-success"
                 >
-                  {nexupLoading ? 'Adding...' : '➕ Add Trailer'}
+                  {nexupLoading ? 'Adding...' : 'Add Trailer'}
                 </button>
               </div>
             </form>
@@ -37083,7 +36426,7 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
                       onMouseLeave={(e) => e.target.style.background = 'var(--card-bg)'}
                     >
                       {item.type === 'drive' ? (
-                        <span style={{ fontSize: '1.1rem' }}>💾</span>
+                        <HardDrive size={16} style={{ color: 'var(--text-secondary)' }} />
                       ) : (
                         <Folder size={16} style={{ color: '#f0c000' }} />
                       )}
@@ -37118,10 +36461,9 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
                 Cancel
               </button>
               <button 
-                className="button"
+                className="button button-success"
                 onClick={() => selectFolderFromBrowser(folderBrowserPath)}
                 disabled={!folderBrowserPath}
-                style={{ backgroundColor: '#28a745' }}
               >
                 <Check size={14} style={{ marginRight: '0.35rem' }} />
                 Select This Folder
@@ -37159,7 +36501,121 @@ curl -X POST "http://YOUR_HOST:9393/plex/stable-token/save?token=YOUR_PLEX_TOKEN
           </div>
         </div>
       )}
+      </div>
     </div>
+
+    {/* Alternate Trailer Picker — global so it works from every tab (NeX-Up
+        upcoming, etc.). Shows the top 3 YouTube candidates to preview & choose. */}
+    {altTrailers.open && (
+      <div
+        style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.7)', zIndex: 10000, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '1rem' }}
+        onClick={(e) => { if (e.target === e.currentTarget) closeAltTrailers(); }}
+      >
+        <div style={{ background: 'var(--card-bg)', border: '1px solid var(--border-color)', borderRadius: '10px', width: '100%', maxWidth: '720px', maxHeight: '88vh', overflowY: 'auto', padding: '1.25rem' }} onClick={(e) => e.stopPropagation()}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '0.5rem' }}>
+            <h2 style={{ margin: 0, display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '1.25rem' }}>
+              <Youtube size={22} /> Choose a trailer{altTrailers.title ? ` — ${altTrailers.title}` : ''}
+            </h2>
+            <button onClick={closeAltTrailers} className="button button-secondary" style={{ padding: '0.3rem 0.5rem' }} aria-label="Close"><X size={18} /></button>
+          </div>
+          <p style={{ color: 'var(--text-secondary)', fontSize: '0.88rem', marginTop: 0 }}>
+            The default trailer couldn’t be downloaded. Preview these alternates and pick one to download.
+          </p>
+          {altTrailers.defaultReason && (
+            <div style={{ marginTop: '-0.4rem', marginBottom: '0.75rem', fontSize: '0.8rem', color: 'var(--text-secondary)', background: 'var(--hover-bg)', borderRadius: '6px', padding: '0.5rem 0.7rem', borderLeft: '3px solid #ffc230' }}>
+              <strong>Why:</strong> {altTrailers.defaultReason}
+            </div>
+          )}
+
+          {altTrailers.error && altTrailers.candidates.length > 0 && (
+            <div style={{ marginBottom: '0.75rem', padding: '0.6rem 0.8rem', background: 'rgba(220,53,69,0.12)', border: '1px solid rgba(220,53,69,0.45)', borderRadius: '8px', color: 'var(--error-color)', fontSize: '0.82rem', lineHeight: 1.45 }}>
+              {altTrailers.error}
+            </div>
+          )}
+
+          {altTrailers.candidates.length > 0 && Object.keys(altTrailers.failedUrls || {}).length >= altTrailers.candidates.length && (
+            <div style={{ marginBottom: '0.75rem', padding: '0.6rem 0.8rem', background: 'rgba(255,193,7,0.12)', border: '1px solid rgba(255,193,7,0.45)', borderRadius: '8px', color: '#d39e00', fontSize: '0.82rem', lineHeight: 1.45 }}>
+              All of these are unavailable from your network — this title is likely region-blocked where NeXroll runs. A VPN or different network may be required, or this trailer simply isn’t downloadable here.
+            </div>
+          )}
+
+          {altTrailers.loading ? (
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem', padding: '2rem', justifyContent: 'center', color: 'var(--text-secondary)' }}>
+              <Loader2 size={20} className="spin" /> Searching YouTube for trailers…
+            </div>
+          ) : altTrailers.error && altTrailers.candidates.length === 0 ? (
+            <div style={{ padding: '1rem', background: 'rgba(220,53,69,0.1)', border: '1px solid rgba(220,53,69,0.4)', borderRadius: '8px', color: 'var(--error-color)', fontSize: '0.88rem' }}>
+              {altTrailers.error}
+            </div>
+          ) : altTrailers.candidates.length === 0 ? (
+            <div style={{ padding: '1.5rem', textAlign: 'center', color: 'var(--text-secondary)' }}>
+              No alternate trailers found on YouTube for this title.
+            </div>
+          ) : (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+              {altTrailers.candidates.map((c) => {
+                const mins = c.duration ? `${Math.floor(c.duration / 60)}:${String(Math.round(c.duration % 60)).padStart(2, '0')}` : '';
+                const busy = altTrailers.downloadingUrl === c.url;
+                const anyBusy = !!altTrailers.downloadingUrl;
+                const previewing = altTrailers.previewId === c.id;
+                const failed = (altTrailers.failedUrls || {})[c.url];
+                return (
+                  <div key={c.id} style={{ border: '1px solid var(--border-color)', borderRadius: '8px', overflow: 'hidden', background: 'var(--hover-bg)' }}>
+                    {previewing ? (
+                      <iframe
+                        title={c.title}
+                        src={`https://www.youtube.com/embed/${c.id}`}
+                        style={{ width: '100%', aspectRatio: '16 / 9', border: 'none', display: 'block' }}
+                        allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+                        allowFullScreen
+                      />
+                    ) : (
+                      <div style={{ position: 'relative', cursor: 'pointer' }} onClick={() => setAltTrailers(prev => ({ ...prev, previewId: c.id }))}>
+                        <img src={c.thumbnail} alt={c.title} style={{ width: '100%', display: 'block', aspectRatio: '16 / 9', objectFit: 'cover' }} />
+                        <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'rgba(0,0,0,0.25)' }}>
+                          <span style={{ display: 'inline-flex', alignItems: 'center', gap: '0.4rem', background: 'rgba(0,0,0,0.6)', color: '#fff', padding: '0.4rem 0.8rem', borderRadius: '999px', fontSize: '0.85rem' }}>
+                            <Eye size={16} /> Preview
+                          </span>
+                        </div>
+                      </div>
+                    )}
+                    <div style={{ padding: '0.6rem 0.75rem', opacity: failed ? 0.65 : 1 }}>
+                      <div style={{ fontWeight: 600, fontSize: '0.9rem', marginBottom: '0.2rem' }}>{c.title}</div>
+                      {failed && (
+                        <div style={{ display: 'inline-flex', alignItems: 'center', gap: '0.25rem', fontSize: '0.72rem', color: '#d39e00', marginBottom: '0.2rem' }}>
+                          <AlertTriangle size={12} /> Unavailable from your network — try another
+                        </div>
+                      )}
+                      <div style={{ fontSize: '0.78rem', color: 'var(--text-secondary)' }}>
+                        {c.channel || 'YouTube'}{mins ? ` · ${mins}` : ''}{typeof c.view_count === 'number' ? ` · ${c.view_count.toLocaleString()} views` : ''}
+                      </div>
+                      <div style={{ display: 'flex', gap: '0.5rem', marginTop: '0.6rem', flexWrap: 'wrap' }}>
+                        <button onClick={() => setAltTrailers(prev => ({ ...prev, previewId: previewing ? null : c.id }))} className="button button-secondary" style={{ fontSize: '0.78rem', padding: '0.35rem 0.6rem', display: 'inline-flex', alignItems: 'center', gap: '0.3rem' }}>
+                          <Eye size={14} /> {previewing ? 'Hide preview' : 'Preview'}
+                        </button>
+                        <a href={c.url} target="_blank" rel="noopener noreferrer" className="button button-secondary" style={{ fontSize: '0.78rem', padding: '0.35rem 0.6rem', display: 'inline-flex', alignItems: 'center', gap: '0.3rem', textDecoration: 'none' }}>
+                          <ExternalLink size={14} /> YouTube
+                        </a>
+                        <button onClick={() => downloadAlternateTrailer(c)} className="button" disabled={anyBusy || !!failed} title={failed || ''} style={{ fontSize: '0.78rem', padding: '0.35rem 0.7rem', display: 'inline-flex', alignItems: 'center', gap: '0.3rem', marginLeft: 'auto', opacity: failed ? 0.6 : 1 }}>
+                          {busy ? <><Loader2 size={14} className="spin" /> Downloading…</> : failed ? <><AlertTriangle size={14} /> Unavailable</> : <><Download size={14} /> Download this</>}
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+
+          <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '1rem' }}>
+            <button onClick={closeAltTrailers} className="button button-secondary">Cancel</button>
+          </div>
+        </div>
+      </div>
+    )}
+
+    <ToastHost toasts={toasts} onDismiss={dismissToast} />
+    </>
   );
 }
 

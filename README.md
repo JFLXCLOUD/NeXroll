@@ -43,7 +43,8 @@ NeXroll is a preroll manager for Plex, Jellyfin, and Emby that makes setup effor
 
 ## Main Features
 
-- **NeX-Up** — Automatically download trailers for upcoming movies and TV shows from Radarr & Sonarr, with YouTube integration, dynamic intro generator with multi-language support (EN/FR/ES/DE), Coming Soon List generator, and sequence builder presets
+- **Modern v2 Interface** — Collapsible "Arr-style" sidebar with built-in search and per-section colors, a redesigned dashboard with quick-action tiles, a first-run onboarding wizard, and deep-linkable pages (refresh-safe URLs)
+- **NeX-Up** — Automatically download trailers for upcoming movies and TV shows from Radarr & Sonarr, with **cookie-free YouTube downloads** (a built-in PO-token provider clears the "not a bot" wall) in a Plex-friendly H.264 format, a dynamic intro generator with multi-language support (EN/FR/ES/DE), a Coming Soon List generator, and sequence builder presets
 - **Preroll Management** — Upload videos, auto-generate thumbnails, organize with tags and multi-category assignments
 - **Smart Scheduling** — Daily, weekly, monthly, yearly schedules with recurrence patterns, fallback categories, and visual calendar views
 - **Sequence Builder** — Create ordered preroll sequences with random blocks and fixed selections
@@ -51,9 +52,10 @@ NeXroll is a preroll manager for Plex, Jellyfin, and Emby that makes setup effor
 - **Priority & Exclusive Mode** — Control which schedule wins with priority levels (1-10) and exclusive override
 - **Holiday Browser** — Search holidays from 100+ countries and create schedules with one click
 - **Holiday Presets** — 32+ built-in holidays with one-click category and schedule creation
-- **Community Prerolls** — Browse and download from 1,300+ community prerolls at prerolls.uk
-- **Media Server Integration** — Connect to Plex, Jellyfin, or Emby with status monitoring and quick apply actions
-- **Backup & Restore** — Full database and file backups with one-click restore
+- **Community Prerolls** — Search and **browse** 1,700+ community prerolls (by category, platform, creator, upload date) with pagination, and download in one click
+- **Media Server Integration** — Connect to Plex, Jellyfin, or Emby with status monitoring and quick apply actions; download and remotely configure the Jellyfin/Emby plugin from the Connect page
+- **Backup & Restore** — Full database and file backups with one-click restore and live progress
+- **Factory Reset & Redaction** — Reset to a fresh-install state from the UI, and automatic redaction of API keys/IPs in exported logs
 - **Windows Native** — One-click installer with optional Windows Service and System Tray app
 
 ## Download and Install

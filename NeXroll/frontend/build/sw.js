@@ -1,7 +1,7 @@
  // NeXroll Service Worker for PWA functionality
-const CACHE_NAME = 'nexroll-v1.3.0';
-const STATIC_CACHE = 'nexroll-static-v1.3.0';
-const API_CACHE = 'nexroll-api-v1.3.0';
+const CACHE_NAME = 'nexroll-v1.4.0';
+const STATIC_CACHE = 'nexroll-static-v1.4.0';
+const API_CACHE = 'nexroll-api-v1.4.0';
 
 // Resources to cache immediately on install
 const STATIC_ASSETS = [
@@ -131,13 +131,28 @@ self.addEventListener('fetch', event => {
       return;
     }
 
-    // Handle static assets (JS/CSS with content hashes) - CACHE-FIRST
-    // CRA generates unique filenames per build, so cached versions are safe
-    if (request.method === 'GET' && (
+    // Dynamic preroll media (thumbnails + video previews) live under
+    // /static/prerolls/, /static/thumbnails/ and /thumbgen/. These files change
+    // in place (regenerated thumbnails, swapped files) at the SAME url, so they
+    // must NOT be cache-first — that served stale/broken images that even a hard
+    // refresh couldn't clear (the SW intercepts before the browser cache). Let
+    // them go straight to the network (default handler below).
+    const isDynamicMedia =
+      url.pathname.startsWith('/static/prerolls/') ||
+      url.pathname.startsWith('/static/thumbnails/') ||
+      url.pathname.startsWith('/thumbgen/');
+
+    // Content-hashed build assets (CRA JS/CSS/media): cache-first is safe because
+    // every build produces unique filenames.
+    const isBuildAsset = !isDynamicMedia && (
       request.destination === 'script' ||
       request.destination === 'style' ||
-      url.pathname.startsWith('/static/')
-    )) {
+      url.pathname.startsWith('/static/js/') ||
+      url.pathname.startsWith('/static/css/') ||
+      url.pathname.startsWith('/static/media/')
+    );
+
+    if (request.method === 'GET' && isBuildAsset) {
       event.respondWith(
         caches.match(request).then(cachedResponse => {
           if (cachedResponse) {

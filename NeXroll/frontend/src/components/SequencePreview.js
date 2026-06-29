@@ -71,7 +71,7 @@ const SequencePreview = ({ blocks, categories, prerolls, getCategoryName, getPre
           display: 'flex',
           alignItems: 'center',
           gap: '10px'
-        }}>📺 Sequence Preview</h3>
+        }}>Sequence Preview</h3>
         <div style={{
           display: 'grid',
           gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))',
@@ -216,7 +216,7 @@ const SequencePreview = ({ blocks, categories, prerolls, getCategoryName, getPre
                       <div style={{
                         fontSize: '32px',
                         lineHeight: 1
-                      }}>🎲</div>
+                      }}></div>
                       <div style={{ flex: 1 }}>
                         <strong style={{ 
                           display: 'block',
@@ -239,7 +239,7 @@ const SequencePreview = ({ blocks, categories, prerolls, getCategoryName, getPre
                       <div style={{
                         fontSize: '32px',
                         lineHeight: 1
-                      }}>📌</div>
+                      }}></div>
                       <div style={{ flex: 1 }}>
                         <strong style={{
                           display: 'block',
@@ -284,7 +284,7 @@ const SequencePreview = ({ blocks, categories, prerolls, getCategoryName, getPre
             color: 'var(--text-color)',
             lineHeight: '1.6'
           }}>
-            <strong>💡 How it works:</strong> When this sequence is triggered, blocks execute in order from top to bottom. 
+            <strong>How it works:</strong> When this sequence is triggered, blocks execute in order from top to bottom. 
             Random blocks pick prerolls randomly each time, while fixed blocks always play the same prerolls in the specified order.
           </p>
         </div>

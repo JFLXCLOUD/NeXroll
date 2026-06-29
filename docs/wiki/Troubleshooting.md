@@ -142,10 +142,10 @@ Full list: https://en.wikipedia.org/wiki/List_of_tz_database_time_zones
 
 ### Trailers Not Downloading
 
-1. **Upload YouTube cookies** — Export from an incognito browser session using the cookies.txt extension
-2. **Check VPN** — Try a different server/IP if YouTube is blocking
-3. **Rate limiting** — Wait between downloads, don't bulk-download too many
-4. **Region-locked content** — Some trailers are region-restricted
+1. **Install the PO-token provider** — Open the **YouTube Downloads** card and click Install; once it shows *healthy*, downloads work cookie-free. This clears YouTube's "not a bot" wall and is the recommended method.
+2. **Upload YouTube cookies (fallback)** — For age- or region-restricted trailers, export from an incognito browser session using the cookies.txt extension
+3. **Check VPN** — Try a different server/IP if YouTube is blocking
+4. **Rate limiting** — Wait between downloads, don't bulk-download too many
 5. **Check logs** — Settings → Logs for detailed error messages
 
 ### No Upcoming Content Found

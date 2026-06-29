@@ -27,7 +27,13 @@ VALID_VIDEO_EXTENSIONS = {
 }
 
 # Subdirectory basenames the scanner should never recurse into.
-SKIP_DIRS = {'thumbnails', 'temp', 'nexup_temp', 'tmp', '__pycache__'}
+# node_modules / bgutil-provider hold the YouTube PO-token provider: thousands of
+# files including TypeScript sources (*.ts / *.d.ts). Since '.ts' is also a valid
+# video extension (MPEG-TS), those were being treated as prerolls and each spawned
+# a failing FFmpeg thumbnail job — enough to make NeXroll unresponsive when the
+# provider lands inside the prerolls folder. Never descend into them.
+SKIP_DIRS = {'thumbnails', 'temp', 'nexup_temp', 'tmp', '__pycache__',
+             'node_modules', 'bgutil-provider'}
 
 
 def _iter_preroll_files(prerolls_dir: str):
@@ -43,6 +49,11 @@ def _iter_preroll_files(prerolls_dir: str):
                 continue
             ext = os.path.splitext(f)[1].lower()
             if ext not in VALID_VIDEO_EXTENSIONS:
+                continue
+            # '*.d.ts' splits to ext '.ts' (MPEG-TS) but is a TypeScript
+            # declaration file, never a video — skip it explicitly so a stray
+            # node_modules tree outside SKIP_DIRS can't seed junk prerolls.
+            if f.lower().endswith('.d.ts'):
                 continue
             abs_path = os.path.join(root, f)
             # Parent folder name relative to prerolls_dir: '' for the root itself
@@ -78,6 +89,7 @@ def reconcile_prerolls(
     delete_missing: bool = False,
     dedupe: bool = False,
     auto_prune_missing: bool = False,
+    exclude_trees: Optional[list] = None,
 ) -> dict:
     """
     Reconcile DB Preroll rows against on-disk files. See module docstring.
@@ -92,6 +104,14 @@ def reconcile_prerolls(
         disk, or a large fraction of rows suddenly missing). This is what makes
         deletions in Explorer self-heal without prompting the user, while
         protecting against wiping the library if a network share blips.
+    exclude_trees: directory trees the scanner must leave alone (the NeX-Up
+        trailer storage). Files there are owned by NeX-Up, which registers
+        them under its system categories itself; when the scanner indexed
+        them it created a second, Uncategorized row per trailer. Rows whose
+        path lives under an excluded tree are skipped entirely (so legit
+        NeX-Up rows are never counted missing/pruned), and rows the scanner
+        itself previously created there (managed=True, no category) are
+        removed.
     """
     log = file_log or (lambda *a, **k: None)
     stats = {
@@ -106,6 +126,8 @@ def reconcile_prerolls(
         "deduped_rows": 0,
         "missing_not_pruned": 0,
         "storage_maybe_offline": False,
+        "excluded_files": 0,
+        "excluded_rows_cleaned": 0,
         "errors": [],
     }
 
@@ -113,11 +135,37 @@ def reconcile_prerolls(
         log(f"Scanner: prerolls dir '{prerolls_dir}' not found; skipping", level="WARNING")
         return stats
 
+    # Normalize exclusion trees to prefix form. Guard: never exclude the
+    # prerolls root itself (a misconfigured NeX-Up storage path pointed at the
+    # library root would otherwise silently disable the whole scan).
+    _root_norm = os.path.normcase(os.path.normpath(os.path.abspath(prerolls_dir)))
+    _exclude_prefixes = []
+    for t in (exclude_trees or []):
+        if not t:
+            continue
+        tn = os.path.normcase(os.path.normpath(os.path.abspath(t)))
+        if tn == _root_norm or _root_norm.startswith(tn + os.sep):
+            log(f"Scanner: NOT excluding '{t}' — it contains the prerolls root", level="WARNING")
+            continue
+        _exclude_prefixes.append(tn + os.sep)
+
+    def _is_excluded(pth) -> bool:
+        if not _exclude_prefixes or not pth:
+            return False
+        try:
+            pn = os.path.normcase(os.path.normpath(os.path.abspath(pth)))
+        except Exception:
+            return False
+        return any(pn.startswith(pref) for pref in _exclude_prefixes)
+
     # 1. Build on-disk index. by_parent_filename is the primary lookup
     #    (category folder + filename); by_filename is the unique-name fallback.
     by_parent_filename = {}   # (parent_lower, filename_lower) -> abs_path
     by_filename = {}          # filename_lower -> [abs_path, ...]
     for abs_path, parent, filename in _iter_preroll_files(prerolls_dir):
+        if _is_excluded(abs_path):
+            stats["excluded_files"] += 1
+            continue
         stats["files_on_disk"] += 1
         key = (parent.lower(), filename.lower())
         by_parent_filename.setdefault(key, abs_path)
@@ -147,6 +195,19 @@ def reconcile_prerolls(
 
     for p in all_prerolls:
         if not p.filename:
+            continue
+
+        # Rows living under an excluded (NeX-Up) tree are not the scanner's to
+        # reconcile. Clean up the duplicates the scanner itself created there
+        # in earlier versions (managed=True with no category — NeX-Up's own
+        # rows are managed=False and categorized); leave everything else alone.
+        if p.path and _is_excluded(p.path):
+            if p.managed and p.category_id is None:
+                try:
+                    db.delete(p)
+                    stats["excluded_rows_cleaned"] += 1
+                except Exception as e:
+                    stats["errors"].append(f"cleanup of excluded row {p.id} failed: {e}")
             continue
 
         # Hint: prefer the category folder that matches this preroll's category

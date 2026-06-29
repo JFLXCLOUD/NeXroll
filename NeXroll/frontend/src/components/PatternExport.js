@@ -8,10 +8,15 @@ import { Upload, Package, AlertTriangle, Loader2, Lightbulb, Sparkles } from 'lu
  * Props:
  * - isOpen: Boolean - whether modal is visible
  * - onClose: Function - callback to close modal
- * - scheduleId: Number - ID of schedule to export
- * - scheduleName: String - name of schedule
+ * - scheduleId: Number - ID of a SAVED sequence to export (by-id mode)
+ * - scheduleName: String - name to use for the exported file
+ * - blocks: Array - when provided, export these blocks directly (ad-hoc mode).
+ *     Used by the in-builder export where the sequence isn't a saved row, so a
+ *     SavedSequence id isn't available. Avoids mismatching a Schedule id against
+ *     the by-id endpoint.
+ * - description: String - description to embed when exporting blocks
  */
-const PatternExport = ({ isOpen, onClose, scheduleId, scheduleName }) => {
+const PatternExport = ({ isOpen, onClose, scheduleId, scheduleName, blocks = null, description = '' }) => {
   const [isExporting, setIsExporting] = useState(false);
   const [exportProgress, setExportProgress] = useState('');
   const [error, setError] = useState(null);
@@ -30,9 +35,25 @@ const PatternExport = ({ isOpen, onClose, scheduleId, scheduleName }) => {
         setExportProgress('Creating pattern file...');
       }
 
-      const response = await fetch(`/sequences/${scheduleId}/export?export_mode=${exportMode}`, {
-        method: 'POST',
-      });
+      // Ad-hoc mode: export the supplied blocks directly (no saved-sequence id).
+      // By-id mode: export an existing SavedSequence by its id.
+      let response;
+      if (Array.isArray(blocks)) {
+        response = await fetch('/sequences/export-pattern', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            name: scheduleName || 'Sequence',
+            description: description || '',
+            blocks,
+            export_mode: exportMode,
+          }),
+        });
+      } else {
+        response = await fetch(`/sequences/${scheduleId}/export?export_mode=${exportMode}`, {
+          method: 'POST',
+        });
+      }
 
       if (!response.ok) {
         const errorData = await response.json();
@@ -332,38 +353,12 @@ const PatternExport = ({ isOpen, onClose, scheduleId, scheduleName }) => {
         )}
 
         {/* Action Buttons */}
-        <div style={{ display: 'flex', gap: '1rem', justifyContent: 'flex-end' }}>
-          <button
-            onClick={onClose}
-            disabled={isExporting}
-            style={{
-              padding: '0.75rem 1.5rem',
-              backgroundColor: 'transparent',
-              color: 'var(--text-color)',
-              border: '2px solid var(--border-color)',
-              borderRadius: '0.5rem',
-              cursor: isExporting ? 'not-allowed' : 'pointer',
-              fontSize: '1rem',
-              opacity: isExporting ? 0.5 : 1,
-            }}
-          >
+        <div style={{ display: 'flex', gap: '0.75rem', justifyContent: 'flex-end' }}>
+          <button onClick={onClose} disabled={isExporting} className="button button-secondary">
             Cancel
           </button>
-          <button
-            onClick={handleExport}
-            disabled={isExporting}
-            style={{
-              padding: '0.75rem 1.5rem',
-              backgroundColor: isExporting ? '#9ca3af' : '#667eea',
-              color: 'white',
-              border: 'none',
-              borderRadius: '0.5rem',
-              cursor: isExporting ? 'not-allowed' : 'pointer',
-              fontSize: '1rem',
-              fontWeight: 'bold',
-            }}
-          >
-                        {isExporting ? <><Loader2 size={16} className="spin" /> Exporting...</> : <><Upload size={16} /> Export Pattern</>}
+          <button onClick={handleExport} disabled={isExporting} className="button">
+            {isExporting ? <><Loader2 size={16} className="spin" /> Exporting…</> : <><Upload size={16} /> Export Pattern</>}
           </button>
         </div>
 

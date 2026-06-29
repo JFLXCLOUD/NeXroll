@@ -8,6 +8,10 @@ body {
   margin: 0;
   padding: 0;
   height: 100%;
+  /* Paint the themed background at the root so the whole viewport stays dark in
+     dark mode (the v2 shell no longer relies on .app-container for this). */
+  background-color: var(--bg-color, #1a1a1a);
+  color: var(--text-color, #e0e0e0);
   overflow-x: hidden; /* Only on body, not html - to preserve sticky */
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen',
     'Ubuntu', 'Cantarell', 'Fira Sans', 'Droid Sans', 'Helvetica Neue',
@@ -27,7 +31,7 @@ code {
 
 /* ========== Uniform Tile Sizing ========== */
 .nx-tile {
-  min-height: 140px;
+  min-height: 104px;
   display: flex;
   flex-direction: column;
 }
@@ -40,16 +44,127 @@ code {
   border-top: none;
   border-right: 1px solid var(--border-color);
   border-bottom: 1px solid var(--border-color);
+  /* Condensed padding so tiles read compact, not airy. */
+  padding: 0.85rem;
 }
 
+/* Condensed tile header: a touch smaller/tighter than the default 1.25rem card
+   h2 so short tiles aren't top-heavy. Kept normal-case and the same weight as
+   before — minimalist, not decorative. */
 .nx-tile .card h2 {
   flex-shrink: 0;
+  font-size: 1.05rem;
+  margin-bottom: 0.4rem;
 }
 
 .nx-tile .card > div:last-child {
   flex: 1;
+  min-height: 0;
+}
+/* Inner scrolling is for the tall feature tiles and the calendar only. Small
+   (1-row) tiles must NOT clip-and-scroll: the row-height measurement reads the
+   card's scrollHeight, which only reflects true content height when overflow
+   is visible — with an inner scroller the card never overflows and the grid
+   could never grow to fit (tiles showed scrollbars instead). */
+.nx-tile-cal .card > div:last-child {
   overflow-y: auto;
 }
+/* Wide feature tiles (Video Quality, Upcoming) span ONE row unit like everyone
+   else but two columns; if their content ever exceeds the unit, they scroll
+   inside rather than stretching the grid or spilling out. */
+.nx-tile-wide .card {
+  overflow-y: auto;
+}
+
+/* --------------------------------------------------------------------
+   Shared detail-row vocabulary for the stat tiles. Every tile renders
+   its facts as these key/value rows so type size, icon size, spacing,
+   and alignment match across the whole dashboard (the rows were inline
+   styles per tile before and had drifted: 0.8-0.9rem, varied gaps).
+   -------------------------------------------------------------------- */
+.nx-tile-rows {
+  display: grid;
+  gap: 0.45rem;
+  margin: 0.4rem 0 0;
+}
+.nx-tile-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 0.75rem;
+  font-size: 0.88rem;
+  min-width: 0;
+}
+.nx-tile-row-k {
+  color: var(--text-secondary);
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  flex-shrink: 0;
+}
+.nx-tile-row-k svg { width: 14px; height: 14px; flex-shrink: 0; }
+.nx-tile-row-v {
+  font-weight: 500;
+  color: var(--text-color);
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-align: right;
+}
+.nx-tile-row-v.muted { color: var(--text-secondary); font-weight: 400; }
+/* Status/headline line under the tile title (Running, schedule name, ...) */
+.nx-tile-status {
+  margin: 0.1rem 0 0.35rem;
+  font-size: 1.05rem;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* Big count headline (Prerolls / Storage) */
+.nx-tile-bignum {
+  font-size: 1.6rem;
+  font-weight: 700;
+  margin: 0.15rem 0 0.5rem;
+}
+.nx-tile-bignum .nx-tile-bignum-unit {
+  font-size: 0.85rem;
+  font-weight: 400;
+  color: var(--text-secondary);
+}
+/* Tile header: title left, one compact action button right. Buttons used to
+   sit at the tile bottom, where varying content lengths left them at uneven
+   heights across the grid; in the header they align perfectly on every tile. */
+.nx-tile-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  margin-bottom: 0.45rem;
+}
+.nx-tile-head h2 { margin-bottom: 0; }
+.nx-tile-headbtn {
+  flex-shrink: 0;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border-radius: 7px;
+  border: 1px solid var(--border-color);
+  background: transparent;
+  color: var(--text-secondary);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: color 0.15s ease, background 0.15s ease, border-color 0.15s ease;
+}
+.nx-tile-headbtn:hover {
+  color: var(--text-color);
+  background: var(--hover-bg);
+  border-color: var(--accent-color);
+}
+.nx-tile-headbtn svg { width: 14px; height: 14px; }
 
 /* Unique border-left colors for each tile */
 .nx-tile:nth-child(1) .card {
@@ -118,6 +233,9 @@ code {
 
 /* Light theme (default) */
 body.light {
+  /* Tell the browser the page is light so native controls (time/date pickers,
+     selects, scrollbars) render in the matching scheme. */
+  color-scheme: light;
   --bg-color: #f5f5f5;
   --card-bg: white;
   --text-color: #333;
@@ -144,6 +262,9 @@ body.light .header-icon {
 
 /* Dark theme */
 body.dark {
+  /* Native time/date pickers, selects, and scrollbars render dark to match
+     the theme (without this they stay light regardless of our CSS vars). */
+  color-scheme: dark;
   --bg-color: #1a1a1a;
   --card-bg: #2d2d2d;
   --text-color: #e0e0e0;
@@ -981,15 +1102,49 @@ body.dark .nx-chip.primary {
   background: var(--header-bg);
 }
 
-/* Button variants */
-.button-success { background-color: #28a745 !important; }
-.button-danger  { background-color: #dc3545 !important; }
-.button-warn    { background-color: #f59e0b !important; }
+/* ============================================================
+   Button system (v2): one consistent shape, semantic color variants.
+   .button is the primary action; add a variant class for intent.
+   All variants share sizing/radius/hover and align icon + label.
+   ============================================================ */
+.button,
+.button-secondary {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.4rem;
+  border-radius: 8px;
+  font-size: 0.9rem;
+  font-weight: 500;
+  line-height: 1.2;
+}
+.button:disabled,
+.button-secondary:disabled,
+.button.button-success:disabled,
+.button.button-danger:disabled,
+.button.button-warn:disabled,
+.button.button-info:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+/* Semantic variants. Use as `className="button button-danger"`. The !important
+   keeps them winning over the base .button background even where older markup
+   adds them alongside inline styles. */
+.button-success { background-color: var(--success-color) !important; color: #fff !important; }
+.button-success:hover:not(:disabled) { filter: brightness(1.08); }
+.button-danger  { background-color: var(--error-color) !important; color: #fff !important; }
+.button-danger:hover:not(:disabled)  { filter: brightness(1.08); }
+.button-warn    { background-color: #f59e0b !important; color: #1a1a1a !important; }
+.button-warn:hover:not(:disabled)    { filter: brightness(1.06); }
+.button-info    { background-color: #17a2b8 !important; color: #fff !important; }
+.button-info:hover:not(:disabled)    { filter: brightness(1.08); }
 .button-outline {
   background: transparent !important;
   color: var(--text-color) !important;
   border: 1px solid var(--border-color) !important;
 }
+.button-outline:hover:not(:disabled) { background: var(--hover-bg) !important; }
 
 /* Status chip */
 /* Status chip */
@@ -1948,7 +2103,14 @@ body.dark .dashboard .grid .card:hover {
 .nx-dash-grid { position: relative; grid-template-columns: repeat(4, minmax(0, 1fr)); }
 /* Responsive column count (the rest of the grid is set inline). */
 @media (max-width: 1100px) { .nx-dash-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
-@media (max-width: 620px)  { .nx-dash-grid { grid-template-columns: minmax(0, 1fr); } }
+@media (max-width: 620px) {
+  .nx-dash-grid { grid-template-columns: minmax(0, 1fr); }
+  /* Feature tiles carry an inline `grid-column: span 2`; in a single-column
+     grid that forces a phantom 2nd column, which crushes the stat tiles into a
+     sliver and makes the whole grid overflow (seen on phones). Force every tile
+     to one full column at this width — overrides the inline span. */
+  .nx-dash-grid > .nx-tile { grid-column: 1 / -1 !important; }
+}
 .nx-dash-grid .nx-tile.editing { cursor: grab; }
 .nx-dash-grid .nx-tile.editing:active { cursor: grabbing; }
 .nx-dash-grid .nx-tile.dragging { box-shadow: 0 12px 32px var(--shadow); border-radius: 0.5rem; }
@@ -3584,6 +3746,181 @@ body.dark .nx-chip.warn {
   text-transform: uppercase;
 }
 
+/* ============================================================
+   NeXroll v2 — Connect page redesign
+   Per-server panels carry a brand accent (--brand, set inline). The hero
+   status header summarizes the connection; the connect section holds the form.
+   ============================================================ */
+.nx-conn-panel {
+  --brand: var(--accent-color);
+}
+
+/* Hero status header — branded summary of the connection state. */
+.nx-conn-hero {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  padding: 1.1rem 1.25rem;
+  border-radius: 14px;
+  border: 1px solid var(--border-color);
+  background:
+    linear-gradient(0deg, var(--card-bg), var(--card-bg)) padding-box,
+    var(--card-bg);
+  position: relative;
+  overflow: hidden;
+  margin-bottom: 1rem;
+}
+/* Brand wash on the left edge of the hero. */
+.nx-conn-hero::before {
+  content: "";
+  position: absolute;
+  left: 0; top: 0; bottom: 0;
+  width: 4px;
+  background: var(--brand);
+}
+.nx-conn-hero.connected {
+  background:
+    linear-gradient(90deg, color-mix(in srgb, var(--brand) 10%, transparent), transparent 45%) border-box,
+    var(--card-bg);
+}
+.nx-conn-hero-badge {
+  flex: 0 0 auto;
+  width: 52px;
+  height: 52px;
+  border-radius: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #fff;
+  /* Connected = success green (reads as "good" regardless of the server's brand
+     color, which can be red/purple/green). Brand identity lives in the hero's
+     left edge wash + the selector tabs. */
+  background: var(--success-color);
+  box-shadow: 0 4px 12px color-mix(in srgb, var(--success-color) 38%, transparent);
+}
+.nx-conn-hero-badge.idle {
+  background: var(--hover-bg);
+  color: var(--text-muted);
+  box-shadow: none;
+}
+.nx-conn-hero-body { flex: 1 1 auto; min-width: 0; }
+.nx-conn-hero-title {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 1.15rem;
+  font-weight: 700;
+  color: var(--text-color);
+  margin: 0;
+}
+.nx-conn-hero-state {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  font-size: 0.85rem;
+  font-weight: 600;
+}
+.nx-conn-hero-state.ok  { color: var(--success-color); }
+.nx-conn-hero-state.bad { color: var(--text-muted); }
+.nx-conn-hero-meta {
+  margin: 0.25rem 0 0;
+  font-size: 0.85rem;
+  color: var(--text-secondary);
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.15rem 0.6rem;
+}
+.nx-conn-hero-meta .sep { color: var(--text-muted); }
+.nx-conn-hero-actions { flex: 0 0 auto; display: flex; gap: 0.5rem; align-items: center; }
+
+/* Connect section header (the recommended method block). */
+.nx-conn-method-lead {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+  margin: 0 0 0.25rem;
+  font-size: 1rem;
+  font-weight: 700;
+  color: var(--text-color);
+}
+.nx-conn-method-sub {
+  margin: 0 0 1rem;
+  font-size: 0.85rem;
+  color: var(--text-secondary);
+}
+.nx-conn-field-label {
+  display: block;
+  margin-bottom: 0.4rem;
+  font-weight: 600;
+  font-size: 0.88rem;
+  color: var(--text-color);
+}
+.nx-conn-alts {
+  margin-top: 1.25rem;
+  padding-top: 1rem;
+  border-top: 1px solid var(--border-color);
+}
+.nx-conn-alts > .nx-conn-alts-title {
+  font-size: 0.8rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-muted);
+  margin: 0 0 0.6rem;
+}
+/* A tidy disclosure row for an alternative connect method. */
+.nx-conn-alt {
+  border: 1px solid var(--border-color);
+  border-radius: 10px;
+  margin-bottom: 0.5rem;
+  background: var(--bg-color);
+  overflow: hidden;
+}
+.nx-conn-alt > summary {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.7rem 0.9rem;
+  cursor: pointer;
+  font-weight: 600;
+  color: var(--text-color);
+  list-style: none;
+}
+.nx-conn-alt > summary::-webkit-details-marker { display: none; }
+.nx-conn-alt > summary .nx-conn-alt-chev {
+  margin-left: auto;
+  color: var(--text-muted);
+  transition: transform 0.15s ease;
+}
+.nx-conn-alt[open] > summary .nx-conn-alt-chev { transform: rotate(90deg); }
+.nx-conn-alt-body { padding: 0 0.9rem 0.9rem; }
+
+/* Inline "Docker / remote?" hint under the primary method. */
+.nx-conn-hint {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.5rem;
+  margin-top: 0.85rem;
+  padding: 0.6rem 0.75rem;
+  border-radius: 8px;
+  background: var(--hover-bg);
+  border: 1px dashed var(--border-color);
+  font-size: 0.85rem;
+  color: var(--text-secondary);
+}
+.nx-conn-hint .nx-conn-hint-icon { color: var(--brand); flex: 0 0 auto; margin-top: 1px; }
+.nx-conn-hint button {
+  background: none;
+  border: none;
+  color: var(--brand);
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+  padding: 0;
+  text-decoration: underline;
+}
+
 /* Notice / info panels — unified tinted containers used across the Connections
    panels (plugin states, download hints, detection results). Semantic variants
    match the chip colors so a box and its badge read as a set. */
@@ -3600,3 +3937,1426 @@ body.dark .nx-chip.warn {
 .nx-notice.accent  { background: rgba(108, 92, 231, 0.07); border-color: rgba(108, 92, 231, 0.28); }
 .nx-notice.warn    { background: rgba(230, 126, 34, 0.08); border-color: rgba(230, 126, 34, 0.28); }
 .nx-notice.danger  { background: rgba(231, 76, 60, 0.08); border-color: rgba(231, 76, 60, 0.28); }
+
+/* ============================================================
+   NeXroll v2 — Collapsible sidebar shell
+   ============================================================ */
+:root {
+  --nx-sidebar-w: 256px;
+  --nx-sidebar-w-collapsed: 64px;
+  --nx-topbar-h: 56px;
+  /* Shared page frame: the topbar inner content and the page body use the same
+     max-width and horizontal padding so everything lines up vertically. */
+  --nx-page-max: 1320px;
+  --nx-page-pad-x: 1.75rem;
+}
+
+/* Shell wraps the sidebar + content column side-by-side */
+.nx-shell {
+  display: flex;
+  min-height: 100vh;
+  align-items: stretch;
+  background-color: var(--bg-color);
+  color: var(--text-color);
+}
+
+/* ---- Sidebar ---- */
+.nx-sidebar {
+  flex: 0 0 var(--nx-sidebar-w);
+  width: var(--nx-sidebar-w);
+  background-color: var(--card-bg);
+  border-right: 1px solid var(--border-color);
+  display: flex;
+  flex-direction: column;
+  position: sticky;
+  top: 0;
+  height: 100vh;
+  overflow-y: auto;
+  overflow-x: hidden;
+  z-index: 900;
+  transition: flex-basis 0.18s ease, width 0.18s ease;
+}
+.nx-sidebar.collapsed {
+  flex-basis: var(--nx-sidebar-w-collapsed);
+  width: var(--nx-sidebar-w-collapsed);
+}
+
+.nx-sidebar-head {
+  position: relative;          /* anchor for the absolutely-placed collapse btn */
+  display: flex;
+  align-items: center;
+  justify-content: center;     /* center the logo */
+  padding: 0.75rem 0.75rem;
+  border-bottom: 1px solid var(--border-color);
+  min-height: var(--nx-topbar-h);
+}
+.nx-sidebar-brand {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 0;
+}
+.nx-sidebar-logo {
+  height: 34px;
+  width: auto;
+  display: block;
+  max-width: 100%;
+}
+.nx-sidebar.collapsed .nx-sidebar-logo { display: none; }
+.nx-sidebar.collapsed .nx-sidebar-brand { display: none; }
+
+.nx-sidebar-collapse {
+  position: absolute;          /* out of flow so the logo stays centered */
+  right: 0.6rem;
+  top: 50%;
+  transform: translateY(-50%);
+  background: transparent;
+  border: 1px solid var(--border-color);
+  color: var(--text-secondary);
+  border-radius: 8px;
+  width: 30px;
+  height: 30px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: background-color 0.15s ease, color 0.15s ease;
+}
+.nx-sidebar-collapse:hover {
+  background: var(--hover-bg);
+  color: var(--text-color);
+}
+/* When collapsed there's no logo; center the (now sole) collapse button. */
+.nx-sidebar.collapsed .nx-sidebar-collapse {
+  position: static;
+  transform: none;
+}
+.nx-sidebar.collapsed .nx-sidebar-head {
+  padding: 0.75rem 0;
+}
+
+/* Mobile-only close button (hidden on desktop) */
+.nx-sidebar-mobile-close { display: none; }
+
+/* ---- Sidebar search ---- */
+.nx-sidebar-search {
+  position: relative;
+  padding: 0.6rem 0.6rem 0.4rem;
+}
+.nx-sidebar-search-box {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.4rem 0.55rem;
+  background: var(--bg-color);
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  transition: border-color 0.13s ease, box-shadow 0.13s ease;
+}
+.nx-sidebar-search-box:focus-within {
+  border-color: var(--button-bg);
+  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.16);
+}
+.nx-sidebar-search-glyph { color: var(--text-muted); flex: 0 0 auto; }
+.nx-sidebar-search-box input {
+  flex: 1 1 auto;
+  min-width: 0;
+  border: none;
+  background: transparent;
+  outline: none;
+  color: var(--text-color);
+  font-size: 0.88rem;
+  padding: 0;
+}
+.nx-sidebar-search-box input::placeholder { color: var(--text-muted); }
+.nx-sidebar-search-clear {
+  flex: 0 0 auto;
+  background: transparent;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  display: inline-flex;
+  padding: 0;
+}
+.nx-sidebar-search-clear:hover { color: var(--text-color); }
+
+/* Collapsed-mode search icon (matches sidebar item sizing) */
+.nx-sidebar-search-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: calc(100% - 1rem);
+  margin: 0.4rem 0.5rem;
+  padding: 0.5rem 0;
+  background: transparent;
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: background-color 0.13s ease, color 0.13s ease;
+}
+.nx-sidebar-search-icon:hover { background: var(--hover-bg); color: var(--text-color); }
+
+/* Results dropdown */
+.nx-sidebar-search-results {
+  margin-top: 0.4rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+  max-height: 320px;
+  overflow-y: auto;
+  border-top: 1px solid var(--border-color);
+  padding-top: 0.35rem;
+}
+.nx-sidebar-search-empty {
+  padding: 0.6rem 0.5rem;
+  font-size: 0.82rem;
+  color: var(--text-muted);
+}
+.nx-sidebar-search-item {
+  --nx-accent: var(--button-bg);
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+  width: 100%;
+  padding: 0.5rem 0.55rem;
+  border: none;
+  background: transparent;
+  border-radius: 8px;
+  cursor: pointer;
+  text-align: left;
+  color: var(--text-color);
+}
+.nx-sidebar-search-item.active {
+  background: color-mix(in srgb, var(--nx-accent) 14%, transparent);
+}
+.nx-sidebar-search-item-icon {
+  flex: 0 0 auto;
+  display: flex;
+  color: var(--text-secondary);
+}
+.nx-sidebar-search-item.active .nx-sidebar-search-item-icon { color: var(--nx-accent); }
+.nx-sidebar-search-item-text {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  line-height: 1.2;
+}
+.nx-sidebar-search-item-label {
+  font-size: 0.88rem;
+  font-weight: 500;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.nx-sidebar-search-item.active .nx-sidebar-search-item-label { color: var(--nx-accent); font-weight: 600; }
+.nx-sidebar-search-item-crumb {
+  font-size: 0.72rem;
+  color: var(--text-muted);
+}
+.nx-sidebar-search-item-enter { flex: 0 0 auto; color: var(--nx-accent); opacity: 0.8; }
+
+/* ---- Nav items ---- */
+.nx-sidebar-nav {
+  flex: 1 1 auto;
+  padding: 0.5rem 0.5rem 1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+}
+.nx-sidebar-section { display: flex; flex-direction: column; }
+
+.nx-sidebar-item {
+  --nx-accent: var(--button-bg);
+  display: flex;
+  align-items: center;
+  gap: 0.7rem;
+  width: 100%;
+  padding: 0.6rem 0.7rem;
+  border: none;
+  background: transparent;
+  color: var(--text-color);
+  border-radius: 8px;
+  cursor: pointer;
+  font-size: 0.9rem;
+  font-weight: 500;
+  text-align: left;
+  position: relative;
+  transition: background-color 0.13s ease, color 0.13s ease;
+}
+.nx-sidebar-item:hover { background: var(--hover-bg); }
+.nx-sidebar-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  color: var(--text-secondary);
+}
+.nx-sidebar-label {
+  flex: 1 1 auto;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.nx-sidebar-caret {
+  display: flex;
+  align-items: center;
+  color: var(--text-muted);
+  flex: 0 0 auto;
+}
+
+/* Active parent: tinted bg + left accent bar */
+.nx-sidebar-parent.active {
+  background: color-mix(in srgb, var(--nx-accent) 14%, transparent);
+  color: var(--nx-accent);
+  font-weight: 600;
+}
+.nx-sidebar-parent.active .nx-sidebar-icon { color: var(--nx-accent); }
+.nx-sidebar-parent.active::before {
+  content: "";
+  position: absolute;
+  left: -0.5rem;
+  top: 6px;
+  bottom: 6px;
+  width: 3px;
+  border-radius: 0 3px 3px 0;
+  background: var(--nx-accent);
+}
+
+/* Children tree */
+.nx-sidebar-children {
+  display: flex;
+  flex-direction: column;
+  gap: 0.05rem;
+  margin: 0.1rem 0 0.25rem 0;
+  padding-left: 0.65rem;
+  border-left: 1px solid var(--border-color);
+  margin-left: 0.85rem;
+  /* Smooth entrance when a section expands */
+  animation: nx-tree-in 0.16s ease-out;
+}
+@keyframes nx-tree-in {
+  from { opacity: 0; transform: translateY(-4px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+.nx-sidebar-child {
+  font-size: 0.85rem;
+  font-weight: 500;
+  padding: 0.45rem 0.6rem;
+}
+.nx-sidebar-child .nx-sidebar-icon { color: var(--text-muted); }
+.nx-sidebar-child.active {
+  color: var(--nx-accent);
+  background: color-mix(in srgb, var(--nx-accent) 10%, transparent);
+  font-weight: 600;
+}
+.nx-sidebar-child.active .nx-sidebar-icon { color: var(--nx-accent); }
+
+/* Collapsed: icon-only, centered, hide labels/carets/children */
+.nx-sidebar.collapsed .nx-sidebar-label,
+.nx-sidebar.collapsed .nx-sidebar-caret,
+.nx-sidebar.collapsed .nx-sidebar-children { display: none; }
+.nx-sidebar.collapsed .nx-sidebar-item {
+  justify-content: center;
+  padding: 0.6rem 0;
+  gap: 0;
+}
+.nx-sidebar.collapsed .nx-sidebar-parent.active::before { left: 0; }
+
+/* ---- Sidebar footer: resource links + version ---- */
+.nx-sidebar-footer {
+  margin-top: auto;            /* pin to the bottom of the sidebar column */
+  padding: 0.75rem;
+  border-top: 1px solid var(--border-color);
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+.nx-sidebar-resources {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.25rem;
+  flex-wrap: wrap;
+}
+.nx-sidebar-resource {
+  --nx-resource-accent: var(--button-bg);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  border-radius: 8px;
+  color: var(--text-secondary);
+  text-decoration: none;
+  transition: background-color 0.13s ease, color 0.13s ease, transform 0.13s ease;
+}
+.nx-sidebar-resource:hover {
+  background: var(--hover-bg);
+  color: var(--nx-resource-accent);
+  transform: translateY(-1px);
+}
+.nx-sidebar-version {
+  text-align: center;
+  font-size: 0.72rem;
+  color: var(--text-muted);
+  letter-spacing: 0.02em;
+}
+
+/* Update-available pill (expanded sidebar) */
+.nx-sidebar-update {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  text-decoration: none;
+  padding: 0.5rem 0.6rem;
+  border-radius: 9px;
+  border: 1px solid color-mix(in srgb, var(--success-color) 45%, transparent);
+  background: color-mix(in srgb, var(--success-color) 12%, transparent);
+  color: var(--success-color);
+  transition: background-color 0.13s ease, transform 0.13s ease;
+}
+.nx-sidebar-update:hover {
+  background: color-mix(in srgb, var(--success-color) 18%, transparent);
+  transform: translateY(-1px);
+}
+.nx-sidebar-update-icon-inline { flex: 0 0 auto; }
+.nx-sidebar-update-text { display: flex; flex-direction: column; line-height: 1.2; min-width: 0; }
+.nx-sidebar-update-lead { font-size: 0.78rem; font-weight: 700; }
+.nx-sidebar-update-ver {
+  font-size: 0.72rem;
+  color: var(--text-secondary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Update icon (collapsed sidebar) */
+.nx-sidebar-update-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  margin: 0 auto;
+  border-radius: 8px;
+  color: var(--success-color);
+  background: color-mix(in srgb, var(--success-color) 14%, transparent);
+  text-decoration: none;
+  animation: nx-update-pulse 2.4s ease-in-out infinite;
+}
+@keyframes nx-update-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--success-color) 45%, transparent); }
+  50% { box-shadow: 0 0 0 4px transparent; }
+}
+
+/* Collapsed: stack the resource icons vertically, hide the version label */
+.nx-sidebar.collapsed .nx-sidebar-resources { flex-direction: column; gap: 0.1rem; }
+.nx-sidebar.collapsed .nx-sidebar-version { display: none; }
+.nx-sidebar.collapsed .nx-sidebar-footer { padding: 0.5rem 0; }
+
+/* ---- Content column ---- */
+.nx-content {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  background-color: var(--bg-color);
+}
+/* Slim top bar inside content (status, theme, user, logout). The bar itself is
+   full-width (so its bottom border spans the column), but its inner content
+   shares the exact same frame as the page content below — same max-width, same
+   side padding, centered — so the right-aligned controls line up with the
+   content's right edge instead of floating out at the viewport edge. */
+.nx-topbar {
+  position: sticky;
+  top: 0;
+  z-index: 850;
+  min-height: var(--nx-topbar-h);
+  display: flex;
+  background-color: var(--bg-color);
+  border-bottom: 1px solid var(--border-color);
+}
+.nx-topbar-inner {
+  width: 100%;
+  max-width: var(--nx-page-max);
+  margin: 0 auto;
+  padding: 0 var(--nx-page-pad-x);
+  box-sizing: border-box; /* keep padding inside the width (see .dashboard note) */
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+.nx-topbar-spacer { flex: 1 1 auto; }
+.nx-mobile-menu-toggle {
+  display: none;
+  background: transparent;
+  border: 1px solid var(--border-color);
+  color: var(--text-color);
+  border-radius: 8px;
+  width: 36px;
+  height: 36px;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}
+
+.nx-sidebar-backdrop { display: none; }
+
+/* ---- Responsive: sidebar becomes an off-canvas drawer ---- */
+@media (max-width: 900px) {
+  .nx-sidebar {
+    position: fixed;
+    left: 0;
+    top: 0;
+    bottom: 0;
+    height: 100vh;
+    transform: translateX(-100%);
+    transition: transform 0.2s ease;
+    flex-basis: var(--nx-sidebar-w);
+    width: var(--nx-sidebar-w);
+    box-shadow: 2px 0 16px rgba(0, 0, 0, 0.25);
+  }
+  .nx-sidebar.mobile-open { transform: translateX(0); }
+  /* On mobile the collapse toggle is irrelevant; always show full nav */
+  .nx-sidebar.collapsed { flex-basis: var(--nx-sidebar-w); width: var(--nx-sidebar-w); }
+  .nx-sidebar.collapsed .nx-sidebar-label,
+  .nx-sidebar.collapsed .nx-sidebar-caret { display: flex; }
+  .nx-sidebar.collapsed .nx-sidebar-logo,
+  .nx-sidebar.collapsed .nx-sidebar-brand { display: flex; }
+  .nx-sidebar.collapsed .nx-sidebar-item { justify-content: flex-start; padding: 0.6rem 0.7rem; gap: 0.7rem; }
+  .nx-sidebar-collapse { display: none; }
+  .nx-sidebar-mobile-close {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: transparent;
+    border: 1px solid var(--border-color);
+    color: var(--text-secondary);
+    border-radius: 8px;
+    width: 32px;
+    height: 32px;
+    cursor: pointer;
+    margin-left: auto;
+  }
+  .nx-mobile-menu-toggle { display: flex; }
+  .nx-sidebar-backdrop {
+    display: block;
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.5);
+    z-index: 899;
+  }
+}
+
+/* ============================================================
+   NeXroll v2 — Page styling tuned for the sidebar shell (Phase 3B)
+   ============================================================ */
+
+/* The page content shares the same horizontal frame as the topbar (same
+   max-width + side padding), centered within the content column so it reads as
+   a balanced page rather than being jammed against the sidebar. */
+.nx-content .dashboard {
+  max-width: var(--nx-page-max);
+  margin: 0 auto;
+  padding: 1.5rem var(--nx-page-pad-x) 3rem;
+  width: 100%;
+  /* Include the horizontal padding in the width. Without border-box, width:100%
+     + padding made the page ~56px wider than its column, so once the sidebar
+     ate enough width (~<1700px expanded) the right edge got cut off. */
+  box-sizing: border-box;
+}
+
+/* Legacy in-page page titles (still used by full-screen views like the calendar
+   and a few modals). Kept compact; not sticky. */
+.nx-content .header {
+  font-size: 1.6rem;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  margin: 0 0 0.35rem;
+  line-height: 1.2;
+}
+.nx-content .header .header-icon {
+  color: var(--button-bg);
+}
+.nx-content .header + p {
+  padding-bottom: 1rem;
+  border-bottom: 1px solid var(--border-color);
+  margin-bottom: 1.25rem !important;
+}
+
+/* v2 sticky page header band: a single header rendered at the top of the
+   content column (a direct child of .nx-content), so it reliably stays pinned
+   just under the topbar while the whole page scrolls beneath it. */
+.nx-page-header {
+  position: sticky;
+  top: var(--nx-topbar-h);
+  z-index: 700;
+  background-color: var(--bg-color);
+  border-bottom: 1px solid var(--border-color);
+  padding: 0.85rem var(--nx-page-pad-x);
+}
+.nx-page-header-inner {
+  max-width: var(--nx-page-max);
+  margin: 0 auto;
+  width: 100%;
+}
+.nx-page-header-title {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin: 0;
+  font-size: 1.5rem;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  line-height: 1.2;
+  color: var(--text-color);
+}
+.nx-page-header-title .header-icon { color: var(--button-bg); }
+.nx-page-header-desc {
+  margin: 0.2rem 0 0;
+  font-size: 0.9rem;
+  color: var(--text-secondary);
+}
+
+/* Cards: slightly larger radius + softer, flatter look to match the sidebar. */
+.nx-content .card {
+  border-radius: 12px;
+  box-shadow: 0 1px 2px var(--shadow);
+  border: 1px solid var(--border-color);
+}
+.nx-content .card h2,
+.nx-content .card h3 {
+  letter-spacing: -0.01em;
+}
+
+/* Buttons: subtle modern rounding to echo the sidebar items. */
+.nx-content .button {
+  border-radius: 8px;
+}
+
+@media (max-width: 900px) {
+  :root {
+    --nx-page-pad-x: 1rem;
+  }
+  .nx-content .dashboard {
+    padding-top: 1rem;
+    padding-bottom: 2.5rem;
+  }
+  .nx-content .header {
+    font-size: 1.35rem;
+  }
+}
+
+/* Consistent vertical rhythm between stacked cards on a page. */
+.nx-content .dashboard > .card {
+  margin-bottom: 1rem;
+}
+.nx-content .dashboard > .card:last-child {
+  margin-bottom: 0;
+}
+
+/* Themed scrollbars so dark mode feels complete (sidebar + content). */
+.nx-sidebar,
+.nx-content,
+.nx-content * {
+  scrollbar-width: thin;
+  scrollbar-color: var(--border-color) transparent;
+}
+.nx-sidebar::-webkit-scrollbar,
+.nx-content ::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+.nx-sidebar::-webkit-scrollbar-thumb,
+.nx-content ::-webkit-scrollbar-thumb {
+  background: var(--border-color);
+  border-radius: 6px;
+  border: 2px solid var(--bg-color);
+}
+.nx-sidebar::-webkit-scrollbar-thumb:hover,
+.nx-content ::-webkit-scrollbar-thumb:hover {
+  background: var(--text-muted);
+}
+.nx-sidebar::-webkit-scrollbar-track,
+.nx-content ::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+/* ============================================================
+   NeXroll v2 — Toast notifications
+   ============================================================ */
+.nx-toast-host {
+  position: fixed;
+  bottom: 1.25rem;
+  right: 1.25rem;
+  z-index: 2000;
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+  max-width: min(380px, calc(100vw - 2rem));
+  pointer-events: none;
+}
+.nx-toast {
+  pointer-events: auto;
+  display: flex;
+  align-items: flex-start;
+  gap: 0.6rem;
+  padding: 0.7rem 0.8rem;
+  border-radius: 10px;
+  background: var(--card-bg);
+  color: var(--text-color);
+  border: 1px solid var(--border-color);
+  border-left: 3px solid var(--button-bg);
+  box-shadow: 0 6px 24px var(--shadow);
+  font-size: 0.88rem;
+  line-height: 1.35;
+  animation: nx-toast-in 0.18s ease-out;
+}
+.nx-toast-success { border-left-color: var(--success-color); }
+.nx-toast-info { border-left-color: var(--accent-color); }
+.nx-toast-icon {
+  display: flex;
+  align-items: center;
+  flex: 0 0 auto;
+  margin-top: 1px;
+}
+.nx-toast-success .nx-toast-icon { color: var(--success-color); }
+.nx-toast-info .nx-toast-icon { color: var(--accent-color); }
+.nx-toast-msg {
+  flex: 1 1 auto;
+  min-width: 0;
+  white-space: pre-line;     /* honor any single \n in short messages */
+  word-break: break-word;
+}
+.nx-toast-close {
+  flex: 0 0 auto;
+  background: transparent;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  padding: 0;
+  margin-top: 1px;
+  transition: color 0.13s ease;
+}
+.nx-toast-close:hover { color: var(--text-color); }
+
+@keyframes nx-toast-in {
+  from { opacity: 0; transform: translateY(8px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+@media (max-width: 600px) {
+  .nx-toast-host {
+    left: 1rem;
+    right: 1rem;
+    bottom: 1rem;
+    max-width: none;
+  }
+}
+
+/* ============================================================
+   NeXroll v2 — Reusable empty state
+   ============================================================ */
+.nx-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  gap: 0.6rem;
+  padding: 3.5rem 1.5rem;
+  background: var(--card-bg);
+  border: 1px dashed var(--border-color);
+  border-radius: 12px;
+  color: var(--text-secondary);
+}
+.nx-empty-icon {
+  display: inline-flex;
+  color: var(--text-muted);
+  opacity: 0.7;
+  margin-bottom: 0.25rem;
+}
+.nx-empty-title {
+  margin: 0;
+  font-size: 1.15rem;
+  font-weight: 700;
+  color: var(--text-color);
+}
+.nx-empty-text {
+  margin: 0 0 0.5rem;
+  font-size: 0.92rem;
+  max-width: 420px;
+}
+
+/* ============================================================
+   NeXroll v2 — Accessibility: keyboard focus rings
+   Only shows for keyboard navigation (:focus-visible), so mouse users see no
+   extra outline. Applies to all interactive controls.
+   ============================================================ */
+.nx-shell a:focus-visible,
+.nx-shell button:focus-visible,
+.nx-shell input:focus-visible,
+.nx-shell select:focus-visible,
+.nx-shell textarea:focus-visible,
+.nx-sidebar a:focus-visible,
+.nx-sidebar button:focus-visible,
+.nx-toast button:focus-visible {
+  outline: 2px solid var(--accent-color);
+  outline-offset: 2px;
+  border-radius: 6px;
+}
+/* Sidebar items already have rounded corners; keep the ring snug. */
+.nx-sidebar-item:focus-visible,
+.nx-sidebar-resource:focus-visible {
+  outline: 2px solid var(--accent-color);
+  outline-offset: -2px;
+}
+/* Search result rows have their own .active highlight (driven by keyboard
+   navigation), so the focus-visible accent ring is redundant — suppress it. */
+.nx-sidebar-search-item:focus,
+.nx-sidebar-search-item:focus-visible {
+  outline: none;
+}
+
+/* Topbar icon/utility buttons: lighter than primary .button so the bar reads as
+   a quiet utility strip. */
+.nx-topbar .nx-iconbtn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.3rem;
+  background: transparent;
+  border: 1px solid var(--border-color);
+  color: var(--text-secondary);
+  border-radius: 8px;
+  height: 32px;
+  padding: 0 0.6rem;
+  cursor: pointer;
+  font-size: 0.8rem;
+  transition: background-color 0.13s ease, color 0.13s ease, border-color 0.13s ease;
+}
+.nx-topbar .nx-iconbtn:hover {
+  background: var(--hover-bg);
+  color: var(--text-color);
+}
+.nx-topbar .nx-user {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  font-size: 0.8rem;
+  color: var(--text-secondary);
+}
+
+/* ============================================================
+   NeXroll v2 — Community Prerolls page
+   Reuses .nx-conn-hero for the status hero. Adds a search toolbar and
+   refined result rows. Wrap the page in .nx-community so form fields pick up
+   the shared themed styling (same rules as .nx-connect).
+   ============================================================ */
+.nx-community { --brand: var(--accent-color); }
+
+/* Themed form fields (mirror the .nx-connect treatment). */
+.nx-community input[type="text"],
+.nx-community input[type="search"],
+.nx-community input:not([type]),
+.nx-community select {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 0.6rem 0.8rem;
+  font-size: 0.95rem;
+  font-family: inherit;
+  color: var(--text-color);
+  background-color: var(--input-bg);
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  outline: none;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+.nx-community input::placeholder { color: var(--text-muted); opacity: 1; }
+.nx-community input:focus,
+.nx-community select:focus {
+  border-color: var(--button-bg);
+  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.18);
+}
+body.dark .nx-community input:focus,
+body.dark .nx-community select:focus { box-shadow: 0 0 0 3px rgba(79, 70, 229, 0.3); }
+
+/* Search toolbar */
+.nx-comm-toolbar {
+  display: flex;
+  gap: 0.6rem;
+  align-items: flex-end;
+  flex-wrap: wrap;
+}
+.nx-comm-search {
+  position: relative;
+  flex: 1 1 320px;
+  min-width: 240px;
+}
+.nx-comm-search > .nx-comm-search-icon {
+  position: absolute;
+  left: 12px; top: 50%;
+  transform: translateY(-50%);
+  color: var(--text-muted);
+  pointer-events: none;
+  display: flex;
+}
+.nx-comm-search input { padding-left: 38px !important; }
+.nx-comm-filter { flex: 0 0 auto; }
+.nx-comm-filter label {
+  display: block;
+  margin-bottom: 0.3rem;
+  font-size: 0.75rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  color: var(--text-muted);
+}
+.nx-comm-filter select { min-width: 130px; }
+
+/* Index/status meta chips inside the hero */
+.nx-comm-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  padding: 0.2rem 0.55rem;
+  border-radius: 999px;
+  font-size: 0.78rem;
+  font-weight: 600;
+  border: 1px solid var(--border-color);
+  background: var(--hover-bg);
+  color: var(--text-secondary);
+}
+.nx-comm-chip.ok    { color: var(--success-color); border-color: color-mix(in srgb, var(--success-color) 40%, transparent); background: color-mix(in srgb, var(--success-color) 12%, transparent); }
+.nx-comm-chip.link  { color: #3b82f6; border-color: rgba(59,130,246,0.4); background: rgba(59,130,246,0.12); }
+.nx-comm-chip.stale { color: #14b8a6; border-color: rgba(20,184,166,0.4); background: rgba(20,184,166,0.12); }
+
+/* Refined result rows */
+.nx-comm-results { display: flex; flex-direction: column; }
+.nx-comm-row {
+  display: flex;
+  align-items: center;
+  gap: 0.9rem;
+  padding: 0.75rem 0.25rem;
+  border-bottom: 1px solid var(--border-color);
+}
+.nx-comm-row:last-child { border-bottom: none; }
+.nx-comm-row-icon {
+  flex: 0 0 auto;
+  width: 38px; height: 38px;
+  border-radius: 8px;
+  display: flex; align-items: center; justify-content: center;
+  background: var(--hover-bg);
+  color: var(--text-secondary);
+}
+.nx-comm-row-body { flex: 1 1 auto; min-width: 0; }
+.nx-comm-row-title {
+  font-weight: 600;
+  color: var(--text-color);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.nx-comm-row-meta {
+  font-size: 0.8rem;
+  color: var(--text-secondary);
+  display: flex;
+  gap: 0.4rem;
+  flex-wrap: wrap;
+  margin-top: 0.1rem;
+}
+.nx-comm-row-actions { flex: 0 0 auto; display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap; justify-content: flex-end; }
+
+/* Community secondary action bar — visible row under the hero. Real actions on
+   the left; quiet utility links on the right. */
+.nx-comm-actionbar {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+.nx-comm-actionbar-spacer { flex: 1 1 auto; }
+.nx-comm-linkbtn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  background: transparent;
+  border: 1px solid transparent;
+  color: var(--text-secondary);
+  font: inherit;
+  font-size: 0.85rem;
+  padding: 0.4rem 0.6rem;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: background-color 0.13s ease, color 0.13s ease, border-color 0.13s ease;
+}
+.nx-comm-linkbtn:hover { background: var(--hover-bg); color: var(--text-color); }
+.nx-comm-linkbtn.active {
+  color: var(--accent-color);
+  border-color: color-mix(in srgb, var(--accent-color) 40%, transparent);
+  background: color-mix(in srgb, var(--accent-color) 10%, transparent);
+}
+
+/* ============================================================
+   NeXroll v2 — Indexing progress bar (community index build)
+   Width is driven by real backend progress; a single CSS transition makes it
+   glide. A shimmer overlay keeps it lively between updates.
+   ============================================================ */
+.nx-buildbar {
+  width: 100%;
+  padding: 0.75rem 0 0.25rem;
+}
+.nx-buildbar-track {
+  width: 100%;
+  height: 8px;
+  background: var(--hover-bg);
+  border: 1px solid var(--border-color);
+  border-radius: 999px;
+  overflow: hidden;
+}
+.nx-buildbar-fill {
+  position: relative;
+  height: 100%;
+  min-width: 0;
+  border-radius: 999px;
+  background: linear-gradient(90deg, var(--accent-color), #3b82f6);
+  /* Glide between real progress values; ease-out so it slows as it approaches
+     each target instead of snapping. */
+  transition: width 0.55s cubic-bezier(0.22, 1, 0.36, 1);
+  overflow: hidden;
+}
+.nx-buildbar-shimmer {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.35), transparent);
+  transform: translateX(-100%);
+  animation: nx-buildbar-shimmer 1.4s ease-in-out infinite;
+}
+@keyframes nx-buildbar-shimmer {
+  to { transform: translateX(100%); }
+}
+.nx-buildbar-info {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 1rem;
+  margin-top: 0.5rem;
+  font-size: 0.82rem;
+  color: var(--text-secondary);
+}
+.nx-buildbar-status {
+  flex: 1 1 auto;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.nx-buildbar-stats { flex: 0 0 auto; font-weight: 600; font-variant-numeric: tabular-nums; }
+
+/* ============================================================
+   NeXroll v2 — Create Schedule page
+   Wrap the page in .nx-sched: themed inputs/selects, consistent numbered
+   section cards, and a sticky create bar.
+   ============================================================ */
+.nx-sched {
+  max-width: 980px;
+  margin: 0 auto;
+}
+
+/* Themed form controls (mirror .nx-connect) */
+.nx-sched input[type="text"],
+.nx-sched input[type="date"],
+.nx-sched input[type="time"],
+.nx-sched input[type="number"],
+.nx-sched input:not([type]),
+.nx-sched select,
+.nx-sched textarea {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 0.6rem 0.75rem;
+  font-size: 0.95rem;
+  font-family: inherit;
+  color: var(--text-color);
+  background-color: var(--input-bg);
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  outline: none;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+.nx-sched input::placeholder { color: var(--text-muted); opacity: 1; }
+.nx-sched input:focus,
+.nx-sched select:focus,
+.nx-sched textarea:focus {
+  border-color: var(--button-bg);
+  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.18);
+}
+body.dark .nx-sched input:focus,
+body.dark .nx-sched select:focus,
+body.dark .nx-sched textarea:focus { box-shadow: 0 0 0 3px rgba(79, 70, 229, 0.3); }
+
+/* Section card */
+.nx-sched-section {
+  background: var(--card-bg);
+  border: 1px solid var(--border-color);
+  border-radius: 14px;
+  padding: 1.25rem 1.4rem;
+  margin-bottom: 1rem;
+  box-shadow: 0 1px 2px var(--shadow);
+}
+.nx-sched-section-head {
+  display: flex;
+  align-items: center;
+  gap: 0.7rem;
+  margin-bottom: 1.1rem;
+}
+.nx-sched-step {
+  flex: 0 0 auto;
+  width: 30px; height: 30px;
+  border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+  background: color-mix(in srgb, var(--button-bg) 14%, transparent);
+  color: var(--button-bg);
+  font-weight: 700;
+  font-size: 0.9rem;
+}
+.nx-sched-section-head h3 {
+  margin: 0;
+  font-size: 1.1rem;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+}
+.nx-sched-section-sub {
+  margin: -0.6rem 0 1.1rem 2.5rem;
+  font-size: 0.85rem;
+  color: var(--text-secondary);
+}
+
+/* Field label */
+.nx-sched-label {
+  display: block;
+  margin-bottom: 0.4rem;
+  font-size: 0.88rem;
+  font-weight: 600;
+  color: var(--text-color);
+}
+.nx-sched-label .req { color: var(--error-color); margin-left: 2px; }
+.nx-sched-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1.1rem;
+}
+@media (max-width: 680px) { .nx-sched-grid { grid-template-columns: 1fr; } }
+
+/* Mode / choice cards (Simple vs Sequence) */
+.nx-sched-choices {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.85rem;
+}
+@media (max-width: 680px) { .nx-sched-choices { grid-template-columns: 1fr; } }
+.nx-sched-choice {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  padding: 1rem 1.1rem;
+  border-radius: 10px;
+  border: 2px solid var(--border-color);
+  background: var(--bg-color);
+  cursor: pointer;
+  transition: border-color 0.15s ease, background-color 0.15s ease;
+}
+.nx-sched-choice:hover { border-color: color-mix(in srgb, var(--button-bg) 55%, var(--border-color)); }
+.nx-sched-choice.active {
+  border-color: var(--button-bg);
+  background: color-mix(in srgb, var(--button-bg) 8%, transparent);
+}
+.nx-sched-choice-title {
+  display: flex; align-items: center; gap: 0.5rem;
+  font-weight: 700; color: var(--text-color);
+}
+.nx-sched-choice-title .nx-sched-choice-check { margin-left: auto; color: var(--button-bg); }
+.nx-sched-choice-desc { font-size: 0.85rem; color: var(--text-secondary); margin: 0; line-height: 1.45; }
+
+/* Sticky create bar */
+.nx-sched-bar {
+  position: sticky;
+  bottom: 0;
+  z-index: 50;
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  justify-content: flex-end;
+  margin-top: 1rem;
+  padding: 0.85rem 1rem;
+  background: var(--card-bg);
+  border: 1px solid var(--border-color);
+  border-radius: 12px;
+  box-shadow: 0 -2px 12px var(--shadow);
+}
+.nx-sched-bar .nx-sched-bar-info { margin-right: auto; font-size: 0.85rem; color: var(--text-secondary); }
+
+/* My Schedules list: themed search/filter controls so they stop using ad-hoc
+   inline borders/widths and align cleanly. */
+.nx-sched-list input[type="text"],
+.nx-sched-list select {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 0.6rem 0.8rem;
+  font-size: 0.95rem;
+  font-family: inherit;
+  color: var(--text-color);
+  background-color: var(--input-bg);
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  outline: none;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+.nx-sched-list input[type="text"]::placeholder { color: var(--text-muted); opacity: 1; }
+.nx-sched-list input[type="text"]:focus,
+.nx-sched-list select:focus {
+  border-color: var(--button-bg);
+  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.18);
+}
+body.dark .nx-sched-list input[type="text"]:focus,
+body.dark .nx-sched-list select:focus { box-shadow: 0 0 0 3px rgba(79, 70, 229, 0.3); }
+
+/* Group headers (Currently Running / Enabled / Disabled) */
+.nx-sched-group-head {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.78rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-muted);
+  margin: 0.5rem 0 0.25rem;
+}
+
+/* ============================================================
+   NeXroll v2 — Settings pages
+   Themed inputs/selects + a consistent "setting row" block so each settings
+   sub-page reads the same. Page titles come from the sticky page header.
+   ============================================================ */
+.nx-settings input[type="text"],
+.nx-settings input[type="url"],
+.nx-settings input[type="password"],
+.nx-settings input[type="number"],
+.nx-settings input[type="search"],
+.nx-settings input[type="email"],
+.nx-settings input:not([type]),
+.nx-settings select,
+.nx-settings textarea {
+  box-sizing: border-box;
+  padding: 0.6rem 0.75rem;
+  font-size: 0.95rem;
+  font-family: inherit;
+  color: var(--text-color);
+  background-color: var(--input-bg);
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  outline: none;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+.nx-settings input::placeholder,
+.nx-settings textarea::placeholder { color: var(--text-muted); opacity: 1; }
+.nx-settings input:focus,
+.nx-settings select:focus,
+.nx-settings textarea:focus {
+  border-color: var(--button-bg);
+  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.18);
+}
+body.dark .nx-settings input:focus,
+body.dark .nx-settings select:focus,
+body.dark .nx-settings textarea:focus { box-shadow: 0 0 0 3px rgba(79, 70, 229, 0.3); }
+
+/* Consistent spacing between the stacked cards on a settings page. Most
+   settings sub-pages render several top-level .card blocks; the base .card has
+   no margin, so without this they touch. (Pages that use a single card with
+   .nx-setting-row blocks inside are unaffected — the rows carry their own
+   spacing.) */
+.nx-settings .card { margin-bottom: 1rem; }
+.nx-settings .card:last-child { margin-bottom: 0; }
+
+/* Hide the now-redundant in-page .header on settings pages (the sticky page
+   header supplies the title). Kept as a safety net in case any sub-page still
+   renders one. */
+.nx-settings > .nx-settings-legacy-header { display: none; }
+
+/* Reusable setting row: icon + title + description + control. */
+.nx-setting-row {
+  padding: 1rem 1.1rem;
+  background: var(--bg-color);
+  border: 1px solid var(--border-color);
+  border-radius: 10px;
+  margin-bottom: 1rem;
+}
+.nx-setting-row:last-child { margin-bottom: 0; }
+.nx-setting-row-head {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-bottom: 0.4rem;
+}
+.nx-setting-row-head h3 { margin: 0; font-size: 1rem; font-weight: 600; }
+.nx-setting-row-desc {
+  margin: 0 0 0.75rem;
+  color: var(--text-secondary);
+  font-size: 0.85rem;
+}
+
+/* ====================================================================
+   Categories page (v2 refresh). The action buttons use the standard
+   .button variants; here we make the search/filter/view toolbar a clean
+   responsive bar that stacks full-width on phones (the old version used
+   fixed % widths with no wrap and overflowed small screens).
+   ==================================================================== */
+.nx-cat-toolbar {
+  display: flex;
+  gap: 0.75rem;
+  align-items: center;
+  flex-wrap: wrap;
+  padding: 0.75rem;
+  background: var(--bg-color);
+  border: 1px solid var(--border-color);
+  border-radius: 10px;
+  margin-bottom: 1.25rem;
+}
+.nx-cat-toolbar .nx-cat-search {
+  flex: 1 1 320px;
+  min-width: 0;
+  padding: 0.6rem 0.85rem;
+  font-size: 0.92rem;
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  background: var(--card-bg);
+  color: var(--text-color);
+  box-sizing: border-box;
+}
+.nx-cat-toolbar .nx-cat-search:focus {
+  outline: none;
+  border-color: var(--accent-color);
+}
+.nx-cat-toolbar .nx-cat-filter {
+  flex: 0 0 auto;
+  padding: 0.6rem 0.85rem;
+  font-size: 0.92rem;
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  background: var(--card-bg);
+  color: var(--text-color);
+  cursor: pointer;
+  box-sizing: border-box;
+}
+.nx-cat-toolbar .view-toggle { margin-left: auto; flex: 0 0 auto; }
+
+/* Phone: everything stacks full width and the view toggle drops to its
+   own row instead of being pinned right (which caused the overflow). */
+@media (max-width: 620px) {
+  .nx-cat-toolbar .nx-cat-search { flex: 1 1 100%; }
+  .nx-cat-toolbar .nx-cat-filter { flex: 1 1 100%; }
+  .nx-cat-toolbar .view-toggle { margin-left: 0; flex: 1 1 100%; }
+  .nx-cat-toolbar .view-toggle .view-btn { flex: 1 1 0; justify-content: center; }
+}
+
+/* Bulk-selection info banner — theme-aware (the old hardcoded #fff3cd /
+   #856404 was invisible/wrong in dark mode). */
+.nx-cat-bulkbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+  padding: 0.7rem 1rem;
+  margin-bottom: 1rem;
+  border-radius: 10px;
+  font-size: 0.88rem;
+  color: var(--text-color);
+  background: color-mix(in srgb, #f59e0b 12%, transparent);
+  border: 1px solid color-mix(in srgb, #f59e0b 40%, transparent);
+}
+
+/* Keep the list-view table from blowing out narrow screens — it scrolls
+   horizontally within its own wrapper instead of widening the page. */
+.nx-cat-tablewrap { width: 100%; overflow-x: auto; -webkit-overflow-scrolling: touch; }
+
+/* ====================================================================
+   Time quick-pick chips (schedule create/edit forms). One-click presets
+   under each native time input; the input itself stays for arbitrary
+   times and follows the theme via color-scheme on body.light/.dark.
+   ==================================================================== */
+.nx-timepicks {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  margin-top: 0.45rem;
+}
+.nx-timepick {
+  padding: 0.22rem 0.6rem;
+  font-size: 0.75rem;
+  font-weight: 500;
+  border-radius: 999px;
+  border: 1px solid var(--border-color);
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: color 0.12s ease, background 0.12s ease, border-color 0.12s ease;
+}
+.nx-timepick:hover {
+  color: var(--text-color);
+  background: var(--hover-bg);
+}
+.nx-timepick.active {
+  background: var(--button-bg);
+  border-color: var(--button-bg);
+  color: #fff;
+}
+
+/* Quick Actions tile buttons: compact, left-aligned, truncating labels */
+.nx-qa-btn {
+  font-size: 0.78rem;
+  padding: 0.4rem 0.55rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 0.4rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+.nx-qa-btn svg { flex-shrink: 0; }
+
+/* Dashboard quick-actions bar (left side of the dashboard toolbar) */
+.nx-qa-bar {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  flex-wrap: wrap;
+  min-width: 0;
+}
+
+/* Upcoming Schedules tile: list shows ~6 entries, then scrolls. The sticky
+   fade sits at the viewport bottom of the scroll area to hint at more rows;
+   it is only rendered when there are more entries than fit. */
+.nx-upcoming-list {
+  max-height: 240px; /* ~4 schedule rows incl. gaps */
+  overflow-y: auto;
+  position: relative;
+  scrollbar-width: thin;
+}
+.nx-upcoming-fade {
+  position: sticky;
+  bottom: 0;
+  height: 72px;
+  margin-top: -72px;
+  background: linear-gradient(to bottom, transparent, var(--card-bg) 80%);
+  pointer-events: none;
+}

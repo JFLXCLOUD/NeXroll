@@ -557,6 +557,173 @@ class RadarrConnector:
         return None
 
 
+def classify_ytdlp_error(msg: str) -> dict:
+    """Map a yt-dlp error string to a stable category + user-facing guidance.
+
+    Distinguishes the cases the old code conflated: bot/auth wall (cookies
+    stale or missing) vs a specific video being unavailable (private, removed,
+    age/region-locked) vs everything else. Lets the UI stop telling users to
+    re-export cookies when the cookies are fine and only that video is bad.
+    """
+    m = (msg or '').lower()
+    if any(s in m for s in ["sign in to confirm", "who's watching", 'not a bot',
+                            'confirm you', 'sign in to view']):
+        return {'category': 'auth', 'reason': 'YouTube is requiring sign-in (bot wall). Your cookies are missing, stale, or rate-limited.'}
+    if any(s in m for s in ['private video', 'video unavailable', 'removed by the uploader',
+                            'no longer available', 'this video is not available', 'members-only',
+                            'account associated with this video has been terminated']):
+        return {'category': 'video_unavailable', 'reason': 'This specific video is unavailable (private, removed, members-only, or region-locked) - not a cookie problem.'}
+    if 'age' in m and ('restrict' in m or 'confirm' in m):
+        return {'category': 'age_restricted', 'reason': 'This video is age-restricted. Signed-in cookies are required for this one specifically.'}
+    if 'http error 429' in m or 'too many requests' in m:
+        return {'category': 'rate_limited', 'reason': 'YouTube is rate-limiting your IP. Wait a while, or try a VPN/different network.'}
+    if 'requested format is not available' in m or 'no video formats found' in m:
+        # Extraction + auth SUCCEEDED — yt-dlp reached the video and read its
+        # format list; it only failed to match a format string. For a probe
+        # (which downloads nothing) this proves sign-in works. The real
+        # downloader tries many format/player-client combos, so this is not a
+        # download blocker either.
+        return {'category': 'reachable', 'reason': 'Reached the video and authenticated (format selection is not relevant to a sign-in test).'}
+    return {'category': 'other', 'reason': (msg or 'Unknown error')[:300]}
+
+
+def search_youtube_trailers(query: str, limit: int = 3, search_pool: int = 10) -> list:
+    """Search YouTube for trailer candidates (used when the Radarr/TMDB-provided
+    trailer is unavailable). Returns up to `limit` lightweight dicts the UI can
+    show for preview + user-chosen download:
+        {id, title, channel, duration, url, thumbnail, view_count}
+
+    Uses a flat search (metadata only, no per-video extraction or download), so
+    it's fast and needs no PO token. Results are ranked toward genuine trailers
+    (title contains "trailer"/"official", sensible length) but kept in search
+    relevance order as a tiebreaker.
+    """
+    try:
+        import yt_dlp
+    except ImportError:
+        logger.warning("yt_dlp not available for trailer search")
+        return []
+
+    opts = {
+        'quiet': True, 'no_warnings': True, 'extract_flat': True,
+        'skip_download': True, 'noplaylist': True, 'socket_timeout': 30,
+    }
+    try:
+        with yt_dlp.YoutubeDL(opts) as ydl:
+            info = ydl.extract_info(f"ytsearch{search_pool}:{query}", download=False)
+        entries = (info or {}).get('entries') or []
+    except Exception as e:
+        logger.warning(f"YouTube trailer search failed for '{query}': {e}")
+        return []
+
+    seen = set()
+    scored = []
+    for idx, e in enumerate(entries):
+        if not e:
+            continue
+        vid = e.get('id')
+        if not vid or vid in seen:
+            continue
+        seen.add(vid)
+        title = e.get('title') or ''
+        dur = e.get('duration') or 0
+        # Skip obvious non-trailers (full movies, long reviews/reactions).
+        if dur and dur > 600:
+            continue
+        tl = title.lower()
+        score = 0
+        if 'trailer' in tl:
+            score += 3
+        if 'official' in tl:
+            score += 2
+        if 'teaser' in tl:
+            score += 1
+        if dur and 20 <= dur <= 240:
+            score += 2
+        scored.append((score, idx, {
+            'id': vid,
+            'title': title,
+            'channel': e.get('channel') or e.get('uploader') or '',
+            'duration': dur,
+            'url': f'https://www.youtube.com/watch?v={vid}',
+            'thumbnail': f'https://i.ytimg.com/vi/{vid}/hqdefault.jpg',
+            'view_count': e.get('view_count'),
+        }))
+
+    scored.sort(key=lambda t: (-t[0], t[1]))  # score desc, then search order
+    return [item for _, _, item in scored[:limit]]
+
+
+def probe_youtube(url: str, cookies_file=None, cookie_browser=None, timeout: int = 45) -> dict:
+    """Probe a single YouTube URL via the yt_dlp PYTHON MODULE (no CLI binary,
+    which doesn't exist in Docker/PyInstaller builds). Returns
+    {ok, title?, category?, reason?}. Used by the test/diagnostic endpoint so
+    it exercises the same code path production downloads use.
+    """
+    try:
+        import yt_dlp
+    except ImportError:
+        return {'ok': False, 'category': 'no_ytdlp', 'reason': 'yt-dlp module not available'}
+
+    opts = {
+        'quiet': True, 'no_warnings': True, 'noplaylist': True,
+        'skip_download': True, 'socket_timeout': timeout,
+        'no_check_certificate': True,
+        # This is a sign-in/reachability probe, not a download. Accept any
+        # format so format-string mismatches never fail it; we never fetch
+        # media anyway (download=False).
+        'format': 'best/bestvideo*+bestaudio/bestvideo*/worst',
+        'ignore_no_formats_error': True,
+    }
+    if cookies_file and Path(cookies_file).exists():
+        opts['cookiefile'] = str(cookies_file)
+    elif cookie_browser:
+        opts['cookiesfrombrowser'] = _parse_cookies_from_browser(cookie_browser)
+
+    try:
+        with yt_dlp.YoutubeDL(opts) as ydl:
+            info = ydl.extract_info(url, download=False)
+        return {'ok': True, 'title': info.get('title'), 'duration': info.get('duration')}
+    except yt_dlp.utils.DownloadError as e:
+        c = classify_ytdlp_error(str(e))
+        # "reachable" means extraction + auth worked (only format selection
+        # failed) — that's a PASS for a sign-in test.
+        if c.get('category') == 'reachable':
+            return {'ok': True, 'title': None, 'reason': c['reason']}
+        return {'ok': False, **c}
+    except Exception as e:
+        c = classify_ytdlp_error(str(e))
+        if c.get('category') == 'reachable':
+            return {'ok': True, 'title': None, 'reason': c['reason']}
+        return {'ok': False, **c}
+
+
+def _parse_cookies_from_browser(spec: str):
+    """Turn a yt-dlp CLI --cookies-from-browser spec into the Python-API tuple.
+
+    CLI form:  BROWSER[+KEYRING][:PROFILE][::CONTAINER]   e.g. "edge:+keyring"
+    API form:  (browser, profile, keyring, container)     e.g. ("edge", None, "+keyring", None)
+
+    The previous code passed the raw string as a 1-tuple, which yt-dlp rejected,
+    so every browser-cookie strategy silently failed.
+    """
+    browser = spec
+    profile = None
+    keyring = None
+    container = None
+    # KEYRING is attached to the browser with '+': "edge+gnomekeyring" or "edge:+keyring"
+    if '::' in browser:
+        browser, container = browser.split('::', 1)
+    if ':' in browser:
+        browser, profile = browser.split(':', 1)
+    if profile and profile.startswith('+'):
+        keyring = profile[1:] or None
+        profile = None
+    if '+' in browser:
+        browser, keyring = browser.split('+', 1)
+    return (browser.strip().lower(), profile or None, keyring or None, container or None)
+
+
 class TrailerDownloader:
     """Handles downloading trailers using yt-dlp with TMDB source discovery and browser cookie support"""
     
@@ -579,12 +746,19 @@ class TrailerDownloader:
         self.cookie_browser = cookie_browser  # 'chrome', 'firefox', 'edge', 'brave', 'auto'
         self.tmdb = TMDBTrailerFetcher(tmdb_api_key=tmdb_api_key)
         
-        # Quality format mapping
+        # Quality format mapping.
+        # PREFER H.264 (avc1) video + AAC (mp4a) audio first. Plex prerolls must
+        # DIRECT-PLAY (Plex never transcodes a preroll), and yt-dlp's default
+        # "bestvideo" at 1080p is usually VP9 — which many Plex clients can't
+        # direct-play, so VP9 trailers get silently skipped in a sequence while
+        # the H.264 dynamic/category prerolls play. Each entry then falls back to
+        # the old codec-agnostic selection so a video that only offers VP9/AV1
+        # still downloads (it just may not direct-play on every client).
         self.quality_formats = {
-            '720': 'bestvideo[height<=720]+bestaudio/best[height<=720]',
-            '1080': 'bestvideo[height<=1080]+bestaudio/best[height<=1080]',
-            '4k': 'bestvideo[height<=2160]+bestaudio/best[height<=2160]',
-            'best': 'bestvideo+bestaudio/best'
+            '720':  'bestvideo[vcodec^=avc1][height<=720]+bestaudio[acodec^=mp4a]/bestvideo[height<=720]+bestaudio/best[height<=720]/best/bestvideo+bestaudio/b',
+            '1080': 'bestvideo[vcodec^=avc1][height<=1080]+bestaudio[acodec^=mp4a]/bestvideo[height<=1080]+bestaudio/best[height<=1080]/best/bestvideo+bestaudio/b',
+            '4k':   'bestvideo[vcodec^=avc1][height<=2160]+bestaudio[acodec^=mp4a]/bestvideo[height<=2160]+bestaudio/best[height<=2160]/best/bestvideo+bestaudio/b',
+            'best': 'bestvideo[vcodec^=avc1]+bestaudio[acodec^=mp4a]/bestvideo+bestaudio/best/b'
         }
         
         # Detect available browser for cookies
@@ -726,11 +900,12 @@ class TrailerDownloader:
     
     async def download_trailer(
         self, 
-        url: str, 
-        title: str, 
+        url: str,
+        title: str,
         tmdb_id: int = None,
         year: int = None,
-        tvdb_id: int = None
+        tvdb_id: int = None,
+        only_provided_url: bool = False
     ) -> Optional[Dict[str, Any]]:
         """
         Download a trailer for a movie or TV show.
@@ -739,7 +914,12 @@ class TrailerDownloader:
         2. Apple Trailers (no bot detection)
         3. TMDB YouTube sources
         4. Other sources
-        
+
+        only_provided_url=True downloads EXACTLY `url` with no TMDB/Apple fallback.
+        Used when the user explicitly chose an alternate trailer in the picker, so
+        a failure is reported honestly instead of silently substituting a
+        different trailer.
+
         For TV shows, tmdb_id may be None - use tvdb_id instead for filename.
         Movies are stored in /movies subdirectory, TV shows in /tv subdirectory.
         """
@@ -778,8 +958,10 @@ class TrailerDownloader:
                 })
             
             # PRIORITY 2+: Get additional sources from TMDB (Apple Trailers, Vimeo, other YouTube)
-            # Only if we have a TMDB ID (movies, not TV shows)
-            if tmdb_id:
+            # Only if we have a TMDB ID (movies, not TV shows). Skipped when the
+            # caller asked to use exactly the provided URL (user-chosen alternate),
+            # so a failure isn't masked by quietly grabbing a different trailer.
+            if tmdb_id and not only_provided_url:
                 tmdb_sources = await self.tmdb.get_trailer_sources(tmdb_id, title=title, year=year)
                 
                 # Add TMDB sources, but avoid duplicates with the Radarr URL
@@ -849,176 +1031,163 @@ class TrailerDownloader:
                     last_error = f"Vimeo download failed for {source_name}"
                     
                 elif source_type == 'youtube':
-                    # Try multiple YouTube strategies in order of effectiveness
-                    youtube_strategies = []
+                    # Modern, lean YouTube strategy (2026). The heavy lifting is
+                    # done by the bgutil PO-token provider (backend/nexup_potoken.py)
+                    # and its yt-dlp plugin, which auto-attach a Proof-of-Origin
+                    # token so the default / tv / web_safari clients work WITHOUT
+                    # cookies and get past "Sign in to confirm you're not a bot".
+                    #
+                    # We make sure the token server is up, then try a SHORT ordered
+                    # list of clients that actually work today — instead of the old
+                    # ~30-strategy scattergun full of clients YouTube has since
+                    # killed (android/ios/mediaconnect/web_creator/…), which only
+                    # burned time and rate limit before failing.
+                    try:
+                        from backend import nexup_potoken
+                        _mgr = nexup_potoken.get_manager()
+                        if _mgr is not None:
+                            _ps = _mgr.ensure_running()
+                            if _ps.get('usable'):
+                                logger.info("PO-token provider active — cookieless YouTube downloads enabled")
+                            else:
+                                logger.info("PO-token provider not usable; falling back to cookies/clients")
+                    except Exception as _pe:
+                        logger.debug(f"PO-token provider check failed: {_pe}")
+
                     cookies_file = self.base_storage_path / 'youtube_cookies.txt'
                     oauth_file = self.base_storage_path / 'youtube_oauth.json'
-                    
-                    # Extract video ID for alternate URL formats
-                    video_id = None
-                    if 'watch?v=' in source_url:
-                        video_id = source_url.split('watch?v=')[1].split('&')[0]
-                    elif 'youtu.be/' in source_url:
-                        video_id = source_url.split('youtu.be/')[1].split('?')[0]
-                    
-                    # Strategy 0: Use exported cookies.txt file (most reliable!)
+                    base_flags = ['--force-ipv4', '--geo-bypass']
+
+                    youtube_strategies = []
+                    # 1. Default clients, cookieless. With a PO token this is the
+                    #    most reliable path for public trailers and avoids
+                    #    rate-limiting / flagging a signed-in account.
+                    youtube_strategies.append(list(base_flags))
+                    # 2-4. Explicit PO-token-friendly clients as fallbacks.
+                    for client in ('tv', 'web_safari', 'mweb'):
+                        youtube_strategies.append(base_flags + ['--extractor-args', f'youtube:player_client={client}'])
+                    # 5. Exported cookies.txt — for age-restricted / region-locked.
                     if cookies_file.exists():
                         logger.info(f"Using cookies file: {cookies_file}")
-                        youtube_strategies.append([
-                            '--cookies', str(cookies_file),
-                            '--force-ipv4', '--geo-bypass'
-                        ])
-                    else:
-                        logger.info(f"Cookie file not found at: {cookies_file} (base_storage_path={self.base_storage_path})")
-                    
-                    # Strategy 1: OAuth token file (very reliable, no expiry issues)
+                        youtube_strategies.append(base_flags + ['--cookies', str(cookies_file)])
+                    # 6. OAuth token file, if the user set one up.
                     if oauth_file.exists():
-                        logger.info(f"Using OAuth file: {oauth_file}")
-                        youtube_strategies.append([
-                            '--username', 'oauth',
-                            '--password', str(oauth_file),
-                            '--force-ipv4', '--geo-bypass'
-                        ])
-                    
-                    # Strategy 2: Try browser cookies with different browsers
+                        youtube_strategies.append(base_flags + ['--username', 'oauth', '--password', str(oauth_file)])
+                    # 7. tv_embedded — last-ditch age-gate bypass.
+                    youtube_strategies.append(base_flags + ['--extractor-args', 'youtube:player_client=tv_embedded'])
+                    # 8. Browser cookies, if a logged-in browser is available.
                     if cookie_browser:
-                        youtube_strategies.append([
-                            '--cookies-from-browser', f'{cookie_browser}:+keyring',
-                            '--force-ipv4', '--geo-bypass'
-                        ])
-                        youtube_strategies.append([
-                            '--cookies-from-browser', cookie_browser,
-                            '--force-ipv4', '--geo-bypass'
-                        ])
-                    
-                    # Try all detected browsers
-                    for browser in ['chrome', 'edge', 'firefox', 'brave', 'chromium', 'opera', 'vivaldi']:
-                        if browser != cookie_browser:
-                            youtube_strategies.append([
-                                '--cookies-from-browser', browser,
-                                '--force-ipv4', '--geo-bypass'
-                            ])
-                    
-                    # Strategy 3: Embedded player URL (often bypasses restrictions)
-                    if video_id:
-                        embed_url = f"https://www.youtube.com/embed/{video_id}"
-                        youtube_strategies.append([
-                            '--force-ipv4', '--geo-bypass',
-                            '--referer', 'https://www.google.com/',
-                            # Will use embed_url instead of source_url
-                            '__USE_EMBED_URL__', embed_url
-                        ])
-                    
-                    # Strategy 4: Player client variants (bypass bot detection)
-                    player_clients = [
-                        'tv_embedded',      # Smart TV embedded player - often works
-                        'mediaconnect',     # Chromecast-like - newer, good success
-                        'tv',               # Smart TV app
-                        'web_embedded',     # Web embedded player
-                        'web_creator',      # YouTube Studio player
-                        'web_music',        # YouTube Music player
-                        'mweb',             # Mobile web
-                        'android',          # Android app
-                        'android_music',    # YouTube Music Android
-                        'android_creator',  # YouTube Studio Android
-                        'ios',              # iOS app
-                        'ios_music',        # YouTube Music iOS
-                    ]
-                    
-                    for client in player_clients:
-                        youtube_strategies.append([
-                            '--extractor-args', f'youtube:player_client={client}',
-                            '--force-ipv4', '--geo-bypass'
-                        ])
-                    
-                    # Strategy 5: Combine player client with user agent spoofing
-                    user_agents = [
-                        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36',
-                        'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36',
-                        'Mozilla/5.0 (Linux; Android 13; Pixel 7) AppleWebKit/537.36 Chrome/120.0.0.0 Mobile Safari/537.36',
-                        'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 Mobile/15E148',
-                        'com.google.android.youtube/19.04.38 (Linux; U; Android 13)',  # YouTube Android app
-                    ]
-                    
-                    for ua in user_agents[:2]:  # Just try a couple
-                        youtube_strategies.append([
-                            '--extractor-args', 'youtube:player_client=web',
-                            '--user-agent', ua,
-                            '--force-ipv4', '--geo-bypass'
-                        ])
-                    
-                    # Strategy 6: Age gate bypass methods
-                    youtube_strategies.extend([
-                        ['--extractor-args', 'youtube:player_client=tv_embedded,web', '--force-ipv4', '--geo-bypass'],
-                        ['--extractor-args', 'youtube:player_skip=webpage', '--force-ipv4', '--geo-bypass'],
-                    ])
-                    
-                    # Strategy 7: Last resort - minimal options with delay
-                    youtube_strategies.append([
-                        '--force-ipv4', '--geo-bypass',
-                        '--sleep-requests', '2',
-                        '--min-sleep-interval', '3',
-                    ])
-                    
+                        youtube_strategies.append(base_flags + ['--cookies-from-browser', cookie_browser])
+
                     # Track if cookies were tried and failed with bot detection
                     cookies_tried_but_failed = False
-                    
+                    best_error = None        # most specific classified yt-dlp error seen
+                    last_strategy_msg = None  # raw text of the last failure
+
                     for i, strategy_args in enumerate(youtube_strategies):
-                        # Check for embed URL override
-                        actual_url = source_url
-                        actual_args = [a for a in strategy_args if not a.startswith('__USE_')]
-                        for j, arg in enumerate(strategy_args):
-                            if arg == '__USE_EMBED_URL__' and j + 1 < len(strategy_args):
-                                actual_url = strategy_args[j + 1]
-                                actual_args = [a for a in strategy_args[:j]]
-                                break
-                        
+                        actual_args = list(strategy_args)
                         strategy_desc = actual_args[:2] if actual_args else ['default']
                         logger.info(f"Trying YouTube strategy {i+1}/{len(youtube_strategies)}: {strategy_desc}")
-                        
+
                         result = await self._download_with_ytdlp(
-                            actual_url, output_template, title, tmdb_id,
+                            source_url, output_template, title, tmdb_id,
                             actual_args, creationflags, output_dir
                         )
-                        if result:
-                            if isinstance(result, dict) and result.get('path'):
-                                logger.info(f"Strategy {i+1} succeeded!")
-                                return result
-                            elif isinstance(result, dict) and result.get('error'):
-                                # Strategy failed with specific error
-                                if i == 0 and '--cookies' in str(actual_args):
-                                    # First strategy was cookies and it failed
-                                    if 'bot' in result.get('error', '').lower() or 'sign in' in result.get('error', '').lower():
-                                        cookies_tried_but_failed = True
-                                        logger.warning(f"Cookie file exists but authentication failed - cookies may be stale or expired")
-                        else:
-                            # None result - check if this was the cookies strategy
-                            if i == 0 and '--cookies' in str(actual_args):
+                        if isinstance(result, dict) and result.get('path'):
+                            logger.info(f"Strategy {i+1} succeeded!")
+                            return result
+
+                        # Capture the REAL yt-dlp error so we can tell the user the
+                        # actual reason (e.g. "video unavailable") instead of a guess.
+                        if isinstance(result, dict) and result.get('message'):
+                            last_strategy_msg = result['message']
+                            cls = classify_ytdlp_error(last_strategy_msg)
+                            if best_error is None and cls['category'] in (
+                                    'video_unavailable', 'age_restricted', 'rate_limited', 'auth'):
+                                best_error = {'category': cls['category'], 'raw': last_strategy_msg}
+                            if '--cookies' in actual_args and cls['category'] == 'auth':
                                 cookies_tried_but_failed = True
-                        
+                        elif '--cookies' in actual_args and not result:
+                            cookies_tried_but_failed = True
+
                         # Small delay between strategies to avoid rate limiting
                         if i < len(youtube_strategies) - 1:
                             await asyncio.sleep(0.5)
-                    
-                    # Provide more helpful error message based on what failed
-                    if cookies_tried_but_failed:
-                        last_error = f"YOUTUBE_BOT_BLOCK: YouTube bot detection triggered. Cookies exist but may be invalid/expired, or your IP is rate-limited. To fix: 1) Open Incognito/Private browser, 2) Login to YouTube, 3) Go to youtube.com/robots.txt, 4) Export cookies using a browser extension, 5) Save to your NeX-Up storage folder as 'youtube_cookies.txt'. See: github.com/yt-dlp/yt-dlp/wiki/Extractors#exporting-youtube-cookies"
-                        logger.warning(f"YouTube bot detection for {source_name}. Cookies file exists at {cookies_file} but YouTube still requires sign-in - may need proper cookie export or PO Token.")
+
+                    # Is the PO-token provider actually usable? Drives the guidance.
+                    pot_usable = False
+                    try:
+                        from backend import nexup_potoken
+                        _m = nexup_potoken.get_manager()
+                        pot_usable = bool(_m and _m.status().get('usable'))
+                    except Exception:
+                        pot_usable = False
+
+                    # Build an honest, specific message. Prefer the real classified
+                    # yt-dlp reason; only fall back to provider/transient guidance when
+                    # YouTube didn't give a concrete cause. The UPPER_CASE prefix is an
+                    # internal code the caller maps to a user message (it is stripped
+                    # before display).
+                    cat = best_error['category'] if best_error else None
+                    raw_short = ''
+                    if best_error:
+                        raw_short = str(best_error['raw']).splitlines()[0].strip()[:180]
+                    elif last_strategy_msg:
+                        raw_short = str(last_strategy_msg).splitlines()[0].strip()[:180]
+
+                    if cat == 'video_unavailable':
+                        last_error = (
+                            "VIDEO_UNAVAILABLE: This trailer can't be downloaded because YouTube reports the "
+                            "source video as unavailable — it's private, removed, members-only, or blocked in "
+                            "your country. This is the video itself, not your NeXroll setup, so retrying won't "
+                            "help; use a different trailer if one is available."
+                            + (f" [YouTube: {raw_short}]" if raw_short else "")
+                        )
+                    elif cat == 'age_restricted':
+                        last_error = (
+                            "AGE_RESTRICTED: This trailer is age-restricted, so YouTube requires a signed-in "
+                            "account even with PO tokens. Open 'Advanced: sign in for age-restricted trailers' "
+                            "on the YouTube Downloads card, add your cookies, then retry."
+                        )
+                    elif cat == 'rate_limited':
+                        last_error = (
+                            "RATE_LIMITED: YouTube is temporarily rate-limiting this IP (too many requests in a "
+                            "short time). Wait a while, or use a different network/VPN, then retry."
+                        )
+                    elif not pot_usable:
+                        last_error = (
+                            "YOUTUBE_BOT_BLOCK: YouTube requires a Proof-of-Origin (PO) token and the token "
+                            "provider isn't active. Install the YouTube downloader (Node + PO-token provider) on "
+                            f"the System page, then retry. Age-restricted trailers can also use cookies at {cookies_file}."
+                        )
+                    elif cat == 'auth' or cookies_tried_but_failed:
+                        last_error = (
+                            "YOUTUBE_BOT_BLOCK: YouTube still demanded sign-in even with the PO-token provider "
+                            "active — usually an age-restricted video or a briefly rate-limited IP. Add cookies "
+                            f"via 'Advanced: sign in' ({cookies_file}) and retry."
+                        )
                     else:
-                        last_error = f"All {len(youtube_strategies)} YouTube strategies failed for {source_name}. Try: Export cookies to {cookies_file} from an Incognito window. See: github.com/yt-dlp/yt-dlp/wiki/Extractors#exporting-youtube-cookies"
+                        last_error = (
+                            f"DOWNLOAD_FAILED: Couldn't download this trailer after {len(youtube_strategies)} attempts."
+                            + (f" [YouTube: {raw_short}]" if raw_short
+                               else " YouTube didn't report a specific reason — this is often a transient block, so try again shortly.")
+                        )
                     logger.warning(last_error)
-            
+
             logger.error(f"All trailer sources failed for {title}. Last error: {last_error}")
-            # Return error info so UI can show helpful message
-            if last_error and ('YOUTUBE_BOT_BLOCK' in last_error or 'STALE_COOKIES' in last_error):
-                return {'error': 'YOUTUBE_BOT_BLOCK', 'message': last_error}
-            return None
-            
+            # Map the message prefix to a stable error code the UI can branch on.
+            code = 'DOWNLOAD_FAILED'
+            for prefix in ('YOUTUBE_BOT_BLOCK', 'VIDEO_UNAVAILABLE', 'AGE_RESTRICTED', 'RATE_LIMITED'):
+                if last_error and last_error.startswith(prefix):
+                    code = prefix
+                    break
+            return {'error': code, 'message': last_error or 'All download strategies failed'}
+
         except Exception as e:
             logger.error(f"Error downloading trailer for {title}: {e}")
             import traceback
             logger.error(f"Traceback: {traceback.format_exc()}")
-            return None
+            return {'error': 'EXCEPTION', 'message': str(e)}
     
     async def _download_with_ytdlp(
         self,
@@ -1074,7 +1243,11 @@ class TrailerDownloader:
                 ydl_opts['cookiefile'] = extra_args[i + 1]
                 i += 2
             elif arg == '--cookies-from-browser' and i + 1 < len(extra_args):
-                ydl_opts['cookiesfrombrowser'] = (extra_args[i + 1],)
+                # yt-dlp's Python API wants a structured tuple
+                # (browser, profile, keyring, container) - NOT the CLI string
+                # form "edge:+keyring". Parse the CLI spec into that tuple, or
+                # the browser cookie strategies silently fail.
+                ydl_opts['cookiesfrombrowser'] = _parse_cookies_from_browser(extra_args[i + 1])
                 i += 2
             elif arg == '--username' and i + 1 < len(extra_args):
                 ydl_opts['username'] = extra_args[i + 1]
@@ -1315,8 +1488,10 @@ class NexUpManager:
                     movie['title'],
                     movie['tmdb_id']
                 )
-                
-                if download_result:
+
+                # download_trailer returns an {'error','message'} dict on
+                # failure now, so require an actual path (not just truthiness).
+                if download_result and isinstance(download_result, dict) and download_result.get('path'):
                     # Create database entry
                     trailer = models.ComingSoonTrailer(
                         radarr_movie_id=movie['radarr_id'],

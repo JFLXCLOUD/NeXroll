@@ -46,7 +46,7 @@ class DynamicPrerollGenerator:
     # Available templates with enhanced visual styles
     TEMPLATES = {
         'coming_soon': {
-            'name': '🎬 Coming Soon',
+            'name': 'Coming Soon',
             'description': 'Cinematic intro announcing upcoming content with glow effects and dramatic animations.',
             'duration': 5,
             'variables': ['server_name'],
@@ -54,7 +54,7 @@ class DynamicPrerollGenerator:
             'style': 'cinematic'
         },
         'feature_presentation': {
-            'name': '🎭 Feature Presentation',
+            'name': 'Feature Presentation',
             'description': 'Classic theater-style "Feature Presentation" with elegant text and decorative elements.',
             'duration': 5,
             'variables': ['server_name'],
@@ -62,7 +62,7 @@ class DynamicPrerollGenerator:
             'style': 'classic'
         },
         'now_showing': {
-            'name': '📽️ Now Showing',
+            'name': 'Now Showing',
             'description': 'Retro film-style "Now Showing" with film grain effect. Warm sepia tones.',
             'duration': 4,
             'variables': ['server_name'],
@@ -96,35 +96,35 @@ class DynamicPrerollGenerator:
         'fr': {
             'coming_soon': 'PROCHAINEMENT',
             'to': 'sur',
-            'feature_presentation': 'LONG M\\u00c9TRAGE',
+            'feature_presentation': 'LONG MÉTRAGE',
             'feature': 'LONG',
-            'presentation': 'M\\u00c9TRAGE',
-            'now_showing': "\\u00c0 L'AFFICHE",
+            'presentation': 'MÉTRAGE',
+            'now_showing': "À L'AFFICHE",
             'at': 'sur',
             'coming_soon_to': 'PROCHAINEMENT SUR',
             'available_now': 'Maintenant disponible!',
         },
         'es': {
-            'coming_soon': 'PR\\u00d3XIMAMENTE',
+            'coming_soon': 'PRÓXIMAMENTE',
             'to': 'en',
-            'feature_presentation': 'FUNCI\\u00d3N PRINCIPAL',
-            'feature': 'FUNCI\\u00d3N',
+            'feature_presentation': 'FUNCIÓN PRINCIPAL',
+            'feature': 'FUNCIÓN',
             'presentation': 'PRINCIPAL',
             'now_showing': 'EN CARTELERA',
             'at': 'en',
-            'coming_soon_to': 'PR\\u00d3XIMAMENTE EN',
-            'available_now': '\\u00a1Disponible!',
+            'coming_soon_to': 'PRÓXIMAMENTE EN',
+            'available_now': '¡Disponible!',
         },
         'de': {
-            'coming_soon': 'DEMN\\u00c4CHST',
+            'coming_soon': 'DEMNÄCHST',
             'to': 'auf',
             'feature_presentation': 'HAUPTFILM',
             'feature': 'HAUPT',
             'presentation': 'FILM',
             'now_showing': 'JETZT IM PROGRAMM',
             'at': 'auf',
-            'coming_soon_to': 'DEMN\\u00c4CHST AUF',
-            'available_now': 'Jetzt verf\\u00fcgbar!',
+            'coming_soon_to': 'DEMNÄCHST AUF',
+            'available_now': 'Jetzt verfügbar!',
         },
     }
     
@@ -208,43 +208,88 @@ class DynamicPrerollGenerator:
         return None
     
     def _get_font_path(self, font_name: str = 'arial') -> tuple:
-        """Get font file path and escaped version for FFmpeg"""
+        """Get font file path and escaped version for FFmpeg drawtext.
+
+        Searches Windows fonts first, then Linux/Docker font directories. This
+        matters because FFmpeg's drawtext, when given no fontfile, falls back to
+        a built-in font with poor extended-Latin coverage — so glyphs like the
+        German umlauts (ä/ö/ü), accented characters, etc. render as garbage.
+        On Linux/Docker we resolve to DejaVu (broad Unicode coverage) or
+        Liberation as a fallback. Each logical style maps to candidate filenames
+        across platforms; we return the first that exists.
+        """
         if font_name in self._font_cache:
             return self._font_cache[font_name]
-        
-        windows_fonts = os.environ.get('WINDIR', r'C:\Windows') + r'\Fonts'
-        
-        # Font mappings for different styles
+
+        # Per-style candidate filenames (Windows + Linux DejaVu/Liberation).
         font_files = {
-            'arial': ['arial.ttf', 'ArialMT.ttf'],
-            'arial_bold': ['arialbd.ttf', 'Arial-BoldMT.ttf'],
-            'times': ['times.ttf', 'TimesNewRomanPSMT.ttf'],
-            'georgia': ['georgia.ttf', 'Georgia.ttf'],
-            'impact': ['impact.ttf', 'Impact.ttf'],
-            'segoe': ['segoeui.ttf', 'SegoeUI.ttf'],
-            'segoe_bold': ['segoeuib.ttf', 'SegoeUI-Bold.ttf'],
-            'consolas': ['consola.ttf', 'Consolas.ttf'],
+            'arial':       ['arial.ttf', 'ArialMT.ttf', 'DejaVuSans.ttf', 'LiberationSans-Regular.ttf'],
+            'arial_bold':  ['arialbd.ttf', 'Arial-BoldMT.ttf', 'DejaVuSans-Bold.ttf', 'LiberationSans-Bold.ttf'],
+            'times':       ['times.ttf', 'TimesNewRomanPSMT.ttf', 'DejaVuSerif.ttf', 'LiberationSerif-Regular.ttf'],
+            'georgia':     ['georgia.ttf', 'Georgia.ttf', 'DejaVuSerif.ttf', 'LiberationSerif-Regular.ttf'],
+            'impact':      ['impact.ttf', 'Impact.ttf', 'DejaVuSans-Bold.ttf', 'LiberationSans-Bold.ttf'],
+            'segoe':       ['segoeui.ttf', 'SegoeUI.ttf', 'DejaVuSans.ttf', 'LiberationSans-Regular.ttf'],
+            'segoe_bold':  ['segoeuib.ttf', 'SegoeUI-Bold.ttf', 'DejaVuSans-Bold.ttf', 'LiberationSans-Bold.ttf'],
+            'consolas':    ['consola.ttf', 'Consolas.ttf', 'DejaVuSansMono.ttf', 'LiberationMono-Regular.ttf'],
         }
-        
-        candidates = font_files.get(font_name, ['arial.ttf'])
+
+        # Directories to search, in order. Windows fonts dir + common Linux paths
+        # (Debian/Ubuntu Docker base ships fonts under /usr/share/fonts/truetype).
+        search_dirs = [
+            os.environ.get('WINDIR', r'C:\Windows') + os.sep + 'Fonts',
+            '/usr/share/fonts/truetype/dejavu',
+            '/usr/share/fonts/truetype/liberation',
+            '/usr/share/fonts/truetype/liberation2',
+            '/usr/share/fonts/dejavu',
+            '/usr/share/fonts',
+            '/usr/local/share/fonts',
+            '/Library/Fonts',
+            '/System/Library/Fonts',
+        ]
+
+        candidates = font_files.get(font_name, font_files['arial'])
+        # Always allow DejaVu as a final universal fallback.
+        for fb in ('DejaVuSans-Bold.ttf' if 'bold' in font_name else 'DejaVuSans.ttf', 'DejaVuSans.ttf'):
+            if fb not in candidates:
+                candidates.append(fb)
+
         font_file = None
-        
         for candidate in candidates:
-            path = os.path.join(windows_fonts, candidate)
-            if os.path.exists(path):
-                font_file = path
+            for d in search_dirs:
+                path = os.path.join(d, candidate)
+                if os.path.exists(path):
+                    font_file = path
+                    break
+            if font_file:
                 break
-        
+
+        # Last resort: recursively scan the Linux fonts tree for a DejaVu Sans.
         if not font_file:
-            # Fallback to arial
-            font_file = os.path.join(windows_fonts, 'arial.ttf')
-        
-        if os.path.exists(font_file):
+            want = 'DejaVuSans-Bold.ttf' if 'bold' in font_name else 'DejaVuSans.ttf'
+            for base in ('/usr/share/fonts', '/usr/local/share/fonts'):
+                if os.path.isdir(base):
+                    for root, _dirs, files in os.walk(base):
+                        if want in files:
+                            font_file = os.path.join(root, want)
+                            break
+                        if 'DejaVuSans.ttf' in files:
+                            font_file = os.path.join(root, 'DejaVuSans.ttf')
+                    if font_file:
+                        break
+
+        if font_file and os.path.exists(font_file):
+            # FFmpeg fontfile path: forward slashes, escape the Windows drive colon.
             escaped = font_file.replace('\\', '/').replace(':', '\\:')
             result = (font_file, f":fontfile='{escaped}'")
         else:
+            # No fontfile found — drawtext will use its built-in default. Log so
+            # the umlaut-rendering cause is diagnosable.
+            try:
+                logger.warning(f"[Font] No font file found for '{font_name}'; FFmpeg will use its default (extended-Latin glyphs may not render)")
+            except Exception:
+                pass
             result = (None, "")
-        
+
         self._font_cache[font_name] = result
         return result
     

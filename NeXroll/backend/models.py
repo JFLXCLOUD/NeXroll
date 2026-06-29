@@ -83,6 +83,10 @@ class Schedule(Base):
     # Holiday tracking fields for auto-updating variable date holidays
     holiday_name = Column(String, nullable=True)  # e.g., "Thanksgiving", "Easter"
     holiday_country = Column(String, nullable=True)  # e.g., "US", "CA"
+    # When this schedule was created from a saved sequence, remember which one
+    # so edits to that saved sequence can be propagated back into this
+    # schedule's embedded `sequence` copy. Null for schedules built ad-hoc.
+    source_sequence_id = Column(Integer, nullable=True)
 
     category = relationship("Category", foreign_keys=[category_id])
     fallback_category = relationship("Category", foreign_keys=[fallback_category_id])
@@ -233,6 +237,10 @@ class Setting(Base):
     # App state
     active_category = Column(Integer, ForeignKey("categories.id"))
     timezone = Column(String, default="UTC")  # User's timezone (e.g., "America/New_York")
+    # v2 onboarding: True once the first-run setup wizard has been completed/skipped.
+    # Existing (v1.x) databases are marked complete during migration so upgraders
+    # are never forced through the wizard.
+    onboarding_complete = Column(Boolean, default=False)
     updated_at = Column(DateTime, default=datetime.datetime.utcnow)
     override_expires_at = Column(DateTime, nullable=True)
     path_mappings = Column(Text, nullable=True)  # JSON list of {"local": "...", "plex": "..."} path prefix mappings

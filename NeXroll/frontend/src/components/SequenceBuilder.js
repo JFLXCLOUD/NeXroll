@@ -98,7 +98,7 @@ const SequenceBuilder = ({ blocks: externalBlocks = [], onBlocksChange, initialS
     const defaults = {
       random: { category_id: categories[0]?.id || null, count: 1 },
       fixed: { preroll_ids: [] },
-      nexup_trailers: { source: 'both', count: 2 },
+      nexup_trailers: { source: 'both', count: 2, mode: 'random' },
       coming_soon_list: { layout: 'grid' },
       dynamic_preroll: { template: '', theme: '' },
     };
@@ -804,11 +804,18 @@ const SequenceBuilder = ({ blocks: externalBlocks = [], onBlocksChange, initialS
       />
 
       {/* Pattern Export Modal */}
+      {/* Export the blocks currently in the builder (ad-hoc mode). This sequence
+          isn't a saved SavedSequence row here, so we pass `blocks` rather than an
+          id - exporting by `scheduleId` (a Schedule id in the schedule editor)
+          would mismatch the by-id /sequences/{id}/export endpoint. */}
       {scheduleId && (
         <PatternExport
           isOpen={showExportModal}
           onClose={() => setShowExportModal(false)}
           scheduleId={scheduleId}
+          scheduleName={initialName || 'Sequence'}
+          description={initialDescription || ''}
+          blocks={blocks}
         />
       )}
 

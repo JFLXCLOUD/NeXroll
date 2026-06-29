@@ -677,7 +677,7 @@ const PatternImport = ({ isOpen, onClose, onImport }) => {
               }}
             >
               <p style={{ margin: 0, fontSize: '0.9rem', color: 'var(--text-color)', lineHeight: '1.6' }}>
-                <strong>📂 Configure Import Destinations</strong>
+                <strong>Configure Import Destinations</strong>
               </p>
               <p style={{ margin: '0.5rem 0 0 0', fontSize: '0.85rem', color: '#9ca3af', lineHeight: '1.5' }}>
                 Choose where to import each folder and preroll from the bundle. You can select existing categories or create new ones.
@@ -749,7 +749,7 @@ const PatternImport = ({ isOpen, onClose, onImport }) => {
                               minWidth: '200px',
                             }}
                           >
-                            <option value={`new:${cat.name}`}>➕ Create: {cat.name}</option>
+                            <option value={`new:${cat.name}`}>Create: {cat.name}</option>
                             {availableCategories.map(c => (
                               <option key={c.id} value={c.id}>{c.name}</option>
                             ))}
@@ -829,7 +829,7 @@ const PatternImport = ({ isOpen, onClose, onImport }) => {
                               minWidth: '200px',
                             }}
                           >
-                            <option value="new:Imported">➕ Create: Imported</option>
+                            <option value="new:Imported">Create: Imported</option>
                             {availableCategories.map(c => (
                               <option key={c.id} value={c.id}>{c.name}</option>
                             ))}
@@ -954,8 +954,8 @@ const PatternImport = ({ isOpen, onClose, onImport }) => {
                   </div>
                   <div style={{ fontSize: '0.8rem', color: '#9ca3af', marginTop: '0.25rem' }}>
                     {previewPlaylist[currentPreviewIndex]?.type === 'fixed' 
-                      ? '🎯 Fixed Block' 
-                      : `🎲 Random from ${previewPlaylist[currentPreviewIndex]?.category} (${previewPlaylist[currentPreviewIndex]?.totalInCategory || '?'} available)`}
+                      ? 'Fixed Block' 
+                      : `Random from ${previewPlaylist[currentPreviewIndex]?.category} (${previewPlaylist[currentPreviewIndex]?.totalInCategory || '?'} available)`}
                   </div>
                 </div>
 
@@ -1652,34 +1652,14 @@ const PatternImport = ({ isOpen, onClose, onImport }) => {
             <>
               <button
                 onClick={onClose}
-                style={{
-                  padding: '0.75rem 1.5rem',
-                  backgroundColor: 'transparent',
-                  color: 'var(--text-color)',
-                  border: '2px solid var(--border-color)',
-                  borderRadius: '0.5rem',
-                  cursor: 'pointer',
-                  fontSize: '1rem',
-                }}
+                className="button button-secondary"
               >
                 Cancel
               </button>
               <button
                 onClick={handlePreview}
                 disabled={!selectedFile || isLoading}
-                style={{
-                  padding: '0.75rem 1.5rem',
-                  backgroundColor: !selectedFile || isLoading ? '#9ca3af' : '#667eea',
-                  color: 'white',
-                  border: 'none',
-                  borderRadius: '0.5rem',
-                  cursor: !selectedFile || isLoading ? 'not-allowed' : 'pointer',
-                  fontSize: '1rem',
-                  fontWeight: 'bold',
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: '0.5rem',
-                }}
+                className="button"
               >
                 {isLoading ? <><Loader2 size={16} className="spin" /> Analyzing...</> : <><Eye size={16} /> Preview Import</>}
               </button>
@@ -1690,37 +1670,14 @@ const PatternImport = ({ isOpen, onClose, onImport }) => {
             <>
               <button
                 onClick={handleReset}
-                style={{
-                  padding: '0.75rem 1.5rem',
-                  backgroundColor: 'transparent',
-                  color: 'var(--text-color)',
-                  border: '2px solid var(--border-color)',
-                  borderRadius: '0.5rem',
-                  cursor: 'pointer',
-                  fontSize: '1rem',
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: '0.5rem',
-                }}
+                className="button button-secondary"
               >
                 <ArrowLeft size={16} /> Start Over
               </button>
               <button
                 onClick={handleConfirmMappings}
                 disabled={isLoading}
-                style={{
-                  padding: '0.75rem 1.5rem',
-                  backgroundColor: isLoading ? '#9ca3af' : '#10b981',
-                  color: 'white',
-                  border: 'none',
-                  borderRadius: '0.5rem',
-                  cursor: isLoading ? 'not-allowed' : 'pointer',
-                  fontSize: '1rem',
-                  fontWeight: 'bold',
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: '0.5rem',
-                }}
+                className="button button-success"
               >
                 {isLoading ? <><Loader2 size={16} className="spin" /> Importing...</> : <><CheckCircle size={16} /> Import with Mappings</>}
               </button>
@@ -1731,37 +1688,14 @@ const PatternImport = ({ isOpen, onClose, onImport }) => {
             <>
               <button
                 onClick={handleReset}
-                style={{
-                  padding: '0.75rem 1.5rem',
-                  backgroundColor: 'transparent',
-                  color: 'var(--text-color)',
-                  border: '2px solid var(--border-color)',
-                  borderRadius: '0.5rem',
-                  cursor: 'pointer',
-                  fontSize: '1rem',
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: '0.5rem',
-                }}
+                className="button button-secondary"
               >
                 <ArrowLeft size={16} /> Start Over
               </button>
               <button
                 onClick={handleConfirmBundleImport}
                 disabled={isLoading}
-                style={{
-                  padding: '0.75rem 1.5rem',
-                  backgroundColor: isLoading ? '#9ca3af' : '#10b981',
-                  color: 'white',
-                  border: 'none',
-                  borderRadius: '0.5rem',
-                  cursor: isLoading ? 'not-allowed' : 'pointer',
-                  fontSize: '1rem',
-                  fontWeight: 'bold',
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: '0.5rem',
-                }}
+                className="button button-success"
               >
                 {isLoading ? (
                   <><Loader2 size={16} className="spin" /> Importing...</>
@@ -1776,18 +1710,7 @@ const PatternImport = ({ isOpen, onClose, onImport }) => {
             <>
               <button
                 onClick={handleReset}
-                style={{
-                  padding: '0.75rem 1.5rem',
-                  backgroundColor: 'transparent',
-                  color: 'var(--text-color)',
-                  border: '2px solid var(--border-color)',
-                  borderRadius: '0.5rem',
-                  cursor: 'pointer',
-                  fontSize: '1rem',
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: '0.5rem',
-                }}
+                className="button button-secondary"
               >
                 <ArrowLeft size={16} /> Start Over
               </button>
@@ -1813,19 +1736,7 @@ const PatternImport = ({ isOpen, onClose, onImport }) => {
               <button
                 onClick={handleConfirmImport}
                 disabled={!previewData?.blocks || previewData.blocks.length === 0}
-                style={{
-                  padding: '0.75rem 1.5rem',
-                  backgroundColor: (!previewData?.blocks || previewData.blocks.length === 0) ? '#9ca3af' : '#10b981',
-                  color: 'white',
-                  border: 'none',
-                  borderRadius: '0.5rem',
-                  cursor: (!previewData?.blocks || previewData.blocks.length === 0) ? 'not-allowed' : 'pointer',
-                  fontSize: '1rem',
-                  fontWeight: 'bold',
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: '0.5rem',
-                }}
+                className="button button-success"
               >
                 <CheckCircle size={16} /> {step === 'ready' ? 'Complete Import' : 'Import Pattern'}
               </button>

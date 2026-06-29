@@ -13,9 +13,9 @@ Unlike Plex (which uses a simple preroll path string), Jellyfin requires a plugi
 
 ## Requirements
 
-- **Jellyfin 10.10+** (uses the `IIntroProvider` API)
-- **NeXroll v1.12.0+**
-- **.NET 8 SDK** (only needed if building from source)
+- **Jellyfin 10.11+** (uses the `IIntroProvider` API)
+- **NeXroll v1.12.0+** — use **plugin v1.14.0+** for Docker/Unraid; it fixes preroll caching when Jellyfin can't read the files directly
+- **.NET 9 SDK** (only needed if building from source)
 - Network access between NeXroll and Jellyfin (default port: 9393)
 
 ## Step 1: Connect NeXroll to Jellyfin
@@ -41,9 +41,10 @@ If NeXroll is already connected to Jellyfin, it can detect and configure the plu
 2. Click **Detect Plugin** — NeXroll will check if the plugin is already installed
 3. If detected, click **Configure Plugin** to push your NeXroll URL and settings to the plugin
 
-### Option 2: Pre-built DLL
+### Option 2: Download the plugin package (zip)
 
-1. Download [`NeXroll.Jellyfin.dll`](https://github.com/JFLXCLOUD/NeXroll/raw/main/Plugins/NeXroll.Jellyfin.dll) from the repository
+1. Download the plugin zip — either from NeXroll's **Connect → Jellyfin** page (the **Download Plugin** link, served straight from your NeXroll), or from the [GitHub releases](https://github.com/JFLXCLOUD/NeXroll/releases) (`NeXroll.Jellyfin-<version>.zip`).
+   > The zip contains `NeXroll.Jellyfin.dll`, `meta.json`, and `thumb.png`. A **bare DLL won't register** — Jellyfin needs `meta.json` for the plugin's name and version.
 2. Create a folder in your Jellyfin plugins directory:
    ```
    <Jellyfin Data>/plugins/NeXroll Intros/
@@ -54,13 +55,13 @@ If NeXroll is already connected to Jellyfin, it can detect and configure the plu
    - **Windows**: `C:\ProgramData\Jellyfin\Server\plugins\NeXroll Intros\`
    - **Linux**: `/var/lib/jellyfin/plugins/NeXroll Intros/`
    - **Docker**: `/config/plugins/NeXroll Intros/` (inside the container)
-3. Copy `NeXroll.Jellyfin.dll` into the `NeXroll Intros/` folder
+3. Extract the contents of the zip (all three files) into the `NeXroll Intros/` folder
 4. **Restart Jellyfin**
 5. Verify the plugin loaded: **Dashboard → Plugins** → look for "NeXroll Intros"
 
 ### Option 3: Build from Source
 
-1. Install the [.NET 8 SDK](https://dot.net/download)
+1. Install the [.NET 9 SDK](https://dot.net/download)
 2. Build:
    ```bash
    cd Plugins/NeXroll.Jellyfin
@@ -82,6 +83,8 @@ The easiest way is to use NeXroll's built-in plugin configuration:
    - Generate and assign an API key for the plugin
    - Configure path mappings if needed
 
+   You can also set the plugin's **Playback options** right here — **Max Intros** (`0` = play the whole active sequence), **Enable for Movies / Episodes**, and the request timeout — then click **Update Plugin Configuration** to push them to Jellyfin.
+
 ### Via Jellyfin Dashboard
 
 You can also configure the plugin directly in Jellyfin:
@@ -93,7 +96,7 @@ You can also configure the plugin directly in Jellyfin:
 5. Configure **Path Mapping** if NeXroll and Jellyfin see preroll files at different paths:
    - **NeXroll Path Prefix**: The path as NeXroll sees it (e.g., `/data/prerolls`)
    - **Jellyfin Path Prefix**: The path as Jellyfin sees it (e.g., `/mnt/media/prerolls`)
-6. Set **Max Intros** (default: 1 — how many prerolls to play per session)
+6. Set **Max Intros** (default: `0` = unlimited — plays the whole active sequence; set a number only if you want to cap how many play)
 7. Toggle **Enable for Movies** / **Enable for Episodes**
 8. Click **Save**
 
@@ -115,9 +118,7 @@ The NeXroll Jellyfin plugin uses Jellyfin's `IIntroProvider` interface:
 3. **Local Cache**: Preroll files are downloaded to a local cache directory via NeXroll's `/plugin/stream` endpoint
 4. **Database Registration**: Cached files are resolved via Jellyfin's `ILibraryManager` and saved as `Video` items in the database so Jellyfin can play them
 5. **Playback Injection**: The plugin returns `IntroInfo` items with the registered `ItemId` — Jellyfin plays them before the main content
-6. **Cache Location**:
-   - **Windows**: `%LocalAppData%\NeXroll\intro_cache\`
-   - **Linux**: `~/.local/share/NeXroll/intro_cache/`
+6. **Cache Location** (plugin v1.14.0+): Jellyfin's own plugin data folder (under the server config dir), falling back to the system temp directory. Older versions cached to `%LocalAppData%\NeXroll\intro_cache` / `~/.local/share/NeXroll`, which **failed on Docker/Unraid** — the service has no `HOME`, so the path collapsed to `/NeXroll` at the container root and threw `Access to the path '/NeXroll' is denied`. Update to **v1.14.0+** if you hit that error.
 
 ## Docker Setup
 
@@ -145,14 +146,18 @@ In the plugin config, set up path mapping:
 - **NeXroll Path Prefix**: `/data/prerolls`
 - **Jellyfin Path Prefix**: `/media/prerolls`
 
+> **No shared mount? Path mapping is optional.** If Jellyfin can't see the preroll files directly (e.g. you don't mount the prerolls share into the Jellyfin container), the plugin **streams** each preroll from NeXroll over HTTP and caches it locally — so prerolls still play with no path mapping at all. Just make sure the plugin's **NeXroll Server URL** is reachable from the Jellyfin container, and you're on **plugin v1.14.0+**.
+
 ## Troubleshooting
 
 | Problem | Solution |
 |---------|----------|
 | No intros playing | Verify the plugin is installed and configured with the correct NeXroll URL |
-| Plugin not visible in Jellyfin | Ensure the DLL is inside a subfolder of `plugins/` (e.g., `plugins/NeXroll Intros/`). Restart Jellyfin |
+| Plugin not visible in Jellyfin | Ensure all three files (`NeXroll.Jellyfin.dll`, `meta.json`, `thumb.png`) are inside a subfolder of `plugins/` (e.g., `plugins/NeXroll Intros/`) — a bare DLL won't register. Restart Jellyfin |
 | "Could not reach NeXroll" in logs | Check the NeXroll URL in plugin settings. Verify port 9393 is accessible from Jellyfin |
-| Files not found | Configure path mapping if NeXroll and Jellyfin use different mount points |
+| Files not found | Set up path mapping (shared mount) **or** rely on streaming — make sure the plugin's NeXroll URL is reachable and you're on v1.14.0+ |
+| `Access to the path '/NeXroll' is denied` (Docker/Unraid) | Update the plugin to **v1.14.0+** — older versions cached prerolls to an unwritable path |
+| Only the first preroll plays / sequence items skipped | Set **Max Intros** to `0` (unlimited). Compare the Jellyfin log's `Injecting N intro(s)` line to your sequence length |
 | Plugin detected but 0 intros | Make sure you have an active category or filler set in NeXroll |
 | Prerolls play for movies but not episodes | Check that "Enable for Episodes" is turned on in the plugin config |
 | Test Connection fails | Ensure NeXroll is running and the URL includes the port (e.g., `http://192.168.1.50:9393`) |
@@ -167,5 +172,5 @@ In the plugin config, set up path mapping:
 | Path Prefix To | *(empty)* | Path prefix as Jellyfin sees it |
 | Enable for Movies | `true` | Play intros before movies |
 | Enable for Episodes | `true` | Play intros before TV episodes |
-| Max Intros | `1` | Maximum number of prerolls per playback session (0 = unlimited) |
+| Max Intros | `0` | Maximum number of prerolls per playback session (`0` = unlimited — plays the whole active sequence) |
 | Timeout Seconds | `5` | Network timeout when contacting NeXroll server |

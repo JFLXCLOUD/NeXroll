@@ -16,6 +16,7 @@
 ### Features
 
 * [NeX-Up (Trailers)](NeX-Up)
+* [Community Prerolls](Community-Prerolls)
 * [Sequences](Sequences)
 * [Scheduling Guide](Scheduling)
 * [Path Mappings](Path-Mappings)

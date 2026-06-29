@@ -17,6 +17,7 @@ const BlockEditor = ({ block, categories, prerolls, isNew, onSave, onCancel }) =
   // NeX-Up Trailers state
   const [nexupSource, setNexupSource] = useState(block.source || 'both');
   const [nexupCount, setNexupCount] = useState(block.count || 2);
+  const [nexupMode, setNexupMode] = useState(block.mode || 'random');
   // Coming Soon List state
   const [comingSoonLayout, setComingSoonLayout] = useState(block.layout || 'grid');
   // Dynamic Preroll state
@@ -93,6 +94,7 @@ const BlockEditor = ({ block, categories, prerolls, isNew, onSave, onCancel }) =
     } else if (blockType === 'nexup_trailers') {
       newBlock.source = nexupSource;
       newBlock.count = nexupCount;
+      newBlock.mode = nexupMode;
       delete newBlock.category_id;
       delete newBlock.preroll_ids;
       delete newBlock.layout;
@@ -702,65 +704,76 @@ const BlockEditor = ({ block, categories, prerolls, isNew, onSave, onCancel }) =
 
           {/* NeX-Up Trailers Configuration */}
           {blockType === 'nexup_trailers' && (
-            <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: '12px', marginBottom: '12px' }}>
-              <div>
-                <label style={{
-                  display: 'block',
-                  marginBottom: '6px',
-                  color: 'var(--text-color)',
-                  fontWeight: 600,
-                  fontSize: '13px'
-                }}>Source</label>
-                <select
-                  value={nexupSource}
-                  onChange={(e) => setNexupSource(e.target.value)}
-                  style={{
-                    width: '100%',
-                    padding: '9px 12px',
-                    border: '2px solid var(--border-color)',
-                    borderRadius: '6px',
-                    background: 'var(--input-bg)',
-                    color: 'var(--text-color)',
-                    fontSize: '13px',
-                    cursor: 'pointer'
-                  }}
-                >
-                  <option value="both">Movies &amp; TV</option>
-                  <option value="movies">Movies Only</option>
-                  <option value="tv">TV Shows Only</option>
-                </select>
-                <small style={{ display: 'block', marginTop: '5px', color: 'var(--text-secondary)', fontSize: '11px' }}>
-                  Pull trailers from NeX-Up's downloaded coming soon trailers
-                </small>
+            <div style={{ marginBottom: '12px' }}>
+              {/* Mode: Random shuffles the selected source pool; Sequential
+                  plays the soonest-releasing trailers in order. */}
+              <label style={{ display: 'block', marginBottom: '6px', color: 'var(--text-color)', fontWeight: 600, fontSize: '13px' }}>Mode</label>
+              <div style={{ display: 'flex', gap: '8px', marginBottom: '12px' }}>
+                {[
+                  { val: 'random', label: 'Random', desc: 'Shuffle the selected source(s)' },
+                  { val: 'sequential', label: 'Sequential', desc: 'Soonest release first, in order' },
+                ].map(opt => (
+                  <button
+                    key={opt.val}
+                    type="button"
+                    onClick={() => setNexupMode(opt.val)}
+                    style={{
+                      flex: 1,
+                      padding: '8px 10px',
+                      borderRadius: '6px',
+                      border: `2px solid ${nexupMode === opt.val ? 'var(--accent-color, #00d4ff)' : 'var(--border-color)'}`,
+                      background: nexupMode === opt.val ? 'color-mix(in srgb, var(--accent-color, #00d4ff) 12%, transparent)' : 'var(--input-bg)',
+                      color: 'var(--text-color)',
+                      cursor: 'pointer',
+                      textAlign: 'left',
+                    }}
+                  >
+                    <div style={{ fontWeight: 600, fontSize: '13px' }}>{opt.label}</div>
+                    <div style={{ fontSize: '11px', color: 'var(--text-secondary)', marginTop: '2px' }}>{opt.desc}</div>
+                  </button>
+                ))}
               </div>
-              <div>
-                <label style={{
-                  display: 'block',
-                  marginBottom: '6px',
-                  color: 'var(--text-color)',
-                  fontWeight: 600,
-                  fontSize: '13px'
-                }}>Count</label>
-                <input
-                  type="number"
-                  min="1"
-                  max="20"
-                  value={nexupCount}
-                  onChange={(e) => setNexupCount(Math.max(1, parseInt(e.target.value) || 1))}
-                  style={{
-                    width: '100%',
-                    padding: '9px 12px',
-                    border: '2px solid var(--border-color)',
-                    borderRadius: '6px',
-                    background: 'var(--input-bg)',
-                    color: 'var(--text-color)',
-                    fontSize: '13px',
-                    boxSizing: 'border-box'
-                  }}
-                />
-                <small style={{ display: 'block', marginTop: '5px', color: 'var(--text-secondary)', fontSize: '11px' }}>
-                  Number of trailers to pick
-                </small>
+
+              <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: '12px' }}>
+                <div>
+                  <label style={{ display: 'block', marginBottom: '6px', color: 'var(--text-color)', fontWeight: 600, fontSize: '13px' }}>Source</label>
+                  <select
+                    value={nexupSource}
+                    onChange={(e) => setNexupSource(e.target.value)}
+                    style={{
+                      width: '100%', padding: '9px 12px', border: '2px solid var(--border-color)',
+                      borderRadius: '6px', background: 'var(--input-bg)', color: 'var(--text-color)',
+                      fontSize: '13px', cursor: 'pointer'
+                    }}
+                  >
+                    <option value="both">Movies &amp; TV</option>
+                    <option value="movies">Movies Only</option>
+                    <option value="tv">TV Shows Only</option>
+                  </select>
+                  <small style={{ display: 'block', marginTop: '5px', color: 'var(--text-secondary)', fontSize: '11px' }}>
+                    {nexupMode === 'sequential'
+                      ? 'Plays the soonest-releasing trailers from this source, in order'
+                      : 'Randomly picks trailers from this source'}
+                  </small>
+                </div>
+                <div>
+                  <label style={{ display: 'block', marginBottom: '6px', color: 'var(--text-color)', fontWeight: 600, fontSize: '13px' }}>Count</label>
+                  <input
+                    type="number"
+                    min="1"
+                    max="20"
+                    value={nexupCount}
+                    onChange={(e) => setNexupCount(Math.max(1, parseInt(e.target.value) || 1))}
+                    style={{
+                      width: '100%', padding: '9px 12px', border: '2px solid var(--border-color)',
+                      borderRadius: '6px', background: 'var(--input-bg)', color: 'var(--text-color)',
+                      fontSize: '13px', boxSizing: 'border-box'
+                    }}
+                  />
+                  <small style={{ display: 'block', marginTop: '5px', color: 'var(--text-secondary)', fontSize: '11px' }}>
+                    How many trailers
+                  </small>
+                </div>
               </div>
             </div>
           )}

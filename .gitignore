@@ -1,4 +1,8 @@
-﻿# Python
+﻿# Local dev backend run logs
+backend_local.log
+backend_local.log.err
+
+# Python
 __pycache__/
 *.py[cod]
 *$py.class
@@ -151,3 +155,9 @@ replace_*.py
 
 # Root package-lock (frontend only)
 /package-lock.json
+# Built installers staged for release uploads (local only)
+release-artifacts/
+
+# Screenshot staging/scratch folder (real screenshots live in docs/screenshots/)
+nexrollsC*/
+nexrolls*/
