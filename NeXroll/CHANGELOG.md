@@ -1,5 +1,18 @@
 # Changelog
 
+## [2.0.1] - 06-30-2026
+
+### Fixed
+
+- **Holiday-linked schedules no longer flip on and off when the Holiday API is
+  briefly unavailable.** A holiday/yearly schedule resolved its date live on
+  every scheduler tick, and a transient lookup failure made the schedule count
+  as inactive for that tick — so the scheduler would fall back to another
+  schedule/category and the wrong prerolls would play, alternating between
+  correct and incorrect from one playback to the next (on Plex and the
+  Jellyfin/Emby plugin alike). The active-check now falls back to the schedule's
+  stored date when the live lookup fails, so a flaky API can't toggle it.
+
 ## [2.0.0] - 06-29-2026
 
 **NeXroll v2.0.0** — the stable release of the v2 line, a top-to-bottom modernization of the app. Promotes beta.1 through beta.15; see those entries below for the full detail. Upgrading from v1.x is safe — your data carries over and the first-run wizard is skipped automatically.

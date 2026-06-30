@@ -2181,6 +2181,12 @@ class Scheduler:
             h_country = getattr(schedule, "holiday_country", None)
             if h_name and h_country:
                 holiday_date = self._get_holiday_date(h_name, h_country, now.year)
+                if holiday_date is None:
+                    # Holiday API unavailable this tick — fall back to the schedule's
+                    # stored start_date (kept current for the year by the holiday
+                    # auto-refresh) so a transient lookup failure can't flip the
+                    # schedule inactive and alternate which schedule wins.
+                    holiday_date = getattr(schedule, "start_date", None)
                 if holiday_date:
                     if not (now.month == holiday_date.month and now.day == holiday_date.day):
                         _scheduler_verbose(f"Schedule '{schedule.name}' (yearly/holiday-dynamic) not active: "
@@ -2228,6 +2234,11 @@ class Scheduler:
             h_country = getattr(schedule, "holiday_country", None)
             if h_name and h_country:
                 holiday_date = self._get_holiday_date(h_name, h_country, now.year)
+                if holiday_date is None:
+                    # Holiday API unavailable this tick — fall back to the schedule's
+                    # stored start_date so a transient lookup failure can't flip the
+                    # schedule inactive and alternate which schedule wins.
+                    holiday_date = getattr(schedule, "start_date", None)
                 if holiday_date:
                     if not (now.month == holiday_date.month and now.day == holiday_date.day):
                         _scheduler_verbose(f"Schedule '{schedule.name}' (holiday) not active: "
