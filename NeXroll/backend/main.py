@@ -4869,6 +4869,119 @@ def integration_clear(
     return {"applied": False, "message": "Reverted to NeXroll's normal schedule"}
 
 
+@app.post("/api/integration/preroll")
+def integration_ingest_preroll(
+    file: UploadFile = File(...),
+    name: str = Form(...),
+    marathon_id: Optional[str] = Form(None),
+    _key: models.APIKey = Depends(require_api_key),
+    db: Session = Depends(get_db),
+):
+    """Ingest a Bingearr-generated promo preroll.
+
+    Stores it in a locked 'Bingearr' system category (read-only in the NeXroll
+    UI) and (re)creates a single-preroll sequence so Bingearr can apply exactly
+    this promo via /api/integration/apply with ref 'sequence:<id>'.
+    """
+    ALLOWED = {".mp4", ".mkv", ".mov", ".m4v", ".webm"}
+    ext = os.path.splitext(file.filename or "")[1].lower() or ".mp4"
+    if ext not in ALLOWED:
+        raise HTTPException(status_code=400, detail=f"Unsupported file type '{ext}'.")
+
+    # Locked system category that holds Bingearr promos.
+    cat = db.query(models.Category).filter(models.Category.name == "Bingearr").first()
+    if not cat:
+        cat = models.Category(
+            name="Bingearr",
+            description="Auto-generated Bingearr playlist promos (managed by Bingearr).",
+            is_system=True,
+            apply_to_plex=False,
+        )
+        db.add(cat)
+        db.commit()
+        db.refresh(cat)
+    elif not getattr(cat, "is_system", False):
+        cat.is_system = True
+        db.commit()
+
+    # Stable filename per marathon so re-generation replaces rather than piles up.
+    cat_dir = os.path.join(PREROLLS_DIR, "Bingearr")
+    os.makedirs(cat_dir, exist_ok=True)
+    safe = f"bingearr_marathon_{marathon_id}{ext}" if marathon_id else os.path.basename(file.filename or f"{name}{ext}")
+    dest = os.path.join(cat_dir, safe)
+
+    content = file.file.read()
+    with open(dest, "wb") as f:
+        f.write(content)
+
+    # Replace any prior preroll record for this file in the Bingearr category.
+    prior = db.query(models.Preroll).filter(
+        models.Preroll.filename == safe, models.Preroll.category_id == cat.id
+    ).all()
+    for p in prior:
+        try:
+            if p.thumbnail and os.path.isabs(p.thumbnail) and os.path.exists(p.thumbnail):
+                os.remove(p.thumbnail)
+        except Exception:
+            pass
+        db.delete(p)
+    if prior:
+        db.commit()
+
+    # Best-effort duration probe.
+    duration = None
+    try:
+        res = _run_subprocess(
+            [get_ffprobe_cmd(), "-v", "quiet", "-print_format", "json", "-show_format", dest],
+            capture_output=True, text=True,
+        )
+        if getattr(res, "returncode", 1) == 0 and res.stdout:
+            duration = float(json.loads(res.stdout).get("format", {}).get("duration"))
+    except Exception:
+        duration = None
+
+    preroll = models.Preroll(
+        filename=safe,
+        display_name=name,
+        path=dest,
+        category_id=cat.id,
+        managed=True,
+        duration=duration,
+        file_size=len(content),
+        description=f"Bingearr promo for '{name}'",
+    )
+    db.add(preroll)
+    db.commit()
+    db.refresh(preroll)
+    try:
+        preroll.categories = [cat]
+        db.commit()
+    except Exception:
+        db.rollback()
+
+    # (Re)create a one-preroll sequence so the promo can be applied precisely.
+    seq_name = f"Bingearr — {name}"
+    blocks = [{"type": "fixed", "preroll_ids": [preroll.id]}]
+    seq = db.query(models.SavedSequence).filter(models.SavedSequence.name == seq_name).first()
+    if seq:
+        seq.set_blocks(blocks)
+    else:
+        seq = models.SavedSequence(name=seq_name, description=f"Bingearr promo for '{name}'")
+        seq.set_blocks(blocks)
+        db.add(seq)
+    db.commit()
+    db.refresh(seq)
+
+    return {
+        "ok": True,
+        "preroll_id": preroll.id,
+        "category": cat.name,
+        "category_id": cat.id,
+        "sequence_id": seq.id,
+        "ref": f"sequence:{seq.id}",
+    }
+
+
 async def require_api_key_full(
     api_key: Optional[str] = Depends(get_api_key),
     db: Session = Depends(get_db)
