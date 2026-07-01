@@ -5668,6 +5668,17 @@ def log_event(level: str, category: str, message: str, source: str = None,
             db.close()
 
 
+def _iso_utc(dt):
+    """Serialize a naive-UTC datetime as an ISO string explicitly marked UTC.
+
+    Log entries are stored with datetime.utcnow() (naive UTC). Without the 'Z'
+    marker the frontend's new Date(...) treats the value as local time, so log
+    timestamps display shifted by the viewer's UTC offset. Marking them UTC lets
+    the browser render them correctly in the viewer's local timezone.
+    """
+    return (dt.isoformat() + "Z") if dt else None
+
+
 def cleanup_old_logs(retention_days: int = None, db: Session = None):
     """Remove logs older than retention period"""
     close_db = False
@@ -6441,7 +6452,7 @@ async def auth_get_audit_logs(
         "logs": [
             {
                 "id": log.id,
-                "timestamp": log.timestamp.isoformat() if log.timestamp else None,
+                "timestamp": _iso_utc(log.timestamp),
                 "event_type": log.event_type,
                 "username": log.username,
                 "user_id": log.user_id,
@@ -6859,7 +6870,7 @@ async def logs_get(
         "logs": [
             {
                 "id": log.id,
-                "timestamp": log.timestamp.isoformat() if log.timestamp else None,
+                "timestamp": _iso_utc(log.timestamp),
                 "level": log.level,
                 "category": log.category,
                 "source": log.source,
@@ -6915,8 +6926,8 @@ async def logs_get_stats(
         "total": total,
         "by_level": level_counts,
         "by_category": category_counts,
-        "oldest": oldest.timestamp.isoformat() if oldest else None,
-        "newest": newest.timestamp.isoformat() if newest else None
+        "oldest": _iso_utc(oldest.timestamp) if oldest else None,
+        "newest": _iso_utc(newest.timestamp) if newest else None
     }
 
 
@@ -6985,7 +6996,7 @@ async def logs_export(
 
         for log in logs:
             writer.writerow([
-                log.timestamp.isoformat() if log.timestamp else "",
+                (_iso_utc(log.timestamp) or ""),
                 log.level,
                 log.category,
                 log.source or "",
@@ -7009,7 +7020,7 @@ async def logs_export(
             "total": len(logs),
             "logs": [
                 {
-                    "timestamp": log.timestamp.isoformat() if log.timestamp else None,
+                    "timestamp": _iso_utc(log.timestamp),
                     "level": log.level,
                     "category": log.category,
                     "source": log.source,
@@ -16758,6 +16769,41 @@ def compat_static_thumbnails(category: str, thumb_name: str):
 @app.get("/thumbgen/{category}/{thumb_name}")
 def alias_thumbgen(category: str, thumb_name: str):
     return get_or_create_thumbnail(category, thumb_name)
+
+
+@app.get("/preroll-thumb")
+def serve_preroll_thumb(p: str = ""):
+    """Serve a preroll thumbnail by its stored (data_dir-relative) path.
+
+    The path is resolved SERVER-SIDE with os.path.abspath, so it works even when
+    the preroll folder lives OUTSIDE data_dir (a custom folder). In that case the
+    stored relpath contains '..' (e.g. '../plex_intro_library/thumbnails/x.jpg'),
+    which a browser collapses before sending — turning '/static/../plex_intro_library/…'
+    into an unmounted '/plex_intro_library/…' that 404s. Resolving here avoids that.
+    Access is restricted to the preroll/thumbnail roots so it can't be used to read
+    arbitrary files.
+    """
+    from fastapi.responses import FileResponse
+    if not p:
+        raise HTTPException(status_code=404, detail="Not found")
+    try:
+        abs_path = os.path.abspath(os.path.join(data_dir, p))
+    except Exception:
+        raise HTTPException(status_code=404, detail="Not found")
+    allowed = []
+    for r in (PREROLLS_DIR if "PREROLLS_DIR" in globals() else None,
+              THUMBNAILS_DIR if "THUMBNAILS_DIR" in globals() else None,
+              data_dir):
+        try:
+            if r:
+                allowed.append(os.path.abspath(r))
+        except Exception:
+            pass
+    if not any(abs_path == root or abs_path.startswith(root + os.sep) for root in allowed):
+        raise HTTPException(status_code=404, detail="Not found")
+    if not os.path.isfile(abs_path):
+        raise HTTPException(status_code=404, detail="Not found")
+    return FileResponse(abs_path)
 
 # Fallback handlers for hashed frontend assets (avoid 404 when index.html points to old main.<hash>.{js,css})
 # This serves the latest present main.* file when the requested hashed file is missing.

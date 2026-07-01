@@ -179,7 +179,10 @@ const thumbnailUrl = (thumbnail) => {
   if (!thumbnail) return '';
   const t = String(thumbnail);
   if (/^https?:\/\//i.test(t)) return t;
-  const u = apiUrl(`static/${t}`);
+  // Serve via the backend resolver (not a raw /static path) so thumbnails work
+  // even when the preroll folder lives outside data_dir — in that case the stored
+  // path contains '..', which the browser would collapse and mis-route.
+  const u = apiUrl(`preroll-thumb?p=${encodeURIComponent(t)}`);
   return _thumbCacheBust ? `${u}${u.includes('?') ? '&' : '?'}cb=${_thumbCacheBust}` : u;
 };
 // Render a NeX-Up release/air date as a stable calendar date. These are
@@ -27282,8 +27285,14 @@ const DashboardTiles = {
           }}>
             {logs.map((log, idx) => {
               // Format timestamp like app.log: 2026-02-21 14:32:45
+              // Backend sends UTC-marked timestamps; render in the viewer's LOCAL
+              // time. (toISOString() would force it back to UTC — the old bug that
+              // showed log times shifted a few hours ahead.)
               const logDate = new Date(log.created_at || log.timestamp);
-              const timestamp = logDate.toISOString().replace('T', ' ').slice(0, 19);
+              const _p2 = (n) => String(n).padStart(2, '0');
+              const timestamp = isNaN(logDate.getTime())
+                ? String(log.created_at || log.timestamp || '')
+                : `${logDate.getFullYear()}-${_p2(logDate.getMonth() + 1)}-${_p2(logDate.getDate())} ${_p2(logDate.getHours())}:${_p2(logDate.getMinutes())}:${_p2(logDate.getSeconds())}`;
               
               // Level color matching terminal style
               const levelColor = 

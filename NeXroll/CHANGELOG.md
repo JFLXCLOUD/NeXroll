@@ -1,5 +1,21 @@
 # Changelog
 
+## [2.0.2] - 07-01-2026
+
+### Fixed
+
+- **Thumbnails now work with a custom preroll folder outside the data directory.**
+  When the Preroll Folder pointed at a path that isn't under NeXroll's data
+  directory (common in Docker when aiming it at an existing library), thumbnail
+  URLs resolved to a relative `..` path that the browser collapsed into an
+  unmapped location — so every preroll showed a blank thumbnail even though the
+  images existed on disk, and re-initializing didn't help. Thumbnails are now
+  served through a resolver that works no matter where the preroll folder lives.
+- **Log timestamps show in your local time.** The Logs page displayed timestamps
+  shifted by your UTC offset (a few hours ahead, sometimes the wrong day) because
+  the stored UTC time wasn't marked as UTC. Timestamps are now labeled UTC and
+  rendered in the viewer's local timezone.
+
 ## [2.0.1] - 06-30-2026
 
 ### Fixed
