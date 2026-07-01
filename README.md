@@ -15,7 +15,7 @@
 
 ---
 
-NeXroll is a preroll manager for Plex, Jellyfin, and Emby that makes setup effortless. It runs natively on Windows and works in Docker, featuring a clean web interface, optional background service, and lightweight tray app. Everything is self-contained, and a single installer gets you up and running in minutes.
+NeXroll turns your home theater into a night at the cinema. It's a preroll manager for Plex, Jellyfin, and Emby that plays the cinematic intros before a movie, with holiday and seasonal scheduling, automatic trailers for upcoming releases, and a built-in community intro library. Install it on Windows or run it in Docker, self-contained and ready to go in a few minutes.
 
 ---
 
