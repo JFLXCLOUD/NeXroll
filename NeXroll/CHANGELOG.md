@@ -1,5 +1,28 @@
 # Changelog
 
+## [2.0.3] - 07-04-2026
+
+### Fixed
+
+- **Schedules could silently stop activating, with the dashboard's "Last Applied"
+  time, "Currently Running", and "Currently Showing" all going stale.** The
+  scheduler determined "is it time for this schedule to run" using the
+  container/OS clock's own notion of local time instead of the app's configured
+  Settings > Timezone — so if the two ever diverged (for example a container
+  whose `TZ` is set but not actually honored by its base image), the scheduler
+  could evaluate schedules against the wrong hour and even the wrong day, while
+  the Calendar view (rendered in the browser) kept showing the correct day. All
+  schedule-activity checks, `last_run`/`next_run`, and the manual "apply
+  sequence/category" protection window now consistently derive "now" from
+  Settings > Timezone instead of the ambient system clock.
+- **Dashboard showed prerolls as "Uncategorized" even after tagging them with a
+  category.** The Prerolls tile's "Uncategorized" count and "X of Y categories
+  used" stat only checked a preroll's legacy single-category field, not the
+  multi-category assignments used since v1.13.0 — so prerolls categorized only
+  through the multi-category picker were counted as uncategorized on the
+  dashboard even though Library > All Prerolls > Uncategorized correctly showed
+  them as categorized. The dashboard tile now checks both.
+
 ## [2.0.2] - 07-01-2026
 
 ### Fixed

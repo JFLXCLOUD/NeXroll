@@ -5954,8 +5954,8 @@ const DashboardTiles = {
   prerolls: () => {
     const total = prerolls.length;
     const totalCats = categories.length;
-    const usedCats = categories.filter(cat => prerolls.some(p => p.category_id === cat.id)).length;
-    const uncategorized = prerolls.filter(p => !p.category_id).length;
+    const usedCats = categories.filter(cat => prerolls.some(p => p.category_id === cat.id || (p.categories && p.categories.some(c => c.id === cat.id)))).length;
+    const uncategorized = prerolls.filter(p => !p.category_id && !(p.categories && p.categories.length > 0)).length;
     const sizeBytes = prerolls.reduce((s, p) => s + (p.file_size || 0), 0);
     const externalCount = prerolls.filter(p => p.managed === false).length;
     // Freshness: most recent upload/import across the library.

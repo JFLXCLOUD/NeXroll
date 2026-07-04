@@ -50,7 +50,7 @@ if not getattr(sys, "frozen", False):
 from backend.database import SessionLocal, engine, DB_PATH
 import backend.models as models
 from backend.plex_connector import PlexConnector
-from backend.scheduler import scheduler, _has_valid_sequence, prerolls_for_category_query
+from backend.scheduler import scheduler, _has_valid_sequence, prerolls_for_category_query, _localized_now
 from backend import secure_store
 from backend.dynamic_preroll import DynamicPrerollGenerator, set_verbose_logger as set_dp_verbose_logger
 from backend import scanner as fs_scanner
@@ -10971,8 +10971,10 @@ def apply_sequence_to_server(sequence_id: int, db: Session = Depends(get_db)):
         raise HTTPException(status_code=400, detail="No media server configured (Plex/Jellyfin/Emby)")
 
     # Set a short override so the scheduler doesn't immediately revert, and track applied sequence
+    # (override_expires_at is compared against the scheduler's Setting.timezone-local "now" — see
+    # _localized_now in scheduler.py — so it must be set using the same local convention, not UTC)
     try:
-        setting.override_expires_at = datetime.datetime.utcnow() + datetime.timedelta(minutes=15)
+        setting.override_expires_at = _localized_now(db) + datetime.timedelta(minutes=15)
         setting.applied_sequence_id = sequence_id
         setting.applied_sequence_name = saved_seq.name
         setting.updated_at = datetime.datetime.utcnow()
@@ -13453,7 +13455,7 @@ def run_scheduler_now(db: Session = Depends(get_db)):
 @app.get("/scheduler/debug")
 def scheduler_debug(db: Session = Depends(get_db)):
     """Diagnostic endpoint: show full scheduler evaluation for all schedules"""
-    now = datetime.datetime.now()
+    now = _localized_now(db)
     setting = db.query(models.Setting).first()
     schedules = db.query(models.Schedule).filter(models.Schedule.is_active == True).all()
 
@@ -14010,7 +14012,7 @@ def get_current_preroll_details(db: Session = Depends(get_db)):
         seq_id = getattr(setting, "applied_sequence_id", None)
         if seq_id:
             override_exp = getattr(setting, "override_expires_at", None)
-            if override_exp and override_exp > datetime.datetime.now():
+            if override_exp and override_exp > _localized_now(db):
                 mode = "sequential"
 
         # Check active category plex_mode
@@ -14193,7 +14195,7 @@ def get_current_preroll_details(db: Session = Depends(get_db)):
     seq_id = getattr(setting, "applied_sequence_id", None)
     if seq_id:
         override_exp = getattr(setting, "override_expires_at", None)
-        if override_exp and override_exp > datetime.datetime.utcnow():
+        if override_exp and override_exp > _localized_now(db):
             applied_sequence = {
                 "id": seq_id,
                 "name": getattr(setting, "applied_sequence_name", None) or "Unknown Sequence"
@@ -17138,7 +17140,9 @@ def _apply_category_to_plex_and_track(db: Session, category_id: int, ttl: int = 
                 db.add(st)
             st.active_category = category_id
             try:
-                st.override_expires_at = datetime.datetime.utcnow() + datetime.timedelta(minutes=int(ttl))
+                # See _localized_now in scheduler.py: override_expires_at must use the same
+                # Setting.timezone-local convention as the scheduler's "now", not UTC.
+                st.override_expires_at = _localized_now(db) + datetime.timedelta(minutes=int(ttl))
             except Exception:
                 st.override_expires_at = None
             st.updated_at = datetime.datetime.utcnow()
@@ -17210,8 +17214,9 @@ def get_active_category(db: Session = Depends(get_db)):
         seq_id = getattr(setting, "applied_sequence_id", None)
         if seq_id:
             override_exp = getattr(setting, "override_expires_at", None)
-            # Use local time (not UTC) since override_expires_at is set using datetime.now()
-            if override_exp and override_exp > datetime.datetime.now():
+            # Use Setting.timezone-local time (not UTC, not bare datetime.now()) since
+            # override_expires_at is written using _localized_now() — see scheduler.py
+            if override_exp and override_exp > _localized_now(db):
                 seq_name = getattr(setting, "applied_sequence_name", None) or "Unknown Sequence"
                 applied_sequence = {
                     "id": seq_id,
@@ -17296,7 +17301,7 @@ def get_active_category(db: Session = Depends(get_db)):
         if active_sched_id:
             try:
                 _ptr = db.query(models.Schedule).filter(models.Schedule.id == active_sched_id).first()
-                _now = datetime.datetime.now()
+                _now = _localized_now(db)
                 _ptr_valid = bool(
                     _ptr
                     and getattr(_ptr, "is_active", False)
@@ -17318,7 +17323,7 @@ def get_active_category(db: Session = Depends(get_db)):
         # single reliable signal for all blend types (avoids _schedule_in_date_window divergence).
         blend_schedules_info = None
         try:
-            now = datetime.datetime.now()
+            now = _localized_now(db)
             all_active = db.query(models.Schedule).filter(models.Schedule.is_active == True).all()
             exclusive_in_window = [
                 s for s in all_active
@@ -27930,7 +27935,7 @@ def get_dashboard_stats(db: Session = Depends(get_db)):
         
         # --- Schedule Statistics ---
         schedules = db.query(models.Schedule).all()
-        now = datetime.datetime.now()
+        now = _localized_now(db)
         
         active_schedules = 0
         inactive_schedules = 0
@@ -28210,7 +28215,7 @@ def _resolve_current_intros(db: Session) -> dict:
     # Applies when all blend partners are plain category schedules (no sequences), since the
     # sequence/mixed paths always leave active_schedule_id or active_category set.
     try:
-        now = datetime.datetime.now()
+        now = _localized_now(db)
         recent_cutoff = now - datetime.timedelta(minutes=3)
         all_active = db.query(models.Schedule).filter(models.Schedule.is_active == True).all()
         blend_candidates = [

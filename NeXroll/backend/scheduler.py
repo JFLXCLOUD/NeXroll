@@ -71,6 +71,40 @@ def _scheduler_verbose(msg: str):
     except Exception:
         pass
 
+
+def _localized_now(db: Session = None) -> datetime.datetime:
+    """
+    Return "now" as a naive datetime representing wall-clock time in the
+    app's configured Setting.timezone, for comparison against schedule
+    start/end dates and recurrence time-ranges (which are stored as naive
+    local datetimes/strings).
+
+    Deliberately uses datetime.now(tz) — which derives local time from the
+    system's UTC clock plus pytz's bundled IANA database — rather than the
+    bare datetime.now() the scheduler used previously, which just reads
+    whatever local time the OS/container reports. Those can silently
+    diverge (e.g. a container missing tzdata, or TZ set but not actually
+    honored by the base image) even when Setting.timezone is configured
+    correctly, which is what let the scheduler evaluate schedules against
+    the wrong day/hour while the UI's own clock (browser-side) stayed correct.
+    """
+    own_session = db is None
+    if own_session:
+        db = SessionLocal()
+    try:
+        setting = db.query(models.Setting).first()
+        tz_name = getattr(setting, "timezone", None) if setting else None
+    except Exception:
+        tz_name = None
+    finally:
+        if own_session:
+            db.close()
+    try:
+        tz = pytz.timezone(tz_name or "UTC")
+    except Exception:
+        tz = pytz.utc
+    return datetime.datetime.now(tz).replace(tzinfo=None)
+
 def resolve_nexup_trailer_block(block: dict, db) -> list:
     """Resolve a 'nexup_trailers' sequence/filler step to ordered trailer rows.
 
@@ -1402,8 +1436,8 @@ class Scheduler:
             if priority_mode == "schedules_override":
                 # Check if any schedule is currently active
                 schedules = db.query(models.Schedule).filter(models.Schedule.is_active == True).all()
-                # Use local time for comparisons since schedules are stored as naive local datetimes
-                now = datetime.datetime.now()
+                # Use local time (per Setting.timezone) for comparisons since schedules are stored as naive local datetimes
+                now = _localized_now(db)
                 active_schedules = [s for s in schedules if self._is_schedule_active(s, now)]
                 if active_schedules:
                     _scheduler_log(f"Skipping genre mapping for ratingKey={chosen_key} due to active schedule (priority mode: {priority_mode})")
@@ -1465,8 +1499,8 @@ class Scheduler:
         """Evaluate schedules, apply active category to Plex, and handle fallback when idle."""
         db = SessionLocal()
         try:
-            # Use local time for comparisons since schedules are stored as naive local datetimes
-            now = datetime.datetime.now()
+            # Use local time (per Setting.timezone) for comparisons since schedules are stored as naive local datetimes
+            now = _localized_now(db)
             schedules = db.query(models.Schedule).filter(models.Schedule.is_active == True).all()
 
             # Determine active schedules (window-aware)
@@ -3277,8 +3311,8 @@ class Scheduler:
         """Return a list of schedules currently active (for diagnostics/status)."""
         db = SessionLocal()
         try:
-            # Use local time for comparisons since schedules are stored as naive local datetimes
-            now = datetime.datetime.now()
+            # Use local time (per Setting.timezone) for comparisons since schedules are stored as naive local datetimes
+            now = _localized_now(db)
             schedules = db.query(models.Schedule).filter(models.Schedule.is_active == True).all()
             return [s for s in schedules if self._is_schedule_active(s, now)]
         finally:
@@ -3491,8 +3525,8 @@ class Scheduler:
 
     def _calculate_next_run(self, schedule: models.Schedule) -> Optional[datetime.datetime]:
         """Calculate when this schedule should run next"""
-        # Use local time for comparisons since schedules are stored as naive local datetimes
-        now = datetime.datetime.now()
+        # Use local time (per Setting.timezone) for comparisons since schedules are stored as naive local datetimes
+        now = _localized_now()
 
         if schedule.type == "monthly":
             # Next month, same day
