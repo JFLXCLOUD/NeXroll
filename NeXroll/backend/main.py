@@ -1763,14 +1763,6 @@ class CommunityPrerollDownloadRequest(BaseModel):
     add_to_category: bool = False
     tags: str = ""
 
-class HolidayScheduleRequest(BaseModel):
-    holiday_name: str
-    holiday_date: str = None
-    country_code: str
-    category_id: int
-    multi_year: bool = False
-    year_count: int = 5
-
 def _normalize_url(url: str) -> str:
     try:
         if not url:
@@ -2798,72 +2790,105 @@ def startup_env_bootstrap():
         except Exception:
             pass
 
+def _refresh_holiday_linked_schedules(db: Session) -> dict:
+    """
+    Shared implementation for refreshing variable-date holiday schedules
+    (Thanksgiving, Easter, etc.) to the current year's actual date. Used by
+    both the startup auto-refresh and the manual "Refresh Holiday Dates"
+    endpoint - kept as one function so a fix to one (e.g. the future-year
+    skip guard) can't silently be missing from the other.
+
+    Skips any schedule already pinned to a future year, so pre-configuring
+    next year's holiday date ahead of time doesn't get clobbered back to the
+    current year.
+    """
+    from datetime import datetime
+    from backend.holiday_api import HolidayAPI
+
+    current_year = datetime.now().year
+    updated_count = 0
+    errors = []
+    updated_schedules = []
+
+    holiday_schedules = db.query(models.Schedule).filter(
+        models.Schedule.holiday_name.isnot(None),
+        models.Schedule.holiday_country.isnot(None)
+    ).all()
+
+    for schedule in holiday_schedules:
+        try:
+            # Skip if schedule is for future year already
+            if schedule.start_date and schedule.start_date.year > current_year:
+                continue
+
+            holiday = HolidayAPI.search_holiday_by_name(
+                schedule.holiday_name, (schedule.holiday_country or "").upper(), current_year
+            )
+
+            if holiday and holiday.get("date"):
+                new_date = datetime.strptime(holiday["date"], "%Y-%m-%d")
+                old_date = schedule.start_date
+
+                if not old_date or old_date.year != current_year or old_date.month != new_date.month or old_date.day != new_date.day:
+                    schedule.start_date = new_date
+                    schedule.end_date = new_date.replace(hour=23, minute=59, second=59)
+                    updated_count += 1
+                    updated_schedules.append({
+                        "id": schedule.id,
+                        "name": schedule.name,
+                        "holiday": schedule.holiday_name,
+                        "old_date": old_date.strftime("%Y-%m-%d") if old_date else None,
+                        "new_date": new_date.strftime("%Y-%m-%d")
+                    })
+            else:
+                errors.append({
+                    "schedule_id": schedule.id,
+                    "holiday": schedule.holiday_name,
+                    "error": f"Holiday not found for {schedule.holiday_country} in {current_year}"
+                })
+
+        except Exception as e:
+            errors.append({
+                "schedule_id": schedule.id,
+                "holiday": getattr(schedule, "holiday_name", None),
+                "error": str(e)
+            })
+
+    if updated_count > 0:
+        db.commit()
+
+    return {
+        "total_holiday_schedules": len(holiday_schedules),
+        "updated_count": updated_count,
+        "updated_schedules": updated_schedules,
+        "errors": errors,
+        "year": current_year
+    }
+
+
 def _auto_refresh_holiday_dates():
     """
     Automatically refresh variable-date holiday schedules (Thanksgiving, Easter, etc.)
     This runs on startup and updates any schedules linked to holidays that have
     different dates for the current year.
     """
-    from datetime import datetime
-    
     db = SessionLocal()
     try:
-        current_year = datetime.now().year
-        
-        # Find all schedules with holiday_name set
-        holiday_schedules = db.query(models.Schedule).filter(
-            models.Schedule.holiday_name.isnot(None),
-            models.Schedule.holiday_country.isnot(None)
-        ).all()
-        
-        if not holiday_schedules:
+        result = _refresh_holiday_linked_schedules(db)
+        if result["total_holiday_schedules"] == 0:
             return
-        
-        _file_log(f"Auto-checking {len(holiday_schedules)} holiday-linked schedules for {current_year}...")
-        
-        from backend.holiday_api import HolidayAPI
-        updated_count = 0
-        
-        for schedule in holiday_schedules:
-            try:
-                # Skip if schedule is for future year already
-                if schedule.start_date and schedule.start_date.year > current_year:
-                    continue
-                
-                # Get the holiday for current year
-                holidays = HolidayAPI.get_holidays(schedule.holiday_country, current_year)
-                
-                # Find matching holiday
-                matching = None
-                for h in holidays:
-                    if h.get("name", "").lower() == schedule.holiday_name.lower():
-                        matching = h
-                        break
-                    if h.get("localName", "").lower() == schedule.holiday_name.lower():
-                        matching = h
-                        break
-                
-                if matching:
-                    new_date = datetime.strptime(matching["date"], "%Y-%m-%d")
-                    old_date = schedule.start_date
-                    
-                    # Update if year changed or date changed
-                    if old_date.year != current_year or old_date.month != new_date.month or old_date.day != new_date.day:
-                        schedule.start_date = new_date
-                        schedule.end_date = new_date.replace(hour=23, minute=59, second=59)
-                        updated_count += 1
-                        _file_log(f"  Updated '{schedule.name}': {old_date.strftime('%Y-%m-%d')} -> {new_date.strftime('%Y-%m-%d')}")
-                        
-            except Exception as e:
-                _file_log(f"  Error updating schedule '{schedule.name}': {e}", level="WARNING")
-                continue
-        
-        if updated_count > 0:
-            db.commit()
-            _file_log(f"Auto-updated {updated_count} holiday schedule(s) for {current_year}")
+
+        _file_log(f"Auto-checked {result['total_holiday_schedules']} holiday-linked schedules for {result['year']}...")
+        for s in result["updated_schedules"]:
+            _file_log(f"  Updated '{s['name']}': {s['old_date']} -> {s['new_date']}")
+        for err in result["errors"]:
+            _file_log(f"  Error updating schedule id={err['schedule_id']} ({err['holiday']}): {err['error']}", level="WARNING")
+
+        if result["updated_count"] > 0:
+            _file_log(f"Auto-updated {result['updated_count']} holiday schedule(s) for {result['year']}")
         else:
-            _file_log(f"All {len(holiday_schedules)} holiday schedule(s) already up-to-date for {current_year}")
-            
+            _file_log(f"All {result['total_holiday_schedules']} holiday schedule(s) already up-to-date for {result['year']}")
+
     except Exception as e:
         db.rollback()
         raise
@@ -12959,112 +12984,6 @@ def get_next_holiday_occurrence(holiday_name: str, country_code: str = "US"):
         log_event('ERROR', 'system', f'Holiday next occurrence lookup failed: {e}', source='next_holiday')
         raise HTTPException(status_code=500, detail=f"Failed to find next occurrence: {str(e)}")
 
-@app.post("/holiday-api/create-schedule")
-def create_schedule_from_holiday(
-    request: HolidayScheduleRequest,
-    db: Session = Depends(get_db)
-):
-    """
-    Create a recurring schedule from a holiday using the API
-    Will automatically fetch the correct dates for the holiday
-    """
-    try:
-        from backend.holiday_api import HolidayAPI
-        from datetime import datetime
-        
-        # Extract values from request
-        holiday_name = request.holiday_name
-        country_code = request.country_code
-        category_id = request.category_id
-        
-        # Generate years list based on multi_year setting
-        if request.multi_year and request.year_count:
-            current_year = datetime.now().year
-            years = [current_year + i for i in range(request.year_count)]
-        else:
-            current_year = datetime.now().year
-            years = [current_year]
-        
-        # Verify category exists
-        category = db.query(models.Category).filter(models.Category.id == category_id).first()
-        if not category:
-            raise HTTPException(status_code=404, detail=f"Category {category_id} not found")
-        
-        # Get holiday dates for all requested years
-        suggestions = HolidayAPI.suggest_schedule_dates(holiday_name, country_code.upper(), years)
-        
-        if not suggestions:
-            raise HTTPException(
-                status_code=404,
-                detail=f"Holiday '{holiday_name}' not found for {country_code} in years {years}"
-            )
-        
-        # Use the first year's date to create the schedule
-        first_occurrence = suggestions[0]
-        
-        # Check for multi-day holiday
-        multi_day = HolidayAPI.get_multi_day_holidays(country_code.upper(), first_occurrence["year"])
-        matching_multi = next(
-            (h for h in multi_day if holiday_name.lower() in h["name"].lower()),
-            None
-        )
-        
-        if matching_multi:
-            # Multi-day holiday
-            start_month = matching_multi["start_month"]
-            start_day = matching_multi["start_day"]
-            end_month = matching_multi["end_month"]
-            end_day = matching_multi["end_day"]
-        else:
-            # Single day holiday
-            start_month = first_occurrence["month"]
-            start_day = first_occurrence["day"]
-            end_month = start_month
-            end_day = start_day
-        
-        # Create the schedule with proper datetime objects
-        start_date_obj = datetime(2024, start_month, start_day)  # Use a reference year
-        end_date_obj = datetime(2024, end_month, end_day)
-        
-        schedule = models.Schedule(
-            name=first_occurrence["name"],
-            category_id=category_id,
-            type="yearly",
-            is_active=True,
-            start_date=start_date_obj,
-            end_date=end_date_obj,
-            shuffle=False,
-            playlist=False
-        )
-        
-        db.add(schedule)
-        db.commit()
-        db.refresh(schedule)
-        
-        return {
-            "message": f"Schedule created for {first_occurrence['name']}",
-            "schedule_id": schedule.id,
-            "schedule": {
-                "id": schedule.id,
-                "name": schedule.name,
-                "start_date": schedule.start_date,
-                "end_date": schedule.end_date,
-                "type": schedule.type
-            },
-            "holiday_dates": suggestions,
-            "years_created": years
-        }
-        
-    except HTTPException:
-        raise
-    except Exception as e:
-        db.rollback()
-        import traceback
-        error_details = traceback.format_exc()
-        _file_log(f"[ERROR] Error creating holiday schedule: {str(e)}\n{error_details}")
-        log_event('ERROR', 'scheduler', f'Holiday schedule creation failed: {e}', source='create_schedule_from_holiday')
-        raise HTTPException(status_code=500, detail=f"Failed to create schedule: {str(e)}")
-
 @app.get("/holiday-api/status")
 def get_holiday_api_status():
     """Check if holiday API is available and working"""
@@ -13115,78 +13034,8 @@ def refresh_holiday_dates(db: Session = Depends(get_db)):
     for the current/upcoming year.
     """
     try:
-        from backend.holiday_api import HolidayAPI
-        from datetime import datetime
-        
-        current_year = datetime.now().year
-        updated_count = 0
-        errors = []
-        updated_schedules = []
-        
-        # Find all schedules with holiday_name set
-        holiday_schedules = db.query(models.Schedule).filter(
-            models.Schedule.holiday_name.isnot(None),
-            models.Schedule.holiday_country.isnot(None)
-        ).all()
-        
-        for schedule in holiday_schedules:
-            try:
-                # Get the holiday for current year
-                holidays = HolidayAPI.get_holidays(schedule.holiday_country, current_year)
-                
-                # Find matching holiday
-                matching = None
-                for h in holidays:
-                    if h.get("name", "").lower() == schedule.holiday_name.lower():
-                        matching = h
-                        break
-                    # Also check localName
-                    if h.get("localName", "").lower() == schedule.holiday_name.lower():
-                        matching = h
-                        break
-                
-                if matching:
-                    # Parse the date
-                    new_date = datetime.strptime(matching["date"], "%Y-%m-%d")
-                    old_date = schedule.start_date
-                    
-                    # Update if date changed or year is different
-                    if old_date.year != current_year or old_date.month != new_date.month or old_date.day != new_date.day:
-                        schedule.start_date = new_date
-                        schedule.end_date = new_date.replace(hour=23, minute=59, second=59)
-                        updated_count += 1
-                        updated_schedules.append({
-                            "id": schedule.id,
-                            "name": schedule.name,
-                            "holiday": schedule.holiday_name,
-                            "old_date": old_date.strftime("%Y-%m-%d"),
-                            "new_date": new_date.strftime("%Y-%m-%d")
-                        })
-                else:
-                    errors.append({
-                        "schedule_id": schedule.id,
-                        "holiday": schedule.holiday_name,
-                        "error": f"Holiday not found for {schedule.holiday_country} in {current_year}"
-                    })
-                    
-            except Exception as e:
-                errors.append({
-                    "schedule_id": schedule.id,
-                    "holiday": schedule.holiday_name,
-                    "error": str(e)
-                })
-        
-        db.commit()
-        
-        return {
-            "success": True,
-            "total_holiday_schedules": len(holiday_schedules),
-            "updated_count": updated_count,
-            "updated_schedules": updated_schedules,
-            "errors": errors,
-            "year": current_year
-        }
-        
+        result = _refresh_holiday_linked_schedules(db)
+        return {"success": True, **result}
     except Exception as e:
         db.rollback()
         log_event('ERROR', 'scheduler', f'Holiday date refresh failed: {e}', source='refresh_holiday_dates')

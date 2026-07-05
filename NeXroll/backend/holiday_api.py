@@ -4,10 +4,10 @@ Provides automatic holiday detection and scheduling using external calendar APIs
 """
 
 import requests
+import time
 from datetime import datetime, date
 from typing import List, Dict, Optional, Tuple
 import logging
-from functools import lru_cache
 
 logger = logging.getLogger(__name__)
 
@@ -19,7 +19,18 @@ class HolidayAPI:
     """
     
     BASE_URL = "https://date.nager.at/api/v3"
-    
+
+    # Cache TTL: holiday data for a given country/year essentially never changes,
+    # but we still refresh periodically rather than caching forever. A bare
+    # process-lifetime cache (e.g. functools.lru_cache) would permanently store
+    # whatever the FIRST call returned - including a transient network failure's
+    # empty-list result - for the rest of the app's uptime. These caches instead
+    # track a timestamp and, on a failed refresh, keep serving the last known-good
+    # data rather than replacing it with an empty/fallback result.
+    CACHE_TTL_SECONDS = 24 * 60 * 60
+    _countries_cache: Dict[str, object] = {"data": None, "timestamp": 0.0}
+    _holidays_cache: Dict[Tuple[str, int], Dict[str, object]] = {}
+
     # Map of supported countries with their ISO codes
     SUPPORTED_COUNTRIES = {
         "US": "United States",
@@ -57,44 +68,89 @@ class HolidayAPI:
     }
     
     # Holiday name mappings for common variations
+    # Each alias string must map to exactly one canonical holiday - having the
+    # same alias (e.g. "Christmas" / "New Year") point at two different
+    # canonical entries made the match depend on dict/API list ordering.
     HOLIDAY_ALIASES = {
-        "Christmas Day": ["Christmas", "Xmas", "Christmas Eve"],
+        "Christmas Day": ["Christmas", "Xmas"],
+        "Christmas Eve": ["Xmas Eve"],
         "New Year's Day": ["New Year", "New Years"],
+        "New Year's Eve": ["NYE"],
         "Halloween": ["All Hallows Eve", "Samhain"],
         "Thanksgiving": ["Thanksgiving Day"],
-        "Easter": ["Easter Sunday", "Easter Monday"],
+        "Easter": ["Easter Sunday"],
         "Valentine's Day": ["Saint Valentine's Day"],
         "Independence Day": ["Fourth of July", "4th of July"],
-        "Christmas Eve": ["Christmas"],
-        "New Year's Eve": ["New Year"],
         "Hanukkah": ["Chanukah", "Hanukah"],
         "Chinese New Year": ["Lunar New Year", "Spring Festival"],
         "Diwali": ["Deepavali", "Festival of Lights"],
         "Kwanzaa": ["Kwanza"],
     }
-    
+
+    # Holidays whose calendar date never actually changes, keyed by country
+    # then lowercased holiday name. Nager.Date (and government calendars
+    # generally) return the "observed" date instead of the real one when a
+    # fixed holiday falls on a weekend - e.g. Independence Day 2026 falls on
+    # a Saturday, so Nager.Date's `date` field for it is "2026-07-03" (the
+    # preceding Friday), with no separate field exposing the real July 4.
+    # That's correct for "which day is the office closed," but wrong for
+    # "which day is the holiday" scheduling - so get_holidays() overrides the
+    # date back to the true month/day for any holiday listed here. Holidays
+    # that are genuinely weekday-defined (Thanksgiving, MLK Day, Easter, etc.)
+    # are deliberately not listed - their API-reported date IS the actual day.
+    FIXED_HOLIDAY_DATES = {
+        "US": {
+            "new year's day": (1, 1),
+            "valentine's day": (2, 14),
+            "st. patrick's day": (3, 17),
+            "juneteenth national independence day": (6, 19),
+            "independence day": (7, 4),
+            "halloween": (10, 31),
+            "veterans day": (11, 11),
+            "christmas day": (12, 25),
+        },
+        "CA": {
+            "new year's day": (1, 1),
+            "valentine's day": (2, 14),
+            "canada day": (7, 1),
+            "halloween": (10, 31),
+            "remembrance day": (11, 11),
+            "christmas day": (12, 25),
+            "boxing day": (12, 26),
+        },
+    }
+
+
     @staticmethod
-    @lru_cache(maxsize=32)
     def get_available_countries() -> List[Dict[str, str]]:
         """
         Fetch list of available countries from API
         Returns: [{"countryCode": "US", "name": "United States"}, ...]
         """
+        cached = HolidayAPI._countries_cache
+        if cached["data"] is not None and (time.time() - cached["timestamp"]) < HolidayAPI.CACHE_TTL_SECONDS:
+            return cached["data"]
+
         try:
             response = requests.get(f"{HolidayAPI.BASE_URL}/AvailableCountries", timeout=5)
             if response.status_code == 200:
-                countries = response.json()
-                return [
+                countries = [
                     {"countryCode": c["countryCode"], "name": c["name"]}
-                    for c in countries
+                    for c in response.json()
                 ]
-            return [{"countryCode": k, "name": v} for k, v in HolidayAPI.SUPPORTED_COUNTRIES.items()]
+                HolidayAPI._countries_cache = {"data": countries, "timestamp": time.time()}
+                return countries
+            logger.warning(f"AvailableCountries API returned status {response.status_code}")
         except Exception as e:
             logger.error(f"Failed to fetch countries from API: {e}")
-            return [{"countryCode": k, "name": v} for k, v in HolidayAPI.SUPPORTED_COUNTRIES.items()]
-    
+
+        # Refresh failed - serve the last known-good data if we have any,
+        # rather than permanently downgrading to the ~30-country static list.
+        if cached["data"] is not None:
+            return cached["data"]
+        return [{"countryCode": k, "name": v} for k, v in HolidayAPI.SUPPORTED_COUNTRIES.items()]
+
     @staticmethod
-    @lru_cache(maxsize=128)
     def get_holidays(country_code: str, year: int) -> List[Dict]:
         """
         Fetch holidays for a specific country and year
@@ -107,22 +163,28 @@ class HolidayAPI:
             List of holiday dictionaries with keys:
             - name: Holiday name
             - date: Date string (YYYY-MM-DD)
-            - local_name: Local language name
-            - country_code: Country code
+            - localName: Local language name
+            - countryCode: Country code
             - fixed: Boolean (if holiday is on fixed date)
             - global: Boolean (if observed nationwide)
             - type: "Public", "Bank", "School", "Authorities", "Optional", "Observance"
         """
+        cache_key = (country_code, year)
+        cached = HolidayAPI._holidays_cache.get(cache_key)
+        if cached and (time.time() - cached["timestamp"]) < HolidayAPI.CACHE_TTL_SECONDS:
+            return cached["data"]
+
         try:
             response = requests.get(
                 f"{HolidayAPI.BASE_URL}/PublicHolidays/{year}/{country_code}",
                 timeout=5
             )
-            
+
             if response.status_code == 200:
                 holidays = response.json()
-                
+
                 # Enrich with date parsing and ensure consistent field names
+                fixed_dates = HolidayAPI.FIXED_HOLIDAY_DATES.get(country_code.upper(), {})
                 for holiday in holidays:
                     try:
                         holiday_date = datetime.strptime(holiday["date"], "%Y-%m-%d").date()
@@ -131,19 +193,42 @@ class HolidayAPI:
                         holiday["date_obj"] = holiday_date
                     except Exception:
                         pass
-                    
+
+                    # Correct known fixed-calendar holidays back to their real
+                    # date if the API reported an "observed" (weekend-shifted)
+                    # date instead - see FIXED_HOLIDAY_DATES above.
+                    true_md = fixed_dates.get(holiday.get("name", "").lower())
+                    if true_md:
+                        try:
+                            true_date = date(year, true_md[0], true_md[1])
+                            if holiday.get("date_obj") != true_date:
+                                holiday["observed_date"] = holiday["date"]
+                                holiday["date"] = true_date.strftime("%Y-%m-%d")
+                                holiday["month"] = true_date.month
+                                holiday["day"] = true_date.day
+                                holiday["date_obj"] = true_date
+                            holiday["fixed"] = True
+                        except ValueError:
+                            pass  # e.g. Feb 29 fallback safety, shouldn't occur for this table
+
                     # Ensure types is an array (Nager API returns this already)
                     if "types" not in holiday:
                         holiday["types"] = ["Public"] if holiday.get("global", False) else ["Observance"]
-                
+
+                HolidayAPI._holidays_cache[cache_key] = {"data": holidays, "timestamp": time.time()}
                 return holidays
             else:
                 logger.warning(f"API returned status {response.status_code} for {country_code}/{year}")
-                return []
-                
         except Exception as e:
             logger.error(f"Failed to fetch holidays for {country_code}/{year}: {e}")
-            return []
+
+        # Refresh failed - serve the last known-good data if we have any, rather
+        # than returning an empty list that would then get treated as "no
+        # holidays this year" (and, upstream, as "holiday not found" for every
+        # holiday-linked schedule in this country until the next successful fetch).
+        if cached:
+            return cached["data"]
+        return []
     
     @staticmethod
     def get_multi_day_holidays(country_code: str, year: int) -> List[Dict]:
@@ -201,23 +286,38 @@ class HolidayAPI:
     @staticmethod
     def search_holiday_by_name(name: str, country_code: str, year: int) -> Optional[Dict]:
         """
-        Find a specific holiday by name (supports aliases)
+        Find a specific holiday by name (supports aliases).
+
+        Tries an exact (case-insensitive) match on name/localName first -
+        this is the path used for holiday_name values already resolved via
+        the Holiday Browser or an exact API name, and must be unambiguous
+        (e.g. a schedule named "Christmas" must not resolve to "Christmas Eve"
+        just because one happens to come first in the API's response).
+        Substring matching is only used as a last-resort fallback for
+        free-typed/partial names.
         """
         holidays = HolidayAPI.get_holidays(country_code, year)
-        name_lower = name.lower()
-        
-        # Direct match
+        name_lower = name.lower().strip()
+
+        # 1. Exact match on name or localName
         for holiday in holidays:
-            if name_lower in holiday["name"].lower():
+            if holiday.get("name", "").lower() == name_lower or holiday.get("localName", "").lower() == name_lower:
                 return holiday
-        
-        # Check aliases
+
+        # 2. Alias match (exact alias -> canonical name, exact match against holidays)
         for canonical_name, aliases in HolidayAPI.HOLIDAY_ALIASES.items():
             if any(alias.lower() == name_lower for alias in aliases):
                 for holiday in holidays:
-                    if canonical_name.lower() in holiday["name"].lower():
+                    if holiday.get("name", "").lower() == canonical_name.lower():
                         return holiday
-        
+
+        # 3. Substring fallback (best-effort; may be ambiguous if multiple
+        #    holidays share a common substring, but better than nothing for
+        #    free-text search queries)
+        for holiday in holidays:
+            if name_lower in holiday.get("name", "").lower():
+                return holiday
+
         return None
     
     @staticmethod

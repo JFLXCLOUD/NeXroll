@@ -220,8 +220,6 @@ class Scheduler:
         # Track last rotation time for random blocks (schedule_id -> last_rotation_time)
         self._last_rotation_time: dict[int, datetime.datetime] = {}
         self._rotation_interval_seconds: float = 600.0  # 10 minute rotation interval
-        # Cache for holiday dates (holiday_name_country_year -> date)
-        self._holiday_date_cache: dict[str, Optional[datetime.date]] = {}
         # Track blend mode state for verification
         self._blend_mode_active: bool = False
         self._blend_expected_preroll: Optional[str] = None
@@ -3322,48 +3320,39 @@ class Scheduler:
         """
         Look up the date for a holiday in a specific year using the Holiday API.
         This handles variable-date holidays like Thanksgiving, Easter, etc.
-        
+
         Args:
             holiday_name: Name of the holiday (e.g., "Thanksgiving")
             country_code: ISO country code (e.g., "US")
             year: Year to look up
-            
+
         Returns:
             datetime.date object if found, None otherwise
+
+        No caching here beyond HolidayAPI.get_holidays()'s own TTL cache - an
+        earlier per-(name,country,year) cache stored a "not found" result
+        forever, so a transient API failure early in the year permanently
+        blinded the scheduler to that holiday until process restart. A fresh
+        lookup here is cheap (get_holidays() is itself cached), so it's safe
+        to just re-derive on every call.
         """
-        # Check cache first
-        cache_key = f"{holiday_name}_{country_code}_{year}"
-        if cache_key in self._holiday_date_cache:
-            return self._holiday_date_cache[cache_key]
-        
         try:
-            # Import Holiday API
             from backend.holiday_api import HolidayAPI
-            
-            # Fetch holidays for this country and year
-            holidays = HolidayAPI.get_holidays(country_code, year)
-            
-            # Find matching holiday (case-insensitive)
-            holiday_name_lower = holiday_name.lower()
-            for holiday in holidays:
-                if holiday_name_lower in holiday.get('name', '').lower():
-                    # Found it! Parse the date
-                    holiday_date_str = holiday.get('date')
-                    if holiday_date_str:
-                        holiday_date = datetime.datetime.strptime(holiday_date_str, '%Y-%m-%d').date()
-                        # Cache it
-                        self._holiday_date_cache[cache_key] = holiday_date
-                        _scheduler_log(f"Found {holiday_name} in {country_code} {year}: {holiday_date}")
-                        return holiday_date
-            
-            # Not found - cache None to avoid repeated API calls
-            self._holiday_date_cache[cache_key] = None
-            _scheduler_log(f"Holiday '{holiday_name}' not found in {country_code} {year}", level="WARNING")
+
+            # search_holiday_by_name does an exact (case-insensitive) match
+            # before falling back to substring matching, so a schedule named
+            # "Christmas" can't silently resolve to "Christmas Eve" or similar.
+            holiday = HolidayAPI.search_holiday_by_name(holiday_name, (country_code or "").upper(), year)
+            if holiday and holiday.get("date"):
+                holiday_date = datetime.datetime.strptime(holiday["date"], "%Y-%m-%d").date()
+                _scheduler_verbose(f"Found {holiday_name} in {country_code} {year}: {holiday_date}")
+                return holiday_date
+
+            _scheduler_verbose(f"Holiday '{holiday_name}' not found in {country_code} {year}")
             return None
-            
+
         except Exception as e:
             _scheduler_log(f"SCHEDULER: Error looking up holiday date: {e}", level="ERROR")
-            # Don't cache errors - try again next time
             return None
 
     def _execute_schedule(self, schedule: models.Schedule, db: Session):

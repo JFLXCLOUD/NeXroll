@@ -1,5 +1,40 @@
 # Changelog
 
+## [2.0.4] - 07-04-2026
+
+### Fixed
+
+- **Independence Day (and other fixed-date holidays) could show/schedule on the
+  wrong day.** The Holiday Browser and holiday-linked schedules pull dates from
+  an external calendar API, which reports the government's "observed" date
+  instead of the real one when a fixed holiday falls on a weekend (e.g.
+  Independence Day 2026 falls on a Saturday, so the API reports July 3rd with
+  no way to recover the real July 4th). Known fixed-calendar holidays
+  (Independence Day, Christmas, New Year's Day, Juneteenth, Veterans Day, and a
+  few others for US/CA) are now corrected back to their true date, and now
+  correctly show "Fixed date" instead of "Variable date."
+- **A brief outage in the external Holiday API could permanently blank out
+  holiday data for the rest of the app's uptime.** Holiday lookups were cached
+  forever with no expiry, so a single failed request (e.g. right after
+  container start, before networking is ready) locked in an empty/fallback
+  result until the next restart - affecting the Holiday Browser, the
+  scheduler's per-tick holiday resolution, and both the automatic and manual
+  "Refresh Holiday Dates" paths. Holiday data now refreshes every 24 hours and,
+  if a refresh fails, keeps serving the last known-good data instead.
+- **A holiday schedule could resolve to the wrong holiday if its name was a
+  substring of another** (e.g. "Christmas" silently matching "Christmas Eve"
+  instead of "Christmas Day", depending on API list order). Matching now tries
+  an exact name match first, only falling back to substring matching as a last
+  resort.
+- **Manually clicking "Refresh Holiday Dates" could roll back a schedule
+  you'd deliberately pre-configured for next year's holiday** back to the
+  current year's date - the automatic startup refresh already skipped
+  future-dated schedules, but the manual button didn't. Both now share one
+  implementation.
+- Removed a dead, broken "create schedule from holiday" API path that never
+  linked the schedule for yearly auto-updates and used a field name the
+  frontend didn't actually send.
+
 ## [2.0.3] - 07-04-2026
 
 ### Fixed

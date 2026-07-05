@@ -2014,35 +2014,17 @@ const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
     }
   };
 
-  const createScheduleFromHoliday = async (holiday, categoryId) => {
-    try {
-      const res = await fetch(apiUrl('/holiday-api/create-schedule'), {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          holiday_name: holiday.name,
-          holiday_date: holiday.date,
-          country_code: holidaySelectedCountry,
-          category_id: categoryId,
-          multi_year: true,
-          years_ahead: 5
-        })
-      });
-      const data = await safeJson(res);
-      if (res.ok) {
-        alert(`Schedule "${holiday.name}" created successfully!`);
-        // Refresh schedules
-        const schedRes = await fetch(apiUrl('/schedules'));
-        const schedData = await safeJson(schedRes);
-        if (schedRes.ok) setSchedules(schedData);
-        setShowHolidayBrowser(false);
-      } else {
-        alert(`Failed to create schedule: ${data?.detail || 'Unknown error'}`);
-      }
-    } catch (e) {
-      console.error('Create holiday schedule error:', e);
-      alert(`Error: ${e.message}`);
+  const openHolidayBrowser = () => {
+    // Clear any leftover search text from a previous session so it can't
+    // hide holidays that are actually there for the newly-opened country/year.
+    setHolidaySearchQuery('');
+    // Country list rarely changes - skip the redundant refetch once loaded.
+    if (holidayCountries.length === 0) {
+      loadHolidayCountries();
     }
+    loadHolidays(holidaySelectedCountry, holidaySelectedYear);
+    checkHolidayApiStatus();
+    setShowHolidayBrowser(true);
   };
 
   // === Shared toggle schedule handler (DRY - used by both compact and detailed views) ===
@@ -14212,10 +14194,7 @@ const DashboardTiles = {
         {/* Quick Start: Browse Holidays */}
         <div
           onClick={() => {
-            loadHolidayCountries();
-            loadHolidays(holidaySelectedCountry, holidaySelectedYear);
-            checkHolidayApiStatus();
-            setShowHolidayBrowser(true);
+            openHolidayBrowser();
           }}
           className="nx-conn-hint"
           style={{ cursor: 'pointer', marginTop: 0, marginBottom: '1rem', alignItems: 'center', justifyContent: 'space-between' }}
@@ -14887,10 +14866,7 @@ const DashboardTiles = {
                 <button
                   type="button"
                   onClick={() => {
-                    loadHolidayCountries();
-                    loadHolidays(holidaySelectedCountry, holidaySelectedYear);
-                    checkHolidayApiStatus();
-                    setShowHolidayBrowser(true);
+                    openHolidayBrowser();
                   }}
                   style={{
                     marginTop: '1rem',
@@ -35134,10 +35110,7 @@ const DashboardTiles = {
                   <button
                     type="button"
                     onClick={() => {
-                      loadHolidayCountries();
-                      loadHolidays(holidaySelectedCountry, holidaySelectedYear);
-                      checkHolidayApiStatus();
-                      setShowHolidayBrowser(true);
+                      openHolidayBrowser();
                     }}
                     style={{
                       marginTop: '1rem',
@@ -35482,7 +35455,7 @@ const DashboardTiles = {
                   className="nx-select"
                   style={{ minWidth: '100px', padding: '0.5rem' }}
                 >
-                  {[0, 1, 2, 3, 4].map(offset => {
+                  {[-1, 0, 1, 2, 3, 4].map(offset => {
                     const year = new Date().getFullYear() + offset;
                     return <option key={year} value={year}>{year}</option>;
                   })}
