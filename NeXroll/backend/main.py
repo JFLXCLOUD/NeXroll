@@ -4720,12 +4720,266 @@ async def require_api_key(
             status_code=401,
             detail="API key required. Provide via X-Api-Key header or api_key query parameter."
         )
-    
+
     key_record = validate_api_key(api_key, "read", db)
     if not key_record:
         raise HTTPException(status_code=401, detail="Invalid or expired API key")
-    
+
     return key_record
+
+
+# ---------------------------------------------------------------------------
+# Bingearr integration API
+#
+# A small, stable public surface for Bingearr (sibling project) to discover
+# prerolls and apply/clear them when a marathon is activated. Auth uses the
+# existing api_keys store via Depends(require_api_key) (X-Api-Key header).
+# Contract: Bingearr repo -> docs/nexroll-integration.md.
+# ---------------------------------------------------------------------------
+
+class IntegrationApplyBody(BaseModel):
+    ref: str                      # "<type>:<id>", e.g. "category:5" or "sequence:2"
+    server: Optional[str] = None  # advisory media-server name from Bingearr
+
+
+@app.get("/api/integration/status")
+def integration_status(
+    _key: models.APIKey = Depends(require_api_key),
+    db: Session = Depends(get_db),
+):
+    """Health + version probe for Bingearr."""
+    ver = None
+    try:
+        from backend.version import get_version as _gv
+        ver = _gv()
+    except Exception:
+        ver = None
+
+    setting = db.query(models.Setting).first()
+    plex_url = getattr(setting, "plex_url", None) if setting else None
+    token = (getattr(setting, "plex_token", None) if setting else None) or secure_store.get_plex_token()
+    server_connected = False
+    if plex_url and token:
+        try:
+            server_connected = bool(PlexConnector(plex_url, token).test_connection())
+        except Exception:
+            server_connected = False
+
+    return {"ok": True, "version": ver, "server_connected": server_connected}
+
+
+@app.get("/api/integration/prerolls")
+def integration_prerolls(
+    _key: models.APIKey = Depends(require_api_key),
+    db: Session = Depends(get_db),
+):
+    """Prerolls a Bingearr user can attach: categories + saved sequences."""
+    out = []
+    for c in db.query(models.Category).order_by(models.Category.name).all():
+        out.append({"id": str(c.id), "name": c.name, "type": "category"})
+    for s in db.query(models.SavedSequence).order_by(models.SavedSequence.name).all():
+        out.append({"id": str(s.id), "name": s.name, "type": "sequence"})
+    return out
+
+
+@app.post("/api/integration/apply")
+def integration_apply(
+    body: IntegrationApplyBody,
+    ttl: int = 480,
+    _key: models.APIKey = Depends(require_api_key),
+    db: Session = Depends(get_db),
+):
+    """Apply a preroll to the media server. ttl (minutes) holds off the
+    scheduler from reverting until Bingearr calls /clear."""
+    ref = (body.ref or "").strip()
+    if ":" not in ref:
+        raise HTTPException(status_code=400, detail="ref must be '<type>:<id>' (e.g. 'category:5').")
+    kind, _, raw_id = ref.partition(":")
+    kind = kind.strip().lower()
+    try:
+        rid = int(raw_id)
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=400, detail="ref id must be numeric.")
+
+    suffix = f" for {body.server}" if body.server else ""
+
+    if kind == "category":
+        cat = db.query(models.Category).filter(models.Category.id == rid).first()
+        if not cat:
+            raise HTTPException(status_code=404, detail="Category not found.")
+        ok = _apply_category_to_plex_and_track(db, cat.id, ttl=ttl)
+        if not ok:
+            return {"applied": False, "message": f"Failed to apply category '{cat.name}' to the media server."}
+        return {"applied": True, "message": f"Applied category '{cat.name}'{suffix}"}
+
+    if kind == "sequence":
+        seq = db.query(models.SavedSequence).filter(models.SavedSequence.id == rid).first()
+        if not seq:
+            raise HTTPException(status_code=404, detail="Sequence not found.")
+        try:
+            apply_sequence_to_server(rid, db)
+        except HTTPException:
+            raise
+        except Exception as e:
+            return {"applied": False, "message": f"Failed to apply sequence '{seq.name}': {e}"}
+        # apply_sequence_to_server sets a 15m override; extend it to ttl so a
+        # binge block isn't reverted mid-marathon.
+        try:
+            st = db.query(models.Setting).first()
+            if st:
+                st.override_expires_at = datetime.datetime.utcnow() + datetime.timedelta(minutes=int(ttl))
+                st.updated_at = datetime.datetime.utcnow()
+                db.commit()
+        except Exception:
+            try:
+                db.rollback()
+            except Exception:
+                pass
+        return {"applied": True, "message": f"Applied sequence '{seq.name}'{suffix}"}
+
+    raise HTTPException(status_code=400, detail="ref type must be 'category' or 'sequence'.")
+
+
+@app.post("/api/integration/clear")
+def integration_clear(
+    _key: models.APIKey = Depends(require_api_key),
+    db: Session = Depends(get_db),
+):
+    """Drop the manual override so NeXroll's normal schedule wins again."""
+    try:
+        st = db.query(models.Setting).first()
+        if st:
+            st.override_expires_at = None
+            st.active_category = None
+            for attr in ("applied_sequence_id", "applied_sequence_name"):
+                if hasattr(st, attr):
+                    setattr(st, attr, None)
+            st.updated_at = datetime.datetime.utcnow()
+            db.commit()
+    except Exception:
+        try:
+            db.rollback()
+        except Exception:
+            pass
+    # Re-evaluate immediately so Plex reflects the normal schedule (or clears).
+    try:
+        scheduler.trigger_immediate_check()
+    except Exception:
+        pass
+    return {"applied": False, "message": "Reverted to NeXroll's normal schedule"}
+
+
+@app.post("/api/integration/preroll")
+def integration_ingest_preroll(
+    file: UploadFile = File(...),
+    name: str = Form(...),
+    marathon_id: Optional[str] = Form(None),
+    _key: models.APIKey = Depends(require_api_key),
+    db: Session = Depends(get_db),
+):
+    """Ingest a Bingearr-generated promo preroll.
+
+    Stores it in a locked 'Bingearr' system category (read-only in the NeXroll
+    UI) and (re)creates a single-preroll sequence so Bingearr can apply exactly
+    this promo via /api/integration/apply with ref 'sequence:<id>'.
+    """
+    ALLOWED = {".mp4", ".mkv", ".mov", ".m4v", ".webm"}
+    ext = os.path.splitext(file.filename or "")[1].lower() or ".mp4"
+    if ext not in ALLOWED:
+        raise HTTPException(status_code=400, detail=f"Unsupported file type '{ext}'.")
+
+    # Locked system category that holds Bingearr promos.
+    cat = db.query(models.Category).filter(models.Category.name == "Bingearr").first()
+    if not cat:
+        cat = models.Category(
+            name="Bingearr",
+            description="Auto-generated Bingearr playlist promos (managed by Bingearr).",
+            is_system=True,
+            apply_to_plex=False,
+        )
+        db.add(cat)
+        db.commit()
+        db.refresh(cat)
+    elif not getattr(cat, "is_system", False):
+        cat.is_system = True
+        db.commit()
+
+    # Stable filename per marathon so re-generation replaces rather than piles up.
+    cat_dir = os.path.join(PREROLLS_DIR, "Bingearr")
+    os.makedirs(cat_dir, exist_ok=True)
+    safe = f"bingearr_marathon_{marathon_id}{ext}" if marathon_id else os.path.basename(file.filename or f"{name}{ext}")
+    dest = os.path.join(cat_dir, safe)
+
+    content = file.file.read()
+    with open(dest, "wb") as f:
+        f.write(content)
+
+    # Replace any prior preroll record for this file in the Bingearr category.
+    prior = db.query(models.Preroll).filter(
+        models.Preroll.filename == safe, models.Preroll.category_id == cat.id
+    ).all()
+    for p in prior:
+        try:
+            if p.thumbnail and os.path.isabs(p.thumbnail) and os.path.exists(p.thumbnail):
+                os.remove(p.thumbnail)
+        except Exception:
+            pass
+        db.delete(p)
+    if prior:
+        db.commit()
+
+    # Best-effort duration probe.
+    duration = None
+    try:
+        res = _run_subprocess(
+            [get_ffprobe_cmd(), "-v", "quiet", "-print_format", "json", "-show_format", dest],
+            capture_output=True, text=True,
+        )
+        if getattr(res, "returncode", 1) == 0 and res.stdout:
+            duration = float(json.loads(res.stdout).get("format", {}).get("duration"))
+    except Exception:
+        duration = None
+
+    preroll = models.Preroll(
+        filename=safe,
+        display_name=name,
+        path=dest,
+        category_id=cat.id,
+        managed=True,
+        duration=duration,
+        file_size=len(content),
+        description=f"Bingearr promo for '{name}'",
+    )
+    db.add(preroll)
+    db.commit()
+    db.refresh(preroll)
+    try:
+        preroll.categories = [cat]
+        db.commit()
+    except Exception:
+        db.rollback()
+
+    # (Re)create a one-preroll sequence so the promo can be applied precisely.
+    seq_name = f"Bingearr — {name}"
+    blocks = [{"type": "fixed", "preroll_ids": [preroll.id]}]
+    seq = db.query(models.SavedSequence).filter(models.SavedSequence.name == seq_name).first()
+    if seq:
+        seq.set_blocks(blocks)
+    else:
+        seq = models.SavedSequence(name=seq_name, description=f"Bingearr promo for '{name}'")
+        seq.set_blocks(blocks)
+        db.add(seq)
+    db.commit()
+    db.refresh(seq)
+
+    return {
+        "ok": True,
+        "preroll_id": preroll.id,
+        "category": cat.name,
+        "category_id": cat.id,
+        "sequence_id": seq.id,
+        "ref": f"sequence:{seq.id}",
+    }
 
 
 async def require_api_key_full(
