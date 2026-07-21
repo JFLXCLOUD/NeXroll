@@ -19,13 +19,29 @@ from backend.database import SessionLocal
 
 # Logging helpers - direct file writes to avoid circular imports
 def _get_log_path():
-    """Get the log file path"""
+    """Get the log file path.
+
+    Mirrors main._ensure_log_dir's fallback chain so the scheduler writes to the
+    SAME app.log as the FastAPI app (can't import main here — circular import).
+    Historically this used /var/log/nexroll on Linux while the app wrote to
+    <cwd>/logs, so Docker diagnostics bundles were missing every SCHEDULER line.
+    """
+    candidates = []
     if sys.platform == "win32":
-        log_dir = os.path.join(os.environ.get("PROGRAMDATA", "C:\\ProgramData"), "NeXroll", "logs")
-    else:
-        log_dir = "/var/log/nexroll"
-    os.makedirs(log_dir, exist_ok=True)
-    return os.path.join(log_dir, "app.log")
+        base = os.environ.get("PROGRAMDATA")
+        if base:
+            candidates.append(os.path.join(base, "NeXroll", "logs"))
+        la = os.environ.get("LOCALAPPDATA") or os.environ.get("APPDATA")
+        if la:
+            candidates.append(os.path.join(la, "NeXroll", "logs"))
+    candidates.append(os.path.join(os.getcwd(), "logs"))
+    for log_dir in candidates:
+        try:
+            os.makedirs(log_dir, exist_ok=True)
+            return os.path.join(log_dir, "app.log")
+        except Exception:
+            continue
+    return os.path.join(os.getcwd(), "app.log")
 
 _scheduler_rotation_cache = {"last_check": 0}
 

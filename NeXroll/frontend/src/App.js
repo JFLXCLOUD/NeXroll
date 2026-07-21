@@ -202,6 +202,23 @@ const formatReleaseDate = (val, opts) => {
   return isNaN(d.getTime()) ? s : d.toLocaleDateString(undefined, opts);
 };
 
+// Pick black or white text for a schedule/category color swatch. Calendar blocks
+// paint the schedule's color as their background; hardcoded white text disappears
+// on light colors (white, yellow, pastels) — especially glaring in dark mode where
+// every other label is white. Accepts #rgb/#rrggbb; anything unparsable keeps the
+// historical white text.
+const contrastTextFor = (bg) => {
+  if (!bg || typeof bg !== 'string') return '#fff';
+  let hex = bg.trim().replace(/^#/, '');
+  if (hex.length === 3) hex = hex.split('').map(c => c + c).join('');
+  if (!/^[0-9a-fA-F]{6}$/.test(hex)) return '#fff';
+  const r = parseInt(hex.slice(0, 2), 16);
+  const g = parseInt(hex.slice(2, 4), 16);
+  const b = parseInt(hex.slice(4, 6), 16);
+  // Perceived luminance (ITU BT.601 weights) — 0 (black) to 255 (white).
+  return (0.299 * r + 0.587 * g + 0.114 * b) > 150 ? '#1f2937' : '#fff';
+};
+
 // Preview players remember the last volume the user set instead of snapping back
 // to max on every preview. The level is persisted in localStorage and applied
 // through a callback ref the moment each <video> mounts (works even though the
@@ -8309,21 +8326,22 @@ const DashboardTiles = {
                         else if (spanIsLoser) tooltipText = `${sched.name} — Overridden`;
 
                         const barColor = sched.color || sched.cat.color;
+                        const barText = contrastTextFor(barColor);
 
                         return (
-                          <div 
+                          <div
                             key={spanIdx} title={tooltipText}
                             style={{
                               position: 'absolute', left: `${left}%`, width: `${width}%`,
                               top: '5px', bottom: '5px',
                               background: spanIsLoser ? barColor : `linear-gradient(135deg, ${barColor}, ${barColor}dd)`,
-                              borderRadius: '5px', padding: '0 8px', color: '#fff',
+                              borderRadius: '5px', padding: '0 8px', color: barText,
                               fontSize: '0.7rem', fontWeight: 600,
                               display: 'flex', alignItems: 'center', justifyContent: width > 20 ? 'flex-start' : 'center',
                               gap: '4px', boxShadow: shadowStyle, border: borderStyle,
                               opacity: opacityStyle, textDecoration: spanIsLoser ? 'line-through' : 'none',
                               overflow: 'hidden', whiteSpace: 'nowrap', textOverflow: 'ellipsis',
-                              cursor: 'default', textShadow: '0 1px 2px rgba(0,0,0,0.3)', zIndex: 2,
+                              cursor: 'default', textShadow: barText === '#fff' ? '0 1px 2px rgba(0,0,0,0.3)' : 'none', zIndex: 2,
                             }}
                           >
                             {spanIsExclusive && <Lock size={11} style={{ flexShrink: 0 }} />}
@@ -11773,15 +11791,17 @@ const DashboardTiles = {
                 const timeStr = isAllDay ? 'All Day' : `${formatHour(Math.floor(range.start))} - ${range.wrapsOvernight ? formatHour(Math.floor(range.rawEnd)) + ' (next day)' : formatHour(Math.floor(range.end))}`;
                 const samePriorityConflicts = getScheduleConflicts(sched);
                 const hasSamePriorityConflict = samePriorityConflicts.length > 0;
+                const chipBg = sched.color || sched.cat.color;
+                const chipText = contrastTextFor(chipBg);
                 return (
                   <div key={idx} style={{
                     display: 'flex',
                     alignItems: 'center',
                     gap: '6px',
                     padding: '6px 10px',
-                    backgroundColor: sched.color || sched.cat.color,
+                    backgroundColor: chipBg,
                     borderRadius: '6px',
-                    color: '#fff',
+                    color: chipText,
                     fontSize: '0.8rem',
                     fontWeight: 500,
                     border: hasSamePriorityConflict ? '2px solid #ff9800' : 'none',
@@ -11789,7 +11809,7 @@ const DashboardTiles = {
                   }}
                   title={hasSamePriorityConflict ? `Same priority conflict with: ${samePriorityConflicts.map(c => c.schedule.name).join(', ')}\n\nBoth schedules are exclusive with the same priority.\nNeXroll will randomly pick one during overlapping times.\nSet different priorities to have deterministic behavior.` : ''}
                   >
-                    {hasSamePriorityConflict && <AlertTriangle size={12} style={{ color: '#ffeb3b' }} />}
+                    {hasSamePriorityConflict && <AlertTriangle size={12} style={{ color: chipText === '#fff' ? '#ffeb3b' : '#b45309' }} />}
                     {sched.exclusive && !hasSamePriorityConflict && <Lock size={12} />}
                     {sched.blend_enabled && !sched.exclusive && <Shuffle size={12} />}
                     <span>{sched.name}</span>
@@ -11919,8 +11939,10 @@ const DashboardTiles = {
                       tooltipText += '\nOverridden by higher priority schedule';
                     }
                     
+                    const blockBg = sched.color || sched.cat.color;
+                    const blockText = contrastTextFor(blockBg);
                     return (
-                      <div 
+                      <div
                         key={sIdx}
                         title={tooltipText}
                         style={{
@@ -11928,9 +11950,9 @@ const DashboardTiles = {
                           alignItems: 'center',
                           gap: '6px',
                           padding: '6px 12px',
-                          backgroundColor: sched.color || sched.cat.color,
+                          backgroundColor: blockBg,
                           borderRadius: '6px',
-                          color: '#fff',
+                          color: blockText,
                           fontSize: '0.8rem',
                           fontWeight: 500,
                           opacity: (isLoser || isSamePriorityLoser) ? 0.5 : 1,
@@ -11953,7 +11975,7 @@ const DashboardTiles = {
                                 : 'none'
                         }}
                       >
-                        {hasSamePriorityConflict && <AlertTriangle size={12} style={{ color: isSamePriorityLoser ? '#fff' : '#ffeb3b' }} />}
+                        {hasSamePriorityConflict && <AlertTriangle size={12} style={{ color: isSamePriorityLoser ? blockText : (blockText === '#fff' ? '#ffeb3b' : '#b45309') }} />}
                         {isExclusive && !hasSamePriorityConflict && <Lock size={12} />}
                         {isWinner && hourData.hasConflict && !isExclusive && !isBlending && !hasSamePriorityConflict && <Crown size={12} />}
                         {isBlending && <Shuffle size={12} />}
@@ -12616,10 +12638,11 @@ const DashboardTiles = {
                     }
 
                     const barColor = sched.color || sched.cat.color;
-                    
+                    const barText = contrastTextFor(barColor);
+
                     return (
-                      <div 
-                        key={spanIdx} 
+                      <div
+                        key={spanIdx}
                         title={tooltipText}
                         style={{
                           position: 'absolute',
@@ -12627,12 +12650,12 @@ const DashboardTiles = {
                           width: `${width}%`,
                           top: '6px',
                           bottom: '6px',
-                          background: spanIsLoser 
-                            ? barColor 
+                          background: spanIsLoser
+                            ? barColor
                             : `linear-gradient(135deg, ${barColor}, ${barColor}dd)`,
                           borderRadius: '6px',
                           padding: '0 10px',
-                          color: '#fff',
+                          color: barText,
                           fontSize: '0.75rem',
                           fontWeight: 600,
                           display: 'flex',
@@ -12648,7 +12671,7 @@ const DashboardTiles = {
                           textOverflow: 'ellipsis',
                           cursor: 'default',
                           transition: 'opacity 0.2s, box-shadow 0.2s',
-                          textShadow: '0 1px 2px rgba(0,0,0,0.3)',
+                          textShadow: barText === '#fff' ? '0 1px 2px rgba(0,0,0,0.3)' : 'none',
                           zIndex: 2,
                         }}
                       >
@@ -12845,16 +12868,17 @@ const DashboardTiles = {
                   {spans.map((span, spanIdx) => {
                     const width = ((span.end - span.start + 1) / daysInMonth) * 100;
                     const left = (span.start / daysInMonth) * 100;
+                    const barBg = sched.color || sched.cat.color;
                     return (
                       <div key={spanIdx} style={{
                         position: 'absolute',
                         left: `${left}%`,
                         width: `${width}%`,
                         height: '100%',
-                        backgroundColor: sched.color || sched.cat.color,
+                        backgroundColor: barBg,
                         borderRadius: '4px',
                         padding: '4px 8px',
-                        color: '#fff',
+                        color: contrastTextFor(barBg),
                         fontSize: '0.75rem',
                         fontWeight: 500,
                         display: 'flex',
@@ -13548,11 +13572,15 @@ const DashboardTiles = {
                     
                     // Check if schedule is inactive (greyed out)
                     const isInactive = data.schedObjs.some(s => !s.is_active);
-                    
+
+                    // Fallback entries draw on a transparent background (text takes the
+                    // schedule color); solid chips need contrast-aware text.
+                    const chipText = isFallbackEntry ? scheduleColor : (isInactive ? '#fff' : contrastTextFor(scheduleColor));
+
                     return (
-                      <div 
-                        key={catId + '_' + i} 
-                        title={tooltipText} 
+                      <div
+                        key={catId + '_' + i}
+                        title={tooltipText}
                         style={{
                         backgroundColor: isFallbackEntry ? 'transparent' : (isInactive ? '#6c757d' : scheduleColor),
                         border: isFallbackEntry 
@@ -13566,7 +13594,7 @@ const DashboardTiles = {
                                 : (isInBlend 
                                   ? '2px solid rgba(139, 92, 246, 0.8)' 
                                   : (isWinner && dayData.hasConflict ? '2px solid rgba(255, 215, 0, 0.8)' : 'none'))))),
-                        color: isFallbackEntry ? scheduleColor : '#fff', 
+                        color: chipText,
                         borderRadius: '4px',
                         padding: '3px 6px', 
                         fontSize: '0.7rem',
@@ -13593,7 +13621,7 @@ const DashboardTiles = {
                         alignItems: 'center',
                         gap: '3px'
                       }}>
-                        {hasSamePriorityConflict && <AlertTriangle size={10} style={{ flexShrink: 0, color: '#ffeb3b' }} />}
+                        {hasSamePriorityConflict && <AlertTriangle size={10} style={{ flexShrink: 0, color: chipText === '#fff' ? '#ffeb3b' : '#b45309' }} />}
                         {isExclusive && !hasSamePriorityConflict && <Lock size={10} style={{ flexShrink: 0, opacity: isTimeRestrictedExclusive ? 0.7 : 1 }} />}
                         {isExclusive && exclusiveTimeRange && (
                           <span style={{ fontSize: '0.55rem', opacity: 0.8, flexShrink: 0 }}>({exclusiveTimeRange})</span>
@@ -15874,7 +15902,7 @@ const DashboardTiles = {
                     {scheduleMode === 'simple' && schedule.category && (
                       <span style={{
                         backgroundColor: schedule.color || schedule.category.color || '#6366f1',
-                        color: 'white',
+                        color: contrastTextFor(schedule.color || schedule.category.color || '#6366f1'),
                         padding: '0.25rem 0.75rem',
                         borderRadius: '0.25rem',
                         fontSize: '0.8rem',

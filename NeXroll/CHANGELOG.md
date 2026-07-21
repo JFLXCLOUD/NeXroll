@@ -34,6 +34,27 @@
 - Removed a dead, broken "create schedule from holiday" API path that never
   linked the schedule for yearly auto-updates and used a field name the
   frontend didn't actually send.
+- **Manually-applied sequences (the Apply button, including ones that mix in
+  NeX-Up trailers) never reached Jellyfin or Emby.** Applying a sequence wrote
+  the resolved paths straight into Plex's preroll field, but for Jellyfin/Emby
+  it only recorded that the apply "succeeded" without storing which sequence
+  was applied anywhere the plugin could read — so the plugin's per-playback
+  `/plugin/intros` request fell through to whatever category/schedule was
+  already active, silently dropping the sequence (and any NeX-Up trailers in
+  it). The plugin resolver now honors the manually-applied sequence for the
+  same 15-minute window Plex respects.
+- **Diagnostics bundles were missing scheduler activity and plugin/NeX-Up
+  events.** The scheduler wrote its log lines to a different fallback
+  directory than the rest of the app on Linux/Docker, so bundled `app.log`
+  silently excluded every `SCHEDULER:` line; a bundle now also includes
+  `logs/events.log`, dumped from the database-backed event log (plugin
+  requests, scheduler decisions, NeX-Up activity) that the file log never
+  captured to begin with.
+- **Calendar text could become unreadable in dark mode** when a schedule's
+  color was white, yellow, or another light color — every schedule chip and
+  bar across the day/week/month calendar views (and the dashboard's "This
+  Week" tile) hardcoded white text on top of the schedule's own color.
+  Text color is now chosen for contrast against each schedule's actual color.
 
 ## [2.0.3] - 07-04-2026
 

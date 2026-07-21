@@ -10984,11 +10984,11 @@ def apply_sequence_to_server(sequence_id: int, db: Session = Depends(get_db)):
         except Exception as e:
             _file_log(f"Failed to apply sequence to Plex: {e}")
 
-    # Apply to Jellyfin (plugin serves via /resolve-preroll endpoint)
+    # Apply to Jellyfin/Emby: the plugin polls /plugin/intros on each playback, and
+    # _resolve_current_intros serves this sequence while the override window below holds.
     if getattr(setting, "jellyfin_url", None):
         applied_to.append("jellyfin")
 
-    # Apply to Emby (plugin serves via /resolve-preroll endpoint)
     if getattr(setting, "emby_url", None):
         applied_to.append("emby")
 
@@ -23818,7 +23818,7 @@ def diagnostics_bundle(db: Session = Depends(get_db)):
     Create a diagnostics ZIP with:
     - info.json (version, scheduler status, secure provider, resolved paths)
     - db/schema.sql (SQLite schema dump)
-    - logs (app.log, service.log if present)
+    - logs (app.log, service.log if present, events.log from the DB log_entries table)
     - config/plex_config.sanitized.json (token removed if file exists)
 
     ALL sensitive values (API keys, tokens, passwords, internal IPs) are
@@ -23884,6 +23884,30 @@ def diagnostics_bundle(db: Session = Depends(get_db)):
                     with open(log_file, "r", encoding="utf-8", errors="replace") as lf:
                         scrubbed_log = _scrub(lf.read())
                     z.writestr(os.path.join("logs", os.path.basename(log_file)), scrubbed_log)
+            except Exception:
+                pass
+
+            # DB event log — log_event() records (plugin/intros requests, scheduler
+            # events, jellyfin/nexup activity) only exist in the log_entries table,
+            # not app.log; without them a bundle shows no plugin activity at all.
+            try:
+                entries = (
+                    db.query(models.LogEntry)
+                    .order_by(models.LogEntry.timestamp.desc())
+                    .limit(5000)
+                    .all()
+                )
+                if entries:
+                    lines = []
+                    for e in reversed(entries):
+                        ts_str = e.timestamp.strftime("%Y-%m-%d %H:%M:%S") if e.timestamp else "?"
+                        line = f"[{ts_str}] [{e.level}] [{e.category}] {e.message}"
+                        if e.source:
+                            line += f" (source={e.source})"
+                        if e.details:
+                            line += f" details={e.details}"
+                        lines.append(line)
+                    z.writestr("logs/events.log", _scrub("\n".join(lines)))
             except Exception:
                 pass
             # Common service log location
@@ -27983,6 +28007,25 @@ def _resolve_current_intros(db: Session) -> dict:
             return []
         blocks = seq.get_blocks()
         return _resolve_blocks(blocks) if blocks else []
+
+    # --- 0. Manually-applied sequence (Apply button) while its override window holds ---
+    # Plex gets the sequence written directly into its preroll string at apply time,
+    # but Jellyfin/Emby resolve through this function on every playback — so the
+    # override must be honored here or the Apply button is a silent no-op for
+    # plugin-based servers. The scheduler clears override_expires_at as soon as any
+    # schedule enters its active window, which reverts this to the schedule state.
+    applied_seq_id = getattr(setting, "applied_sequence_id", None)
+    if applied_seq_id:
+        override_exp = getattr(setting, "override_expires_at", None)
+        # override_expires_at is written with _localized_now() (Setting.timezone-local),
+        # so it must be compared against the same clock — see apply_sequence.
+        if override_exp and override_exp > _localized_now(db):
+            try:
+                seq_paths = _resolve_sequence(int(applied_seq_id))
+                if seq_paths:
+                    return {"paths": seq_paths, "mode": "sequential"}
+            except (ValueError, TypeError):
+                pass
 
     # --- 1. Filler takes priority ---
     filler_active = getattr(setting, "filler_active", None)
