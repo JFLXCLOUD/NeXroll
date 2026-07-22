@@ -8,9 +8,19 @@
 
 [![Discord](https://img.shields.io/discord/1439077075117150313?label=Discord&logo=discord&logoColor=white)](https://discord.gg/nexroll)
 
-## What's New in v2.0.0
+## What's New in v2.0.4
 
-NeXroll v2 is a top-to-bottom modernization of the app.
+NeXroll v2 is a top-to-bottom modernization of the app. The v2.0.1-v2.0.4 maintenance releases also improve scheduler reliability, diagnostics, thumbnails, and Jellyfin/Emby sequence playback.
+
+### v2.0.4 maintenance highlights
+
+- **More reliable schedules** — schedule evaluation consistently uses the timezone selected in NeXroll, and holiday lookups retain last-known-good data during temporary API outages.
+- **Correct holiday dates** — known fixed-date holidays use their actual calendar date instead of an alternate observed date, with safer exact-name matching.
+- **Jellyfin/Emby sequence fixes** — manually applied sequences, including sequences with NeX-Up trailers, are now returned to the media-server plugins during the manual-apply window.
+- **Better diagnostics** — diagnostic bundles now include scheduler activity and the event log used for plugin, scheduling, and NeX-Up decisions.
+- **Thumbnail and log display fixes** — thumbnails work when prerolls live outside the data directory, and log timestamps render in the viewer's local time.
+
+### v2 platform highlights
 
 - **New "Arr-style" interface** — a collapsible sidebar with built-in search and per-section accent colors, a redesigned dashboard with quick-action tiles, and a **first-run onboarding wizard**. Every page is deep-linkable, so the URL always reflects where you are (refresh-safe, Back/Forward works).
 - **Community Prerolls** — search and **Browse** the Typical Nerds community library by category, platform, creator, and upload date, with **pagination**, and download prerolls in one click (optionally straight into a category).

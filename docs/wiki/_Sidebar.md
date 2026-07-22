@@ -27,6 +27,7 @@
 * [API Documentation](API)
 * [Troubleshooting](Troubleshooting)
 * [FAQ](FAQ)
+* [Release Notes](https://github.com/JFLXCLOUD/NeXroll/releases)
 
 ### Links
 

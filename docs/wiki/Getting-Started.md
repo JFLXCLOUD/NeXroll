@@ -112,17 +112,17 @@ Categories help organize prerolls by theme:
 
 ## Step 7: Apply Prerolls
 
-### Quick Apply (Manual — Plex Only)
+### Quick Apply (Manual)
 
-Apply a category's prerolls to Plex immediately:
+Apply a category or sequence immediately:
 
-1. Go to **Dashboard → Categories**
-2. Find your category
-3. Click **Apply to Plex**
+1. Open the category or sequence you want to use.
+2. Click its **Apply** action.
+3. Start playback during the manual-apply window to test it.
 
-Plex will now use those prerolls!
+Plex receives the resolved preroll paths directly. Jellyfin and Emby retrieve the manually applied selection through the NeXroll Intros plugin.
 
-> **Jellyfin/Emby users**: The NeXroll Intros plugin automatically fetches active prerolls at playback time — no manual "apply" step is needed. Just make sure the plugin is configured and you have an active category, schedule, or filler set.
+> **Jellyfin/Emby users**: Manual apply is useful for testing, but it is not required for normal operation. The plugin automatically fetches the active manual selection, schedule, category, or filler at playback time.
 
 ### Scheduled (Automatic)
 
@@ -146,7 +146,7 @@ NeX-Up brings a movie theater "Coming Soon" experience to your server:
 1. Go to **NeX-Up → Connections**
 2. Connect **Radarr** and/or **Sonarr** with their URL and API key
 3. Click **Sync** to discover upcoming releases
-4. Go to **NeX-Up → Settings** to upload YouTube cookies for reliable downloads
+4. Confirm the built-in PO-token provider is healthy. YouTube cookies remain available as an optional fallback when needed.
 5. Download trailers for upcoming content
 6. Use the **Generator** tab to create Coming Soon intro videos or Coming Soon Lists
 
