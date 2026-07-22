@@ -130,6 +130,7 @@ services:
     image: nexroll:latest
     volumes:
       - /srv/prerolls:/data/prerolls
+      - /srv/nexup-trailers:/data/nexup_trailers
     ports:
       - "9393:9393"
 
@@ -137,6 +138,7 @@ services:
     image: jellyfin/jellyfin
     volumes:
       - /srv/prerolls:/media/prerolls
+      - /srv/nexup-trailers:/data/nexup_trailers:ro
       - jellyfin-config:/config
     ports:
       - "8096:8096"
@@ -148,6 +150,46 @@ In the plugin config, set up path mapping:
 
 > **No shared mount? Path mapping is optional.** If Jellyfin can't see the preroll files directly (e.g. you don't mount the prerolls share into the Jellyfin container), the plugin **streams** each preroll from NeXroll over HTTP and caches it locally — so prerolls still play with no path mapping at all. Just make sure the plugin's **NeXroll Server URL** is reachable from the Jellyfin container, and you're on **plugin v1.14.0+**.
 
+### Normal prerolls play, but NeX-Up trailers do not
+
+Normal prerolls and NeX-Up trailers can live in different directories. A typical NeXroll container returns paths like:
+
+```text
+/data/prerolls/seasons/summer/intro.mp4
+/data/nexup_trailers/tv/example_trailer.mp4
+```
+
+If Jellyfin can read `/data/prerolls` but cannot read `/data/nexup_trailers`, the normal preroll may play while the trailers are skipped. The most reliable fix is to mount the NeX-Up trailer host directory into **both** containers, using the same container path:
+
+```yaml
+# NeXroll
+- /path/on/host/trailers:/data/nexup_trailers
+
+# Jellyfin (read-only is sufficient)
+- /path/on/host/trailers:/data/nexup_trailers:ro
+```
+
+For Unraid, add the same host share (for example, `/mnt/user/media/trailers`) to both containers with the container path `/data/nexup_trailers`. Set the Jellyfin mapping to **Read Only** if Jellyfin does not need to modify the files. Then:
+
+1. In NeXroll, set **NeX-Up → Settings → Storage Path** to `/data/nexup_trailers`.
+2. Confirm the Jellyfin container can read the directory and its `.mp4` files.
+3. Restart both containers after changing their volume mappings.
+4. Start a new movie playback test.
+
+If Jellyfin uses a different internal path, configure the plugin mapping instead. For example:
+
+- **NeXroll Path Prefix**: `/data/nexup_trailers`
+- **Jellyfin Path Prefix**: `/media/trailers`
+
+The plugin can also fall back to downloading each trailer from NeXroll into Jellyfin's local `intro_cache`. If a shared mount or path mapping does not resolve the problem:
+
+1. Update or reinstall the latest NeXroll Intros plugin and restart Jellyfin.
+2. Make sure the configured NeXroll URL is reachable **from inside the Jellyfin container**. Use the NeXroll container/service name or the server's LAN IP; do not use `localhost` unless NeXroll runs in the same container.
+3. Confirm Jellyfin's config/plugin-data directory is writable so the plugin can create `intro_cache`.
+4. Reproduce the problem once, then search the Jellyfin server log for `NeXroll`, `Failed to download intro`, `ResolvePath`, `intro_cache`, or `/data/nexup_trailers`.
+
+If NeXroll's event log says it is returning the full sequence, including trailer paths, but only the normal preroll plays, that normally points to a Jellyfin-side mount, path-translation, HTTP fallback, or cache-permission problem rather than a NeX-Up selection problem.
+
 ## Troubleshooting
 
 | Problem | Solution |
@@ -158,6 +200,7 @@ In the plugin config, set up path mapping:
 | Files not found | Set up path mapping (shared mount) **or** rely on streaming — make sure the plugin's NeXroll URL is reachable and you're on v1.14.0+ |
 | `Access to the path '/NeXroll' is denied` (Docker/Unraid) | Update the plugin to **v1.14.0+** — older versions cached prerolls to an unwritable path |
 | Only the first preroll plays / sequence items skipped | Set **Max Intros** to `0` (unlimited). Compare the Jellyfin log's `Injecting N intro(s)` line to your sequence length |
+| Normal prerolls play, but NeX-Up trailers do not | Mount the NeX-Up storage directory into Jellyfin at `/data/nexup_trailers` (read-only is sufficient), or map `/data/nexup_trailers` to Jellyfin's actual trailer path. Restart Jellyfin and check its log for `NeXroll` or `Failed to download intro` |
 | Plugin detected but 0 intros | Make sure you have an active category or filler set in NeXroll |
 | Prerolls play for movies but not episodes | Check that "Enable for Episodes" is turned on in the plugin config |
 | Test Connection fails | Ensure NeXroll is running and the URL includes the port (e.g., `http://192.168.1.50:9393`) |
