@@ -50,10 +50,34 @@ if not getattr(sys, "frozen", False):
 from backend.database import SessionLocal, engine, DB_PATH
 import backend.models as models
 from backend.plex_connector import PlexConnector
-from backend.scheduler import scheduler, _has_valid_sequence, prerolls_for_category_query, _localized_now
+from backend.scheduler import (
+    scheduler,
+    _has_valid_sequence,
+    prerolls_for_category_query,
+    resolve_category_sequence_block,
+    _localized_now,
+)
 from backend import secure_store
 from backend.dynamic_preroll import DynamicPrerollGenerator, set_verbose_logger as set_dp_verbose_logger
 from backend import scanner as fs_scanner
+from backend.preroll_files import (
+    MAX_PREROLL_UPLOAD_SIZE,
+    ReversibleFileTransaction,
+    apply_preroll_media_replacement,
+    managed_category_suffix,
+    move_to_unique_destination,
+    open_unique_destination,
+    rename_file_case_safe,
+    validate_preroll_filename,
+    validate_storage_component,
+)
+from backend.sequence_utils import representative_category_id
+from backend.backup_utils import (
+    normalize_preroll_id,
+    remap_preroll_ids_json,
+    remap_sequence_blocks,
+    remap_sequence_json,
+)
 
 models.Base.metadata.create_all(bind=engine)
 
@@ -1666,7 +1690,7 @@ class ScheduleResponse(BaseModel):
     type: str
     start_date: datetime.datetime
     end_date: Optional[datetime.datetime] = None
-    category_id: int
+    category_id: Optional[int] = None
     shuffle: bool
     playlist: bool
     is_active: bool
@@ -1679,11 +1703,41 @@ class ScheduleResponse(BaseModel):
     blend_enabled: bool = False  # Allow blending with other overlapping schedules
     priority: int = 5  # Priority level 1-10 (higher wins during overlap)
     exclusive: bool = False  # When active, this schedule wins exclusively (no blending)
+    source_sequence_id: Optional[int] = None
     
     class Config:
         json_encoders = {
             datetime.datetime: lambda v: v.isoformat() if v else None
         }
+
+
+def _remove_ignored_conflicts_for_schedule(db: Session, schedule_id: int) -> int:
+    """Remove persisted conflict ignores that reference a deleted schedule."""
+    setting = db.query(models.Setting).first()
+    if not setting or not getattr(setting, "ignored_conflicts", None):
+        return 0
+    try:
+        ignored = json.loads(setting.ignored_conflicts)
+    except (json.JSONDecodeError, TypeError):
+        return 0
+    if not isinstance(ignored, list):
+        return 0
+
+    kept = []
+    removed = 0
+    for key in ignored:
+        try:
+            referenced_ids = {int(part) for part in str(key).split("-")}
+        except (TypeError, ValueError):
+            referenced_ids = set()
+        if schedule_id in referenced_ids:
+            removed += 1
+        else:
+            kept.append(key)
+    if removed:
+        setting.ignored_conflicts = json.dumps(kept)
+        setting.updated_at = datetime.datetime.utcnow()
+    return removed
 
 class CategoryCreate(BaseModel):
     name: str
@@ -2805,7 +2859,10 @@ def _refresh_holiday_linked_schedules(db: Session) -> dict:
     from datetime import datetime
     from backend.holiday_api import HolidayAPI
 
-    current_year = datetime.now().year
+    # Holiday schedule dates belong to the app's configured timezone, not the
+    # host/container timezone (which can be on a different year around midnight
+    # on New Year's Eve).
+    current_year = _localized_now(db).year
     updated_count = 0
     errors = []
     updated_schedules = []
@@ -5160,6 +5217,10 @@ async def external_create_category(
     name = (category.name or "").strip()
     if not name:
         raise HTTPException(status_code=422, detail="Category name is required")
+    try:
+        validate_storage_component(name)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
     
     # Check for duplicate
     existing = db.query(models.Category).filter(models.Category.name == name).first()
@@ -5327,6 +5388,10 @@ async def external_create_schedule(
     name = (schedule.name or "").strip()
     if not name:
         raise HTTPException(status_code=422, detail="Schedule name is required")
+    if schedule.schedule_type not in ("daily", "weekly", "monthly", "yearly", "holiday"):
+        raise HTTPException(status_code=422, detail="Invalid schedule_type")
+    if not 1 <= schedule.priority <= 10:
+        raise HTTPException(status_code=422, detail="Schedule priority must be between 1 and 10")
     
     # Must have category or sequence
     if not schedule.category_id and not schedule.sequence_id:
@@ -5365,14 +5430,21 @@ async def external_create_schedule(
             end_date = datetime.datetime.fromisoformat(ed)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=f"Invalid date format: {str(e)}")
-    
+
+    if start_date is None:
+        raise HTTPException(status_code=400, detail="Schedule start_date is required")
+    if end_date and schedule.schedule_type not in ("yearly", "holiday") and end_date < start_date:
+        raise HTTPException(status_code=400, detail="Schedule end_date cannot be before start_date")
+
     # Build sequence JSON if sequence_id provided
     sequence_json = None
     if schedule.sequence_id:
         saved_seq = db.query(models.SavedSequence).filter(models.SavedSequence.id == schedule.sequence_id).first()
         if not saved_seq:
             raise HTTPException(status_code=404, detail=f"Sequence not found: {schedule.sequence_id}")
-        sequence_json = saved_seq.sequence_data
+        if not saved_seq.get_blocks():
+            raise HTTPException(status_code=400, detail=f"Sequence {schedule.sequence_id} has no blocks")
+        sequence_json = saved_seq.blocks
     
     db_schedule = models.Schedule(
         name=name,
@@ -5387,7 +5459,8 @@ async def external_create_schedule(
         is_active=schedule.enabled,
         blend_enabled=schedule.blend_enabled,
         priority=schedule.priority,
-        exclusive=schedule.exclusive
+        exclusive=schedule.exclusive,
+        source_sequence_id=schedule.sequence_id,
     )
     
     try:
@@ -5398,7 +5471,10 @@ async def external_create_schedule(
         db.rollback()
         log_event('ERROR', 'api', f'External API: Failed to create schedule: {e}', source='external_create_schedule')
         raise HTTPException(status_code=500, detail=f"Failed to create schedule: {str(e)}")
-    
+
+    scheduler._last_rotation_time.pop(db_schedule.id, None)
+    scheduler.trigger_immediate_check()
+
     return {
         "success": True,
         "schedule": {
@@ -5408,6 +5484,7 @@ async def external_create_schedule(
             "start_date": db_schedule.start_date.isoformat() if db_schedule.start_date else None,
             "end_date": db_schedule.end_date.isoformat() if db_schedule.end_date else None,
             "category_id": db_schedule.category_id,
+            "source_sequence_id": db_schedule.source_sequence_id,
             "enabled": db_schedule.is_active,
             "priority": db_schedule.priority
         }
@@ -5427,7 +5504,9 @@ async def external_delete_schedule(
     schedule = db.query(models.Schedule).filter(models.Schedule.id == schedule_id).first()
     if not schedule:
         raise HTTPException(status_code=404, detail="Schedule not found")
-    
+
+    removed_ignored_conflicts = _remove_ignored_conflicts_for_schedule(db, schedule_id)
+
     try:
         db.delete(schedule)
         db.commit()
@@ -5435,8 +5514,15 @@ async def external_delete_schedule(
         db.rollback()
         log_event('ERROR', 'api', f'External API: Failed to delete schedule {schedule_id}: {e}', source='external_delete_schedule')
         raise HTTPException(status_code=500, detail=f"Failed to delete schedule: {str(e)}")
-    
-    return {"success": True, "message": f"Schedule {schedule_id} deleted"}
+
+    scheduler._last_rotation_time.pop(schedule_id, None)
+    scheduler.trigger_immediate_check()
+
+    return {
+        "success": True,
+        "message": f"Schedule {schedule_id} deleted",
+        "removed_ignored_conflicts": removed_ignored_conflicts,
+    }
 
 
 @app.put("/external/schedules/{schedule_id}/toggle")
@@ -5455,6 +5541,10 @@ async def external_toggle_schedule(
         raise HTTPException(status_code=404, detail="Schedule not found")
     
     schedule.is_active = enabled
+    if not enabled:
+        setting = db.query(models.Setting).first()
+        if setting and getattr(setting, "active_schedule_id", None) == schedule_id:
+            setting.active_schedule_id = None
     
     try:
         db.commit()
@@ -5462,7 +5552,9 @@ async def external_toggle_schedule(
         db.rollback()
         log_event('ERROR', 'api', f'External API: Failed to toggle schedule {schedule_id}: {e}', source='external_toggle_schedule')
         raise HTTPException(status_code=500, detail=f"Failed to update schedule: {str(e)}")
-    
+
+    scheduler.trigger_immediate_check()
+
     return {
         "success": True,
         "schedule_id": schedule_id,
@@ -8069,6 +8161,75 @@ def calculate_content_hash(content: bytes) -> str:
     import hashlib
     return hashlib.sha256(content).hexdigest()
 
+
+def _cleanup_preroll_upload_artifacts(*paths: str | None) -> None:
+    """Best-effort cleanup for media reserved by an upload that did not commit."""
+    seen: set[str] = set()
+    for path in paths:
+        if not path:
+            continue
+        absolute = os.path.abspath(path)
+        if absolute in seen:
+            continue
+        seen.add(absolute)
+        try:
+            if os.path.isfile(absolute):
+                os.remove(absolute)
+        except OSError as exc:
+            _file_log(f"Failed to clean incomplete preroll artifact '{absolute}': {exc}")
+
+
+def _stage_preroll_thumbnail(
+    video_path: str,
+    target_directory: str,
+    desired_filename: str,
+    file_transaction: ReversibleFileTransaction,
+) -> tuple[str, str]:
+    """Generate a thumbnail at a collision-safe staged path."""
+    os.makedirs(target_directory, exist_ok=True)
+    _, thumbnail_abs, reservation = open_unique_destination(
+        target_directory, desired_filename
+    )
+    reservation.close()
+    file_transaction.record_new_file(thumbnail_abs)
+    temporary = thumbnail_abs + ".tmp.jpg"
+
+    try:
+        thumb_ok = False
+        result = None
+        for seek_sec in ("5", "1", "0"):
+            result = _run_subprocess(
+                [
+                    get_ffmpeg_cmd(), "-v", "error", "-y", "-ss", seek_sec,
+                    "-i", video_path, "-vframes", "1", "-q:v", "2",
+                    "-f", "mjpeg", temporary,
+                ],
+                capture_output=True,
+                text=True,
+            )
+            if (
+                getattr(result, "returncode", 1) == 0
+                and os.path.exists(temporary)
+                and os.path.getsize(temporary) > 0
+            ):
+                thumb_ok = True
+                break
+        if not thumb_ok:
+            _file_log(
+                f"FFmpeg thumbnail generation failed: {getattr(result, 'stderr', '')}"
+            )
+            _generate_placeholder(temporary)
+        os.replace(temporary, thumbnail_abs)
+        return _safe_thumbnail_relpath(thumbnail_abs), thumbnail_abs
+    except Exception:
+        _cleanup_preroll_upload_artifacts(temporary, thumbnail_abs)
+        raise
+
+
+def _log_file_transaction_errors(context: str, errors: list[str]) -> None:
+    for error in errors:
+        _file_log(f"{context}: filesystem transaction cleanup failed: {error}")
+
 @app.post("/prerolls/check-duplicate")
 def check_duplicate(
     file: UploadFile = File(...),
@@ -8078,6 +8239,12 @@ def check_duplicate(
     try:
         # Read file content
         content = file.file.read()
+        if len(content) > MAX_PREROLL_UPLOAD_SIZE:
+            raise HTTPException(status_code=413, detail="File too large. Maximum upload size is 500 MB.")
+        try:
+            validate_preroll_filename(file.filename)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
         file_hash = calculate_content_hash(content)
         
         # Check if a preroll with this hash already exists
@@ -8103,6 +8270,8 @@ def check_duplicate(
                 "is_duplicate": False,
                 "file_hash": file_hash
             }
+    except HTTPException:
+        raise
     except Exception as e:
         log_event('ERROR', 'user', f'Error checking duplicate: {e}', source='check_duplicate')
         raise HTTPException(status_code=500, detail=f"Error checking duplicate: {str(e)}")
@@ -8155,8 +8324,12 @@ def upload_preroll(
     category_dir = "Default"
     if primary_category_id:
         category = db.query(models.Category).filter(models.Category.id == primary_category_id).first()
-        if category:
-            category_dir = category.name
+        if not category:
+            raise HTTPException(status_code=400, detail="Selected category does not exist")
+        try:
+            category_dir = validate_storage_component(category.name)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     # Create category directories if they don't exist
     category_path = os.path.join(PREROLLS_DIR, category_dir)
@@ -8164,27 +8337,28 @@ def upload_preroll(
     os.makedirs(category_path, exist_ok=True)
     os.makedirs(thumbnail_category_path, exist_ok=True)
 
+    try:
+        safe_filename = validate_preroll_filename(file.filename)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
     # Read file content once
     content = file.file.read()
     file_size = len(content)
 
     # Security: enforce upload size limit (500 MB)
-    MAX_UPLOAD_SIZE = 500 * 1024 * 1024  # 500 MB
-    if file_size > MAX_UPLOAD_SIZE:
+    if file_size > MAX_PREROLL_UPLOAD_SIZE:
         raise HTTPException(status_code=413, detail="File too large. Maximum upload size is 500 MB.")
 
-    # Security: validate file extension
-    ALLOWED_EXTENSIONS = {'.mp4', '.mkv', '.mov', '.avi', '.m4v', '.webm', '.wmv', '.flv', '.ts'}
-    file_ext = os.path.splitext(file.filename)[1].lower() if file.filename else ''
-    if file_ext not in ALLOWED_EXTENSIONS:
-        raise HTTPException(status_code=400, detail=f"File type '{file_ext}' not allowed. Accepted: {', '.join(sorted(ALLOWED_EXTENSIONS))}")
-    
-    # Calculate hash if not provided
-    if not file_hash or not file_hash.strip():
-        file_hash = calculate_content_hash(content)
+    # Never trust a client-provided digest as the database's source of truth.
+    # The value returned by check-duplicate is only an upload optimization hint.
+    file_hash = calculate_content_hash(content)
     
     # Check for duplicates and handle according to duplicate_action
     existing_duplicate = db.query(models.Preroll).filter(models.Preroll.file_hash == file_hash).first()
+    replacement_duplicate = None
+    replacement_original_thumbnail = None
+    replacement_cleanup_paths: list[str] = []
     
     if existing_duplicate and duplicate_action:
         if duplicate_action == "skip":
@@ -8199,40 +8373,61 @@ def upload_preroll(
                 }
             }
         elif duplicate_action == "replace":
-            # Delete the existing preroll (will also delete the file)
-            try:
-                if existing_duplicate.path and os.path.exists(existing_duplicate.path):
-                    os.remove(existing_duplicate.path)
-                if existing_duplicate.thumbnail and os.path.exists(existing_duplicate.thumbnail):
-                    os.remove(existing_duplicate.thumbnail)
-                db.delete(existing_duplicate)
-                db.commit()
-            except Exception as e:
-                db.rollback()
-                log_event('ERROR', 'user', f'Failed to replace duplicate: {e}', source='upload_preroll')
-                raise HTTPException(status_code=500, detail=f"Failed to replace duplicate: {str(e)}")
+            # Update the existing row in place so fixed sequence/schedule IDs and
+            # category associations remain valid. Its media stays intact until
+            # the staged replacement commits successfully.
+            replacement_duplicate = existing_duplicate
+            primary_category_id = existing_duplicate.category_id
+            category_dir = "Default"
+            existing_primary = getattr(existing_duplicate, "category", None)
+            if existing_primary is not None:
+                try:
+                    category_dir = validate_storage_component(existing_primary.name)
+                except ValueError:
+                    # Legacy category names can predate storage validation. Keep
+                    # replacement writes within the managed Default directory.
+                    category_dir = "Default"
+            category_path = os.path.join(PREROLLS_DIR, category_dir)
+            thumbnail_category_path = os.path.join(THUMBNAILS_DIR, category_dir)
+            os.makedirs(category_path, exist_ok=True)
+            os.makedirs(thumbnail_category_path, exist_ok=True)
+            if getattr(existing_duplicate, "managed", True) and existing_duplicate.path:
+                old_path = existing_duplicate.path
+                replacement_cleanup_paths.append(
+                    old_path if os.path.isabs(old_path) else os.path.join(data_dir, old_path)
+                )
+            if existing_duplicate.thumbnail:
+                old_thumbnail = existing_duplicate.thumbnail
+                replacement_original_thumbnail = (
+                    old_thumbnail if os.path.isabs(old_thumbnail)
+                    else os.path.join(data_dir, old_thumbnail)
+                )
         elif duplicate_action == "rename":
             # Auto-rename the new file to avoid conflict. v1.13.0: uploads go to a flat
             # directory so filename uniqueness is global, not per-category.
-            base, ext = os.path.splitext(file.filename)
+            base, ext = os.path.splitext(safe_filename)
             counter = 1
-            new_filename = file.filename
+            new_filename = safe_filename
             while db.query(models.Preroll).filter(
                 models.Preroll.filename == new_filename
             ).first():
                 new_filename = f"{base}_{counter}{ext}"
                 counter += 1
-            file.filename = new_filename
+            safe_filename = new_filename
     
     # Save file to disk (single physical copy regardless of multi-category assignment)
     # Sanitize filename to prevent path traversal attacks
-    safe_filename = os.path.basename(file.filename)
-    if not safe_filename:
-        raise HTTPException(status_code=400, detail="Invalid filename")
-    file_path = os.path.join(category_path, safe_filename)
+    safe_filename, file_path, destination = open_unique_destination(category_path, safe_filename)
     file.filename = safe_filename  # Update for downstream usage
-    with open(file_path, "wb") as f:
-        f.write(content)
+    try:
+        with destination:
+            destination.write(content)
+    except Exception:
+        try:
+            os.remove(file_path)
+        except OSError:
+            pass
+        raise
 
     # Probe duration (best-effort)
     duration = None
@@ -8257,22 +8452,42 @@ def upload_preroll(
             tag_list = [t.strip() for t in tags.split(",") if t.strip()]
             processed_tags = json.dumps(tag_list)
 
-    # Persist initial row (to get ID for thumbnail naming)
-    preroll = models.Preroll(
-        filename=file.filename,
-        display_name=None,
-        path=file_path,
-        thumbnail=None,
-        tags=processed_tags,
-        category_id=primary_category_id,
-        description=description or None,
-        duration=duration,
-        file_size=file_size,
-        file_hash=file_hash,
-    )
-    db.add(preroll)
-    db.commit()
-    db.refresh(preroll)
+    # Flush (without committing) to get an ID for thumbnail naming. Keeping the
+    # row, category links, and any duplicate replacement in one transaction
+    # ensures a later failure cannot leave a partial upload in the library.
+    if replacement_duplicate is not None:
+        preroll = apply_preroll_media_replacement(
+            replacement_duplicate,
+            filename=file.filename,
+            path=file_path,
+            tags=processed_tags,
+            description=description or None,
+            duration=duration,
+            file_size=file_size,
+            file_hash=file_hash,
+        )
+    else:
+        preroll = models.Preroll(
+            filename=file.filename,
+            display_name=None,
+            path=file_path,
+            thumbnail=None,
+            tags=processed_tags,
+            category_id=primary_category_id,
+            description=description or None,
+            duration=duration,
+            file_size=file_size,
+            file_hash=file_hash,
+        )
+        db.add(preroll)
+    try:
+        db.flush()
+    except Exception as e:
+        db.rollback()
+        _cleanup_preroll_upload_artifacts(file_path)
+        _file_log(f"upload_preroll: initial database flush failed: {e}")
+        log_event('ERROR', 'user', f'Upload database initialization failed: {e}', source='upload_preroll')
+        raise HTTPException(status_code=500, detail="Failed to save preroll upload") from e
 
     # If file is named 'loading.*', place it into a unique subfolder to avoid name collisions
     try:
@@ -8282,23 +8497,27 @@ def upload_preroll(
             os.makedirs(subdir, exist_ok=True)
             new_abs = os.path.join(subdir, file.filename)
             if os.path.abspath(new_abs) != os.path.abspath(file_path):
-                try:
-                    os.replace(file_path, new_abs)
-                except Exception:
-                    shutil.copy2(file_path, new_abs)
-                    try:
-                        os.remove(file_path)
-                    except Exception:
-                        pass
-            file_path = new_abs
-            preroll.path = new_abs
+                _, new_abs = move_to_unique_destination(
+                    file_path, os.path.dirname(new_abs), os.path.basename(new_abs)
+                )
+                file_path = new_abs
+                preroll.path = new_abs
     except Exception as e:
         _file_log(f"upload_preroll: move to subfolder failed: {e}")
 
     # Generate id-prefixed thumbnail under primary category
-    thumbnail_path = None
+    thumbnail_path = preroll.thumbnail if replacement_duplicate is not None else None
+    thumbnail_abs = None
+    tmp_thumb = None
     try:
-        thumbnail_abs = os.path.join(thumbnail_category_path, f"{preroll.id}_{file.filename}.jpg")
+        desired_thumbnail_name = f"{preroll.id}_{file.filename}.jpg"
+        if replacement_duplicate is not None:
+            _, thumbnail_abs, thumbnail_reservation = open_unique_destination(
+                thumbnail_category_path, desired_thumbnail_name
+            )
+            thumbnail_reservation.close()
+        else:
+            thumbnail_abs = os.path.join(thumbnail_category_path, desired_thumbnail_name)
         tmp_thumb = thumbnail_abs + ".tmp.jpg"
         thumb_ok = False
         for seek_sec in ("5", "1", "0"):
@@ -8313,35 +8532,56 @@ def upload_preroll(
         if not thumb_ok:
             _file_log(f"FFmpeg thumbnail generation failed: {getattr(res, 'stderr', '')}")
             _generate_placeholder(tmp_thumb)
-        try:
-            if os.path.exists(thumbnail_abs):
-                os.remove(thumbnail_abs)
-        except Exception:
-            pass
+        if replacement_duplicate is None:
+            try:
+                if os.path.exists(thumbnail_abs):
+                    os.remove(thumbnail_abs)
+            except Exception:
+                pass
         os.replace(tmp_thumb, thumbnail_abs)
         thumbnail_path = _safe_thumbnail_relpath(thumbnail_abs)
         preroll.thumbnail = thumbnail_path
+        if replacement_original_thumbnail:
+            replacement_cleanup_paths.append(replacement_original_thumbnail)
     except Exception as e:
+        _cleanup_preroll_upload_artifacts(thumbnail_abs, tmp_thumb)
         _file_log(f"upload_preroll: thumbnail generation error: {e}")
-        preroll.thumbnail = None
+        if replacement_duplicate is None:
+            preroll.thumbnail = None
 
     # Assign many-to-many categories (store a single file; categories are tags)
-    try:
-        assoc_ids = list(all_ids)
-        if primary_category_id and primary_category_id not in assoc_ids:
-            assoc_ids.insert(0, primary_category_id)
-        if assoc_ids:
-            cats = db.query(models.Category).filter(models.Category.id.in_(assoc_ids)).all()
-            preroll.categories = cats
-    except Exception as e:
-        _file_log(f"upload_preroll: category association failed: {e}")
+    if replacement_duplicate is None:
+        try:
+            assoc_ids = list(all_ids)
+            if primary_category_id and primary_category_id not in assoc_ids:
+                assoc_ids.insert(0, primary_category_id)
+            if assoc_ids:
+                cats = db.query(models.Category).filter(models.Category.id.in_(assoc_ids)).all()
+                preroll.categories = cats
+        except Exception as e:
+            _file_log(f"upload_preroll: category association failed: {e}")
 
     try:
         db.commit()
     except Exception as e:
         db.rollback()
+        _cleanup_preroll_upload_artifacts(file_path, thumbnail_abs, tmp_thumb)
         _file_log(f"upload_preroll: final commit failed: {e}")
         log_event('ERROR', 'user', f'Upload commit failed: {e}', source='upload_preroll')
+        raise HTTPException(status_code=500, detail="Failed to save preroll upload") from e
+
+    # The replacement is durable now. Removing the old media only after commit
+    # guarantees a failed upload never destroys the working duplicate.
+    replacement_protected_paths = {
+        os.path.normcase(os.path.abspath(path))
+        for path in (file_path, thumbnail_abs)
+        if path
+    }
+    _cleanup_preroll_upload_artifacts(*[
+        path
+        for path in replacement_cleanup_paths
+        if os.path.normcase(os.path.abspath(path)) not in replacement_protected_paths
+    ])
 
     # Auto-apply to Plex/Jellyfin if primary category is already applied or currently active
     auto_applied = False
@@ -8421,6 +8661,10 @@ def upload_multiple_prerolls(
     successful_uploads = 0
 
     for file in files:
+        file_path = None
+        thumb_abs = None
+        thumb_tmp = None
+        upload_committed = False
         try:
             # Ensure directories exist
             os.makedirs(PREROLLS_DIR, exist_ok=True)
@@ -8440,8 +8684,9 @@ def upload_multiple_prerolls(
             category_dir = "Default"
             if primary_category_id:
                 category = db.query(models.Category).filter(models.Category.id == primary_category_id).first()
-                if category:
-                    category_dir = category.name
+                if not category:
+                    raise ValueError("Selected category does not exist")
+                category_dir = validate_storage_component(category.name)
 
             # Ensure category folders
             category_path = os.path.join(PREROLLS_DIR, category_dir)
@@ -8449,13 +8694,24 @@ def upload_multiple_prerolls(
             os.makedirs(category_path, exist_ok=True)
             os.makedirs(thumb_cat_path, exist_ok=True)
 
-            # Save file to disk
-            file_path = os.path.join(category_path, file.filename)
-            file_size = 0
-            with open(file_path, "wb") as f:
-                content = file.file.read()
-                file_size = len(content)
-                f.write(content)
+            # Validate and read before opening a destination so a rejected upload
+            # cannot truncate an existing managed file.
+            safe_filename = validate_preroll_filename(file.filename)
+            content = file.file.read()
+            file_size = len(content)
+            if file_size > MAX_PREROLL_UPLOAD_SIZE:
+                raise ValueError("File too large. Maximum upload size is 500 MB.")
+            safe_filename, file_path, destination = open_unique_destination(category_path, safe_filename)
+            file.filename = safe_filename
+            try:
+                with destination:
+                    destination.write(content)
+            except Exception:
+                try:
+                    os.remove(file_path)
+                except OSError:
+                    pass
+                raise
 
             # Probe duration (best-effort)
             duration = None
@@ -8480,7 +8736,8 @@ def upload_multiple_prerolls(
                     tag_list = [t.strip() for t in tags.split(",") if t.strip()]
                     processed_tags = json.dumps(tag_list)
 
-            # Persist preroll row (to get ID)
+            # Flush to obtain an ID but keep the entire file upload in one
+            # transaction until category links and thumbnail metadata are ready.
             preroll = models.Preroll(
                 filename=file.filename,
                 display_name=None,
@@ -8491,10 +8748,14 @@ def upload_multiple_prerolls(
                 description=description or None,
                 duration=duration,
                 file_size=file_size,
+                file_hash=calculate_content_hash(content),
             )
             db.add(preroll)
-            db.commit()
-            db.refresh(preroll)
+            try:
+                db.flush()
+            except Exception as e:
+                _file_log(f"upload_multiple: initial database flush failed for '{file.filename}': {e}")
+                raise RuntimeError("Failed to initialize upload in the database") from e
 
             # If filename is 'loading.*', place into unique subfolder
             try:
@@ -8504,16 +8765,11 @@ def upload_multiple_prerolls(
                     os.makedirs(subdir, exist_ok=True)
                     new_abs = os.path.join(subdir, file.filename)
                     if os.path.abspath(new_abs) != os.path.abspath(file_path):
-                        try:
-                            os.replace(file_path, new_abs)
-                        except Exception:
-                            shutil.copy2(file_path, new_abs)
-                            try:
-                                os.remove(file_path)
-                            except Exception:
-                                pass
-                    file_path = new_abs
-                    preroll.path = new_abs
+                        _, new_abs = move_to_unique_destination(
+                            file_path, os.path.dirname(new_abs), os.path.basename(new_abs)
+                        )
+                        file_path = new_abs
+                        preroll.path = new_abs
             except Exception as e:
                 _file_log(f"upload_multiple: move to subfolder failed: {e}")
 
@@ -8521,26 +8777,26 @@ def upload_multiple_prerolls(
             thumbnail_rel = None
             try:
                 thumb_abs = os.path.join(thumb_cat_path, f"{preroll.id}_{file.filename}.jpg")
-                tmp = thumb_abs + ".tmp.jpg"
+                thumb_tmp = thumb_abs + ".tmp.jpg"
                 thumb_ok = False
                 for seek_sec in ("5", "1", "0"):
                     res = _run_subprocess(
-                        [get_ffmpeg_cmd(), "-v", "error", "-y", "-ss", seek_sec, "-i", file_path, "-vframes", "1", "-q:v", "2", "-f", "mjpeg", tmp],
+                        [get_ffmpeg_cmd(), "-v", "error", "-y", "-ss", seek_sec, "-i", file_path, "-vframes", "1", "-q:v", "2", "-f", "mjpeg", thumb_tmp],
                         capture_output=True,
                         text=True,
                     )
-                    if getattr(res, "returncode", 1) == 0 and os.path.exists(tmp) and os.path.getsize(tmp) > 0:
+                    if getattr(res, "returncode", 1) == 0 and os.path.exists(thumb_tmp) and os.path.getsize(thumb_tmp) > 0:
                         thumb_ok = True
                         break
                 if not thumb_ok:
                     _file_log(f"FFmpeg thumbnail generation failed: {getattr(res, 'stderr', '')}")
-                    _generate_placeholder(tmp)
+                    _generate_placeholder(thumb_tmp)
                 try:
                     if os.path.exists(thumb_abs):
                         os.remove(thumb_abs)
                 except Exception:
                     pass
-                os.replace(tmp, thumb_abs)
+                os.replace(thumb_tmp, thumb_abs)
                 thumbnail_rel = _safe_thumbnail_relpath(thumb_abs)
                 preroll.thumbnail = thumbnail_rel
             except Exception as e:
@@ -8558,27 +8814,35 @@ def upload_multiple_prerolls(
             except Exception as e:
                 _file_log(f"upload_multiple: category association failed: {e}")
 
+            response_categories = [
+                {"id": c.id, "name": c.name} for c in (preroll.categories or [])
+            ]
+            response_id = preroll.id
             try:
                 db.commit()
-                db.refresh(preroll)
+                upload_committed = True
             except Exception as e:
                 db.rollback()
-                _file_log(f"upload_multiple: final commit failed: {e}")
+                _file_log(f"upload_multiple: final commit failed for '{file.filename}': {e}")
                 log_event('ERROR', 'user', f'Multi-upload commit failed: {e}', source='upload_multiple_prerolls')
+                raise RuntimeError("Failed to save upload in the database") from e
 
             results.append({
                 "filename": file.filename,
                 "uploaded": True,
-                "id": preroll.id,
+                "id": response_id,
                 "thumbnail": thumbnail_rel,
                 "duration": duration,
                 "file_size": file_size,
-                "category_id": preroll.category_id,
-                "categories": [{"id": c.id, "name": c.name} for c in (preroll.categories or [])],
+                "category_id": primary_category_id,
+                "categories": response_categories,
             })
             successful_uploads += 1
 
         except Exception as e:
+            db.rollback()
+            if not upload_committed:
+                _cleanup_preroll_upload_artifacts(file_path, thumb_abs, thumb_tmp)
             results.append({
                 "filename": file.filename if hasattr(file, "filename") else "unknown",
                 "uploaded": False,
@@ -8888,12 +9152,18 @@ def get_prerolls(db: Session = Depends(get_db), category_id: str = "", tags: str
     # returns prerolls with zero categories.
     if category_id and category_id.strip():
         if category_id.strip().lower() == "uncategorized":
-            query = query.filter(~models.Preroll.categories.any())
+            query = query.filter(
+                models.Preroll.category_id.is_(None),
+                ~models.Preroll.categories.any(),
+            )
         else:
             try:
                 cat_id = int(category_id)
                 query = query.filter(
-                    models.Preroll.categories.any(models.Category.id == cat_id)
+                    or_(
+                        models.Preroll.category_id == cat_id,
+                        models.Preroll.categories.any(models.Category.id == cat_id),
+                    )
                 )
             except ValueError:
                 pass  # Invalid category_id, ignore filter
@@ -8916,6 +9186,9 @@ def get_prerolls(db: Session = Depends(get_db), category_id: str = "", tags: str
     result = []
     for p in prerolls:
         cats = [{"id": c.id, "name": c.name} for c in (p.categories or [])]
+        if p.category and not any(c["id"] == p.category.id for c in cats):
+            cats.insert(0, {"id": p.category.id, "name": p.category.name})
+        file_path = p.path if (p.path and os.path.isabs(p.path)) else os.path.join(data_dir, p.path or "")
         result.append({
             "id": p.id,
             "filename": p.filename,
@@ -8933,7 +9206,7 @@ def get_prerolls(db: Session = Depends(get_db), category_id: str = "", tags: str
             "upload_date": p.upload_date,
             "community_preroll_id": getattr(p, "community_preroll_id", None),
             "exclude_from_matching": getattr(p, "exclude_from_matching", False),
-            "file_exists": bool(p.path and os.path.exists(p.path))
+            "file_exists": bool(p.path and os.path.exists(file_path))
         })
     return result
 
@@ -8945,185 +9218,158 @@ def update_preroll(preroll_id: int, payload: PrerollUpdate, db: Session = Depend
 
     changed_thumbnail = False
     old_primary_cat_name = getattr(getattr(p, "category", None), "name", None)
+    managed = getattr(p, "managed", True)
+    original_video_abs = None
+    if managed and p.path:
+        original_video_abs = p.path if os.path.isabs(p.path) else os.path.join(data_dir, p.path)
+    current_video_abs = original_video_abs
+    original_thumb_abs = None
+    if p.thumbnail:
+        original_thumb_abs = (
+            p.thumbnail if os.path.isabs(p.thumbnail)
+            else os.path.join(data_dir, p.thumbnail)
+        )
+    file_transaction = ReversibleFileTransaction()
+    new_primary = None
 
-    # Tags: accept JSON array or comma-separated string; persist as JSON string array
-    if payload.tags is not None:
-        try:
+    try:
+        # Tags: accept JSON array or comma-separated string.
+        if payload.tags is not None:
             if isinstance(payload.tags, list):
                 p.tags = json.dumps(payload.tags)
             elif isinstance(payload.tags, str):
                 try:
                     p.tags = json.dumps(json.loads(payload.tags))
                 except Exception:
-                    tag_list = [t.strip() for t in payload.tags.split(",") if t.strip()]
-                    p.tags = json.dumps(tag_list)
-        except Exception:
-            # Keep original if conversion fails
-            pass
+                    p.tags = json.dumps([
+                        tag.strip() for tag in payload.tags.split(",") if tag.strip()
+                    ])
 
-    # Display name (UI label)
-    if payload.display_name is not None:
-        p.display_name = (payload.display_name or "").strip() or None
+        if payload.display_name is not None:
+            p.display_name = (payload.display_name or "").strip() or None
+        if payload.description is not None:
+            p.description = (payload.description or "").strip() or None
 
-    # Description
-    if payload.description is not None:
-        p.description = (payload.description or "").strip() or None
-
-    # Physical rename on disk (optional)
-    if payload.new_filename and str(payload.new_filename).strip() and getattr(p, "managed", True):
-        new_name = os.path.basename(str(payload.new_filename).strip())  # Sanitize to prevent path traversal
-        if not new_name:
-            raise HTTPException(status_code=400, detail="Invalid filename")
-        # resolve current absolute path
-        old_abs = p.path if os.path.isabs(p.path) else os.path.join(data_dir, p.path)
-        base_dir = os.path.dirname(old_abs)
-        old_ext = os.path.splitext(old_abs)[1]
-        # Append old extension if none provided
-        if not os.path.splitext(new_name)[1]:
-            new_name = f"{new_name}{old_ext}"
-        new_abs = os.path.join(base_dir, new_name)
-        # Verify resolved path stays within base directory
-        if not os.path.abspath(new_abs).startswith(os.path.abspath(base_dir)):
-            raise HTTPException(status_code=400, detail="Invalid filename")
-        try:
-            if os.path.abspath(old_abs) != os.path.abspath(new_abs):
-                os.makedirs(os.path.dirname(new_abs), exist_ok=True)
+        # Physical rename on disk (optional). Every successful move is recorded
+        # before any later operation can fail.
+        if payload.new_filename and str(payload.new_filename).strip() and managed:
+            requested_name = str(payload.new_filename).strip().replace("\\", "/").rsplit("/", 1)[-1]
+            new_name = requested_name
+            if not new_name:
+                raise HTTPException(status_code=400, detail="Invalid filename")
+            if not current_video_abs:
+                raise HTTPException(status_code=500, detail="Preroll media path is missing")
+            base_dir = os.path.dirname(current_video_abs)
+            old_ext = os.path.splitext(current_video_abs)[1]
+            if not os.path.splitext(new_name)[1]:
+                new_name = f"{new_name}{old_ext}"
+            try:
+                new_name = validate_preroll_filename(new_name)
+            except ValueError as exc:
+                raise HTTPException(status_code=400, detail=str(exc)) from exc
+            renamed_abs = os.path.join(base_dir, new_name)
+            if os.path.commonpath((os.path.abspath(renamed_abs), os.path.abspath(base_dir))) != os.path.abspath(base_dir):
+                raise HTTPException(status_code=400, detail="Invalid filename")
+            if os.path.abspath(current_video_abs) != os.path.abspath(renamed_abs):
                 try:
-                    os.replace(old_abs, new_abs)
-                except Exception:
-                    shutil.copy2(old_abs, new_abs)
-                    try:
-                        os.remove(old_abs)
-                    except Exception:
-                        pass
-                p.path = new_abs
+                    rename_file_case_safe(current_video_abs, renamed_abs)
+                except FileExistsError as exc:
+                    raise HTTPException(
+                        status_code=409,
+                        detail=f"A file named '{new_name}' already exists",
+                    ) from exc
+                file_transaction.record_move(current_video_abs, renamed_abs)
+                current_video_abs = renamed_abs
+                p.path = renamed_abs
                 p.filename = new_name
                 changed_thumbnail = True
-        except Exception as e:
-            _file_log(f"update_preroll: rename failed for id={p.id}: {e}")
-            log_event('WARNING', 'user', f'Preroll rename failed: {e}', source='update_preroll', details={'preroll_id': p.id})
 
-    # Primary category change: move file under new primary category folder
-    new_primary = None
-    if payload.category_id is not None and payload.category_id != p.category_id:
-        new_primary = db.query(models.Category).filter(models.Category.id == payload.category_id).first()
-        if new_primary:
-            if getattr(p, "managed", True):
-                # Resolve current absolute path
-                cur_abs = p.path if os.path.isabs(p.path) else os.path.join(data_dir, p.path)
+        # Primary category change: move managed media under the new category.
+        if payload.category_id is not None and payload.category_id != p.category_id:
+            new_primary = db.query(models.Category).filter(
+                models.Category.id == payload.category_id
+            ).first()
+            if not new_primary:
+                raise HTTPException(status_code=404, detail="Category not found")
+            if managed:
+                if not current_video_abs:
+                    raise HTTPException(status_code=500, detail="Preroll media path is missing")
+                suffix = managed_category_suffix(current_video_abs, PREROLLS_DIR)
                 try:
-                    # Derive suffix relative to <oldCat>/ (preserve subfolders like Preroll_<id>)
-                    rel_from_root = os.path.relpath(cur_abs, PREROLLS_DIR)
-                    parts = rel_from_root.split(os.sep)
-                    suffix = os.path.join(*parts[1:]) if len(parts) > 1 else os.path.basename(cur_abs)
-                except Exception:
-                    # Fallback: just use filename
-                    suffix = os.path.basename(p.path)
-
-                new_cat_dir = os.path.join(PREROLLS_DIR, new_primary.name)
-                os.makedirs(new_cat_dir, exist_ok=True)
-                new_abs = os.path.join(new_cat_dir, suffix)
-                try:
-                    if os.path.abspath(new_abs) != os.path.abspath(cur_abs):
-                        os.makedirs(os.path.dirname(new_abs), exist_ok=True)
-                        try:
-                            os.replace(cur_abs, new_abs)
-                        except Exception:
-                            shutil.copy2(cur_abs, new_abs)
-                            try:
-                                os.remove(cur_abs)
-                            except Exception:
-                                pass
-                        p.path = new_abs
-                    p.category_id = new_primary.id
-                    changed_thumbnail = True
-                except Exception as e:
-                    _file_log(f"update_preroll: move to new category failed id={p.id}: {e}")
-                    log_event('WARNING', 'user', f'Preroll category move failed: {e}', source='update_preroll', details={'preroll_id': p.id})
+                    new_category_dir = validate_storage_component(new_primary.name)
+                except ValueError as exc:
+                    raise HTTPException(status_code=400, detail=str(exc)) from exc
+                requested_abs = os.path.join(PREROLLS_DIR, new_category_dir, suffix)
+                if os.path.abspath(requested_abs) != os.path.abspath(current_video_abs):
+                    previous_abs = current_video_abs
+                    unique_name, current_video_abs = move_to_unique_destination(
+                        previous_abs,
+                        os.path.dirname(requested_abs),
+                        os.path.basename(requested_abs),
+                    )
+                    file_transaction.record_move(previous_abs, current_video_abs)
+                    p.filename = unique_name
+                    p.path = current_video_abs
+                p.category_id = new_primary.id
+                changed_thumbnail = True
             else:
-                # External/mapped file: do not move on disk; only change primary category
                 p.category_id = new_primary.id
                 changed_thumbnail = True
 
-    # Many-to-many categories update
-    if payload.category_ids is not None:
-        try:
-            ids = [int(x) for x in payload.category_ids if str(x).isdigit()]
-            # Ensure primary is included when provided
+        if payload.category_ids is not None:
+            ids = [int(value) for value in payload.category_ids if str(value).isdigit()]
             if p.category_id and p.category_id not in ids:
                 ids.insert(0, p.category_id)
-            cats = db.query(models.Category).filter(models.Category.id.in_(ids)).all() if ids else []
-            p.categories = cats
-        except Exception as e:
-            _file_log(f"update_preroll: updating categories failed id={p.id}: {e}")
+            p.categories = (
+                db.query(models.Category).filter(models.Category.id.in_(ids)).all()
+                if ids else []
+            )
 
-    # Update thumbnail if filename or primary category changed
-    try:
-        primary_name = getattr(getattr(p, "category", None), "name", None) or old_primary_cat_name or "Default"
-        tgt_dir = os.path.join(THUMBNAILS_DIR, primary_name)
-        os.makedirs(tgt_dir, exist_ok=True)
-        new_thumb_abs = os.path.join(tgt_dir, f"{p.id}_{p.filename}.jpg")
-
-        # Determine current thumbnail absolute path (if exists)
-        old_thumb_abs = None
-        if p.thumbnail:
-            old_thumb_abs = p.thumbnail if os.path.isabs(p.thumbnail) else os.path.join(data_dir, p.thumbnail)
-
-        if changed_thumbnail or not old_thumb_abs or not os.path.exists(old_thumb_abs):
-            # Regenerate from video file
-            video_abs = p.path if os.path.isabs(p.path) else os.path.join(data_dir, p.path)
-            tmp = new_thumb_abs + ".tmp.jpg"
-            thumb_ok = False
-            for seek_sec in ("5", "1", "0"):
-                res = _run_subprocess(
-                    [get_ffmpeg_cmd(), "-v", "error", "-y", "-ss", seek_sec, "-i", video_abs, "-vframes", "1", "-q:v", "2", "-f", "mjpeg", tmp],
-                    capture_output=True,
-                    text=True,
+        if changed_thumbnail or not original_thumb_abs or not os.path.exists(original_thumb_abs):
+            primary_name = (
+                getattr(new_primary, "name", None)
+                or getattr(getattr(p, "category", None), "name", None)
+                or old_primary_cat_name
+                or "Default"
+            )
+            try:
+                primary_storage_name = validate_storage_component(primary_name)
+            except ValueError:
+                primary_storage_name = "Default"
+            video_abs = current_video_abs
+            if not video_abs:
+                video_abs = p.path if os.path.isabs(p.path) else os.path.join(data_dir, p.path)
+            try:
+                thumbnail_rel, _ = _stage_preroll_thumbnail(
+                    video_abs,
+                    os.path.join(THUMBNAILS_DIR, primary_storage_name),
+                    f"{p.id}_{p.filename}.jpg",
+                    file_transaction,
                 )
-                if getattr(res, "returncode", 1) == 0 and os.path.exists(tmp) and os.path.getsize(tmp) > 0:
-                    thumb_ok = True
-                    break
-            if not thumb_ok:
-                _generate_placeholder(tmp)
-            try:
-                if os.path.exists(new_thumb_abs):
-                    os.remove(new_thumb_abs)
-            except Exception:
-                pass
-            os.replace(tmp, new_thumb_abs)
-        else:
-            # Try to rename/move existing thumbnail if only path/name changed
-            try:
-                if os.path.abspath(old_thumb_abs) != os.path.abspath(new_thumb_abs):
-                    os.makedirs(os.path.dirname(new_thumb_abs), exist_ok=True)
-                    try:
-                        os.replace(old_thumb_abs, new_thumb_abs)
-                    except Exception:
-                        shutil.copy2(old_thumb_abs, new_thumb_abs)
-                        try:
-                            os.remove(old_thumb_abs)
-                        except Exception:
-                            pass
-            except Exception:
-                pass
+                p.thumbnail = thumbnail_rel
+                file_transaction.delete_after_commit(original_thumb_abs)
+            except Exception as exc:
+                _file_log(f"update_preroll: thumbnail update failed id={p.id}: {exc}")
 
-        # Store relative path
-        rel = _safe_thumbnail_relpath(new_thumb_abs)
-        p.thumbnail = rel
-    except Exception as e:
-        _file_log(f"update_preroll: thumbnail update failed id={p.id}: {e}")
+        if payload.exclude_from_matching is not None:
+            p.exclude_from_matching = payload.exclude_from_matching
 
-    # Update exclude_from_matching flag
-    if payload.exclude_from_matching is not None:
-        p.exclude_from_matching = payload.exclude_from_matching
-
-    try:
         db.commit()
-        db.refresh(p)
-    except Exception as e:
+    except HTTPException:
         db.rollback()
-        log_event('ERROR', 'user', f'Failed to update preroll {preroll_id}: {e}', source='update_preroll')
-        raise HTTPException(status_code=500, detail=f"Failed to update preroll: {str(e)}")
+        _log_file_transaction_errors("update_preroll rollback", file_transaction.rollback())
+        raise
+    except Exception as exc:
+        db.rollback()
+        _log_file_transaction_errors("update_preroll rollback", file_transaction.rollback())
+        log_event('ERROR', 'user', f'Failed to update preroll {preroll_id}: {exc}', source='update_preroll')
+        raise HTTPException(status_code=500, detail=f"Failed to update preroll: {str(exc)}") from exc
+
+    _log_file_transaction_errors("update_preroll commit", file_transaction.commit())
+    try:
+        db.refresh(p)
+    except Exception as exc:
+        _file_log(f"update_preroll: committed but refresh failed id={p.id}: {exc}")
 
     return {
         "message": "Preroll updated",
@@ -9140,97 +9386,79 @@ def update_preroll(preroll_id: int, payload: PrerollUpdate, db: Session = Depend
 
 @app.delete("/prerolls/{preroll_id}")
 def delete_preroll(preroll_id: int, db: Session = Depends(get_db)):
+    file_transaction = ReversibleFileTransaction()
     try:
         preroll = db.query(models.Preroll).filter(models.Preroll.id == preroll_id).first()
         if not preroll:
             raise HTTPException(status_code=404, detail="Preroll not found")
+        deleted_filename = preroll.filename
 
-        # Delete the actual files (do not delete external mapped files)
-        try:
-            # Handle new path structure
-            if getattr(preroll, "managed", True):
-                full_path = preroll.path
-                if not os.path.isabs(full_path):
-                    full_path = os.path.join(data_dir, full_path)
+        # Move managed artifacts aside first. They are restored if any database
+        # edit fails, and permanently removed only after the single commit.
+        if getattr(preroll, "managed", True) and preroll.path:
+            full_path = (
+                preroll.path if os.path.isabs(preroll.path)
+                else os.path.join(data_dir, preroll.path)
+            )
+            file_transaction.stage_delete(full_path)
+        if preroll.thumbnail:
+            thumbnail_path = (
+                preroll.thumbnail if os.path.isabs(preroll.thumbnail)
+                else os.path.join(data_dir, preroll.thumbnail)
+            )
+            file_transaction.stage_delete(thumbnail_path)
 
-                if os.path.exists(full_path):
-                    os.remove(full_path)
-
-            if preroll.thumbnail:
-                thumbnail_path = preroll.thumbnail
-                if not os.path.isabs(thumbnail_path):
-                    thumbnail_path = os.path.join(data_dir, thumbnail_path)
-
-                if os.path.exists(thumbnail_path):
-                    os.remove(thumbnail_path)
-        except Exception as e:
-            print(f"Warning: Could not delete files for preroll {preroll_id}: {e}")
-
-        # Remove preroll_id from all schedules' preroll_ids JSON field
+        # Schedule/saved-sequence edits and row deletion share the same database
+        # transaction. Identity-map all remaining IDs so only deleted or already
+        # dangling fixed references are removed.
+        remaining_preroll_ids = {
+            row[0]: row[0]
+            for row in db.query(models.Preroll.id).filter(
+                models.Preroll.id != preroll_id
+            ).all()
+        }
         schedules = db.query(models.Schedule).all()
         for schedule in schedules:
             if schedule.preroll_ids:
-                try:
-                    preroll_list = json.loads(schedule.preroll_ids)
-                    if isinstance(preroll_list, list) and preroll_id in preroll_list:
-                        preroll_list.remove(preroll_id)
-                        schedule.preroll_ids = json.dumps(preroll_list) if preroll_list else None
-                except Exception as e:
-                    print(f"Warning: Could not update schedule {schedule.id}: {e}")
+                schedule.preroll_ids = remap_preroll_ids_json(
+                    schedule.preroll_ids, remaining_preroll_ids
+                )
+            if schedule.sequence:
+                schedule.sequence = remap_sequence_json(
+                    schedule.sequence, remaining_preroll_ids
+                )
+        for saved_sequence in db.query(models.SavedSequence).all():
+            saved_sequence.blocks = json.dumps(
+                remap_sequence_blocks(
+                    saved_sequence.blocks,
+                    remaining_preroll_ids,
+                )
+            )
+
+        # Let the ORM delete the secondary associations and row in one unit of
+        # work. Mixing a Core junction delete with ORM deletion can double-delete
+        # loaded relationship rows and raise StaleDataError during flush.
+        db.delete(preroll)
         db.commit()
 
-        # Use SQLAlchemy connection to access raw DB connection
-        sqlalchemy_conn = db.connection()
-        dbapi_conn = sqlalchemy_conn.connection  # Get the raw DBAPI connection
-        try:
-            cursor = dbapi_conn.cursor()
-            
-            # Check foreign key status
-            cursor.execute("PRAGMA foreign_keys")
-            fk_status = cursor.fetchone()[0]
-            print(f"FK status before: {fk_status}")
-            
-            # Disable foreign keys
-            cursor.execute("PRAGMA foreign_keys=OFF;")
-            cursor.execute("PRAGMA foreign_keys")
-            fk_status_off = cursor.fetchone()[0]
-            print(f"FK status after OFF: {fk_status_off}")
-            
-            # Delete many-to-many
-            print(f"Deleting from preroll_categories WHERE preroll_id={preroll_id}")
-            cursor.execute("DELETE FROM preroll_categories WHERE preroll_id = ?;", (preroll_id,))
-            print(f"  Deleted {cursor.rowcount} rows from preroll_categories")
-            
-            # Delete preroll
-            print(f"Deleting from prerolls WHERE id={preroll_id}")
-            cursor.execute("DELETE FROM prerolls WHERE id = ?;", (preroll_id,))
-            print(f"  Deleted {cursor.rowcount} rows from prerolls")
-            
-            # Re-enable foreign keys
-            cursor.execute("PRAGMA foreign_keys=ON;")
-            cursor.execute("PRAGMA foreign_keys")
-            fk_status_on = cursor.fetchone()[0]
-            print(f"FK status after ON: {fk_status_on}")
-            
-            # Commit
-            dbapi_conn.commit()
-            cursor.close()
-            print(f"[OK] Successfully deleted preroll {preroll_id} using raw SQL with FK disabled")
-        except Exception as e:
-            print(f"[ERR] Raw SQL deletion failed: {type(e).__name__}: {e}")
-            dbapi_conn.rollback()
-            raise e
-
-        log_event('INFO', 'user', f"Preroll '{preroll.filename}' deleted", details={"preroll_id": preroll_id})
+        _log_file_transaction_errors(
+            "delete_preroll commit", file_transaction.commit()
+        )
+        log_event('INFO', 'user', f"Preroll '{deleted_filename}' deleted", details={"preroll_id": preroll_id})
         return {"message": "Preroll deleted successfully"}
     except HTTPException:
+        db.rollback()
+        _log_file_transaction_errors(
+            "delete_preroll rollback", file_transaction.rollback()
+        )
         raise
-    except Exception as e:
-        print(f"Error deleting preroll {preroll_id}: {e}")
-        import traceback
-        traceback.print_exc()
-        log_event('ERROR', 'user', f'Preroll deletion failed: {e}', source='delete_preroll', details={'preroll_id': preroll_id})
-        raise HTTPException(status_code=500, detail=f"Error deleting preroll: {str(e)}")
+    except Exception as exc:
+        db.rollback()
+        _log_file_transaction_errors(
+            "delete_preroll rollback", file_transaction.rollback()
+        )
+        log_event('ERROR', 'user', f'Preroll deletion failed: {exc}', source='delete_preroll', details={'preroll_id': preroll_id})
+        raise HTTPException(status_code=500, detail=f"Error deleting preroll: {str(exc)}") from exc
 
 @app.post("/prerolls/{preroll_id}/auto-match")
 def auto_match_single_preroll(preroll_id: int, db: Session = Depends(get_db)):
@@ -9723,6 +9951,10 @@ def create_category(category: CategoryCreate, db: Session = Depends(get_db)):
     name = (category.name or "").strip()
     if not name:
         raise HTTPException(status_code=422, detail="Category name is required")
+    try:
+        validate_storage_component(name)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
 
     # Check duplicates by name
     existing = db.query(models.Category).filter(models.Category.name == name).first()
@@ -9789,6 +10021,10 @@ def update_category(category_id: int, category: CategoryCreate, db: Session = De
     new_name = (category.name or "").strip()
     if not new_name:
         raise HTTPException(status_code=422, detail="Category name is required")
+    try:
+        validate_storage_component(new_name)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
 
     # Ensure name is unique among other categories
     existing = db.query(models.Category).filter(
@@ -9851,6 +10087,8 @@ def get_category_prerolls(category_id: int, db: Session = Depends(get_db)):
     result = []
     for p in prerolls:
         cats = [{"id": c.id, "name": c.name} for c in (p.categories or [])]
+        if p.category and not any(c["id"] == p.category.id for c in cats):
+            cats.insert(0, {"id": p.category.id, "name": p.category.name})
         result.append({
             "id": p.id,
             "filename": p.filename,
@@ -9883,120 +10121,99 @@ def add_preroll_to_category(category_id: int, preroll_id: int, set_primary: bool
     if not p:
         raise HTTPException(status_code=404, detail="Preroll not found")
 
-    # Add association (if not already present)
+    managed = getattr(p, "managed", True)
+    original_video_abs = None
+    if managed and p.path:
+        original_video_abs = p.path if os.path.isabs(p.path) else os.path.join(data_dir, p.path)
+    current_video_abs = original_video_abs
+    original_thumb_abs = None
+    if p.thumbnail:
+        original_thumb_abs = (
+            p.thumbnail if os.path.isabs(p.thumbnail)
+            else os.path.join(data_dir, p.thumbnail)
+        )
+    file_transaction = ReversibleFileTransaction()
+    moved_primary = False
+
     try:
+        # Add association (if not already present).
         assigned_ids = {c.id for c in (p.categories or [])}
         if category_id not in assigned_ids:
-            # attach (load actual row to ensure identity matches)
             p.categories = (p.categories or []) + [cat]
-    except Exception as e:
-        _file_log(f"add_preroll_to_category: association add failed p={p.id}, c={category_id}: {e}")
-        log_event('ERROR', 'user', f'Failed to add preroll to category: {e}', source='add_preroll_to_category')
 
-    moved_primary = False
-    # Optionally set as primary category (move file path)
-    if set_primary and p.category_id != category_id:
-        if getattr(p, "managed", True):
-            # Resolve current absolute path
-            cur_abs = p.path if os.path.isabs(p.path) else os.path.join(data_dir, p.path)
+        # Optionally set as primary category (move file path).
+        if set_primary and p.category_id != category_id:
             try:
-                # Derive suffix relative to <oldCat>/ (preserve subfolders like Preroll_<id>)
-                rel_from_root = os.path.relpath(cur_abs, PREROLLS_DIR)
-                parts = rel_from_root.split(os.sep)
-                suffix = os.path.join(*parts[1:]) if len(parts) > 1 else os.path.basename(cur_abs)
-            except Exception:
-                suffix = os.path.basename(p.path)
-
-            new_cat_dir = os.path.join(PREROLLS_DIR, cat.name)
-            os.makedirs(new_cat_dir, exist_ok=True)
-            new_abs = os.path.join(new_cat_dir, suffix)
-            try:
-                if os.path.abspath(new_abs) != os.path.abspath(cur_abs):
-                    os.makedirs(os.path.dirname(new_abs), exist_ok=True)
-                    try:
-                        os.replace(cur_abs, new_abs)
-                    except Exception:
-                        shutil.copy2(cur_abs, new_abs)
-                        try:
-                            os.remove(cur_abs)
-                        except Exception:
-                            pass
-                    p.path = new_abs
+                new_category_dir = validate_storage_component(cat.name)
+            except ValueError as exc:
+                raise HTTPException(status_code=400, detail=str(exc)) from exc
+            if managed:
+                if not current_video_abs:
+                    raise HTTPException(status_code=500, detail="Preroll media path is missing")
+                suffix = managed_category_suffix(current_video_abs, PREROLLS_DIR)
+                requested_abs = os.path.join(PREROLLS_DIR, new_category_dir, suffix)
+                if os.path.abspath(requested_abs) != os.path.abspath(current_video_abs):
+                    previous_abs = current_video_abs
+                    unique_name, current_video_abs = move_to_unique_destination(
+                        previous_abs,
+                        os.path.dirname(requested_abs),
+                        os.path.basename(requested_abs),
+                    )
+                    file_transaction.record_move(previous_abs, current_video_abs)
+                    p.filename = unique_name
+                    p.path = current_video_abs
                 p.category_id = cat.id
                 moved_primary = True
-                # Update thumbnail for new primary location/name (id-prefixed)
-                try:
-                    tgt_dir = os.path.join(THUMBNAILS_DIR, cat.name)
-                    os.makedirs(tgt_dir, exist_ok=True)
-                    new_thumb_abs = os.path.join(tgt_dir, f"{p.id}_{p.filename}.jpg")
-                    video_abs = p.path if os.path.isabs(p.path) else os.path.join(data_dir, p.path)
-                    tmp = new_thumb_abs + ".tmp.jpg"
-                    thumb_ok = False
-                    for seek_sec in ("5", "1", "0"):
-                        res = _run_subprocess(
-                            [get_ffmpeg_cmd(), "-v", "error", "-y", "-ss", seek_sec, "-i", video_abs, "-vframes", "1", "-q:v", "2", "-f", "mjpeg", tmp],
-                            capture_output=True,
-                            text=True,
-                        )
-                        if getattr(res, "returncode", 1) == 0 and os.path.exists(tmp) and os.path.getsize(tmp) > 0:
-                            thumb_ok = True
-                            break
-                    if not thumb_ok:
-                        _generate_placeholder(tmp)
-                    try:
-                        if os.path.exists(new_thumb_abs):
-                            os.remove(new_thumb_abs)
-                    except Exception:
-                        pass
-                    os.replace(tmp, new_thumb_abs)
-                    rel = _safe_thumbnail_relpath(new_thumb_abs)
-                    p.thumbnail = rel
-                except Exception as e:
-                    _file_log(f"add_preroll_to_category: primary move thumb update failed p={p.id}: {e}")
-            except Exception as e:
-                _file_log(f"add_preroll_to_category: primary move failed p={p.id} to category={cat.name}: {e}")
-                log_event('ERROR', 'user', f'Category primary move failed: {e}', source='add_preroll_to_category', details={'preroll_id': p.id, 'category': cat.name})
-                raise HTTPException(status_code=500, detail="Failed to set primary category (move operation)")
-        else:
-            # External/mapped file: do not move on disk; only change primary category and update thumbnail
-            p.category_id = cat.id
-            moved_primary = True
-            try:
-                tgt_dir = os.path.join(THUMBNAILS_DIR, cat.name)
-                os.makedirs(tgt_dir, exist_ok=True)
-                new_thumb_abs = os.path.join(tgt_dir, f"{p.id}_{p.filename}.jpg")
-                video_abs = p.path if os.path.isabs(p.path) else os.path.join(data_dir, p.path)
-                tmp = new_thumb_abs + ".tmp.jpg"
-                thumb_ok = False
-                for seek_sec in ("5", "1", "0"):
-                    res = _run_subprocess(
-                        [get_ffmpeg_cmd(), "-v", "error", "-y", "-ss", seek_sec, "-i", video_abs, "-vframes", "1", "-q:v", "2", "-f", "mjpeg", tmp],
-                        capture_output=True,
-                        text=True,
-                    )
-                    if getattr(res, "returncode", 1) == 0 and os.path.exists(tmp) and os.path.getsize(tmp) > 0:
-                        thumb_ok = True
-                        break
-                if not thumb_ok:
-                    _generate_placeholder(tmp)
-                try:
-                    if os.path.exists(new_thumb_abs):
-                        os.remove(new_thumb_abs)
-                except Exception:
-                    pass
-                os.replace(tmp, new_thumb_abs)
-                rel = _safe_thumbnail_relpath(new_thumb_abs)
-                p.thumbnail = rel
-            except Exception as e:
-                _file_log(f"add_preroll_to_category: external primary thumb update failed p={p.id}: {e}")
+            else:
+                p.category_id = cat.id
+                moved_primary = True
 
-    try:
+            video_abs = current_video_abs
+            if not video_abs:
+                video_abs = p.path if os.path.isabs(p.path) else os.path.join(data_dir, p.path)
+            try:
+                thumbnail_rel, _ = _stage_preroll_thumbnail(
+                    video_abs,
+                    os.path.join(THUMBNAILS_DIR, new_category_dir),
+                    f"{p.id}_{p.filename}.jpg",
+                    file_transaction,
+                )
+                p.thumbnail = thumbnail_rel
+                file_transaction.delete_after_commit(original_thumb_abs)
+            except Exception as exc:
+                _file_log(
+                    f"add_preroll_to_category: primary thumbnail staging failed p={p.id}: {exc}"
+                )
+
         db.commit()
-        db.refresh(p)
-    except Exception as e:
+    except HTTPException:
         db.rollback()
-        log_event('ERROR', 'user', f'Failed to add preroll {preroll_id} to category {category_id}: {e}', source='add_preroll_to_category')
-        raise HTTPException(status_code=500, detail=f"Failed to add preroll to category: {str(e)}")
+        _log_file_transaction_errors(
+            "add_preroll_to_category rollback", file_transaction.rollback()
+        )
+        raise
+    except Exception as exc:
+        db.rollback()
+        _log_file_transaction_errors(
+            "add_preroll_to_category rollback", file_transaction.rollback()
+        )
+        log_event(
+            'ERROR', 'user',
+            f'Failed to add preroll {preroll_id} to category {category_id}: {exc}',
+            source='add_preroll_to_category',
+        )
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to add preroll to category: {str(exc)}",
+        ) from exc
+
+    _log_file_transaction_errors(
+        "add_preroll_to_category commit", file_transaction.commit()
+    )
+    try:
+        db.refresh(p)
+    except Exception as exc:
+        _file_log(f"add_preroll_to_category: committed but refresh failed p={p.id}: {exc}")
 
     # Auto-apply to Plex/Jellyfin if category is already applied or currently active
     auto_applied = False
@@ -10310,18 +10527,37 @@ def get_default_category(db: Session = Depends(get_db)):
     return default_category
 
 # Schedule endpoints
-@app.post("/schedules")
-def create_schedule(schedule: ScheduleCreate, db: Session = Depends(get_db)):
-    # Validate: must have either category_id or sequence
-    if not schedule.category_id and not schedule.sequence:
-        raise HTTPException(status_code=400, detail="Schedule must have either a category or a sequence")
-    
-    # Validate category exists if provided
+def _validate_schedule_references(schedule: ScheduleCreate, db: Session):
+    """Validate the category/sequence references shared by create and update."""
+    if not schedule.category_id and not _has_valid_sequence(schedule):
+        raise HTTPException(status_code=400, detail="Schedule must have either a category or a non-empty sequence")
+
     category = None
     if schedule.category_id:
         category = db.query(models.Category).filter(models.Category.id == schedule.category_id).first()
         if not category:
             raise HTTPException(status_code=404, detail="Category not found")
+
+    if schedule.fallback_category_id:
+        fallback = db.query(models.Category).filter(models.Category.id == schedule.fallback_category_id).first()
+        if not fallback:
+            raise HTTPException(status_code=404, detail="Fallback category not found")
+
+    if schedule.source_sequence_id:
+        source = db.query(models.SavedSequence).filter(
+            models.SavedSequence.id == schedule.source_sequence_id
+        ).first()
+        if not source:
+            raise HTTPException(status_code=404, detail="Source sequence not found")
+
+    if not 1 <= schedule.priority <= 10:
+        raise HTTPException(status_code=422, detail="Schedule priority must be between 1 and 10")
+    return category
+
+
+@app.post("/schedules")
+def create_schedule(schedule: ScheduleCreate, db: Session = Depends(get_db)):
+    _validate_schedule_references(schedule, db)
 
     # Parse dates from strings - store as naive local datetime (no timezone conversion)
     # The user enters their local time, we store it as-is, and the scheduler compares against local time
@@ -10358,6 +10594,11 @@ def create_schedule(schedule: ScheduleCreate, db: Session = Depends(get_db)):
     except ValueError as e:
         raise HTTPException(status_code=400, detail=f"Invalid date format: {str(e)}")
 
+    if start_date is None:
+        raise HTTPException(status_code=400, detail="Schedule start_date is required")
+    if end_date and schedule.type not in ("yearly", "holiday") and end_date < start_date:
+        raise HTTPException(status_code=400, detail="Schedule end_date cannot be before start_date")
+
     db_schedule = models.Schedule(
         name=schedule.name,
         type=schedule.type,
@@ -10367,6 +10608,7 @@ def create_schedule(schedule: ScheduleCreate, db: Session = Depends(get_db)):
         fallback_category_id=schedule.fallback_category_id,
         shuffle=schedule.shuffle,
         playlist=schedule.playlist,
+        is_active=schedule.is_active,
         recurrence_pattern=schedule.recurrence_pattern,
         preroll_ids=schedule.preroll_ids,
         sequence=schedule.sequence,
@@ -10423,7 +10665,8 @@ def create_schedule(schedule: ScheduleCreate, db: Session = Depends(get_db)):
         "priority": getattr(created_schedule, "priority", 5),
         "exclusive": getattr(created_schedule, "exclusive", False),
         "holiday_name": getattr(created_schedule, "holiday_name", None),
-        "holiday_country": getattr(created_schedule, "holiday_country", None)
+        "holiday_country": getattr(created_schedule, "holiday_country", None),
+        "source_sequence_id": getattr(created_schedule, "source_sequence_id", None)
     }
 
 @app.get("/schedules")
@@ -10458,58 +10701,15 @@ def get_schedules(db: Session = Depends(get_db)):
             "priority": getattr(s, "priority", 5),
             "exclusive": getattr(s, "exclusive", False),
             "holiday_name": getattr(s, "holiday_name", None),
-            "holiday_country": getattr(s, "holiday_country", None)
+            "holiday_country": getattr(s, "holiday_country", None),
+            "source_sequence_id": getattr(s, "source_sequence_id", None)
         })
     
     return result
 
 def _schedule_in_date_window(sched, now):
-    """Full active-window check: date window + weekDays + months + monthDays + timeRange."""
-    if not getattr(sched, "start_date", None):
-        return False
-    if sched.end_date:
-        if not (sched.start_date <= now <= sched.end_date):
-            return False
-    else:
-        if now < sched.start_date:
-            return False
-    if sched.recurrence_pattern:
-        try:
-            pattern = json.loads(sched.recurrence_pattern)
-            week_days = pattern.get("weekDays")
-            if week_days and isinstance(week_days, list) and len(week_days) > 0:
-                day_map = {0: "monday", 1: "tuesday", 2: "wednesday", 3: "thursday", 4: "friday", 5: "saturday", 6: "sunday"}
-                if day_map.get(now.weekday()) not in week_days:
-                    return False
-            months = pattern.get("months")
-            if months and isinstance(months, list) and len(months) > 0:
-                if now.month not in months:
-                    return False
-            month_days = pattern.get("monthDays")
-            if month_days and isinstance(month_days, list) and len(month_days) > 0:
-                if now.day not in month_days:
-                    return False
-            time_range = pattern.get("timeRange")
-            if time_range and time_range.get("start"):
-                try:
-                    sp = time_range["start"].split(":")
-                    sh, sm = int(sp[0]), int(sp[1]) if len(sp) > 1 else 0
-                    ep = (time_range.get("end") or "").split(":")
-                    eh, em = (int(ep[0]), int(ep[1]) if len(ep) > 1 else 59) if ep[0] else (23, 59)
-                    cur = now.hour * 60 + now.minute
-                    s_val = sh * 60 + sm
-                    e_val = eh * 60 + em
-                    if s_val <= e_val:
-                        if not (s_val <= cur <= e_val):
-                            return False
-                    else:
-                        if not (cur >= s_val or cur <= e_val):
-                            return False
-                except (ValueError, IndexError):
-                    pass
-        except (json.JSONDecodeError, AttributeError):
-            pass
-    return True
+    """Use the scheduler's canonical recurrence/date evaluator."""
+    return scheduler._is_schedule_active(sched, now)
 
 
 
@@ -10518,6 +10718,8 @@ def update_schedule(schedule_id: int, schedule: ScheduleCreate, db: Session = De
     db_schedule = db.query(models.Schedule).filter(models.Schedule.id == schedule_id).first()
     if not db_schedule:
         raise HTTPException(status_code=404, detail="Schedule not found")
+
+    _validate_schedule_references(schedule, db)
 
     # Parse dates from strings - store as naive local datetime (no timezone conversion)
     # The user enters their local time, we store it as-is, and the scheduler compares against local time
@@ -10554,6 +10756,11 @@ def update_schedule(schedule_id: int, schedule: ScheduleCreate, db: Session = De
     except ValueError as e:
         raise HTTPException(status_code=400, detail=f"Invalid date format: {str(e)}")
 
+    if start_date is None:
+        raise HTTPException(status_code=400, detail="Schedule start_date is required")
+    if end_date and schedule.type not in ("yearly", "holiday") and end_date < start_date:
+        raise HTTPException(status_code=400, detail="Schedule end_date cannot be before start_date")
+
     # Check if schedule is being enabled or disabled
     was_active = db_schedule.is_active
     is_being_disabled = was_active and not schedule.is_active
@@ -10579,6 +10786,7 @@ def update_schedule(schedule_id: int, schedule: ScheduleCreate, db: Session = De
     db_schedule.exclusive = schedule.exclusive
     db_schedule.holiday_name = schedule.holiday_name
     db_schedule.holiday_country = schedule.holiday_country
+    db_schedule.source_sequence_id = schedule.source_sequence_id
 
     try:
         db.commit()
@@ -10589,23 +10797,21 @@ def update_schedule(schedule_id: int, schedule: ScheduleCreate, db: Session = De
         log_event('ERROR', 'scheduler', f'Schedule update failed: {e}', source='update_schedule', details={'schedule_id': schedule_id})
         raise HTTPException(status_code=500, detail=f"Failed to update schedule: {str(e)}")
 
-    # If we just disabled the schedule that the dashboard is pointing at, clear
-    # the pointer now. The scheduler only advances active_schedule_id on a
-    # successful Plex apply of a NEW winner, so without this the dashboard would
-    # keep showing this (now-disabled) schedule as "currently showing" until
-    # something else successfully applies — which may never happen (e.g. no
-    # active schedule, or Plex unreachable).
-    if is_being_disabled:
+    # Invalidate an active pointer on every edit, not only disable. A sequence,
+    # playlist delimiter, or recurrence edit can keep the same schedule/category
+    # IDs, so the scheduler's normal dedupe would otherwise mistake the edited
+    # definition for the already-applied one and leave the media server stale.
+    try:
+        setting = db.query(models.Setting).first()
+        if setting and getattr(setting, "active_schedule_id", None) == schedule_id:
+            setting.active_schedule_id = None
+            db.commit()
+        scheduler._last_rotation_time.pop(schedule_id, None)
+    except Exception:
         try:
-            setting = db.query(models.Setting).first()
-            if setting and getattr(setting, "active_schedule_id", None) == schedule_id:
-                setting.active_schedule_id = None
-                db.commit()
+            db.rollback()
         except Exception:
-            try:
-                db.rollback()
-            except Exception:
-                pass
+            pass
 
     # Re-evaluate the scheduler immediately so dashboard + Plex reflect the change without
     # waiting up to 60 seconds for the next tick. (Pre-v1.13.5 this called a ~410-line
@@ -10636,6 +10842,11 @@ def delete_schedule(schedule_id: int, db: Session = Depends(get_db)):
         raise HTTPException(status_code=404, detail="Schedule not found")
 
     schedule_name = db_schedule.name
+
+    # SQLite may reuse a deleted integer ID; remove persisted conflict ignores
+    # so a future unrelated schedule cannot inherit this one's ignore decision.
+    removed_ignored_conflicts = _remove_ignored_conflicts_for_schedule(db, schedule_id)
+
     db.delete(db_schedule)
     try:
         db.commit()
@@ -10653,11 +10864,15 @@ def delete_schedule(schedule_id: int, db: Session = Depends(get_db)):
     # tick. Without this, deleting the active schedule leaves Plex serving its old
     # prerolls and the tile showing the deleted schedule's name until the next tick.
     try:
+        scheduler._last_rotation_time.pop(schedule_id, None)
         scheduler.trigger_immediate_check()
     except Exception:
         pass
 
-    return {"message": "Schedule deleted"}
+    return {
+        "message": "Schedule deleted",
+        "removed_ignored_conflicts": removed_ignored_conflicts,
+    }
 
 # ============================================================================
 # SAVED SEQUENCES API
@@ -10694,6 +10909,8 @@ def get_saved_sequences(db: Session = Depends(get_db)):
 @app.post("/sequences")
 def create_saved_sequence(sequence: SavedSequenceCreate, db: Session = Depends(get_db)):
     """Create a new saved sequence"""
+    if not sequence.blocks:
+        raise HTTPException(status_code=422, detail="A saved sequence must contain at least one block")
     try:
         new_sequence = models.SavedSequence(
             name=sequence.name,
@@ -10744,6 +10961,8 @@ def update_saved_sequence(sequence_id: int, sequence: SavedSequenceUpdate, db: S
     db_sequence = db.query(models.SavedSequence).filter(models.SavedSequence.id == sequence_id).first()
     if not db_sequence:
         raise HTTPException(status_code=404, detail="Sequence not found")
+    if sequence.blocks is not None and not sequence.blocks:
+        raise HTTPException(status_code=422, detail="A saved sequence must contain at least one block")
     
     try:
         if sequence.name is not None:
@@ -10751,6 +10970,7 @@ def update_saved_sequence(sequence_id: int, sequence: SavedSequenceUpdate, db: S
         if sequence.description is not None:
             db_sequence.description = sequence.description
         synced_schedules = 0
+        linked_schedule_ids = []
         if sequence.blocks is not None:
             db_sequence.blocks = json.dumps(sequence.blocks)
             # Propagate the edit into any schedule built from this saved sequence
@@ -10760,8 +10980,15 @@ def update_saved_sequence(sequence_id: int, sequence: SavedSequenceUpdate, db: S
                 models.Schedule.source_sequence_id == sequence_id
             ).all()
             new_seq_json = json.dumps(sequence.blocks)
+            representative_id = representative_category_id(sequence.blocks)
+            if representative_id is not None and not db.query(models.Category).filter(
+                models.Category.id == representative_id
+            ).first():
+                representative_id = None
             for sched in linked:
                 sched.sequence = new_seq_json
+                sched.category_id = representative_id
+                linked_schedule_ids.append(sched.id)
                 synced_schedules += 1
 
         db_sequence.updated_at = datetime.datetime.utcnow()
@@ -10770,6 +10997,12 @@ def update_saved_sequence(sequence_id: int, sequence: SavedSequenceUpdate, db: S
 
         if synced_schedules:
             _file_log(f"Sequence {sequence_id} edit propagated to {synced_schedules} linked schedule(s)")
+            # A deterministic active sequence would otherwise look unchanged to
+            # the scheduler and remain stale indefinitely. Invalidate its last
+            # successful apply marker and re-evaluate immediately.
+            for schedule_id in linked_schedule_ids:
+                scheduler._last_rotation_time.pop(schedule_id, None)
+            scheduler.trigger_immediate_check()
         _file_log(f"Updated sequence: {db_sequence.name} (ID: {sequence_id})")
         log_event('INFO', 'nexup', f"NeX-Up sequence '{db_sequence.name}' updated", 
                   source='update_sequence', details={"sequence_id": sequence_id}, db=db)
@@ -10805,6 +11038,13 @@ def delete_saved_sequence(sequence_id: int, db: Session = Depends(get_db)):
         setting = db.query(models.Setting).first()
         cleared_filler = False
         cleared_override = False
+        unlinked_schedules = db.query(models.Schedule).filter(
+            models.Schedule.source_sequence_id == sequence_id
+        ).all()
+        for linked_schedule in unlinked_schedules:
+            # Keep the embedded sequence intact; only remove the library link so
+            # a future SavedSequence row that reuses this ID cannot overwrite it.
+            linked_schedule.source_sequence_id = None
         if setting:
             if getattr(setting, "filler_sequence_id", None) == sequence_id:
                 setting.filler_sequence_id = None
@@ -10837,12 +11077,14 @@ def delete_saved_sequence(sequence_id: int, db: Session = Depends(get_db)):
                       "sequence_id": sequence_id,
                       "cleared_filler": cleared_filler,
                       "cleared_override": cleared_override,
+                      "unlinked_schedules": len(unlinked_schedules),
                   }, db=db)
 
         return {
             "message": "Sequence deleted successfully",
             "cleared_filler": cleared_filler,
             "cleared_applied_override": cleared_override,
+            "unlinked_schedules": len(unlinked_schedules),
         }
     except Exception as e:
         db.rollback()
@@ -10865,11 +11107,6 @@ def apply_sequence_to_server(sequence_id: int, db: Session = Depends(get_db)):
     if not blocks:
         raise HTTPException(status_code=400, detail="Sequence has no blocks")
 
-    # Delegate to the canonical helper imported from scheduler so the m2m + enabled
-    # filter logic lives in one place.
-    def _prerolls_for_category(cid: int):
-        return prerolls_for_category_query(db, cid).all()
-
     # Resolve blocks into ordered file paths
     paths = []
     for block in blocks:
@@ -10878,19 +11115,8 @@ def apply_sequence_to_server(sequence_id: int, db: Session = Depends(get_db)):
         except Exception:
             continue
 
-        if block_type == "random":
-            cid = int(block.get("category_id") or 0)
-            count = int(block.get("count") or 1)
-            if not cid:
-                continue
-            pool = _prerolls_for_category(cid)
-            # Filter to only prerolls whose files actually exist on disk
-            pool = [p for p in pool if p.path and os.path.exists(p.path)]
-            if not pool:
-                continue
-            k = min(max(count, 1), len(pool))
-            picks = random.sample(pool, k) if len(pool) > k else pool
-            for p in picks:
+        if block_type in {"random", "sequential"}:
+            for p in resolve_category_sequence_block(block, db):
                 paths.append(os.path.abspath(p.path))
 
         elif block_type == "fixed":
@@ -13035,6 +13261,8 @@ def refresh_holiday_dates(db: Session = Depends(get_db)):
     """
     try:
         result = _refresh_holiday_linked_schedules(db)
+        if result.get("updated_count"):
+            scheduler.trigger_immediate_check()
         return {"success": True, **result}
     except Exception as e:
         db.rollback()
@@ -13399,6 +13627,20 @@ def scheduler_debug(db: Session = Depends(get_db)):
                     eval_info["is_active"] = True
                     eval_info["reason"] = "no recurrence_pattern (date-only)"
         schedule_evals.append(eval_info)
+
+    # Keep the diagnostic endpoint's final verdict identical to the scheduler.
+    # The detailed legacy trace above is useful context, but it does not model
+    # yearly/holiday recurrence or overnight day anchoring completely.
+    schedules_by_id = {s.id: s for s in schedules}
+    for eval_info in schedule_evals:
+        schedule_obj = schedules_by_id.get(eval_info.get("id"))
+        if not schedule_obj:
+            continue
+        canonical_active = scheduler._is_schedule_active(schedule_obj, now)
+        if eval_info.get("is_active") != canonical_active:
+            eval_info["legacy_trace_reason"] = eval_info.get("reason")
+            eval_info["reason"] = "canonical scheduler active-window evaluation"
+        eval_info["is_active"] = canonical_active
 
     override_info = None
     if setting:
@@ -15040,9 +15282,10 @@ def backup_database(db: Session = Depends(get_db)):
     """
     try:
         data = {
-            "schema_version": 2,  # bumped from implicit v1 in v1.13.13
+            "schema_version": 3,  # v3 includes preroll IDs for safe reference remapping
             "prerolls": [
                 {
+                    "id": p.id,
                     "filename": p.filename,
                     "display_name": getattr(p, "display_name", None),
                     "path": p.path,
@@ -15091,6 +15334,7 @@ def backup_database(db: Session = Depends(get_db)):
                     "exclusive": getattr(s, "exclusive", False),
                     "holiday_name": getattr(s, "holiday_name", None),
                     "holiday_country": getattr(s, "holiday_country", None),
+                    "source_sequence_id": getattr(s, "source_sequence_id", None),
                 } for s in db.query(models.Schedule).all()
             ],
             "holiday_presets": [
@@ -15109,6 +15353,7 @@ def backup_database(db: Session = Depends(get_db)):
             ],
             "saved_sequences": [
                 {
+                    "id": seq.id,
                     "name": seq.name,
                     "description": seq.description,
                     "blocks": seq.get_blocks(),
@@ -15183,8 +15428,10 @@ def backup_files():
             db = SessionLocal()
             try:
                 db_export = {
+                    "schema_version": 3,
                     "prerolls": [
                         {
+                            "id": p.id,
                             "filename": p.filename,
                             "display_name": getattr(p, "display_name", None),
                             "path": p.path,
@@ -15209,7 +15456,9 @@ def backup_files():
                             "category_id": s.category_id,
                             "fallback_category_id": getattr(s, "fallback_category_id", None),
                             "shuffle": s.shuffle, "playlist": s.playlist, "is_active": s.is_active,
-                            "recurrence_pattern": s.recurrence_pattern, "preroll_ids": s.preroll_ids
+                            "recurrence_pattern": s.recurrence_pattern, "preroll_ids": s.preroll_ids,
+                            "sequence": getattr(s, "sequence", None),
+                            "source_sequence_id": getattr(s, "source_sequence_id", None),
                         } for s in db.query(models.Schedule).all()
                     ],
                     "holiday_presets": [
@@ -15218,7 +15467,7 @@ def backup_files():
                         for h in db.query(models.HolidayPreset).all()
                     ],
                     "saved_sequences": [
-                        {"name": seq.name, "description": seq.description, "blocks": seq.get_blocks(),
+                        {"id": seq.id, "name": seq.name, "description": seq.description, "blocks": seq.get_blocks(),
                          "created_at": seq.created_at.isoformat() if seq.created_at else None,
                          "updated_at": seq.updated_at.isoformat() if seq.updated_at else None}
                         for seq in db.query(models.SavedSequence).all()
@@ -15420,8 +15669,14 @@ def restore_database(backup_data: dict, db: Session = Depends(get_db)):
                 continue
         db.commit()
 
-        # Restore prerolls (including display_name and many-to-many categories if present)
+        # Restore prerolls (including display_name and many-to-many categories if present).
+        # JSON backups carry source IDs so schedules and fixed sequence blocks can
+        # be reconnected after SQLite assigns fresh IDs. Legacy backups without IDs
+        # intentionally produce no mappings; retaining their raw references could
+        # point at an unrelated preroll when an old ID gap is collapsed.
+        old_preroll_id_to_new_id = {}
         for preroll_data in backup_data.get("prerolls", []):
+            old_preroll_id = normalize_preroll_id(preroll_data.get("id"))
             try:
                 # Per-row SAVEPOINT so one bad preroll can't discard the batch.
                 with db.begin_nested():
@@ -15467,11 +15722,17 @@ def restore_database(backup_data: dict, db: Session = Depends(get_db)):
                     if assoc:
                         p.categories = assoc
                         db.flush()
+                if old_preroll_id is not None:
+                    old_preroll_id_to_new_id[old_preroll_id] = p.id
             except Exception as preroll_err:
                 print(f"Error adding preroll {preroll_data.get('filename')}: {preroll_err}")
                 continue
 
         db.commit()
+
+        # Schedules are restored before saved sequences, so retain their old
+        # sequence IDs and reconnect them after the sequences have new IDs.
+        pending_schedule_sequence_links = []
 
         # Restore schedules
         for schedule_data in backup_data.get("schedules", []):
@@ -15495,6 +15756,15 @@ def restore_database(backup_data: dict, db: Session = Depends(get_db)):
                 new_cat_id = old_id_to_new_id.get(old_cat_id) if old_cat_id else None
                 old_fallback_id = schedule_data.get("fallback_category_id")
                 new_fallback_id = old_id_to_new_id.get(old_fallback_id) if old_fallback_id else None
+                remapped_preroll_ids = remap_preroll_ids_json(
+                    schedule_data.get("preroll_ids"),
+                    old_preroll_id_to_new_id,
+                )
+                remapped_sequence = remap_sequence_json(
+                    schedule_data.get("sequence"),
+                    old_preroll_id_to_new_id,
+                    old_id_to_new_id,
+                )
                 
                 with db.begin_nested():
                     schedule = models.Schedule(
@@ -15508,20 +15778,24 @@ def restore_database(backup_data: dict, db: Session = Depends(get_db)):
                         playlist=schedule_data.get("playlist", False),
                         is_active=schedule_data.get("is_active", True),
                         recurrence_pattern=schedule_data.get("recurrence_pattern"),
-                        preroll_ids=schedule_data.get("preroll_ids"),
+                        preroll_ids=remapped_preroll_ids,
                         # v1.13.13: previously-missing fields restored. Without these, sequence
                         # schedules came back as plain category schedules, blend/exclusive/priority
                         # were lost, and holiday-API auto-update bindings were dropped.
-                        sequence=schedule_data.get("sequence"),
+                        sequence=remapped_sequence,
                         color=schedule_data.get("color"),
                         blend_enabled=bool(schedule_data.get("blend_enabled", False)),
                         priority=schedule_data.get("priority") if schedule_data.get("priority") is not None else 5,
                         exclusive=bool(schedule_data.get("exclusive", False)),
                         holiday_name=schedule_data.get("holiday_name"),
                         holiday_country=schedule_data.get("holiday_country"),
+                        source_sequence_id=None,
                     )
                     db.add(schedule)
                     db.flush()
+                    old_source_sequence_id = schedule_data.get("source_sequence_id")
+                    if old_source_sequence_id is not None:
+                        pending_schedule_sequence_links.append((schedule.id, old_source_sequence_id))
             except Exception as schedule_err:
                 print(f"Error adding schedule {schedule_data.get('name')}: {schedule_err}")
                 continue
@@ -15555,6 +15829,7 @@ def restore_database(backup_data: dict, db: Session = Depends(get_db)):
 
         # Restore saved sequences
         print("RESTORE: Restoring saved sequences...")
+        old_sequence_id_to_new_id = {}
         for seq_data in backup_data.get("saved_sequences", []):
             try:
                 # Safe datetime parsing
@@ -15575,16 +15850,31 @@ def restore_database(backup_data: dict, db: Session = Depends(get_db)):
                     sequence = models.SavedSequence(
                         name=seq_data.get("name"),
                         description=seq_data.get("description"),
-                        blocks=json.dumps(seq_data.get("blocks", [])),
+                        blocks=json.dumps(remap_sequence_blocks(
+                            seq_data.get("blocks", []),
+                            old_preroll_id_to_new_id,
+                            old_id_to_new_id,
+                        )),
                         created_at=created_at or datetime.datetime.utcnow(),
                         updated_at=updated_at or datetime.datetime.utcnow()
                     )
                     db.add(sequence)
                     db.flush()
+                    old_sequence_id = seq_data.get("id")
+                    if old_sequence_id is not None:
+                        old_sequence_id_to_new_id[old_sequence_id] = sequence.id
                 print(f"RESTORE: Added sequence '{seq_data.get('name')}'")
             except Exception as seq_err:
                 print(f"Error adding saved sequence {seq_data.get('name')}: {seq_err}")
                 continue
+
+        for schedule_id, old_sequence_id in pending_schedule_sequence_links:
+            new_sequence_id = old_sequence_id_to_new_id.get(old_sequence_id)
+            if new_sequence_id is not None:
+                db.query(models.Schedule).filter(models.Schedule.id == schedule_id).update(
+                    {models.Schedule.source_sequence_id: new_sequence_id},
+                    synchronize_session=False,
+                )
 
         db.commit()
 
@@ -27818,17 +28108,19 @@ def get_dashboard_stats(db: Session = Depends(get_db)):
         for s in schedules:
             if not s.is_active:
                 inactive_schedules += 1
+            elif scheduler._is_schedule_active(s, now):
+                # Use the same yearly/holiday/recurrence/overnight evaluator as
+                # the scheduler itself. Comparing only raw start/end years made
+                # recurring schedules appear permanently active or inactive.
+                active_schedules += 1
+            elif (
+                s.start_date
+                and s.start_date > now
+                and (s.type or "").lower() not in ("monthly", "yearly", "holiday")
+            ):
+                upcoming_schedules += 1
             else:
-                # Check if currently in window
-                if s.start_date and s.start_date <= now:
-                    if s.end_date is None or s.end_date >= now:
-                        active_schedules += 1
-                    else:
-                        inactive_schedules += 1
-                elif s.start_date and s.start_date > now:
-                    upcoming_schedules += 1
-                else:
-                    inactive_schedules += 1
+                inactive_schedules += 1
             
             # Count by actual type
             stype = (s.type or "daily").lower()
@@ -27949,17 +28241,8 @@ def _resolve_current_intros(db: Session) -> dict:
                 btype = str(block.get("type", "")).lower()
             except Exception:
                 continue
-            if btype == "random":
-                cid = int(block.get("category_id") or 0)
-                count = int(block.get("count") or 1)
-                if not cid:
-                    continue
-                pool = _prerolls_for_category(cid)
-                if not pool:
-                    continue
-                k = min(max(count, 1), len(pool))
-                picks = random.sample(pool, k) if len(pool) > k else pool
-                for p in picks:
+            if btype in {"random", "sequential"}:
+                for p in resolve_category_sequence_block(block, db):
                     paths.append(os.path.abspath(p.path))
             elif btype == "fixed":
                 pids: list[int] = []

@@ -1,5 +1,6 @@
-import React, { useState } from 'react';
-import { Upload, Package, AlertTriangle, Loader2, Lightbulb, Sparkles } from 'lucide-react';
+import React, { useEffect, useRef, useState } from 'react';
+import { Upload, Package, AlertTriangle, Loader2, Lightbulb, Sparkles, X } from 'lucide-react';
+import { lockBodyScroll } from '../utils/modalBehavior';
 
 /**
  * PatternExport - Export sequence with multiple format options
@@ -21,6 +22,53 @@ const PatternExport = ({ isOpen, onClose, scheduleId, scheduleName, blocks = nul
   const [exportProgress, setExportProgress] = useState('');
   const [error, setError] = useState(null);
   const [exportMode, setExportMode] = useState('with_community_ids');
+  const closeTimerRef = useRef(null);
+  const overlayRef = useRef(null);
+
+  useEffect(() => {
+    if (isOpen) {
+      // Transient results from the previous export must not leak into a newly
+      // opened dialog.
+      setError(null);
+      setExportProgress('');
+    } else if (closeTimerRef.current) {
+      clearTimeout(closeTimerRef.current);
+      closeTimerRef.current = null;
+    }
+  }, [isOpen]);
+
+  useEffect(() => () => {
+    if (closeTimerRef.current) clearTimeout(closeTimerRef.current);
+  }, []);
+
+  useEffect(() => {
+    if (!isOpen) return undefined;
+    return lockBodyScroll();
+  }, [isOpen]);
+
+  useEffect(() => {
+    if (!isOpen || isExporting) return undefined;
+    const handleKeyDown = (event) => {
+      if (event.key !== 'Escape') return;
+      if (document.querySelector('.nx-dialog-overlay')) return;
+      const overlays = Array.from(document.querySelectorAll('.nx-modal-overlay'))
+        .filter(node => node.style.pointerEvents !== 'none');
+      if (overlays[overlays.length - 1] !== overlayRef.current) return;
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      onClose();
+    };
+    document.addEventListener('keydown', handleKeyDown);
+    return () => document.removeEventListener('keydown', handleKeyDown);
+  }, [isOpen, isExporting, onClose]);
+
+  const scheduleClose = () => {
+    if (closeTimerRef.current) clearTimeout(closeTimerRef.current);
+    closeTimerRef.current = setTimeout(() => {
+      closeTimerRef.current = null;
+      onClose();
+    }, 1500);
+  };
 
   const handleExport = async () => {
     setIsExporting(true);
@@ -76,9 +124,7 @@ const PatternExport = ({ isOpen, onClose, scheduleId, scheduleName, blocks = nul
         window.URL.revokeObjectURL(url);
         
         setExportProgress('Bundle exported successfully!');
-        setTimeout(() => {
-          onClose();
-        }, 1500);
+        scheduleClose();
       } else {
         setExportProgress('Downloading pattern...');
         // Other modes return JSON
@@ -96,9 +142,7 @@ const PatternExport = ({ isOpen, onClose, scheduleId, scheduleName, blocks = nul
         window.URL.revokeObjectURL(url);
         
         setExportProgress('Pattern exported successfully!');
-        setTimeout(() => {
-          onClose();
-        }, 1500);
+        scheduleClose();
       }
     } catch (err) {
       console.error('Export error:', err);
@@ -122,6 +166,8 @@ const PatternExport = ({ isOpen, onClose, scheduleId, scheduleName, blocks = nul
       `}</style>
       
       <div
+        ref={overlayRef}
+        className="nx-modal-overlay"
         style={{
           position: 'fixed',
         top: 0,
@@ -130,29 +176,49 @@ const PatternExport = ({ isOpen, onClose, scheduleId, scheduleName, blocks = nul
         bottom: 0,
         backgroundColor: 'rgba(0, 0, 0, 0.7)',
         zIndex: 9999,
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'center',
-      }}
-      onClick={(e) => {
-        if (e.target === e.currentTarget) onClose();
-      }}
-    >
-      <div
-        style={{
-          backgroundColor: 'var(--card-bg)',
-          borderRadius: '0.5rem',
-          padding: '2rem',
-          maxWidth: '500px',
-          width: '90%',
-          border: '1px solid var(--border-color)',
-        }}
+         display: 'flex',
+         alignItems: 'center',
+         justifyContent: 'center',
+         padding: '1rem',
+         overflowY: 'auto',
+       }}
+       onClick={(e) => {
+         if (e.target === e.currentTarget && !isExporting) onClose();
+       }}
+     >
+       <div
+         role="dialog"
+         aria-modal="true"
+         aria-labelledby="pattern-export-title"
+         style={{
+           backgroundColor: 'var(--card-bg)',
+           borderRadius: '0.5rem',
+           padding: 'clamp(1rem, 4vw, 2rem)',
+           maxWidth: '500px',
+           width: '100%',
+           maxHeight: 'calc(100dvh - 2rem)',
+           overflowY: 'auto',
+           boxSizing: 'border-box',
+           border: '1px solid var(--border-color)',
+         }}
         onClick={(e) => e.stopPropagation()}
       >
         {/* Header */}
-        <h2 style={{ margin: 0, marginBottom: '1rem', color: 'var(--text-color)', fontSize: '1.5rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-          <Upload size={24} /> Export Sequence Pattern
-        </h2>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '1rem', marginBottom: '1rem' }}>
+          <h2 id="pattern-export-title" style={{ margin: 0, color: 'var(--text-color)', fontSize: '1.5rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+            <Upload size={24} /> Export Sequence Pattern
+          </h2>
+          <button
+            type="button"
+            onClick={onClose}
+            disabled={isExporting}
+            aria-label="Close export dialog"
+            className="nx-modal-close"
+            style={{ flexShrink: 0 }}
+          >
+            <X size={18} aria-hidden="true" />
+          </button>
+        </div>
 
         {/* Description */}
         <div
@@ -308,6 +374,7 @@ const PatternExport = ({ isOpen, onClose, scheduleId, scheduleName, blocks = nul
         {/* Error Message */}
         {error && (
           <div
+            role="alert"
             style={{
               backgroundColor: 'rgba(239, 68, 68, 0.1)',
               borderRadius: '0.5rem',
@@ -323,8 +390,10 @@ const PatternExport = ({ isOpen, onClose, scheduleId, scheduleName, blocks = nul
         )}
 
         {/* Progress Message */}
-        {isExporting && exportProgress && (
+        {exportProgress && (
           <div
+            role="status"
+            aria-live="polite"
             style={{
               backgroundColor: 'rgba(102, 126, 234, 0.1)',
               borderRadius: '0.5rem',
@@ -336,16 +405,19 @@ const PatternExport = ({ isOpen, onClose, scheduleId, scheduleName, blocks = nul
               gap: '1rem',
             }}
           >
-            <div
-              style={{
-                width: '24px',
-                height: '24px',
-                border: '3px solid rgba(102, 126, 234, 0.3)',
-                borderTop: '3px solid #667eea',
-                borderRadius: '50%',
-                animation: 'spin 1s linear infinite',
-              }}
-            />
+            {isExporting && (
+              <div
+                style={{
+                  width: '24px',
+                  height: '24px',
+                  border: '3px solid rgba(102, 126, 234, 0.3)',
+                  borderTop: '3px solid #667eea',
+                  borderRadius: '50%',
+                  animation: 'spin 1s linear infinite',
+                  flexShrink: 0,
+                }}
+              />
+            )}
             <p style={{ margin: 0, fontSize: '0.95rem', color: '#667eea', fontWeight: 'bold' }}>
               {exportProgress}
             </p>
@@ -354,10 +426,10 @@ const PatternExport = ({ isOpen, onClose, scheduleId, scheduleName, blocks = nul
 
         {/* Action Buttons */}
         <div style={{ display: 'flex', gap: '0.75rem', justifyContent: 'flex-end' }}>
-          <button onClick={onClose} disabled={isExporting} className="button button-secondary">
+          <button type="button" onClick={onClose} disabled={isExporting} className="button button-secondary">
             Cancel
           </button>
-          <button onClick={handleExport} disabled={isExporting} className="button">
+          <button type="button" onClick={handleExport} disabled={isExporting} className="button">
             {isExporting ? <><Loader2 size={16} className="spin" /> Exporting…</> : <><Upload size={16} /> Export Pattern</>}
           </button>
         </div>

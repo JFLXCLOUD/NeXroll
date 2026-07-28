@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { Film, Inbox } from 'lucide-react';
+import { Film, Inbox, X } from 'lucide-react';
+import { lockBodyScroll } from '../utils/modalBehavior';
 // eslint-disable-next-line no-unused-vars
 import SequenceTimeline from './SequenceTimeline';
 // eslint-disable-next-line no-unused-vars
@@ -26,6 +27,7 @@ const SequencePreviewModal = ({ isOpen, onClose, blocks = [], categories = [], p
   const [expandedBlocks, setExpandedBlocks] = useState(new Set());
   const [playlist, setPlaylist] = useState([]);
   const videoRef = React.useRef(null);
+  const overlayRef = React.useRef(null);
   const isTransitioningRef = React.useRef(false);
   const expectedIndexRef = React.useRef(0);
   // Snapshot props at modal-open time so background refetches don't rebuild the playlist
@@ -71,6 +73,28 @@ const SequencePreviewModal = ({ isOpen, onClose, blocks = [], categories = [], p
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isOpen]);
+
+  // Keep the full-screen player consistent with the other dialogs: Escape is
+  // always a reliable way out, including before playback has started.
+  useEffect(() => {
+    if (!isOpen) return undefined;
+    const releaseScrollLock = lockBodyScroll();
+    const handleKeyDown = (event) => {
+      if (event.key !== 'Escape') return;
+      if (document.querySelector('.nx-dialog-overlay')) return;
+      const overlays = Array.from(document.querySelectorAll('.nx-modal-overlay'))
+        .filter(node => node.style.pointerEvents !== 'none');
+      if (overlays[overlays.length - 1] !== overlayRef.current) return;
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      onClose();
+    };
+    document.addEventListener('keydown', handleKeyDown);
+    return () => {
+      releaseScrollLock();
+      document.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [isOpen, onClose]);
 
   // Build the playlist ONCE when the modal opens (keyed off modalOpenCounter)
   useEffect(() => {
@@ -125,13 +149,20 @@ const SequencePreviewModal = ({ isOpen, onClose, blocks = [], categories = [], p
 
     if (blocksNeedingResolve.length > 0) {
       // Resolve new block types via backend
+      let active = true;
+      const controller = new AbortController();
       fetch('/sequences/resolve-preview-blocks', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(blocksNeedingResolve)
+        body: JSON.stringify(blocksNeedingResolve),
+        signal: controller.signal,
       })
-        .then(res => res.json())
+        .then(res => {
+          if (!res.ok) throw new Error(`Preview resolution failed (${res.status})`);
+          return res.json();
+        })
         .then(data => {
+          if (!active) return;
           const localItems = buildLocalItems();
           // Merge resolved items at the correct block positions
           const resolvedByIdx = {};
@@ -166,10 +197,15 @@ const SequencePreviewModal = ({ isOpen, onClose, blocks = [], categories = [], p
           }
           setPlaylist(finalPlaylist);
         })
-        .catch(() => {
+        .catch((error) => {
+          if (!active || error.name === 'AbortError') return;
           // Fallback: just use local items
           setPlaylist(buildLocalItems());
         });
+      return () => {
+        active = false;
+        controller.abort();
+      };
     } else {
       setPlaylist(buildLocalItems());
     }
@@ -350,6 +386,8 @@ const SequencePreviewModal = ({ isOpen, onClose, blocks = [], categories = [], p
 
   return (
     <div
+      ref={overlayRef}
+      className="nx-modal-overlay"
       style={{
         position: 'fixed',
         top: 0,
@@ -361,7 +399,7 @@ const SequencePreviewModal = ({ isOpen, onClose, blocks = [], categories = [], p
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'center',
-        padding: '2rem',
+        padding: 'clamp(0.5rem, 4vw, 2rem)',
       }}
       onClick={(e) => {
         if (e.target === e.currentTarget) onClose();
@@ -369,12 +407,16 @@ const SequencePreviewModal = ({ isOpen, onClose, blocks = [], categories = [], p
     >
       {/* Compact Video Player Overlay */}
       <div
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="sequence-preview-title"
         style={{
           backgroundColor: 'var(--card-bg)',
           borderRadius: '12px',
           overflow: 'hidden',
-          maxWidth: '90vw',
-          maxHeight: '90vh',
+          width: '100%',
+          maxWidth: '900px',
+          maxHeight: 'calc(100dvh - 1rem)',
           boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.5)',
           display: 'flex',
           flexDirection: 'column',
@@ -393,8 +435,8 @@ const SequencePreviewModal = ({ isOpen, onClose, blocks = [], categories = [], p
         >
           <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
             <span style={{ display: 'flex', alignItems: 'center', color: 'var(--button-bg)' }}><Film size={22} /></span>
-            <div>
-              <h3 style={{ margin: 0, fontSize: '1.1rem', color: 'var(--text-color)' }}>
+            <div style={{ minWidth: 0 }}>
+              <h3 id="sequence-preview-title" style={{ margin: 0, fontSize: '1.1rem', color: 'var(--text-color)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                 {sequenceName}
               </h3>
               <p style={{ margin: 0, fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
@@ -403,6 +445,7 @@ const SequencePreviewModal = ({ isOpen, onClose, blocks = [], categories = [], p
             </div>
           </div>
           <button
+            type="button"
             onClick={onClose}
             style={{
               width: '32px',
@@ -427,9 +470,10 @@ const SequencePreviewModal = ({ isOpen, onClose, blocks = [], categories = [], p
               e.currentTarget.style.backgroundColor = 'transparent';
               e.currentTarget.style.color = 'var(--text-secondary)';
             }}
+            aria-label="Close sequence preview"
             title="Close"
           >
-            
+            <X size={20} aria-hidden="true" />
           </button>
         </div>
 
@@ -444,7 +488,7 @@ const SequencePreviewModal = ({ isOpen, onClose, blocks = [], categories = [], p
                 justifyContent: 'center',
                 padding: '3rem 2rem',
                 textAlign: 'center',
-                minHeight: '400px',
+                minHeight: 'min(400px, 55dvh)',
               }}
             >
               <div style={{ marginBottom: '1rem', opacity: 0.5, display: 'flex', justifyContent: 'center' }}><Inbox size={56} /></div>
@@ -513,6 +557,7 @@ const SequencePreviewModal = ({ isOpen, onClose, blocks = [], categories = [], p
                 ref={videoRef}
                 autoPlay
                 controls
+                aria-label={`Sequence preview for ${sequenceName}`}
                 onEnded={handleVideoEnded}
                 onError={handleVideoError}
                 onCanPlay={handleCanPlay}

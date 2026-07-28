@@ -645,7 +645,9 @@ select.input {
   align-items: center;
   justify-content: center;
   padding: 2rem;
-  z-index: 9999;
+  /* Confirmations and alerts must stay above feature modals such as the
+     holiday browser and trailer picker (both use z-index: 10000). */
+  z-index: 20000;
   animation: nx-dialog-fade-in 0.15s ease-out;
 }
 

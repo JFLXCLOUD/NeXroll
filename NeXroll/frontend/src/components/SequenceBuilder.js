@@ -217,7 +217,7 @@ const SequenceBuilder = ({ blocks: externalBlocks = [], onBlocksChange, initialS
 
   return (
     <div style={{
-      padding: '20px',
+      padding: 'clamp(0.75rem, 3vw, 20px)',
       background: 'var(--card-bg)',
       borderRadius: '8px',
       color: 'var(--text-color)',
@@ -227,6 +227,8 @@ const SequenceBuilder = ({ blocks: externalBlocks = [], onBlocksChange, initialS
         display: 'flex',
         justifyContent: 'space-between',
         alignItems: 'center',
+        flexWrap: 'wrap',
+        gap: '1rem',
         marginBottom: '20px',
         paddingBottom: '15px',
         borderBottom: '2px solid var(--border-color)'

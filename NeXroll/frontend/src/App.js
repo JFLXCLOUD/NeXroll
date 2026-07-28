@@ -13,6 +13,22 @@ import Sidebar from './components/Sidebar';
 import OnboardingWizard from './components/OnboardingWizard';
 import ToastHost from './components/Toast';
 import { validateSequence, stringifySequence, parseSequence, cloneSequenceWithIds, estimatePrerollCount } from './utils/sequenceValidator';
+import {
+  buildBlendBothChanges,
+  buildRecurrencePattern,
+  buildScheduleTimeOccurrence,
+  evaluateScheduleOccurrenceSegments,
+  evaluateScheduleTimeSegments,
+  getAnchoredTimeRangeOverlap,
+  getSchedulePairKey,
+  isEffectiveBlendPair,
+  isYearlyOrHolidayScheduleActiveOnDay,
+  normalizeScheduleDateForStorage,
+  priorityToBeatExclusive,
+  timeRangesOverlap,
+  yearlyOrHolidayDateRangesOverlap
+} from './utils/scheduleUtils';
+import { lockBodyScroll } from './utils/modalBehavior';
 import { 
     Calendar, CalendarDays, ChevronLeft, Clock, Play, Edit, Save, Trash, Trash2, Upload, 
     Search, Folder, Film, BookOpen, Star, Plus, PlusCircle, Settings, Target, CheckCircle, Link, Link2,
@@ -372,26 +388,56 @@ const extractVersionFromRelease = (data) => {
 };
 
 const Modal = ({ title, onClose, children, width = 700, zIndex = 1000, allowBackgroundInteraction = false }) => {
+  const titleId = React.useId();
+  const overlayRef = React.useRef(null);
+  const closeButtonRef = React.useRef(null);
+
   React.useEffect(() => {
-    const onEsc = (e) => { if (e.key === 'Escape') onClose && onClose(); };
+    const onEsc = (e) => {
+      if (e.key !== 'Escape') return;
+      // A styled confirmation/alert owns Escape while it is above a modal.
+      if (document.querySelector('.nx-dialog-overlay')) return;
+      const overlays = Array.from(document.querySelectorAll('.nx-modal-overlay'))
+        .filter(node => node.style.pointerEvents !== 'none');
+      if (overlays[overlays.length - 1] !== overlayRef.current) return;
+      e.preventDefault();
+      e.stopImmediatePropagation();
+      onClose && onClose();
+    };
+    const releaseScrollLock = !allowBackgroundInteraction ? lockBodyScroll() : null;
     document.addEventListener('keydown', onEsc);
-    return () => document.removeEventListener('keydown', onEsc);
-  }, [onClose]);
+    return () => {
+      releaseScrollLock?.();
+      document.removeEventListener('keydown', onEsc);
+    };
+  }, [allowBackgroundInteraction, onClose]);
+
+  React.useEffect(() => {
+    if (!allowBackgroundInteraction) closeButtonRef.current?.focus();
+  }, [allowBackgroundInteraction]);
 
   return (
     <div 
+      ref={overlayRef}
       className="nx-modal-overlay" 
       style={{ 
         zIndex, 
         pointerEvents: allowBackgroundInteraction ? 'none' : 'auto',
         backgroundColor: allowBackgroundInteraction ? 'transparent' : undefined
       }} 
-      onClick={(e) => { if (e.target.classList.contains('nx-modal-overlay')) onClose && onClose(); }}
+      onClick={(e) => { if (e.target === e.currentTarget) onClose && onClose(); }}
     >
-      <div className="nx-modal" style={{ maxWidth: width, position: 'relative', zIndex: 1, pointerEvents: 'auto' }} onClick={(e) => e.stopPropagation()}>
+      <div
+        className="nx-modal"
+        role="dialog"
+        aria-modal={!allowBackgroundInteraction}
+        aria-labelledby={titleId}
+        style={{ maxWidth: width, position: 'relative', zIndex: 1, pointerEvents: 'auto' }}
+        onClick={(e) => e.stopPropagation()}
+      >
         <div className="nx-modal-header">
-          <h3 className="nx-modal-title">{title}</h3>
-          <button className="nx-modal-close" type="button" onClick={onClose} aria-label="Close"><X size={18} /></button>
+          <h3 id={titleId} className="nx-modal-title">{title}</h3>
+          <button ref={closeButtonRef} className="nx-modal-close" type="button" onClick={onClose} aria-label="Close"><X size={18} /></button>
         </div>
         <div className="nx-modal-body">
           {children}
@@ -1254,6 +1300,8 @@ const [applyingToServer, setApplyingToServer] = useState(false);
     message: '',
     type: 'info' // 'info' | 'success' | 'warning' | 'error'
   });
+  const confirmCancelRef = useRef(null);
+  const alertOkRef = useRef(null);
   // v2 toasts: non-blocking success/info feedback (errors/confirms use the dialog)
   const [toasts, setToasts] = useState([]);
   const dismissToast = useCallback((id) => {
@@ -1317,6 +1365,90 @@ const [holidays, setHolidays] = useState([]);
 const [holidaysLoading, setHolidaysLoading] = useState(false);
 const [holidayApiStatus, setHolidayApiStatus] = useState(null);
 const [holidaySearchQuery, setHolidaySearchQuery] = useState('');
+const holidayRequestIdRef = useRef(0);
+
+useEffect(() => {
+  let closeTopDialog = null;
+
+  // Ordered by visual stacking/nesting. Only the first open dialog owns Escape.
+  if (altTrailers.open) {
+    if (!altTrailers.downloadingUrl) {
+      closeTopDialog = () => setAltTrailers(prev => ({ ...prev, open: false, previewId: null }));
+    }
+  } else if (showHolidayBrowser) {
+    closeTopDialog = () => setShowHolidayBrowser(false);
+  } else if (youtubeSetup.showWizard) {
+    closeTopDialog = () => setYoutubeSetup(prev => ({ ...prev, showWizard: false }));
+  } else if (showFolderBrowser) {
+    closeTopDialog = () => setShowFolderBrowser(false);
+  } else if (playingTrailer) {
+    closeTopDialog = () => setPlayingTrailer(null);
+  } else if (previewingComingSoonList) {
+    closeTopDialog = () => setPreviewingComingSoonList(null);
+  } else if (previewingDynamicPreroll) {
+    closeTopDialog = () => setPreviewingDynamicPreroll(null);
+  } else if (communityPreviewingPreroll) {
+    closeTopDialog = () => setCommunityPreviewingPreroll(null);
+  } else if (currentPrerollPreview) {
+    closeTopDialog = () => setCurrentPrerollPreview(null);
+  } else if (previewingPreroll) {
+    closeTopDialog = () => setPreviewingPreroll(null);
+  } else if (showManualTrailerModal) {
+    if (!nexupLoading) closeTopDialog = () => setShowManualTrailerModal(false);
+  } else if (showNexupTVTrailers) {
+    closeTopDialog = () => setShowNexupTVTrailers(false);
+  } else if (showNexupUpcomingTV) {
+    closeTopDialog = () => setShowNexupUpcomingTV(false);
+  } else if (showNexupTrailers) {
+    closeTopDialog = () => setShowNexupTrailers(false);
+  } else if (showNexupUpcoming) {
+    closeTopDialog = () => setShowNexupUpcoming(false);
+  } else if (showNexupSequenceWizard) {
+    closeTopDialog = () => setShowNexupSequenceWizard(false);
+  } else if (factoryReset.open) {
+    if (!factoryReset.busy) closeTopDialog = () => setFactoryReset(prev => ({ ...prev, open: false }));
+  } else if (showChangePasswordModal) {
+    closeTopDialog = () => setShowChangePasswordModal(false);
+  } else if (showCreateUserModal) {
+    closeTopDialog = () => setShowCreateUserModal(false);
+  } else if (showNewKeyModal) {
+    closeTopDialog = () => setShowNewKeyModal(false);
+  }
+
+  const anyHandcraftedDialogOpen = Boolean(
+    altTrailers.open || showHolidayBrowser || youtubeSetup.showWizard || showFolderBrowser ||
+    playingTrailer || previewingComingSoonList || previewingDynamicPreroll ||
+    communityPreviewingPreroll || currentPrerollPreview || previewingPreroll ||
+    showManualTrailerModal || showNexupTVTrailers || showNexupUpcomingTV ||
+    showNexupTrailers || showNexupUpcoming || showNexupSequenceWizard ||
+    factoryReset.open || showChangePasswordModal || showCreateUserModal || showNewKeyModal
+  );
+  if (!anyHandcraftedDialogOpen) return undefined;
+
+  const releaseScrollLock = lockBodyScroll();
+  const closeOnEscape = (event) => {
+    if (event.key !== 'Escape' || document.querySelector('.nx-dialog-overlay')) return;
+    if (!closeTopDialog) return; // Busy dialogs cannot be dismissed mid-operation.
+    event.preventDefault();
+    event.stopImmediatePropagation();
+    closeTopDialog();
+  };
+  document.addEventListener('keydown', closeOnEscape);
+
+  return () => {
+    releaseScrollLock();
+    document.removeEventListener('keydown', closeOnEscape);
+  };
+}, [
+  altTrailers.open, altTrailers.downloadingUrl, communityPreviewingPreroll,
+  currentPrerollPreview, factoryReset.open, factoryReset.busy, nexupLoading,
+  playingTrailer, previewingComingSoonList, previewingDynamicPreroll,
+  previewingPreroll, showChangePasswordModal, showCreateUserModal,
+  showFolderBrowser, showHolidayBrowser, showManualTrailerModal,
+  showNewKeyModal, showNexupSequenceWizard, showNexupTrailers,
+  showNexupTVTrailers, showNexupUpcoming, showNexupUpcomingTV,
+  youtubeSetup.showWizard
+]);
 
 // Date/time helpers: treat backend datetimes as naive local times
 // The backend stores dates exactly as entered by the user (no timezone conversion)
@@ -1402,12 +1534,6 @@ const parseNaiveDatetime = (isoOrNaive) => {
   return new Date(year, month - 1, day, hour || 0, minute || 0);
 };
 
-const formatAsNaiveIso = (d) => {
-  if (!d) return '';
-  const pad = (n) => String(n).padStart(2, '0');
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
-};
-
 // Helper function to check if a schedule is active on a specific day
 const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
   if (!schedule.start_date) return false;
@@ -1416,35 +1542,7 @@ const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
   // For yearly/holiday schedules, skip the year-based date range check
   // These schedules repeat every year based on month/day only
   if (schedule.type === 'yearly' || schedule.type === 'holiday') {
-    const startDateStr = schedule.start_date.includes('T') ? schedule.start_date.split('T')[0] : schedule.start_date;
-    const endDateStr = schedule.end_date ? (schedule.end_date.includes('T') ? schedule.end_date.split('T')[0] : schedule.end_date) : startDateStr;
-    const [, startMonth, startDay] = startDateStr.split('-').map(Number);
-    const [, endMonth, endDay] = endDateStr.split('-').map(Number);
-    const schedStartMonth = startMonth - 1;
-    const schedStartDay = startDay;
-    const schedEndMonth = endMonth - 1;
-    const schedEndDay = endDay;
-    const dayMonth = dayDate.getMonth();
-    const dayDay = dayDate.getDate();
-    
-    // Handle same-month range (e.g., Dec 1-31)
-    if (schedStartMonth === schedEndMonth) {
-      return dayMonth === schedStartMonth && dayDay >= schedStartDay && dayDay <= schedEndDay;
-    }
-    
-    // Handle year-wrapping range (e.g., Dec 15 - Jan 15)
-    if (schedStartMonth > schedEndMonth) {
-      // Schedule wraps around year end
-      return (dayMonth === schedStartMonth && dayDay >= schedStartDay) ||
-             (dayMonth === schedEndMonth && dayDay <= schedEndDay) ||
-             (dayMonth > schedStartMonth) || // After start month in same year
-             (dayMonth < schedEndMonth);       // Before end month in next year
-    }
-    
-    // Handle multi-month range within same year (e.g., Oct 15 - Dec 31)
-    return (dayMonth === schedStartMonth && dayDay >= schedStartDay) ||
-           (dayMonth === schedEndMonth && dayDay <= schedEndDay) ||
-           (dayMonth > schedStartMonth && dayMonth < schedEndMonth);
+    return isYearlyOrHolidayScheduleActiveOnDay(schedule, dayDate);
   }
   
   // For non-yearly schedules, check if the day is within the schedule's overall date range
@@ -1736,6 +1834,38 @@ const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
     setAlertDialog(prev => ({ ...prev, open: false }));
   };
 
+  // Confirmation and alert popups sit above editors and other modals. They
+  // alone own Escape while open, and focus returns to the control that opened
+  // them after dismissal.
+  useEffect(() => {
+    if (!confirmDialog.open && !alertDialog.open) return undefined;
+    const releaseScrollLock = lockBodyScroll();
+    const previouslyFocused = document.activeElement;
+    const focusTimer = window.setTimeout(() => {
+      if (confirmDialog.open) confirmCancelRef.current?.focus();
+      else alertOkRef.current?.focus();
+    }, 0);
+    const onKeyDown = (event) => {
+      if (event.key !== 'Escape') return;
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      if (alertDialog.open) handleAlertDialogClose();
+      else handleConfirmDialogClose(false);
+    };
+    document.addEventListener('keydown', onKeyDown);
+    return () => {
+      releaseScrollLock();
+      window.clearTimeout(focusTimer);
+      document.removeEventListener('keydown', onKeyDown);
+      if (previouslyFocused instanceof HTMLElement && document.contains(previouslyFocused)) {
+        previouslyFocused.focus();
+      }
+    };
+    // The open flags define the popup lifetime; close handlers intentionally use
+    // the resolver captured by the render that opened the confirmation.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [confirmDialog.open, alertDialog.open]);
+
   // Override global alert to use custom dialog
   useEffect(() => {
     const origAlert = window.alert;
@@ -2002,10 +2132,12 @@ const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
   };
 
   const loadHolidays = async (countryCode, year) => {
+    const requestId = ++holidayRequestIdRef.current;
     setHolidaysLoading(true);
     try {
       const res = await fetch(apiUrl(`/holiday-api/holidays/${countryCode}/${year}`));
       const data = await safeJson(res);
+      if (requestId !== holidayRequestIdRef.current) return;
       if (res.ok && data?.holidays && Array.isArray(data.holidays)) {
         setHolidays(data.holidays);
       } else if (res.ok && Array.isArray(data)) {
@@ -2015,9 +2147,9 @@ const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
       }
     } catch (e) {
       console.error('Load holidays error:', e);
-      setHolidays([]);
+      if (requestId === holidayRequestIdRef.current) setHolidays([]);
     } finally {
-      setHolidaysLoading(false);
+      if (requestId === holidayRequestIdRef.current) setHolidaysLoading(false);
     }
   };
 
@@ -2096,7 +2228,8 @@ const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
         priority: schedule.priority != null ? schedule.priority : 5,
         exclusive: schedule.exclusive || false,
         holiday_name: schedule.holiday_name || null,
-        holiday_country: schedule.holiday_country || null
+        holiday_country: schedule.holiday_country || null,
+        source_sequence_id: schedule.source_sequence_id ?? null
       };
       
       console.log(`Toggle request (${viewName}):`, requestData);
@@ -2795,6 +2928,9 @@ const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
           body: checkFormData
         });
         const checkData = await checkResponse.json();
+        if (!checkResponse.ok) {
+          throw new Error(checkData?.detail || `Duplicate check failed (HTTP ${checkResponse.status})`);
+        }
         duplicateChecks.push({
           file,
           isDuplicate: checkData.is_duplicate,
@@ -2860,7 +2996,14 @@ const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
         });
 
         if (!response.ok) {
-          throw new Error(`HTTP error! status: ${response.status}`);
+          let detail = `Upload failed (HTTP ${response.status})`;
+          try {
+            const errorData = await response.json();
+            detail = errorData?.detail || errorData?.message || detail;
+          } catch (_) {
+            // Keep the HTTP status when the server did not return JSON.
+          }
+          throw new Error(detail);
         }
 
         const data = await response.json();
@@ -2904,7 +3047,7 @@ const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
       const skippedNames = skippedResults.map(r => ` • ${r.file}`).join('\n');
       message = `ℹ️ All ${totalFiles} file(s) were skipped (duplicates):\n\n${skippedNames}`;
     } else if (successful === 0 && failed > 0) {
-      message = `Failed to upload any files. Please check the errors.`;
+      message = 'Failed to upload any files.';
     } else {
       const parts = [];
       if (successful > 0) parts.push(`${successful} uploaded`);
@@ -2917,12 +3060,26 @@ const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
         message += `\n\nSkipped: ${skippedNames}`;
       }
     }
+    if (failed > 0) {
+      const failureDetails = results
+        .filter(r => !r.success)
+        .map(r => `${r.file}: ${r.error || 'Upload failed'}`)
+        .join('\n');
+      message += `\n\nFailed:\n${failureDetails}`;
+    }
     alert(message);
 
-    // Clear files and form
-    setFiles([]);
-    setUploadForm({ tags: '', category_id: '', category_ids: [], description: '' });
-    // Clear the file input element
+    // Keep failed files and their form values available for a retry. Successful
+    // and skipped files are removed so retrying cannot upload them twice.
+    const failedFiles = results.reduce((pending, result, index) => {
+      if (!result.success && files[index]) pending.push(files[index]);
+      return pending;
+    }, []);
+    setFiles(failedFiles);
+    if (failed === 0) {
+      setUploadForm({ tags: '', category_id: '', category_ids: [], description: '' });
+    }
+    // Clear the native input so the same failed file can be selected again.
     if (fileInputRef.current) {
       fileInputRef.current.value = '';
     }
@@ -2931,6 +3088,14 @@ const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
 
   // Shared validation for schedule recurrence patterns (used by both create and update)
   const validateScheduleRecurrence = () => {
+    if ((scheduleForm.type === 'daily' || scheduleForm.type === 'weekly') && scheduleForm.start_date && scheduleForm.end_date) {
+      const start = parseNaiveDatetime(scheduleForm.start_date);
+      const end = parseNaiveDatetime(scheduleForm.end_date);
+      if (start && end && end < start) {
+        alert('End date must be after the start date');
+        return false;
+      }
+    }
     if (scheduleForm.type === 'daily' && !timeRange.start) {
       alert('Please select at least a start time for daily schedules');
       return false;
@@ -2973,13 +3138,9 @@ const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
 
   // Build the common schedule data object + recurrence pattern (used by both create and update)
   const buildScheduleData = () => {
-    const normalizeRecurringDate = (value) => {
-      const parsed = parseNaiveDatetime(value);
-      if (!parsed) return value;
-      // Yearly/holiday schedules should recur by month/day+time, not be anchored to a specific year.
-      const normalized = new Date(2000, parsed.getMonth(), parsed.getDate(), parsed.getHours(), parsed.getMinutes(), 0, 0);
-      return formatAsNaiveIso(normalized);
-    };
+    const normalizeRecurringDate = (value) => (
+      normalizeScheduleDateForStorage(scheduleForm.type, value)
+    );
 
     const normalizedStartDate = (scheduleForm.type === 'yearly' || scheduleForm.type === 'holiday')
       ? normalizeRecurringDate(scheduleForm.start_date)
@@ -3022,21 +3183,13 @@ const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
     }
 
     // Build recurrence pattern based on schedule type
-    const recurrencePattern = {};
-    if (scheduleForm.type === 'daily' && timeRange.start) {
-      recurrencePattern.timeRange = timeRange;
-    }
-    if (scheduleForm.type === 'weekly' && weekDays.length > 0) {
-      recurrencePattern.weekDays = weekDays;
-      if (timeRange.start && timeRange.end) {
-        recurrencePattern.timeRange = timeRange;
-      }
-    }
-    if (scheduleForm.type === 'monthly') {
-      if (selectedMonths.length > 0) recurrencePattern.months = selectedMonths;
-      if (monthDays.length > 0) recurrencePattern.monthDays = monthDays;
-      if (timeRange.start) recurrencePattern.timeRange = timeRange;
-    }
+    const recurrencePattern = buildRecurrencePattern({
+      type: scheduleForm.type,
+      timeRange,
+      weekDays,
+      selectedMonths,
+      monthDays
+    });
     if (Object.keys(recurrencePattern).length > 0) {
       data.recurrence_pattern = JSON.stringify(recurrencePattern);
     } else {
@@ -3052,6 +3205,8 @@ const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
 
   const handleCreateSchedule = async (e) => {
     e.preventDefault();
+
+    let sourceSequenceId = loadedSavedSequenceId || null;
 
     // Validate required fields
     if (!scheduleForm.name.trim()) {
@@ -3093,7 +3248,12 @@ const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
           const sequenceName = scheduleForm.name.trim() + ' Sequence';
           const sequenceDescription = `Sequence for schedule "${scheduleForm.name.trim()}"`;
           console.log('Saving sequence to library:', sequenceName);
-          await saveSequence(sequenceName, sequenceDescription);
+          const savedSequence = await saveSequence(sequenceName, sequenceDescription, {
+            preserveBuilder: true,
+            forceCreate: true
+          });
+          sourceSequenceId = savedSequence?.id ?? null;
+          if (sourceSequenceId) setLoadedSavedSequenceId(sourceSequenceId);
         } catch (error) {
           console.error('Failed to save sequence to library:', error);
           // Continue anyway - sequence will still be saved in the schedule
@@ -3125,13 +3285,13 @@ const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
       // Use validated blocks array
       const blocks = Array.isArray(sequenceBlocks) ? sequenceBlocks : [];
       scheduleData.sequence = stringifySequence(blocks);
-      // Backend expects category_id, so we'll use first category from sequence or null
-      const firstCategory = blocks.find(b => b.type === 'random')?.category_id;
+      // Backend expects category_id, so use the first category-backed sequence block or null.
+      const firstCategory = blocks.find(b => ['random', 'sequential'].includes(b.type))?.category_id;
       scheduleData.category_id = firstCategory || null;
       // Link to the saved sequence (if this was built from one) so edits to that
       // sequence propagate back into this schedule.
-      if (loadedSavedSequenceId) {
-        scheduleData.source_sequence_id = loadedSavedSequenceId;
+      if (sourceSequenceId) {
+        scheduleData.source_sequence_id = sourceSequenceId;
       }
     }
 
@@ -3155,7 +3315,7 @@ const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
         
         if (potentialConflicts.length > 0) {
           const conflictNames = potentialConflicts.map(c => c.schedule.name).join(', ');
-          alert(`Schedule created, but it conflicts with: ${conflictNames}\n\nBoth schedules have the same priority (${scheduleData.priority || 5}) and are exclusive. NeXroll will randomly choose one during overlap.\n\nTo fix: Edit one schedule to have a different priority.`);
+          alert(`Schedule created, but it conflicts with: ${conflictNames}\n\nThe schedules share priority ${scheduleData.priority || 5} during an overlapping window. NeXroll's fixed tie-break order will select one.\n\nTo make the intended winner explicit, give the schedules different priorities.`);
         } else {
           alert('Schedule created successfully!');
         }
@@ -3167,6 +3327,7 @@ const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
         });
         setScheduleMode('simple');
         setSequenceBlocks([]);
+        setLoadedSavedSequenceId(null);
         setWeekDays([]);
         setSelectedMonths([]); setMonthDays([]);
         setTimeRange({ start: '', end: '' });
@@ -3442,44 +3603,6 @@ const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
 
   // ========== Schedule Conflict Detection ==========
   
-  // Check if two time ranges overlap
-  const timeRangesOverlap = (start1, end1, start2, end2) => {
-    // No time range = "all day" — overlaps with everything
-    if (!start1 && !start2) return true;
-    if (!start1 || !start2) return true;
-    
-    const toMinutes = (time) => {
-      if (!time) return null;
-      const [hours, minutes] = time.split(':').map(Number);
-      return hours * 60 + minutes;
-    };
-    
-    const s1 = toMinutes(start1);
-    const e1 = end1 ? toMinutes(end1) : 24 * 60 - 1; // Default to end of day
-    const s2 = toMinutes(start2);
-    const e2 = end2 ? toMinutes(end2) : 24 * 60 - 1;
-    
-    if (s1 === null || s2 === null) return false;
-    
-    // Handle overnight ranges (e.g., 10PM - 3AM)
-    const range1CrossesMidnight = e1 < s1;
-    const range2CrossesMidnight = e2 < s2;
-    
-    if (range1CrossesMidnight && range2CrossesMidnight) {
-      // Both cross midnight - they definitely overlap
-      return true;
-    } else if (range1CrossesMidnight) {
-      // Range 1 crosses midnight: check if range 2 overlaps either part
-      return (s2 <= e1) || (s2 >= s1) || (e2 >= s1) || (e2 <= e1);
-    } else if (range2CrossesMidnight) {
-      // Range 2 crosses midnight: check if range 1 overlaps either part
-      return (s1 <= e2) || (s1 >= s2) || (e1 >= s2) || (e1 <= e2);
-    } else {
-      // Normal ranges
-      return s1 < e2 && s2 < e1;
-    }
-  };
-
   // ========== Unified Day Conflict State ==========
   // This is the single source of truth for conflict detection across ALL views.
   // Matches the backend scheduler logic in scheduler.py _check_and_execute_schedules().
@@ -3491,9 +3614,9 @@ const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
   //   3. If no exclusive, no blend: highest priority wins (normal deterministic selection)
   //
   // CONFLICT DEFINITION (when user action is needed):
-  //   TRUE CONFLICT = same-priority exclusive schedules overlap on the same day/time
-  //     → The backend picks one randomly/arbitrarily — result is unpredictable
-  //   Everything else is DETERMINISTIC and handled by the priority system:
+  //   TRUE CONFLICT = two or more winner candidates share the highest active
+  //   priority after exclusive and blend rules have been applied for that time.
+  //   Everything else is deterministic and handled by the priority system:
   //     - Different-priority exclusives → higher wins (by design)
   //     - Exclusive vs non-exclusive → exclusive wins (by design)
   //     - Non-exclusive priority differences → higher wins (by design)
@@ -3504,11 +3627,56 @@ const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
   // WHAT IS NOT A CONFLICT:
   //   - Different priorities (higher always wins deterministically)
   //   - Exclusive blocking non-exclusive (that's what exclusive MEANS)
-  //   - Blend-enabled schedules (they intentionally coexist)
+  //   - Two or more simultaneously active blend-enabled schedules
   //   - Schedules with non-overlapping time ranges
   //   - Fallback/filler categories (only play when nothing else is active)
   //
+  const buildActionableConflictDaysByPair = (candidateSchedules, lookaheadDays, startDate) => {
+    const normalizeDay = (dateStr) => {
+      if (!dateStr) return null;
+      const date = new Date(dateStr);
+      return new Date(date.getFullYear(), date.getMonth(), date.getDate()).getTime();
+    };
+    const rangeStart = startDate ? new Date(startDate) : new Date();
+    const firstDay = new Date(
+      rangeStart.getFullYear(),
+      rangeStart.getMonth(),
+      rangeStart.getDate()
+    );
+    const conflictDaysByPair = new Map();
+
+    for (let dayOffset = 0; dayOffset < lookaheadDays; dayOffset += 1) {
+      const occurrences = [];
+      for (const relativeAnchorOffset of [-1, 0]) {
+        const anchorDay = new Date(
+          firstDay.getFullYear(),
+          firstDay.getMonth(),
+          firstDay.getDate() + dayOffset + relativeAnchorOffset
+        );
+        candidateSchedules.forEach(schedule => {
+          if (!isScheduleActiveOnDay(schedule, anchorDay.getTime(), normalizeDay)) return;
+          occurrences.push(buildScheduleTimeOccurrence(schedule, relativeAnchorOffset));
+        });
+      }
+
+      const segmentState = evaluateScheduleOccurrenceSegments(occurrences);
+      if (!segmentState.hasConflict) continue;
+      const conflictDay = new Date(
+        firstDay.getFullYear(),
+        firstDay.getMonth(),
+        firstDay.getDate() + dayOffset
+      );
+      segmentState.conflictPairs.forEach(pair => {
+        if (!conflictDaysByPair.has(pair.key)) conflictDaysByPair.set(pair.key, []);
+        conflictDaysByPair.get(pair.key).push(conflictDay);
+      });
+    }
+
+    return conflictDaysByPair;
+  };
+
   const computeDayConflictState = (contentScheds) => {
+    const segmentState = evaluateScheduleTimeSegments(contentScheds);
     // Exclusive schedules
     const exclusiveScheds = contentScheds.filter(s => s.exclusive);
     const hasExclusive = exclusiveScheds.length > 0;
@@ -3524,46 +3692,20 @@ const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
 
     // Non-exclusive schedules
     const nonExclusiveScheds = contentScheds.filter(s => !s.exclusive);
-    const blendScheds = nonExclusiveScheds.filter(s => s.blend_enabled);
+    const actualBlendIds = new Set(segmentState.blendScheduleIds);
+    const blendScheds = nonExclusiveScheds.filter(s => actualBlendIds.has(s.id));
 
     // Blend mode detection:
     // - When no exclusive: 2+ blend_enabled non-exclusive schedules
     // - When exclusive has time range: 2+ blend_enabled operate outside the exclusive window
-    const hasBlend = (!hasExclusive && blendScheds.length >= 2) ||
-                     (exclusiveHasTimeRange && blendScheds.length >= 2);
+    const hasBlend = segmentState.hasBlend;
 
-    // CONFLICT DETECTION:
-    // A TRUE conflict ONLY exists when the backend cannot deterministically choose a winner.
-    // This happens in ONE scenario: same-priority exclusive schedules on the same day.
-    let hasConflict = false;
-    let samePriorityExclusiveConflict = false;
-
-    if (exclusiveScheds.length > 1) {
-      // Check if any exclusive schedules share the SAME priority
-      const priorities = exclusiveScheds.map(s => s.priority ?? 5);
-      const uniquePriorities = new Set(priorities);
-      if (uniquePriorities.size < priorities.length) {
-        // At least two exclusives share a priority → true conflict
-        hasConflict = true;
-        samePriorityExclusiveConflict = true;
-      }
-      // Different-priority exclusives are NOT a conflict (higher priority wins deterministically)
-    }
-
-    // For non-exclusive schedules without any exclusive present:
-    // Multiple non-exclusive, non-blend schedules with the SAME priority = conflict
-    if (!hasExclusive && contentScheds.length > 1 && !hasBlend) {
-      const nonBlendScheds = contentScheds.filter(s => !s.blend_enabled);
-      if (nonBlendScheds.length > 1) {
-        const priorities = nonBlendScheds.map(s => s.priority ?? 5);
-        const uniquePriorities = new Set(priorities);
-        if (uniquePriorities.size < priorities.length) {
-          // Same-priority non-exclusive, non-blend schedules → true conflict
-          hasConflict = true;
-        }
-        // Different priorities → deterministic winner, not a conflict
-      }
-    }
+    // Segment-level state mirrors the backend decision at every active minute,
+    // including exclusive precedence and group-based blend mode.
+    const hasConflict = segmentState.hasConflict;
+    const samePriorityExclusiveConflict = segmentState.conflictPairs.some(
+      pair => pair.mode === 'exclusive'
+    );
 
     // Winner determination (matches backend scheduler.py logic)
     let winner = null;
@@ -3582,9 +3724,20 @@ const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
         return a.id - b.id;
       };
 
+      // Exclusive winner selection intentionally omits start date; this mirrors
+      // scheduler.py's priority -> earliest end -> lowest id order.
+      const exclusivePrioritySort = (a, b) => {
+        const pA = a.priority ?? 5; const pB = b.priority ?? 5;
+        if (pA !== pB) return pB - pA;
+        const eA = a.end_date ? new Date(a.end_date).getTime() : Number.MAX_SAFE_INTEGER;
+        const eB = b.end_date ? new Date(b.end_date).getTime() : Number.MAX_SAFE_INTEGER;
+        if (eA !== eB) return eA - eB;
+        return a.id - b.id;
+      };
+
       if (hasExclusive) {
         // Exclusive wins
-        const sorted = [...exclusiveScheds].sort(prioritySort);
+        const sorted = [...exclusiveScheds].sort(exclusivePrioritySort);
         winner = sorted[0];
 
         // If exclusive has time range, also compute non-exclusive winner
@@ -3623,9 +3776,50 @@ const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
     };
   };
   
-  // Check if a schedule has true conflicts (same-priority, same-type overlap where outcome is unpredictable)
+  // Check if a schedule has equal-priority overlaps that should be made explicit
+  const scheduleConflictPairCache = React.useMemo(
+    () => ({ source: schedules, byYear: new Map() }),
+    [schedules]
+  ).byYear;
+  const getActionableConflictDaysForSchedule = (schedule) => {
+    const currentYear = new Date().getFullYear();
+    const configuredStart = schedule?.start_date ? new Date(schedule.start_date) : null;
+    const configuredYear = configuredStart && !Number.isNaN(configuredStart.getTime())
+      ? configuredStart.getFullYear()
+      : currentYear;
+    // Year 2000 is the sentinel used for year-agnostic yearly schedules.
+    const analysisYear = configuredYear !== 2000 && configuredYear > currentYear
+      ? configuredYear
+      : currentYear;
+    const analysisStart = new Date(analysisYear, 0, 1);
+    // One complete recurrence year plus the following January covers every
+    // weekday/month and concrete windows that cross New Year without making
+    // repeated tooltip checks scan multiple full years.
+    const analysisEnd = new Date(analysisYear + 1, 1, 1);
+    const lookaheadDays = Math.round(
+      (analysisEnd.getTime() - analysisStart.getTime()) / (24 * 60 * 60 * 1000)
+    );
+    const scheduleIsLoaded = schedules.some(candidate => candidate.id === schedule.id);
+    if (!scheduleIsLoaded) {
+      return buildActionableConflictDaysByPair(
+        [...schedules.filter(candidate => candidate.is_active), schedule],
+        lookaheadDays,
+        analysisStart
+      );
+    }
+    if (!scheduleConflictPairCache.has(analysisYear)) {
+      scheduleConflictPairCache.set(analysisYear, buildActionableConflictDaysByPair(
+        schedules.filter(candidate => candidate.is_active),
+        lookaheadDays,
+        analysisStart
+      ));
+    }
+    return scheduleConflictPairCache.get(analysisYear);
+  };
+
   const getScheduleConflicts = (schedule) => {
     if (!schedule) return [];
+    if (!schedule.is_active) return [];
     if (!schedule.start_date) return []; // No start date = not visible on calendar
     
     const conflicts = [];
@@ -3643,6 +3837,7 @@ const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
     
     // Normalize priority (default to 5 if not set)
     const thisPriority = schedule.priority ?? 5;
+    const actionableConflictDays = getActionableConflictDaysForSchedule(schedule);
     
     // Check against all other schedules
     schedules.forEach(other => {
@@ -3650,13 +3845,13 @@ const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
       if (!other.is_active) return; // Inactive schedules don't conflict
       if (!other.start_date) return; // No start date = not visible on calendar
       
-      // Scenario 1: Both exclusive, same priority (unpredictable winner)
+      // Scenario 1: Both exclusive, same priority (winner depends on tie-break fields)
       if (schedule.exclusive && other.exclusive) {
         const otherPriority = other.priority ?? 5;
         if (otherPriority !== thisPriority) return; // Different priorities = deterministic
       }
       // Scenario 2: Both non-exclusive, both non-blend, same priority
-      else if (!schedule.exclusive && !other.exclusive && !schedule.blend_enabled && !other.blend_enabled) {
+      else if (!schedule.exclusive && !other.exclusive && !isEffectiveBlendPair(schedule, other)) {
         const otherPriority = other.priority ?? 5;
         if (otherPriority !== thisPriority) return; // Different priorities = deterministic
       }
@@ -3664,6 +3859,7 @@ const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
       else {
         return;
       }
+      if (!actionableConflictDays.has(getSchedulePairKey(schedule, other))) return;
       
       // Parse other schedule's recurrence pattern
       let otherPattern = {};
@@ -3748,30 +3944,17 @@ const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
       
       // Check yearly/holiday vs yearly/holiday — date window overlap (month+day)
       else if (['yearly', 'holiday'].includes(schedule.type) && ['yearly', 'holiday'].includes(other.type)) {
-        const thisStart = schedule.start_date ? new Date(schedule.start_date) : null;
-        const thisEnd = schedule.end_date ? new Date(schedule.end_date) : thisStart;
-        const otherStart = other.start_date ? new Date(other.start_date) : null;
-        const otherEnd = other.end_date ? new Date(other.end_date) : otherStart;
-        
-        if (thisStart && otherStart) {
-          // Compare month/day windows (ignore year for yearly recurrence)
-          const thisStartMD = thisStart.getMonth() * 100 + thisStart.getDate();
-          const thisEndMD = thisEnd ? thisEnd.getMonth() * 100 + thisEnd.getDate() : thisStartMD;
-          const otherStartMD = otherStart.getMonth() * 100 + otherStart.getDate();
-          const otherEndMD = otherEnd ? otherEnd.getMonth() * 100 + otherEnd.getDate() : otherStartMD;
-          
-          if (thisStartMD <= otherEndMD && otherStartMD <= thisEndMD) {
-            if (timeRangesOverlap(
-              thisTimeRange.start, thisTimeRange.end,
-              otherTimeRange.start, otherTimeRange.end
-            )) {
-              conflicts.push({
-                schedule: other,
-                thisTime: thisTimeRange,
-                otherTime: otherTimeRange,
-                note: 'Yearly/holiday schedules overlap on same calendar dates'
-              });
-            }
+        if (yearlyOrHolidayDateRangesOverlap(schedule, other)) {
+          if (timeRangesOverlap(
+            thisTimeRange.start, thisTimeRange.end,
+            otherTimeRange.start, otherTimeRange.end
+          )) {
+            conflicts.push({
+              schedule: other,
+              thisTime: thisTimeRange,
+              otherTime: otherTimeRange,
+              note: 'Yearly/holiday schedules overlap on same calendar dates'
+            });
           }
         }
       }
@@ -3821,7 +4004,7 @@ const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
 
   // Analyze ALL schedule conflicts across the entire configuration
   // Returns structured conflict objects with suggested auto-resolutions
-  const analyzeAllConflicts = (lookaheadDays = 30) => {
+  const analyzeAllConflicts = (lookaheadDays = 30, startDate = null) => {
     const allConflicts = [];
     const seen = new Set(); // Avoid duplicate pairs
     const activeSchedules = schedules.filter(s => s.is_active);
@@ -3832,12 +4015,23 @@ const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
       return new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
     };
 
+    const rangeStart = startDate ? new Date(startDate) : new Date();
+    const today = new Date(rangeStart.getFullYear(), rangeStart.getMonth(), rangeStart.getDate());
+
+    // Group-aware results ensure a pair is actionable only when it reaches
+    // winner selection after exclusive and blend semantics are applied.
+    const actionableConflictDaysByPair = buildActionableConflictDaysByPair(
+      activeSchedules,
+      lookaheadDays,
+      today
+    );
+
     // Check all pairs of active schedules
     for (let i = 0; i < activeSchedules.length; i++) {
       for (let j = i + 1; j < activeSchedules.length; j++) {
         const a = activeSchedules[i];
         const b = activeSchedules[j];
-        const pairKey = [a.id, b.id].sort().join('-');
+        const pairKey = getSchedulePairKey(a, b);
         if (seen.has(pairKey)) continue;
 
         // Parse recurrence patterns
@@ -3850,28 +4044,56 @@ const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
         const timeA = patternA.timeRange || {};
         const timeB = patternB.timeRange || {};
 
-        // Find overlapping days (look ahead configurable)
-        const today = new Date();
-        const overlappingDays = [];
-        for (let d = 0; d < lookaheadDays; d++) {
-          const checkDate = new Date(today.getFullYear(), today.getMonth(), today.getDate() + d);
-          const dayTime = checkDate.getTime();
-          if (isScheduleActiveOnDay(a, dayTime, normalizeDay) && isScheduleActiveOnDay(b, dayTime, normalizeDay)) {
-            overlappingDays.push(checkDate);
+        // Find overlapping concrete occurrences. Overnight windows belong to
+        // their start day, so adjacent recurrence anchors must be compared too.
+        const overlappingDayTimes = new Set();
+        for (let aDayOffset = -1; aDayOffset < lookaheadDays; aDayOffset += 1) {
+          const anchorA = new Date(today.getFullYear(), today.getMonth(), today.getDate() + aDayOffset);
+          if (!isScheduleActiveOnDay(a, anchorA.getTime(), normalizeDay)) continue;
+
+          for (const relativeAnchorOffset of [-1, 0, 1]) {
+            const bDayOffset = aDayOffset + relativeAnchorOffset;
+            if (bDayOffset < -1 || bDayOffset > lookaheadDays) continue;
+
+            const anchorB = new Date(today.getFullYear(), today.getMonth(), today.getDate() + bDayOffset);
+            if (!isScheduleActiveOnDay(b, anchorB.getTime(), normalizeDay)) continue;
+
+            const overlap = getAnchoredTimeRangeOverlap(
+              timeA.start,
+              timeA.end,
+              0,
+              timeB.start,
+              timeB.end,
+              relativeAnchorOffset
+            );
+            if (!overlap) continue;
+
+            const overlapDayOffset = aDayOffset + Math.floor(overlap.start / (24 * 60));
+            if (overlapDayOffset >= 0 && overlapDayOffset < lookaheadDays) {
+              const overlapDay = new Date(
+                today.getFullYear(),
+                today.getMonth(),
+                today.getDate() + overlapDayOffset
+              );
+              overlappingDayTimes.add(overlapDay.getTime());
+            }
           }
         }
 
+        const overlappingDays = [...overlappingDayTimes]
+          .sort((first, second) => first - second)
+          .map(dayTime => new Date(dayTime));
+
         if (overlappingDays.length === 0) continue;
+        const actionableOverlappingDays = actionableConflictDaysByPair.get(pairKey) || [];
 
-        // Check if times overlap (if both have time ranges)
-        const hasTimeOverlap = timeRangesOverlap(timeA.start, timeA.end, timeB.start, timeB.end);
-        const bothHaveTimeRanges = !!(timeA.start && timeB.start);
-        
-        // If both have time ranges and they DON'T overlap, no conflict
-        if (bothHaveTimeRanges && !hasTimeOverlap) continue;
-
-        // Both exclusive, same priority = random selection conflict (HIGH severity)
-        if (a.exclusive && b.exclusive && priorityA === priorityB) {
+        // Both exclusive, same priority = ambiguous-priority conflict (HIGH severity)
+        if (
+          a.exclusive
+          && b.exclusive
+          && priorityA === priorityB
+          && actionableOverlappingDays.length > 0
+        ) {
           seen.add(pairKey);
           const categoryA = categories.find(c => c.id === a.category_id);
           const categoryB = categories.find(c => c.id === b.category_id);
@@ -3895,27 +4117,22 @@ const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
               changes: [{ scheduleId: b.id, field: 'priority', value: priorityB + 1 }]
             });
           }
-          // Suggestion 3: Convert one to blend mode
+          // Exclusive schedules suppress all blending. To make both play, both
+          // schedules must become non-exclusive and have blending enabled.
           suggestions.push({
-            id: `${pairKey}-blend-a`,
-            label: `Make "${a.name}" non-exclusive + enable blending (both play)`,
+            id: `${pairKey}-blend-both`,
+            label: 'Make both schedules non-exclusive and enable blending on both',
             icon: 'shuffle',
-            changes: [{ scheduleId: a.id, field: 'exclusive', value: false }, { scheduleId: a.id, field: 'blend_enabled', value: true }]
-          });
-          suggestions.push({
-            id: `${pairKey}-blend-b`,
-            label: `Make "${b.name}" non-exclusive + enable blending (both play)`,
-            icon: 'shuffle',
-            changes: [{ scheduleId: b.id, field: 'exclusive', value: false }, { scheduleId: b.id, field: 'blend_enabled', value: true }]
+            changes: buildBlendBothChanges(a, b)
           });
           // Suggestion 4: Split time ranges (only if both are daily/weekly with time support)
           if ((a.type === 'daily' || a.type === 'weekly') && (b.type === 'daily' || b.type === 'weekly')) {
             suggestions.push({
               id: `${pairKey}-split-time`,
-              label: `Split time ranges: "${a.name}" 12AM-12PM, "${b.name}" 12PM-12AM`,
+              label: `Split time ranges: "${a.name}" 12AM-11:59AM, "${b.name}" 12PM-11:59PM`,
               icon: 'clock',
               changes: [
-                { scheduleId: a.id, field: 'timeRange', value: { start: '00:00', end: '12:00' } },
+                { scheduleId: a.id, field: 'timeRange', value: { start: '00:00', end: '11:59' } },
                 { scheduleId: b.id, field: 'timeRange', value: { start: '12:00', end: '23:59' } }
               ]
             });
@@ -3929,8 +4146,8 @@ const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
             scheduleB: b,
             categoryA: categoryA?.name || 'Unknown',
             categoryB: categoryB?.name || 'Unknown',
-            overlappingDays,
-            description: `Both schedules are exclusive with priority ${priorityA}. NeXroll randomly picks one during overlap — results may be unpredictable.`,
+            overlappingDays: actionableOverlappingDays,
+            description: `Both schedules are exclusive with priority ${priorityA}. NeXroll's fixed tie-break order selects one during overlap, so the intended winner is not explicit.`,
             suggestions
           });
         }
@@ -3944,12 +4161,13 @@ const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
 
           seen.add(pairKey);
           const suggestions = [];
-          // Suggestion: Convert loser to blend
+          // An exclusive winner suppresses blending entirely. Both schedules
+          // must opt out of exclusivity before a blended result is possible.
           suggestions.push({
-            id: `${pairKey}-blend-loser`,
-            label: `Make "${loser.name}" non-exclusive + enable blending (plays alongside winner)`,
+            id: `${pairKey}-blend-both`,
+            label: 'Make both schedules non-exclusive and enable blending on both',
             icon: 'shuffle',
-            changes: [{ scheduleId: loser.id, field: 'exclusive', value: false }, { scheduleId: loser.id, field: 'blend_enabled', value: true }]
+            changes: buildBlendBothChanges(winner, loser)
           });
           // Suggestion: Raise loser priority above winner
           if (winnerPriority < 10) {
@@ -3988,25 +4206,27 @@ const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
           const exclusivePriority = exclusive.priority ?? 5;
           const nonExclusivePriority = nonExclusive.priority ?? 5;
 
-          // Only flag if the exclusive actually wins (same or higher priority)
-          if (exclusivePriority >= nonExclusivePriority) {
+          // The backend evaluates exclusivity before priority, so every such
+          // overlap must be reported, even when the non-exclusive priority is higher.
+          {
             seen.add(pairKey);
             const categoryNonExcl = categories.find(c => c.id === nonExclusive.category_id);
             const suggestions = [];
             suggestions.push({
-              id: `${pairKey}-blend-non-excl`,
-              label: `Enable blending on "${nonExclusive.name}" (allows it to play alongside exclusive)`,
+              id: `${pairKey}-blend-both`,
+              label: 'Make both schedules non-exclusive and enable blending on both',
               icon: 'shuffle',
-              changes: [{ scheduleId: nonExclusive.id, field: 'blend_enabled', value: true }]
+              changes: buildBlendBothChanges(exclusive, nonExclusive)
             });
-            if (nonExclusivePriority < 10) {
+            const winningPriority = priorityToBeatExclusive(exclusivePriority, nonExclusivePriority);
+            if (winningPriority !== null) {
               suggestions.push({
                 id: `${pairKey}-raise-non-excl`,
-                label: `Make "${nonExclusive.name}" exclusive with priority ${exclusivePriority + 1} (makes it win)`,
+                label: `Make "${nonExclusive.name}" exclusive with priority ${winningPriority} (makes it win)`,
                 icon: 'lock',
                 changes: [
                   { scheduleId: nonExclusive.id, field: 'exclusive', value: true },
-                  { scheduleId: nonExclusive.id, field: 'priority', value: exclusivePriority + 1 }
+                  { scheduleId: nonExclusive.id, field: 'priority', value: winningPriority }
                 ]
               });
             }
@@ -4025,8 +4245,15 @@ const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
             });
           }
         }
-        // Both non-exclusive, same priority, neither is blending = conflict (backend picks arbitrarily)
-        else if (!a.exclusive && !b.exclusive && priorityA === priorityB && !a.blend_enabled && !b.blend_enabled) {
+        // A lone blend flag falls back to normal selection; the pair only
+        // coexists intentionally when both schedules opt into blending.
+        else if (
+          !a.exclusive
+          && !b.exclusive
+          && priorityA === priorityB
+          && !isEffectiveBlendPair(a, b)
+          && actionableOverlappingDays.length > 0
+        ) {
           seen.add(pairKey);
           const categoryA = categories.find(c => c.id === a.category_id);
           const categoryB = categories.find(c => c.id === b.category_id);
@@ -4069,8 +4296,8 @@ const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
             scheduleB: b,
             categoryA: categoryA?.name || 'Unknown',
             categoryB: categoryB?.name || 'Unknown',
-            overlappingDays,
-            description: `Both schedules have priority ${priorityA} and neither is blending. NeXroll picks one arbitrarily — results may be unpredictable.`,
+            overlappingDays: actionableOverlappingDays,
+            description: `Both schedules have priority ${priorityA}, but fewer than two schedules are blending. NeXroll's fixed tie-break order selects one, so the intended winner is not explicit.`,
             suggestions
           });
         }
@@ -4084,7 +4311,7 @@ const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
   };
 
   // Apply a single conflict resolution fix
-  const applyConflictFix = async (changes) => {
+  const applyConflictFix = async (changes, workingSchedules) => {
     const results = [];
     // Group changes by scheduleId
     const bySchedule = {};
@@ -4094,7 +4321,8 @@ const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
     }
 
     for (const [schedId, schedChanges] of Object.entries(bySchedule)) {
-      const sched = schedules.find(s => s.id === parseInt(schedId));
+      const numericScheduleId = parseInt(schedId, 10);
+      const sched = workingSchedules.get(numericScheduleId);
       if (!sched) { results.push({ schedId, success: false, error: 'Schedule not found' }); continue; }
 
       // Build the update payload from existing schedule data
@@ -4117,7 +4345,10 @@ const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
         is_active: sched.is_active,
         blend_enabled: sched.blend_enabled,
         priority: sched.priority ?? 5,
-        exclusive: sched.exclusive ?? false
+        exclusive: sched.exclusive ?? false,
+        holiday_name: sched.holiday_name || null,
+        holiday_country: sched.holiday_country || null,
+        source_sequence_id: sched.source_sequence_id ?? null
       };
 
       // Apply each change
@@ -4138,6 +4369,9 @@ const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
           body: JSON.stringify(payload)
         });
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        // Use successful updates as the baseline for later fixes that touch the
+        // same schedule, instead of rebuilding from stale React state.
+        workingSchedules.set(numericScheduleId, { ...sched, ...payload });
         results.push({ schedId, success: true });
       } catch (err) {
         results.push({ schedId, success: false, error: err.message });
@@ -4151,6 +4385,7 @@ const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
     setConflictWizardApplying(true);
     const applied = [];
     const failed = [];
+    const workingSchedules = new Map(schedules.map(schedule => [schedule.id, { ...schedule }]));
 
     for (const conflict of allConflicts) {
       const selectedFixId = conflictResolutions[conflict.id];
@@ -4158,7 +4393,7 @@ const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
       const fix = conflict.suggestions.find(s => s.id === selectedFixId);
       if (!fix) continue;
 
-      const results = await applyConflictFix(fix.changes);
+      const results = await applyConflictFix(fix.changes, workingSchedules);
       const allOk = results.every(r => r.success);
       if (allOk) {
         applied.push({ conflict, fix });
@@ -4714,6 +4949,7 @@ const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
 
   const handleEditSchedule = (schedule) => {
     setEditingSchedule(schedule);
+    setLoadedSavedSequenceId(schedule.source_sequence_id ?? null);
     setScheduleForm({
       name: schedule.name,
       type: schedule.type,
@@ -4830,15 +5066,17 @@ const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
       scheduleData.category_id = parseInt(scheduleForm.category_id);
       scheduleData.sequence = ''; // Clear sequence if switching to simple
       scheduleData.preroll_ids = '';
+      scheduleData.source_sequence_id = null;
     } else {
       // Use validated blocks array
       const blocks = Array.isArray(sequenceBlocks) ? sequenceBlocks : [];
       scheduleData.sequence = stringifySequence(blocks);
       console.log('Stringified sequence:', scheduleData.sequence);
       // Backend expects category_id, so we'll use first category from sequence or keep existing
-      const firstCategory = blocks.find(b => b.type === 'random')?.category_id;
-      scheduleData.category_id = firstCategory || parseInt(scheduleForm.category_id) || editingSchedule.category_id || 1;
+      const firstCategory = blocks.find(b => ['random', 'sequential'].includes(b.type))?.category_id;
+      scheduleData.category_id = firstCategory || null;
       scheduleData.preroll_ids = '';
+      scheduleData.source_sequence_id = loadedSavedSequenceId || null;
     }
 
     console.log('Sending schedule data:', scheduleData);
@@ -4883,6 +5121,7 @@ const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
         });
         setScheduleMode('simple');
         setSequenceBlocks([]);
+        setLoadedSavedSequenceId(null);
         setWeekDays([]);
         setSelectedMonths([]); setMonthDays([]);
         setTimeRange({ start: '', end: '' });
@@ -8509,7 +8748,7 @@ const DashboardTiles = {
                     Drag & drop video files here, or click to browse
                   </div>
                   <div style={{ color: 'var(--text-secondary)', fontSize: '0.85rem' }}>
-                    MP4, MKV, AVI, MOV supported
+                    MP4, MKV, AVI, MOV, WebM, MPEG, and other common video formats
                   </div>
                 </div>
 
@@ -9144,7 +9383,7 @@ const DashboardTiles = {
               value={inputTagsValue}
               onChange={(e) => handleTagsChange(e.target.value)}
               className="input"
-              style={{ width: '75%', paddingLeft: '2.5rem', fontSize: '0.95rem' }}
+              style={{ width: '100%', paddingLeft: '2.5rem', fontSize: '0.95rem' }}
             />
           </div>
           <div
@@ -9387,7 +9626,7 @@ const DashboardTiles = {
             </button>
           </div>
 
-          <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap' }}>
             <select
               value={bulkCategoryId}
               onChange={(e) => setBulkCategoryId(e.target.value)}
@@ -9462,7 +9701,7 @@ const DashboardTiles = {
               <span className="nx-empty-icon"><Search size={48} /></span>
               <h3 className="nx-empty-title">No matches</h3>
               <p className="nx-empty-text">No prerolls match your current filters.</p>
-              <button className="button button-secondary" onClick={() => { setFilterCategory(''); setFilterTags(''); setFilterMatchStatus(''); }}>
+              <button className="button button-secondary" onClick={() => { setFilterCategory(''); handleTagsChange(''); setFilterMatchStatus(''); }}>
                 Clear filters
               </button>
             </>
@@ -11559,43 +11798,14 @@ const DashboardTiles = {
       
       // Determine winner for this hour (same logic as week view)
       const contentScheds = hourSchedules.filter(s => s.category_id || s.sequence);
-      const exclusiveScheds = contentScheds.filter(s => s.exclusive);
-      const hasExclusive = exclusiveScheds.length > 0;
-      const blendScheds = contentScheds.filter(s => s.blend_enabled && !s.exclusive);
-      const hasBlend = blendScheds.length > 1;
-      
-      // Check for true conflicts - multiple schedules competing (NOT same-priority exclusive conflicts)
-      // Same-priority exclusive conflicts are handled separately by getScheduleConflicts
-      const hasConflict = contentScheds.length > 1 && !hasBlend;
-      
-      // Check if multiple exclusive schedules have the same priority (true conflict requiring random selection)
-      const hasSamePriorityExclusiveConflict = exclusiveScheds.length > 1 && (() => {
-        const priorities = exclusiveScheds.map(s => s.priority ?? 5);
-        const uniquePriorities = [...new Set(priorities)];
-        return uniquePriorities.length < exclusiveScheds.length; // Some have same priority
-      })();
-      
-      let winner = null;
-      if (contentScheds.length > 0) {
-        if (hasExclusive) {
-          // Exclusive schedule wins - sort by priority (higher wins)
-          const sorted = [...exclusiveScheds].sort((a, b) => (b.priority ?? 5) - (a.priority ?? 5));
-          winner = sorted[0];
-        } else if (hasBlend) {
-          winner = 'blend';
-        } else {
-          const sorted = [...contentScheds].sort((a, b) => {
-            const priorityA = a.priority ?? 5;
-            const priorityB = b.priority ?? 5;
-            if (priorityA !== priorityB) return priorityB - priorityA;
-            const endA = a.end_date ? new Date(a.end_date).getTime() : Number.MAX_SAFE_INTEGER;
-            const endB = b.end_date ? new Date(b.end_date).getTime() : Number.MAX_SAFE_INTEGER;
-            if (endA !== endB) return endA - endB;
-            return a.id - b.id;
-          });
-          winner = sorted[0];
-        }
-      }
+      const hourState = computeDayConflictState(contentScheds);
+      const {
+        winner,
+        hasConflict,
+        hasBlend,
+        hasExclusive,
+        samePriorityExclusiveConflict: hasSamePriorityExclusiveConflict
+      } = hourState;
       
       hours.push({
         hour: h,
@@ -11618,7 +11828,7 @@ const DashboardTiles = {
     };
 
     // Check if any conflicts exist
-    const hasAnyConflicts = hours.some(h => h.hasConflict && !h.hasBlend && !h.hasExclusive);
+    const hasAnyConflicts = hours.some(h => h.hasConflict || h.hasSamePriorityExclusiveConflict);
     const hasAnyBlends = hours.some(h => h.hasBlend);
     const hasAnyExclusives = hours.some(h => h.hasExclusive);
 
@@ -11709,7 +11919,7 @@ const DashboardTiles = {
         {hasAnyConflicts && !calendarShowConflictsOnly && (() => {
           const conflictHourCount = hours.filter(h => h.hasSamePriorityExclusiveConflict || (h.hasConflict && !h.hasBlend && !h.hasExclusive)).length;
           if (conflictHourCount === 0) return null;
-          const conflicts = analyzeAllConflicts();
+          const conflicts = analyzeAllConflicts(1, calendarDay);
           const highCount = conflicts.filter(c => c.severity === 'high').length;
           const infoCount = conflicts.filter(c => c.severity === 'info').length;
           const actionableCount = conflicts.length - infoCount;
@@ -11727,7 +11937,7 @@ const DashboardTiles = {
               </div>
               <p style={{ margin: '0 0 0.75rem 0', fontSize: '0.85rem', color: 'var(--text-secondary)', lineHeight: 1.5 }}>
                 <strong>{conflictHourCount} hour{conflictHourCount !== 1 ? 's' : ''}</strong> have overlapping schedules today.
-                The schedule that ends soonest takes priority. Look for the <Crown size={12} style={{ display: 'inline', verticalAlign: 'middle' }} /> crown icon.{' '}
+                Exclusive schedules win first; two or more blend-enabled schedules blend; otherwise highest priority wins, with end time used only as a tie-breaker. Look for the <Crown size={12} style={{ display: 'inline', verticalAlign: 'middle' }} /> crown icon.{' '}
                 Visit the <button type="button" onClick={() => setActiveTab('schedules/conflicts')} style={{ background: 'none', border: 'none', color: '#14B8A6', cursor: 'pointer', textDecoration: 'underline', padding: 0, fontSize: 'inherit', fontWeight: 600 }}>Conflicts</button> tab to review and resolve.
               </p>
               <div style={{ display: 'flex', gap: '0.5rem', fontSize: '0.8rem', alignItems: 'center', flexWrap: 'wrap' }}>
@@ -11807,7 +12017,7 @@ const DashboardTiles = {
                     border: hasSamePriorityConflict ? '2px solid #ff9800' : 'none',
                     boxShadow: hasSamePriorityConflict ? '0 0 8px rgba(255, 152, 0, 0.5)' : 'none'
                   }}
-                  title={hasSamePriorityConflict ? `Same priority conflict with: ${samePriorityConflicts.map(c => c.schedule.name).join(', ')}\n\nBoth schedules are exclusive with the same priority.\nNeXroll will randomly pick one during overlapping times.\nSet different priorities to have deterministic behavior.` : ''}
+                  title={hasSamePriorityConflict ? `Same priority conflict with: ${samePriorityConflicts.map(c => c.schedule.name).join(', ')}\n\nThese schedules share a priority during overlapping times.\nNeXroll's fixed tie-break order selects one.\nSet different priorities to make the intended winner explicit.` : ''}
                   >
                     {hasSamePriorityConflict && <AlertTriangle size={12} style={{ color: chipText === '#fff' ? '#ffeb3b' : '#b45309' }} />}
                     {sched.exclusive && !hasSamePriorityConflict && <Lock size={12} />}
@@ -11903,12 +12113,12 @@ const DashboardTiles = {
                     const isExclusive = sched.exclusive;
                     const isBlending = hourData.hasBlend && sched.blend_enabled;
                     
-                    // Check for same-priority exclusive conflicts (random selection)
+                    // Check for same-priority conflicts resolved by backend tie-break order
                     const samePriorityConflicts = getScheduleConflicts(sched);
                     const hasSamePriorityConflict = samePriorityConflicts.length > 0;
                     
                     // An exclusive schedule is a "loser" if it's not the winner AND there's another exclusive with higher priority
-                    // (Different from same-priority conflict where it's random)
+                    // (Different from a same-priority conflict resolved by tie-break fields)
                     const isExclusiveLoser = isExclusive && !isWinner && hourData.hasExclusive && !hasSamePriorityConflict;
                     
                     // A non-exclusive schedule loses to any exclusive or higher priority schedule
@@ -11917,7 +12127,7 @@ const DashboardTiles = {
                     // Combined loser check
                     const isLoser = isExclusiveLoser || isNonExclusiveLoser;
                     
-                    // For same-priority conflicts, the non-winner is shown differently (random selection)
+                    // For same-priority conflicts, distinguish the schedule selected by the tie-breaker
                     const isSamePriorityLoser = hasSamePriorityConflict && !isWinner;
                     
                     // Get category/sequence info
@@ -11928,7 +12138,7 @@ const DashboardTiles = {
                     // Build tooltip
                     let tooltipText = `${sched.name}\nCategory: ${categoryName}\nType: ${sched.type}\nPriority: ${sched.priority ?? 5}`;
                     if (hasSamePriorityConflict) {
-                      tooltipText += `\n\nSAME PRIORITY CONFLICT\nConflicts with: ${samePriorityConflicts.map(c => c.schedule.name).join(', ')}\n${isWinner ? 'Currently selected (random)' : 'Not selected (random)'}\nSet different priorities for deterministic behavior.`;
+                      tooltipText += `\n\nSAME PRIORITY CONFLICT\nConflicts with: ${samePriorityConflicts.map(c => c.schedule.name).join(', ')}\n${isWinner ? 'Selected by the current tie-break order' : 'Not selected by the current tie-break order'}\nSet different priorities to make the intended winner explicit.`;
                     } else if (isExclusive && isWinner) {
                       tooltipText += '\n\nEXCLUSIVE - ACTIVE\nHighest priority exclusive schedule';
                     } else if (isExclusive && isLoser) {
@@ -12196,7 +12406,7 @@ const DashboardTiles = {
         {/* Day columns header strip */}
         {/* Conflict Summary Panel - Week View */}
         {conflictDayCount > 0 && !calendarShowConflictsOnly && (() => {
-          const conflicts = analyzeAllConflicts();
+          const conflicts = analyzeAllConflicts(7, calendarWeekStart);
           const highCount = conflicts.filter(c => c.severity === 'high').length;
           const infoCount = conflicts.filter(c => c.severity === 'info').length;
           const actionableCount = conflicts.length - infoCount;
@@ -12214,7 +12424,7 @@ const DashboardTiles = {
               </div>
               <p style={{ margin: '0 0 0.75rem 0', fontSize: '0.85rem', color: 'var(--text-secondary)', lineHeight: 1.5 }}>
                 <strong>{conflictDayCount} day{conflictDayCount !== 1 ? 's' : ''}</strong> this week have overlapping schedules.
-                The schedule that ends soonest takes priority. Look for the <Crown size={12} style={{ display: 'inline', verticalAlign: 'middle' }} /> crown icon.{' '}
+                Exclusive schedules win first; two or more blend-enabled schedules blend; otherwise highest priority wins, with end time used only as a tie-breaker. Look for the <Crown size={12} style={{ display: 'inline', verticalAlign: 'middle' }} /> crown icon.{' '}
                 Visit the <button type="button" onClick={() => setActiveTab('schedules/conflicts')} style={{ background: 'none', border: 'none', color: '#14B8A6', cursor: 'pointer', textDecoration: 'underline', padding: 0, fontSize: 'inherit', fontWeight: 600 }}>Conflicts</button> tab to review and resolve.
               </p>
               <div style={{ display: 'flex', gap: '0.5rem', fontSize: '0.8rem', alignItems: 'center', flexWrap: 'wrap' }}>
@@ -12510,7 +12720,7 @@ const DashboardTiles = {
                   borderRight: '1px solid var(--border-color)',
                   overflow: 'hidden',
                 }}
-                title={hasSamePriorityConflict ? `Same priority conflict with: ${samePriorityConflicts.map(c => c.schedule.name).join(', ')}\n\nBoth schedules are exclusive with the same priority.\nNeXroll will randomly pick one during overlapping times.\nSet different priorities to have deterministic behavior.` : sched.name}
+                title={hasSamePriorityConflict ? `Same priority conflict with: ${samePriorityConflicts.map(c => c.schedule.name).join(', ')}\n\nThese schedules share a priority during overlapping times.\nNeXroll's fixed tie-break order selects one.\nSet different priorities to make the intended winner explicit.` : sched.name}
                 >
                   {/* Color dot */}
                   <div style={{
@@ -12850,7 +13060,7 @@ const DashboardTiles = {
                   alignItems: 'center',
                   gap: '6px'
                 }}
-                title={hasSamePriorityConflict ? `Same priority conflict with: ${samePriorityConflicts.map(c => c.schedule.name).join(', ')}\n\nBoth schedules are exclusive with the same priority.\nNeXroll will randomly pick one during overlapping times.\nSet different priorities to have deterministic behavior.` : ''}
+                title={hasSamePriorityConflict ? `Same priority conflict with: ${samePriorityConflicts.map(c => c.schedule.name).join(', ')}\n\nThese schedules share a priority during overlapping times.\nNeXroll's fixed tie-break order selects one.\nSet different priorities to make the intended winner explicit.` : ''}
                 >
                   {hasSamePriorityConflict && <AlertTriangle size={14} style={{ color: '#ff9800', flexShrink: 0 }} />}
                   {sched.exclusive && !hasSamePriorityConflict && <Lock size={14} style={{ color: '#14B8A6', flexShrink: 0 }} />}
@@ -12928,6 +13138,7 @@ const DashboardTiles = {
     // Grid view for month - original implementation with conflict indicators
     const monthIndex = calendarMonth - 1;
     const startOfMonth = new Date(calendarYear, monthIndex, 1);
+    const daysInMonth = new Date(calendarYear, monthIndex + 1, 0).getDate();
     const start = new Date(startOfMonth);
     start.setDate(start.getDate() - start.getDay()); // back to Sunday
 
@@ -13184,7 +13395,7 @@ const DashboardTiles = {
               lineHeight: 1.5
             }}>
               <strong>{totalConflicts} day{totalConflicts !== 1 ? 's' : ''}</strong> have overlapping schedules. 
-              The schedule that ends soonest takes priority. Look for the <Crown size={12} style={{ display: 'inline', verticalAlign: 'middle' }} /> crown icon.{' '}
+              Exclusive schedules win first; two or more blend-enabled schedules blend; otherwise highest priority wins, with end time used only as a tie-breaker. Look for the <Crown size={12} style={{ display: 'inline', verticalAlign: 'middle' }} /> crown icon.{' '}
               Visit the <button type="button" onClick={() => setActiveTab('schedules/conflicts')} style={{ background: 'none', border: 'none', color: '#14B8A6', cursor: 'pointer', textDecoration: 'underline', padding: 0, fontSize: 'inherit', fontWeight: 600 }}>Conflicts</button> tab to review and resolve.
             </p>
             <div style={{ display: 'flex', gap: '0.5rem', fontSize: '0.8rem', alignItems: 'center', flexWrap: 'wrap' }}>
@@ -13209,7 +13420,7 @@ const DashboardTiles = {
               </span>
               <span style={{ flex: 1 }} />
               {(() => {
-                const conflicts = analyzeAllConflicts();
+                const conflicts = analyzeAllConflicts(daysInMonth, startOfMonth);
                 const highCount = conflicts.filter(c => c.severity === 'high').length;
                 const infoCount = conflicts.filter(c => c.severity === 'info').length;
                 const actionableCount = conflicts.length - infoCount;
@@ -13553,7 +13764,7 @@ const DashboardTiles = {
                     // Add same-priority conflict warning to tooltip
                     if (hasSamePriorityConflict) {
                       const conflictNames = [...new Set(samePriorityConflicts.map(c => c.schedule.name))].join(', ');
-                      tooltipText += `\n\nSAME PRIORITY CONFLICT with: ${conflictNames}\nNeXroll will randomly pick one. Set different priorities for deterministic behavior.`;
+                      tooltipText += `\n\nSAME PRIORITY CONFLICT with: ${conflictNames}\nNeXroll's fixed tie-break order selects one. Set different priorities to make the intended winner explicit.`;
                     }
                     
                     if (isExclusive) {
@@ -13927,7 +14138,9 @@ const DashboardTiles = {
         {(() => {
           const totalYearConflicts = counts.reduce((sum, entry) => sum + entry.conflictDays, 0);
           if (totalYearConflicts === 0 || calendarShowConflictsOnly) return null;
-          const conflicts = analyzeAllConflicts();
+          const yearStart = new Date(calendarYear, 0, 1);
+          const daysInYear = Math.round((new Date(calendarYear + 1, 0, 1) - yearStart) / (24 * 60 * 60 * 1000));
+          const conflicts = analyzeAllConflicts(daysInYear, yearStart);
           const highCount = conflicts.filter(c => c.severity === 'high').length;
           const infoCount = conflicts.filter(c => c.severity === 'info').length;
           const actionableCount = conflicts.length - infoCount;
@@ -13945,7 +14158,7 @@ const DashboardTiles = {
               </div>
               <p style={{ margin: '0 0 0.75rem 0', fontSize: '0.85rem', color: 'var(--text-secondary)', lineHeight: 1.5 }}>
                 <strong>{totalYearConflicts} day{totalYearConflicts !== 1 ? 's' : ''}</strong> across {calendarYear} have overlapping schedules.
-                The schedule that ends soonest takes priority. Look for the <Crown size={12} style={{ display: 'inline', verticalAlign: 'middle' }} /> crown icon.{' '}
+                Exclusive schedules win first; two or more blend-enabled schedules blend; otherwise highest priority wins, with end time used only as a tie-breaker. Look for the <Crown size={12} style={{ display: 'inline', verticalAlign: 'middle' }} /> crown icon.{' '}
                 Visit the <button type="button" onClick={() => setActiveTab('schedules/conflicts')} style={{ background: 'none', border: 'none', color: '#14B8A6', cursor: 'pointer', textDecoration: 'underline', padding: 0, fontSize: 'inherit', fontWeight: 600 }}>Conflicts</button> tab to review and resolve.
               </p>
               <div style={{ display: 'flex', gap: '0.5rem', fontSize: '0.8rem', alignItems: 'center', flexWrap: 'wrap' }}>
@@ -14220,12 +14433,11 @@ const DashboardTiles = {
         </div>
 
         {/* Quick Start: Browse Holidays */}
-        <div
-          onClick={() => {
-            openHolidayBrowser();
-          }}
+        <button
+          type="button"
+          onClick={openHolidayBrowser}
           className="nx-conn-hint"
-          style={{ cursor: 'pointer', marginTop: 0, marginBottom: '1rem', alignItems: 'center', justifyContent: 'space-between' }}
+          style={{ cursor: 'pointer', marginTop: 0, marginBottom: '1rem', alignItems: 'center', justifyContent: 'space-between', width: '100%', font: 'inherit', textAlign: 'left', color: 'inherit' }}
         >
           <span style={{ display: 'flex', alignItems: 'center', gap: '0.6rem' }}>
             <Globe size={18} className="nx-conn-hint-icon" />
@@ -14234,7 +14446,7 @@ const DashboardTiles = {
           <span style={{ display: 'inline-flex', alignItems: 'center', gap: '0.25rem', color: 'var(--button-bg)', fontWeight: 600 }}>
             Browse <ChevronRight size={15} />
           </span>
-        </div>
+        </button>
 
         <form onSubmit={handleCreateSchedule}>
           {/* Section 1: Mode */}
@@ -15085,7 +15297,7 @@ const DashboardTiles = {
                   </div>
                   <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', margin: '0.5rem 0 0 0' }}>
                     {savedSequences.length === 0 ? (
-                      <>No saved sequences. Go to <a href="#" onClick={(e) => { e.preventDefault(); setActiveTab('schedules/builder'); }} style={{ color: 'var(--button-bg)', textDecoration: 'underline' }}>Sequence Builder</a> to create one.</>
+                      <>No saved sequences. Go to <button type="button" onClick={() => setActiveTab('schedules/builder')} style={{ color: 'var(--button-bg)', textDecoration: 'underline', background: 'none', border: 0, padding: 0, font: 'inherit', cursor: 'pointer' }}>Sequence Builder</button> to create one.</>
                     ) : (
                       `Select a sequence from your library or build a custom one below. Current: ${sequenceBlocks.length} blocks`
                     )}
@@ -15099,7 +15311,12 @@ const DashboardTiles = {
                   prerolls={prerolls}
                   scheduleId={null}
                   apiUrl={apiUrl}
-                  onBlocksChange={setSequenceBlocks}
+                  onBlocksChange={(blocks) => {
+                    setSequenceBlocks(blocks);
+                    // This schedule is now a customized copy. Keeping the
+                    // library link would let a later library edit overwrite it.
+                    setLoadedSavedSequenceId(null);
+                  }}
                   hideNameSection={loadedSavedSequenceId !== null}
                   onSave={(name, description) => {
                     console.log('Sequence info:', name, description);
@@ -15280,6 +15497,7 @@ const DashboardTiles = {
                 });
                 setScheduleMode('simple');
                 setSequenceBlocks([]);
+                setLoadedSavedSequenceId(null);
                 setWeekDays([]);
                 setSelectedMonths([]); setMonthDays([]);
                 setTimeRange({ start: '', end: '' });
@@ -15597,6 +15815,7 @@ const DashboardTiles = {
             if (schedule.recurrence_pattern) {
               try {
                 const pattern = JSON.parse(schedule.recurrence_pattern);
+                const recurrenceParts = [];
                 if (pattern.timeRange) {
                   const formatTime = (time) => {
                     if (!time) return '';
@@ -15607,23 +15826,23 @@ const DashboardTiles = {
                     return `${displayHour}:${minutes} ${ampm}`;
                   };
                   if (pattern.timeRange.start && pattern.timeRange.end) {
-                    recurrenceText = `Time: ${formatTime(pattern.timeRange.start)} - ${formatTime(pattern.timeRange.end)}`;
+                    recurrenceParts.push(`Time: ${formatTime(pattern.timeRange.start)} - ${formatTime(pattern.timeRange.end)}`);
                   } else if (pattern.timeRange.start) {
-                    recurrenceText = `Time: ${formatTime(pattern.timeRange.start)}`;
+                    recurrenceParts.push(`Time: ${formatTime(pattern.timeRange.start)}`);
                   }
                 }
                 if (pattern.weekDays && pattern.weekDays.length > 0) {
                   const days = pattern.weekDays.map(d => d.charAt(0).toUpperCase() + d.slice(1, 3)).join(', ');
-                  recurrenceText = `Repeats: ${days}`;
+                  recurrenceParts.push(`Repeats: ${days}`);
                 }
                 if (pattern.months && pattern.months.length > 0) {
                   const monthNames = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
-                  recurrenceText = `Months: ${pattern.months.map(m => monthNames[m - 1]).join(', ')}`;
+                  recurrenceParts.push(`Months: ${pattern.months.map(m => monthNames[m - 1]).join(', ')}`);
                 }
                 if (pattern.monthDays && pattern.monthDays.length > 0) {
-                  const dayStr = `Days: ${pattern.monthDays.join(', ')}`;
-                  recurrenceText = recurrenceText ? `${recurrenceText} · ${dayStr}` : dayStr;
+                  recurrenceParts.push(`Days: ${pattern.monthDays.join(', ')}`);
                 }
+                recurrenceText = recurrenceParts.join(' · ');
               } catch (e) {
                 recurrenceText = '';
               }
@@ -15734,7 +15953,7 @@ const DashboardTiles = {
                                   gap: '0.25rem',
                                   cursor: 'help'
                                 }}
-                                title={`Conflict with: ${conflicts.map(c => c.schedule.name).join(', ')}\n\nBoth schedules have the same priority (${schedule.priority || 5}) and are exclusive. NeXroll will randomly choose one during overlap.\n\nFix: Set different priorities for these schedules.`}
+                                title={`Conflict with: ${conflicts.map(c => c.schedule.name).join(', ')}\n\nThese schedules share priority ${schedule.priority || 5} during an overlapping window. NeXroll's fixed tie-break order selects one.\n\nSet different priorities to make the intended winner explicit.`}
                               >
                                 <AlertTriangle size={12} /> Conflict
                               </span>
@@ -15990,7 +16209,7 @@ const DashboardTiles = {
                               gap: '0.25rem',
                               cursor: 'help'
                             }}
-                            title={`Conflict with: ${conflicts.map(c => c.schedule.name).join(', ')}\n\nBoth schedules have the same priority (${schedule.priority || 5}) and are exclusive. NeXroll will randomly choose one during overlap.\n\nFix: Set different priorities for these schedules.`}
+                            title={`Conflict with: ${conflicts.map(c => c.schedule.name).join(', ')}\n\nThese schedules share priority ${schedule.priority || 5} during an overlapping window. NeXroll's fixed tie-break order selects one.\n\nSet different priorities to make the intended winner explicit.`}
                           >
                             <AlertTriangle size={14} /> Conflict ({conflicts.length})
                           </span>
@@ -21421,6 +21640,7 @@ const DashboardTiles = {
                     key={movie.radarr_id}
                     style={{
                       display: 'flex',
+                      flexWrap: 'wrap',
                       gap: '1rem',
                       padding: '1rem',
                       backgroundColor: movie.excluded_from_list ? 'rgba(220, 53, 69, 0.1)' : 'var(--bg-color)',
@@ -23183,6 +23403,9 @@ const DashboardTiles = {
               onClick={() => setYoutubeSetup(prev => ({ ...prev, showWizard: false }))}
             >
               <div 
+                role="dialog"
+                aria-modal="true"
+                aria-labelledby="youtube-setup-title"
                 style={{ 
                   maxWidth: '550px',
                   width: '90%',
@@ -23202,7 +23425,7 @@ const DashboardTiles = {
                   justifyContent: 'space-between',
                   alignItems: 'center'
                 }}>
-                  <h2 style={{ margin: 0, fontSize: '1.5rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                  <h2 id="youtube-setup-title" style={{ margin: 0, fontSize: '1.5rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
                     <Youtube size={28} /> YouTube Setup Wizard
                   </h2>
                   <button 
@@ -23263,15 +23486,19 @@ const DashboardTiles = {
                       {/* Method Selection Cards */}
                       <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem', marginBottom: '1.5rem' }}>
                         {/* Browser Cookies Method - Recommended */}
-                        <div 
+                        <button
+                          type="button"
                           onClick={() => setYoutubeSetup(prev => ({ ...prev, authMethod: 'browser' }))}
                           style={{ 
+                            width: '100%',
                             padding: '1rem', 
                             backgroundColor: youtubeSetup.authMethod === 'browser' ? 'rgba(40, 167, 69, 0.2)' : 'var(--bg-color)', 
                             borderRadius: '8px',
                             border: youtubeSetup.authMethod === 'browser' ? '2px solid #28a745' : '2px solid var(--border-color)',
                             cursor: 'pointer',
                             textAlign: 'left',
+                            color: 'inherit',
+                            font: 'inherit',
                             transition: 'all 0.2s'
                           }}
                         >
@@ -23290,18 +23517,22 @@ const DashboardTiles = {
                             Sign in to YouTube in your browser, then we'll extract the cookies automatically.
                             Requires closing the browser briefly during extraction.
                           </p>
-                        </div>
+                        </button>
                         
                         {/* Manual Upload Method */}
-                        <div 
+                        <button
+                          type="button"
                           onClick={() => setYoutubeSetup(prev => ({ ...prev, authMethod: 'cookies' }))}
                           style={{ 
+                            width: '100%',
                             padding: '1rem', 
                             backgroundColor: youtubeSetup.authMethod === 'cookies' ? 'rgba(23, 162, 184, 0.2)' : 'var(--bg-color)', 
                             borderRadius: '8px',
                             border: youtubeSetup.authMethod === 'cookies' ? '2px solid #17a2b8' : '2px solid var(--border-color)',
                             cursor: 'pointer',
                             textAlign: 'left',
+                            color: 'inherit',
+                            font: 'inherit',
                             transition: 'all 0.2s'
                           }}
                         >
@@ -23317,7 +23548,7 @@ const DashboardTiles = {
                           <p style={{ margin: '0.5rem 0 0 0', fontSize: '0.85rem', color: '#6c757d', fontStyle: 'italic' }}>
                             Tip: Use an Incognito/Private browser window when logging into YouTube and exporting cookies for best results.
                           </p>
-                        </div>
+                        </button>
                       </div>
                       
                       {youtubeSetup.testResult && !youtubeSetup.testResult.success && (
@@ -26857,6 +27088,9 @@ const DashboardTiles = {
         >
           <div 
             className="card"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="new-api-key-title"
             style={{ 
               maxWidth: '500px', 
               width: '90%',
@@ -26874,7 +27108,7 @@ const DashboardTiles = {
                 <Key size={20} />
               </div>
               <div>
-                <h2 style={{ margin: 0, fontSize: '1.2rem' }}>Create New API Key</h2>
+                <h2 id="new-api-key-title" style={{ margin: 0, fontSize: '1.2rem' }}>Create New API Key</h2>
                 <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>
                   Grant external tools access to NeXroll
                 </div>
@@ -27800,6 +28034,9 @@ const DashboardTiles = {
         >
           <div 
             className="card"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="create-user-title"
             style={{ 
               maxWidth: '450px', 
               width: '90%',
@@ -27817,7 +28054,7 @@ const DashboardTiles = {
                 <UserPlus size={20} />
               </div>
               <div>
-                <h2 style={{ margin: 0, fontSize: '1.2rem' }}>Create New User</h2>
+                <h2 id="create-user-title" style={{ margin: 0, fontSize: '1.2rem' }}>Create New User</h2>
                 <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>
                   Add a login for someone else to manage NeXroll
                 </div>
@@ -27935,6 +28172,9 @@ const DashboardTiles = {
         >
           <div 
             className="card"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="change-password-title"
             style={{ 
               maxWidth: '450px', 
               width: '90%',
@@ -27943,7 +28183,7 @@ const DashboardTiles = {
             }}
             onClick={(e) => e.stopPropagation()}
           >
-            <h2 style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+            <h2 id="change-password-title" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
               <Lock size={20} /> Change Password
             </h2>
             <p style={{ color: 'var(--text-secondary)', fontSize: '0.9rem', margin: '0 0 1rem 0' }}>
@@ -28859,8 +29099,15 @@ const DashboardTiles = {
         style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000, padding: '1rem' }}
         onClick={() => { if (!factoryReset.busy) setFactoryReset(prev => ({ ...prev, open: false })); }}
       >
-        <div className="card" style={{ maxWidth: '520px', width: '100%', border: '1px solid rgba(239,68,68,0.5)', margin: 0 }} onClick={e => e.stopPropagation()}>
-          <h3 style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', color: '#ef4444', marginTop: 0 }}>
+        <div
+          className="card"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="factory-reset-title"
+          style={{ maxWidth: '520px', width: '100%', maxHeight: '90vh', overflowY: 'auto', border: '1px solid rgba(239,68,68,0.5)', margin: 0 }}
+          onClick={e => e.stopPropagation()}
+        >
+          <h3 id="factory-reset-title" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', color: '#ef4444', marginTop: 0 }}>
             <AlertTriangle size={18} /> Factory Reset
           </h3>
           <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', margin: '0 0 0.5rem' }}>
@@ -30154,7 +30401,7 @@ const DashboardTiles = {
     }
   };
 
-  const saveSequence = async (name, description) => {
+  const saveSequence = async (name, description, { preserveBuilder = false, forceCreate = false } = {}) => {
     try {
       // Clean the blocks data before sending to ensure it's properly serializable
       // Validate we have blocks to save
@@ -30188,8 +30435,9 @@ const DashboardTiles = {
         return cleaned;
       });
       
-      // Determine if we're updating an existing sequence or creating a new one
-      const isUpdating = editingSequenceId !== null;
+      // Schedule creation must never overwrite the sequence that happened to
+      // be open previously in the library builder.
+      const isUpdating = !forceCreate && editingSequenceId !== null;
       const method = isUpdating ? 'PUT' : 'POST';
       const url = isUpdating ? `sequences/${editingSequenceId}` : 'sequences';
       
@@ -30235,16 +30483,18 @@ const DashboardTiles = {
       const savedSeq = await response.json();
       showAlert(`Sequence "${name}" ${isUpdating ? 'updated' : 'saved'} successfully!`, 'success');
       
-      // Clear ALL editing state after successful save/update
-      setSequenceBlocks([]);
-      setEditingSequenceId(null);
-      setEditingSequenceName('');
-      setEditingSequenceDescription('');
+      // Schedule creation still needs these blocks for the schedule request that follows.
+      if (!preserveBuilder) {
+        setSequenceBlocks([]);
+        setEditingSequenceId(null);
+        setEditingSequenceName('');
+        setEditingSequenceDescription('');
+      }
       
       loadSavedSequences(); // Reload list
       
-      // Navigate back to library to show the updated list
-      setActiveTab('schedules/library');
+      // Direct saves return to the library; internal schedule saves stay on the form.
+      if (!preserveBuilder) setActiveTab('schedules/library');
       
       return savedSeq;
     } catch (error) {
@@ -30346,6 +30596,11 @@ const DashboardTiles = {
     if (activeTab !== 'schedules/create') {
       setLoadedSavedSequenceId(null);
     }
+    if (activeTab !== 'schedules/builder') {
+      setEditingSequenceId(null);
+      setEditingSequenceName('');
+      setEditingSequenceDescription('');
+    }
   }, [activeTab]);
 
   // Render function for My Sequences (Library) page
@@ -30383,7 +30638,6 @@ const DashboardTiles = {
             {/* Export All Button */}
             {savedSequences.length > 0 && (
               <button 
-                className="button"
                 onClick={() => {
                   // Build a map of preroll IDs to their info for quick lookup
                   const prerollMap = {};
@@ -32844,9 +33098,15 @@ const DashboardTiles = {
          display: 'flex',
          alignItems: 'center',
          justifyContent: 'center',
-         zIndex: 1000
-       }}>
-         <div style={{
+         zIndex: 1000,
+         padding: '1rem'
+       }} onClick={(event) => { if (event.target === event.currentTarget) setShowNexupSequenceWizard(false); }}>
+         <div
+           role="dialog"
+           aria-modal="true"
+           aria-labelledby="nexup-sequence-wizard-title"
+           onClick={(event) => event.stopPropagation()}
+           style={{
            backgroundColor: 'var(--card-bg)',
            borderRadius: '16px',
            padding: '2rem',
@@ -32857,7 +33117,7 @@ const DashboardTiles = {
            border: '1px solid var(--border-color)'
          }}>
            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem' }}>
-             <h2 style={{ margin: 0, color: 'var(--text-color)', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+             <h2 id="nexup-sequence-wizard-title" style={{ margin: 0, color: 'var(--text-color)', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
                <Clapperboard size={24} /> Create NeX-Up Sequence
              </h2>
              <button
@@ -32923,12 +33183,24 @@ const DashboardTiles = {
                    {nexupSequencePresets.map(preset => (
                      <div
                        key={preset.id}
+                       role="button"
+                       tabIndex={preset.has_requirements ? 0 : -1}
+                       aria-disabled={!preset.has_requirements}
                        onClick={() => preset.has_requirements && setNexupSequenceWizard(prev => ({ 
                          ...prev, 
                          selectedPreset: preset.id,
                          // Auto-set includePreroll based on preset type
                          includePreroll: preset.id !== 'movie_trailers_only' && preset.id !== 'tv_trailers_only'
                        }))}
+                       onKeyDown={(event) => {
+                         if (!preset.has_requirements || (event.key !== 'Enter' && event.key !== ' ')) return;
+                         event.preventDefault();
+                         setNexupSequenceWizard(prev => ({
+                           ...prev,
+                           selectedPreset: preset.id,
+                           includePreroll: preset.id !== 'movie_trailers_only' && preset.id !== 'tv_trailers_only'
+                         }));
+                       }}
                        style={{
                          padding: '1.25rem',
                          borderRadius: '12px',
@@ -34067,16 +34339,24 @@ const DashboardTiles = {
          display: 'flex',
          alignItems: 'center',
          justifyContent: 'center',
-         zIndex: 9999
-       }}>
-         <div style={{
+         zIndex: 9999,
+         padding: '1rem'
+       }} onClick={() => setPreviewingPreroll(null)}>
+         <div
+           role="dialog"
+           aria-modal="true"
+           aria-label={`Preview ${previewingPreroll.display_name || previewingPreroll.filename}`}
+           onClick={(event) => event.stopPropagation()}
+           style={{
            backgroundColor: 'var(--card-bg)',
            color: 'var(--text-color)',
            padding: '20px',
            borderRadius: '12px',
            border: '1px solid var(--border-color)',
-           maxWidth: '80%',
-           maxHeight: '80%'
+           width: '100%',
+           maxWidth: '900px',
+           maxHeight: '85vh',
+           overflowY: 'auto'
          }}>
            <h3>Preview: {previewingPreroll.display_name || previewingPreroll.filename}</h3>
            <button onClick={() => setPreviewingPreroll(null)} style={{ float: 'right', background: 'none', border: 'none', color: 'inherit', cursor: 'pointer', display: 'inline-flex' }} aria-label="Close"><X size={18} /></button>
@@ -34119,7 +34399,11 @@ const DashboardTiles = {
          display: 'flex', alignItems: 'center', justifyContent: 'center',
          zIndex: 9999
        }} onClick={() => setCurrentPrerollPreview(null)}>
-         <div style={{
+         <div
+           role="dialog"
+           aria-modal="true"
+           aria-label="Current preroll preview"
+           style={{
            backgroundColor: 'var(--card-bg, #1a1a2e)',
            padding: '1.25rem',
            borderRadius: '12px',
@@ -34257,13 +34541,17 @@ const DashboardTiles = {
          onClick={() => setCommunityPreviewingPreroll(null)}
        >
          <div 
+           role="dialog"
+           aria-modal="true"
+           aria-label={`Preview ${communityPreviewingPreroll.title}`}
            style={{
              backgroundColor: 'var(--card-bg)',
              padding: '20px',
              borderRadius: '8px',
              maxWidth: '90%',
              maxHeight: '90%',
-             position: 'relative'
+             position: 'relative',
+             overflowY: 'auto'
            }}
            onClick={(e) => e.stopPropagation()}
          >
@@ -34277,6 +34565,8 @@ const DashboardTiles = {
                {communityPreviewingPreroll.title}
              </h3>
              <button 
+               type="button"
+               aria-label="Close preview"
                onClick={() => setCommunityPreviewingPreroll(null)}
                style={{
                  background: 'transparent',
@@ -34350,6 +34640,9 @@ const DashboardTiles = {
          onClick={() => setPreviewingDynamicPreroll(null)}
        >
          <div 
+           role="dialog"
+           aria-modal="true"
+           aria-label="Dynamic preroll preview"
            style={{
              backgroundColor: 'var(--card-bg)',
              padding: '20px',
@@ -34357,7 +34650,8 @@ const DashboardTiles = {
              maxWidth: '90%',
              maxHeight: '90%',
              position: 'relative',
-             border: '1px solid rgba(255,255,255,0.1)'
+             border: '1px solid rgba(255,255,255,0.1)',
+             overflowY: 'auto'
            }}
            onClick={(e) => e.stopPropagation()}
          >
@@ -34376,6 +34670,8 @@ const DashboardTiles = {
                })()}
              </h3>
              <button 
+               type="button"
+               aria-label="Close preview"
                onClick={() => setPreviewingDynamicPreroll(null)}
                style={{
                  background: 'transparent',
@@ -34449,6 +34745,9 @@ const DashboardTiles = {
          onClick={() => setPreviewingComingSoonList(null)}
        >
          <div 
+           role="dialog"
+           aria-modal="true"
+           aria-label="Coming Soon list preview"
            style={{
              backgroundColor: 'var(--card-bg)',
              padding: '20px',
@@ -34456,7 +34755,8 @@ const DashboardTiles = {
              maxWidth: '90%',
              maxHeight: '90%',
              position: 'relative',
-             border: '1px solid rgba(255,255,255,0.1)'
+             border: '1px solid rgba(255,255,255,0.1)',
+             overflowY: 'auto'
            }}
            onClick={(e) => e.stopPropagation()}
          >
@@ -34471,6 +34771,8 @@ const DashboardTiles = {
                Coming Soon List - {previewingComingSoonList?.filename?.includes('grid') ? 'Grid Layout' : 'List Layout'}
              </h3>
              <button 
+               type="button"
+               aria-label="Close preview"
                onClick={() => setPreviewingComingSoonList(null)}
                style={{
                  background: 'transparent',
@@ -34541,6 +34843,9 @@ const DashboardTiles = {
          onClick={() => setPlayingTrailer(null)}
        >
          <div 
+           role="dialog"
+           aria-modal="true"
+           aria-label={`Trailer preview for ${playingTrailer.trailer?.title || 'selected title'}`}
            style={{
              backgroundColor: 'var(--card-bg)',
              padding: '20px',
@@ -34549,7 +34854,8 @@ const DashboardTiles = {
              maxHeight: '90%',
              width: '900px',
              position: 'relative',
-             border: '1px solid rgba(255,255,255,0.1)'
+             border: '1px solid rgba(255,255,255,0.1)',
+             overflowY: 'auto'
            }}
            onClick={(e) => e.stopPropagation()}
          >
@@ -34568,6 +34874,8 @@ const DashboardTiles = {
                {playingTrailer.trailer?.title}
              </h3>
              <button 
+               type="button"
+               aria-label="Close trailer preview"
                onClick={() => setPlayingTrailer(null)}
                style={{
                  background: 'transparent',
@@ -34709,6 +35017,7 @@ const DashboardTiles = {
             });
             setScheduleMode('simple');
             setSequenceBlocks([]);
+            setLoadedSavedSequenceId(null);
             setWeekDays([]);
             setSelectedMonths([]); setMonthDays([]);
             setTimeRange({ start: '', end: '' });
@@ -35279,7 +35588,12 @@ const DashboardTiles = {
                 <div className="nx-field nx-span-2" style={{ marginTop: '1rem' }}>
                   <SequenceBuilder
                     blocks={sequenceBlocks}
-                    onBlocksChange={setSequenceBlocks}
+                    onBlocksChange={(blocks) => {
+                      setSequenceBlocks(blocks);
+                      // Editing embedded blocks intentionally detaches this
+                      // schedule from its reusable source sequence.
+                      setLoadedSavedSequenceId(null);
+                    }}
                     categories={categories}
                     prerolls={prerolls}
                     scheduleId={editingSchedule?.id || null}
@@ -35288,6 +35602,7 @@ const DashboardTiles = {
                     initialName={scheduleForm.name || ''}
                     onSave={(blocks) => {
                       setSequenceBlocks(blocks);
+                      setLoadedSavedSequenceId(null);
                       console.log('Sequence updated:', blocks);
                     }}
                     onCancel={() => {
@@ -35343,6 +35658,7 @@ const DashboardTiles = {
                   });
                   setScheduleMode('simple');
                   setSequenceBlocks([]);
+                  setLoadedSavedSequenceId(null);
                   setWeekDays([]);
                   setSelectedMonths([]); setMonthDays([]);
                   setTimeRange({ start: '', end: '' });
@@ -35357,7 +35673,7 @@ const DashboardTiles = {
 
       {/* Holiday Browser Modal */}
       {showHolidayBrowser && (
-        <div style={{
+        <div className="nx-modal-overlay" style={{
           position: 'fixed',
           top: 0,
           left: 0,
@@ -35368,19 +35684,26 @@ const DashboardTiles = {
           alignItems: 'center',
           justifyContent: 'center',
           zIndex: 10000
-        }} onClick={(e) => { if (e.target === e.currentTarget) setShowHolidayBrowser(false); }}>
-          <div style={{
-            backgroundColor: 'var(--card-bg)',
-            borderRadius: '12px',
-            width: '90%',
-            maxWidth: '1200px',
-            maxHeight: '90vh',
-            overflow: 'hidden',
-            display: 'flex',
-            flexDirection: 'column',
-            boxShadow: '0 10px 40px rgba(0, 0, 0, 0.3)',
-            border: '1px solid var(--border-color)'
-          }}>
+        }}
+          onClick={(e) => { if (e.target === e.currentTarget) setShowHolidayBrowser(false); }}
+        >
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="holiday-browser-title"
+            style={{
+              backgroundColor: 'var(--card-bg)',
+              borderRadius: '12px',
+              width: '90%',
+              maxWidth: '1200px',
+              maxHeight: '90vh',
+              overflow: 'hidden',
+              display: 'flex',
+              flexDirection: 'column',
+              boxShadow: '0 10px 40px rgba(0, 0, 0, 0.3)',
+              border: '1px solid var(--border-color)'
+            }}
+          >
             {/* Modal Header - NeXroll Style */}
             <div style={{
               padding: '1.25rem 1.5rem',
@@ -35393,7 +35716,7 @@ const DashboardTiles = {
               <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
                 <Globe size={24} style={{ color: '#3b82f6' }} />
                 <div>
-                  <h2 style={{ margin: 0, color: 'var(--text-color)', fontSize: '1.25rem', fontWeight: 700 }}>
+                  <h2 id="holiday-browser-title" style={{ margin: 0, color: 'var(--text-color)', fontSize: '1.25rem', fontWeight: 700 }}>
                     Holiday Browser
                   </h2>
                   <p style={{ margin: '0.15rem 0 0 0', color: 'var(--text-secondary)', fontSize: '0.8rem' }}>
@@ -35439,7 +35762,7 @@ const DashboardTiles = {
 
             {/* Controls Bar */}
             <div style={{
-              padding: '1rem 2rem',
+              padding: '1rem clamp(0.75rem, 4vw, 2rem)',
               borderBottom: '1px solid var(--border-color)',
               display: 'flex',
               gap: '1rem',
@@ -35498,6 +35821,7 @@ const DashboardTiles = {
                   placeholder="Search holidays..."
                   value={holidaySearchQuery}
                   onChange={(e) => setHolidaySearchQuery(e.target.value)}
+                  autoFocus
                   className="nx-input"
                   style={{ padding: '0.5rem 1rem' }}
                 />
@@ -35508,7 +35832,7 @@ const DashboardTiles = {
             <div style={{
               flex: 1,
               overflow: 'auto',
-              padding: '1.5rem 2rem'
+              padding: '1.5rem clamp(0.75rem, 4vw, 2rem)'
             }}>
               {holidaysLoading ? (
                 <div style={{ textAlign: 'center', padding: '3rem', color: 'var(--text-secondary)' }}>
@@ -35521,7 +35845,7 @@ const DashboardTiles = {
                   <p>No holidays found for this country/year</p>
                 </div>
               ) : (
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(320px, 1fr))', gap: '1rem' }}>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(min(100%, 320px), 1fr))', gap: '1rem' }}>
                   {holidays
                     .filter(h => {
                       if (!holidaySearchQuery) return true;
@@ -35530,7 +35854,9 @@ const DashboardTiles = {
                     })
                     .map((holiday, idx) => {
                       const holidayDate = new Date(holiday.date + 'T00:00:00');
-                      const isPast = holidayDate < new Date();
+                      const now = new Date();
+                      const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+                      const isPast = holidayDate < today;
                       const isPublic = holiday.types?.includes('Public');
                       
                       return (
@@ -35662,6 +35988,9 @@ const DashboardTiles = {
         <div className="nx-modal-overlay" onClick={() => setShowNexupUpcoming(false)}>
           <div 
             className="nx-modal" 
+            role="dialog"
+            aria-modal="true"
+            aria-label="Upcoming movies from Radarr"
             onClick={(e) => e.stopPropagation()}
             style={{ maxWidth: '900px', maxHeight: '85vh' }}
           >
@@ -35699,6 +36028,7 @@ const DashboardTiles = {
                     key={movie.radarr_id}
                     style={{
                       display: 'flex',
+                      flexWrap: 'wrap',
                       gap: '1rem',
                       padding: '1rem',
                       backgroundColor: 'var(--card-bg)',
@@ -35812,6 +36142,9 @@ const DashboardTiles = {
         <div className="nx-modal-overlay" onClick={() => setShowNexupTrailers(false)}>
           <div 
             className="nx-modal" 
+            role="dialog"
+            aria-modal="true"
+            aria-label="Downloaded trailers"
             onClick={(e) => e.stopPropagation()}
             style={{ maxWidth: '900px', maxHeight: '85vh' }}
           >
@@ -35849,6 +36182,7 @@ const DashboardTiles = {
                     key={trailer.id}
                     style={{
                       display: 'flex',
+                      flexWrap: 'wrap',
                       gap: '1rem',
                       padding: '1rem',
                       backgroundColor: 'var(--card-bg)',
@@ -35917,6 +36251,9 @@ const DashboardTiles = {
         <div className="nx-modal-overlay" onClick={() => setShowNexupUpcomingTV(false)}>
           <div 
             className="nx-modal" 
+            role="dialog"
+            aria-modal="true"
+            aria-label="Upcoming TV shows from Sonarr"
             onClick={(e) => e.stopPropagation()}
             style={{ maxWidth: '900px', maxHeight: '85vh' }}
           >
@@ -35954,6 +36291,7 @@ const DashboardTiles = {
                     key={`${show.sonarr_series_id || idx}_${show.season_number || 0}`}
                     style={{
                       display: 'flex',
+                      flexWrap: 'wrap',
                       gap: '1rem',
                       padding: '1rem',
                       backgroundColor: 'var(--card-bg)',
@@ -36077,6 +36415,9 @@ const DashboardTiles = {
         <div className="nx-modal-overlay" onClick={() => setShowNexupTVTrailers(false)}>
           <div 
             className="nx-modal" 
+            role="dialog"
+            aria-modal="true"
+            aria-label="Downloaded TV trailers"
             onClick={(e) => e.stopPropagation()}
             style={{ maxWidth: '900px', maxHeight: '85vh' }}
           >
@@ -36114,6 +36455,7 @@ const DashboardTiles = {
                     key={trailer.id}
                     style={{
                       display: 'flex',
+                      flexWrap: 'wrap',
                       gap: '1rem',
                       padding: '1rem',
                       backgroundColor: 'var(--card-bg)',
@@ -36185,17 +36527,22 @@ const DashboardTiles = {
 
       {/* Manual Trailer Addition Modal */}
       {showManualTrailerModal && (
-        <div className="nx-modal-overlay" onClick={() => setShowManualTrailerModal(false)}>
+        <div className="nx-modal-overlay" onClick={() => { if (!nexupLoading) setShowManualTrailerModal(false); }}>
           <div 
             className="nx-modal" 
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="manual-trailer-title"
             onClick={(e) => e.stopPropagation()}
             style={{ maxWidth: '600px' }}
           >
             <div className="nx-modal-header">
-              <h2 className="nx-modal-title">Add Trailer Manually</h2>
+              <h2 id="manual-trailer-title" className="nx-modal-title">Add Trailer Manually</h2>
               <button 
                 onClick={() => setShowManualTrailerModal(false)}
                 className="nx-modal-close"
+                type="button"
+                disabled={nexupLoading}
                 aria-label="Close"
               >
                 <X size={18} />
@@ -36287,6 +36634,7 @@ const DashboardTiles = {
                   type="button"
                   onClick={() => setShowManualTrailerModal(false)}
                   className="button button-secondary"
+                  disabled={nexupLoading}
                 >
                   Cancel
                 </button>
@@ -36307,29 +36655,39 @@ const DashboardTiles = {
       {/* Custom Confirm Dialog */}
       {confirmDialog.open && (
         <div className="nx-dialog-overlay" onClick={() => handleConfirmDialogClose(false)}>
-          <div className="nx-dialog" onClick={(e) => e.stopPropagation()}>
+          <div
+            className="nx-dialog"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="nx-confirm-dialog-title"
+            aria-describedby="nx-confirm-dialog-message"
+            onClick={(e) => e.stopPropagation()}
+          >
             <div className="nx-dialog-header">
               <div className={`nx-dialog-icon ${confirmDialog.type}`}>
                 {confirmDialog.type === 'danger' ? <AlertTriangle size={22} /> :
                  confirmDialog.type === 'warning' ? <AlertTriangle size={22} /> :
                  <Info size={22} />}
               </div>
-              <h3 className="nx-dialog-title">{confirmDialog.title}</h3>
+              <h3 id="nx-confirm-dialog-title" className="nx-dialog-title">{confirmDialog.title}</h3>
             </div>
             <div className="nx-dialog-body">
-              <p className="nx-dialog-message">{confirmDialog.message}</p>
+              <p id="nx-confirm-dialog-message" className="nx-dialog-message">{confirmDialog.message}</p>
             </div>
             <div className="nx-dialog-footer">
               <button 
+                ref={confirmCancelRef}
+                type="button"
                 className="nx-dialog-btn cancel" 
                 onClick={() => handleConfirmDialogClose(false)}
+                autoFocus
               >
                 {confirmDialog.cancelText}
               </button>
               <button 
+                type="button"
                 className={`nx-dialog-btn confirm ${confirmDialog.type}`}
                 onClick={() => handleConfirmDialogClose(true)}
-                autoFocus
               >
                 {confirmDialog.confirmText}
               </button>
@@ -36343,15 +36701,20 @@ const DashboardTiles = {
         <div className="nx-modal-overlay" onClick={() => setShowFolderBrowser(false)}>
           <div 
             className="nx-modal" 
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="folder-browser-title"
             onClick={(e) => e.stopPropagation()}
             style={{ maxWidth: '600px', maxHeight: '80vh', display: 'flex', flexDirection: 'column' }}
           >
             <div className="nx-modal-header" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '1rem', borderBottom: '1px solid var(--border-color)' }}>
-              <h3 style={{ margin: 0, display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+              <h3 id="folder-browser-title" style={{ margin: 0, display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
                 <FolderOpen size={20} /> Browse Folders
               </h3>
               <button 
                 onClick={() => setShowFolderBrowser(false)} 
+                type="button"
+                aria-label="Close folder browser"
                 style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-color)' }}
               >
                 <X size={20} />
@@ -36486,7 +36849,14 @@ const DashboardTiles = {
       {/* Custom Alert Dialog */}
       {alertDialog.open && (
         <div className="nx-dialog-overlay" onClick={handleAlertDialogClose}>
-          <div className="nx-dialog" onClick={(e) => e.stopPropagation()}>
+          <div
+            className="nx-dialog"
+            role="alertdialog"
+            aria-modal="true"
+            aria-labelledby="nx-alert-dialog-title"
+            aria-describedby="nx-alert-dialog-message"
+            onClick={(e) => e.stopPropagation()}
+          >
             <div className="nx-dialog-header">
               <div className={`nx-dialog-icon ${alertDialog.type}`}>
                 {alertDialog.type === 'error' ? <XCircle size={22} /> :
@@ -36494,13 +36864,15 @@ const DashboardTiles = {
                  alertDialog.type === 'warning' ? <AlertTriangle size={22} /> :
                  <Info size={22} />}
               </div>
-              <h3 className="nx-dialog-title">{alertDialog.title}</h3>
+              <h3 id="nx-alert-dialog-title" className="nx-dialog-title">{alertDialog.title}</h3>
             </div>
             <div className="nx-dialog-body">
-              <p className="nx-dialog-message">{alertDialog.message}</p>
+              <p id="nx-alert-dialog-message" className="nx-dialog-message">{alertDialog.message}</p>
             </div>
             <div className="nx-dialog-footer">
               <button 
+                ref={alertOkRef}
+                type="button"
                 className="nx-dialog-btn ok"
                 onClick={handleAlertDialogClose}
                 autoFocus
@@ -36519,14 +36891,20 @@ const DashboardTiles = {
     {altTrailers.open && (
       <div
         style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.7)', zIndex: 10000, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '1rem' }}
-        onClick={(e) => { if (e.target === e.currentTarget) closeAltTrailers(); }}
+        onClick={(e) => { if (e.target === e.currentTarget && !altTrailers.downloadingUrl) closeAltTrailers(); }}
       >
-        <div style={{ background: 'var(--card-bg)', border: '1px solid var(--border-color)', borderRadius: '10px', width: '100%', maxWidth: '720px', maxHeight: '88vh', overflowY: 'auto', padding: '1.25rem' }} onClick={(e) => e.stopPropagation()}>
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="alternate-trailer-title"
+          style={{ background: 'var(--card-bg)', border: '1px solid var(--border-color)', borderRadius: '10px', width: '100%', maxWidth: '720px', maxHeight: '88vh', overflowY: 'auto', padding: '1.25rem' }}
+          onClick={(e) => e.stopPropagation()}
+        >
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '0.5rem' }}>
-            <h2 style={{ margin: 0, display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '1.25rem' }}>
+            <h2 id="alternate-trailer-title" style={{ margin: 0, display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '1.25rem' }}>
               <Youtube size={22} /> Choose a trailer{altTrailers.title ? ` — ${altTrailers.title}` : ''}
             </h2>
-            <button onClick={closeAltTrailers} className="button button-secondary" style={{ padding: '0.3rem 0.5rem' }} aria-label="Close"><X size={18} /></button>
+            <button type="button" onClick={closeAltTrailers} disabled={!!altTrailers.downloadingUrl} className="button button-secondary" style={{ padding: '0.3rem 0.5rem' }} aria-label="Close"><X size={18} /></button>
           </div>
           <p style={{ color: 'var(--text-secondary)', fontSize: '0.88rem', marginTop: 0 }}>
             The default trailer couldn’t be downloaded. Preview these alternates and pick one to download.
@@ -36618,7 +36996,7 @@ const DashboardTiles = {
           )}
 
           <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '1rem' }}>
-            <button onClick={closeAltTrailers} className="button button-secondary">Cancel</button>
+            <button type="button" onClick={closeAltTrailers} disabled={!!altTrailers.downloadingUrl} className="button button-secondary">Cancel</button>
           </div>
         </div>
       </div>

@@ -1,11 +1,13 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { Shuffle, Pin, X, ChevronUp, ChevronDown, Search, Tag, Check, Film, LayoutGrid, Sparkles } from 'lucide-react';
+import { lockBodyScroll } from '../utils/modalBehavior';
 
 /**
  * BlockEditor - Modal for configuring sequence blocks
  * Supports both random and fixed block types
  */
 const BlockEditor = ({ block, categories, prerolls, isNew, onSave, onCancel }) => {
+  const overlayRef = useRef(null);
   const [blockType, setBlockType] = useState(block.type || 'random');
   const [categoryId, setCategoryId] = useState(block.category_id || (categories[0]?.id || null));
   const [count, setCount] = useState(block.count || 1);
@@ -67,6 +69,25 @@ const BlockEditor = ({ block, categories, prerolls, isNew, onSave, onCancel }) =
         .finally(() => setDynamicPrerollsLoading(false));
     }
   }, [blockType, dynamicPrerolls.length, dynamicPrerollsLoading, dpTemplate]);
+
+  useEffect(() => {
+    const releaseScrollLock = lockBodyScroll();
+    const handleKeyDown = (event) => {
+      if (event.key !== 'Escape') return;
+      if (document.querySelector('.nx-dialog-overlay')) return;
+      const overlays = Array.from(document.querySelectorAll('.nx-modal-overlay'))
+        .filter(node => node.style.pointerEvents !== 'none');
+      if (overlays[overlays.length - 1] !== overlayRef.current) return;
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      onCancel();
+    };
+    document.addEventListener('keydown', handleKeyDown);
+    return () => {
+      releaseScrollLock();
+      document.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [onCancel]);
 
   const handleSave = () => {
     const newBlock = {
@@ -198,7 +219,7 @@ const BlockEditor = ({ block, categories, prerolls, isNew, onSave, onCancel }) =
     : false;
 
   return (
-    <div style={{
+    <div ref={overlayRef} className="nx-modal-overlay" style={{
       position: 'fixed',
       top: 0,
       left: 0,
@@ -211,7 +232,11 @@ const BlockEditor = ({ block, categories, prerolls, isNew, onSave, onCancel }) =
       zIndex: 1000,
       animation: 'fadeIn 0.2s'
     }} onClick={onCancel}>
-      <div style={{
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="block-editor-title"
+        style={{
         background: 'var(--card-bg)',
         borderRadius: '12px',
         width: '95%',
@@ -232,7 +257,7 @@ const BlockEditor = ({ block, categories, prerolls, isNew, onSave, onCancel }) =
           borderBottom: '2px solid var(--border-color)',
           background: 'var(--hover-bg)'
         }}>
-          <h2 style={{
+          <h2 id="block-editor-title" style={{
             margin: 0,
             color: 'var(--text-color)',
             fontSize: '20px',
@@ -248,8 +273,8 @@ const BlockEditor = ({ block, categories, prerolls, isNew, onSave, onCancel }) =
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'center'
-          }} onClick={onCancel}>
-            <X size={20} />
+          }} onClick={onCancel} aria-label="Close block editor">
+            <X size={20} aria-hidden="true" />
           </button>
         </div>
 

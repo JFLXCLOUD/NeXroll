@@ -1,3 +1,4 @@
+import calendar
 import datetime
 import json
 import random
@@ -218,6 +219,57 @@ def prerolls_for_category_query(db, category_id):
     )
 
 
+def resolve_category_sequence_block(
+    block: dict,
+    db: Session,
+    fallback_category_id: int | None = None,
+) -> list[models.Preroll]:
+    """Resolve a random/sequential category block to eligible preroll rows.
+
+    Sequential blocks use ascending database ID as their stable order. Random
+    blocks sample from that same stable pool. Both modes share the canonical
+    category-membership/enabled filter and omit missing media files. Legacy
+    ``categoryId`` input is accepted alongside ``category_id``.
+    """
+    if not isinstance(block, dict):
+        return []
+
+    block_type = str(block.get("type", "")).lower()
+    if block_type not in {"random", "sequential"}:
+        return []
+
+    raw_category_id = block.get("category_id")
+    if raw_category_id in (None, ""):
+        raw_category_id = block.get("categoryId")
+    if raw_category_id in (None, ""):
+        raw_category_id = fallback_category_id
+    try:
+        category_id = int(raw_category_id)
+    except (TypeError, ValueError):
+        return []
+    if category_id <= 0:
+        return []
+
+    try:
+        count = max(int(block.get("count") or 1), 1)
+    except (TypeError, ValueError):
+        count = 1
+
+    pool = (
+        prerolls_for_category_query(db, category_id)
+        .order_by(models.Preroll.id.asc())
+        .all()
+    )
+    pool = [preroll for preroll in pool if preroll.path and os.path.exists(preroll.path)]
+    if not pool:
+        return []
+
+    selected_count = min(count, len(pool))
+    if block_type == "random" and len(pool) > selected_count:
+        return random.sample(pool, selected_count)
+    return pool[:selected_count]
+
+
 class Scheduler:
     def __init__(self):
         self.running = False
@@ -244,6 +296,12 @@ class Scheduler:
         # Track last log-retention cleanup (runs ~once/day from the loop)
         self._last_log_cleanup_time: Optional[datetime.datetime] = None
         self._last_trailer_cleanup_time: Optional[datetime.datetime] = None
+        self._last_holiday_date_refresh_day: Optional[datetime.date] = None
+        # API-triggered checks and the background loop can fire together. Keep
+        # schedule evaluation/application single-threaded so they cannot race
+        # while updating Plex and the persisted active state. RLock is required
+        # because verification can request an immediate re-evaluation.
+        self._schedule_check_lock = threading.RLock()
         # Automatic preroll-folder scan runs in its own isolated thread so it can
         # never block or crash the scheduler loop.
         self._last_preroll_scan_time: Optional[datetime.datetime] = None
@@ -1509,12 +1567,53 @@ class Scheduler:
             except Exception:
                 pass
 
+    def _refresh_linked_holiday_dates_if_needed(self, db: Session, now: datetime.datetime) -> None:
+        """Persist current-year variable holiday dates once per local day."""
+        refresh_day = now.date()
+        if self._last_holiday_date_refresh_day == refresh_day:
+            return
+
+        linked = db.query(models.Schedule).filter(
+            models.Schedule.holiday_name.isnot(None),
+            models.Schedule.holiday_country.isnot(None),
+        ).all()
+        changed = 0
+        for schedule in linked:
+            # Preserve dates explicitly selected for a future year.
+            if schedule.start_date and schedule.start_date.year > now.year:
+                continue
+            resolved = self._get_holiday_date(schedule.holiday_name, schedule.holiday_country, now.year)
+            if resolved is None:
+                continue
+            if (
+                schedule.start_date
+                and schedule.start_date.year == now.year
+                and schedule.start_date.month == resolved.month
+                and schedule.start_date.day == resolved.day
+            ):
+                continue
+
+            schedule.start_date = datetime.datetime.combine(resolved, datetime.time.min)
+            schedule.end_date = datetime.datetime.combine(resolved, datetime.time(23, 59, 59))
+            changed += 1
+
+        if changed:
+            db.commit()
+            _scheduler_log(f"Refreshed {changed} linked holiday schedule date(s) for {now.year}")
+        self._last_holiday_date_refresh_day = refresh_day
+
     def _check_and_execute_schedules(self):
+        """Serialize every scheduler tick, including request-triggered checks."""
+        with self._schedule_check_lock:
+            return self._check_and_execute_schedules_locked()
+
+    def _check_and_execute_schedules_locked(self):
         """Evaluate schedules, apply active category to Plex, and handle fallback when idle."""
         db = SessionLocal()
         try:
             # Use local time (per Setting.timezone) for comparisons since schedules are stored as naive local datetimes
             now = _localized_now(db)
+            self._refresh_linked_holiday_dates_if_needed(db, now)
             schedules = db.query(models.Schedule).filter(models.Schedule.is_active == True).all()
 
             # Determine active schedules (window-aware)
@@ -1575,6 +1674,7 @@ class Scheduler:
             chosen_schedule = None
             current_fallback_id = None
             blend_schedules = []  # Schedules to blend together
+            fallback_needs_apply = False
 
             if active:
                 # STEP 1: Check for EXCLUSIVE schedules first
@@ -1585,6 +1685,8 @@ class Scheduler:
                     # Multiple exclusive schedules: highest priority wins, then earliest end, then lowest id
                     def _exclusive_sort_key(s):
                         priority = getattr(s, "priority", 5)
+                        if priority is None:
+                            priority = 5
                         end = s.end_date if s.end_date else datetime.datetime.max
                         return (-priority, end, s.id)  # Negative priority so higher values sort first
                     exclusive_schedules.sort(key=_exclusive_sort_key)
@@ -1717,6 +1819,8 @@ class Scheduler:
                     # Priority (highest wins), then earliest end date, then earliest start, then lowest id
                     def _sort_key(s):
                         priority = getattr(s, "priority", 5)
+                        if priority is None:
+                            priority = 5
                         end = s.end_date if s.end_date else datetime.datetime.max
                         start = s.start_date or datetime.datetime.min
                         return (-priority, end, start, s.id)  # Negative priority so higher values sort first
@@ -1740,8 +1844,9 @@ class Scheduler:
                     else:
                         _scheduler_verbose(f"Schedule '{chosen_schedule.name}' has no fallback; cleared previous fallback")
                 
-                # Sanity check: ensure category_id is set
-                if not desired_category_id:
+                # A category is optional for sequence-only schedules. Only flag a
+                # missing target when the winner has neither source of prerolls.
+                if not desired_category_id and not _has_valid_sequence(chosen_schedule):
                     state_key = f"error:no_category:{chosen_schedule.id}"
                     if self._last_logged_state != state_key:
                         _scheduler_log(f"Schedule '{chosen_schedule.name}' (ID {chosen_schedule.id}) has no category_id set. Cannot apply prerolls.", level="ERROR")
@@ -1780,6 +1885,7 @@ class Scheduler:
                         desired_category_id = stored_fallback
                         state_key = f"fallback:{desired_category_id}"
                         if self._last_logged_state != state_key:
+                            fallback_needs_apply = True
                             _scheduler_log(f"No active schedules; using fallback category {desired_category_id} from last active schedule")
                             self._last_logged_state = state_key
                             self._last_logged_time = now
@@ -1953,10 +2059,12 @@ class Scheduler:
                 # the underlying category is the same. Without this, Plex would keep serving
                 # the previous schedule's sequence (or category pool) until the category
                 # itself changed.
+                previous_schedule_id = getattr(setting, "active_schedule_id", None)
                 schedule_changed = bool(
-                    chosen_schedule
-                    and getattr(setting, "active_schedule_id", None) != chosen_schedule.id
+                    (chosen_schedule and previous_schedule_id != chosen_schedule.id)
+                    or (chosen_schedule is None and previous_schedule_id is not None)
                 )
+                filler_changed = getattr(setting, "filler_active", None) is not None
 
                 # Random-block rotation: re-apply a sequence with random picks every
                 # `_rotation_interval_seconds` so the random picks actually rotate.
@@ -1967,7 +2075,15 @@ class Scheduler:
                         if isinstance(seq, str):
                             seq = json.loads(seq)
                         if isinstance(seq, list):
-                            has_random = any(block.get("type") == "random" for block in seq)
+                            has_random = any(
+                                block.get("type") == "random"
+                                or (
+                                    block.get("type") == "nexup_trailers"
+                                    and str(block.get("mode", "random")).lower() == "random"
+                                )
+                                for block in seq
+                                if isinstance(block, dict)
+                            )
                             if has_random:
                                 last_rotation = self._last_rotation_time.get(chosen_schedule.id)
                                 if last_rotation is None or (now - last_rotation).total_seconds() >= self._rotation_interval_seconds:
@@ -1975,25 +2091,46 @@ class Scheduler:
                     except Exception as e:
                         _scheduler_log(f"SCHEDULER: Error checking rotation for schedule {chosen_schedule.id}: {e}", level="ERROR")
 
-                if schedule_changed or should_rotate:
+                sequence_needs_retry = bool(
+                    chosen_schedule
+                    and _has_valid_sequence(chosen_schedule)
+                    and self._last_rotation_time.get(chosen_schedule.id) is None
+                )
+
+                if schedule_changed or filler_changed or fallback_needs_apply or should_rotate or sequence_needs_retry:
                     if chosen_schedule and _has_valid_sequence(chosen_schedule):
                         applied_ok = self._apply_schedule_sequence_to_plex(chosen_schedule, db)
                     else:
                         applied_ok = self._apply_category_to_plex(desired_category_id, db, schedule=chosen_schedule)
                     # State reflects intent. See note in the matching block above for why
                     # we update unconditionally on apply failure.
-                    if applied_ok:
+                    if applied_ok and chosen_schedule:
                         self._last_rotation_time[chosen_schedule.id] = now
-                    setting.active_schedule_id = chosen_schedule.id
+                    setting.active_schedule_id = chosen_schedule.id if chosen_schedule else None
                     setting.filler_active = None
-                    chosen_schedule.last_run = now
-                    chosen_schedule.next_run = self._calculate_next_run(chosen_schedule)
+                    if chosen_schedule:
+                        chosen_schedule.last_run = now
+                        chosen_schedule.next_run = self._calculate_next_run(chosen_schedule)
                     db.commit()
-                    reason = "winner changed" if schedule_changed else "random rotation"
-                    if applied_ok:
-                        _scheduler_log(f"Re-applied schedule '{chosen_schedule.name}' (ID {chosen_schedule.id}): {reason}")
+                    if schedule_changed:
+                        reason = "winner changed"
+                    elif filler_changed:
+                        reason = "leaving filler"
+                    elif fallback_needs_apply:
+                        reason = "entering fallback"
+                    elif sequence_needs_retry and not should_rotate:
+                        reason = "sequence retry"
                     else:
-                        _scheduler_log(f"Plex re-apply failed for schedule '{chosen_schedule.name}' ({reason}) — dashboard updated anyway", level="WARNING")
+                        reason = "random rotation"
+                    if chosen_schedule:
+                        if applied_ok:
+                            _scheduler_log(f"Re-applied schedule '{chosen_schedule.name}' (ID {chosen_schedule.id}): {reason}")
+                        else:
+                            _scheduler_log(f"Plex re-apply failed for schedule '{chosen_schedule.name}' ({reason}) — dashboard updated anyway", level="WARNING")
+                    elif applied_ok:
+                        _scheduler_log(f"Re-applied fallback category {desired_category_id}: {reason}")
+                    else:
+                        _scheduler_log(f"Plex re-apply failed for fallback category {desired_category_id} ({reason})", level="WARNING")
                 else:
                     # No re-apply needed, but log occasionally and ensure active_schedule_id
                     # is sane (defensive — schedule_changed already handles it above).
@@ -2016,8 +2153,10 @@ class Scheduler:
         If there's a mismatch, reapply the current active category.
         This ensures scheduled prerolls remain active even if manually changed or API calls fail.
         """
-        # Use local time for comparisons since schedules are stored as naive local datetimes
-        now = datetime.datetime.now()
+        # Use the configured timezone, matching the main scheduler loop. Using
+        # the host/container clock here can otherwise clear a correct schedule
+        # as "stale" when the two timezones differ.
+        now = _localized_now()
         
         # Check if enough time has passed since last verification
         if self._last_verification_time:
@@ -2102,16 +2241,10 @@ class Scheduler:
                     _scheduler_log(f"VERIFICATION: Re-evaluation after stale clear failed: {e}", level="ERROR")
                 return
             
-            # Get the expected prerolls for the active category (including many-to-many)
-            # Must match the logic in _apply_category_to_plex
-            prerolls = (
-                db.query(models.Preroll)
-                .outerjoin(models.preroll_categories, models.Preroll.id == models.preroll_categories.c.preroll_id)
-                .filter(or_(models.Preroll.category_id == setting.active_category,
-                            models.preroll_categories.c.category_id == setting.active_category))
-                .distinct()
-                .all()
-            )
+            # Use the same m2m + enabled filter as the apply path. Including a
+            # disabled preroll here creates a permanent false mismatch that the
+            # reapply can never satisfy.
+            prerolls = prerolls_for_category_query(db, setting.active_category).all()
             
             if not prerolls:
                 return  # No prerolls to verify
@@ -2168,10 +2301,17 @@ class Scheduler:
             
             expected_paths = [_translate_for_plex(p) for p in preroll_paths_local]
             
-            # Note: Verification uses semicolon by default since we don't track which schedule is active
-            # This is a limitation - verification may trigger false positives if the active schedule
-            # uses comma (sequential) mode. Consider storing active schedule ID in settings for proper verification.
-            separator = ";"
+            tracked_schedule = None
+            tracked_schedule_id = getattr(setting, "active_schedule_id", None)
+            if tracked_schedule_id:
+                tracked_schedule = db.query(models.Schedule).filter(
+                    models.Schedule.id == tracked_schedule_id
+                ).first()
+
+            # Preserve the winner's playlist/random delimiter. Reapplying a
+            # playlist category without its schedule used to silently convert
+            # it to random mode every five minutes.
+            separator = "," if tracked_schedule and getattr(tracked_schedule, "playlist", False) else ";"
             expected_preroll_string = separator.join(expected_paths)
             
             # Get actual preroll setting from Plex
@@ -2179,8 +2319,8 @@ class Scheduler:
             actual_preroll_string = plex_connector.get_preroll()
             
             # Normalize for comparison (strip whitespace, handle empty strings)
-            expected_normalized = expected_preroll_string.strip()
-            actual_normalized = actual_preroll_string.strip()
+            expected_normalized = (expected_preroll_string or "").strip()
+            actual_normalized = (actual_preroll_string or "").strip()
             
             # Compare expected vs actual
             if expected_normalized != actual_normalized:
@@ -2190,7 +2330,11 @@ class Scheduler:
                 _scheduler_verbose(f"  Reapplying category {setting.active_category}...")
                 
                 # Reapply the current category
-                success = self._apply_category_to_plex(setting.active_category, db)
+                success = self._apply_category_to_plex(
+                    setting.active_category,
+                    db,
+                    schedule=tracked_schedule,
+                )
                 if success:
                     _scheduler_log(f"VERIFICATION: Successfully reapplied prerolls")
                 else:
@@ -2222,13 +2366,49 @@ class Scheduler:
 
         schedule_type = getattr(schedule, "type", "") or ""
 
+        # An overnight recurrence belongs to the day on which it starts. For
+        # example, Friday 22:00-03:00 must remain active through Saturday 03:00,
+        # while Friday 01:00 must not count as the first Friday occurrence. Use
+        # this anchored datetime for date/day/month constraints; the actual
+        # wall-clock `now` is still used for the time-of-day comparison below.
+        recurrence_now = now
+        if schedule.recurrence_pattern:
+            try:
+                _anchor_pattern = json.loads(schedule.recurrence_pattern)
+                _anchor_range = _anchor_pattern.get("timeRange") if isinstance(_anchor_pattern, dict) else None
+                if _anchor_range and _anchor_range.get("start") and _anchor_range.get("end"):
+                    _start_parts = str(_anchor_range["start"]).split(":")
+                    _end_parts = str(_anchor_range["end"]).split(":")
+                    _start_minutes = int(_start_parts[0]) * 60 + (int(_start_parts[1]) if len(_start_parts) > 1 else 0)
+                    _end_minutes = int(_end_parts[0]) * 60 + (int(_end_parts[1]) if len(_end_parts) > 1 else 0)
+                    _current_minutes = now.hour * 60 + now.minute
+                    if _start_minutes > _end_minutes and _current_minutes <= _end_minutes:
+                        recurrence_now = now - datetime.timedelta(days=1)
+            except (json.JSONDecodeError, AttributeError, TypeError, ValueError, IndexError):
+                pass
+
+        # Holiday Browser schedules may be intentionally pinned to a future
+        # year. Dynamic lookup must not make one recur before its configured
+        # first year (using the overnight occurrence's anchor day).
+        if (
+            (
+                schedule_type == "holiday"
+                or (
+                    getattr(schedule, "holiday_name", None)
+                    and getattr(schedule, "holiday_country", None)
+                )
+            )
+            and schedule.start_date.year > recurrence_now.year
+        ):
+            return False
+
         # --- Yearly type: match month/day, ignore year ---
         if schedule_type == "yearly":
             # If holiday_name + holiday_country are set, use dynamic Holiday API lookup
             h_name = getattr(schedule, "holiday_name", None)
             h_country = getattr(schedule, "holiday_country", None)
             if h_name and h_country:
-                holiday_date = self._get_holiday_date(h_name, h_country, now.year)
+                holiday_date = self._get_holiday_date(h_name, h_country, recurrence_now.year)
                 if holiday_date is None:
                     # Holiday API unavailable this tick — fall back to the schedule's
                     # stored start_date (kept current for the year by the holiday
@@ -2236,9 +2416,9 @@ class Scheduler:
                     # schedule inactive and alternate which schedule wins.
                     holiday_date = getattr(schedule, "start_date", None)
                 if holiday_date:
-                    if not (now.month == holiday_date.month and now.day == holiday_date.day):
+                    if not (recurrence_now.month == holiday_date.month and recurrence_now.day == holiday_date.day):
                         _scheduler_verbose(f"Schedule '{schedule.name}' (yearly/holiday-dynamic) not active: "
-                                           f"today {now.month}/{now.day} != holiday {holiday_date.month}/{holiday_date.day}")
+                                           f"today {recurrence_now.month}/{recurrence_now.day} != holiday {holiday_date.month}/{holiday_date.day}")
                         return False
                     # Month/day match — fall through to time range check below
                 else:
@@ -2258,13 +2438,13 @@ class Scheduler:
                 end = getattr(schedule, "end_date", None)
                 if end:
                     try:
-                        this_year_start = schedule.start_date.replace(year=now.year)
-                        this_year_end = end.replace(year=now.year)
+                        this_year_start = schedule.start_date.replace(year=recurrence_now.year)
+                        this_year_end = end.replace(year=recurrence_now.year)
                         # Handle ranges that span the year boundary (e.g. Dec 18 - Jan 3)
                         if this_year_end < this_year_start:
-                            in_range = (now >= this_year_start) or (now <= this_year_end)
+                            in_range = (recurrence_now >= this_year_start) or (recurrence_now <= this_year_end)
                         else:
-                            in_range = this_year_start <= now <= this_year_end
+                            in_range = this_year_start <= recurrence_now <= this_year_end
                         if not in_range:
                             _scheduler_verbose(
                                 f"Schedule '{schedule.name}' (yearly) not in range "
@@ -2281,16 +2461,16 @@ class Scheduler:
             h_name = getattr(schedule, "holiday_name", None)
             h_country = getattr(schedule, "holiday_country", None)
             if h_name and h_country:
-                holiday_date = self._get_holiday_date(h_name, h_country, now.year)
+                holiday_date = self._get_holiday_date(h_name, h_country, recurrence_now.year)
                 if holiday_date is None:
                     # Holiday API unavailable this tick — fall back to the schedule's
                     # stored start_date so a transient lookup failure can't flip the
                     # schedule inactive and alternate which schedule wins.
                     holiday_date = getattr(schedule, "start_date", None)
                 if holiday_date:
-                    if not (now.month == holiday_date.month and now.day == holiday_date.day):
+                    if not (recurrence_now.month == holiday_date.month and recurrence_now.day == holiday_date.day):
                         _scheduler_verbose(f"Schedule '{schedule.name}' (holiday) not active: "
-                                           f"today {now.month}/{now.day} != {h_name} {holiday_date.month}/{holiday_date.day}")
+                                           f"today {recurrence_now.month}/{recurrence_now.day} != {h_name} {holiday_date.month}/{holiday_date.day}")
                         return False
                 else:
                     _scheduler_verbose(f"Schedule '{schedule.name}' (holiday) could not resolve '{h_name}' for {now.year}")
@@ -2299,23 +2479,27 @@ class Scheduler:
                 # No holiday fields — fall back to yearly-style month/day from start_date
                 if getattr(schedule, "end_date", None):
                     try:
-                        this_year_start = schedule.start_date.replace(year=now.year)
-                        this_year_end = schedule.end_date.replace(year=now.year)
-                        if not (this_year_start <= now <= this_year_end):
+                        this_year_start = schedule.start_date.replace(year=recurrence_now.year)
+                        this_year_end = schedule.end_date.replace(year=recurrence_now.year)
+                        if this_year_end < this_year_start:
+                            in_range = recurrence_now >= this_year_start or recurrence_now <= this_year_end
+                        else:
+                            in_range = this_year_start <= recurrence_now <= this_year_end
+                        if not in_range:
                             return False
                     except ValueError:
                         return False
                 else:
-                    if not (now.month == schedule.start_date.month and now.day == schedule.start_date.day):
+                    if not (recurrence_now.month == schedule.start_date.month and recurrence_now.day == schedule.start_date.day):
                         return False
 
         # --- Daily/Weekly/Monthly and others: standard date window check ---
         else:
             date_active = False
             if getattr(schedule, "end_date", None):
-                date_active = schedule.start_date <= now <= schedule.end_date
+                date_active = schedule.start_date <= recurrence_now <= schedule.end_date
             else:
-                date_active = now >= schedule.start_date
+                date_active = recurrence_now >= schedule.start_date
             
             if not date_active:
                 return False
@@ -2330,7 +2514,7 @@ class Scheduler:
                 if week_days and isinstance(week_days, list) and len(week_days) > 0:
                     # Map Python weekday (0=Mon..6=Sun) to our day names
                     day_map = {0: "monday", 1: "tuesday", 2: "wednesday", 3: "thursday", 4: "friday", 5: "saturday", 6: "sunday"}
-                    current_day_name = day_map.get(now.weekday())
+                    current_day_name = day_map.get(recurrence_now.weekday())
                     if current_day_name not in week_days:
                         _scheduler_verbose(f"Schedule '{schedule.name}' not active on {current_day_name} (weekDays: {week_days})")
                         return False
@@ -2338,7 +2522,7 @@ class Scheduler:
                 # Check months (which months of the year) for monthly schedules
                 months = pattern.get("months")
                 if months and isinstance(months, list) and len(months) > 0:
-                    current_month = now.month
+                    current_month = recurrence_now.month
                     if current_month not in months:
                         _scheduler_verbose(f"Schedule '{schedule.name}' not active in month {current_month} (months: {months})")
                         return False
@@ -2346,7 +2530,7 @@ class Scheduler:
                 # Check monthDays (which days of the month) for monthly schedules
                 month_days = pattern.get("monthDays")
                 if month_days and isinstance(month_days, list) and len(month_days) > 0:
-                    current_day_of_month = now.day
+                    current_day_of_month = recurrence_now.day
                     if current_day_of_month not in month_days:
                         _scheduler_verbose(f"Schedule '{schedule.name}' not active on day {current_day_of_month} (monthDays: {month_days})")
                         return False
@@ -2638,11 +2822,6 @@ class Scheduler:
         except Exception:
             return False
 
-        # Delegate to the canonical helper at module scope so the m2m + enabled
-        # filter logic lives in one place (see prerolls_for_category_query).
-        def _prerolls_for_category(cid: int):
-            return prerolls_for_category_query(db, cid).all()
-
         # Build ordered list of file paths per sequence steps
         paths = []
         for step in seq:
@@ -2650,25 +2829,23 @@ class Scheduler:
                 stype = str(step.get("type", "")).lower()
             except Exception:
                 stype = ""
-            if stype == "random":
-                try:
-                    cid = int(step.get("category_id") or schedule.category_id or 0)
-                except Exception:
-                    cid = schedule.category_id or 0
-                if not cid:
+            if stype in {"random", "sequential"}:
+                picks = resolve_category_sequence_block(
+                    step,
+                    db,
+                    fallback_category_id=schedule.category_id,
+                )
+                if not picks:
+                    raw_category_id = (
+                        step.get("category_id")
+                        or step.get("categoryId")
+                        or schedule.category_id
+                    )
+                    _scheduler_log(
+                        f"Sequence: No prerolls with valid files for category {raw_category_id}",
+                        level="WARNING",
+                    )
                     continue
-                try:
-                    count = int(step.get("count") or 1)
-                except Exception:
-                    count = 1
-                pool = _prerolls_for_category(cid)
-                # Filter to only prerolls whose files actually exist on disk
-                pool = [p for p in pool if p.path and os.path.exists(p.path)]
-                if not pool:
-                    _scheduler_log(f"Sequence: No prerolls with valid files for category {cid}", level="WARNING")
-                    continue
-                k = min(max(count, 1), len(pool))
-                picks = random.sample(pool, k) if len(pool) > k else pool
                 for p in picks:
                     paths.append(os.path.abspath(p.path))
             elif stype == "fixed":
@@ -3071,10 +3248,6 @@ class Scheduler:
             
             _scheduler_log(f"FILLER: Applying saved sequence '{saved_seq.name}' with {len(blocks)} blocks")
             
-            # Delegate to the canonical helper at module scope.
-            def _prerolls_for_category(cid: int):
-                return prerolls_for_category_query(db, cid).all()
-
             # Build ordered list of file paths per sequence steps
             paths = []
             for block in blocks:
@@ -3083,19 +3256,15 @@ class Scheduler:
                 except Exception:
                     block_type = ""
                 
-                if block_type == "random":
-                    cid = int(block.get("category_id") or 0)
-                    count = int(block.get("count") or 1)
-                    if not cid:
+                if block_type in {"random", "sequential"}:
+                    picks = resolve_category_sequence_block(block, db)
+                    if not picks:
+                        raw_category_id = block.get("category_id") or block.get("categoryId")
+                        _scheduler_log(
+                            f"FILLER: No prerolls with valid files for category {raw_category_id}",
+                            level="WARNING",
+                        )
                         continue
-                    pool = _prerolls_for_category(cid)
-                    # Filter to only prerolls whose files actually exist on disk
-                    pool = [p for p in pool if p.path and os.path.exists(p.path)]
-                    if not pool:
-                        _scheduler_log(f"FILLER: No prerolls with valid files for category {cid}", level="WARNING")
-                        continue
-                    k = min(max(count, 1), len(pool))
-                    picks = random.sample(pool, k) if len(pool) > k else pool
                     for p in picks:
                         paths.append(os.path.abspath(p.path))
                         
@@ -3529,53 +3698,97 @@ class Scheduler:
             _scheduler_log(f"Could not update Plex preroll to: {preroll_path}", level="ERROR")
 
     def _calculate_next_run(self, schedule: models.Schedule) -> Optional[datetime.datetime]:
-        """Calculate when this schedule should run next"""
-        # Use local time (per Setting.timezone) for comparisons since schedules are stored as naive local datetimes
+        """Calculate the next monthly/yearly/holiday activation safely.
+
+        Monthly schedules are driven by recurrence_pattern (the UI deliberately
+        stores their start_date as 2000-01-01), so using start_date.day produced
+        incorrect metadata and could raise ValueError when replacing a 29th-31st
+        into a shorter month. Yearly leap-day schedules had the same crash.
+        """
+        if not schedule or not getattr(schedule, "start_date", None):
+            return None
+
         now = _localized_now()
+        schedule_type = str(getattr(schedule, "type", "") or "").lower()
 
-        if schedule.type == "monthly":
-            # Next month, same day
-            next_run = now.replace(day=schedule.start_date.day, hour=schedule.start_date.hour,
-                                 minute=schedule.start_date.minute, second=0, microsecond=0)
-            if next_run <= now:
-                # If we're past the time today, schedule for next month
-                if now.month == 12:
-                    next_run = next_run.replace(year=now.year + 1, month=1)
-                else:
-                    next_run = next_run.replace(month=now.month + 1)
-            return next_run
-
-        elif schedule.type == "yearly":
-            # Next year, same date
-            next_run = schedule.start_date.replace(year=now.year)
-            if next_run <= now:
-                next_run = next_run.replace(year=now.year + 1)
-            return next_run
-
-        elif schedule.type == "holiday":
-            # Find the associated holiday preset and calculate next occurrence
-            db = SessionLocal()
+        pattern = {}
+        raw_pattern = getattr(schedule, "recurrence_pattern", None)
+        if raw_pattern:
             try:
-                holiday = db.query(models.HolidayPreset).filter(
-                    models.HolidayPreset.category_id == schedule.category_id
-                ).first()
-                if holiday:
-                    # Use start_month/start_day if available, otherwise fall back to legacy month/day
-                    target_month = getattr(holiday, 'start_month', None) or holiday.month
-                    target_day = getattr(holiday, 'start_day', None) or holiday.day
+                parsed = json.loads(raw_pattern) if isinstance(raw_pattern, str) else raw_pattern
+                if isinstance(parsed, dict):
+                    pattern = parsed
+            except (json.JSONDecodeError, TypeError):
+                pattern = {}
 
-                    if target_month and target_day:
-                        # Calculate next occurrence of this holiday date
-                        next_run = now.replace(month=target_month, day=target_day,
-                                             hour=schedule.start_date.hour,
-                                             minute=schedule.start_date.minute,
-                                             second=0, microsecond=0)
-                        if next_run <= now:
-                            # If we're past this year's occurrence, schedule for next year
-                            next_run = next_run.replace(year=now.year + 1)
-                        return next_run
-            finally:
-                db.close()
+        run_hour = schedule.start_date.hour
+        run_minute = schedule.start_date.minute
+        time_range = pattern.get("timeRange")
+        if isinstance(time_range, dict) and time_range.get("start"):
+            try:
+                parts = str(time_range["start"]).split(":")
+                parsed_hour = int(parts[0])
+                parsed_minute = int(parts[1]) if len(parts) > 1 else 0
+                if 0 <= parsed_hour <= 23 and 0 <= parsed_minute <= 59:
+                    run_hour, run_minute = parsed_hour, parsed_minute
+            except (TypeError, ValueError, IndexError):
+                pass
+
+        def _valid_numbers(values, low, high):
+            result = set()
+            for value in values or []:
+                try:
+                    number = int(value)
+                except (TypeError, ValueError):
+                    continue
+                if low <= number <= high:
+                    result.add(number)
+            return sorted(result)
+
+        if schedule_type == "monthly":
+            months = _valid_numbers(pattern.get("months"), 1, 12) or list(range(1, 13))
+            month_days = _valid_numbers(pattern.get("monthDays"), 1, 31) or [schedule.start_date.day]
+
+            # Search far enough to cover sparse configurations such as February
+            # 29 only. Invalid dates are skipped rather than silently clamped.
+            for month_offset in range(0, 12 * 8):
+                absolute_month = (now.year * 12 + now.month - 1) + month_offset
+                year, month_index = divmod(absolute_month, 12)
+                month = month_index + 1
+                if month not in months:
+                    continue
+                last_day = calendar.monthrange(year, month)[1]
+                candidates = []
+                for day in month_days:
+                    if day > last_day:
+                        continue
+                    candidate = datetime.datetime(year, month, day, run_hour, run_minute)
+                    if candidate > now:
+                        candidates.append(candidate)
+                if candidates:
+                    return min(candidates)
+            return None
+
+        if schedule_type in ("yearly", "holiday"):
+            holiday_name = getattr(schedule, "holiday_name", None)
+            holiday_country = getattr(schedule, "holiday_country", None)
+            for year in range(now.year, now.year + 9):
+                target_month = schedule.start_date.month
+                target_day = schedule.start_date.day
+
+                if schedule_type == "holiday" and holiday_name and holiday_country:
+                    holiday_date = self._get_holiday_date(holiday_name, holiday_country, year)
+                    if holiday_date is not None:
+                        target_month = holiday_date.month
+                        target_day = holiday_date.day
+
+                try:
+                    candidate = datetime.datetime(year, target_month, target_day, run_hour, run_minute)
+                except ValueError:
+                    continue
+                if candidate > now:
+                    return candidate
+            return None
 
         return None
 

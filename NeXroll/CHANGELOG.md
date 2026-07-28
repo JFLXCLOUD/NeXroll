@@ -1,5 +1,32 @@
 # Changelog
 
+## [2.0.5] - 07-28-2026
+
+### Fixed
+
+- **Overnight schedules (e.g. Friday 10 PM - 3 AM) could be attributed to the wrong day**, dropping out of their window right at midnight or activating a day early. Schedule-active checks now anchor to the occurrence's actual starting day for every recurrence type, not just yearly.
+- **"Next run" could be wrong, or the app could error, for monthly schedules on days 29-31 and for yearly/holiday schedules landing on Feb 29.** The next-run calculation now searches forward using the real recurrence pattern (or the Holiday API for holiday-linked schedules) and skips invalid dates instead of assuming every month has the stored day.
+- **A schedule made of only a sequence (no category) was wrongly logged as broken and never applied.** Sequence-only schedules are now recognized as valid.
+- **Sequential-type blocks in a sequence were silently skipped everywhere** (schedule apply, filler apply, manual "Apply to Server", and the dashboard's current-intro resolution) - only "random" blocks ever resolved to a preroll. Sequential blocks now resolve correctly, in stable ascending order.
+- **The scheduler's background verification loop used the host/container clock instead of your configured Settings > Timezone**, which could falsely flag disabled prerolls as "expected" in a permanent mismatch loop, and always assumed non-playlist mode - silently flipping a playlist-mode category back to random roughly every 5 minutes. All three are fixed; verification now respects your timezone and the category's actual playlist setting.
+- Fixed a race condition where an API-triggered schedule check and the background scheduler loop could evaluate schedules at the same time and step on each other.
+- Fixed a crash and stale dashboard state that could occur when a schedule transitioned to "no active schedule" or left a filler category.
+- Holiday-linked schedule dates now refresh daily from the Holiday API instead of only resolving at evaluation time, and random-mode NeX-Up trailer blocks now rotate the same way random category blocks do.
+- **Restoring a backup could silently break the links between schedules/sequences and the prerolls they reference**, since SQLite reassigns row IDs on restore. Backups now export preroll/sequence IDs and remap every reference on restore so schedules and fixed-sequence blocks keep pointing at the right prerolls (backup schema bumped to v3).
+- **Deleting a preroll could leave dangling references** in saved sequences and schedule sequence blocks (previously only the schedule's direct preroll list was cleaned up). The delete path also no longer uses a raw `PRAGMA foreign_keys=OFF` query, closing a narrow window where a crash mid-delete could corrupt references.
+- **Uploading a file as a "replace duplicate" deleted and recreated the preroll row**, breaking any schedule or sequence that referenced the old ID. Replacing a duplicate now updates the existing row in place instead.
+- Preroll uploads, renames, and category moves are now race-safe under concurrent requests and roll back cleanly if a file operation fails partway through; renaming to a filename that already exists now returns a conflict instead of silently overwriting it; Windows-reserved/invalid filenames are rejected; case-only renames (e.g. `Movie.mp4` to `movie.mp4`) now work correctly.
+- File hashes are now always recomputed on the server during upload, closing a duplicate-detection bypass where a client could supply a fake hash.
+- Dashboard active/upcoming/inactive schedule counts and the `/scheduler/debug` view now use the same evaluation logic as the scheduler itself - previously they could miscount yearly, holiday, and recurring schedules.
+- **The Conflict Detection Wizard could miss real conflicts and offer bad "quick fixes"**: it didn't always account for a lower-priority exclusive schedule still winning, its one-click blend fix could enable blending on only one side of a pair (which doesn't actually blend anything), and its priority-bump suggestion could push a schedule's priority above the max of 10. The wizard's logic has been rewritten to match the backend's conflict evaluation exactly.
+- Escape key, focus handling, and background scroll-lock are now consistent across all dialogs (block editor, pattern import/export, sequence preview, and the ~18 modals in the main app), with a defined stacking order when more than one is open.
+- Fixed a race in the Holiday Browser where rapidly switching country or year could display stale results from an earlier, slower request.
+
+### Changed
+
+- Editing a saved sequence now propagates to any schedule built from it and re-triggers the scheduler immediately, instead of leaving the schedule stale until its next natural evaluation.
+- Schedule create/update validation is stricter: type and priority (1-10) are checked, a start date is required, end dates must fall after start dates (except for yearly/holiday schedules), and referenced categories/sequences must actually exist.
+
 ## [2.0.4] - 07-04-2026
 
 ### Fixed

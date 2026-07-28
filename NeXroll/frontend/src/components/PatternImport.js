@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Download, Check, CheckCircle, AlertTriangle, XCircle, Package, Folder, FileText, Lightbulb, Eye, ArrowLeft, Loader2, ClipboardList, Cloud, CloudDownload, RefreshCw, FolderOpen, ChevronDown, ChevronRight, Play, Pause, SkipForward, SkipBack, Film, X } from 'lucide-react';
+import { Download, Check, CheckCircle, AlertTriangle, XCircle, Package, Folder, FileText, Lightbulb, Eye, ArrowLeft, Loader2, ClipboardList, Cloud, CloudDownload, FolderOpen, ChevronDown, ChevronRight, Play, Pause, SkipForward, SkipBack, X } from 'lucide-react';
+import { lockBodyScroll } from '../utils/modalBehavior';
 
 /**
  * PatternImport - Import sequence from .nexseq JSON pattern file
@@ -33,6 +34,7 @@ const PatternImport = ({ isOpen, onClose, onImport }) => {
   const [isPlaying, setIsPlaying] = useState(false);
   const [previewPlaylist, setPreviewPlaylist] = useState([]); // Flattened list of video paths
   const videoRef = useRef(null);
+  const overlayRef = useRef(null);
 
   // Reset state when modal closes
   useEffect(() => {
@@ -281,6 +283,37 @@ const PatternImport = ({ isOpen, onClose, onImport }) => {
       videoRef.current.pause();
     }
   };
+
+  useEffect(() => {
+    if (!isOpen) return undefined;
+    return lockBodyScroll();
+  }, [isOpen]);
+
+  useEffect(() => {
+    if (!isOpen) return undefined;
+    const handleKeyDown = (event) => {
+      if (event.key !== 'Escape') return;
+      if (document.querySelector('.nx-dialog-overlay')) return;
+      const overlays = Array.from(document.querySelectorAll('.nx-modal-overlay'))
+        .filter(node => node.style.pointerEvents !== 'none');
+      if (overlays[overlays.length - 1] !== overlayRef.current) return;
+
+      event.preventDefault();
+      event.stopImmediatePropagation();
+
+      // The video player is a nested dialog. Escape should close only the top
+      // layer, not discard the import underneath it.
+      if (showPreviewPlayer) {
+        setShowPreviewPlayer(false);
+        setIsPlaying(false);
+        videoRef.current?.pause();
+      } else if (step !== 'downloading' && !isLoading) {
+        onClose();
+      }
+    };
+    document.addEventListener('keydown', handleKeyDown);
+    return () => document.removeEventListener('keydown', handleKeyDown);
+  }, [isLoading, isOpen, onClose, showPreviewPlayer, step]);
 
   // Confirm folder mappings and proceed with import
   const handleConfirmMappings = async () => {
@@ -564,11 +597,12 @@ const PatternImport = ({ isOpen, onClose, onImport }) => {
   if (!isOpen) return null;
 
   const downloadableCount = previewData?.match_results?.missing_prerolls?.filter(p => p.downloadable).length || 0;
-  const matchedCount = previewData?.match_results?.matched || 0;
-  const totalBlocks = previewData?.match_results?.total_blocks || 0;
+  const dismissBlocked = step === 'downloading' || isLoading;
 
   return (
     <div
+      ref={overlayRef}
+      className="nx-modal-overlay"
       style={{
         position: 'fixed',
         top: 0,
@@ -581,29 +615,45 @@ const PatternImport = ({ isOpen, onClose, onImport }) => {
         alignItems: 'center',
         justifyContent: 'center',
         overflow: 'auto',
-        padding: '2rem',
+        padding: 'clamp(0.5rem, 4vw, 2rem)',
       }}
       onClick={(e) => {
-        if (e.target === e.currentTarget && step !== 'downloading') onClose();
+        if (e.target === e.currentTarget && !dismissBlocked) onClose();
       }}
     >
       <div
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="pattern-import-title"
         style={{
           backgroundColor: 'var(--card-bg)',
           borderRadius: '0.5rem',
-          padding: '2rem',
+          padding: 'clamp(1rem, 4vw, 2rem)',
           maxWidth: '750px',
           width: '100%',
-          maxHeight: '90vh',
+          maxHeight: 'calc(100dvh - 1rem)',
           overflowY: 'auto',
+          boxSizing: 'border-box',
           border: '1px solid var(--border-color)',
         }}
         onClick={(e) => e.stopPropagation()}
       >
         {/* Header */}
-        <h2 style={{ margin: 0, marginBottom: '1rem', color: 'var(--text-color)', fontSize: '1.5rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-          <Download size={24} /> Import Sequence Pattern
-        </h2>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '1rem', marginBottom: '1rem' }}>
+          <h2 id="pattern-import-title" style={{ margin: 0, color: 'var(--text-color)', fontSize: '1.5rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+            <Download size={24} /> Import Sequence Pattern
+          </h2>
+          <button
+            type="button"
+            onClick={onClose}
+            disabled={dismissBlocked}
+            className="nx-modal-close"
+            aria-label="Close import dialog"
+            style={{ flexShrink: 0 }}
+          >
+            <X size={18} aria-hidden="true" />
+          </button>
+        </div>
 
         {/* Step 1: File Selection */}
         {step === 'select' && (
@@ -901,7 +951,14 @@ const PatternImport = ({ isOpen, onClose, onImport }) => {
 
             {/* Sequence Preview Player Modal */}
             {showPreviewPlayer && previewPlaylist.length > 0 && (
-              <div style={{
+              <div
+                role="dialog"
+                aria-modal="true"
+                aria-label="Imported sequence video preview"
+                onClick={(event) => {
+                  if (event.target === event.currentTarget) handleClosePreview();
+                }}
+                style={{
                 position: 'fixed',
                 top: 0,
                 left: 0,
@@ -916,7 +973,9 @@ const PatternImport = ({ isOpen, onClose, onImport }) => {
               }}>
                 {/* Close button */}
                 <button
+                  type="button"
                   onClick={handleClosePreview}
+                  aria-label="Close video preview"
                   style={{
                     position: 'absolute',
                     top: '1rem',
@@ -964,6 +1023,8 @@ const PatternImport = ({ isOpen, onClose, onImport }) => {
                   ref={videoRef}
                   src={previewPlaylist[currentPreviewIndex]?.url}
                   autoPlay
+                  controls
+                  aria-label={previewPlaylist[currentPreviewIndex]?.name || 'Sequence preview video'}
                   onEnded={handleVideoEnded}
                   onPlay={() => setIsPlaying(true)}
                   onPause={() => setIsPlaying(false)}
@@ -986,8 +1047,10 @@ const PatternImport = ({ isOpen, onClose, onImport }) => {
                   borderRadius: '2rem',
                 }}>
                   <button
+                    type="button"
                     onClick={handlePrevVideo}
                     disabled={currentPreviewIndex === 0}
+                    aria-label="Previous preview video"
                     style={{
                       padding: '0.75rem',
                       backgroundColor: currentPreviewIndex === 0 ? 'rgba(255, 255, 255, 0.1)' : 'rgba(139, 92, 246, 0.3)',
@@ -1004,7 +1067,9 @@ const PatternImport = ({ isOpen, onClose, onImport }) => {
                   </button>
 
                   <button
+                    type="button"
                     onClick={togglePlayPause}
+                    aria-label={isPlaying ? 'Pause preview video' : 'Play preview video'}
                     style={{
                       padding: '1rem',
                       backgroundColor: '#8b5cf6',
@@ -1021,8 +1086,10 @@ const PatternImport = ({ isOpen, onClose, onImport }) => {
                   </button>
 
                   <button
+                    type="button"
                     onClick={handleNextVideo}
                     disabled={currentPreviewIndex === previewPlaylist.length - 1}
+                    aria-label="Next preview video"
                     style={{
                       padding: '0.75rem',
                       backgroundColor: currentPreviewIndex === previewPlaylist.length - 1 ? 'rgba(255, 255, 255, 0.1)' : 'rgba(139, 92, 246, 0.3)',
@@ -1049,7 +1116,8 @@ const PatternImport = ({ isOpen, onClose, onImport }) => {
                   maxWidth: '80%',
                 }}>
                   {previewPlaylist.map((item, idx) => (
-                    <div
+                    <button
+                      type="button"
                       key={idx}
                       onClick={() => {
                         setCurrentPreviewIndex(idx);
@@ -1066,8 +1134,12 @@ const PatternImport = ({ isOpen, onClose, onImport }) => {
                             : 'rgba(255, 255, 255, 0.3)',
                         cursor: 'pointer',
                         transition: 'all 0.2s ease',
+                        border: 'none',
+                        padding: 0,
                       }}
                       title={item.name}
+                      aria-label={`Play ${item.name}`}
+                      aria-current={idx === currentPreviewIndex ? 'true' : undefined}
                     />
                   ))}
                 </div>
