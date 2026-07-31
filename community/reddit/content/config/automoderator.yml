@@ -1,0 +1,94 @@
+# Support and bug-report checklist
+---
+type: submission
+priority: 10
+flair_text:
+  - "Question / Support"
+  - "Bug Report"
+moderators_exempt: false
+comment_stickied: true
+comment: |
+  Thanks for posting. To help the community troubleshoot efficiently, please make sure your post includes:
+
+  - NeXroll version
+  - Install type: Windows, Docker, or Unraid
+  - Media server and version: Plex, Jellyfin, or Emby
+  - Expected behavior and actual behavior
+  - Steps to reproduce
+  - Relevant sanitized log lines
+  - Recent configuration changes
+
+  Docker and Unraid users should also include sanitized volume, environment, and path-mapping details.
+
+  Never post passwords, tokens, API keys, cookies, private URLs, or public IP addresses. Review exported diagnostics before sharing them.
+
+  Full checklist: https://www.reddit.com/r/NeXroll/about/sticky?num=2
+
+  Real-time help: https://discord.gg/R9eH7TbxEk
+
+# Likely exposed credentials in submissions
+---
+type: submission
+priority: 100
+body+title (regex, includes):
+  - '(?i)\bX-Plex-Token\b\s*[:=]\s*[A-Za-z0-9._~-]{8,}'
+  - '(?i)\b(?:api[_ -]?key|access[_ -]?token|auth[_ -]?token|password|passwd|client[_ -]?secret)\b\s*[:=]\s*\S{12,}'
+  - '(?i)[?&](?:apikey|api_key|token|access_token|auth_token)=[A-Za-z0-9._~+/%=-]{8,}'
+  - '(?i)\b(?:Authorization|Cookie)\s*:\s*(?:Bearer\s+)?[A-Za-z0-9._~+/%=-]{12,}'
+moderators_exempt: false
+action: filter
+action_reason: "Possible credential or secret exposed"
+message_subject: "Your r/NeXroll content may expose a secret"
+message: |
+  Your recent r/NeXroll content was held for moderator review because it appears to contain a password, token, API key, cookie, or similar credential.
+
+  Remove the sensitive value before reposting and rotate it if it was publicly exposed. You may reply to this message if the match was a harmless placeholder.
+
+# Likely exposed credentials in comments
+---
+type: comment
+priority: 100
+body (regex, includes):
+  - '(?i)\bX-Plex-Token\b\s*[:=]\s*[A-Za-z0-9._~-]{8,}'
+  - '(?i)\b(?:api[_ -]?key|access[_ -]?token|auth[_ -]?token|password|passwd|client[_ -]?secret)\b\s*[:=]\s*\S{12,}'
+  - '(?i)[?&](?:apikey|api_key|token|access_token|auth_token)=[A-Za-z0-9._~+/%=-]{8,}'
+  - '(?i)\b(?:Authorization|Cookie)\s*:\s*(?:Bearer\s+)?[A-Za-z0-9._~+/%=-]{12,}'
+moderators_exempt: false
+action: remove
+message_subject: "Your r/NeXroll comment may expose a secret"
+message: |
+  Your recent r/NeXroll comment was removed because it appears to contain a password, token, API key, cookie, or similar credential.
+
+  Remove the sensitive value before commenting again and rotate it if it was publicly exposed. You may reply to this message if the match was a harmless placeholder.
+modmail_subject: "Possible secret removed from a comment"
+modmail: |
+  AutoModerator removed a comment that may expose a credential. Review it here: {{permalink}}
+
+# URL shorteners, referral links, and untrusted file-sharing downloads in submissions
+---
+type: submission
+priority: 90
+body+title+url (regex, includes):
+  - '(?i)https?://(?:www\.)?(?:bit\.ly|tinyurl\.com|t\.co|goo\.gl|is\.gd|cutt\.ly|rebrand\.ly|shorturl\.at)/\S+'
+  - '(?i)https?://\S+[?&](?:affiliate|affiliate_id|aff_id|referral|referrer)=\S+'
+  - '(?i)https?://(?:www\.)?(?:mediafire\.com|mega\.nz|gofile\.io|anonfiles\.com|sendspace\.com|file-upload\.com)/\S+'
+moderators_exempt: false
+action: filter
+action_reason: "Shortened, referral, or untrusted download link requires review"
+
+# URL shorteners, referral links, and untrusted file-sharing downloads in comments
+---
+type: comment
+priority: 90
+body (regex, includes):
+  - '(?i)https?://(?:www\.)?(?:bit\.ly|tinyurl\.com|t\.co|goo\.gl|is\.gd|cutt\.ly|rebrand\.ly|shorturl\.at)/\S+'
+  - '(?i)https?://\S+[?&](?:affiliate|affiliate_id|aff_id|referral|referrer)=\S+'
+  - '(?i)https?://(?:www\.)?(?:mediafire\.com|mega\.nz|gofile\.io|anonfiles\.com|sendspace\.com|file-upload\.com)/\S+'
+moderators_exempt: false
+action: remove
+message_subject: "Your r/NeXroll comment contains a restricted link"
+message: |
+  Your recent r/NeXroll comment was removed because it contains a shortened, referral, or untrusted file-sharing link. Please use a direct official source when one is available.
+modmail_subject: "Restricted link removed from a comment"
+modmail: |
+  AutoModerator removed a comment containing a restricted link. Review it here: {{permalink}}

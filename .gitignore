@@ -161,3 +161,11 @@ release-artifacts/
 # Screenshot staging/scratch folder (real screenshots live in docs/screenshots/)
 nexrollsC*/
 nexrolls*/
+
+# Remotion launch video generated assets and renders
+launch-video/public/
+launch-video/out/
+
+# Local Reddit moderator credentials and live-state backups
+community/reddit/snapshots/
+community/reddit/.state.json

@@ -1,0 +1,506 @@
+{
+  "schema_name": "nexroll-reddit-community",
+  "schema_version": 1,
+  "description": "Declarative configuration and content map for the official r/NeXroll community.",
+  "subreddit": {
+    "name": "NeXroll",
+    "title": "NeXroll | Preroll Manager for Plex, Jellyfin & Emby",
+    "public_description": "Official NeXroll community. Get help, report bugs, request features, share setups, and follow releases for the free, self-hosted preroll manager for Plex, Jellyfin, and Emby. Windows, Docker, and Unraid supported.",
+    "welcome_message": "Welcome to r/NeXroll. Download the latest release, then follow the Getting Started guide. For help, include your NeXroll version, install type, media server, expected result, and relevant sanitized logs. Never post passwords, tokens, API keys, cookies, or public IP addresses. Join us on Discord at https://discord.gg/R9eH7TbxEk for real-time help.",
+    "submit_text": "Choose the closest post flair and use a clear, searchable title. Support and bug posts should include your NeXroll version, install type, media server, expected behavior, actual behavior, reproduction steps, and sanitized logs. Never post credentials, tokens, API keys, cookies, or public IP addresses.",
+    "language": "en"
+  },
+  "branding": {
+    "description": "Dark theater-inspired branding derived from the NeXroll application palette.",
+    "primary_color": "#00D4FF",
+    "secondary_color": "#FFC230",
+    "background_color": "#1A1A1A",
+    "icon": "assets/reddit-community-icon.png",
+    "banner": "assets/reddit-banner-desktop.png",
+    "mobile_banner": "assets/reddit-banner-mobile.png"
+  },
+  "settings": {
+    "community_type": "public",
+    "allow_discovery": true,
+    "allow_images": true,
+    "allow_videos": true,
+    "allow_polls": true,
+    "allow_spoilers": true,
+    "wiki_enabled": true,
+    "require_post_flair": true,
+    "user_flair_enabled": true,
+    "user_flair_self_assignable": true,
+    "suggested_comment_sort": "confidence"
+  },
+  "rules": [
+    {
+      "id": "respectful",
+      "priority": 1,
+      "short_name": "Be respectful and constructive",
+      "description": "Discuss ideas and problems without insults, harassment, gatekeeping, or hostility.",
+      "kind": "all"
+    },
+    {
+      "id": "on_topic",
+      "priority": 2,
+      "short_name": "Keep it NeXroll-related",
+      "description": "Posts should concern NeXroll, prerolls, supported media servers, integrations, or relevant self-hosting workflows.",
+      "kind": "all"
+    },
+    {
+      "id": "clear_flair",
+      "priority": 3,
+      "short_name": "Use a clear title and the right flair",
+      "description": "Make posts searchable, choose the closest flair, and keep each post focused on one issue or request.",
+      "kind": "link"
+    },
+    {
+      "id": "support_context",
+      "priority": 4,
+      "short_name": "Include useful support details",
+      "description": "Search first. Include your NeXroll version, deployment type, media server, reproduction steps, expected behavior, actual behavior, and sanitized logs where relevant.",
+      "kind": "link"
+    },
+    {
+      "id": "protect_secrets",
+      "priority": 5,
+      "short_name": "Protect secrets and privacy",
+      "description": "Never publish passwords, tokens, API keys, cookies, private URLs, public IP addresses, or unredacted configuration files.",
+      "kind": "all"
+    },
+    {
+      "id": "authorized_content",
+      "priority": 6,
+      "short_name": "Share only distributable content",
+      "description": "Do not request or distribute pirated media or prerolls you lack permission to share. Respect the Community Prerolls Fair Use Policy.",
+      "kind": "all"
+    },
+    {
+      "id": "no_spam",
+      "priority": 7,
+      "short_name": "No spam or undisclosed promotion",
+      "description": "No referral spam, repetitive promotion, unrelated advertising, or undisclosed commercial interests.",
+      "kind": "all"
+    }
+  ],
+  "post_flair": [
+    {
+      "id": "announcement",
+      "text": "Announcement",
+      "background_color": "#FFC230",
+      "text_color": "dark",
+      "mod_only": true
+    },
+    {
+      "id": "new_release",
+      "text": "New Release",
+      "background_color": "#00D4FF",
+      "text_color": "dark",
+      "mod_only": true
+    },
+    {
+      "id": "archived_release",
+      "text": "Archived Release",
+      "background_color": "#6B7280",
+      "text_color": "light",
+      "mod_only": true
+    },
+    {
+      "id": "support",
+      "text": "Question / Support",
+      "background_color": "#3B82F6",
+      "text_color": "light",
+      "mod_only": false
+    },
+    {
+      "id": "bug_report",
+      "text": "Bug Report",
+      "background_color": "#EF4444",
+      "text_color": "light",
+      "mod_only": false
+    },
+    {
+      "id": "confirmed_bug",
+      "text": "Confirmed Bug",
+      "background_color": "#B91C1C",
+      "text_color": "light",
+      "mod_only": true
+    },
+    {
+      "id": "feature_request",
+      "text": "Feature Request",
+      "background_color": "#8B5CF6",
+      "text_color": "light",
+      "mod_only": false
+    },
+    {
+      "id": "guide_tip",
+      "text": "Guide / Tip",
+      "background_color": "#14B8A6",
+      "text_color": "dark",
+      "mod_only": false
+    },
+    {
+      "id": "setup_showcase",
+      "text": "Setup Showcase",
+      "background_color": "#10B981",
+      "text_color": "dark",
+      "mod_only": false
+    },
+    {
+      "id": "community_preroll",
+      "text": "Community Preroll",
+      "background_color": "#F59E0B",
+      "text_color": "dark",
+      "mod_only": false
+    },
+    {
+      "id": "discussion",
+      "text": "Discussion",
+      "background_color": "#6B7280",
+      "text_color": "light",
+      "mod_only": false
+    },
+    {
+      "id": "solved",
+      "text": "Solved",
+      "background_color": "#22C55E",
+      "text_color": "dark",
+      "mod_only": false
+    }
+  ],
+  "user_flair": [
+    {
+      "id": "plex_windows",
+      "text": "Plex | Windows",
+      "background_color": "#E5A00D",
+      "text_color": "dark",
+      "mod_only": false,
+      "editable": false
+    },
+    {
+      "id": "plex_docker",
+      "text": "Plex | Docker",
+      "background_color": "#E5A00D",
+      "text_color": "dark",
+      "mod_only": false,
+      "editable": false
+    },
+    {
+      "id": "plex_unraid",
+      "text": "Plex | Unraid",
+      "background_color": "#E5A00D",
+      "text_color": "dark",
+      "mod_only": false,
+      "editable": false
+    },
+    {
+      "id": "jellyfin_windows",
+      "text": "Jellyfin | Windows",
+      "background_color": "#00A4DC",
+      "text_color": "dark",
+      "mod_only": false,
+      "editable": false
+    },
+    {
+      "id": "jellyfin_docker",
+      "text": "Jellyfin | Docker",
+      "background_color": "#00A4DC",
+      "text_color": "dark",
+      "mod_only": false,
+      "editable": false
+    },
+    {
+      "id": "jellyfin_unraid",
+      "text": "Jellyfin | Unraid",
+      "background_color": "#00A4DC",
+      "text_color": "dark",
+      "mod_only": false,
+      "editable": false
+    },
+    {
+      "id": "emby_windows",
+      "text": "Emby | Windows",
+      "background_color": "#52B54B",
+      "text_color": "dark",
+      "mod_only": false,
+      "editable": false
+    },
+    {
+      "id": "emby_docker",
+      "text": "Emby | Docker",
+      "background_color": "#52B54B",
+      "text_color": "dark",
+      "mod_only": false,
+      "editable": false
+    },
+    {
+      "id": "emby_unraid",
+      "text": "Emby | Unraid",
+      "background_color": "#52B54B",
+      "text_color": "dark",
+      "mod_only": false,
+      "editable": false
+    },
+    {
+      "id": "multi_server",
+      "text": "Multi-server",
+      "background_color": "#8B5CF6",
+      "text_color": "light",
+      "mod_only": false,
+      "editable": false
+    },
+    {
+      "id": "nexroll_developer",
+      "text": "NeXroll Developer",
+      "background_color": "#00D4FF",
+      "text_color": "dark",
+      "mod_only": true,
+      "editable": false
+    },
+    {
+      "id": "plugin_developer",
+      "text": "Plugin Developer",
+      "background_color": "#FFC230",
+      "text_color": "dark",
+      "mod_only": true,
+      "editable": false
+    },
+    {
+      "id": "community_contributor",
+      "text": "Community Contributor",
+      "background_color": "#14B8A6",
+      "text_color": "dark",
+      "mod_only": true,
+      "editable": false
+    }
+  ],
+  "removal_reasons": [
+    {
+      "id": "needs_details",
+      "title": "Needs troubleshooting details",
+      "message": "Your post was removed because it does not include enough information to troubleshoot. Please repost with your NeXroll version, install type, media server, expected behavior, actual behavior, reproduction steps, and relevant sanitized logs. The support checklist is available at https://www.reddit.com/r/NeXroll/about/sticky?num=2.",
+      "rule_id": "support_context"
+    },
+    {
+      "id": "sensitive_information",
+      "title": "Sensitive information exposed",
+      "message": "Your content was removed to protect your account or server. Remove passwords, tokens, API keys, cookies, private URLs, public IP addresses, and other credentials before reposting. Rotate any secret that was publicly exposed.",
+      "rule_id": "protect_secrets"
+    },
+    {
+      "id": "duplicate",
+      "title": "Duplicate or already documented",
+      "message": "This question or issue is already covered by an existing thread or the NeXroll documentation. Please continue the existing discussion or review https://github.com/JFLXCLOUD/NeXroll/wiki.",
+      "rule_id": "clear_flair"
+    },
+    {
+      "id": "off_topic",
+      "title": "Off-topic content",
+      "message": "This content is outside the scope of NeXroll, prerolls, supported media servers, integrations, or related self-hosting workflows.",
+      "rule_id": "on_topic"
+    },
+    {
+      "id": "unauthorized_content",
+      "title": "Unauthorized or infringing content",
+      "message": "This content requests or distributes media that the poster is not authorized to share. You may repost only material you have permission to distribute and that complies with the Community Prerolls Fair Use Policy.",
+      "rule_id": "authorized_content"
+    },
+    {
+      "id": "spam",
+      "title": "Spam or undisclosed promotion",
+      "message": "This content was removed as referral spam, repetitive promotion, unrelated advertising, or undisclosed commercial promotion.",
+      "rule_id": "no_spam"
+    },
+    {
+      "id": "conduct",
+      "title": "Unconstructive conduct",
+      "message": "This content was removed because it included harassment, insults, hostility, or other conduct that prevents a constructive technical discussion.",
+      "rule_id": "respectful"
+    }
+  ],
+  "sidebar": {
+    "legacy_markdown_path": "content/sidebar.md",
+    "widgets": [
+      {
+        "id": "about",
+        "type": "text",
+        "title": "About NeXroll",
+        "markdown": "NeXroll is a free, self-hosted preroll manager for Plex, Jellyfin, and Emby. Organize intros, build sequences, schedule seasons and holidays, and bring the cinema experience home."
+      },
+      {
+        "id": "get_nexroll",
+        "type": "buttons",
+        "title": "Get NeXroll",
+        "buttons": [
+          {
+            "label": "Latest Release",
+            "url": "https://github.com/JFLXCLOUD/NeXroll/releases/latest"
+          },
+          {
+            "label": "Documentation",
+            "url": "https://github.com/JFLXCLOUD/NeXroll/wiki"
+          },
+          {
+            "label": "Docker Setup",
+            "url": "https://github.com/JFLXCLOUD/NeXroll/wiki/Docker"
+          },
+          {
+            "label": "GitHub",
+            "url": "https://github.com/JFLXCLOUD/NeXroll"
+          }
+        ]
+      },
+      {
+        "id": "help",
+        "type": "buttons",
+        "title": "Help & Community",
+        "buttons": [
+          {
+            "label": "Getting Started",
+            "url": "https://github.com/JFLXCLOUD/NeXroll/wiki/Getting-Started"
+          },
+          {
+            "label": "Troubleshooting",
+            "url": "https://github.com/JFLXCLOUD/NeXroll/wiki/Troubleshooting"
+          },
+          {
+            "label": "Discord",
+            "url": "https://discord.gg/R9eH7TbxEk"
+          },
+          {
+            "label": "GitHub Issues",
+            "url": "https://github.com/JFLXCLOUD/NeXroll/issues"
+          }
+        ]
+      },
+      {
+        "id": "support_development",
+        "type": "buttons",
+        "title": "Support Development",
+        "buttons": [
+          {
+            "label": "Ko-fi",
+            "url": "https://ko-fi.com/j_b__"
+          },
+          {
+            "label": "Typical Nerds",
+            "url": "https://typicalnerds.uk/"
+          }
+        ]
+      },
+      {
+        "id": "related_communities",
+        "type": "community_list",
+        "title": "Related Communities",
+        "communities": [
+          "PlexPrerolls",
+          "PleX",
+          "jellyfin",
+          "emby",
+          "unRAID",
+          "selfhosted"
+        ]
+      }
+    ]
+  },
+  "wiki": {
+    "pages": [
+      {
+        "name": "index",
+        "title": "NeXroll Community Wiki",
+        "content_path": "content/wiki/index.md",
+        "visibility": "public",
+        "editing": "mods",
+        "listed": true
+      },
+      {
+        "name": "installation",
+        "title": "Installation",
+        "content_path": "content/wiki/installation.md",
+        "visibility": "public",
+        "editing": "mods",
+        "listed": true
+      },
+      {
+        "name": "support",
+        "title": "Getting Support",
+        "content_path": "content/wiki/support.md",
+        "visibility": "public",
+        "editing": "mods",
+        "listed": true
+      },
+      {
+        "name": "path-mappings",
+        "title": "Path Mappings",
+        "content_path": "content/wiki/path-mappings.md",
+        "visibility": "public",
+        "editing": "mods",
+        "listed": true
+      },
+      {
+        "name": "media-servers",
+        "title": "Media Servers",
+        "content_path": "content/wiki/media-servers.md",
+        "visibility": "public",
+        "editing": "mods",
+        "listed": true
+      },
+      {
+        "name": "scheduling-and-sequences",
+        "title": "Scheduling and Sequences",
+        "content_path": "content/wiki/scheduling-and-sequences.md",
+        "visibility": "public",
+        "editing": "mods",
+        "listed": true
+      },
+      {
+        "name": "nex-up",
+        "title": "NeX-Up",
+        "content_path": "content/wiki/nex-up.md",
+        "visibility": "public",
+        "editing": "mods",
+        "listed": true
+      },
+      {
+        "name": "community-prerolls",
+        "title": "Community Prerolls",
+        "content_path": "content/wiki/community-prerolls.md",
+        "visibility": "public",
+        "editing": "mods",
+        "listed": true
+      },
+      {
+        "name": "faq",
+        "title": "Frequently Asked Questions",
+        "content_path": "content/wiki/faq.md",
+        "visibility": "public",
+        "editing": "mods",
+        "listed": true
+      },
+      {
+        "name": "releases",
+        "title": "Releases",
+        "content_path": "content/wiki/releases.md",
+        "visibility": "public",
+        "editing": "mods",
+        "listed": true
+      }
+    ]
+  },
+  "pinned_posts": [
+    {
+      "id": "start_here",
+      "content_path": "content/posts/start-here.md",
+      "sticky_slot": 1
+    },
+    {
+      "id": "support_checklist",
+      "content_path": "content/posts/support-checklist.md",
+      "sticky_slot": 2
+    }
+  ],
+  "automoderator": {
+    "path": "content/config/automoderator.yml"
+  }
+}
