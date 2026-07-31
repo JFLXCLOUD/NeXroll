@@ -17,6 +17,113 @@ ALLOWED_PREROLL_EXTENSIONS = frozenset(
 )
 
 
+def preroll_has_category(preroll, category_id: int) -> bool:
+    """Return whether a preroll carries a category through either schema path."""
+    if preroll is None:
+        return False
+    if getattr(preroll, "category_id", None) == category_id:
+        return True
+    return any(
+        getattr(item, "id", None) == category_id
+        for item in (getattr(preroll, "categories", None) or [])
+    )
+
+
+def ensure_preroll_category(preroll, category) -> bool:
+    """Attach ``category`` without replacing existing category assignments.
+
+    The many-to-many relationship is canonical, while ``category_id`` remains
+    populated for older queries. The return value reports whether a user-visible
+    membership was added; a legacy-only row can still have its many-to-many link
+    repaired while returning ``False`` because it was already categorized.
+    """
+    if preroll is None or category is None or getattr(category, "id", None) is None:
+        return False
+
+    current_categories = list(getattr(preroll, "categories", None) or [])
+    if any(getattr(item, "id", None) == category.id for item in current_categories):
+        return False
+
+    already_visible_through_legacy = getattr(preroll, "category_id", None) == category.id
+    was_uncategorized = (
+        getattr(preroll, "category_id", None) is None and not current_categories
+    )
+    preroll.categories = current_categories + [category]
+    if was_uncategorized:
+        preroll.category_id = category.id
+    return not already_visible_through_legacy
+
+
+def thumbnail_path_candidates(
+    stored_path: str | None,
+    data_dir: str,
+    prerolls_dir: str,
+) -> list[str]:
+    """Return compatible absolute candidates for a stored thumbnail path.
+
+    Older API responses prefixed ``thumbnails/...`` with ``prerolls/``. When
+    ``data_dir`` is already the preroll root (the Docker default), blindly
+    joining that response produces ``.../prerolls/prerolls/thumbnails``. Keep
+    the ordinary data-relative candidate first, then try preroll-root-relative
+    forms so both legacy responses and current database values resolve.
+    """
+    raw = str(stored_path or "").strip()
+    if not raw:
+        return []
+
+    candidates: list[str] = []
+
+    def add(path: str) -> None:
+        try:
+            absolute = os.path.abspath(path)
+        except (OSError, TypeError, ValueError):
+            return
+        key = os.path.normcase(os.path.normpath(absolute))
+        if not any(os.path.normcase(os.path.normpath(item)) == key for item in candidates):
+            candidates.append(absolute)
+
+    if os.path.isabs(raw):
+        add(raw)
+    else:
+        add(os.path.join(data_dir, raw))
+        add(os.path.join(prerolls_dir, raw))
+
+        slash_parts = [part for part in raw.replace("\\", "/").split("/") if part]
+        if slash_parts:
+            root_names = {
+                "prerolls",
+                os.path.basename(os.path.normpath(prerolls_dir)).casefold(),
+            }
+            if slash_parts[0].casefold() in root_names and len(slash_parts) > 1:
+                add(os.path.join(prerolls_dir, *slash_parts[1:]))
+
+    return candidates
+
+
+def resolve_thumbnail_path(
+    stored_path: str | None,
+    data_dir: str,
+    prerolls_dir: str,
+    thumbnails_dir: str,
+) -> str | None:
+    """Resolve an existing thumbnail without exposing neighboring data files."""
+    try:
+        allowed_root = os.path.normcase(os.path.realpath(thumbnails_dir))
+    except (OSError, TypeError, ValueError):
+        return None
+
+    for candidate in thumbnail_path_candidates(stored_path, data_dir, prerolls_dir):
+        try:
+            resolved = os.path.normcase(os.path.realpath(candidate))
+            if os.path.commonpath((resolved, allowed_root)) != allowed_root:
+                continue
+        except (OSError, ValueError):
+            continue
+        if os.path.isfile(resolved):
+            return resolved
+    return None
+
+
 def apply_preroll_media_replacement(
     preroll,
     *,

@@ -64,10 +64,13 @@ from backend.preroll_files import (
     MAX_PREROLL_UPLOAD_SIZE,
     ReversibleFileTransaction,
     apply_preroll_media_replacement,
+    ensure_preroll_category,
     managed_category_suffix,
     move_to_unique_destination,
     open_unique_destination,
+    preroll_has_category,
     rename_file_case_safe,
+    resolve_thumbnail_path,
     validate_preroll_filename,
     validate_storage_component,
 )
@@ -78,6 +81,7 @@ from backend.backup_utils import (
     remap_sequence_blocks,
     remap_sequence_json,
 )
+from backend.auth_gate import is_auth_gate_exempt
 
 models.Base.metadata.create_all(bind=engine)
 
@@ -2316,17 +2320,6 @@ app.add_middleware(
 # Requests with a valid API key (X-Api-Key header or ?api_key=) also pass:
 # GET/HEAD requires a "read" key, anything else a "write" key — so external
 # automation keeps working when login is required.
-_AUTH_GATE_EXEMPT_EXACT = {
-    "/", "/health", "/favicon.ico", "/manifest.json", "/asset-manifest.json",
-    "/sw.js", "/robots.txt", "/logo192.png", "/logo512.png",
-    "/auth/status", "/auth/login", "/auth/logout", "/auth/register",
-    "/auth/reset-password",
-}
-_AUTH_GATE_EXEMPT_PREFIXES = (
-    "/static/",
-    "/plugin/", "/jellyfin/plugin/", "/emby/plugin/",
-)
-
 # auth_enabled is read on every gated request; cache it briefly so static-ish
 # traffic doesn't hammer SQLite. The /auth/settings PUT resets the cache so a
 # toggle takes effect immediately.
@@ -2361,11 +2354,7 @@ def _auth_gate_enabled() -> bool:
 @app.middleware("http")
 async def _auth_gate_mw(request: Request, call_next):
     path = request.url.path or "/"
-    if (
-        request.method == "OPTIONS"
-        or path in _AUTH_GATE_EXEMPT_EXACT
-        or path.startswith(_AUTH_GATE_EXEMPT_PREFIXES)
-    ):
+    if is_auth_gate_exempt(request.method, path):
         return await call_next(request)
     if not _auth_gate_enabled():
         return await call_next(request)
@@ -14678,34 +14667,44 @@ def map_preroll_root(req: MapRootRequest, db: Session = Depends(get_db)):
 
     total_found = len(candidate_files)
 
-    # Helper: dedupe check. Path-based check is global; filename-only check is gated by
-    # the file's resolved category if it has one (no global filename collision check —
-    # different categories can legitimately share filenames in the legacy folder layout).
-    def _exists_in_db(abs_path: str, filename: str, category_id_for_dup_check: Optional[int]) -> bool:
+    # Path matching is global. The filename fallback stays scoped to the
+    # resolved category because different categories can share a filename.
+    # Return the row so repeated imports can tag it instead of skipping it.
+    def _find_existing_in_db(
+        abs_path: str,
+        filename: str,
+        category_id_for_dup_check: Optional[int],
+    ) -> Optional[models.Preroll]:
         try:
             row = db.query(models.Preroll).filter(models.Preroll.path == abs_path).first()
             if row:
-                return True
+                return row
             if sys.platform.startswith("win"):
                 lp = abs_path.lower()
                 row = db.query(models.Preroll).filter(func.lower(models.Preroll.path) == lp).first()
                 if row:
-                    return True
+                    return row
             if category_id_for_dup_check is not None:
                 fname_lower = filename.lower()
                 row = db.query(models.Preroll).filter(
-                    models.Preroll.category_id == category_id_for_dup_check,
-                    func.lower(models.Preroll.filename) == fname_lower
+                    or_(
+                        models.Preroll.category_id == category_id_for_dup_check,
+                        models.Preroll.categories.any(
+                            models.Category.id == category_id_for_dup_check
+                        ),
+                    ),
+                    func.lower(models.Preroll.filename) == fname_lower,
                 ).first()
                 if row:
-                    return True
+                    return row
         except Exception:
             pass
-        return False
+        return None
 
     # Dry-run preview: group by resolved category so the UI can show what will happen
     existing = 0
-    per_category_preview: dict[str, dict] = {}  # category_name (or "(uncategorized)") -> {"id", "to_add"}
+    to_tag = 0
+    per_category_preview: dict[str, dict] = {}
     UNCAT_KEY = "(uncategorized)"
     for pth in candidate_files:
         try:
@@ -14715,13 +14714,27 @@ def map_preroll_root(req: MapRootRequest, db: Session = Depends(get_db)):
         fname = os.path.basename(ap)
         cat_for_file = _resolve_category_for_file(ap)
         cat_id_for_dup = cat_for_file.id if cat_for_file else None
-        if _exists_in_db(ap, fname, cat_id_for_dup):
+        existing_row = _find_existing_in_db(ap, fname, cat_id_for_dup)
+        if existing_row is not None:
             existing += 1
+            if cat_for_file is not None and not preroll_has_category(existing_row, cat_for_file.id):
+                entry = per_category_preview.setdefault(
+                    cat_for_file.name,
+                    {"id": cat_for_file.id, "to_add": 0, "to_tag": 0},
+                )
+                entry["to_tag"] += 1
+                to_tag += 1
             continue
         if cat_for_file is not None:
-            entry = per_category_preview.setdefault(cat_for_file.name, {"id": cat_for_file.id, "to_add": 0})
+            entry = per_category_preview.setdefault(
+                cat_for_file.name,
+                {"id": cat_for_file.id, "to_add": 0, "to_tag": 0},
+            )
         else:
-            entry = per_category_preview.setdefault(UNCAT_KEY, {"id": None, "to_add": 0})
+            entry = per_category_preview.setdefault(
+                UNCAT_KEY,
+                {"id": None, "to_add": 0, "to_tag": 0},
+            )
         entry["to_add"] += 1
 
     to_add = total_found - existing
@@ -14735,8 +14748,14 @@ def map_preroll_root(req: MapRootRequest, db: Session = Depends(get_db)):
             "total_found": total_found,
             "already_present": existing,
             "to_add": to_add,
+            "to_tag": to_tag,
             "per_category": [
-                {"category": name, "category_id": meta["id"], "to_add": meta["to_add"]}
+                {
+                    "category": name,
+                    "category_id": meta["id"],
+                    "to_add": meta["to_add"],
+                    "to_tag": meta["to_tag"],
+                }
                 for name, meta in per_category_preview.items()
             ],
         }
@@ -14751,8 +14770,10 @@ def map_preroll_root(req: MapRootRequest, db: Session = Depends(get_db)):
 
     added_details = []
     added_count = 0
+    tagged_existing = 0
     skipped_count = existing
     per_category_added: dict[str, int] = {}
+    per_category_tagged: dict[str, int] = {}
 
     for src in candidate_files:
         try:
@@ -14763,7 +14784,13 @@ def map_preroll_root(req: MapRootRequest, db: Session = Depends(get_db)):
         filename = os.path.basename(abs_src)
         cat_for_file = _resolve_category_for_file(abs_src)
         cat_id_for_dup = cat_for_file.id if cat_for_file else None
-        if _exists_in_db(abs_src, filename, cat_id_for_dup):
+        existing_row = _find_existing_in_db(abs_src, filename, cat_id_for_dup)
+        if existing_row is not None:
+            if cat_for_file is not None and ensure_preroll_category(existing_row, cat_for_file):
+                tagged_existing += 1
+                per_category_tagged[cat_for_file.name] = (
+                    per_category_tagged.get(cat_for_file.name, 0) + 1
+                )
             continue
 
         # Thumbnail folder: organized under the resolved category name, or a generic
@@ -14865,6 +14892,19 @@ def map_preroll_root(req: MapRootRequest, db: Session = Depends(get_db)):
         })
         added_count += 1
 
+    # A repeated import may only update existing rows, so commit even when no
+    # new preroll rows were created in the loop above.
+    try:
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
+
+    category_names = list(dict.fromkeys([
+        *per_category_added.keys(),
+        *per_category_tagged.keys(),
+    ]))
+
     return {
         "dry_run": False,
         "root": root_abs,
@@ -14874,7 +14914,15 @@ def map_preroll_root(req: MapRootRequest, db: Session = Depends(get_db)):
         "total_found": total_found,
         "already_present": skipped_count,
         "added": added_count,
-        "per_category": [{"category": name, "added": count} for name, count in per_category_added.items()],
+        "tagged_existing": tagged_existing,
+        "per_category": [
+            {
+                "category": name,
+                "added": per_category_added.get(name, 0),
+                "tagged_existing": per_category_tagged.get(name, 0),
+            }
+            for name in category_names
+        ],
         "added_details": added_details[:50],  # limit detail size
     }
 
@@ -15258,7 +15306,9 @@ def rescan_prerolls(
             'INFO', 'user',
             f"Preroll rescan: {stats['paths_updated']} paths updated, "
             f"{stats['thumbnails_generated']} thumbnails generated, "
-            f"{stats['new_prerolls']} new rows, {stats['missing_files']} missing, "
+            f"{stats['new_prerolls']} new rows, "
+            f"{stats.get('categories_assigned', 0)} categories assigned, "
+            f"{stats['missing_files']} missing, "
             f"{stats.get('duplicate_rows', 0)} duplicates, "
             f"{stats.get('deleted_missing', 0)} deleted, {stats.get('deduped_rows', 0)} deduped",
             source='rescan_prerolls',
@@ -16927,24 +16977,15 @@ def serve_preroll_thumb(p: str = ""):
     from fastapi.responses import FileResponse
     if not p:
         raise HTTPException(status_code=404, detail="Not found")
-    try:
-        abs_path = os.path.abspath(os.path.join(data_dir, p))
-    except Exception:
+    resolved = resolve_thumbnail_path(
+        p,
+        data_dir,
+        PREROLLS_DIR,
+        THUMBNAILS_DIR,
+    )
+    if resolved is None:
         raise HTTPException(status_code=404, detail="Not found")
-    allowed = []
-    for r in (PREROLLS_DIR if "PREROLLS_DIR" in globals() else None,
-              THUMBNAILS_DIR if "THUMBNAILS_DIR" in globals() else None,
-              data_dir):
-        try:
-            if r:
-                allowed.append(os.path.abspath(r))
-        except Exception:
-            pass
-    if not any(abs_path == root or abs_path.startswith(root + os.sep) for root in allowed):
-        raise HTTPException(status_code=404, detail="Not found")
-    if not os.path.isfile(abs_path):
-        raise HTTPException(status_code=404, detail="Not found")
-    return FileResponse(abs_path)
+    return FileResponse(resolved)
 
 # Fallback handlers for hashed frontend assets (avoid 404 when index.html points to old main.<hash>.{js,css})
 # This serves the latest present main.* file when the requested hashed file is missing.

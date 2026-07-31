@@ -1206,6 +1206,7 @@ const [applyingToServer, setApplyingToServer] = useState(false);
   const [loginForm, setLoginForm] = useState({ username: '', password: '', remember_me: false });
   const [loginLoading, setLoginLoading] = useState(false);
   const [loginError, setLoginError] = useState(null);
+  const [authNotice, setAuthNotice] = useState(null);
   const [showRegisterForm, setShowRegisterForm] = useState(false);
   const [showResetForm, setShowResetForm] = useState(false);
   const [resetForm, setResetForm] = useState({ new_password: '', confirm_password: '' });
@@ -9209,7 +9210,7 @@ const DashboardTiles = {
                     </button>
                   </div>
                   {mapRootResult.type !== 'error' && (
-                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '0.75rem', textAlign: 'center' }}>
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(110px, 1fr))', gap: '0.75rem', textAlign: 'center' }}>
                       <div style={{ padding: '0.75rem', background: 'var(--card-bg)', borderRadius: '8px', border: '1px solid var(--border-color)' }}>
                         <div style={{ fontSize: '1.75rem', fontWeight: 700, color: 'var(--accent-color)' }}>
                           {mapRootResult.found}
@@ -9230,6 +9231,14 @@ const DashboardTiles = {
                           {mapRootResult.type === 'dryrun' ? 'Would Add' : 'Added'}
                         </div>
                       </div>
+                      <div style={{ padding: '0.75rem', background: 'var(--card-bg)', borderRadius: '8px', border: '1px solid var(--border-color)' }}>
+                        <div style={{ fontSize: '1.75rem', fontWeight: 700, color: '#17a2b8' }}>
+                          {mapRootResult.type === 'dryrun' ? mapRootResult.toTag : mapRootResult.tagged}
+                        </div>
+                        <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>
+                          {mapRootResult.type === 'dryrun' ? 'Would Tag' : 'Tagged'}
+                        </div>
+                      </div>
                     </div>
                   )}
                   {Array.isArray(mapRootResult.perCategory) && mapRootResult.perCategory.length > 0 && (
@@ -9247,13 +9256,16 @@ const DashboardTiles = {
                             borderRadius: '999px',
                             fontSize: '0.85rem'
                           }}>
-                            {row.category}: {row.to_add ?? row.added ?? 0}
+                            {row.category}: {row.to_add ?? row.added ?? 0} add
+                            {(row.to_tag ?? row.tagged_existing ?? 0) > 0 && (
+                              <>, {row.to_tag ?? row.tagged_existing} tag</>
+                            )}
                           </span>
                         ))}
                       </div>
                     </div>
                   )}
-                  {mapRootResult.type === 'dryrun' && mapRootResult.toAdd > 0 && (
+                  {mapRootResult.type === 'dryrun' && (mapRootResult.toAdd + mapRootResult.toTag) > 0 && (
                     <div style={{ marginTop: '1rem', textAlign: 'center' }}>
                       <button
                         className="button"
@@ -9261,7 +9273,7 @@ const DashboardTiles = {
                         style={{ backgroundColor: '#28a745', padding: '0.6rem 1.5rem' }}
                       >
                         <Download size={14} style={{ marginRight: '0.35rem' }} />
-                        Import {mapRootResult.toAdd} File{mapRootResult.toAdd !== 1 ? 's' : ''} Now
+                        Apply {mapRootResult.toAdd + mapRootResult.toTag} Change{(mapRootResult.toAdd + mapRootResult.toTag) !== 1 ? 's' : ''} Now
                       </button>
                     </div>
                   )}
@@ -19144,6 +19156,7 @@ const DashboardTiles = {
     e?.preventDefault();
     setLoginLoading(true);
     setLoginError(null);
+    setAuthNotice(null);
     try {
       const res = await fetch(apiUrl('/auth/login'), {
         method: 'POST',
@@ -19219,20 +19232,22 @@ const DashboardTiles = {
 
   const handleRegister = async (e) => {
     e?.preventDefault();
+    setLoginError(null);
+    setAuthNotice(null);
     if (registerForm.password !== registerForm.confirm_password) {
-      showAlert('Passwords do not match', 'error');
+      setLoginError('Passwords do not match');
       return;
     }
     if (registerForm.password.length < 8) {
-      showAlert('Password must be at least 8 characters', 'error');
+      setLoginError('Password must be at least 8 characters');
       return;
     }
     if (registerForm.password === registerForm.password.toLowerCase() || registerForm.password === registerForm.password.toUpperCase()) {
-      showAlert('Password must contain both uppercase and lowercase letters', 'error');
+      setLoginError('Password must contain both uppercase and lowercase letters');
       return;
     }
     if (!/\d/.test(registerForm.password)) {
-      showAlert('Password must contain at least one number', 'error');
+      setLoginError('Password must contain at least one number');
       return;
     }
     setLoginLoading(true);
@@ -19252,12 +19267,12 @@ const DashboardTiles = {
         setShowRegisterForm(false);
         setRegisterForm({ username: '', password: '', confirm_password: '', display_name: '' });
         await checkAuthStatus();
-        showAlert('Account created! Please log in.', 'success');
+        setAuthNotice('Account created. Please sign in.');
       } else {
-        showAlert(data?.detail || 'Registration failed', 'error');
+        setLoginError(data?.detail || 'Registration failed');
       }
     } catch (e) {
-      showAlert('Connection error. Please try again.', 'error');
+      setLoginError('Connection error. Please try again.');
     } finally {
       setLoginLoading(false);
     }
@@ -21360,26 +21375,30 @@ const DashboardTiles = {
         throw new Error(msg);
       }
       // Summarize counts based on backend response shape
-      // Dry run: { total_found, already_present, to_add }
-      // Apply:   { total_found, already_present, added, added_details[] }
+      // Dry run: { total_found, already_present, to_add, to_tag }
+      // Apply:   { total_found, already_present, added, tagged_existing, added_details[] }
       if (data && data.dry_run) {
         const found = Number(data.total_found ?? 0);
         const present = Number(data.already_present ?? 0);
         const toAdd = Number(data.to_add ?? Math.max(0, found - present));
+        const toTag = Number(data.to_tag ?? 0);
         setMapRootResult({
           type: 'dryrun',
           found,
           present,
           toAdd,
+          toTag,
           perCategory: Array.isArray(data.per_category) ? data.per_category : []
         });
       } else {
         const added = Number(data.added ?? (Array.isArray(data.added_details) ? data.added_details.length : 0));
+        const tagged = Number(data.tagged_existing ?? 0);
         const found = Number(data.total_found ?? 0);
         const present = Number(data.already_present ?? 0);
         setMapRootResult({
           type: 'import',
           added,
+          tagged,
           found,
           present,
           perCategory: Array.isArray(data.per_category) ? data.per_category : []
@@ -32449,6 +32468,7 @@ const DashboardTiles = {
           backgroundColor: darkMode ? '#25253a' : '#fff',
           borderRadius: '12px',
           padding: '2rem',
+          boxSizing: 'border-box',
           boxShadow: '0 4px 20px rgba(0,0,0,0.15)',
           border: `1px solid ${darkMode ? '#3a3a5a' : '#e0e0e0'}`
         }}>
@@ -32457,7 +32477,16 @@ const DashboardTiles = {
             <img
               src={darkMode ? "/NeXroll_Logo_WHT.png" : "/NeXroll_Logo_BLK.png"}
               alt="NeXroll"
-              style={{ height: '60px', marginBottom: '0.5rem' }}
+              width="305"
+              height="60"
+              style={{
+                display: 'block',
+                width: '100%',
+                maxWidth: '305px',
+                height: 'auto',
+                margin: '0 auto 0.5rem',
+                objectFit: 'contain'
+              }}
             />
             <div style={{ 
               fontSize: '0.9rem', 
@@ -32471,11 +32500,45 @@ const DashboardTiles = {
             </div>
           </div>
 
+          {authNotice && (
+            <div
+              role="status"
+              aria-live="polite"
+              style={{
+                padding: '0.75rem',
+                backgroundColor: 'rgba(34, 197, 94, 0.1)',
+                border: '1px solid rgba(34, 197, 94, 0.3)',
+                borderRadius: '8px',
+                color: '#22c55e',
+                marginBottom: '1rem',
+                fontSize: '0.9rem'
+              }}
+            >
+              {authNotice}
+            </div>
+          )}
+          {loginError && (
+            <div
+              role="alert"
+              style={{
+                padding: '0.75rem',
+                backgroundColor: 'rgba(239, 68, 68, 0.1)',
+                border: '1px solid rgba(239, 68, 68, 0.3)',
+                borderRadius: '8px',
+                color: '#ef4444',
+                marginBottom: '1rem',
+                fontSize: '0.9rem'
+              }}
+            >
+              {loginError}
+            </div>
+          )}
+
           {/* Register Form (for first user or when registration is allowed) */}
-          {(showRegisterForm || !authStatus.users_exist) ? (
-            <form onSubmit={handleRegister}>
+          {!showResetForm && ((showRegisterForm || !authStatus.users_exist) ? (
+            <form onSubmit={handleRegister} aria-busy={loginLoading}>
               <div style={{ marginBottom: '1rem' }}>
-                <label style={{ 
+                <label htmlFor="auth-register-username" style={{
                   display: 'block', 
                   marginBottom: '0.5rem', 
                   fontWeight: 600,
@@ -32484,9 +32547,14 @@ const DashboardTiles = {
                   Username
                 </label>
                 <input
+                  id="auth-register-username"
+                  name="username"
                   type="text"
                   value={registerForm.username}
                   onChange={(e) => setRegisterForm(prev => ({ ...prev, username: e.target.value }))}
+                  autoComplete="username"
+                  autoCapitalize="none"
+                  spellCheck={false}
                   required
                   style={{
                     width: '100%',
@@ -32501,7 +32569,7 @@ const DashboardTiles = {
                 />
               </div>
               <div style={{ marginBottom: '1rem' }}>
-                <label style={{ 
+                <label htmlFor="auth-register-display-name" style={{
                   display: 'block', 
                   marginBottom: '0.5rem', 
                   fontWeight: 600,
@@ -32510,9 +32578,12 @@ const DashboardTiles = {
                   Display Name (optional)
                 </label>
                 <input
+                  id="auth-register-display-name"
+                  name="display_name"
                   type="text"
                   value={registerForm.display_name}
                   onChange={(e) => setRegisterForm(prev => ({ ...prev, display_name: e.target.value }))}
+                  autoComplete="name"
                   placeholder="How you want to be shown"
                   style={{
                     width: '100%',
@@ -32527,7 +32598,7 @@ const DashboardTiles = {
                 />
               </div>
               <div style={{ marginBottom: '1rem' }}>
-                <label style={{ 
+                <label htmlFor="auth-register-password" style={{
                   display: 'block', 
                   marginBottom: '0.5rem', 
                   fontWeight: 600,
@@ -32536,9 +32607,12 @@ const DashboardTiles = {
                   Password
                 </label>
                 <input
+                  id="auth-register-password"
+                  name="password"
                   type="password"
                   value={registerForm.password}
                   onChange={(e) => setRegisterForm(prev => ({ ...prev, password: e.target.value }))}
+                  autoComplete="new-password"
                   required
                   minLength={8}
                   style={{
@@ -32554,7 +32628,7 @@ const DashboardTiles = {
                 />
               </div>
               <div style={{ marginBottom: '1.5rem' }}>
-                <label style={{ 
+                <label htmlFor="auth-register-password-confirm" style={{
                   display: 'block', 
                   marginBottom: '0.5rem', 
                   fontWeight: 600,
@@ -32563,9 +32637,12 @@ const DashboardTiles = {
                   Confirm Password
                 </label>
                 <input
+                  id="auth-register-password-confirm"
+                  name="confirm_password"
                   type="password"
                   value={registerForm.confirm_password}
                   onChange={(e) => setRegisterForm(prev => ({ ...prev, confirm_password: e.target.value }))}
+                  autoComplete="new-password"
                   required
                   minLength={8}
                   style={{
@@ -32607,7 +32684,11 @@ const DashboardTiles = {
                 <div style={{ textAlign: 'center', marginTop: '1rem' }}>
                   <button
                     type="button"
-                    onClick={() => setShowRegisterForm(false)}
+                    onClick={() => {
+                      setShowRegisterForm(false);
+                      setLoginError(null);
+                      setAuthNotice(null);
+                    }}
                     style={{
                       background: 'none',
                       border: 'none',
@@ -32623,22 +32704,9 @@ const DashboardTiles = {
             </form>
           ) : (
             /* Login Form */
-            <form onSubmit={handleLogin}>
-              {loginError && (
-                <div style={{
-                  padding: '0.75rem',
-                  backgroundColor: 'rgba(239, 68, 68, 0.1)',
-                  border: '1px solid rgba(239, 68, 68, 0.3)',
-                  borderRadius: '8px',
-                  color: '#ef4444',
-                  marginBottom: '1rem',
-                  fontSize: '0.9rem'
-                }}>
-                  {loginError}
-                </div>
-              )}
+            <form onSubmit={handleLogin} aria-busy={loginLoading}>
               <div style={{ marginBottom: '1rem' }}>
-                <label style={{ 
+                <label htmlFor="auth-login-username" style={{
                   display: 'block', 
                   marginBottom: '0.5rem', 
                   fontWeight: 600,
@@ -32647,9 +32715,14 @@ const DashboardTiles = {
                   Username
                 </label>
                 <input
+                  id="auth-login-username"
+                  name="username"
                   type="text"
                   value={loginForm.username}
                   onChange={(e) => setLoginForm(prev => ({ ...prev, username: e.target.value }))}
+                  autoComplete="username"
+                  autoCapitalize="none"
+                  spellCheck={false}
                   required
                   autoFocus
                   style={{
@@ -32665,7 +32738,7 @@ const DashboardTiles = {
                 />
               </div>
               <div style={{ marginBottom: '1rem' }}>
-                <label style={{ 
+                <label htmlFor="auth-login-password" style={{
                   display: 'block', 
                   marginBottom: '0.5rem', 
                   fontWeight: 600,
@@ -32674,9 +32747,12 @@ const DashboardTiles = {
                   Password
                 </label>
                 <input
+                  id="auth-login-password"
+                  name="password"
                   type="password"
                   value={loginForm.password}
                   onChange={(e) => setLoginForm(prev => ({ ...prev, password: e.target.value }))}
+                  autoComplete="current-password"
                   required
                   style={{
                     width: '100%',
@@ -32699,6 +32775,7 @@ const DashboardTiles = {
                   color: darkMode ? '#ddd' : '#333'
                 }}>
                   <input
+                    name="remember_me"
                     type="checkbox"
                     checked={loginForm.remember_me}
                     onChange={(e) => setLoginForm(prev => ({ ...prev, remember_me: e.target.checked }))}
@@ -32732,7 +32809,12 @@ const DashboardTiles = {
                 {authStatus.allow_registration && (
                   <button
                     type="button"
-                    onClick={() => setShowRegisterForm(true)}
+                    onClick={() => {
+                      setShowRegisterForm(true);
+                      setShowResetForm(false);
+                      setLoginError(null);
+                      setAuthNotice(null);
+                    }}
                     style={{
                       background: 'none',
                       border: 'none',
@@ -32747,7 +32829,14 @@ const DashboardTiles = {
                 {authStatus.is_local && (
                   <button
                     type="button"
-                    onClick={() => { setShowResetForm(true); setResetError(null); setResetSuccess(null); }}
+                    onClick={() => {
+                      setShowResetForm(true);
+                      setShowRegisterForm(false);
+                      setLoginError(null);
+                      setAuthNotice(null);
+                      setResetError(null);
+                      setResetSuccess(null);
+                    }}
                     style={{
                       background: 'none',
                       border: 'none',
@@ -32761,7 +32850,7 @@ const DashboardTiles = {
                 )}
               </div>
             </form>
-          )}
+          ))}
 
           {/* Reset Password Form (localhost only) */}
           {showResetForm && !showRegisterForm && authStatus.users_exist && (
@@ -32778,7 +32867,7 @@ const DashboardTiles = {
                 This will reset the admin account password. Only available from the local machine.
               </div>
               {resetError && (
-                <div style={{
+                <div role="alert" style={{
                   padding: '0.75rem',
                   backgroundColor: 'rgba(239, 68, 68, 0.1)',
                   border: '1px solid rgba(239, 68, 68, 0.3)',
@@ -32791,7 +32880,7 @@ const DashboardTiles = {
                 </div>
               )}
               {resetSuccess && (
-                <div style={{
+                <div role="status" aria-live="polite" style={{
                   padding: '0.75rem',
                   backgroundColor: 'rgba(34, 197, 94, 0.1)',
                   border: '1px solid rgba(34, 197, 94, 0.3)',
@@ -32803,15 +32892,18 @@ const DashboardTiles = {
                   {resetSuccess}
                 </div>
               )}
-              <form onSubmit={handleResetPassword}>
+              <form onSubmit={handleResetPassword} aria-busy={resetLoading}>
                 <div style={{ marginBottom: '1rem' }}>
-                  <label style={{ display: 'block', marginBottom: '0.5rem', fontWeight: 600, color: darkMode ? '#ddd' : '#333' }}>
+                  <label htmlFor="auth-reset-password" style={{ display: 'block', marginBottom: '0.5rem', fontWeight: 600, color: darkMode ? '#ddd' : '#333' }}>
                     New Password
                   </label>
                   <input
+                    id="auth-reset-password"
+                    name="new_password"
                     type="password"
                     value={resetForm.new_password}
                     onChange={(e) => setResetForm(prev => ({ ...prev, new_password: e.target.value }))}
+                    autoComplete="new-password"
                     required
                     minLength={8}
                     style={{
@@ -32824,13 +32916,16 @@ const DashboardTiles = {
                   />
                 </div>
                 <div style={{ marginBottom: '1.5rem' }}>
-                  <label style={{ display: 'block', marginBottom: '0.5rem', fontWeight: 600, color: darkMode ? '#ddd' : '#333' }}>
+                  <label htmlFor="auth-reset-password-confirm" style={{ display: 'block', marginBottom: '0.5rem', fontWeight: 600, color: darkMode ? '#ddd' : '#333' }}>
                     Confirm New Password
                   </label>
                   <input
+                    id="auth-reset-password-confirm"
+                    name="confirm_password"
                     type="password"
                     value={resetForm.confirm_password}
                     onChange={(e) => setResetForm(prev => ({ ...prev, confirm_password: e.target.value }))}
+                    autoComplete="new-password"
                     required
                     minLength={8}
                     style={{
@@ -32860,7 +32955,13 @@ const DashboardTiles = {
                 <div style={{ textAlign: 'center', marginTop: '1rem' }}>
                   <button
                     type="button"
-                    onClick={() => { setShowResetForm(false); setResetError(null); setResetSuccess(null); }}
+                    onClick={() => {
+                      setShowResetForm(false);
+                      setResetError(null);
+                      setResetSuccess(null);
+                      setLoginError(null);
+                      setAuthNotice(null);
+                    }}
                     style={{
                       background: 'none', border: 'none',
                       color: '#00d4ff', cursor: 'pointer', fontSize: '0.9rem'

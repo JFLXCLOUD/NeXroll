@@ -21,6 +21,7 @@ from typing import Optional, Callable
 from sqlalchemy.orm import Session
 
 from backend import models
+from backend.preroll_files import ensure_preroll_category
 
 VALID_VIDEO_EXTENSIONS = {
     '.mp4', '.mkv', '.mov', '.avi', '.m4v', '.webm', '.wmv', '.flv', '.ts'
@@ -122,6 +123,7 @@ def reconcile_prerolls(
         "missing_files": 0,
         "duplicate_rows": 0,
         "new_prerolls": 0,
+        "categories_assigned": 0,
         "deleted_missing": 0,
         "deduped_rows": 0,
         "missing_not_pruned": 0,
@@ -162,6 +164,7 @@ def reconcile_prerolls(
     #    (category folder + filename); by_filename is the unique-name fallback.
     by_parent_filename = {}   # (parent_lower, filename_lower) -> abs_path
     by_filename = {}          # filename_lower -> [abs_path, ...]
+    parent_by_path = {}       # abs_path -> top-level folder name
     for abs_path, parent, filename in _iter_preroll_files(prerolls_dir):
         if _is_excluded(abs_path):
             stats["excluded_files"] += 1
@@ -170,6 +173,7 @@ def reconcile_prerolls(
         key = (parent.lower(), filename.lower())
         by_parent_filename.setdefault(key, abs_path)
         by_filename.setdefault(filename.lower(), []).append(abs_path)
+        parent_by_path[abs_path] = parent.lower()
 
     # 2. Index categories so we can look them up by name (folder hint) and by id (path hint).
     all_categories = db.query(models.Category).all()
@@ -225,6 +229,14 @@ def reconcile_prerolls(
 
         if actual:
             matched_paths.add(actual)
+            # A moved file can already have a DB row from a previous root-level
+            # scan. Backfill only truly uncategorized rows when their new top-level
+            # folder matches an existing category; never replace deliberate tags.
+            if p.category_id is None and not (p.categories or []):
+                folder_cat = cat_by_name_lower.get(parent_by_path.get(actual, ""))
+                if folder_cat is not None and ensure_preroll_category(p, folder_cat):
+                    cat = folder_cat
+                    stats["categories_assigned"] += 1
             try:
                 current_norm = os.path.abspath(p.path) if p.path else None
                 actual_norm = os.path.abspath(actual)
@@ -264,6 +276,8 @@ def reconcile_prerolls(
                 category_id=cat.id if cat else None,
                 managed=True,
             )
+            if cat is not None:
+                new_p.categories = [cat]
             db.add(new_p)
             db.flush()
             if generate_thumbnail_fn:
@@ -407,7 +421,8 @@ def reconcile_prerolls(
     log(
         f"Scanner: {stats['files_on_disk']} files on disk, {stats['db_rows_total']} db rows, "
         f"{stats['paths_updated']} paths updated, {stats['thumbnails_generated']} thumbnails generated, "
-        f"{stats['new_prerolls']} new rows, {stats['missing_files']} missing, "
+        f"{stats['new_prerolls']} new rows, {stats['categories_assigned']} categories assigned, "
+        f"{stats['missing_files']} missing, "
         f"{stats['duplicate_rows']} duplicates, "
         f"{stats['deleted_missing']} deleted missing, {stats['deduped_rows']} deduped"
     )

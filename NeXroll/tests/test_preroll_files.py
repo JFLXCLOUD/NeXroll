@@ -5,11 +5,15 @@ import unittest
 
 from backend.preroll_files import (
     apply_preroll_media_replacement,
+    ensure_preroll_category,
     managed_category_suffix,
     move_to_unique_destination,
     open_unique_destination,
+    preroll_has_category,
     ReversibleFileTransaction,
     rename_file_case_safe,
+    resolve_thumbnail_path,
+    thumbnail_path_candidates,
     unique_destination,
     validate_preroll_filename,
     validate_storage_component,
@@ -17,6 +21,94 @@ from backend.preroll_files import (
 
 
 class PrerollFileHelpersTests(unittest.TestCase):
+    def test_category_assignment_preserves_existing_tags_and_sets_legacy_for_uncategorized(self):
+        class Category:
+            def __init__(self, category_id):
+                self.id = category_id
+
+        class Preroll:
+            category_id = None
+            categories = []
+
+        preroll = Preroll()
+        existing = Category(1)
+        added = Category(2)
+        preroll.categories = [existing]
+
+        self.assertTrue(ensure_preroll_category(preroll, added))
+        self.assertEqual([item.id for item in preroll.categories], [1, 2])
+        self.assertIsNone(preroll.category_id)
+        self.assertTrue(preroll_has_category(preroll, 2))
+
+        uncategorized = Preroll()
+        self.assertTrue(ensure_preroll_category(uncategorized, added))
+        self.assertEqual(uncategorized.category_id, 2)
+        self.assertEqual([item.id for item in uncategorized.categories], [2])
+
+    def test_category_assignment_backfills_m2m_for_legacy_row_idempotently(self):
+        class Category:
+            id = 7
+
+        class Preroll:
+            category_id = 7
+            categories = []
+
+        preroll = Preroll()
+        self.assertFalse(ensure_preroll_category(preroll, Category()))
+        self.assertEqual([item.id for item in preroll.categories], [7])
+        self.assertFalse(ensure_preroll_category(preroll, Category()))
+
+    def test_thumbnail_candidates_handle_docker_prerolls_prefix(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            prerolls_dir = os.path.join(temp_dir, "prerolls")
+            expected = os.path.join(
+                prerolls_dir,
+                "thumbnails",
+                "Default",
+                "637_intro.mp4.jpg",
+            )
+
+            candidates = thumbnail_path_candidates(
+                "prerolls/thumbnails/Default/637_intro.mp4.jpg",
+                prerolls_dir,
+                prerolls_dir,
+            )
+
+            self.assertIn(os.path.abspath(expected), candidates)
+
+    def test_thumbnail_resolver_rejects_non_thumbnail_files(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            prerolls_dir = os.path.join(temp_dir, "prerolls")
+            thumbnails_dir = os.path.join(prerolls_dir, "thumbnails")
+            thumbnail = os.path.join(thumbnails_dir, "Default", "intro.jpg")
+            video = os.path.join(prerolls_dir, "intro.mp4")
+            database = os.path.join(temp_dir, "nexroll.db")
+            os.makedirs(os.path.dirname(thumbnail), exist_ok=True)
+            for path in (thumbnail, video, database):
+                with open(path, "wb") as handle:
+                    handle.write(b"test")
+
+            resolved = resolve_thumbnail_path(
+                "prerolls/thumbnails/Default/intro.jpg",
+                prerolls_dir,
+                prerolls_dir,
+                thumbnails_dir,
+            )
+
+            self.assertEqual(resolved, os.path.normcase(os.path.realpath(thumbnail)))
+            self.assertIsNone(resolve_thumbnail_path(
+                "intro.mp4",
+                prerolls_dir,
+                prerolls_dir,
+                thumbnails_dir,
+            ))
+            self.assertIsNone(resolve_thumbnail_path(
+                "../nexroll.db",
+                prerolls_dir,
+                prerolls_dir,
+                thumbnails_dir,
+            ))
+
     def test_replacement_updates_media_without_changing_identity_or_associations(self):
         category = object()
 
