@@ -5168,13 +5168,6 @@ body.dark .nx-sidebar-section:first-child .nx-sidebar-parent.active {
   background: var(--hover-bg);
   color: var(--text-color);
 }
-.nx-topbar .nx-user {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.35rem;
-  font-size: 0.8rem;
-  color: var(--text-secondary);
-}
 
 /* ============================================================
    NeXroll v2 — Community Prerolls page
@@ -6446,6 +6439,31 @@ body.light .nx-content .nx-global-clock { color: #30333a; }
   color: #c5c8cf;
 }
 .nx-content .nx-focus-help { text-decoration: none; }
+
+/* Log out sits beside the avatar on every page. The topbar pins its icon
+   buttons to a 29px square; this one carries a label, so it opts back out.
+   Below ~640px the label drops and it becomes a square icon button again. */
+.nx-content .nx-topbar .nx-topbar-logout {
+  width: auto !important;
+  min-width: 29px;
+  padding: 0 0.6rem !important;
+  gap: 0.35rem;
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--text-secondary);
+  white-space: nowrap;
+}
+.nx-content .nx-topbar .nx-topbar-logout:hover {
+  color: var(--text-color);
+  border-color: var(--text-secondary);
+}
+@media (max-width: 640px) {
+  .nx-content .nx-topbar .nx-topbar-logout {
+    width: 29px !important;
+    padding: 0 !important;
+  }
+  .nx-topbar-logout-label { display: none; }
+}
 .nx-focus-avatar {
   width: 28px;
   height: 28px;

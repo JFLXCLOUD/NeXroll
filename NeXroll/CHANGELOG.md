@@ -1,5 +1,27 @@
 # Changelog
 
+## [2.1.0-beta.2] - 08-19-2026 (beta)
+
+> A follow-up to beta.1: the account controls are reachable from every page,
+> and the dashboard no longer ships three pairs of tiles that showed the same
+> thing. No database migration, no configuration change.
+
+### Fixed
+
+- **The Log out button was missing from the dashboard.** It was rendered only when the active page was not the dashboard, so the page the app opens on - the one most people sit on - was the one page with no way to sign out. It now appears in the header on every page.
+- **Two user icons appeared in the header on every page except the dashboard.** The initials avatar and a second name chip with its own person icon were drawn side by side. The header now carries one avatar, whose tooltip names the signed-in account, and one Log out button. The Log out button also keeps its label instead of being squeezed into the header's 29px icon-button width; below 640px it collapses to an icon.
+
+### Changed
+
+- **The dashboard had two tiles named "Storage."** They rendered the same storage breakdown in two different styles. The duplicate is gone; one Storage tile remains.
+- **"What's next" and "Upcoming schedules" were the same list twice, and they disagreed.** One dropped any schedule whose time had passed unless it was active at that moment; the other kept ongoing schedules with a past start and no end date. The same queue could therefore read differently depending on which tile you looked at. They are now a single **Upcoming schedules** tile using the more forgiving filter, and the number of rows follows the tile's width and detail level rather than being fixed at four.
+- **"Currently Showing" duplicated the left half of "Current & next schedule."** It has been retired, and the two things it showed that the surviving tile did not - the preview button for what is applied to the server, and the playback mode, blend list, and gap-filler state - have moved into it.
+- The Customize dialog's descriptions for the Scheduler, Schedule counts, and Media servers tiles now say they are detailed views of what System health summarizes, rather than reading as separate features.
+
+Sixteen dashboard tiles become thirteen. Stored layouts that still name a retired
+tile drop it on the next load, in the backend, in the browser's saved copy, and
+at render time; no layout needs to be rebuilt by hand.
+
 ## [2.1.0-beta.1] - 08-18-2026 (beta)
 
 > A redesigned dashboard, a data-loss fix in preroll deletion with a recoverable

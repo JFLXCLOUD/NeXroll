@@ -29,6 +29,12 @@ DENSITIES = ("compact", "comfortable")
 NEW_IN_V2 = ("now_showing", "whats_next", "system_health", "storage_mix", "quick_actions")
 
 # Every tile the dashboard knows about, in default display order.
+#
+# Retired in 2.1 and deliberately absent: "storage" (a second rendering of the
+# same breakdown "storage_mix" shows), "current_category" (the active-schedule
+# half of "now_showing"), and "upcoming" (a second upcoming list whose filter
+# disagreed with "whats_next"). Because _clean_key_list keeps only known keys,
+# a stored layout naming any of them simply drops it on the next load.
 TILE_KEYS = (
     "now_showing",
     "system_health",
@@ -37,11 +43,8 @@ TILE_KEYS = (
     "storage_mix",
     "whats_next",
     "schedules",
-    "storage",
     "servers",
     "scheduler",
-    "current_category",
-    "upcoming",
     "resolution_chart",
     "nexup",
     "community",
@@ -55,7 +58,6 @@ TILE_DEFAULTS = {
     "system_health": {"size": "sm", "detail": "detailed"},
     "storage_mix": {"size": "sm", "detail": "detailed"},
     "quick_actions": {"size": "sm", "detail": "detailed"},
-    "upcoming": {"size": "lg", "detail": "detailed"},
     "resolution_chart": {"size": "md", "detail": "detailed"},
     "weekly_calendar": {"size": "lg", "detail": "detailed"},
 }
@@ -75,8 +77,8 @@ PRESETS = {
     ),
     "operations": (
         "now_showing", "whats_next", "system_health",
-        "prerolls", "schedules", "storage", "servers", "storage_mix",
-        "quick_actions", "scheduler", "current_category", "upcoming", "nexup",
+        "prerolls", "schedules", "servers", "storage_mix",
+        "quick_actions", "scheduler", "nexup",
     ),
 }
 

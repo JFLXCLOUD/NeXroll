@@ -10,7 +10,10 @@ from backend.dashboard_layout import (
     upgrade_layout,
 )
 
-# A real v1 layout, copied from a 2.0.5 database.
+# A real v1 layout, copied from a 2.0.5 database. "storage",
+# "current_category", and "upcoming" were retired in 2.1 - a layout written by
+# 2.0.5 still names them, so they exercise the retired-key path on every
+# upgrade assertion below.
 V1_LAYOUT = {
     "version": 1,
     "grid": {"cols": 4, "rows": 2},
@@ -20,6 +23,11 @@ V1_LAYOUT = {
     "hidden": [],
     "locked": False,
 }
+
+# What survives that layout once the retired tiles are dropped.
+V1_SURVIVING_ORDER = [key for key in V1_LAYOUT["order"] if key in TILE_KEYS]
+
+RETIRED_KEYS = ("storage", "current_category", "upcoming")
 
 
 class DefaultLayoutTests(unittest.TestCase):
@@ -65,7 +73,23 @@ class UpgradeFromV1Tests(unittest.TestCase):
         upgraded = upgrade_layout(V1_LAYOUT)
         kept = [key for key in upgraded["order"] if key in V1_LAYOUT["order"]]
 
-        self.assertEqual(kept, V1_LAYOUT["order"])
+        self.assertEqual(kept, V1_SURVIVING_ORDER)
+
+    def test_retired_tiles_are_dropped_from_an_upgraded_layout(self):
+        # 2.1 retired three tiles whose content another tile already showed.
+        # A 2.0.5 layout still lists them; keeping them would render nothing
+        # (the frontend has no renderer) while still taking a grid slot.
+        upgraded = upgrade_layout(V1_LAYOUT)
+
+        for key in RETIRED_KEYS:
+            self.assertNotIn(key, upgraded["order"], key)
+            self.assertNotIn(key, upgraded["tiles"], key)
+            self.assertNotIn(key, upgraded["sizes"], key)
+
+    def test_a_retired_tile_hidden_by_the_user_is_dropped_too(self):
+        stored = dict(V1_LAYOUT, hidden=["upcoming", "nexup"])
+
+        self.assertEqual(upgrade_layout(stored)["hidden"], ["nexup"])
 
     def test_new_tiles_are_added_at_the_front_and_visible(self):
         upgraded = upgrade_layout(V1_LAYOUT)
@@ -216,13 +240,18 @@ class SizePreservationTests(unittest.TestCase):
     arrangement the user built in 2.0.x."""
 
     def test_v1_sizes_are_folded_into_tiles_and_kept_flat(self):
-        stored = dict(V1_LAYOUT, sizes={"resolution_chart": "md", "upcoming": "lg"})
+        stored = dict(V1_LAYOUT, sizes={"resolution_chart": "md", "whats_next": "lg"})
 
         upgraded = upgrade_layout(stored)
 
         self.assertEqual(upgraded["tiles"]["resolution_chart"]["size"], "md")
-        self.assertEqual(upgraded["tiles"]["upcoming"]["size"], "lg")
+        self.assertEqual(upgraded["tiles"]["whats_next"]["size"], "lg")
         self.assertEqual(upgraded["sizes"]["resolution_chart"], "md")
+
+    def test_a_size_stored_for_a_retired_tile_is_ignored(self):
+        upgraded = upgrade_layout(dict(V1_LAYOUT, sizes={"upcoming": "lg"}))
+
+        self.assertNotIn("upcoming", upgraded["sizes"])
 
     def test_grid_layouts_are_round_tripped_untouched(self):
         geometry = {"lg": [{"i": "prerolls", "x": 0, "y": 0, "w": 1, "h": 3}]}

@@ -61,14 +61,18 @@ const ALL_SIZE_OPTIONS = ['sm', 'md', 'lg'];
 // The Focused Enhanced default is intentionally five panels. Existing tile IDs
 // stay stable so 2.0.x layouts can still be upgraded without losing choices.
 const DEFAULT_SIZES = {
-  servers: 'sm', prerolls: 'sm', storage: 'sm', schedules: 'sm', scheduler: 'sm',
-  current_category: 'sm', community: 'sm', nexup: 'sm', upcoming: 'lg', resolution_chart: 'md',
+  servers: 'sm', prerolls: 'sm', schedules: 'sm', scheduler: 'sm',
+  community: 'sm', nexup: 'sm', resolution_chart: 'md',
   now_showing: 'md', whats_next: 'md', system_health: 'sm', storage_mix: 'sm', quick_actions: 'sm',
   weekly_calendar: 'lg',
 };
 const FOCUS_ESSENTIAL_KEYS = ['now_showing', 'system_health', 'prerolls', 'quick_actions', 'storage_mix'];
 const FOCUS_OPTIONAL_KEYS = ['servers', 'resolution_chart', 'community'];
-const DEFAULT_ORDER = ['now_showing', 'system_health', 'prerolls', 'quick_actions', 'storage_mix', 'whats_next', 'servers', 'storage', 'schedules', 'scheduler', 'current_category', 'community', 'nexup', 'upcoming', 'resolution_chart', 'weekly_calendar'];
+// Retired in 2.1: `storage` (duplicated `storage_mix`), `current_category`
+// (the left half of `now_showing`), and `upcoming` (a second, subtly different
+// copy of `whats_next`). Stored layouts that still name them drop the keys on
+// load, both here and in backend/dashboard_layout.py.
+const DEFAULT_ORDER = ['now_showing', 'system_health', 'prerolls', 'quick_actions', 'storage_mix', 'whats_next', 'servers', 'schedules', 'scheduler', 'community', 'nexup', 'resolution_chart', 'weekly_calendar'];
 const DEFAULT_HIDDEN = DEFAULT_ORDER.filter(key => !FOCUS_ESSENTIAL_KEYS.includes(key));
 const DASH_KEYS = DEFAULT_ORDER.slice();
 const NEXROLL_WIKI_URL = 'https://github.com/JFLXCLOUD/NeXroll/wiki';
@@ -1518,36 +1522,6 @@ const toLocalInputValue = (isoOrNaive) => {
     s = s.slice(0, 16);
   }
   return s;
-};
-const toLocalDisplay = (isoOrNaive) => {
-  if (!isoOrNaive) return 'N/A';
-  try {
-    // Parse the naive datetime string and display it
-    // Since it's stored as local time, we create a date without timezone conversion
-    let s = isoOrNaive;
-    if (s.endsWith('Z')) {
-      s = s.slice(0, -1);
-    }
-    const offsetMatch = s.match(/[+-]\d{2}:\d{2}$/);
-    if (offsetMatch) {
-      s = s.slice(0, -6);
-    }
-    // Parse as local time by treating the string as a local datetime
-    const [datePart, timePart] = s.split('T');
-    const [year, month, day] = datePart.split('-').map(Number);
-    const [hour, minute] = (timePart || '00:00').split(':').map(Number);
-    const d = new Date(year, month - 1, day, hour, minute);
-    // Format without seconds: "1/1/2026, 7:00 AM"
-    return d.toLocaleString(undefined, {
-      year: 'numeric',
-      month: 'numeric',
-      day: 'numeric',
-      hour: 'numeric',
-      minute: '2-digit'
-    });
-  } catch {
-    return isoOrNaive;
-  }
 };
 const toLocalInputFromDate = (d) => {
   if (!d) return '';
@@ -6170,7 +6144,10 @@ const [dashLayout, setDashLayout] = useState(() => {
       const data = JSON.parse(stored);
       if (data && data.grid && Array.isArray(data.order)) {
         // Ensure all DASH_KEYS are present in order (in case new tiles were added)
-        const storedOrder = data.order || [];
+        // Drop tiles this build no longer renders (2.1 retired `storage`,
+        // `current_category`, and `upcoming`) rather than carrying them
+        // forward in `order` and writing them back to the backend on save.
+        const storedOrder = (data.order || []).filter(k => DASH_KEYS.includes(k));
         const storedHidden = data.hidden || [];
         const allKeys = [...storedOrder];
         for (const k of DASH_KEYS) {
@@ -6419,6 +6396,38 @@ const DashboardTiles = {
           p.category_id === cat.id || (p.categories || []).some(c => c.id === cat.id)
         ).length
       : null;
+    // Playback mode, blend, and the "preview what's applied" action all moved
+    // here from the retired "Currently Showing" tile, which rendered the same
+    // active-schedule state this tile's left half already covers.
+    const mode = seq
+      ? (seq.via_schedule ? 'Sequence (scheduled)' : 'Sequence (manual)')
+      : activeCategory
+        ? ({ playlist: 'Sequential', single: 'Single file', sequence: 'Sequence' }[activeCategory.plex_mode] || 'Shuffle')
+        : null;
+    const blend = (activeCategory?.blend_schedules || []).length >= 2
+      ? activeCategory.blend_schedules.map(s => s.name).join(' + ')
+      : null;
+    const previewCurrent = async () => {
+      try {
+        const resp = await fetch(apiUrl('plex/current-preroll-details'));
+        const data = await resp.json();
+        if (data.prerolls && data.prerolls.length > 0) {
+          const appliedMode = data.mode || 'shuffle';
+          if (appliedMode === 'shuffle') {
+            const randomIndex = Math.floor(Math.random() * data.prerolls.length);
+            setCurrentPrerollPreview({ prerolls: [data.prerolls[randomIndex]], index: 0, mode: 'shuffle', totalCount: data.prerolls.length });
+          } else if (appliedMode === 'single') {
+            setCurrentPrerollPreview({ prerolls: [data.prerolls[0]], index: 0, mode: 'single' });
+          } else {
+            setCurrentPrerollPreview({ prerolls: data.prerolls, index: 0, mode: 'sequential' });
+          }
+        } else {
+          showAlert('No prerolls currently applied to server', 'info');
+        }
+      } catch {
+        showAlert('Failed to fetch current preroll details', 'error');
+      }
+    };
     const next = nextScheduleCountdown;
     const nextCategory = next?.categoryId != null
       ? categories.find(c => c.id === next.categoryId)
@@ -6433,9 +6442,21 @@ const DashboardTiles = {
       <div className="card nx-focus-tile nx-focus-schedule">
         <div className="nx-tile-head">
           <h2><Play size={16} /> Current &amp; next schedule</h2>
-          <button className="nx-card-link nx-no-drag" onPointerDown={(e) => e.stopPropagation()} onClick={() => setActiveTab('schedules')}>
-            Open schedules <ArrowRight size={12} />
-          </button>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+            {(activeCategory || appliedSequence) && (
+              <button
+                className="nx-tile-headbtn nx-no-drag"
+                title="Preview what's currently applied to the server"
+                onPointerDown={(e) => e.stopPropagation()}
+                onClick={previewCurrent}
+              >
+                <Eye size={14} />
+              </button>
+            )}
+            <button className="nx-card-link nx-no-drag" onPointerDown={(e) => e.stopPropagation()} onClick={() => setActiveTab('schedules')}>
+              Open schedules <ArrowRight size={12} />
+            </button>
+          </div>
         </div>
         <div className="nx-schedule-glance">
           <section className={`nx-schedule-state current ${title ? '' : 'empty'}`}>
@@ -6447,8 +6468,10 @@ const DashboardTiles = {
             <p>{title ? subtitle : 'No category or sequence is currently active.'}</p>
             {detail === 'detailed' && (
               <div className="nx-schedule-facts">
-                <span>{seq ? 'Sequence' : 'Category'}</span>
+                <span>{mode || (seq ? 'Sequence' : 'Category')}</span>
                 {count != null && <span>{count} preroll{count === 1 ? '' : 's'}</span>}
+                {blend && <span>Blending {blend}</span>}
+                {activeCategory?.is_filler && <span>Gap filler active</span>}
                 {currentTimezone && <span>{currentTimezone}</span>}
               </div>
             )}
@@ -6473,55 +6496,80 @@ const DashboardTiles = {
     );
   },
 
+  // The dashboard used to ship two upcoming-schedule lists - "What's next" and
+  // "Upcoming Schedules" - whose filters disagreed, so the same queue could read
+  // differently depending on which tile you looked at. This is now the only one.
+  // It keeps the older tile's more forgiving filter (an ongoing schedule with a
+  // past start and no end date still counts as upcoming) and its scrolling list,
+  // and shows as many rows as the tile's width and detail level allow.
   whats_next: () => {
+    const tile = dashLayout?.tiles?.whats_next || {};
+    const detail = tile.detail || 'detailed';
+    const size = tile.size || dashLayout?.sizes?.whats_next || DEFAULT_SIZES.whats_next;
+    const maxRows = detail === 'compact' ? 3 : ({ sm: 4, md: 8, lg: 20 }[size] || 8);
     const now = new Date();
     const upcoming = (schedules || [])
-      .filter(s => s.is_active && (s.next_run || s.start_date))
+      .filter(s => {
+        if (!s.is_active) return false;
+        if (!s.next_run && !s.start_date) return false;
+        // An end date already in the past means the schedule is finished, not
+        // upcoming. No end date means it is ongoing, so it stays in the list.
+        return s.end_date ? new Date(s.end_date) > now : true;
+      })
       .map(s => {
         const start = s.start_date ? new Date(s.start_date) : null;
         const end = s.end_date ? new Date(s.end_date) : null;
         return {
           ...s,
-          isActiveNow: start && start <= now && (!end || end > now),
+          isActiveNow: !!(start && start <= now && (!end || end > now)),
           when: s.next_run ? new Date(s.next_run) : (start || now),
         };
       })
-      .filter(s => s.isActiveNow || s.when >= now)
       .sort((a, b) => (b.isActiveNow - a.isActiveNow) || (a.when - b.when))
-      .slice(0, 4);
+      .slice(0, maxRows);
 
     return (
       <div className="card nx-focus-tile">
         <div className="nx-tile-head">
           <h2 style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-            <CalendarDays size={18} /> What's next
+            <CalendarDays size={18} /> Upcoming schedules
           </h2>
-          <button className="nx-tile-headbtn" onClick={() => setActiveTab('schedules')} title="Open Schedules">
+          <button
+            className="nx-tile-headbtn nx-no-drag"
+            onPointerDown={(e) => e.stopPropagation()}
+            onClick={() => setActiveTab('schedules')}
+            title="Open Schedules"
+          >
             <ArrowRight size={14} />
           </button>
         </div>
         {upcoming.length === 0 ? (
           <p className="nx-focus-sub">No upcoming schedules.</p>
         ) : (
-          <div className="nx-focus-timeline">
-            {upcoming.map((s, i) => {
-              const cat = categories.find(c => c.id === s.category_id);
-              const badge = s.isActiveNow ? 'Active' : (i === 0 ? 'Next' : 'Upcoming');
-              return (
-                <div className="nx-focus-timeline-row" key={s.id}>
-                  <span className="nx-focus-when">
-                    {s.isActiveNow ? 'Now' : s.when.toLocaleString(undefined, {
-                      month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit'
-                    })}
-                  </span>
-                  <span className="nx-focus-timeline-body">
-                    <span className="nx-focus-timeline-name">{s.name}</span>
-                    <span className="nx-focus-sub">{cat?.name || 'Sequence'}</span>
-                  </span>
-                  <span className={`nx-chip nx-status ${s.isActiveNow ? 'ok' : ''}`}>{badge}</span>
-                </div>
-              );
-            })}
+          <div className="nx-upcoming-list">
+            <div className="nx-focus-timeline">
+              {upcoming.map((s, i) => {
+                const cat = categories.find(c => c.id === s.category_id);
+                const badge = s.isActiveNow ? 'Active now' : (i === 0 ? 'Next' : 'Upcoming');
+                return (
+                  <div className="nx-focus-timeline-row" key={s.id}>
+                    <span className="nx-focus-when">
+                      {s.isActiveNow ? 'Now' : s.when.toLocaleString(undefined, {
+                        month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit'
+                      })}
+                    </span>
+                    <span className="nx-focus-timeline-body">
+                      <span className="nx-focus-timeline-name">{s.name}</span>
+                      <span className="nx-focus-sub">{cat?.name || 'Sequence'}</span>
+                    </span>
+                    <span className={`nx-chip nx-status ${s.isActiveNow ? 'ok' : ''}`}>{badge}</span>
+                  </div>
+                );
+              })}
+            </div>
+            {/* Fade hint: only when the list runs past the ~4-row viewport, so
+                the cutoff reads as "scroll for more" rather than "that's all". */}
+            {upcoming.length > 4 && <div className="nx-upcoming-fade" />}
           </div>
         )}
       </div>
@@ -6798,50 +6846,6 @@ const DashboardTiles = {
       </div>
     );
   },
-  storage: () => {
-    const colors = { prerolls: '#3b82f6', nexup: '#ffc230', thumbnails: '#8b5cf6', database: '#22c55e' };
-    const locs = storageBreakdown?.locations || [];
-    const totalBytes = storageBreakdown ? storageBreakdown.total_bytes : totalStorageBytes;
-    const shown = locs.filter(l => l.bytes > 0).sort((a, b) => b.bytes - a.bytes);
-    return (
-      <div className="card">
-        <div className="nx-tile-head">
-          <h2 style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}><HardDrive size={18} /> Storage</h2>
-          <button className="nx-tile-headbtn" onClick={() => setActiveTab('settings/storage')} title="Open Storage settings">
-            <ArrowRight size={14} />
-          </button>
-        </div>
-        <p className="nx-tile-bignum">
-          {formatBytes(totalBytes)} <span className="nx-tile-bignum-unit">used</span>
-        </p>
-        {!storageBreakdown ? (
-          <p style={{ fontSize: '0.88rem', color: 'var(--text-secondary, #888)', margin: 0 }}>Calculating…</p>
-        ) : shown.length === 0 ? (
-          <p style={{ fontSize: '0.88rem', color: 'var(--text-secondary, #888)', margin: 0 }}>No stored files yet</p>
-        ) : (
-          <div className="nx-tile-rows">
-            {shown.map(l => {
-              const pct = totalBytes > 0 ? Math.round((l.bytes / totalBytes) * 100) : 0;
-              return (
-                <div key={l.key} title={l.path || ''}>
-                  <div className="nx-tile-row">
-                    <span className="nx-tile-row-k">
-                      <span style={{ width: 8, height: 8, borderRadius: 2, background: colors[l.key] || 'var(--accent-color, #00d4ff)', flexShrink: 0 }} />
-                      {l.label}
-                    </span>
-                    <span className="nx-tile-row-v">{formatBytes(l.bytes)}</span>
-                  </div>
-                  <div style={{ height: 4, borderRadius: 2, background: 'var(--hover-bg)', marginTop: '0.2rem', overflow: 'hidden' }}>
-                    <div style={{ width: `${pct}%`, height: '100%', background: colors[l.key] || 'var(--accent-color, #00d4ff)' }} />
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        )}
-      </div>
-    );
-  },
   schedules: () => {
     const enabled = schedules.filter(s => s.is_active);
     const disabled = schedules.filter(s => !s.is_active);
@@ -7001,224 +7005,6 @@ const DashboardTiles = {
     </div>
     );
   },
-  current_category: () => (
-    <div className="card">
-      <div className="nx-tile-head">
-        <h2 style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}><Folder size={18} /> Currently Showing</h2>
-        {(activeCategory || appliedSequence) && (
-          <button
-            className="nx-tile-headbtn"
-            title="Preview what's currently applied to the server"
-            onClick={async () => {
-            try {
-              const resp = await fetch(apiUrl('plex/current-preroll-details'));
-              const data = await resp.json();
-              if (data.prerolls && data.prerolls.length > 0) {
-                const mode = data.mode || 'shuffle';
-                if (mode === 'shuffle') {
-                  // Shuffle: pick 1 random preroll
-                  const randomIndex = Math.floor(Math.random() * data.prerolls.length);
-                  setCurrentPrerollPreview({ prerolls: [data.prerolls[randomIndex]], index: 0, mode: 'shuffle', totalCount: data.prerolls.length });
-                } else if (mode === 'single') {
-                  // Single / Coming Soon: show just the one video
-                  setCurrentPrerollPreview({ prerolls: [data.prerolls[0]], index: 0, mode: 'single' });
-                } else {
-                  // Sequential / playlist / sequence: play all in order
-                  setCurrentPrerollPreview({ prerolls: data.prerolls, index: 0, mode: 'sequential' });
-                }
-              } else {
-                showAlert('No prerolls currently applied to server', 'info');
-              }
-            } catch {
-              showAlert('Failed to fetch current preroll details', 'error');
-            }
-          }}
-          >
-            <Eye size={14} />
-          </button>
-        )}
-      </div>
-      {appliedSequence ? (
-        <div>
-          <p className="nx-tile-status" style={{ color: '#8b5cf6' }}>
-            {appliedSequence.name}
-          </p>
-          <div className="nx-tile-rows">
-            <div className="nx-tile-row">
-              <span className="nx-tile-row-k">
-                <Layers size={14} /> Mode
-              </span>
-              <span className="nx-tile-row-v">
-                {appliedSequence.via_schedule ? 'Sequence (Scheduled)' : 'Sequence (Manual Apply)'}
-              </span>
-            </div>
-            {activeCategory && !appliedSequence.via_schedule && (
-              <div className="nx-tile-row">
-                <span className="nx-tile-row-k">
-                  <Calendar size={14} /> Scheduled
-                </span>
-                <span className="nx-tile-row-v">{activeCategory.name}</span>
-              </div>
-            )}
-          </div>
-        </div>
-      ) : activeCategory ? (
-        <div>
-          {activeCategory.blend_schedules && activeCategory.blend_schedules.length >= 2 ? (
-            <>
-              <p className="nx-tile-status" style={{ color: 'var(--success-color, #28a745)' }}>
-                Blending
-              </p>
-              <div className="nx-tile-rows">
-                <div className="nx-tile-row">
-                  <span className="nx-tile-row-k">
-                    <Layers size={14} /> Blend
-                  </span>
-                  <span style={{ color: '#f59e0b', fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', marginLeft: '0.5rem' }}>
-                    {activeCategory.blend_schedules.map(s => s.name).join(' + ')}
-                  </span>
-                </div>
-                {activeCategory.active_schedule_name && (
-                  <div className="nx-tile-row">
-                    <span className="nx-tile-row-k">
-                      <Play size={14} /> Playing
-                    </span>
-                    <span className="nx-tile-row-v">{activeCategory.active_schedule_name}</span>
-                  </div>
-                )}
-              </div>
-            </>
-          ) : (
-            <>
-              <p className="nx-tile-status" style={{ color: 'var(--success-color, #28a745)' }}>
-                {activeCategory.active_schedule_name || activeCategory.name}
-              </p>
-              <div className="nx-tile-rows">
-                {activeCategory.active_schedule_name && (
-                  <div className="nx-tile-row">
-                    <span className="nx-tile-row-k">
-                      <Folder size={14} /> Category
-                    </span>
-                    <span className="nx-tile-row-v">{activeCategory.name}</span>
-                  </div>
-                )}
-                <div className="nx-tile-row">
-                  <span className="nx-tile-row-k">
-                    <Shuffle size={14} /> Mode
-                  </span>
-                  <span className="nx-tile-row-v">
-                    {activeCategory.plex_mode === 'playlist' ? 'Sequential' :
-                     activeCategory.plex_mode === 'single' ? 'Single File' :
-                     activeCategory.plex_mode === 'sequence' ? 'Sequence' : 'Shuffle'}
-                  </span>
-                </div>
-                {/* Only show preroll count for regular categories, not filler/sequence/blend */}
-                {!activeCategory.is_filler && activeCategory.id != null && activeCategory.plex_mode !== 'single' && activeCategory.plex_mode !== 'sequence' && (
-                  <div className="nx-tile-row">
-                    <span className="nx-tile-row-k">
-                      <Film size={14} /> Prerolls
-                    </span>
-                    <span className="nx-tile-row-v">{(() => {
-                      const primaryCount = prerolls.filter(p => p.category_id === activeCategory.id).length;
-                      const secondaryCount = prerolls.filter(p =>
-                        p.categories &&
-                        p.categories.some(c => c.id === activeCategory.id) &&
-                        p.category_id !== activeCategory.id
-                      ).length;
-                      return primaryCount + secondaryCount;
-                    })()}</span>
-                  </div>
-                )}
-                {activeCategory.is_filler && (
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.35rem', fontSize: '0.85rem', color: '#00d4ff', fontStyle: 'italic' }}>
-                    <Zap size={14} /> Gap filler active
-                  </div>
-                )}
-              </div>
-            </>
-          )}
-        </div>
-      ) : (
-        <p style={{ fontSize: '0.88rem', color: 'var(--text-secondary, #666)', margin: 0 }}>No category applied</p>
-      )}
-    </div>
-  ),
-  upcoming: () => (
-    <div className="card">
-      <h2 style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}><CalendarDays size={18} /> Upcoming Schedules</h2>
-      {(() => {
-        const now = new Date();
-        // Get all schedules that are active or will become active
-        const allUpcomingSchedules = schedules
-          .filter(s => {
-            // Must be enabled
-            if (!s.is_active) return false;
-            
-            // Must have a next_run or start_date
-            const runTime = s.next_run ? new Date(s.next_run) : (s.start_date ? new Date(s.start_date) : null);
-            if (!runTime) return false;
-            
-            // If schedule has end_date, it must not have passed yet
-            if (s.end_date) {
-              return new Date(s.end_date) > now;
-            }
-            // If no end_date, it's an ongoing schedule - include it
-            return true;
-          })
-          .map(s => {
-            const startTime = s.start_date ? new Date(s.start_date) : null;
-            const endTime = s.end_date ? new Date(s.end_date) : null;
-            const isActiveNow = startTime && startTime <= now && (!endTime || endTime > now);
-            return { ...s, isActiveNow, sortTime: s.next_run ? new Date(s.next_run) : (startTime || now) };
-          })
-          .sort((a, b) => {
-            // Active now schedules first, then by time
-            if (a.isActiveNow && !b.isActiveNow) return -1;
-            if (!a.isActiveNow && b.isActiveNow) return 1;
-            return a.sortTime - b.sortTime;
-          })
-          .slice(0, 30); // Sanity cap; the list scrolls past ~6 entries
-
-        return allUpcomingSchedules.length > 0 ? (
-          <div className="nx-upcoming-list">
-            <div style={{ display: 'grid', gap: '0.35rem' }}>
-              {allUpcomingSchedules.map(schedule => {
-                const category = categories.find(c => c.id === schedule.category_id);
-                const displayTime = schedule.next_run || schedule.start_date;
-                return (
-                  <div key={schedule.id} style={{ fontSize: '0.8rem', padding: '0.35rem 0.5rem', backgroundColor: 'var(--card-bg)', borderRadius: '4px', border: schedule.isActiveNow ? '1px solid #28a745' : '1px solid var(--border-color)' }}>
-                    <div className="nx-tile-row">
-                      <span style={{ fontWeight: 'bold', color: '#007bff', fontSize: '0.85rem' }}>
-                        {schedule.name}
-                      </span>
-                      <span style={{
-                        fontSize: '0.65rem',
-                        padding: '0.1rem 0.4rem',
-                        borderRadius: '8px',
-                        backgroundColor: schedule.isActiveNow ? '#28a745' : '#6c757d',
-                        color: '#fff',
-                        fontWeight: '600'
-                      }}>
-                        {schedule.isActiveNow ? 'Active Now' : 'Coming Up'}
-                      </span>
-                    </div>
-                    <div style={{ color: 'var(--text-secondary, #666)', fontSize: '0.75rem', marginTop: '0.1rem' }}>
-                      {toLocalDisplay(displayTime)} → {category?.name || 'Unknown'}
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-            {/* Fade hint: only rendered when more entries exist than the
-                ~4-row viewport shows, so the cutoff reads as "scroll for more". */}
-            {allUpcomingSchedules.length > 4 && <div className="nx-upcoming-fade" />}
-          </div>
-        ) : (
-          <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary, #666)', margin: 0 }}>No upcoming schedules</p>
-        );
-      })()}
-    </div>
-  ),
   community: () => {
     const indexedCount = communityIndexStatus?.total_prerolls || 0;
     const matchedCount = communityMatchedCount || 0;
@@ -8484,18 +8270,15 @@ const DashboardTiles = {
   // Human labels for the Customize modal. Falls back to the raw key so a tile
   // added later still lists, just without a friendly name.
   const DASH_TILE_META = {
-    now_showing: { label: 'Current & next schedule', desc: 'What is active now and what follows it' },
-    whats_next: { label: 'Upcoming schedule timeline', desc: 'Extended list of upcoming activations' },
+    now_showing: { label: 'Current & next schedule', desc: 'What is active now, how it plays, and what follows it' },
+    whats_next: { label: 'Upcoming schedules', desc: 'The full queue of what activates next' },
     system_health: { label: 'System health', desc: 'Scheduler, server, storage, conflicts' },
     storage_mix: { label: 'Storage', desc: 'Space used by content type' },
     quick_actions: { label: 'Quick actions', desc: 'Common maintenance commands' },
     prerolls: { label: 'Library', desc: 'Prerolls, categories, and trailers' },
-    schedules: { label: 'Schedules', desc: 'Enabled, disabled, and conflicts' },
-    storage: { label: 'Storage', desc: 'Overall space in use' },
-    servers: { label: 'Media servers', desc: 'Plex, Jellyfin, and Emby connections' },
-    scheduler: { label: 'Scheduler', desc: 'Run state and next activation' },
-    current_category: { label: 'Currently showing', desc: 'Applied category or sequence' },
-    upcoming: { label: 'Upcoming schedules', desc: 'Full upcoming list' },
+    schedules: { label: 'Schedule counts', desc: 'Enabled, disabled, and conflicts in detail' },
+    servers: { label: 'Media servers', desc: 'Plex, Jellyfin, and Emby connections in detail' },
+    scheduler: { label: 'Scheduler', desc: 'Run state, timezone, and last activation in detail' },
     resolution_chart: { label: 'Video quality', desc: 'Resolution and codec analysis' },
     nexup: { label: 'NeX-Up', desc: 'Trailer sync status' },
     community: { label: 'Community prerolls', desc: 'Matched and downloaded prerolls' },
@@ -33910,7 +33693,15 @@ const DashboardTiles = {
               >
                 <HelpCircle size={15} />
           </a>
-          <span className="nx-focus-avatar" title={appDisplayName || 'NeXroll'}>
+          {/* Account cluster: exactly one user marker (the initials avatar) plus
+              a Log out button, on every page. The dashboard used to be excluded
+              from this block, which left signed-in users with no way to sign
+              out from the page they land on, and the old inner <User /> chip
+              duplicated the avatar on every other page. */}
+          <span
+            className="nx-focus-avatar"
+            title={appDisplayName ? `Signed in as ${appDisplayName}` : 'NeXroll'}
+          >
                 {(() => {
                   const hasUser = Boolean(appDisplayName);
                   const name = appDisplayName || 'NeXroll';
@@ -33919,21 +33710,15 @@ const DashboardTiles = {
                 })()}
           </span>
 
-          {/* User/Logout Button (when authenticated) */}
-          {activeTab !== 'dashboard' && authStatus.auth_enabled && authStatus.authenticated && authStatus.user && (
-            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-              <span className="nx-user">
-                <User size={14} />
-                {authStatus.user.display_name || authStatus.user.username}
-              </span>
-              <button
-                onClick={handleLogout}
-                className="nx-iconbtn"
-                title="Logout"
-              >
-                <Lock size={14} /> Logout
-              </button>
-            </div>
+          {authStatus.auth_enabled && authStatus.authenticated && authStatus.user && (
+            <button
+              onClick={handleLogout}
+              className="nx-iconbtn nx-topbar-logout"
+              aria-label={appDisplayName ? `Log out of ${appDisplayName}` : 'Log out'}
+              title={appDisplayName ? `Log out of ${appDisplayName}` : 'Log out'}
+            >
+              <Lock size={14} /> <span className="nx-topbar-logout-label">Log out</span>
+            </button>
           )}
           </div>
         </div>
