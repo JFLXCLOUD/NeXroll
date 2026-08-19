@@ -166,6 +166,7 @@ nexrolls*/
 launch-video/public/
 launch-video/out/
 
-# Local Reddit moderator credentials and live-state backups
-community/reddit/snapshots/
-community/reddit/.state.json
+# Local-only working material (kept on disk, not published to GitHub)
+/community/
+/docs/dashboard-concepts/
+/docs/RELEASE_PLAN_v2.1.0.md
