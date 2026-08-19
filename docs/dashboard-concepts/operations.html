@@ -1,0 +1,130 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>NeXroll Dashboard Concept B — Operations</title>
+  <link rel="stylesheet" href="demo.css">
+</head>
+<body>
+  <div class="app">
+    <aside class="sidebar">
+      <div class="brand"><img src="../../NeXroll/frontend/public/NeXroll_Logo_WHT.png" alt="NeXroll"><span class="brand-mark">◀</span></div>
+      <div class="search"><span>⌕</span><span>Search pages…</span><span class="key">⌘K</span></div>
+      <nav class="nav">
+        <a class="nav-item active" href="#"><span class="glyph">▦</span><span>Dashboard</span></a>
+        <a class="nav-item" href="#"><span class="glyph">▥</span><span>Library</span><span class="chev">›</span></a>
+        <a class="nav-item" href="#"><span class="glyph">□</span><span>Schedules</span><span class="chev">›</span></a>
+        <a class="nav-item" href="#"><span class="glyph">✣</span><span>NeX-Up</span><span class="chev">›</span></a>
+        <a class="nav-item" href="#"><span class="glyph">⌁</span><span>Connect</span></a>
+        <a class="nav-item" href="#"><span class="glyph">◎</span><span>Community Prerolls</span></a>
+        <a class="nav-item" href="#"><span class="glyph">⚙</span><span>Settings</span><span class="chev">›</span></a>
+      </nav>
+      <div class="sidebar-foot"><div class="socials"><span>◒</span><span>●</span><span>◉</span><span>♡</span></div><div class="version">v2.0.1</div></div>
+    </aside>
+
+    <main class="shell">
+      <header class="topbar"><span class="online"><i class="dot"></i>Online</span><span class="top-icon">☼</span><span class="top-icon">?</span><span class="avatar">JB</span></header>
+      <div class="content">
+        <section class="page-head">
+          <div><div class="eyebrow">System overview</div><h1>Dashboard</h1><p>Monitor playback, automation, content, and connected services.</p></div>
+          <div class="head-actions"><button class="btn ghost">↻ Refresh</button><button class="btn">⌕ Find anything</button><button class="btn primary">⚙ Customize</button></div>
+        </section>
+
+        <div class="ops-status">
+          <span class="pill good">● Plex connected</span><span class="pill good">● Scheduler running</span><span class="pill warn">▲ 4 schedule conflicts</span><span class="pill warn">◷ Community index stale</span><span class="pill blue">164 prerolls</span>
+        </div>
+
+        <section class="ops-board">
+          <div class="ops-col">
+            <div class="section-label">Automation <span></span></div>
+            <article class="card ops-card">
+              <div class="card-head"><div class="card-title"><span class="mini-icon">▶</span> Currently showing</div><span class="pill good">Active</span></div>
+              <div class="big-value" style="font-size:20px">Summer Season Schedule</div>
+              <div class="compact-list">
+                <div class="compact-row"><span class="name">Category</span><span class="val">Summer Season</span></div>
+                <div class="compact-row"><span class="name">Mode</span><span class="val">Shuffle</span></div>
+                <div class="compact-row"><span class="name">Prerolls</span><span class="val">1</span></div>
+                <div class="compact-row"><span class="name">Last applied</span><span class="val">Today, 10:31 AM</span></div>
+              </div>
+            </article>
+            <article class="card ops-card">
+              <div class="card-head"><div class="card-title"><span class="mini-icon">▤</span> Schedule queue</div><span class="link">View all 32 →</span></div>
+              <div class="up-next">
+                <div class="up-next-row active"><div><strong>Summer Season Schedule</strong><p>Active now · ends 10:55 PM</p></div><span class="pill good">Now</span></div>
+                <div class="up-next-row"><div><strong>Coming Soon List Schedule</strong><p>Tonight · 10:55 PM</p></div><span class="pill">Next</span></div>
+                <div class="up-next-row"><div><strong>OG Preroll Fillers</strong><p>August 9 · 1:00 PM</p></div><span class="pill">Later</span></div>
+              </div>
+              <div class="alert-line">▲ 4 schedules overlap — review conflicts <span style="margin-left:auto">→</span></div>
+            </article>
+          </div>
+
+          <div class="ops-col">
+            <div class="section-label">Content <span></span></div>
+            <article class="card ops-card">
+              <div class="card-head"><div class="card-title"><span class="mini-icon">▥</span> Preroll library</div><span class="link">Open library →</span></div>
+              <div class="big-value">164 <small>prerolls</small></div>
+              <div class="split-stat"><div class="stat-box"><span>Categories used</span><strong>16 / 45</strong></div><div class="stat-box"><span>Library size</span><strong>960 MB</strong></div></div>
+              <div class="compact-list">
+                <div class="compact-row"><i class="micro amber"></i><span class="name">Uncategorized</span><span class="val" style="color:var(--amber)">30</span></div>
+                <div class="compact-row"><i class="micro green"></i><span class="name">Last added</span><span class="val">1 day ago</span></div>
+                <div class="compact-row"><i class="micro"></i><span class="name">Externally mapped</span><span class="val">125</span></div>
+              </div>
+            </article>
+            <article class="card ops-card">
+              <div class="card-head"><div class="card-title"><span class="mini-icon">▰</span> Storage</div><span class="link">Details →</span></div>
+              <div class="big-value">1.29 GB <small>used</small></div>
+              <div class="storage-bar"><span></span><span></span><span></span><span></span></div>
+              <div class="compact-list" style="margin-top:0">
+                <div class="compact-row"><i class="micro"></i><span class="name">Prerolls</span><span class="val">960 MB</span></div>
+                <div class="compact-row"><i class="micro amber"></i><span class="name">NeX-Up trailers</span><span class="val">208 MB</span></div>
+                <div class="compact-row"><i class="micro green"></i><span class="name">Database</span><span class="val">132 MB</span></div>
+              </div>
+            </article>
+            <article class="card ops-card">
+              <div class="card-head"><div class="card-title"><span class="mini-icon">▥</span> Video quality</div><span class="pill blue">40 analyzed</span></div>
+              <div class="quality"><div class="quality-bar"><span></span></div><div class="quality-meta"><span>720p · H.264</span><span>100%</span></div></div>
+            </article>
+          </div>
+
+          <div class="ops-col">
+            <div class="section-label">Services <span></span></div>
+            <article class="card ops-card">
+              <div class="card-head"><div class="card-title"><span class="mini-icon">▣</span> Media server</div><span class="pill good">● Connected</span></div>
+              <div class="big-value" style="font-size:20px">Plex <small>JFLX</small></div>
+              <div class="compact-list">
+                <div class="compact-row"><span class="name">Address</span><span class="val">192.168.1.178…</span></div>
+                <div class="compact-row"><span class="name">Version</span><span class="val">1.43.2</span></div>
+              </div>
+            </article>
+            <article class="card ops-card">
+              <div class="card-head"><div class="card-title"><span class="mini-icon">✣</span> NeX-Up</div><span class="pill good">● Ready</span></div>
+              <div class="compact-list">
+                <div class="compact-row"><span class="name">Radarr</span><span class="val" style="color:var(--green)">Connected</span></div>
+                <div class="compact-row"><span class="name">Sonarr</span><span class="val" style="color:var(--green)">Connected</span></div>
+                <div class="compact-row"><span class="name">Movie trailers</span><span class="val">5</span></div>
+                <div class="compact-row"><span class="name">TV trailers</span><span class="val">6</span></div>
+              </div>
+            </article>
+            <article class="card ops-card">
+              <div class="card-head"><div class="card-title"><span class="mini-icon">◎</span> Community</div><span class="pill warn">8d stale</span></div>
+              <div class="big-value">37 <small>matched</small></div>
+              <div class="compact-list">
+                <div class="compact-row"><span class="name">Endpoint</span><span class="val">prerolls.uk</span></div>
+                <div class="compact-row"><span class="name">Index size</span><span class="val">1.09 MB</span></div>
+                <div class="compact-row"><span class="name">Latency</span><span class="val" style="color:var(--green)">96 ms</span></div>
+              </div>
+              <div class="alert-line">◷ Rebuild recommended <span style="margin-left:auto">Rebuild →</span></div>
+            </article>
+          </div>
+        </section>
+
+        <section class="ops-footer">
+          <div class="card command-card"><span class="dock-label">Commands</span><button class="action">↻ Refresh</button><button class="action">▰ Scan files</button><button class="action">↓ NeX-Up sync</button><button class="action">▥ Rebuild thumbs</button><button class="action">▱ Backup DB</button><button class="action more">More ···</button></div>
+          <div class="card customize-note"><span style="color:var(--accent-2)">✦</span> Drag sections while customizing</div>
+        </section>
+      </div>
+    </main>
+  </div>
+</body>
+</html>

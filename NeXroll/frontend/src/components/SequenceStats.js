@@ -366,7 +366,7 @@ const SequenceStats = ({ blocks = [], categories = [], prerolls = [], compact = 
           )}
           {stats.blockTypes.random && stats.blockTypes.random > 2 && (
             <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-              <span>Lots of randomization - sequence will vary each playback</span>
+              <span>Lots of randomization - the sequence will vary as random blocks rotate</span>
             </div>
           )}
           {stats.blockTypes.preroll && stats.totalBlocks === stats.blockTypes.preroll && (

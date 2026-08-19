@@ -44,7 +44,7 @@
             onClick={() => { let m = calendarMonth - 1; let y = calendarYear; if (m < 1) { m = 12; y--; } setCalendarMonth(m); setCalendarYear(y); }}
             title="Previous Month"
           >
-            <span className="view-icon">â—€</span>
+            <span className="view-icon">◀</span>
             Prev
           </button>
           <button
@@ -54,7 +54,7 @@
             title="Next Month"
           >
             Next
-            <span className="view-icon">â–¶</span>
+            <span className="view-icon">▶</span>
           </button>
         </div>
       </div>
@@ -519,13 +519,13 @@
                     onClick={() => handleEditSchedule(schedule)}
                     className="nx-iconbtn"
                   >
-                    âœï¸ Edit
+                    ✏️ Edit
                   </button>
                   <button
                     onClick={() => handleDeleteSchedule(schedule.id)}
                     className="nx-iconbtn nx-iconbtn--danger"
                   >
-                    ðŸ—‘ï¸ Delete
+                    🗑️ Delete
                   </button>
                 </div>
               </div>

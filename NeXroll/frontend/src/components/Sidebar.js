@@ -4,7 +4,7 @@ import {
   Calendar, Plus, CalendarDays, BookOpen, GitCompare,
   Library, Sparkles, Link as LinkIcon, ClipboardList, Settings,
   Globe, ArrowRight, HardDrive, Key, FileText, Users, Download, Info, FolderTree,
-  Github, Heart,
+  Github, Heart, Archive,
   ChevronDown, ChevronRight, PanelLeftClose, PanelLeftOpen, X, Search, CornerDownLeft, ArrowUpCircle
 } from 'lucide-react';
 
@@ -47,6 +47,7 @@ const NAV = [
       { id: 'library/add', label: 'Add Prerolls', icon: Upload },
       { id: 'library/categories', label: 'Categories', icon: FolderTree },
       { id: 'library/scaling', label: 'Video Scaling', icon: Video },
+      { id: 'library/trash', label: 'Trash', icon: Archive },
     ],
   },
   {
@@ -120,6 +121,7 @@ const KEYWORDS = {
   'library/add': 'upload import add new preroll video file folder',
   'library/categories': 'category tag organize group folders',
   'library/scaling': 'resolution scale transcode 1080 720 quality video size',
+  'library/trash': 'trash deleted removed restore recover undo bin recycle file',
   'schedules': 'schedule automation rules calendar active',
   'schedules/create': 'new schedule add create wizard daily weekly monthly holiday yearly',
   'schedules/calendar': 'calendar month week view',

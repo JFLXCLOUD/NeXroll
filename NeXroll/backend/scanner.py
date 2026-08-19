@@ -91,6 +91,7 @@ def reconcile_prerolls(
     dedupe: bool = False,
     auto_prune_missing: bool = False,
     exclude_trees: Optional[list] = None,
+    ignored_path_keys: Optional[set] = None,
 ) -> dict:
     """
     Reconcile DB Preroll rows against on-disk files. See module docstring.
@@ -113,6 +114,10 @@ def reconcile_prerolls(
         NeX-Up rows are never counted missing/pruned), and rows the scanner
         itself previously created there (managed=True, no category) are
         removed.
+    ignored_path_keys: normcase/normpath'd absolute paths the user removed from
+        the library while choosing to keep the file on disk. Without this the
+        scanner would re-index them on the very next run and the removal would
+        appear to undo itself.
     """
     log = file_log or (lambda *a, **k: None)
     stats = {
@@ -130,8 +135,10 @@ def reconcile_prerolls(
         "storage_maybe_offline": False,
         "excluded_files": 0,
         "excluded_rows_cleaned": 0,
+        "ignored_files": 0,
         "errors": [],
     }
+    _ignored = ignored_path_keys or set()
 
     if not prerolls_dir or not os.path.isdir(prerolls_dir):
         log(f"Scanner: prerolls dir '{prerolls_dir}' not found; skipping", level="WARNING")
@@ -160,6 +167,12 @@ def reconcile_prerolls(
             return False
         return any(pn.startswith(pref) for pref in _exclude_prefixes)
 
+    def _norm_path(pth):
+        try:
+            return os.path.normcase(os.path.normpath(os.path.abspath(pth)))
+        except Exception:
+            return pth
+
     # 1. Build on-disk index. by_parent_filename is the primary lookup
     #    (category folder + filename); by_filename is the unique-name fallback.
     by_parent_filename = {}   # (parent_lower, filename_lower) -> abs_path
@@ -168,6 +181,10 @@ def reconcile_prerolls(
     for abs_path, parent, filename in _iter_preroll_files(prerolls_dir):
         if _is_excluded(abs_path):
             stats["excluded_files"] += 1
+            continue
+        # Removed from the library, kept on disk — do not resurrect it.
+        if _ignored and _norm_path(abs_path) in _ignored:
+            stats["ignored_files"] += 1
             continue
         stats["files_on_disk"] += 1
         key = (parent.lower(), filename.lower())
@@ -190,11 +207,6 @@ def reconcile_prerolls(
     # that the folder-hint heuristic below failed to match (e.g. a filename that
     # is not unique across category folders). Without this guard, every scan
     # re-creates the same duplicate rows, so Dedupe never sticks.
-    def _norm_path(pth):
-        try:
-            return os.path.normcase(os.path.normpath(os.path.abspath(pth)))
-        except Exception:
-            return pth
     existing_db_paths = {_norm_path(p.path) for p in all_prerolls if p.path}
 
     for p in all_prerolls:
@@ -270,6 +282,10 @@ def reconcile_prerolls(
         try:
             cat = cat_by_name_lower.get(parent_lower) if parent_lower else None
             filename = os.path.basename(abs_path)
+            # managed=True marks the file as living in NeXroll's library folder
+            # (so category moves/renames may relocate it). It is deliberately NOT
+            # a licence to delete: these files are frequently the user's own,
+            # dropped into a category folder by hand and merely indexed here.
             new_p = models.Preroll(
                 filename=filename,
                 path=abs_path,

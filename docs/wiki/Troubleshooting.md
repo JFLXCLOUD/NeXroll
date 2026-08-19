@@ -253,6 +253,80 @@ Windows services may not access network shares.
 - **Windows**: Install FFmpeg and ensure it's in PATH
 - **Manual**: Run `ffmpeg -version` to verify installation
 
+## Preroll Library Issues
+
+### Recovering a Deleted Preroll File
+
+Removing a preroll leaves its file alone unless you explicitly ticked **Also
+delete the video file from disk**. If you did, the file was moved to a
+recoverable trash rather than erased, and is kept for 30 days by default
+(`NEXROLL_TRASH_RETENTION_DAYS` to change it, `0` to keep them indefinitely).
+
+**In the UI** — open **Library > Trash**, find the file, and click **Restore**.
+It goes back to its original path and is re-indexed in your library. The same
+page can erase a single entry, empty the trash, or clear only expired files.
+
+If an entry shows *Original location unknown* its restore button is disabled:
+NeXroll lost the record of where the file came from, so move it back by hand
+using the steps below.
+
+**Via the API** — useful for scripting or bulk recovery:
+
+```bash
+curl http://localhost:9393/prerolls/trash
+curl -X POST http://localhost:9393/prerolls/trash/{entry_id}/restore
+```
+
+Restoring puts the file back at its original path and re-indexes it in the
+library.
+
+**By hand** — open the `.nexroll-trash` folder inside your preroll directory:
+
+```
+<your prerolls folder>/.nexroll-trash/
+  20260818T142205Z-3f7c1e28/
+    manifest.json
+    christmas_intro.mp4
+```
+
+Each entry folder holds the file plus a `manifest.json` recording where it came
+from:
+
+```json
+{
+  "entry_id": "20260818T142205Z-3f7c1e28",
+  "original_path": "/prerolls/Holiday/christmas_intro.mp4",
+  "filename": "christmas_intro.mp4",
+  "deleted_at": "2026-08-18T14:22:05Z",
+  "size_bytes": 25000000
+}
+```
+
+Move the video back to its `original_path`, then run a library scan to re-index
+it.
+
+**Notes:**
+- The trash lives inside the preroll library so deleting is a same-volume
+  rename, not a copy across a network share.
+- The library scanner skips the folder, so trashed files are never re-indexed
+  while they sit there.
+- If the file is past its retention window it may already have been purged by a
+  scan. Restore from a backup instead.
+
+### A Removed Preroll Keeps Coming Back After a Scan
+
+As of 2.1.0 it should not. Removing a preroll while keeping its file on disk
+adds it to an ignore list so the next scan does not re-import it.
+
+If one still reappears, check the list and clear the entry if it is wrong:
+
+```bash
+curl http://localhost:9393/prerolls/ignored
+curl -X DELETE http://localhost:9393/prerolls/ignored/{id}
+```
+
+Re-importing the file deliberately clears its entry automatically.
+
 ## UI Issues
 
 ### Page Not Loading

@@ -285,7 +285,7 @@ const SequencePreview = ({ blocks, categories, prerolls, getCategoryName, getPre
             lineHeight: '1.6'
           }}>
             <strong>How it works:</strong> When this sequence is triggered, blocks execute in order from top to bottom. 
-            Random blocks pick prerolls randomly each time, while fixed blocks always play the same prerolls in the specified order.
+            Random blocks cycle through a shuffled pool before repeating, while fixed blocks always play the same prerolls in the specified order. Plex refreshes random selections periodically.
           </p>
         </div>
       </div>

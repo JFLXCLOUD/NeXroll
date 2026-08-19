@@ -84,6 +84,66 @@ class PrerollScannerCategoryTests(unittest.TestCase):
         self.assertEqual(preroll.category_id, category.id)
         self.assertEqual([item.id for item in preroll.categories], [category.id])
 
+    def _norm(self, path):
+        return os.path.normcase(os.path.normpath(os.path.abspath(path)))
+
+    def test_ignored_path_is_not_reimported_and_file_is_left_alone(self):
+        # A preroll removed from the library while its file was kept on disk must
+        # stay removed; without the ignore list the next scan resurrects the row.
+        path = self._write_video("Generic", "intro.mp4")
+
+        stats = reconcile_prerolls(
+            self.db, self.temp_dir.name, ignored_path_keys={self._norm(path)}
+        )
+
+        self.assertEqual(stats["new_prerolls"], 0)
+        self.assertEqual(stats["ignored_files"], 1)
+        self.assertEqual(stats["files_on_disk"], 0)
+        self.assertEqual(self.db.query(models.Preroll).count(), 0)
+        self.assertTrue(os.path.isfile(path))
+
+    def test_ignored_path_does_not_affect_its_siblings(self):
+        ignored = self._write_video("Generic", "skip.mp4")
+        kept = self._write_video("Generic", "keep.mp4")
+
+        stats = reconcile_prerolls(
+            self.db, self.temp_dir.name, ignored_path_keys={self._norm(ignored)}
+        )
+
+        self.assertEqual(stats["new_prerolls"], 1)
+        self.assertEqual(stats["ignored_files"], 1)
+        self.assertEqual(self.db.query(models.Preroll).one().path, kept)
+
+    def test_ignore_matching_is_case_and_separator_insensitive(self):
+        path = self._write_video("Generic", "intro.mp4")
+        scruffy = path.replace(os.sep, os.sep + "." + os.sep).upper()
+
+        stats = reconcile_prerolls(
+            self.db, self.temp_dir.name, ignored_path_keys={self._norm(scruffy)}
+        )
+
+        self.assertEqual(stats["ignored_files"], 1)
+        self.assertEqual(self.db.query(models.Preroll).count(), 0)
+
+    def test_no_ignore_list_keeps_the_previous_import_behaviour(self):
+        self._write_video("Generic", "intro.mp4")
+
+        stats = reconcile_prerolls(self.db, self.temp_dir.name)
+
+        self.assertEqual(stats["new_prerolls"], 1)
+        self.assertEqual(stats["ignored_files"], 0)
+
+    def test_scanner_never_indexes_the_trash_folder(self):
+        # Trashed media lives in a dot-folder inside the library; if the scanner
+        # walked it, deleting a preroll would immediately re-import it.
+        self._write_video(".nexroll-trash", "20260816T120000Z-abcd1234", "intro.mp4")
+
+        stats = reconcile_prerolls(self.db, self.temp_dir.name)
+
+        self.assertEqual(stats["files_on_disk"], 0)
+        self.assertEqual(stats["new_prerolls"], 0)
+        self.assertEqual(self.db.query(models.Preroll).count(), 0)
+
 
 if __name__ == "__main__":
     unittest.main()

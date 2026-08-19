@@ -107,7 +107,6 @@ NeXroll v2 is a top-to-bottom modernization of the app. The v2.0.1-v2.0.4 mainte
 - **Emby**: Preroll injection via NeXroll Intros plugin with Cinema Mode integration
 - **No shared mount required**: the plugin streams and caches prerolls from NeXroll, so it works even when the media server can't see the files directly
 - Secure credential storage with encryption
-- Genre-based preroll mapping (experimental)
 
 ### System & Administration
 - **Enhanced Logging**: View, search, filter, and export logs in the web UI — with **automatic redaction** of API keys and IP addresses on export/copy

@@ -1,5 +1,78 @@
 # Changelog
 
+## [2.1.0-beta.1] - 08-18-2026 (beta)
+
+> A redesigned dashboard, a data-loss fix in preroll deletion with a recoverable
+> trash, an end to Plex hanging mid-preroll, no-repeat random NeX-Up rotation,
+> and the removal of the dormant genre subsystem. Upgrade-safe: existing dashboard
+> layouts, categories, schedules, and sequences are preserved.
+
+### Fixed
+
+- **A failed Community Prerolls scan could replace the local catalog with an empty index that still appeared current.** Empty scans now leave the previous index intact and report the build failure instead.
+- **Plex could hang partway through your prerolls, failing to load the next trailer or preroll.** Plex does not take a snapshot of the preroll list when playback starts - it re-reads the setting as it advances through the list. NeXroll rewrote that setting on a timer with no idea whether you were mid-playback, so Plex would reach for an entry that no longer existed. This affected four separate paths: the 10-minute random-block rotation, schedule transitions, the 5-minute verification re-apply, and NeX-Up trailer retention deleting a file that was still in the active list. NeXroll now waits for playback to finish before changing prerolls, and never deletes a trailer that is currently in Plex's list. Since prerolls only take effect at the start of the next playback, waiting costs nothing. Set `NEXROLL_ALLOW_MIDPLAYBACK_PREROLL_WRITES=1` to restore the old behaviour.
+- **`GET /stats` always returned 404.** It was declared after the frontend catch-all mount, which shadowed it. Moved above the mount.
+- **Deleting a preroll could permanently erase the original video file from your disk, with no warning and no way to get it back.** NeXroll decided whether a file was its own to destroy using the `managed` flag - but the library scanner sets that flag on everything it finds, so a file you copied into a category folder yourself and let NeXroll index was treated exactly like one NeXroll had created. The single-preroll confirmation only asked "Are you sure you want to delete this preroll?" and never mentioned your disk. Removing a preroll now leaves the file alone unless you explicitly ask for it, and files you do ask to delete are recoverable (see Added). `managed` keeps its real job of governing category moves and renames.
+- **Importing the same folder a second time under a different category did nothing.** Files already in the library were skipped outright instead of being tagged with the category being imported.
+- **The logo was missing from the login screen**, because its image assets sat behind the authentication gate that the login page itself has to get past. Static assets, plugin endpoints, and CORS preflight requests are now correctly exempt from the gate.
+- **Files moved into a category folder outside NeXroll stayed uncategorized after a scan.** The scanner now assigns a category from the folder name when a row has none of its own, and never replaces a category you set deliberately.
+- Thumbnails failed to resolve for prerolls whose stored path carried Docker's `prerolls/` prefix.
+- The login and registration forms now say why a submission was rejected (password mismatch, length, character, and connection errors) instead of failing silently, and their fields are properly labelled for screen readers.
+
+### Added
+
+- **A redesigned dashboard.** The page now opens on what is actually happening
+  rather than a wall of counters.
+  - *Now showing* leads with the active schedule, its mode, preroll count, and
+    timezone, plus a progress bar to the next change.
+  - *What's next* lays the coming activations out on a timeline with Active,
+    Next, and Upcoming badges.
+  - *System health* scores the install out of 100 across the scheduler, media
+    server, library, storage, schedule conflicts, and community index age. A
+    check that could not be measured is reported as unknown and costs no points,
+    so a fresh install does not open on an alarming number. Any hard failure
+    holds the overall status at "degraded" rather than letting a pile of healthy
+    checks average it away.
+  - *Storage mix* breaks your disk use down across prerolls, NeX-Up trailers,
+    thumbnails, and the database.
+  - *Quick actions* puts refresh, scan files, NeX-Up sync, and rebuild
+    thumbnails one click from the dashboard.
+  - A new **Customize dashboard** dialog replaces the old inline edit mode. It
+    carries three presets - Essential, Operations, Everything - along with
+    per-tile width and detail level, visibility and reordering, tile density,
+    and toggles for the greeting, the health note, and the date line.
+  - `GET /system/health/summary` backs the health tile. Schedule-conflict counts
+    are passed in by the frontend, which owns conflict detection; omitting them
+    reports that one check as unknown instead of guessing.
+  - **Upgrading keeps your layout.** Stored dashboard layouts are migrated from
+    the old schema in place: your tile order, hidden tiles, per-tile sizes, and
+    lock state all survive, with the new tiles inserted ahead of them. Nothing
+    you previously hid is un-hidden. New installs start on the Essential preset.
+
+- **AI-generated Community Prerolls filter.** Content under the community server's `/AI/` directory is excluded by default and can be included with a clearly labelled toggle. The preference applies consistently to search, browse facets, latest additions, and random selection.
+- **Preroll trash.** When you do ask for a preroll's file to be deleted, it moves into a `.nexroll-trash` folder instead of being erased, and can be restored for 30 days. Set `NEXROLL_TRASH_RETENTION_DAYS` to change that, or `0` to keep trashed files indefinitely. The trash sits inside your preroll library, so trashing is an instant same-volume rename rather than a copy across a network share, and the library scanner never indexes it. Expired entries are cleared during the regular scan.
+  - `GET /prerolls/trash`, `POST /prerolls/trash/{entry_id}/restore`, `DELETE /prerolls/trash/{entry_id}`, `DELETE /prerolls/trash?expired_only=true`
+  - **Library > Trash** lists what is recoverable with each file's original location, when it was deleted, its size, and how many days remain before it is cleared. Restore puts the file back where it came from and re-indexes it; Delete erases one entry for good; Empty Trash and Clear Expired handle the whole folder. Files whose record of origin was lost are still listed, with restore disabled and a note to move them back by hand.
+  - The delete dialog quotes your configured retention window rather than assuming 30 days, and a delete that takes the file now says the file is recoverable from Library > Trash.
+- **Removals stay removed.** A preroll removed from the library while its file stays on disk is added to an ignore list, so the next scan does not re-import it and undo your change. Deliberately re-importing the file clears the entry automatically.
+  - `GET /prerolls/ignored`, `DELETE /prerolls/ignored/{id}`, `DELETE /prerolls/ignored`
+- **Library sorting.** The Library filter bar can now sort by Last added, Name, or Duration, in either direction. The direction control is labelled for the field it applies to - "Newest first", "A to Z", "Longest first" - rather than a bare arrow. Names sort in natural order, so `bumper2` comes before `bumper10` instead of after it. Prerolls whose duration was never probed sort to the bottom rather than appearing to be the shortest videos in the library. Your choice is remembered per browser, alongside the existing grid/list and page-size preferences.
+
+### Removed
+
+- **The genre-based preroll feature is fully gone.** Its settings UI was removed in v1.9.10, but the backend stayed live: a playback monitor ran every 60 seconds, twelve API endpoints remained callable, and the Plex webhook existed only to drive it. It also wrote prerolls at the worst possible moment - the instant a movie started - which is the same hang described above. Now removed: the scheduler's playback monitor, all `/genres/*` and `/settings/genre` endpoints, the `/plex/webhook` and `/webhooks/plex` receivers, the leftover "Recent Genre Prerolls" dashboard tile, and the dead frontend state. The `genre_maps` table and its settings columns are left untouched, so no data disappears and older backups still restore cleanly.
+
+### Changed
+
+- **Random NeX-Up trailer selections now cycle through the eligible pool before repeating.** Independent random draws could repeatedly choose the same one or two trailers even when many were available. Random sequence blocks now use a no-repeat shuffle bag during normal operation; when the pool is exhausted, NeXroll reshuffles it and begins a new pass. Plex continues to refresh its selected set on the safe periodic rotation, while Jellyfin and Emby advance the bag on each intro request. The sequence builder now describes that behavior accurately instead of promising a different trailer on every Plex playback.
+- The dashboard greeting now includes the current NeXroll profile name, with a local desktop-account fallback when authentication is disabled.
+- Fresh installations now start in dark mode. Existing browser theme choices are preserved.
+- `DELETE /prerolls/{id}` no longer removes the file by default. Pass `delete_file=true` to move it to the trash. Externally mapped files are never deleted from disk even then, matching what the import screen has always promised.
+- The delete confirmation now names the preroll and the folder it lives in, and carries an unchecked "Also delete the video file from disk" option. The confirm button only becomes "Remove and Delete File" once that box is ticked. If you have confirmations turned off in Settings, a delete never takes the file - skipping the prompt is not treated as consent to destroy it.
+- Bulk delete uses the same dialog and reports how many files were moved to the trash.
+- The Priority (1-10) note on the schedule form now reads "Higher priority number schedules win when multiple schedules overlap," making it explicit that a larger number is the stronger one. Applied to both the create and edit forms, and to the priority documentation in the wiki.
+- The Library now opens sorted newest-first instead of in the order prerolls happened to be added to the database. Change it with the new sort control; your choice sticks.
+
 ## [2.0.5] - 07-28-2026
 
 ### Fixed

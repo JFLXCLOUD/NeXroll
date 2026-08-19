@@ -25,7 +25,13 @@ class Preroll(Base):
     description = Column(Text, nullable=True)
     duration = Column(Float, nullable=True)  # Duration in seconds
     file_size = Column(Integer, nullable=True)  # File size in bytes
-    managed = Column(Boolean, default=True)  # True = uploaded/managed by NeXroll; False = externally mapped
+    # True = the file lives in NeXroll's library folder, so NeXroll may move and
+    # rename it (category moves, renames). False = externally mapped; leave it
+    # alone entirely. This does NOT authorize deleting the file: the scanner sets
+    # managed=True on anything it finds in the library, including files the user
+    # put there, so deletion is gated on an explicit request instead (see
+    # delete_preroll's delete_file parameter).
+    managed = Column(Boolean, default=True)
     upload_date = Column(DateTime, default=datetime.datetime.utcnow)
     community_preroll_id = Column(String, nullable=True, index=True)  # ID from community prerolls library
     exclude_from_matching = Column(Boolean, default=False)  # Exclude from auto-matching to community prerolls
@@ -47,6 +53,24 @@ class Category(Base):
     is_system = Column(Boolean, default=False)  # System categories cannot be edited/deleted (e.g., NeX-Up Trailers)
     # Optional: reverse relation to list all prerolls tagged with this category (view-only)
     prerolls = relationship("Preroll", secondary="preroll_categories", viewonly=True)
+
+class IgnoredPath(Base):
+    """A file the user removed from the library but chose to keep on disk.
+
+    The scanner indexes anything it finds under the prerolls folder, so without
+    this the removed preroll would simply reappear on the next scan. Entries are
+    dropped automatically once a Preroll row points at the path again (i.e. the
+    user deliberately re-imported it).
+    """
+    __tablename__ = "ignored_paths"
+
+    id = Column(Integer, primary_key=True, index=True)
+    path = Column(String)  # As recorded, for display
+    path_key = Column(String, unique=True, index=True)  # normcase(normpath(abspath))
+    filename = Column(String, nullable=True)
+    reason = Column(String, nullable=True)
+    created_at = Column(DateTime, default=datetime.datetime.utcnow)
+
 
 class GenreMap(Base):
     __tablename__ = "genre_maps"

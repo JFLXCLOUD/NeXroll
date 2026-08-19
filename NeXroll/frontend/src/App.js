@@ -29,6 +29,13 @@ import {
   yearlyOrHolidayDateRangesOverlap
 } from './utils/scheduleUtils';
 import { lockBodyScroll } from './utils/modalBehavior';
+import {
+  PREROLL_SORT_FIELDS,
+  describeSort,
+  sortDirectionOrDefault,
+  sortFieldOrDefault,
+  sortPrerolls
+} from './utils/prerollSort';
 import { 
     Calendar, CalendarDays, ChevronLeft, Clock, Play, Edit, Save, Trash, Trash2, Upload, 
     Search, Folder, Film, BookOpen, Star, Plus, PlusCircle, Settings, Target, CheckCircle, Link, Link2,
@@ -37,56 +44,93 @@ import {
     Bug, Zap, Loader2, Package, FlaskConical, TreePine, Check, XCircle, Video, ChevronRight, ChevronDown,
     Library, Clapperboard, Sparkles, PartyPopper, Users2, Theater, Eye, EyeOff, X, User, RefreshCcw, Menu,
     Youtube, Globe, Key, Rocket, FileUp, ArrowRight, HardDrive, ListChecks, Unlink, LinkIcon, ExternalLink,
-    Tv, ClipboardList, Info, RotateCw, LayoutDashboard, BarChart3, PieChart as PieChartIcon, Activity, TrendingUp, Server, Timer,
+    Tv, ClipboardList, Info, RotateCw, LayoutDashboard, BarChart3, PieChart as PieChartIcon, TrendingUp, Server, Timer, ArrowUp, ArrowDown,
     Database, Archive, Shield, UserPlus, Users, LayoutGrid, List, Layers, Terminal, AlertCircle, Filter, BarChart2, HelpCircle,
-    Music, Wand2, GitCompare, Square, Plug
+    Music, Wand2, GitCompare, Square, Plug, GripVertical
   } from 'lucide-react';
 // Grid units. A small rowHeight lets a tile's height land close to its measured
 // content height. Tile HEIGHT is always auto-fit to content (so no scrollbars);
 // only WIDTH and POSITION are user-controlled.
-const DASH_ROW_PX = 4;
-const DASH_ROW_MARGIN = 12;
-const measureTileRows = (px) =>
-  Math.max(3, Math.ceil(((px || 0) + DASH_ROW_MARGIN) / (DASH_ROW_PX + DASH_ROW_MARGIN)));
-
-// Curated default layout (12 columns). x/y/w only — heights come from content
-// measurement. This is the organized arrangement that "Reset layout" restores,
-// and it's the fallback position for any tile re-added from the hidden list.
-// y is a row ordinal; vertical compaction collapses the gaps.
-const DASH_PRESET = [
-  { i: 'servers',          x: 0, y: 0,   w: 4 },
-  { i: 'prerolls',         x: 4, y: 0,   w: 4 },
-  { i: 'storage',          x: 8, y: 0,   w: 4 },
-  { i: 'scheduler',        x: 0, y: 100, w: 4 },
-  { i: 'current_category', x: 4, y: 100, w: 4 },
-  { i: 'schedules',        x: 8, y: 100, w: 4 },
-  { i: 'upcoming',         x: 0, y: 200, w: 6 },
-  { i: 'nexup',            x: 6, y: 200, w: 6 },
-  { i: 'community',        x: 0, y: 300, w: 6 },
-  { i: 'resolution_chart', x: 6, y: 300, w: 6 },
-];
-const DASH_PRESET_BY_ID = Object.fromEntries(DASH_PRESET.map(it => [it.i, it]));
-const TILE_DEFAULT_ROWS = 14; // fallback height before the first measurement
-
-// Tidy-grid tile sizes. The grid uses auto-fill columns of a fixed target width
-// plus a measured base row height, so size is expressed as a column/row span:
-//   Small = 1 col x 1 row   Medium = 2 cols x 1 row   Large = 2 cols x 2 rows
-const SIZE_SPAN = { sm: 1, md: 2, lg: 2 };   // column span
-const SIZE_ROWS = { sm: 1, md: 1, lg: 2 };   // row span (applied in the locked layout)
-const SIZE_LABEL = { sm: 'Small', md: 'Medium', lg: 'Large' };
+// Focus Enhanced keeps the persisted sm/md/lg vocabulary, but maps it to the
+// concept's 12-column widths: one third, two thirds, and full width. Tile height
+// is content-driven; "large" no longer means an arbitrary two-row card.
+const SIZE_SPAN = { sm: 4, md: 8, lg: 12 };
+const SIZE_LABEL = { sm: 'Third', md: 'Two thirds', lg: 'Full' };
 const ALL_SIZE_OPTIONS = ['sm', 'md', 'lg'];
-// Tall content tiles (a chart, a schedule list) read poorly at 1 column, so they
-// only offer Medium / Large.
-const FEATURE_TILES = ['upcoming', 'resolution_chart'];
-const FEATURE_SIZE_OPTIONS = ['md', 'lg'];
-// Default arrangement that new installs and "Reset layout" get. Most tiles are
-// Small; the chart/list feature tiles are Large (2x2).
+
+// The Focused Enhanced default is intentionally five panels. Existing tile IDs
+// stay stable so 2.0.x layouts can still be upgraded without losing choices.
 const DEFAULT_SIZES = {
   servers: 'sm', prerolls: 'sm', storage: 'sm', schedules: 'sm', scheduler: 'sm',
   current_category: 'sm', community: 'sm', nexup: 'sm', upcoming: 'lg', resolution_chart: 'md',
+  now_showing: 'md', whats_next: 'md', system_health: 'sm', storage_mix: 'sm', quick_actions: 'sm',
+  weekly_calendar: 'lg',
 };
-const DEFAULT_ORDER = ['servers', 'prerolls', 'storage', 'schedules', 'scheduler', 'current_category', 'community', 'nexup', 'upcoming', 'resolution_chart', 'weekly_calendar'];
-const DEFAULT_HIDDEN = [];
+const FOCUS_ESSENTIAL_KEYS = ['now_showing', 'system_health', 'prerolls', 'quick_actions', 'storage_mix'];
+const FOCUS_OPTIONAL_KEYS = ['servers', 'resolution_chart', 'community'];
+const DEFAULT_ORDER = ['now_showing', 'system_health', 'prerolls', 'quick_actions', 'storage_mix', 'whats_next', 'servers', 'storage', 'schedules', 'scheduler', 'current_category', 'community', 'nexup', 'upcoming', 'resolution_chart', 'weekly_calendar'];
+const DEFAULT_HIDDEN = DEFAULT_ORDER.filter(key => !FOCUS_ESSENTIAL_KEYS.includes(key));
+const DASH_KEYS = DEFAULT_ORDER.slice();
+const NEXROLL_WIKI_URL = 'https://github.com/JFLXCLOUD/NeXroll/wiki';
+
+const HEALTH_CHECK_ACTIONS = {
+  media_server: { tab: 'connect', label: 'Connect server' },
+  scheduler: { tab: 'schedules', label: 'View schedules' },
+  storage: { tab: 'settings/storage', label: 'Storage settings' },
+  conflicts: { tab: 'schedules/conflicts', label: 'Resolve conflicts' },
+  library: { tab: 'library/add', label: 'Add prerolls' },
+  community_index: { tab: 'community-prerolls', label: 'Refresh index' },
+};
+
+const getPrimaryHealthAction = (summary) => {
+  const problems = (summary?.checks || [])
+    .filter(check => check.status === 'error' || check.status === 'warn')
+    .sort((a, b) => {
+      if (a.status !== b.status) return a.status === 'error' ? -1 : 1;
+      return (b.weight || 0) - (a.weight || 0);
+    });
+  return HEALTH_CHECK_ACTIONS[problems[0]?.key]
+    || { tab: 'settings/system', label: 'System info' };
+};
+
+const getDashboardHealthBadge = (summary) => {
+  if (!summary) return { tone: 'loading', label: 'Checking health' };
+  const mediaServer = (summary.checks || []).find(check => check.key === 'media_server');
+  if (mediaServer?.status === 'error') {
+    return { tone: 'error', label: 'Media server disconnected' };
+  }
+  if (summary.status === 'degraded') return { tone: 'error', label: 'System needs attention' };
+  if (summary.status === 'attention') {
+    const count = Number(summary.attention_count) || 0;
+    return { tone: 'warn', label: `${count || 'Some'} item${count === 1 ? '' : 's'} need attention` };
+  }
+  return { tone: 'ok', label: 'All systems healthy' };
+};
+
+// A short-lived 2.1 development build called an eight-tile layout "essential".
+// Normalize only that named preset so existing custom layouts and per-tile
+// size/detail choices remain untouched while the focused preset stays focused.
+const normalizeFocusEssentialLayout = (layout) => {
+  if (!layout) return layout;
+  const incomingOrder = Array.isArray(layout.order) ? layout.order : [];
+  const hidden = Array.isArray(layout.hidden) ? layout.hidden : [];
+  const isUntouchedLegacyDefault = layout.preset === 'custom'
+    && hidden.length === 0
+    && incomingOrder[0] === 'servers'
+    && incomingOrder.indexOf('now_showing') > incomingOrder.indexOf('weekly_calendar');
+  if (layout.preset !== 'essential' && !isUntouchedLegacyDefault) return layout;
+  const order = [
+    ...FOCUS_ESSENTIAL_KEYS,
+    ...incomingOrder.filter(key => DASH_KEYS.includes(key) && !FOCUS_ESSENTIAL_KEYS.includes(key)),
+    ...DASH_KEYS.filter(key => !incomingOrder.includes(key) && !FOCUS_ESSENTIAL_KEYS.includes(key)),
+  ];
+  return {
+    ...layout,
+    preset: 'essential',
+    order,
+    hidden: order.filter(key => !FOCUS_ESSENTIAL_KEYS.includes(key)),
+  };
+};
 
 // Theater-style boot quotes: one is picked per page load and shown on the
 // loading screen, in the spirit of the pre-show bumpers NeXroll exists to
@@ -670,6 +714,15 @@ function App() {
   const [cinemaTrailersLoading, setCinemaTrailersLoading] = useState(false);
   const [cinemaTrailersSaving, setCinemaTrailersSaving] = useState(null); // key currently saving
   const [prerolls, setPrerolls] = useState([]);
+  // Preroll trash. Files deleted with "Also delete the video file from disk" are
+  // moved to <prerolls>/.nexroll-trash rather than erased, and stay recoverable
+  // until their retention window expires.
+  const [trashEntries, setTrashEntries] = useState([]);
+  const [trashBytes, setTrashBytes] = useState(0);
+  const [trashRetentionDays, setTrashRetentionDays] = useState(30);
+  const [trashLoading, setTrashLoading] = useState(false);
+  const [trashError, setTrashError] = useState('');
+  const [trashBusyId, setTrashBusyId] = useState(null);
   const [schedules, setSchedules] = useState([]);
   const [categories, setCategories] = useState([]);
   const [holidayPresets, setHolidayPresets] = useState([]);
@@ -749,9 +802,9 @@ function App() {
   const [darkMode, setDarkMode] = useState(() => {
     try {
       const saved = localStorage.getItem('darkMode');
-      return saved ? JSON.parse(saved) : false;
+      return saved !== null ? JSON.parse(saved) : true;
     } catch {
-      return false;
+      return true;
     }
   });
   const [darkModeLoaded, setDarkModeLoaded] = useState(true); // Mark as loaded since we init from localStorage
@@ -839,6 +892,10 @@ function App() {
   const [updateInfo, setUpdateInfo] = useState(null);
   const [showUpdateBanner, setShowUpdateBanner] = useState(false);
   const [updateSettings, setUpdateSettings] = useState({ check_interval: 'daily', include_prerelease: false, last_check: null, dismissed_version: null });
+  // Focus dashboard data. Health is a composite score from the backend; the
+  // conflict count is folded in from the frontend, which owns that detection.
+  const [healthSummary, setHealthSummary] = useState(null);
+  const [showCustomizeDashboard, setShowCustomizeDashboard] = useState(false);
   const [storageHealth, setStorageHealth] = useState(null);
   const [storageHealthDismissed, setStorageHealthDismissed] = useState(() => {
     try { return sessionStorage.getItem('nx_storage_health_dismissed') === '1'; } catch (_) { return false; }
@@ -876,6 +933,7 @@ function App() {
   const [communitySearchQuery, setCommunitySearchQuery] = useState('');
   const [communitySearchCategory, setCommunitySearchCategory] = useState('');
   const [communitySearchPlatform, setCommunitySearchPlatform] = useState('');
+  const [communityIncludeAI, setCommunityIncludeAI] = useState(false);
   const [communitySearchResults, setCommunitySearchResults] = useState([]);
   const [communityIsSearching, setCommunityIsSearching] = useState(false);
   // Browse-by-facet state (Community Prerolls)
@@ -1026,22 +1084,6 @@ function App() {
   const [timezoneLoading, setTimezoneLoading] = useState(false);
   const [timezoneSaving, setTimezoneSaving] = useState(false);
 
-// Genre mapping UI state
-const [genreMaps, setGenreMaps] = useState([]);
-const [genreMapsLoading, setGenreMapsLoading] = useState(false);
-const [gmForm, setGmForm] = useState({ genre: '', category_id: '' });
-const [gmEditing, setGmEditing] = useState(null);
-const [genresTestInput, setGenresTestInput] = useState('');
-const [genresResolveResult, setGenresResolveResult] = useState(null);
-const [genresApplyLoading, setGenresApplyLoading] = useState(false);
-const [genreSettingsCollapsed, setGenreSettingsCollapsed] = useState(true); // Collapsed by default
-const [genreSettings, setGenreSettings] = useState({
-genre_auto_apply: true,
-genre_priority_mode: 'schedules_override',
-genre_override_ttl_seconds: 10
-});
-const [recentGenreApplications, setRecentGenreApplications] = useState([]);
-const [genreSettingsLoading, setGenreSettingsLoading] = useState(false);
 const [applyingToServer, setApplyingToServer] = useState(false);
   // Verbose logging state
   const [verboseLogging, setVerboseLogging] = useState(false);
@@ -1201,6 +1243,7 @@ const [applyingToServer, setApplyingToServer] = useState(false);
     auth_enabled: false,
     authenticated: false,
     user: null,
+    display_name: null,
     users_exist: false
   });
   const [loginForm, setLoginForm] = useState({ username: '', password: '', remember_me: false });
@@ -1293,6 +1336,9 @@ const [applyingToServer, setApplyingToServer] = useState(false);
     confirmText: 'OK',
     cancelText: 'Cancel',
     type: 'warning', // 'warning' | 'danger' | 'info'
+    details: null,   // { label, value } rows shown above the message
+    checkbox: null,  // { label, hint } opt-in for a destructive extra step
+    checked: false,
     resolver: null
   });
   const [alertDialog, setAlertDialog] = useState({
@@ -1659,6 +1705,16 @@ const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
   const [filterTags, setFilterTags] = useState('');
   const [filterCategory, setFilterCategory] = useState('');
   const [filterMatchStatus, setFilterMatchStatus] = useState(''); // Filter by community match status
+  // Library sort. Defaults to newest-first so recently added prerolls are the
+  // first thing you see; persisted per browser like the view and page-size prefs.
+  const [prerollSortField, setPrerollSortField] = useState(() => {
+    try { return sortFieldOrDefault(localStorage.getItem('prerollSortField')); }
+    catch { return sortFieldOrDefault(null); }
+  });
+  const [prerollSortDirection, setPrerollSortDirection] = useState(() => {
+    try { return sortDirectionOrDefault(localStorage.getItem('prerollSortDirection')); }
+    catch { return sortDirectionOrDefault(null); }
+  });
   const [availableTags, setAvailableTags] = useState([]);
   const [inputTagsValue, setInputTagsValue] = useState(''); // Local state for immediate input feedback
 
@@ -1750,6 +1806,14 @@ const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
     try { localStorage.setItem('prerollPageSize', String(pageSize)); } catch {}
   }, [pageSize]);
 
+  useEffect(() => {
+    try { localStorage.setItem('prerollSortField', prerollSortField); } catch {}
+  }, [prerollSortField]);
+
+  useEffect(() => {
+    try { localStorage.setItem('prerollSortDirection', prerollSortDirection); } catch {}
+  }, [prerollSortDirection]);
+
   // Persist UI preferences
   useEffect(() => {
     try { localStorage.setItem('confirmDeletions', JSON.stringify(confirmDeletions)); } catch {}
@@ -1764,27 +1828,40 @@ const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
   }, [weekStartsOnSunday]);
 
   // Helper functions that respect user preferences
+  // Resolves to a boolean, or to { confirmed, checked } when options.checkbox is
+  // given. A checkbox always guards an extra, irreversible step, so when the user
+  // has confirmations turned off it resolves unchecked — skipping the prompt must
+  // never be read as consent to the destructive option.
   const showConfirm = (message, options = {}) => {
-    if (!confirmDeletions) return Promise.resolve(true); // Skip confirmation if disabled
-    
+    const wrap = (confirmed, checked) =>
+      options.checkbox ? { confirmed, checked } : confirmed;
+
+    if (!confirmDeletions) return Promise.resolve(wrap(true, false));
+
     return new Promise((resolve) => {
       setConfirmDialog({
         open: true,
         title: options.title || 'Confirm',
         message: message,
         confirmText: options.confirmText || 'OK',
+        confirmTextChecked: options.confirmTextChecked || null,
         cancelText: options.cancelText || 'Cancel',
         type: options.type || 'warning',
-        resolver: resolve
+        details: options.details || null,
+        checkbox: options.checkbox || null,
+        checked: !!(options.checkbox && options.checkbox.defaultChecked),
+        resolver: (confirmed, checked) => resolve(wrap(confirmed, checked))
       });
     });
   };
 
   const handleConfirmDialogClose = (confirmed) => {
     if (confirmDialog.resolver) {
-      confirmDialog.resolver(confirmed);
+      confirmDialog.resolver(confirmed, confirmed ? !!confirmDialog.checked : false);
     }
-    setConfirmDialog(prev => ({ ...prev, open: false, resolver: null }));
+    setConfirmDialog(prev => ({
+      ...prev, open: false, resolver: null, details: null, checkbox: null, checked: false
+    }));
   };
 
   const showAlert = (message, type = 'info') => {
@@ -1884,9 +1961,9 @@ const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
   }, [prerolls, pageSize]);
 
   useEffect(() => {
-    // Reset to first page when any filter changes
+    // Reset to first page when any filter or the sort order changes
     setCurrentPage(1);
-  }, [filterCategory, filterTags, filterMatchStatus]);
+  }, [filterCategory, filterTags, filterMatchStatus, prerollSortField, prerollSortDirection]);
 
   // Ensure tab title always shows "NeXroll" (guards against cached index.html/manifest)
   useEffect(() => {
@@ -2298,14 +2375,13 @@ const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
       fetch(apiUrl('system/version')),
       fetch(apiUrl('system/ffmpeg-info')),
       fetch(apiUrl('system/dependencies')),
-      fetch(apiUrl('genres/recent-applications')),
       fetch(apiUrl('settings/active-category')),
       fetch(apiUrl('scheduler/active-schedule-ids')),
       fetch(apiUrl('community-prerolls/index-status')),
       fetch(apiUrl('community-prerolls/downloaded-ids')),
       fetch(apiUrl('update/settings'))
     ]).then(responses => Promise.all(responses.map(safeJson)))
-      .then(([plex, jellyfin, emby, prerolls, schedules, categories, holidays, scheduler, tags, templates, stableToken, sysVersion, ffmpeg, sysDeps, recentGenreApps, activeCat, activeScheduleIdsData, communityIndex, communityDownloaded, updateSettingsData]) => {
+      .then(([plex, jellyfin, emby, prerolls, schedules, categories, holidays, scheduler, tags, templates, stableToken, sysVersion, ffmpeg, sysDeps, activeCat, activeScheduleIdsData, communityIndex, communityDownloaded, updateSettingsData]) => {
         setPlexStatus(plex.connected ? 'Connected' : 'Disconnected');
         setPlexServerInfo(plex);
         setJellyfinStatus(jellyfin.connected ? 'Connected' : 'Disconnected');
@@ -2342,7 +2418,6 @@ const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
         setSystemVersion(sysVersion || null);
         setFfmpegInfo(ffmpeg || null);
         setSystemDependencies(sysDeps || null);
-        setRecentGenreApplications(Array.isArray(recentGenreApps?.applications) ? recentGenreApps.applications : []);
         // Set active category
         if (activeCat?.__error) {
           setActiveCategory(null);
@@ -2768,7 +2843,7 @@ const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
               }
               // Load browse facets (categories / creators / platforms + counts)
               try {
-                const facetsRes = await fetch(apiUrl('community-prerolls/facets'));
+                const facetsRes = await fetch(apiUrl(`community-prerolls/facets?include_ai=${communityIncludeAI}`));
                 const facetsData = await facetsRes.json();
                 setCommunityFacets(facetsData && facetsData.available ? facetsData : null);
               } catch (facetsError) {
@@ -2832,7 +2907,7 @@ const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
           setTimeout(() => setCommunityBuildProgress(null), 1000);
           (async () => {
             try { const r = await fetch(apiUrl('community-prerolls/index-status')); setCommunityIndexStatus(await r.json()); } catch {}
-            try { const r = await fetch(apiUrl('community-prerolls/facets')); const f = await r.json(); setCommunityFacets(f && f.available ? f : null); } catch {}
+            try { const r = await fetch(apiUrl(`community-prerolls/facets?include_ai=${communityIncludeAI}`)); const f = await r.json(); setCommunityFacets(f && f.available ? f : null); } catch {}
           })();
         } else {
           setCommunityBuildProgress(null);
@@ -2845,7 +2920,7 @@ const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
     };
     es.onerror = () => close();
     return close;
-  }, [activeTab]);
+  }, [activeTab, communityIncludeAI]);
 
   // Function to load Top 5 prerolls
   const loadTop5Prerolls = async () => {
@@ -2888,7 +2963,7 @@ const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
     
     setCommunityIsLoadingLatest(true);
     try {
-      const response = await fetch(apiUrl('community-prerolls/latest?limit=6'));
+      const response = await fetch(apiUrl(`community-prerolls/latest?limit=6&include_ai=${communityIncludeAI}`));
       const data = await response.json();
       
       if (data.found && data.results) {
@@ -4002,6 +4077,39 @@ const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
     
     return conflicts;
   };
+
+  // Distinct conflicting schedule PAIRS, for the System health tile. Conflict
+  // detection lives here rather than in the backend, so the health endpoint
+  // takes this as an input instead of guessing. Counting pairs (not per-schedule
+  // conflict rows) avoids reporting every clash twice.
+  const dashboardConflictCount = React.useMemo(() => {
+    try {
+      const pairs = new Set();
+      (schedules || []).forEach(schedule => {
+        (getScheduleConflicts(schedule) || []).forEach(conflict => {
+          const otherId = conflict?.schedule?.id;
+          if (otherId != null && schedule?.id != null) {
+            pairs.add([schedule.id, otherId].sort((a, b) => a - b).join(':'));
+          }
+        });
+      });
+      return pairs.size;
+    } catch {
+      return null; // Unknown beats a wrong number; the backend leaves it unscored.
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [schedules]);
+
+  // Refresh the health summary whenever the inputs it scores actually change.
+  React.useEffect(() => {
+    let cancelled = false;
+    const query = dashboardConflictCount == null ? '' : `?conflicts=${dashboardConflictCount}`;
+    fetch(apiUrl(`system/health/summary${query}`))
+      .then(res => (res.ok ? res.json() : null))
+      .then(data => { if (!cancelled && data) setHealthSummary(data); })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, [dashboardConflictCount, schedulerStatus.running, prerolls.length, activeCategory]);
 
   // Analyze ALL schedule conflicts across the entire configuration
   // Returns structured conflict objects with suggested auto-resolutions
@@ -5135,19 +5243,56 @@ const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
   };
 
   const handleDeletePreroll = async (prerollId) => {
-    if (!await showConfirm('Are you sure you want to delete this preroll?', { type: 'danger', title: 'Delete Preroll' })) return;
+    const preroll = (prerolls || []).find(p => p.id === prerollId);
+    const name = preroll?.display_name || preroll?.filename || 'this preroll';
+    const folder = preroll?.path
+      ? String(preroll.path).replace(/[\\/][^\\/]*$/, '')
+      : null;
+    // Externally mapped files are never deleted by NeXroll, so don't offer it.
+    const canDeleteFile = preroll ? preroll.managed !== false : true;
 
-    fetch(apiUrl(`prerolls/${prerollId}`), {
+    const details = [{ label: 'Preroll', value: name }];
+    if (folder) details.push({ label: 'Folder', value: folder });
+
+    const { confirmed, checked } = await showConfirm(
+      canDeleteFile
+        ? 'This removes the preroll from your NeXroll library. The video file stays on disk unless you choose otherwise below.'
+        : 'This removes the preroll from your NeXroll library. The file is externally mapped, so NeXroll will not touch it on disk.',
+      {
+        type: 'warning',
+        title: 'Remove Preroll',
+        confirmText: 'Remove',
+        confirmTextChecked: 'Remove and Delete File',
+        details,
+        checkbox: canDeleteFile
+          ? {
+              label: 'Also delete the video file from disk',
+              hint: trashRetentionDays > 0
+                ? `Moves it to NeXroll's trash, where it can be restored for ${trashRetentionDays} days.`
+                : "Moves it to NeXroll's trash, where it can be restored."
+            }
+          : { label: 'Also delete the video file from disk', hint: 'Not available for externally mapped files.' }
+      }
+    );
+    if (!confirmed) return;
+    const deleteFile = canDeleteFile && checked;
+
+    fetch(apiUrl(`prerolls/${prerollId}?delete_file=${deleteFile}`), {
       method: 'DELETE'
     })
       .then(handleFetchResponse)
       .then(data => {
-        alert('Preroll deleted successfully!');
+        if (data?.file_kept_reason) showAlert(data.file_kept_reason, 'info');
+        else if (deleteFile) {
+          // The file went to the trash, not to oblivion - say where to get it back.
+          showAlert(`${data?.message || 'Preroll removed'}. The video file is recoverable from Library > Trash.`, 'success');
+        } else showAlert(data?.message || 'Preroll removed from library', 'success');
         fetchData();
+        if (deleteFile) loadTrash();
       })
       .catch(error => {
         console.error('Delete preroll error:', error);
-        alert('Failed to delete preroll: ' + error.message);
+        showAlert('Failed to delete preroll: ' + error.message, 'error');
       });
   };
 
@@ -5689,6 +5834,152 @@ const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
   };
   const totalStorageBytes = prerolls.reduce((sum, p) => sum + (Number(p.file_size) || 0), 0);
 
+  // ============================================
+  // Preroll Trash
+  // ============================================
+  const loadTrash = React.useCallback(async () => {
+    setTrashLoading(true);
+    setTrashError('');
+    try {
+      const res = await fetch(apiUrl('prerolls/trash'));
+      if (!res.ok) throw new Error(`Server returned ${res.status}`);
+      const data = await res.json();
+      setTrashEntries(Array.isArray(data.entries) ? data.entries : []);
+      setTrashBytes(Number(data.bytes) || 0);
+      setTrashRetentionDays(Number(data.retention_days) || 0);
+    } catch (e) {
+      setTrashEntries([]);
+      setTrashError(`Could not read the trash: ${e.message || e}`);
+    } finally {
+      setTrashLoading(false);
+    }
+  }, []);
+
+  // Read the trash once at startup so the delete dialog can quote the real
+  // retention window, then again every time the Trash page is opened. This
+  // effect sits below loadTrash's definition; the mount effect near the top of
+  // App() runs too early to reference it.
+  const trashLoadedOnce = useRef(false);
+  useEffect(() => {
+    if (activeTab === 'library/trash' || !trashLoadedOnce.current) {
+      trashLoadedOnce.current = true;
+      loadTrash();
+    }
+  }, [activeTab, loadTrash]);
+
+  const handleRestoreFromTrash = async (entry) => {
+    const name = entry.display_name || entry.filename || 'this file';
+    if (!await showConfirm(
+      `Restore "${name}"?`,
+      {
+        title: 'Restore File',
+        type: 'info',
+        confirmText: 'Restore',
+        details: [
+          entry.original_path && { label: 'Restores to', value: entry.original_path },
+          entry.deleted_at && { label: 'Deleted', value: formatTrashDate(entry.deleted_at) },
+          entry.size_bytes && { label: 'Size', value: formatBytes(entry.size_bytes) },
+        ].filter(Boolean),
+      }
+    )) return;
+
+    setTrashBusyId(entry.entry_id);
+    try {
+      const res = await fetch(apiUrl(`prerolls/trash/${encodeURIComponent(entry.entry_id)}/restore`), { method: 'POST' });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.detail || `Server returned ${res.status}`);
+      showAlert(`Restored "${name}".`, 'success');
+      await loadTrash();
+      fetchData();
+    } catch (e) {
+      showAlert(`Could not restore "${name}": ${e.message || e}`, 'error');
+    } finally {
+      setTrashBusyId(null);
+    }
+  };
+
+  const handlePurgeTrashEntry = async (entry) => {
+    const name = entry.display_name || entry.filename || 'this file';
+    if (!await showConfirm(
+      `Permanently delete "${name}"? This erases the video file for good and cannot be undone.`,
+      {
+        title: 'Delete Permanently',
+        type: 'danger',
+        confirmText: 'Delete Forever',
+        details: [
+          entry.original_path && { label: 'Came from', value: entry.original_path },
+          entry.size_bytes && { label: 'Size', value: formatBytes(entry.size_bytes) },
+        ].filter(Boolean),
+      }
+    )) return;
+
+    setTrashBusyId(entry.entry_id);
+    try {
+      const res = await fetch(apiUrl(`prerolls/trash/${encodeURIComponent(entry.entry_id)}`), { method: 'DELETE' });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.detail || `Server returned ${res.status}`);
+      showAlert(`Permanently deleted "${name}".`, 'success');
+      await loadTrash();
+    } catch (e) {
+      showAlert(`Could not delete "${name}": ${e.message || e}`, 'error');
+    } finally {
+      setTrashBusyId(null);
+    }
+  };
+
+  const handleEmptyTrash = async (expiredOnly) => {
+    const count = trashEntries.length;
+    if (!expiredOnly && count === 0) return;
+    if (!await showConfirm(
+      expiredOnly
+        ? 'Delete every file in the trash that is past its retention window? This cannot be undone.'
+        : `Permanently delete all ${count} file${count === 1 ? '' : 's'} in the trash? This cannot be undone.`,
+      {
+        title: expiredOnly ? 'Clear Expired' : 'Empty Trash',
+        type: 'danger',
+        confirmText: expiredOnly ? 'Clear Expired' : 'Empty Trash',
+        details: expiredOnly
+          ? [{ label: 'Removes', value: `Files older than ${trashRetentionDays} days` }]
+          : [
+              { label: 'Files', value: String(count) },
+              { label: 'Frees', value: formatBytes(trashBytes) },
+            ],
+      }
+    )) return;
+
+    setTrashLoading(true);
+    try {
+      const res = await fetch(apiUrl(`prerolls/trash${expiredOnly ? '?expired_only=true' : ''}`), { method: 'DELETE' });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.detail || `Server returned ${res.status}`);
+      const removed = Number(data.removed) || 0;
+      showAlert(removed > 0
+        ? `Removed ${removed} file${removed === 1 ? '' : 's'} from the trash.`
+        : 'Nothing to remove.', 'success');
+      await loadTrash();
+    } catch (e) {
+      showAlert(`Could not empty the trash: ${e.message || e}`, 'error');
+      setTrashLoading(false);
+    }
+  };
+
+  // Trash timestamps are stored as UTC ISO strings with a trailing Z; render them
+  // in the browser's local time so "Deleted" matches the user's clock.
+  const formatTrashDate = (iso) => {
+    const t = Date.parse(iso || '');
+    if (Number.isNaN(t)) return 'Unknown';
+    return new Date(t).toLocaleString();
+  };
+
+  // Days left before a trashed file is purged, or null when retention is off.
+  const trashDaysLeft = (entry) => {
+    if (!trashRetentionDays) return null;
+    const deleted = Date.parse(entry.deleted_at || '');
+    if (Number.isNaN(deleted)) return null;
+    const elapsedDays = (Date.now() - deleted) / 86400000;
+    return Math.max(0, Math.ceil(trashRetentionDays - elapsedDays));
+  };
+
   // Apply client-side filters in order: category/tags first, then match status
   const filteredPrerolls = React.useMemo(() => {
     let filtered = prerolls;
@@ -5730,9 +6021,10 @@ const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
     } else if (filterMatchStatus === 'unmatched') {
       filtered = filtered.filter(p => !p.community_preroll_id);
     }
-    
-    return filtered;
-  }, [prerolls, filterCategory, filterTags, filterMatchStatus]);
+
+    // 4. Sort last, so the ordering applies to what survived the filters.
+    return sortPrerolls(filtered, prerollSortField, prerollSortDirection);
+  }, [prerolls, filterCategory, filterTags, filterMatchStatus, prerollSortField, prerollSortDirection]);
 
   const totalPrerolls = filteredPrerolls.length;
   const totalPages = Math.max(1, Math.ceil(totalPrerolls / pageSize));
@@ -5784,19 +6076,55 @@ const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
   const handleBulkDeleteSelected = async () => {
     const count = selectedPrerollIds.length;
     if (count === 0) { showAlert('No prerolls selected', 'error'); return; }
-    if (!await showConfirm(`Delete ${count} selected preroll(s)?\n\nManaged files may be deleted from disk. External mapped files are protected and will not be removed.`, { type: 'danger', title: 'Delete Prerolls' })) return;
-    let ok = 0, fail = 0;
+    const selected = (prerolls || []).filter(p => selectedPrerollIds.includes(p.id));
+    const mappedCount = selected.filter(p => p.managed === false).length;
+
+    const details = [{ label: 'Selected', value: `${count} preroll${count === 1 ? '' : 's'}` }];
+    if (mappedCount > 0) {
+      details.push({ label: 'Externally mapped', value: `${mappedCount} (never deleted from disk)` });
+    }
+
+    const { confirmed, checked } = await showConfirm(
+      'This removes the selected prerolls from your NeXroll library. Their video files stay on disk unless you choose otherwise below.',
+      {
+        type: 'warning',
+        title: 'Remove Prerolls',
+        confirmText: 'Remove',
+        confirmTextChecked: 'Remove and Delete Files',
+        details,
+        checkbox: {
+          label: 'Also delete the video files from disk',
+          hint: trashRetentionDays > 0
+            ? `Moves them to NeXroll's trash, where they can be restored for ${trashRetentionDays} days.`
+            : "Moves them to NeXroll's trash, where they can be restored."
+        }
+      }
+    );
+    if (!confirmed) return;
+
+    let ok = 0, fail = 0, trashed = 0;
     for (const id of selectedPrerollIds) {
       try {
-        const res = await fetch(apiUrl(`prerolls/${id}`), { method: 'DELETE' });
-        if (!res.ok) fail++; else ok++;
+        const res = await fetch(apiUrl(`prerolls/${id}?delete_file=${!!checked}`), { method: 'DELETE' });
+        if (!res.ok) { fail++; continue; }
+        ok++;
+        try {
+          const body = await res.json();
+          if (body?.file_trashed) trashed++;
+        } catch {}
       } catch {
         fail++;
       }
     }
-    alert(`Delete completed. Success: ${ok}, Failed: ${fail}`);
+    showAlert(
+      `Removed ${ok} preroll(s) from the library`
+      + (trashed ? `, ${trashed} file(s) moved to trash - recoverable from Library > Trash` : '')
+      + (fail ? `. Failed: ${fail}` : '.'),
+      fail ? 'error' : 'success'
+    );
     setSelectedPrerollIds([]);
     fetchData();
+    if (checked) loadTrash();
   };
 
   const createCategoryInline = async (name) => {
@@ -5824,22 +6152,17 @@ const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
       return null;
     }
   };
-// === Dashboard Customization (Drag &amp; Drop, 4x2 grid) ===
-const DASH_KEYS = ["servers","prerolls","storage","schedules","scheduler","current_category","upcoming","resolution_chart","nexup","community","weekly_calendar"];
-
-// Tile span configuration - which tiles take multiple columns
-const TILE_SPANS = {
-  upcoming: 2, // Upcoming Schedules spans 2 columns
-  resolution_chart: 2 // Resolution chart spans 2 columns
-};
-
+// === Dashboard Customization (Focus Enhanced 12-column grid) ===
 // Initialize dashboard layout from localStorage synchronously to avoid render flash
 const [dashLayout, setDashLayout] = useState(() => {
   const defaultLayout = {
     grid: { cols: 4, rows: 2 },
     order: DEFAULT_ORDER.slice(),
     hidden: DEFAULT_HIDDEN.slice(),
-    locked: false
+    locked: true,
+    preset: 'essential',
+    tiles: {},
+    preferences: { greeting: true, healthNote: true, dateTime: true, density: 'comfortable' }
   };
   try {
     const stored = localStorage.getItem('dashLayout');
@@ -5864,7 +6187,7 @@ const [dashLayout, setDashLayout] = useState(() => {
           data.sizes = { ...data.sizes, resolution_chart: 'md' };
           try { localStorage.setItem('dashMigratedResChartMd', '1'); } catch (_) {}
         }
-        return {
+        return normalizeFocusEssentialLayout({
           grid: {
             cols: Math.max(1, Math.min(8, parseInt(data.grid.cols || 4, 10) || 4)),
             rows: Math.max(1, Math.min(8, parseInt(data.grid.rows || 2, 10) || 2))
@@ -5872,11 +6195,19 @@ const [dashLayout, setDashLayout] = useState(() => {
           order: allKeys,
           hidden: storedHidden.filter(k => DASH_KEYS.includes(k)),
           locked: !!data.locked,
+          // v2 fields. Absent in a layout saved before this release, so default
+          // them rather than letting the Customize modal read undefined.
+          preset: typeof data.preset === 'string' ? data.preset : 'custom',
+          tiles: (data.tiles && typeof data.tiles === 'object') ? data.tiles : {},
+          preferences: {
+            greeting: true, healthNote: true, dateTime: true, density: 'comfortable',
+            ...(data.preferences && typeof data.preferences === 'object' ? data.preferences : {})
+          },
           // Restore per-tile S/M/L sizes (and the legacy RGL layouts, if any).
           // These were being dropped here, so customizations never survived a reload.
           sizes: (data.sizes && typeof data.sizes === 'object') ? data.sizes : undefined,
           layouts: (data.layouts && typeof data.layouts === 'object') ? data.layouts : undefined
-        };
+        });
       }
     }
   } catch (e) {
@@ -5885,75 +6216,12 @@ const [dashLayout, setDashLayout] = useState(() => {
   return defaultLayout;
 });
 const [dashSaving, setDashSaving] = useState(false);
-
-// Base grid row height. Each sized tile reports its natural content height; a
-// tile that spans N rows needs (height - (N-1)*gap)/N per row, so the base row
-// height is the tallest single-row requirement. The locked layout then uses this
-// as grid-auto-rows and tiles span 1 row (S/M) or 2 rows (L). The full-width
-// calendar gets its own measured row span (calRows).
-const dashGridRef = useRef(null);
-// Callback ref: the dashboard grid mounts AFTER the boot splash / login early
-// returns, long after this component's effects first ran. A plain ref left the
-// measurement effect with grid=null forever (its deps never retriggered it),
-// so the row unit was never measured at all. Tracking the node in state makes
-// the effect re-run the moment the grid actually exists.
-const [dashGridEl, setDashGridEl] = useState(null);
-const setDashGridRef = useCallback((el) => {
-  dashGridRef.current = el;
-  setDashGridEl(el);
-}, []);
-const [uniformRowH, setUniformRowH] = useState(0);
-const [calRows, setCalRows] = useState(1);
+const [dashLayoutReady, setDashLayoutReady] = useState(false);
+const [dashboardNow, setDashboardNow] = useState(() => new Date());
 useEffect(() => {
-  const grid = dashGridEl;
-  if (!grid) return undefined;
-  const GAP = 12; // must match the grid's inline `gap` (condensed tiles)
-  let raf = 0;
-  const recompute = () => {
-    cancelAnimationFrame(raf);
-    raf = requestAnimationFrame(() => {
-      let rowH = 0;
-      // Only single-row tiles define the row unit. Feature tiles (span 2)
-      // must purely INHERIT it - including them in the measurement let their
-      // content height feed back into the row unit, so moving them around in
-      // edit mode could ratchet the whole grid taller.
-      grid.querySelectorAll('.nx-tile-sized[data-rows="1"]:not(.nx-tile-wide)').forEach((t) => {
-        const card = t.querySelector('.card'); if (!card) return;
-        // The card is normally height-locked to its grid cell, which hides its
-        // true content height from every metric (scrollHeight included, since
-        // the flex children shrink to fit). Briefly release it to height:auto
-        // inside this animation frame - measured and restored before paint,
-        // so nothing flickers - to get the real natural height.
-        const prevH = card.style.height;
-        card.style.height = 'auto';
-        const natural = card.offsetHeight;
-        card.style.height = prevH;
-        rowH = Math.max(rowH, natural + 8);
-      });
-      // Tolerance guard: ignore sub-pixel jitter so the measure/apply loop settles.
-      if (rowH > 0) setUniformRowH((prev) => (Math.abs(prev - rowH) > 1 ? rowH : prev));
-      const calCard = grid.querySelector('.nx-tile-cal > .card');
-      if (calCard && rowH > 0) {
-        // The card is height-locked to its grid cell, so offsetHeight reports
-        // the CLIPPED height and the span never grew to fit the whole week.
-        // The card's last child is the schedule-rows wrapper with overflow-y:
-        // auto, so its scrollHeight is the true content height. Real height =
-        // card chrome (header + day row) + that wrapper's full scroll height.
-        const inner = calCard.querySelector(':scope > div:last-child');
-        const natural = inner
-          ? (calCard.offsetHeight - inner.offsetHeight) + inner.scrollHeight
-          : calCard.offsetHeight;
-        const span = Math.max(1, Math.ceil((natural + GAP) / (rowH + GAP)));
-        setCalRows((prev) => (prev !== span ? span : prev));
-      }
-    });
-  };
-  const ro = new ResizeObserver(recompute);
-  ro.observe(grid);
-  grid.querySelectorAll('.nx-tile .card').forEach((c) => ro.observe(c));
-  recompute();
-  return () => { cancelAnimationFrame(raf); ro.disconnect(); };
-}, [dashLayout, dashGridEl]);
+  const timer = setInterval(() => setDashboardNow(new Date()), 60000);
+  return () => clearInterval(timer);
+}, []);
 
 const visibleOrder = React.useMemo(
   () => (dashLayout?.order || DASH_KEYS).filter(k => !(dashLayout?.hidden || []).includes(k)),
@@ -5961,23 +6229,13 @@ const visibleOrder = React.useMemo(
 );
 
 const dashSensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 5 } }));
-// Bumping this remounts the grid — used by "Reset layout" so RGL actually drops
-// its cached internal layout and rebuilds from the default.
-// Per-tile content height (in grid rows), measured live. This is the single
-// source of truth for tile HEIGHT — the layout below always uses it — so tiles
-// fit their content exactly and never scroll, independent of RGL's own state.
-const [tileRows, setTileRows] = useState({});
-const setTileRowsFor = useCallback((key, px) => {
-  const rows = measureTileRows(px);
-  setTileRows(prev => (prev[key] === rows ? prev : { ...prev, [key]: rows }));
-}, []);
-
 const loadDashLayout = React.useCallback(async () => {
-  // localStorage is already handled in useState initialization
-  // This function now only syncs from backend as a fallback
-  const stored = localStorage.getItem('dashLayout');
+  // localStorage is handled synchronously in the state initializer. Only fall
+  // back to the backend when this browser has no local copy.
+  let stored = null;
+  try { stored = localStorage.getItem('dashLayout'); } catch {}
   if (stored) {
-    // localStorage was already loaded synchronously in useState, skip backend check
+    setDashLayoutReady(true);
     return;
   }
   
@@ -5988,26 +6246,36 @@ const loadDashLayout = React.useCallback(async () => {
     if (data && data.grid && Array.isArray(data.order)) {
       const cols = Math.max(1, Math.min(8, parseInt(data.grid.cols || 4, 10) || 4));
       const rows = Math.max(1, Math.min(8, parseInt(data.grid.rows || 2, 10) || 2));
-      const capacity = cols * rows;
       const canonical = DASH_KEYS.slice();
       const order = (data.order || [])
         .map(String)
         .filter(k => canonical.includes(k));
       for (const k of canonical) if (!order.includes(k)) order.push(k);
       const hidden = Array.isArray(data.hidden) ? data.hidden.map(String).filter(k => canonical.includes(k)) : [];
-      setDashLayout({
+      setDashLayout(normalizeFocusEssentialLayout({
+        version: 2,
+        preset: typeof data.preset === 'string' ? data.preset : 'custom',
         grid: { cols, rows },
-        order: order.slice(0, capacity),
+        order,
         hidden,
         locked: !!data.locked,
-        sizes: (data.sizes && typeof data.sizes === 'object') ? data.sizes : undefined,
+        tiles: (data.tiles && typeof data.tiles === 'object') ? data.tiles : {},
+        preferences: {
+          greeting: true,
+          healthNote: true,
+          dateTime: true,
+          density: 'comfortable',
+          ...(data.preferences && typeof data.preferences === 'object' ? data.preferences : {})
+        },
+        sizes: (data.sizes && typeof data.sizes === 'object') ? data.sizes : {},
         layouts: (data.layouts && typeof data.layouts === 'object') ? data.layouts : undefined
-      });
-      return;
+      }));
     }
-  } catch {}
-  
-  // Default layout is already set in useState, no action needed
+  } catch (e) {
+    console.warn('Failed to load dashboard layout from backend:', e);
+  } finally {
+    setDashLayoutReady(true);
+  }
 }, []);
 
 React.useEffect(() => { try { loadDashLayout(); } catch {} }, [loadDashLayout]);
@@ -6032,11 +6300,14 @@ const persistDashLayout = React.useCallback(async (next) => {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        version: 1,
+        version: 2,
+        preset: next.preset,
         grid: next.grid,
         order: next.order,
         hidden: next.hidden,
         locked: next.locked,
+        tiles: next.tiles,
+        preferences: next.preferences,
         sizes: next.sizes,
         layouts: next.layouts
       })
@@ -6050,11 +6321,12 @@ const persistDashLayout = React.useCallback(async (next) => {
 
 // Auto-persist dashboard layout changes with debounce (500ms delay)
 React.useEffect(() => {
+  if (!dashLayoutReady) return undefined;
   const timer = setTimeout(() => {
     persistDashLayout(dashLayout);
   }, 500);
   return () => clearTimeout(timer);
-}, [dashLayout, persistDashLayout]);
+}, [dashLayout, dashLayoutReady, persistDashLayout]);
 
 const handleDashDragEnd = (event) => {
   if (dashLayout?.locked) return;
@@ -6080,49 +6352,43 @@ const handleDashDragEnd = (event) => {
   setDashLayout(next);
 };
 
-/* Visibility toggling removed: dashboard no longer supports hiding widgets (v1.5.0) */
-
 const toggleDashLock = () => {
   const next = { ...dashLayout, locked: !dashLayout.locked };
   setDashLayout(next);
 };
 
-// Fixed-layout tile: size is decided by tile type (no user resizing). Stat tiles
-// are 1x1, feature tiles 2x2, the calendar full-width. Tiles can be dragged to
-// reorder and hidden, but not resized.
-const SortableTile = ({ id, disabled, cols = 1, rows = 1, fullWidth, onHide, children }) => {
+const SortableTile = ({ id, disabled, size = 'sm', detail = 'detailed', onCycleSize, children }) => {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id, disabled });
   const style = {
-    // Translate-only: dnd-kit's rectSortingStrategy bakes scaleX/scaleY into the
-    // transform so a dragged tile is squashed to match whatever cell it's swapping
-    // with. That distorts the 2x2 feature tiles badly. Dropping the scale keeps
-    // every tile at its true size while it slides (the iOS home-screen feel).
     transform: transform ? `translate3d(${Math.round(transform.x)}px, ${Math.round(transform.y)}px, 0)` : undefined,
     transition,
     cursor: disabled ? 'default' : 'grab',
     zIndex: isDragging ? 5 : 1,
-    gridColumn: fullWidth ? '1 / -1' : `span ${cols}`,
-    gridRow: `span ${rows}`,
+    '--nx-tile-span': SIZE_SPAN[size] || SIZE_SPAN.sm,
     position: 'relative'
   };
   return (
     <div
       ref={setNodeRef}
       style={style}
-      data-rows={rows}
-      className={`nx-tile ${fullWidth ? 'nx-tile-cal' : 'nx-tile-sized'} ${cols === 2 ? 'nx-tile-wide' : ''} ${isDragging ? 'dragging' : ''} ${disabled ? '' : 'editing'}`}
+      data-size={size}
+      data-detail={detail}
+      className={`nx-tile ${id === 'weekly_calendar' ? 'nx-tile-cal' : ''} ${isDragging ? 'dragging' : ''} ${disabled ? '' : 'editing'}`}
       {...attributes}
       {...listeners}
     >
-      {!disabled && onHide && (
+      {!disabled && (
+        <span className="nx-tile-drag-handle" aria-hidden="true"><GripVertical size={14} /></span>
+      )}
+      {!disabled && onCycleSize && (
         <button
           type="button"
-          className="nx-tile-hide nx-no-drag"
-          title="Hide tile"
+          className="nx-tile-size-cycle nx-no-drag"
+          title={`Change width from ${SIZE_LABEL[size] || SIZE_LABEL.sm}`}
           onPointerDown={(e) => e.stopPropagation()}
-          onClick={(e) => { e.stopPropagation(); onHide(id); }}
+          onClick={(e) => { e.stopPropagation(); onCycleSize(id, size); }}
         >
-          <X size={13} />
+          {SIZE_LABEL[size] || SIZE_LABEL.sm}
         </button>
       )}
       {children}
@@ -6132,6 +6398,312 @@ const SortableTile = ({ id, disabled, cols = 1, rows = 1, fullWidth, onHide, chi
 
 // Tile renderers: content mirrors the original dashboard cards
 const DashboardTiles = {
+  // --- Focus dashboard tiles -------------------------------------------------
+  // These reuse the same .card / .nx-tile-* classes and CSS variables as every
+  // other tile, so they follow the app's light and dark themes rather than
+  // carrying a palette of their own.
+
+  now_showing: () => {
+    const detail = dashLayout?.tiles?.now_showing?.detail || 'detailed';
+    const seq = appliedSequence;
+    const cat = activeCategory
+      ? categories.find(c => c.id === (activeCategory.id ?? activeCategory))
+      : null;
+    const title = activeCategory?.active_schedule_name || seq?.name || cat?.name || activeCategory?.name || null;
+    const subtitle = (seq?.name && seq.name !== title)
+      ? seq.name
+      : (cat?.name || activeCategory?.name || (seq ? 'Sequence' : 'No active category'));
+    const running = !!schedulerStatus?.running;
+    const count = cat
+      ? prerolls.filter(p =>
+          p.category_id === cat.id || (p.categories || []).some(c => c.id === cat.id)
+        ).length
+      : null;
+    const next = nextScheduleCountdown;
+    const nextCategory = next?.categoryId != null
+      ? categories.find(c => c.id === next.categoryId)
+      : null;
+    const nextWhen = next?.targetTime
+      ? new Date(next.targetTime).toLocaleString(undefined, {
+          month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit'
+        })
+      : null;
+
+    return (
+      <div className="card nx-focus-tile nx-focus-schedule">
+        <div className="nx-tile-head">
+          <h2><Play size={16} /> Current &amp; next schedule</h2>
+          <button className="nx-card-link nx-no-drag" onPointerDown={(e) => e.stopPropagation()} onClick={() => setActiveTab('schedules')}>
+            Open schedules <ArrowRight size={12} />
+          </button>
+        </div>
+        <div className="nx-schedule-glance">
+          <section className={`nx-schedule-state current ${title ? '' : 'empty'}`}>
+            <div className="nx-schedule-state-label">
+              <span>Currently showing</span>
+              <span className={running ? 'is-live' : 'is-paused'}>{running ? '• Live' : 'Paused'}</span>
+            </div>
+            <h3>{title || 'Nothing applied'}</h3>
+            <p>{title ? subtitle : 'No category or sequence is currently active.'}</p>
+            {detail === 'detailed' && (
+              <div className="nx-schedule-facts">
+                <span>{seq ? 'Sequence' : 'Category'}</span>
+                {count != null && <span>{count} preroll{count === 1 ? '' : 's'}</span>}
+                {currentTimezone && <span>{currentTimezone}</span>}
+              </div>
+            )}
+          </section>
+          <div className="nx-schedule-arrow" aria-hidden="true"><ArrowRight size={16} /></div>
+          <section className={`nx-schedule-state ${next ? '' : 'empty'}`}>
+            <div className="nx-schedule-state-label">
+              <span>Up next</span>
+              {nextWhen && <span>{nextWhen}</span>}
+            </div>
+            <h3>{next?.name || 'No upcoming schedule'}</h3>
+            <p>{nextCategory?.name || (next ? 'Scheduled activation' : 'Your schedule queue is clear.')}</p>
+            {detail === 'detailed' && next && (
+              <div className="nx-schedule-facts">
+                <span>{nextWhen || 'Upcoming'}</span>
+                {nextCategory?.name && <span>{nextCategory.name}</span>}
+              </div>
+            )}
+          </section>
+        </div>
+      </div>
+    );
+  },
+
+  whats_next: () => {
+    const now = new Date();
+    const upcoming = (schedules || [])
+      .filter(s => s.is_active && (s.next_run || s.start_date))
+      .map(s => {
+        const start = s.start_date ? new Date(s.start_date) : null;
+        const end = s.end_date ? new Date(s.end_date) : null;
+        return {
+          ...s,
+          isActiveNow: start && start <= now && (!end || end > now),
+          when: s.next_run ? new Date(s.next_run) : (start || now),
+        };
+      })
+      .filter(s => s.isActiveNow || s.when >= now)
+      .sort((a, b) => (b.isActiveNow - a.isActiveNow) || (a.when - b.when))
+      .slice(0, 4);
+
+    return (
+      <div className="card nx-focus-tile">
+        <div className="nx-tile-head">
+          <h2 style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+            <CalendarDays size={18} /> What's next
+          </h2>
+          <button className="nx-tile-headbtn" onClick={() => setActiveTab('schedules')} title="Open Schedules">
+            <ArrowRight size={14} />
+          </button>
+        </div>
+        {upcoming.length === 0 ? (
+          <p className="nx-focus-sub">No upcoming schedules.</p>
+        ) : (
+          <div className="nx-focus-timeline">
+            {upcoming.map((s, i) => {
+              const cat = categories.find(c => c.id === s.category_id);
+              const badge = s.isActiveNow ? 'Active' : (i === 0 ? 'Next' : 'Upcoming');
+              return (
+                <div className="nx-focus-timeline-row" key={s.id}>
+                  <span className="nx-focus-when">
+                    {s.isActiveNow ? 'Now' : s.when.toLocaleString(undefined, {
+                      month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit'
+                    })}
+                  </span>
+                  <span className="nx-focus-timeline-body">
+                    <span className="nx-focus-timeline-name">{s.name}</span>
+                    <span className="nx-focus-sub">{cat?.name || 'Sequence'}</span>
+                  </span>
+                  <span className={`nx-chip nx-status ${s.isActiveNow ? 'ok' : ''}`}>{badge}</span>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
+    );
+  },
+
+  system_health: () => {
+    const h = healthSummary;
+    const score = h?.score;
+    const healthAction = getPrimaryHealthAction(h);
+    const detail = dashLayout?.tiles?.system_health?.detail || 'detailed';
+    const tone = h?.status === 'degraded' ? 'error'
+      : h?.status === 'attention' ? 'warn' : 'ok';
+    const allChecks = (h?.checks || []).filter(c => c.status !== 'unknown');
+    // The concept reserves five concise service rows. When the API supplies
+    // more, keep every operational issue and omit the redundant healthy
+    // library count (already shown in the Library card) before truncating.
+    const visibleChecks = (allChecks.length > 5
+      ? allChecks.filter(c => !(c.key === 'library' && c.status === 'ok'))
+      : allChecks
+    ).slice(0, 5);
+
+    return (
+      <div className="card nx-focus-tile nx-focus-health">
+        <div className="nx-tile-head">
+          <h2><Shield size={16} /> System health</h2>
+          <button
+            className="nx-card-link nx-no-drag"
+            onPointerDown={(e) => e.stopPropagation()}
+            onClick={() => setActiveTab(healthAction.tab)}
+            title={`Open ${healthAction.label.toLowerCase()}`}
+          >
+            {healthAction.label} <ArrowRight size={12} />
+          </button>
+        </div>
+        {!h ? (
+          <p className="nx-focus-sub">Checking…</p>
+        ) : (
+          <>
+            <div className="nx-health-summary">
+              <span
+                className={`nx-health-ring is-${tone}`}
+                style={{ '--nx-health-progress': `${Math.max(0, Math.min(100, score || 0)) * 3.6}deg` }}
+              >
+                <span>{score}</span>
+              </span>
+              <span className="nx-health-copy">
+                <strong>{h.status === 'healthy' ? 'Healthy overall' : h.status === 'attention' ? 'Needs attention' : 'Action needed'}</strong>
+                <small>
+                  {h.attention_count === 0
+                    ? 'No problems found'
+                    : `${h.attention_count} item${h.attention_count === 1 ? '' : 's'} need attention`}
+                </small>
+              </span>
+            </div>
+            {detail === 'detailed' && <div className="nx-health-checks">
+              {visibleChecks.map(c => (
+                <div className="nx-health-check" key={c.key}>
+                  <span className="nx-health-check-name">
+                    <span className={`nx-health-dot is-${c.status === 'error' ? 'error' : c.status === 'warn' ? 'warn' : 'ok'}`} />
+                    {c.label}
+                  </span>
+                  <span className={`nx-health-check-value is-${c.status}`}>{c.value ?? ''}</span>
+                </div>
+              ))}
+            </div>}
+          </>
+        )}
+      </div>
+    );
+  },
+
+  storage_mix: () => {
+    const locations = (storageBreakdown?.locations || []).filter(l => l.bytes > 0);
+    const total = storageBreakdown?.total_bytes || 0;
+    const detail = dashLayout?.tiles?.storage_mix?.detail || 'detailed';
+
+    return (
+      <div className="card nx-focus-tile nx-focus-storage">
+        <div className="nx-tile-head">
+          <h2><HardDrive size={16} /> Storage</h2>
+          <button className="nx-card-link nx-no-drag" onPointerDown={(e) => e.stopPropagation()} onClick={() => setActiveTab('settings/storage')}>
+            Manage <ArrowRight size={12} />
+          </button>
+        </div>
+        {total <= 0 ? (
+          <p className="nx-focus-sub">No storage in use yet.</p>
+        ) : (
+          <>
+            <div className="nx-storage-total">
+              <strong>{formatBytes(total)}</strong>
+              <span>used</span>
+            </div>
+            <div className="nx-storage-bar" role="img" aria-label={`Storage total ${formatBytes(total)}`}>
+              {locations.map((l, i) => (
+                <span
+                  key={l.key}
+                  className={`nx-storage-seg nx-storage-seg-${i % 4}`}
+                  style={{ width: `${Math.max(1, (l.bytes / total) * 100)}%` }}
+                  title={`${l.label}: ${formatBytes(l.bytes)}`}
+                />
+              ))}
+            </div>
+            {detail === 'detailed' && <div className="nx-storage-legend">
+              {locations.map((l, i) => (
+                <div className="nx-storage-row" key={l.key}>
+                  <span>
+                    <span className={`nx-storage-key nx-storage-seg-${i % 4}`} />
+                    {l.label}
+                  </span>
+                  <strong>{formatBytes(l.bytes)}</strong>
+                </div>
+              ))}
+            </div>}
+          </>
+        )}
+      </div>
+    );
+  },
+
+  quick_actions: () => {
+    const detail = dashLayout?.tiles?.quick_actions?.detail || 'detailed';
+    const qaStatus = thumbnailProgress || librarySyncProgress || nexupSyncProgress;
+    return (
+      <div className="card nx-focus-tile nx-focus-actions">
+        <div className="nx-tile-head">
+          <h2><Zap size={16} /> Quick actions</h2>
+          <button className="nx-card-link nx-no-drag" onPointerDown={(e) => e.stopPropagation()} onClick={() => setActiveTab('settings')}>
+            All tools <ArrowRight size={12} />
+          </button>
+        </div>
+        <div className="nx-quick-actions">
+          <button
+            className="nx-quick-action nx-no-drag"
+            onPointerDown={(e) => e.stopPropagation()}
+            disabled={librarySyncProgress?.phase === 'init'}
+            onClick={async () => {
+              if (librarySyncProgress?.phase === 'init') return;
+              setLibrarySyncProgress({ status: 'Refreshing dashboard data…', phase: 'init' });
+              try {
+                await fetchData();
+                setLibrarySyncProgress({ status: 'Dashboard data refreshed', phase: 'done' });
+                setTimeout(() => setLibrarySyncProgress(null), 3000);
+              } catch {
+                setLibrarySyncProgress({ status: 'Refresh failed', phase: 'error' });
+                setTimeout(() => setLibrarySyncProgress(null), 5000);
+              }
+            }}
+          >
+            <span className="nx-action-icon"><RefreshCw size={14} /></span> Refresh data
+          </button>
+          <button className="nx-quick-action nx-no-drag" onPointerDown={(e) => e.stopPropagation()} onClick={() => handleRescanPrerolls()}>
+            <span className="nx-action-icon"><FolderSync size={14} /></span> Scan files
+          </button>
+          {detail === 'detailed' && <>
+            <button
+              className="nx-quick-action nx-no-drag"
+              onPointerDown={(e) => e.stopPropagation()}
+              disabled={nexupSyncProgress?.phase === 'init'}
+              onClick={handleNexupFullSync}
+            >
+              <span className="nx-action-icon"><Download size={14} /></span> NeX-Up sync
+            </button>
+            <button
+              className="nx-quick-action nx-no-drag"
+              onPointerDown={(e) => e.stopPropagation()}
+              disabled={thumbnailProgress?.phase === 'init'}
+              onClick={handleReinitThumbnails}
+            >
+              <span className="nx-action-icon"><RefreshCcw size={14} /></span> Rebuild thumbs
+            </button>
+          </>}
+        </div>
+        {detail === 'detailed' && (
+          <p className={`nx-action-status ${qaStatus?.phase ? `is-${qaStatus.phase}` : ''}`}>
+            {qaStatus?.status || 'Ready for maintenance tasks'}
+          </p>
+        )}
+      </div>
+    );
+  },
+
   servers: () => {
     const s = getActiveConnectedServer();
     const INFO = { plex: plexServerInfo, jellyfin: jellyfinServerInfo, emby: embyServerInfo };
@@ -6195,62 +6767,34 @@ const DashboardTiles = {
     const totalCats = categories.length;
     const usedCats = categories.filter(cat => prerolls.some(p => p.category_id === cat.id || (p.categories && p.categories.some(c => c.id === cat.id)))).length;
     const uncategorized = prerolls.filter(p => !p.category_id && !(p.categories && p.categories.length > 0)).length;
-    const sizeBytes = prerolls.reduce((s, p) => s + (p.file_size || 0), 0);
-    const externalCount = prerolls.filter(p => p.managed === false).length;
-    // Freshness: most recent upload/import across the library.
-    const lastAddedTs = prerolls.reduce((latest, p) => {
-      const t = p.upload_date ? new Date(p.upload_date).getTime() : 0;
-      return t > latest ? t : latest;
-    }, 0);
-    const lastAddedLabel = (() => {
-      if (!lastAddedTs) return null;
-      const days = (Date.now() - lastAddedTs) / 86400000;
-      if (days < 1 / 24) return 'just now';
-      if (days < 1) return `${Math.round(days * 24)}h ago`;
-      if (days < 60) return `${Math.round(days)}d ago`;
-      return new Date(lastAddedTs).toLocaleDateString();
-    })();
+    const recentCutoff = Date.now() - (7 * 86400000);
+    const recentCount = prerolls.filter(p => p.upload_date && new Date(p.upload_date).getTime() >= recentCutoff).length;
+    const detail = dashLayout?.tiles?.prerolls?.detail || 'detailed';
     return (
-      <div className="card">
+      <div className="card nx-focus-tile nx-focus-library">
         <div className="nx-tile-head">
-          <h2 style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}><Film size={18} /> Prerolls</h2>
-          <button className="nx-tile-headbtn" onClick={() => setActiveTab('library')} title="Open Library">
-            <ArrowRight size={14} />
+          <h2><Film size={16} /> Library</h2>
+          <button className="nx-card-link nx-no-drag" onPointerDown={(e) => e.stopPropagation()} onClick={() => setActiveTab('library')}>
+            Open <ArrowRight size={12} />
           </button>
         </div>
-        <p className="nx-tile-bignum">
-          {total} <span className="nx-tile-bignum-unit">preroll{total === 1 ? '' : 's'}</span>
-        </p>
-        <div className="nx-tile-rows">
-          <div className="nx-tile-row">
-            <span className="nx-tile-row-k"><Folder size={14} /> Categories</span>
-            <span className="nx-tile-row-v">{usedCats} <span className="muted" style={{ color: 'var(--text-secondary)', fontWeight: 400 }}>of {totalCats} used</span></span>
-          </div>
-          {sizeBytes > 0 && (
-            <div className="nx-tile-row">
-              <span className="nx-tile-row-k"><HardDrive size={14} /> Library size</span>
-              <span className="nx-tile-row-v">{formatBytes(sizeBytes)}</span>
-            </div>
-          )}
-          {externalCount > 0 && (
-            <div className="nx-tile-row">
-              <span className="nx-tile-row-k"><FolderOpen size={14} /> External (mapped)</span>
-              <span className="nx-tile-row-v">{externalCount}</span>
-            </div>
-          )}
-          {lastAddedLabel && (
-            <div className="nx-tile-row">
-              <span className="nx-tile-row-k"><Clock size={14} /> Last added</span>
-              <span className="nx-tile-row-v">{lastAddedLabel}</span>
-            </div>
-          )}
-          {uncategorized > 0 && (
-            <div className="nx-tile-row">
-              <span className="nx-tile-row-k" style={{ color: '#f59e0b' }}><AlertTriangle size={14} /> Uncategorized</span>
-              <span className="nx-tile-row-v" style={{ color: '#f59e0b' }}>{uncategorized}</span>
-            </div>
-          )}
+        <div className="nx-library-hero">
+          <strong>{total}<small>preroll{total === 1 ? '' : 's'}</small></strong>
+          {recentCount > 0 && <span>+{recentCount} this week</span>}
         </div>
+        {detail === 'detailed' && <div className="nx-library-kpis">
+          <div><span>Categories</span><strong>{usedCats} / {totalCats}</strong></div>
+          <div><span>Movie trailers</span><strong>{nexupTrailers.length}</strong></div>
+          <div><span>TV trailers</span><strong>{nexupTVTrailers.length}</strong></div>
+        </div>}
+        {detail === 'detailed' && <div className="nx-library-footer">
+          <span className={uncategorized > 0 ? 'is-warn' : 'is-ok'}>
+            {uncategorized > 0 ? <><AlertTriangle size={12} /> {uncategorized} uncategorized</> : <><Check size={12} /> All categorized</>}
+          </span>
+          {uncategorized > 0 && (
+            <button className="nx-card-link nx-no-drag" onPointerDown={(e) => e.stopPropagation()} onClick={() => setActiveTab('library')}>Review <ArrowRight size={12} /></button>
+          )}
+        </div>}
       </div>
     );
   },
@@ -6675,27 +7219,6 @@ const DashboardTiles = {
       })()}
     </div>
   ),
-  recent_genres: () => (
-    <div className="card">
-      <h2 style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}><Palette size={18} /> Recent Genre Prerolls</h2>
-      {recentGenreApplications.length > 0 ? (
-        <div className="nx-tile-rows">
-          {recentGenreApplications.map((app, idx) => (
-            <div key={idx} style={{ fontSize: '0.9rem', padding: '0.5rem', backgroundColor: 'var(--card-bg)', border: '1px solid var(--border-color)', borderRadius: '4px' }}>
-              <div style={{ fontWeight: 'bold', color: '#28a745' }}>
-                {app.genre} → {app.category_name}
-              </div>
-              <div style={{ fontSize: '0.8rem', color: '#666', marginTop: '0.25rem' }}>
-                {new Date(app.timestamp).toLocaleString()}
-              </div>
-            </div>
-          ))}
-        </div>
-      ) : (
-        <p style={{ color: 'var(--text-secondary, #666)' }}>No recent genre prerolls</p>
-      )}
-    </div>
-  ),
   community: () => {
     const indexedCount = communityIndexStatus?.total_prerolls || 0;
     const matchedCount = communityMatchedCount || 0;
@@ -7060,6 +7583,167 @@ const DashboardTiles = {
 
   // Library section router (v2 reorg). Maps the library/* tabs to the existing
   // render functions (kept under their original names to minimize churn).
+  // ============================================
+  // Preroll Trash Sub-Page
+  // ============================================
+  // Files only land here when a delete explicitly asked for the video file to go
+  // too. Removing a preroll from the library never puts anything in the trash.
+  const renderPrerollTrash = () => {
+    const count = trashEntries.length;
+
+    return (
+      <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
+        {/* Explainer */}
+        <div className="card" style={{
+          backgroundColor: 'rgba(99, 102, 241, 0.08)',
+          border: '1px solid rgba(99, 102, 241, 0.2)',
+        }}>
+          <div style={{ display: 'flex', alignItems: 'flex-start', gap: '0.75rem' }}>
+            <Archive size={20} style={{ color: '#6366f1', flexShrink: 0, marginTop: '2px' }} />
+            <div>
+              <strong style={{ color: 'var(--text-color)' }}>Deleted preroll files</strong>
+              <p style={{ margin: '0.25rem 0 0 0', fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
+                Removing a preroll from your library leaves its file alone. A file only
+                arrives here if you ticked <em>Also delete the video file from disk</em>.
+                {trashRetentionDays > 0
+                  ? ` Files are kept for ${trashRetentionDays} days, then removed automatically during a library scan.`
+                  : ' Retention is disabled, so files stay here until you remove them yourself.'}
+              </p>
+            </div>
+          </div>
+        </div>
+
+        {/* Toolbar */}
+        <div className="card">
+          <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: '0.75rem' }}>
+            <div style={{ flex: '1 1 auto', minWidth: '180px' }}>
+              <div style={{ fontSize: '1.1rem', fontWeight: 600, color: 'var(--text-color)' }}>
+                {count} file{count === 1 ? '' : 's'} in trash
+              </div>
+              <div style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
+                {formatBytes(trashBytes)} recoverable
+              </div>
+            </div>
+            <button className="button" onClick={loadTrash} disabled={trashLoading}>
+              <RefreshCw size={16} /> Refresh
+            </button>
+            {trashRetentionDays > 0 && (
+              <button className="button" onClick={() => handleEmptyTrash(true)} disabled={trashLoading || count === 0}>
+                <Clock size={16} /> Clear Expired
+              </button>
+            )}
+            <button
+              className="button danger"
+              onClick={() => handleEmptyTrash(false)}
+              disabled={trashLoading || count === 0}
+            >
+              <Trash2 size={16} /> Empty Trash
+            </button>
+          </div>
+        </div>
+
+        {trashError && (
+          <div className="card" style={{
+            backgroundColor: 'rgba(239, 68, 68, 0.08)',
+            border: '1px solid rgba(239, 68, 68, 0.25)',
+          }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem', color: 'var(--text-color)' }}>
+              <AlertTriangle size={18} style={{ color: '#ef4444', flexShrink: 0 }} />
+              <span style={{ fontSize: '0.9rem' }}>{trashError}</span>
+            </div>
+          </div>
+        )}
+
+        {/* Entries */}
+        {trashLoading && count === 0 ? (
+          <div className="card" style={{ textAlign: 'center', padding: '2.5rem 1rem', color: 'var(--text-secondary)' }}>
+            <Loader2 size={28} style={{ marginBottom: '0.75rem' }} />
+            <div>Reading the trash...</div>
+          </div>
+        ) : count === 0 && !trashError ? (
+          <div className="card" style={{ textAlign: 'center', padding: '3rem 1rem' }}>
+            <Archive size={40} style={{ color: 'var(--text-secondary)', opacity: 0.5, marginBottom: '0.75rem' }} />
+            <div style={{ fontSize: '1.05rem', fontWeight: 600, color: 'var(--text-color)' }}>The trash is empty</div>
+            <p style={{ margin: '0.4rem 0 0 0', fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
+              Nothing has been deleted from disk, so there is nothing to recover.
+            </p>
+          </div>
+        ) : (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+            {trashEntries.map(entry => {
+              const daysLeft = trashDaysLeft(entry);
+              const busy = trashBusyId === entry.entry_id;
+              const expiring = daysLeft !== null && daysLeft <= 3;
+              // The backend reports restorable=false when the manifest was lost,
+              // so it no longer knows where the file came from. The file is still
+              // in .nexroll-trash and can be moved back by hand.
+              const restorable = entry.restorable !== false;
+              const title = entry.display_name || entry.filename || 'Unknown file';
+              return (
+                <div className="card" key={entry.entry_id} style={{ opacity: busy ? 0.6 : 1 }}>
+                  <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: '1rem' }}>
+                    <Film size={22} style={{ color: 'var(--text-secondary)', flexShrink: 0 }} />
+                    <div style={{ flex: '1 1 260px', minWidth: 0 }}>
+                      <div
+                        style={{
+                          fontWeight: 600, color: 'var(--text-color)',
+                          overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                        }}
+                        title={title}
+                      >
+                        {title}
+                      </div>
+                      <div
+                        style={{
+                          fontSize: '0.8rem', color: 'var(--text-secondary)',
+                          overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                        }}
+                        title={entry.original_path || undefined}
+                      >
+                        {entry.original_path || 'Original location unknown - restore by hand from .nexroll-trash'}
+                      </div>
+                      <div style={{ fontSize: '0.78rem', color: 'var(--text-secondary)', marginTop: '0.2rem' }}>
+                        {`Deleted ${formatTrashDate(entry.deleted_at)}`}
+                        {entry.size_bytes ? ` - ${formatBytes(entry.size_bytes)}` : ''}
+                        {daysLeft !== null && (
+                          <span style={{ color: expiring ? '#f59e0b' : 'inherit', fontWeight: expiring ? 600 : 400 }}>
+                            {daysLeft === 0
+                              ? ' - Removed on next scan'
+                              : ` - ${daysLeft} day${daysLeft === 1 ? '' : 's'} left`}
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                    <div style={{ display: 'flex', gap: '0.5rem', flexShrink: 0 }}>
+                      <button
+                        className="button"
+                        onClick={() => handleRestoreFromTrash(entry)}
+                        disabled={busy || trashLoading || !restorable}
+                        title={restorable
+                          ? 'Put this file back and re-index it'
+                          : 'NeXroll no longer knows where this file came from. Move it back from the .nexroll-trash folder yourself.'}
+                      >
+                        <RotateCw size={15} /> Restore
+                      </button>
+                      <button
+                        className="button danger"
+                        onClick={() => handlePurgeTrashEntry(entry)}
+                        disabled={busy || trashLoading}
+                        title="Erase this file for good"
+                      >
+                        <Trash2 size={15} /> Delete
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
+    );
+  };
+
   const renderLibrary = () => {
     if (activeTab === 'library/add') {
       return renderDashboardAddPrerolls();
@@ -7069,6 +7753,9 @@ const DashboardTiles = {
     }
     if (activeTab === 'library/scaling') {
       return renderDashboardVideoScaling();
+    }
+    if (activeTab === 'library/trash') {
+      return renderPrerollTrash();
     }
     // Default: All Prerolls grid
     return renderDashboardLibrary();
@@ -7084,6 +7771,7 @@ const DashboardTiles = {
     'library/add':      { icon: Upload,          title: 'Add Prerolls',    desc: 'Upload videos or import prerolls into your library.' },
     'library/categories': { icon: Folder,        title: 'Categories',      desc: 'Organize your prerolls into categories.' },
     'library/scaling':  { icon: Video,           title: 'Video Scaling',   desc: 'Review and rescale preroll resolutions.' },
+    'library/trash':    { icon: Archive,         title: 'Trash',           desc: 'Restore preroll files you deleted from disk.' },
     'connect':          { icon: Link2,           title: 'Connections',     desc: 'Connect to your Plex, Jellyfin, or Emby media server.' },
     'community-prerolls': { icon: Globe,         title: 'Community Prerolls', desc: 'Discover and import community-made prerolls.' },
     'settings':         { icon: Settings,        title: 'General Settings',  desc: 'Theme, timezone, and general application preferences.' },
@@ -7793,13 +8481,329 @@ const DashboardTiles = {
     }
   };
 
+  // Human labels for the Customize modal. Falls back to the raw key so a tile
+  // added later still lists, just without a friendly name.
+  const DASH_TILE_META = {
+    now_showing: { label: 'Current & next schedule', desc: 'What is active now and what follows it' },
+    whats_next: { label: 'Upcoming schedule timeline', desc: 'Extended list of upcoming activations' },
+    system_health: { label: 'System health', desc: 'Scheduler, server, storage, conflicts' },
+    storage_mix: { label: 'Storage', desc: 'Space used by content type' },
+    quick_actions: { label: 'Quick actions', desc: 'Common maintenance commands' },
+    prerolls: { label: 'Library', desc: 'Prerolls, categories, and trailers' },
+    schedules: { label: 'Schedules', desc: 'Enabled, disabled, and conflicts' },
+    storage: { label: 'Storage', desc: 'Overall space in use' },
+    servers: { label: 'Media servers', desc: 'Plex, Jellyfin, and Emby connections' },
+    scheduler: { label: 'Scheduler', desc: 'Run state and next activation' },
+    current_category: { label: 'Currently showing', desc: 'Applied category or sequence' },
+    upcoming: { label: 'Upcoming schedules', desc: 'Full upcoming list' },
+    resolution_chart: { label: 'Video quality', desc: 'Resolution and codec analysis' },
+    nexup: { label: 'NeX-Up', desc: 'Trailer sync status' },
+    community: { label: 'Community prerolls', desc: 'Matched and downloaded prerolls' },
+    weekly_calendar: { label: 'Weekly calendar', desc: 'This week at a glance' },
+  };
+
+  const DASH_PRESETS = [
+    { value: 'essential', label: 'Essential', desc: 'Schedule, health, library, actions, storage' },
+    { value: 'operations', label: 'Operations', desc: 'Adds detailed multi-server information' },
+    { value: 'everything', label: 'Everything', desc: 'Show all available dashboard tiles' },
+  ];
+
+  const applyDashboardPreset = async (preset) => {
+    try {
+      const res = await fetch(apiUrl('settings/dashboard-layout/preset'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ preset }),
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const body = await res.json();
+      // Normalize the focused preset at the client boundary as well, so an
+      // already-running pre-update backend cannot reintroduce its old 8-tile
+      // Essential composition before the service is restarted.
+      if (body?.data) {
+        setDashLayout(prev => normalizeFocusEssentialLayout({ ...prev, ...body.data }));
+      }
+    } catch (e) {
+      showAlert('Failed to apply preset: ' + (e?.message || e), 'error');
+    }
+  };
+
+  const setTileSetting = (key, field, value) => {
+    setDashLayout(prev => {
+      const tiles = { ...(prev.tiles || {}) };
+      tiles[key] = { ...(tiles[key] || {}), [field]: value };
+      const next = { ...prev, tiles, preset: 'custom' };
+      // `sizes` is what the grid actually reads; keep the two in step so a size
+      // change takes effect immediately instead of on the next reload.
+      if (field === 'size') next.sizes = { ...(prev.sizes || {}), [key]: value };
+      return next;
+    });
+  };
+
+  const setDashPreference = (field, value) => {
+    setDashLayout(prev => ({
+      ...prev,
+      preferences: { ...(prev.preferences || {}), [field]: value },
+    }));
+  };
+
+  const toggleTileVisible = (key, visible) => {
+    setDashLayout(prev => {
+      const hidden = new Set(prev.hidden || []);
+      if (visible) hidden.delete(key); else hidden.add(key);
+      return { ...prev, hidden: [...hidden], preset: 'custom' };
+    });
+  };
+
+  const moveTile = (key, direction) => {
+    setDashLayout(prev => {
+      const order = [...(prev.order || DASH_KEYS)];
+      const i = order.indexOf(key);
+      const j = i + direction;
+      if (i < 0 || j < 0 || j >= order.length) return prev;
+      [order[i], order[j]] = [order[j], order[i]];
+      return { ...prev, order, preset: 'custom' };
+    });
+  };
+
+  const renderCustomizeDashboard = () => {
+    if (!showCustomizeDashboard) return null;
+    const prefs = dashLayout?.preferences || {};
+    const order = dashLayout?.order || DASH_KEYS;
+    const hidden = new Set(dashLayout?.hidden || []);
+
+    return (
+      <div className="nx-dialog-overlay" onClick={() => setShowCustomizeDashboard(false)}>
+        <div
+          className="nx-dialog nx-customize"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="nx-customize-title"
+          onClick={(e) => e.stopPropagation()}
+        >
+          <div className="nx-dialog-header">
+            <div className="nx-dialog-icon info"><Sliders size={22} /></div>
+            <div>
+              <h3 id="nx-customize-title" className="nx-dialog-title">Customize dashboard</h3>
+              <p className="nx-focus-sub">Choose what matters, how much detail it shows, and where it appears.</p>
+            </div>
+            <button
+              type="button"
+              className="nx-customize-close"
+              onClick={() => setShowCustomizeDashboard(false)}
+              aria-label="Close dashboard customization"
+            >
+              <X size={16} />
+            </button>
+          </div>
+
+          <div className="nx-dialog-body nx-customize-body">
+            <div className="nx-customize-section">Start with a preset</div>
+            <div className="nx-preset-row">
+              {DASH_PRESETS.map(p => (
+                <button
+                  key={p.value}
+                  type="button"
+                  className={`nx-preset ${dashLayout?.preset === p.value ? 'is-active' : ''}`}
+                  onClick={() => applyDashboardPreset(p.value)}
+                >
+                  <span className="nx-preset-label">{p.label}</span>
+                  <span className="nx-focus-sub">{p.desc}</span>
+                </button>
+              ))}
+            </div>
+
+            <div className="nx-customize-section">Dashboard preferences</div>
+            <div className="nx-pref-grid">
+              {[
+                ['greeting', 'Friendly greeting'],
+                ['healthNote', 'Friendly health note'],
+                ['dateTime', 'Global date & time'],
+              ].map(([field, label]) => (
+                <label className="nx-pref" key={field}>
+                  <span>{label}</span>
+                  <span className="nx-switch">
+                    <input
+                      type="checkbox"
+                      checked={prefs[field] !== false}
+                      onChange={(e) => setDashPreference(field, e.target.checked)}
+                    />
+                    <span className="nx-switch-track" />
+                  </span>
+                </label>
+              ))}
+              <label className="nx-pref">
+                <span>Tile spacing</span>
+                <select
+                  className="input"
+                  value={prefs.density || 'comfortable'}
+                  onChange={(e) => setDashPreference('density', e.target.value)}
+                  style={{ width: 'auto', fontSize: '0.85rem' }}
+                >
+                  <option value="comfortable">Comfortable</option>
+                  <option value="compact">Compact</option>
+                </select>
+              </label>
+            </div>
+
+            <div className="nx-customize-section">Tiles - reorder, show, resize, and change detail</div>
+            <div className="nx-tilelist">
+              {order.map((key, index) => {
+                const meta = DASH_TILE_META[key] || { label: key, desc: '' };
+                const tile = (dashLayout?.tiles || {})[key] || {};
+                const visible = !hidden.has(key);
+                return (
+                  <div className={`nx-tilerow ${visible ? '' : 'is-off'}`} key={key}>
+                    <div className="nx-tilerow-move">
+                      <button type="button" onClick={() => moveTile(key, -1)}
+                              disabled={index === 0} aria-label={`Move ${meta.label} up`}>
+                        <ArrowUp size={12} />
+                      </button>
+                      <button type="button" onClick={() => moveTile(key, 1)}
+                              disabled={index === order.length - 1} aria-label={`Move ${meta.label} down`}>
+                        <ArrowDown size={12} />
+                      </button>
+                    </div>
+                    <div className="nx-tilerow-text">
+                      <span className="nx-tilerow-name">{meta.label}</span>
+                      <span className="nx-focus-sub">{meta.desc}</span>
+                    </div>
+                    <select
+                      className="input" aria-label={`${meta.label} width`}
+                      value={tile.size || DEFAULT_SIZES[key] || 'sm'}
+                      onChange={(e) => setTileSetting(key, 'size', e.target.value)}
+                      disabled={!visible}
+                      style={{ width: 'auto', fontSize: '0.8rem' }}
+                    >
+                      <option value="sm">One third</option>
+                      <option value="md">Two thirds</option>
+                      <option value="lg">Full width</option>
+                    </select>
+                    <select
+                      className="input" aria-label={`${meta.label} detail level`}
+                      value={tile.detail || 'detailed'}
+                      onChange={(e) => setTileSetting(key, 'detail', e.target.value)}
+                      disabled={!visible}
+                      style={{ width: 'auto', fontSize: '0.8rem' }}
+                    >
+                      <option value="detailed">Detailed</option>
+                      <option value="compact">Compact</option>
+                    </select>
+                    <label className="nx-switch nx-tilerow-toggle" title={visible ? 'Hide this tile' : 'Show this tile'}>
+                      <input
+                        type="checkbox"
+                        checked={visible}
+                        onChange={(e) => toggleTileVisible(key, e.target.checked)}
+                        aria-label={`Show ${meta.label}`}
+                      />
+                      <span className="nx-switch-track" />
+                    </label>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+
+          <div className="nx-dialog-footer">
+            <span className="nx-focus-sub" style={{ marginRight: 'auto' }}>
+              {dashSaving ? 'Saving…' : 'Changes save automatically'}
+            </span>
+            <button type="button" className="nx-dialog-btn cancel" onClick={() => applyDashboardPreset('essential')}>
+              Reset
+            </button>
+            <button type="button" className="nx-dialog-btn confirm info" onClick={() => setShowCustomizeDashboard(false)}>
+              Done
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  };
+
+  // Focus Enhanced header: friendly context first, then a compact operational
+  // summary. Date/time lives in the global top bar, matching the concept.
+  const appDisplayName = String(
+    authStatus?.user?.display_name || authStatus?.user?.username || authStatus?.display_name || ''
+  ).trim();
+
+  const renderDashboardHeader = () => {
+    const prefs = dashLayout?.preferences || {};
+    const showGreeting = prefs.greeting !== false;
+    const showNote = prefs.healthNote !== false;
+    const hour = dashboardNow.getHours();
+    const partOfDay = hour < 12 ? 'morning' : hour < 18 ? 'afternoon' : 'evening';
+    const hiddenCount = FOCUS_OPTIONAL_KEYS.filter(key => (dashLayout?.hidden || []).includes(key)).length;
+
+    return (
+      <>
+        <div className="nx-dash-header">
+          <div className="nx-dash-header-text">
+            <div className="nx-dash-eyebrow">Dashboard overview</div>
+            {showGreeting && (
+              <h1 className="nx-dash-greeting">
+                Good {partOfDay}{appDisplayName ? `, ${appDisplayName}` : ''}
+              </h1>
+            )}
+            {showNote && healthSummary?.note && (
+              <p className={`nx-dash-note is-${healthSummary.status || 'healthy'}`}>
+                <span className="nx-dash-note-dot" />
+                <span>{healthSummary.note}</span>
+              </p>
+            )}
+          </div>
+          <div className="nx-dash-header-actions">
+            <button
+              type="button"
+              className="nx-dash-action"
+              onClick={() => fetchData()}
+              title="Refresh dashboard data"
+            >
+              <RefreshCw size={14} className={librarySyncProgress?.phase === 'init' ? 'spin' : ''} /> Refresh
+            </button>
+            <button
+              type="button"
+              className={`nx-dash-action ${dashLayout.locked ? '' : 'is-active'}`}
+              onClick={toggleDashLock}
+              title={dashLayout.locked ? 'Arrange dashboard tiles' : 'Finish arranging dashboard tiles'}
+            >
+              <GripVertical size={14} /> {dashLayout.locked ? 'Arrange' : 'Done arranging'}
+            </button>
+            <button
+              type="button"
+              className="nx-dash-action primary"
+              onClick={() => setShowCustomizeDashboard(true)}
+              title="Choose which tiles appear, how big they are, and how much detail they show"
+            >
+              <Sparkles size={14} /> Customize
+            </button>
+          </div>
+        </div>
+        <div className="nx-glance-strip" aria-label="Dashboard summary">
+          <span className="nx-glance-label">At a glance</span>
+          <span className={`nx-glance-chip ${schedulerStatus?.running ? 'good' : 'warn'}`}><i /> <strong>Scheduler</strong> {schedulerStatus?.running ? 'running' : 'stopped'}</span>
+          <span className="nx-glance-chip"><i /> <strong>{prerolls.length}</strong> prerolls</span>
+          <span className="nx-glance-chip"><i /> <strong>{schedules.length}</strong> schedules</span>
+          <span className={`nx-glance-chip ${dashboardConflictCount > 0 ? 'warn' : 'good'}`}><i /> <strong>{dashboardConflictCount ?? '—'}</strong> conflicts</span>
+          <span className="nx-glance-spacer" />
+          {hiddenCount > 0 && <button className="nx-optional-count" onClick={() => setShowCustomizeDashboard(true)}>
+            + {hiddenCount} optional tile{hiddenCount === 1 ? '' : 's'}
+          </button>
+          }
+        </div>
+      </>
+    );
+  };
+
   // Dashboard Overview Sub-Page (Tiles)
   const renderDashboardOverview = () => (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem', maxWidth: '1320px', width: '100%', margin: '0 auto' }}>
+    <div
+      className={`nx-dash-page density-${dashLayout?.preferences?.density || 'comfortable'}`}
+    >
+      {renderDashboardHeader()}
 
       {/* Storage Health Banner — surfaces missing files / duplicate rows
           from the most recent scanner pass. Dismissible per session. */}
-      {storageHealth && !storageHealthDismissed && (
+      {dashLayout?.preset !== 'essential' && storageHealth && !storageHealthDismissed && (
         (storageHealth.missing_files > 0 || storageHealth.duplicate_rows > 0) && (
         <div className="card" style={{
           marginBottom: '1rem',
@@ -8069,41 +9073,39 @@ const DashboardTiles = {
         )}
       </div>
 
+      {!dashLayout.locked && (
+        <div className="nx-arrange-tip">
+          <GripVertical size={14} />
+          <span><strong>Arrange mode:</strong> drag tiles to move them or use the width control on each card.</span>
+          <span className="nx-arrange-saved">{dashSaving ? 'Saving…' : 'Changes save automatically'}</span>
+        </div>
+      )}
+
       {(() => {
         const renderKeys = visibleOrder.filter(k => DashboardTiles[k] || k === 'weekly_calendar');
         return (
           <DndContext sensors={dashSensors} collisionDetection={closestCenter} onDragEnd={handleDashDragEnd}>
             <SortableContext items={renderKeys} strategy={rectSortingStrategy}>
               <div
-                ref={setDashGridRef}
                 className={`nx-dash-grid ${dashLayout.locked ? '' : 'editing'}`}
-                style={{
-                  display: 'grid',
-                  // Fixed 4-column grid (columns defined in CSS so they can go
-                  // responsive). Stat tiles = 1 cell; feature tiles span 2 cols x
-                  // 2 rows; calendar is full-width. The measured base row height
-                  // keeps every tile aligned to the same vertical rhythm.
-                  // Never fall back to 'auto': content-sized rows make tile
-                  // height depend on position and content (the exact bug where
-                  // feature tiles grew when moved in edit mode).
-                  gridAutoRows: `${uniformRowH || 176}px`,
-                  gridAutoFlow: dashLayout.locked ? 'row dense' : 'row',
-                  alignItems: 'stretch',
-                  gap: '12px'
-                }}
               >
                 {renderKeys.map((key) => {
                   const isCal = key === 'weekly_calendar';
-                  const isFeature = FEATURE_TILES.includes(key);
+                  const tile = dashLayout?.tiles?.[key] || {};
+                  const size = tile.size || dashLayout?.sizes?.[key] || DEFAULT_SIZES[key] || 'sm';
+                  const detail = tile.detail || 'detailed';
                   return (
                     <SortableTile
                       key={key}
                       id={key}
                       disabled={dashLayout.locked}
-                      fullWidth={isCal}
-                      cols={isFeature ? 2 : 1}
-                      rows={isCal ? calRows : 1}
-                      onHide={(tileId) => setDashLayout(prev => ({ ...prev, hidden: [...(prev.hidden || []), tileId] }))}
+                      size={isCal ? 'lg' : size}
+                      detail={detail}
+                      onCycleSize={(tileId, currentSize) => {
+                        const currentIndex = ALL_SIZE_OPTIONS.indexOf(currentSize);
+                        const nextSize = ALL_SIZE_OPTIONS[(currentIndex + 1) % ALL_SIZE_OPTIONS.length];
+                        setTileSetting(tileId, 'size', nextSize);
+                      }}
                     >
                       {isCal ? renderWeeklyCalendar() : DashboardTiles[key]()}
                     </SortableTile>
@@ -9481,6 +10483,45 @@ const DashboardTiles = {
             <option value="matched">Matched only</option>
             <option value="unmatched">Unmatched only</option>
           </select>
+          {(() => {
+            const directionLabel = describeSort(prerollSortField, prerollSortDirection);
+            return (
+              <div style={{ display: 'inline-flex', alignItems: 'center', gap: '0.4rem' }}>
+                <select
+                  value={prerollSortField}
+                  onChange={(e) => setPrerollSortField(e.target.value)}
+                  className="input"
+                  aria-label="Sort prerolls by"
+                  title="Sort prerolls by"
+                  style={{ minWidth: '150px', fontSize: '0.9rem' }}
+                >
+                  {PREROLL_SORT_FIELDS.map(f => (
+                    <option key={f.value} value={f.value}>Sort: {f.label}</option>
+                  ))}
+                </select>
+                <button
+                  type="button"
+                  onClick={() => setPrerollSortDirection(d => (d === 'asc' ? 'desc' : 'asc'))}
+                  className="input"
+                  aria-label={`Sort order: ${directionLabel}. Click to reverse.`}
+                  title={`Sort order: ${directionLabel}. Click to reverse.`}
+                  style={{
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: '0.35rem',
+                    width: 'auto',
+                    cursor: 'pointer',
+                    fontSize: '0.85rem',
+                    whiteSpace: 'nowrap',
+                    color: 'var(--text-secondary)'
+                  }}
+                >
+                  {prerollSortDirection === 'asc' ? <ArrowUp size={14} /> : <ArrowDown size={14} />}
+                  {directionLabel}
+                </button>
+              </div>
+            );
+          })()}
           <div style={{
             display: 'inline-flex',
             alignItems: 'center',
@@ -15373,7 +16414,7 @@ const DashboardTiles = {
                   </span>
                 </div>
                 <p style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', margin: '0.25rem 0 0 0' }}>
-                  Higher priority schedules win when multiple overlap
+                  Higher priority number schedules win when multiple schedules overlap.
                 </p>
               </div>
 
@@ -19142,13 +20183,14 @@ const DashboardTiles = {
         auth_enabled: data?.auth_enabled || false,
         authenticated: data?.authenticated || false,
         user: data?.user || null,
+        display_name: data?.display_name || null,
         users_exist: data?.users_exist || false,
         allow_registration: data?.allow_registration || false,
         is_local: data?.is_local || false
       });
     } catch (e) {
       console.error('Failed to check auth status:', e);
-      setAuthStatus({ loading: false, auth_enabled: false, authenticated: false, user: null, users_exist: false, is_local: false });
+      setAuthStatus({ loading: false, auth_enabled: false, authenticated: false, user: null, display_name: null, users_exist: false, is_local: false });
     }
   }, []);
 
@@ -19439,73 +20481,6 @@ const DashboardTiles = {
       }
     } catch (e) {
       showAlert('Failed to update settings: ' + (e?.message || e), 'error');
-    }
-  };
-
-  // === Genre Mapping helpers ===
-  const parseGenreList = (input) => {
-    try {
-      return String(input || '')
-        .split(/[\n,]/)
-        .map(s => s.trim())
-        .filter(Boolean);
-    } catch {
-      return [];
-    }
-  };
-
-  const loadGenreMaps = React.useCallback(async () => {
-    setGenreMapsLoading(true);
-    try {
-      const res = await fetch(apiUrl('/genres/map'));
-      const data = await safeJson(res);
-      setGenreMaps(Array.isArray(data?.mappings) ? data.mappings : []);
-    } catch (e) {
-      console.error('Load genre maps error:', e);
-      setGenreMaps([]);
-    } finally {
-      setGenreMapsLoading(false);
-    }
-  }, []);
-
-  const loadGenreSettings = React.useCallback(async () => {
-    try {
-      const res = await fetch(apiUrl('/settings/genre'));
-      const data = await safeJson(res);
-      if (data && typeof data === 'object') {
-        setGenreSettings(data);
-      }
-    } catch (err) {
-      console.error('Load genre settings error:', err);
-    }
-  }, []);
-
-
-  const updateGenreSettings = async (updates) => {
-    setGenreSettingsLoading(true);
-    try {
-      const params = new URLSearchParams();
-      if (updates.genre_auto_apply !== undefined) {
-        params.append('genre_auto_apply', updates.genre_auto_apply.toString());
-      }
-      if (updates.genre_priority_mode !== undefined) {
-        params.append('genre_priority_mode', updates.genre_priority_mode);
-      }
-      if (updates.genre_override_ttl_seconds !== undefined) {
-        params.append('genre_override_ttl_seconds', updates.genre_override_ttl_seconds.toString());
-      }
-      const res = await fetch(apiUrl('/settings/genre?' + params.toString()), {
-        method: 'PUT'
-      });
-      if (!res.ok) {
-        throw new Error(`HTTP ${res.status}`);
-      }
-      await loadGenreSettings(); // Reload settings
-      alert('Genre settings updated successfully!');
-    } catch (err) {
-      alert('Failed to update genre settings: ' + (err?.message || err));
-    } finally {
-      setGenreSettingsLoading(false);
     }
   };
 
@@ -21119,154 +22094,6 @@ const DashboardTiles = {
     }
   };
 
-  const cancelEditGenreMap = () => {
-    setGmEditing(null);
-    setGmForm({ genre: '', category_id: '' });
-  };
-
-  const submitGenreMap = async (e) => {
-    if (e && typeof e.preventDefault === 'function') e.preventDefault();
-    const genre = (gmForm.genre || '').trim();
-    const cid = parseInt(gmForm.category_id, 10);
-    if (!genre) {
-      alert('Enter a Plex genre (e.g., Horror, Comedy)');
-      return;
-    }
-    if (!cid || isNaN(cid)) {
-      alert('Select a target category');
-      return;
-    }
-    try {
-      let res, text, data;
-      if (gmEditing && gmEditing.id) {
-        res = await fetch(apiUrl(`/genres/map/${gmEditing.id}`), {
-          method: 'PUT',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ genre, category_id: cid })
-        });
-        text = await res.text();
-        try { data = text ? JSON.parse(text) : null; } catch {}
-        if (!res.ok) throw new Error((data && (data.detail || data.message)) || text || `HTTP ${res.status}`);
-        alert('Mapping updated.');
-      } else {
-        res = await fetch(apiUrl('/genres/map'), {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ genre, category_id: cid })
-        });
-        text = await res.text();
-        try { data = text ? JSON.parse(text) : null; } catch {}
-        if (!res.ok) throw new Error((data && (data.detail || data.message)) || text || `HTTP ${res.status}`);
-        alert('Mapping created.');
-      }
-      cancelEditGenreMap();
-      await loadGenreMaps();
-    } catch (err) {
-      alert('Failed to save mapping: ' + (err?.message || err));
-    }
-  };
-
-  const editGenreMap = (m) => {
-    try {
-      setGmEditing(m);
-      setGmForm({ genre: m?.genre || '', category_id: String(m?.category_id || '') });
-    } catch {
-      setGmEditing(m);
-    }
-  };
-
-  const deleteGenreMap = async (mapId) => {
-    if (!mapId) return;
-    if (!await showConfirm('Delete this genre mapping?', { title: 'Delete Mapping', type: 'danger', confirmText: 'Delete' })) return;
-    try {
-      const res = await fetch(apiUrl(`/genres/map/${mapId}`), { method: 'DELETE' });
-      const data = await safeJson(res);
-      if (!res.ok) throw new Error((data && (data.detail || data.message)) || `HTTP ${res.status}`);
-      await loadGenreMaps();
-    } catch (err) {
-      alert('Failed to delete mapping: ' + (err?.message || err));
-    }
-  };
-
-  const resolveGenresNow = async () => {
-    const list = parseGenreList(genresTestInput);
-    if (list.length === 0) {
-      alert('Enter one or more genres to resolve.');
-      return;
-    }
-    try {
-      const res = await fetch(apiUrl('/genres/resolve'), {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ genres: list })
-      });
-      const data = await safeJson(res);
-      setGenresResolveResult(data);
-      if (!res.ok) {
-        alert('Resolve failed: ' + ((data && (data.detail || data.message)) || `HTTP ${res.status}`));
-      }
-    } catch (err) {
-      alert('Resolve error: ' + (err?.message || err));
-    }
-  };
-
-  const applyGenresNow = async () => {
-    const list = parseGenreList(genresTestInput);
-    if (list.length === 0) {
-      alert('Enter one or more genres to apply.');
-      return;
-    }
-    setGenresApplyLoading(true);
-    try {
-      const res = await fetch(apiUrl('/genres/apply'), {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ genres: list })
-      });
-      const text = await res.text();
-      let data = null;
-      try { data = text ? JSON.parse(text) : null; } catch {}
-      if (!res.ok) {
-        const msg = (data && (data.detail || data.message)) || text || `HTTP ${res.status}`;
-        throw new Error(msg);
-      }
-      setGenresResolveResult(data);
-      alert(`Applied category "${data?.category?.name || 'Unknown'}" for matched genre "${data?.matched_genre || list[0]}" to Plex.`);
-      try { fetchData(); } catch {}
-    } catch (err) {
-      alert('Apply error: ' + (err?.message || err));
-    } finally {
-      setGenresApplyLoading(false);
-    }
-  };
-
-  const applyGenreRow = async (genre) => {
-    const g = String(genre || '').trim();
-    if (!g) return;
-    setGenresApplyLoading(true);
-    try {
-      const res = await fetch(apiUrl('/genres/apply'), {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ genres: [g] })
-      });
-      const text = await res.text();
-      let data = null;
-      try { data = text ? JSON.parse(text) : null; } catch {}
-      if (!res.ok) {
-        const msg = (data && (data.detail || data.message)) || text || `HTTP ${res.status}`;
-        throw new Error(msg);
-      }
-      alert(`Applied category "${data?.category?.name || 'Unknown'}" for matched genre "${data?.matched_genre || g}" to Plex.`);
-      try { fetchData(); } catch {}
-    } catch (err) {
-      alert('Apply error: ' + (err?.message || err));
-    } finally {
-      setGenresApplyLoading(false);
-    }
-  };
-
-  // Folder browser functions for Import feature
   const browseFolders = async (path = '') => {
     setFolderBrowserLoading(true);
     try {
@@ -21454,12 +22281,12 @@ const DashboardTiles = {
     } catch {}
   }, []);
 
-  // Auto-load genre mappings and settings when opening Settings tab
+  // Auto-load settings when opening the Settings tab
   React.useEffect(() => {
     if (activeTab === 'settings') {
-      try { loadGenreMaps(); loadGenreSettings(); loadVerboseLogging(); loadPassiveMode(); loadClearWhenInactive(); loadFillerSettings(); loadSavedSequences(); } catch {}
+      try { loadVerboseLogging(); loadPassiveMode(); loadClearWhenInactive(); loadFillerSettings(); loadSavedSequences(); } catch {}
     }
-  }, [activeTab, loadGenreMaps, loadGenreSettings, loadVerboseLogging, loadPassiveMode, loadClearWhenInactive, loadFillerSettings]);
+  }, [activeTab, loadVerboseLogging, loadPassiveMode, loadClearWhenInactive, loadFillerSettings]);
 
   // Auto-load API keys when opening API Keys tab
   React.useEffect(() => {
@@ -31436,7 +32263,7 @@ const DashboardTiles = {
     };
 
     // Handle search submission. `offset` drives pagination (0 = first page).
-    const handleSearch = async (offset = 0) => {
+    const handleSearch = async (offset = 0, includeAI = communityIncludeAI) => {
       if (!communitySearchQuery.trim() && !communitySearchPlatform.trim()) {
         alert('Please enter a search query or choose a platform');
         return;
@@ -31448,6 +32275,7 @@ const DashboardTiles = {
         const params = new URLSearchParams();
         if (communitySearchQuery.trim()) params.append('query', communitySearchQuery.trim());
         if (communitySearchPlatform.trim()) params.append('platform', communitySearchPlatform.trim());
+        params.append('include_ai', includeAI);
         params.append('limit', pageLimit);
         params.append('offset', offset);
 
@@ -31487,6 +32315,7 @@ const DashboardTiles = {
       const creator = overrides.creator !== undefined ? overrides.creator : browseCreator;
       const platform = overrides.platform !== undefined ? overrides.platform : browsePlatform;
       const sort = overrides.sort !== undefined ? overrides.sort : browseSort;
+      const includeAI = overrides.includeAI !== undefined ? overrides.includeAI : communityIncludeAI;
       const pageLimit = Number(communityResultLimit) || 50;
       setCommunityIsSearching(true);
       try {
@@ -31495,6 +32324,7 @@ const DashboardTiles = {
         if (creator) params.append('creator', creator);
         if (platform) params.append('platform', platform);
         if (sort) params.append('sort', sort);
+        params.append('include_ai', includeAI);
         params.append('limit', pageLimit);
         params.append('offset', offset);
         const response = await fetch(apiUrl(`community-prerolls/search?${params.toString()}`));
@@ -31523,6 +32353,26 @@ const DashboardTiles = {
       else handleSearch(off);
     };
 
+    const handleAIToggle = async () => {
+      const includeAI = !communityIncludeAI;
+      setCommunityIncludeAI(includeAI);
+      setCommunityRandomPreroll(null);
+
+      try {
+        const response = await fetch(apiUrl(`community-prerolls/facets?include_ai=${includeAI}`));
+        const data = await response.json();
+        setCommunityFacets(data && data.available ? data : null);
+      } catch (error) {
+        console.error('Failed to refresh community facets:', error);
+      }
+
+      if (communityActiveMode === 'browse') {
+        handleBrowse({ includeAI }, 0);
+      } else if (communityActiveMode === 'search') {
+        handleSearch(0, includeAI);
+      }
+    };
+
     // Handle random preroll fetch
     const handleRandomPreroll = async () => {
       setCommunityIsLoadingRandom(true);
@@ -31530,6 +32380,7 @@ const DashboardTiles = {
       try {
         const params = new URLSearchParams();
         if (communitySearchPlatform.trim()) params.append('platform', communitySearchPlatform.trim());
+        params.append('include_ai', communityIncludeAI);
 
         const response = await fetch(apiUrl(`community-prerolls/random?${params.toString()}`));
         const data = await response.json();
@@ -32100,6 +32951,18 @@ const DashboardTiles = {
                 <option value={100}>100</option>
               </select>
             </div>
+            <button
+              type="button"
+              className={`nx-comm-ai-toggle${communityIncludeAI ? ' active' : ''}`}
+              aria-pressed={communityIncludeAI}
+              onClick={handleAIToggle}
+              disabled={communityIsSearching}
+              title={communityIncludeAI ? 'Exclude AI-generated prerolls' : 'Include AI-generated prerolls'}
+            >
+              <Sparkles size={16} />
+              <span>AI-generated</span>
+              <span className="nx-comm-ai-state">{communityIncludeAI ? 'Included' : 'Excluded'}</span>
+            </button>
             <button onClick={() => handleSearch(0)} disabled={communityIsSearching} className="button" style={{ height: '42px' }}>
               {communityIsSearching ? <Loader2 size={16} className="spin" /> : <Search size={16} />}
               <span>{communityIsSearching ? 'Searching…' : 'Search'}</span>
@@ -32228,6 +33091,7 @@ const DashboardTiles = {
                     <div className="nx-comm-row-meta">
                       {preroll.creator && <span style={{ display: 'inline-flex', alignItems: 'center', gap: '0.25rem' }}><User size={13} /> {cleanDisplayText(preroll.creator)}</span>}
                       {preroll.category && <span style={{ display: 'inline-flex', alignItems: 'center', gap: '0.25rem' }}><FolderOpen size={13} /> {cleanDisplayText(preroll.category)}</span>}
+                      {preroll.is_ai && <span className="nx-comm-ai-badge"><Sparkles size={11} /> AI-generated</span>}
                       {preroll.duration && <span style={{ display: 'inline-flex', alignItems: 'center', gap: '0.25rem' }}><Clock size={13} /> {preroll.duration}s</span>}
                       {preroll.file_size && preroll.file_size !== 'Unknown' && <span style={{ display: 'inline-flex', alignItems: 'center', gap: '0.25rem' }}><Package size={13} /> {preroll.file_size}</span>}
                     </div>
@@ -32343,7 +33207,10 @@ const DashboardTiles = {
               <div className="nx-comm-row-body">
                 <div className="nx-comm-row-title" style={{ fontSize: '1.05rem' }}>{cleanDisplayText(communityRandomPreroll.title)}</div>
                 {communityRandomPreroll.category && (
-                  <div className="nx-comm-row-meta"><span style={{ display: 'inline-flex', alignItems: 'center', gap: '0.25rem' }}><FolderOpen size={13} /> {cleanDisplayText(communityRandomPreroll.category)}</span></div>
+                  <div className="nx-comm-row-meta">
+                    <span style={{ display: 'inline-flex', alignItems: 'center', gap: '0.25rem' }}><FolderOpen size={13} /> {cleanDisplayText(communityRandomPreroll.category)}</span>
+                    {communityRandomPreroll.is_ai && <span className="nx-comm-ai-badge"><Sparkles size={11} /> AI-generated</span>}
+                  </div>
                 )}
                 {communityShowAddToCategory[communityRandomPreroll.id] && (
                   <div style={{ marginTop: '0.75rem', display: 'flex', gap: '0.5rem', flexWrap: 'wrap', alignItems: 'center' }}>
@@ -32978,6 +33845,8 @@ const DashboardTiles = {
     );
   }
 
+  const serviceStatusBadge = getDashboardHealthBadge(healthSummary);
+
   return (
     <>
     <div className="nx-shell">
@@ -32992,7 +33861,7 @@ const DashboardTiles = {
         version={systemVersion?.api_version}
         update={showUpdateBanner && updateInfo ? updateInfo : null}
       />
-      <div className="nx-content">
+      <div className={`nx-content ${activeTab === 'dashboard' ? 'nx-content-dashboard' : ''}`}>
         {/* Slim top bar: mobile menu toggle + status/theme/user cluster */}
         <div className="nx-topbar">
           <div className="nx-topbar-inner">
@@ -33003,27 +33872,21 @@ const DashboardTiles = {
           >
             <Menu size={20} />
           </button>
+          {dashLayout?.preferences?.dateTime !== false && (
+            <div className="nx-global-clock">
+              <span className="nx-global-clock-icon"><Clock size={14} /></span>
+              <span>
+                <strong>{dashboardNow.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })}</strong>
+                <small>{dashboardNow.toLocaleDateString(undefined, { weekday: 'short', month: 'long', day: 'numeric' })}</small>
+              </span>
+            </div>
+          )}
           <div className="nx-topbar-spacer" />
-          <div className="tabbar-right" style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+          <div className="tabbar-right nx-focus-topbar-actions" style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
           {/* Service Status Indicator */}
-          <span style={{ 
-            display: 'inline-flex', 
-            alignItems: 'center', 
-            gap: '0.35rem',
-            fontSize: '0.75rem', 
-            padding: '0.25rem 0.6rem', 
-            borderRadius: '12px', 
-            backgroundColor: systemVersion ? '#28a74520' : '#dc354520',
-            color: systemVersion ? '#28a745' : '#dc3545',
-            fontWeight: '600'
-          }}>
-            <span style={{ 
-              width: '8px', 
-              height: '8px', 
-              borderRadius: '50%', 
-              backgroundColor: systemVersion ? '#28a745' : '#dc3545'
-            }} />
-            {systemVersion ? 'Online' : 'Offline'}
+          <span className={`nx-service-status is-${serviceStatusBadge.tone}`}>
+            <span className="nx-service-status-dot" />
+            {serviceStatusBadge.label}
           </span>
           
           {/* Theme Toggle Button */}
@@ -33037,8 +33900,27 @@ const DashboardTiles = {
             {darkMode ? <Sun size={15} /> : <Moon size={15} />}
           </button>
 
+          <a
+                href={NEXROLL_WIKI_URL}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="nx-iconbtn nx-focus-help"
+                aria-label="Open the NeXroll wiki"
+                title="Open the NeXroll wiki"
+              >
+                <HelpCircle size={15} />
+          </a>
+          <span className="nx-focus-avatar" title={appDisplayName || 'NeXroll'}>
+                {(() => {
+                  const hasUser = Boolean(appDisplayName);
+                  const name = appDisplayName || 'NeXroll';
+                  const initials = name.split(/\s+/).filter(Boolean).slice(0, 2).map(part => part[0]).join('').toUpperCase();
+                  return hasUser ? (name.includes(' ') ? initials : name.slice(0, 2).toUpperCase()) : 'NX';
+                })()}
+          </span>
+
           {/* User/Logout Button (when authenticated) */}
-          {authStatus.auth_enabled && authStatus.authenticated && authStatus.user && (
+          {activeTab !== 'dashboard' && authStatus.auth_enabled && authStatus.authenticated && authStatus.user && (
             <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
               <span className="nx-user">
                 <User size={14} />
@@ -33596,12 +34478,14 @@ const DashboardTiles = {
                          fontSize: '1rem'
                        }}
                      >
-                       <option value="random">Random (different trailers each time)</option>
+                        <option value="random">Random (cycles through trailers before repeating)</option>
                        <option value="release_date">By Release Date (soonest first)</option>
                        <option value="download_date">By Download Date (newest first)</option>
                      </select>
                      <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginTop: '0.25rem' }}>
-                       How trailers are selected from your NeX-Up library
+                        {nexupSequenceWizard.playbackOrder === 'random'
+                          ? 'Avoids repeats until the eligible trailer pool has been used. Plex refreshes its selected set periodically.'
+                          : 'How trailers are selected from your NeX-Up library'}
                      </p>
                    </div>
                  )}
@@ -35645,7 +36529,7 @@ const DashboardTiles = {
                   </span>
                 </div>
                 <p style={{ fontSize: '0.85rem', color: '#666', marginTop: '0.25rem' }}>
-                  Higher priority schedules win when multiple schedules overlap.
+                  Higher priority number schedules win when multiple schedules overlap.
                 </p>
               </div>
               
@@ -36753,6 +37637,8 @@ const DashboardTiles = {
         </div>
       )}
 
+      {renderCustomizeDashboard()}
+
       {/* Custom Confirm Dialog */}
       {confirmDialog.open && (
         <div className="nx-dialog-overlay" onClick={() => handleConfirmDialogClose(false)}>
@@ -36773,7 +37659,35 @@ const DashboardTiles = {
               <h3 id="nx-confirm-dialog-title" className="nx-dialog-title">{confirmDialog.title}</h3>
             </div>
             <div className="nx-dialog-body">
+              {confirmDialog.details && confirmDialog.details.length > 0 && (
+                <div className="nx-dialog-details">
+                  {confirmDialog.details.map((row, i) => (
+                    <div className="nx-dialog-detail-row" key={i}>
+                      <span className="nx-dialog-detail-label">{row.label}</span>
+                      <span className="nx-dialog-detail-value" title={row.value}>{row.value}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
               <p id="nx-confirm-dialog-message" className="nx-dialog-message">{confirmDialog.message}</p>
+              {confirmDialog.checkbox && (
+                <label className={`nx-dialog-checkbox ${confirmDialog.checked ? 'is-armed' : ''}`}>
+                  <input
+                    type="checkbox"
+                    checked={!!confirmDialog.checked}
+                    onChange={(e) => {
+                      const checked = e.target.checked;
+                      setConfirmDialog(prev => ({ ...prev, checked }));
+                    }}
+                  />
+                  <span className="nx-dialog-checkbox-text">
+                    <span className="nx-dialog-checkbox-label">{confirmDialog.checkbox.label}</span>
+                    {confirmDialog.checkbox.hint && (
+                      <span className="nx-dialog-checkbox-hint">{confirmDialog.checkbox.hint}</span>
+                    )}
+                  </span>
+                </label>
+              )}
             </div>
             <div className="nx-dialog-footer">
               <button 
@@ -36787,10 +37701,12 @@ const DashboardTiles = {
               </button>
               <button 
                 type="button"
-                className={`nx-dialog-btn confirm ${confirmDialog.type}`}
+                className={`nx-dialog-btn confirm ${confirmDialog.checked ? 'danger' : confirmDialog.type}`}
                 onClick={() => handleConfirmDialogClose(true)}
               >
-                {confirmDialog.confirmText}
+                {confirmDialog.checked && confirmDialog.confirmTextChecked
+                  ? confirmDialog.confirmTextChecked
+                  : confirmDialog.confirmText}
               </button>
             </div>
           </div>

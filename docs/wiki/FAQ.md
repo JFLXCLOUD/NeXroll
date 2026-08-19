@@ -112,6 +112,49 @@ Yes! Prerolls can be assigned to multiple categories.
 
 Yes! Go to **Dashboard → Add Prerolls** and use the **Import Folder** feature to register existing files without moving them.
 
+### Does removing a preroll delete the video file?
+
+No. Removing a preroll takes it out of the library and leaves the file on disk.
+The delete dialog carries a separate, unchecked **Also delete the video file
+from disk** option, and the confirm button only becomes **Remove and Delete
+File** once you tick it.
+
+If you have delete confirmations turned off in Settings, a delete never takes
+the file — skipping the prompt is not treated as consent to destroy it.
+
+Files reached through a path mapping (externally mapped media) are never deleted
+from disk, even if you do tick the box.
+
+### I deleted a preroll's file. Where did it go?
+
+Into a recoverable trash, not straight to oblivion. The file is moved to a
+`.nexroll-trash` folder inside your preroll library and kept for **30 days**.
+
+To change the retention window, set the `NEXROLL_TRASH_RETENTION_DAYS`
+environment variable — or set it to `0` to keep trashed files indefinitely.
+Expired entries are cleared during the regular library scan.
+
+The trash sits inside your preroll library rather than the data directory on
+purpose: libraries are commonly on a network share, so trashing is an instant
+same-volume rename instead of copying gigabytes over SMB. The library scanner
+skips the folder, so trashed files are never re-indexed.
+
+To get a file back, open **Library > Trash**. Each entry shows where the file
+came from, when it was deleted, and how long is left before it is cleared.
+**Restore** puts it back at its original path and re-indexes it in your library.
+You can also erase a single entry, empty the trash, or clear only expired files
+from the same page.
+
+### I removed a preroll but the scan keeps bringing it back
+
+It should not, as of 2.1.0. A preroll removed from the library while its file
+stays on disk is added to an ignore list, so the next scan leaves it alone
+rather than undoing your change. Deliberately re-importing the file clears the
+entry automatically.
+
+To review or clear that list: `GET /prerolls/ignored`,
+`DELETE /prerolls/ignored/{id}`, or `DELETE /prerolls/ignored` for all of it.
+
 ---
 
 ## Schedules

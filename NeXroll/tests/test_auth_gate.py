@@ -1,6 +1,6 @@
 import unittest
 
-from backend.auth_gate import is_auth_gate_exempt
+from backend.auth_gate import friendly_local_username, is_auth_gate_exempt
 
 
 class AuthGateExemptionTests(unittest.TestCase):
@@ -15,6 +15,16 @@ class AuthGateExemptionTests(unittest.TestCase):
     def test_api_routes_are_not_exempt(self):
         self.assertFalse(is_auth_gate_exempt("GET", "/categories"))
         self.assertFalse(is_auth_gate_exempt("POST", "/settings"))
+
+    def test_local_username_prefers_windows_account_and_strips_domain(self):
+        self.assertEqual(
+            friendly_local_username({"USERNAME": "MEDIA\\JB", "USER": "ignored"}),
+            "JB",
+        )
+
+    def test_local_username_suppresses_service_accounts(self):
+        self.assertEqual(friendly_local_username({"USERNAME": "SYSTEM"}), "")
+        self.assertEqual(friendly_local_username({"USER": "root"}), "")
 
 
 if __name__ == "__main__":

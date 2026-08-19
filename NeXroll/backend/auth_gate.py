@@ -24,6 +24,27 @@ AUTH_GATE_EXEMPT_PREFIXES = (
     "/emby/plugin/",
 )
 
+_NON_PERSON_USERNAMES = frozenset({
+    "administrator",
+    "defaultapppool",
+    "localsystem",
+    "networkservice",
+    "nobody",
+    "root",
+    "system",
+    "www-data",
+})
+
+
+def friendly_local_username(environment=None, fallback: str = "") -> str:
+    """Return a human local account name, excluding common service users."""
+    environment = environment or {}
+    raw = environment.get("USERNAME") or environment.get("USER") or fallback or ""
+    name = str(raw).strip().replace("/", "\\").split("\\")[-1]
+    if not name or name.casefold() in _NON_PERSON_USERNAMES:
+        return ""
+    return name[:80]
+
 
 def is_auth_gate_exempt(method: str, path: str) -> bool:
     return (

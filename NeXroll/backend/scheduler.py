@@ -17,6 +17,7 @@ import backend.models as models
 from backend.plex_connector import PlexConnector
 from backend.jellyfin_connector import JellyfinConnector
 from backend.database import SessionLocal
+from backend.shuffle_bag import shuffle_bag_sample
 
 # Logging helpers - direct file writes to avoid circular imports
 def _get_log_path():
@@ -122,7 +123,7 @@ def _localized_now(db: Session = None) -> datetime.datetime:
         tz = pytz.utc
     return datetime.datetime.now(tz).replace(tzinfo=None)
 
-def resolve_nexup_trailer_block(block: dict, db) -> list:
+def resolve_nexup_trailer_block(block: dict, db, rotation_key=None) -> list:
     """Resolve a 'nexup_trailers' sequence/filler step to ordered trailer rows.
 
     Mirror of main.resolve_nexup_trailer_block (kept here to avoid importing the
@@ -157,6 +158,8 @@ def resolve_nexup_trailer_block(block: dict, db) -> list:
     if mode == "sequential":
         rows.sort(key=lambda t: (t.release_date is None, t.release_date))
         return rows[:count]
+    if rotation_key is not None:
+        return shuffle_bag_sample(rotation_key, rows, count)
     if len(rows) > count:
         return random.sample(rows, count)
     random.shuffle(rows)
@@ -223,6 +226,7 @@ def resolve_category_sequence_block(
     block: dict,
     db: Session,
     fallback_category_id: int | None = None,
+    rotation_key=None,
 ) -> list[models.Preroll]:
     """Resolve a random/sequential category block to eligible preroll rows.
 
@@ -265,8 +269,11 @@ def resolve_category_sequence_block(
         return []
 
     selected_count = min(count, len(pool))
-    if block_type == "random" and len(pool) > selected_count:
-        return random.sample(pool, selected_count)
+    if block_type == "random":
+        if rotation_key is not None:
+            return shuffle_bag_sample(rotation_key, pool, selected_count)
+        if len(pool) > selected_count:
+            return random.sample(pool, selected_count)
     return pool[:selected_count]
 
 
@@ -276,7 +283,6 @@ class Scheduler:
         self.thread = None
         # Recent per-item apply dedupe and override TTL (seconds)
         self._last_applied: dict[str, datetime.datetime] = {}
-        self._default_genre_override_ttl_seconds: float = 10.0  # Default if not configured
         # Track last logged state to prevent duplicate log spam
         self._last_logged_state = None
         self._last_logged_time = None
@@ -288,6 +294,16 @@ class Scheduler:
         # Track last rotation time for random blocks (schedule_id -> last_rotation_time)
         self._last_rotation_time: dict[int, datetime.datetime] = {}
         self._rotation_interval_seconds: float = 600.0  # 10 minute rotation interval
+        # Playback guard. Plex resolves the preroll list lazily while it plays,
+        # so a rewrite mid-playback makes it hang on the next entry. These track
+        # a short-lived session probe and how long a write has been waiting.
+        self._session_probe_at: Optional[datetime.datetime] = None
+        self._session_probe_count: Optional[int] = None
+        self._session_probe_ttl_seconds: float = 15.0
+        self._deferred_write_since: Optional[datetime.datetime] = None
+        # Paths currently published to Plex, so retention never deletes a file
+        # that is sitting in the active preroll list.
+        self._applied_local_paths: set = set()
         # Track blend mode state for verification
         self._blend_mode_active: bool = False
         self._blend_expected_preroll: Optional[str] = None
@@ -447,11 +463,6 @@ class Scheduler:
             _scheduler_log(f"Startup verification error: {e}", level="ERROR")
         while self.running:
             try:
-                # Auto-apply mapped category from currently playing Plex item (genre-based)
-                self._apply_genre_mapping_from_playback()
-            except Exception as e:
-                _scheduler_log(f"Genre-monitor error: {e}", level="ERROR")
-            try:
                 self._check_and_execute_schedules()
             except Exception as e:
                 _scheduler_log(f"Schedule check error: {e}", level="ERROR")
@@ -591,6 +602,7 @@ class Scheduler:
                 return  # 0 = keep forever
             cutoff = now - datetime.timedelta(days=days)
             removed = 0
+            skipped_in_use = 0
             for model in (models.ComingSoonTrailer, models.ComingSoonTVTrailer):
                 # Anchor retention on the LATER of download time and release date,
                 # so a still-upcoming movie's trailer is never reaped before the
@@ -604,6 +616,13 @@ class Scheduler:
                     or_(model.release_date == None, model.release_date < cutoff),  # noqa: E711
                 ).all()
                 for t in old:
+                    # Never delete a file that is sitting in the preroll list
+                    # Plex is currently serving. The path would stay in Plex's
+                    # preference with nothing behind it, and Plex would hang the
+                    # next time it tried to play that entry.
+                    if t.local_path and os.path.abspath(t.local_path) in self._applied_local_paths:
+                        skipped_in_use += 1
+                        continue
                     if t.local_path and os.path.exists(t.local_path):
                         try:
                             os.remove(t.local_path)
@@ -614,6 +633,11 @@ class Scheduler:
             if removed:
                 db.commit()
                 _scheduler_log(f"NeX-Up trailer retention: removed {removed} trailer(s) older than {days} day(s)")
+            if skipped_in_use:
+                _scheduler_log(
+                    f"NeX-Up trailer retention: kept {skipped_in_use} expired trailer(s) "
+                    f"still in the active preroll list; they will go on a later pass"
+                )
         except Exception as e:
             try:
                 db.rollback()
@@ -1294,278 +1318,85 @@ class Scheduler:
             _scheduler_log(f"SCHEDULER: Error applying prerolls to Jellyfin: {e}", level="ERROR")
             return False
 
-    def _apply_genre_mapping_from_playback(self):
+    def _plex_active_session_count(self, setting) -> Optional[int]:
+        """How many things Plex is playing right now, or None if we can't tell.
+
+        Cached briefly: a single scheduler tick can ask this several times and
+        there is no value in hitting the server once per apply path.
         """
-        Poll Plex /status/sessions. If a currently playing item has mapped genres,
-        apply the mapped category and set an override window to prevent schedule overrides.
-        Respects genre_auto_apply setting and priority mode.
-        """
-        db = SessionLocal()
+        now = datetime.datetime.now()
+        cached_at = self._session_probe_at
+        if cached_at is not None and (now - cached_at).total_seconds() < self._session_probe_ttl_seconds:
+            return self._session_probe_count
+
+        count = None
         try:
-            setting = db.query(models.Setting).first()
-            if not setting or not getattr(setting, "plex_url", None):
-                return
+            plex_url = getattr(setting, "plex_url", None)
+            token = getattr(setting, "plex_token", None)
+            if plex_url and token:
+                connector = PlexConnector(plex_url, token)
+                headers = connector.headers or {"X-Plex-Token": token}
+                response = requests.get(
+                    f"{str(plex_url).rstrip('/')}/status/sessions",
+                    headers=headers, timeout=6,
+                    verify=getattr(connector, "_verify", True),
+                )
+                if getattr(response, "status_code", 0) == 200 and response.content:
+                    import xml.etree.ElementTree as ET
+                    root = ET.fromstring(response.content)
+                    # MediaContainer@size is authoritative; fall back to counting
+                    # child elements if the attribute is missing.
+                    size = root.get("size")
+                    count = int(size) if size is not None else len(list(root))
+        except Exception as exc:
+            _scheduler_verbose(f"Session probe failed: {exc}")
+            count = None
 
-            # Check if genre auto-apply is enabled
-            genre_auto_apply = getattr(setting, "genre_auto_apply", True)
-            if not genre_auto_apply:
-                return
+        self._session_probe_at = now
+        self._session_probe_count = count
+        return count
 
-            connector = PlexConnector(setting.plex_url, getattr(setting, "plex_token", None))
-            headers = connector.headers or ({"X-Plex-Token": getattr(setting, "plex_token", None)} if getattr(setting, "plex_token", None) else {})
-            verify = getattr(connector, "_verify", True)
+    def _defer_preroll_write(self, setting, context: str) -> bool:
+        """True when a preroll-setting write must wait for playback to finish.
 
-            # Fetch current sessions
-            try:
-                r = requests.get(f"{str(setting.plex_url).rstrip('/')}/status/sessions", headers=headers, timeout=6, verify=verify)
-            except Exception as e:
-                _scheduler_log(f"Failed to fetch sessions: {e}")
-                return
-            if getattr(r, "status_code", 0) != 200:
-                _scheduler_log(f"Sessions API returned status {r.status_code}")
-                return
-            if not r.content:
-                _scheduler_log("Sessions API returned empty content")
-                return
+        Plex does not snapshot the preroll list when playback begins - it
+        resolves the next entry from the CinemaTrailersPrerollID preference as
+        it advances. Rewriting that preference mid-playback makes Plex reach for
+        an entry that is no longer there, and it hangs instead of playing the
+        next trailer or preroll.
 
-            import xml.etree.ElementTree as ET
-            try:
-                root = ET.fromstring(r.content)
-            except Exception as e:
-                _scheduler_log(f"Failed to parse sessions XML: {e}")
-                return
+        Deferring costs nothing: prerolls only take effect at the *start* of a
+        playback, so an apply that lands during the gap before the next one is
+        indistinguishable from an immediate one. Callers return False so the
+        existing retry path picks the work up on a later tick.
 
-            # Choose the first playing video; otherwise any active with viewOffset/viewCount signal
-            chosen_key = None
-            for video in root.iter():
-                try:
-                    tag = str(getattr(video, "tag", "") or "")
-                    if tag.endswith("Video") or tag == "Video":
-                        vtype = (video.get("type") or "").lower()
-                        if vtype not in ("movie", "episode", "clip"):
-                            continue
-                        # inspect child Player state
-                        state = None
-                        for child in list(video):
-                            try:
-                                ctag = str(getattr(child, "tag", "") or "")
-                                if ctag.endswith("Player") or ctag == "Player":
-                                    state = (child.get("state") or "").lower()
-                                    break
-                            except Exception:
-                                pass
-                        rk = video.get("ratingKey") or video.get("ratingkey")
-                        if rk and (state == "playing" or video.get("viewOffset") or (video.get("viewCount") is not None)):
-                            chosen_key = str(rk).strip()
-                            if state == "playing":
-                                break
-                except Exception:
-                    continue
+        A probe failure is treated as "nothing playing" - if Plex is unreachable
+        the write will fail anyway, and we must never let an unreachable server
+        wedge scheduling permanently.
+        """
+        if os.environ.get("NEXROLL_ALLOW_MIDPLAYBACK_PREROLL_WRITES") == "1":
+            return False
 
-            if not chosen_key:
-                return
+        count = self._plex_active_session_count(setting)
+        if not count:
+            if self._deferred_write_since is not None:
+                waited = (datetime.datetime.now() - self._deferred_write_since).total_seconds()
+                _scheduler_log(
+                    f"Playback finished; applying deferred preroll change ({context}) "
+                    f"after waiting {int(waited)}s"
+                )
+                self._deferred_write_since = None
+            return False
 
-            # Dedupe per ratingKey within TTL
-            now = datetime.datetime.utcnow()
-            ttl_seconds = getattr(setting, "genre_override_ttl_seconds", self._default_genre_override_ttl_seconds)
-            last = self._last_applied.get(chosen_key)
-            if last and (now - last) < datetime.timedelta(seconds=ttl_seconds):
-                return
-
-            # Fetch metadata for genres (with parent/grandparent fallback)
-            try:
-                rm = requests.get(f"{str(setting.plex_url).rstrip('/')}/library/metadata/{chosen_key}", headers=headers, timeout=6, verify=verify)
-                if getattr(rm, "status_code", 0) != 200:
-                    _scheduler_log(f"Metadata API for {chosen_key} returned status {rm.status_code}")
-                    return
-                if not rm.content:
-                    _scheduler_log(f"Metadata API for {chosen_key} returned empty content")
-                    return
-                rootm = ET.fromstring(rm.content)
-            except Exception as e:
-                _scheduler_log(f"Failed to fetch/parse metadata for {chosen_key}: {e}")
-                return
-
-            # Collect and normalize Genre tags from the item metadata
-            genres: list[str] = []
-            for node in rootm.iter():
-                try:
-                    tagname = str(getattr(node, "tag", "") or "")
-                    if tagname.endswith("Genre") or tagname == "Genre":
-                        g = node.get("tag")
-                        if g and str(g).strip():
-                            genres.append(str(g).strip())
-                except Exception:
-                    continue
-            # Dedupe case-insensitive preserving order
-            seen = set()
-            genres = [g for g in genres if not (g.lower() in seen or seen.add(g.lower()))]
-            # If no genres present (episodes often), fetch parent/grandparent metadata and merge their Genre tags
-            if not genres:
-                try:
-                    primary_video = None
-                    for _n in rootm.iter():
-                        _t = str(getattr(_n, "tag", "") or "")
-                        if _t.endswith("Video") or _t == "Video":
-                            primary_video = _n
-                            break
-                    prk = (primary_video.get("parentRatingKey") or "").strip() if primary_video is not None else ""
-                    grk = (primary_video.get("grandparentRatingKey") or "").strip() if primary_video is not None else ""
-                    for rk2 in [k for k in [prk, grk] if k]:
-                        try:
-                            r2 = requests.get(f"{str(setting.plex_url).rstrip('/')}/library/metadata/{rk2}", headers=headers, timeout=6, verify=verify)
-                            if getattr(r2, "status_code", 0) == 200 and getattr(r2, "content", None):
-                                import xml.etree.ElementTree as _ET2
-                                root2 = _ET2.fromstring(r2.content)
-                                for node2 in root2.iter():
-                                    try:
-                                        t2 = str(getattr(node2, "tag", "") or "")
-                                        if t2.endswith("Genre") or t2 == "Genre":
-                                            g2 = node2.get("tag")
-                                            if g2 and str(g2).strip():
-                                                genres.append(str(g2).strip())
-                                    except Exception:
-                                        continue
-                        except Exception:
-                            continue
-                    _seen2 = set()
-                    genres = [g for g in genres if not (g.lower() in _seen2 or _seen2.add(g.lower()))]
-                except Exception:
-                    pass
-
-            if not genres:
-                return
-
-            # Local normalization + synonyms (mirror backend route behavior)
-            def _norm_genre_local(s):
-                try:
-                    import unicodedata, re
-                    t = unicodedata.normalize("NFKC", str(s or ""))
-                    t = t.replace("&", " and ")
-                    t = re.sub(r"[/_]", " ", t)
-                    t = re.sub(r"-+", " ", t)
-                    t = " ".join(t.split()).strip().lower()
-                    return t
-                except Exception:
-                    return ""
-
-            def _canonical_local(s):
-                g = _norm_genre_local(s)
-                if not g:
-                    return ""
-                synonyms = {
-                    "sci fi": "science fiction",
-                    "scifi": "science fiction",
-                    "sci-fi": "science fiction",
-                    "kids and family": "family",
-                    "kids family": "family",
-                }
-                return synonyms.get(g, g)
-
-            import re as _re
-            def _candidates(s):
-                base = _canonical_local(s)
-                out = []
-                if base:
-                    out.append(base)
-                    parts = [p.strip() for p in _re.split(r"(?:\s+and\s+|,|\||/)", base) if p and p.strip()]
-                    for p in parts:
-                        if p and p not in out:
-                            out.append(p)
-                # unique preserve order
-                seen = set()
-                return [x for x in out if not (x in seen or seen.add(x))]
-
-            # Resolve mapping
-            matched_cat = None
-            matched_genre_display = None
-            for raw in genres:
-                for key in _candidates(raw):
-                    gm = None
-                    try:
-                        gm = db.query(models.GenreMap).filter(models.GenreMap.genre_norm == key).first()
-                    except Exception:
-                        gm = None
-                    if not gm:
-                        try:
-                            gm = db.query(models.GenreMap).filter(func.lower(models.GenreMap.genre) == key).first()
-                        except Exception:
-                            gm = None
-                    if gm:
-                        cat = db.query(models.Category).filter(models.Category.id == gm.category_id).first()
-                        if cat:
-                            matched_cat = cat
-                            matched_genre_display = raw
-                            break
-                if matched_cat:
-                    break
-
-            if not matched_cat:
-                return
-
-            # Check priority mode: if schedules_override and there's an active schedule, don't apply genre
-            priority_mode = getattr(setting, "genre_priority_mode", "schedules_override")
-            if priority_mode == "schedules_override":
-                # Check if any schedule is currently active
-                schedules = db.query(models.Schedule).filter(models.Schedule.is_active == True).all()
-                # Use local time (per Setting.timezone) for comparisons since schedules are stored as naive local datetimes
-                now = _localized_now(db)
-                active_schedules = [s for s in schedules if self._is_schedule_active(s, now)]
-                if active_schedules:
-                    _scheduler_log(f"Skipping genre mapping for ratingKey={chosen_key} due to active schedule (priority mode: {priority_mode})")
-                    return
-
-            # Apply to Plex and set override to protect from scheduler immediately overriding
-            ok = self._apply_category_to_plex(matched_cat.id, db)
-            if not ok:
-                _scheduler_log(f"Failed to apply matched category '{matched_cat.name}' (ID {matched_cat.id}) for genre '{matched_genre_display}'")
-                return
-
-            try:
-                st = db.query(models.Setting).first()
-                if not st:
-                    st = models.Setting(plex_url=None, plex_token=None, active_category=matched_cat.id)
-                    db.add(st)
-                st.active_category = matched_cat.id
-                st.override_expires_at = now + datetime.timedelta(seconds=ttl_seconds)
-                st.updated_at = now
-                db.commit()
-            except Exception:
-                try:
-                    db.rollback()
-                except Exception:
-                    pass
-
-            self._last_applied[chosen_key] = now
-
-            # Record for UI feedback
-            # Use sys.modules to avoid `from backend.main import` which triggers
-            # full module re-execution in PyInstaller frozen builds.
-            import sys as _sys
-            _main_mod = _sys.modules.get('backend.main') or _sys.modules.get('__main__')
-            if _main_mod:
-                RECENT_GENRE_APPLICATIONS = getattr(_main_mod, 'RECENT_GENRE_APPLICATIONS', None)
-            else:
-                RECENT_GENRE_APPLICATIONS = None
-            application = {
-                "timestamp": now.isoformat() + "Z",
-                "genre": matched_genre_display,
-                "category_name": matched_cat.name,
-                "rating_key": chosen_key
-            }
-            if RECENT_GENRE_APPLICATIONS is not None:
-                RECENT_GENRE_APPLICATIONS.append(application)
-                # Keep only last 10
-                if len(RECENT_GENRE_APPLICATIONS) > 10:
-                    RECENT_GENRE_APPLICATIONS.pop(0)
-
-            _scheduler_log(f"Genre mapping applied for ratingKey={chosen_key}: '{matched_genre_display}' -> category '{matched_cat.name}'")
-
-        finally:
-            try:
-                db.close()
-            except Exception:
-                pass
+        if self._deferred_write_since is None:
+            self._deferred_write_since = datetime.datetime.now()
+            _scheduler_log(
+                f"Deferring preroll change ({context}): {count} Plex session(s) playing. "
+                f"Changing prerolls now would make Plex hang on its next preroll."
+            )
+        else:
+            _scheduler_verbose(f"Still deferring preroll change ({context}); {count} session(s) playing")
+        return True
 
     def _refresh_linked_holiday_dates_if_needed(self, db: Session, now: datetime.datetime) -> None:
         """Persist current-year variable holiday dates once per local day."""
@@ -1638,9 +1469,9 @@ class Scheduler:
                     self._last_logged_time = now
                 return  # Exit early - don't apply prerolls or fallback
 
-            # Respect temporary override window set by genre-apply (prevents immediate scheduler override)
+            # Respect the temporary override window set by a manual apply.
             # BUT: active schedules always take priority over overrides — the override only
-            # protects genre/manual prerolls when NO schedules are in their active window.
+            # protects manually applied prerolls when NO schedules are in their active window.
             try:
                 ovr = getattr(setting, "override_expires_at", None)
             except Exception:
@@ -2741,8 +2572,13 @@ class Scheduler:
 
         # Determine mode from delimiter
         mode_str = 'sequential' if delimiter == ',' else 'random'
+        if self._defer_preroll_write(setting, f"category {category_id}"):
+            return False
+
         _scheduler_log(f"Applying category_id={category_id} with {len(prerolls)} prerolls to Plex (mode={mode_str}, delim={'comma' if delimiter==',' else 'semicolon'})…")
         ok = connector.set_preroll(combined)
+        if ok:
+            self._applied_local_paths = {os.path.abspath(p) for p in preroll_paths_local}
         _scheduler_log(f"{'SUCCESS' if ok else 'FAIL'} setting multi-preroll (mode={mode_str}).")
         if ok:
             # Clear blend mode tracking since we're in normal mode now
@@ -2824,16 +2660,18 @@ class Scheduler:
 
         # Build ordered list of file paths per sequence steps
         paths = []
-        for step in seq:
+        for step_index, step in enumerate(seq):
             try:
                 stype = str(step.get("type", "")).lower()
             except Exception:
                 stype = ""
+            rotation_key = ("plex", "schedule", schedule.id, "block", step_index)
             if stype in {"random", "sequential"}:
                 picks = resolve_category_sequence_block(
                     step,
                     db,
                     fallback_category_id=schedule.category_id,
+                    rotation_key=rotation_key,
                 )
                 if not picks:
                     raw_category_id = (
@@ -2874,7 +2712,7 @@ class Scheduler:
                         paths.append(os.path.abspath(p.path))
             elif stype == "nexup_trailers":
                 # NeX-Up trailers from coming_soon_trailers / coming_soon_tv_trailers
-                picked = resolve_nexup_trailer_block(step, db)
+                picked = resolve_nexup_trailer_block(step, db, rotation_key=rotation_key)
                 if picked:
                     paths.extend(os.path.abspath(t.local_path) for t in picked)
                 else:
@@ -3031,8 +2869,13 @@ class Scheduler:
 
         combined = delimiter.join(paths_plex)
 
+        if self._defer_preroll_write(setting, f"sequence schedule {getattr(schedule, 'id', '?')}"):
+            return False
+
         _scheduler_log(f"Applying schedule sequence with {len(paths)} items (mode={mode}, delim={'comma' if delimiter==',' else 'semicolon'})…")
         ok = connector.set_preroll(combined)
+        if ok:
+            self._applied_local_paths = {os.path.abspath(p) for p in paths}
         _scheduler_log(f"{'SUCCESS' if ok else 'FAIL'} setting sequence preroll list.")
         if ok:
             # Mirror manual "Apply to Plex" behavior: mark schedule's category as applied
@@ -3076,8 +2919,9 @@ class Scheduler:
                     if isinstance(seq, str):
                         seq = json.loads(seq)
                     if isinstance(seq, list):
-                        for step in seq:
+                        for step_index, step in enumerate(seq):
                             stype = str(step.get("type", "")).lower()
+                            rotation_key = ("plex", "blend", schedule.id, "block", step_index)
                             if stype == "random":
                                 cid = int(step.get("category_id") or schedule.category_id or 0)
                                 if not cid:
@@ -3086,7 +2930,7 @@ class Scheduler:
                                 pool = _prerolls_for_category(cid)
                                 if pool:
                                     k = min(max(count, 1), len(pool))
-                                    picks = random.sample(pool, k) if len(pool) > k else pool
+                                    picks = shuffle_bag_sample(rotation_key, pool, k)
                                     for p in picks:
                                         paths.append(os.path.abspath(p.path))
                             elif stype == "fixed":
@@ -3104,7 +2948,11 @@ class Scheduler:
                                         paths.append(os.path.abspath(p.path))
                             elif stype == "nexup_trailers":
                                 paths.extend(os.path.abspath(t.local_path)
-                                             for t in resolve_nexup_trailer_block(step, db))
+                                             for t in resolve_nexup_trailer_block(
+                                                 step,
+                                                 db,
+                                                 rotation_key=rotation_key,
+                                             ))
                             elif stype == "coming_soon_list":
                                 layout = str(step.get("layout", "grid")).lower()
                                 blend_setting = db.query(models.Setting).first()
@@ -3218,8 +3066,13 @@ class Scheduler:
         combined = delimiter.join(paths_plex)
         
         connector = PlexConnector(setting.plex_url, setting.plex_token)
+        if self._defer_preroll_write(setting, "blended schedules"):
+            return False
+
         _scheduler_log(f"BLEND: Sending blended playlist to Plex ({len(paths_plex)} prerolls, random mode)...")
         ok = connector.set_preroll(combined)
+        if ok:
+            self._applied_local_paths = {os.path.abspath(p) for p in paths}
         if ok:
             _scheduler_log(f"BLEND: Blended preroll list applied successfully to Plex")
             # Track blend mode for verification
@@ -3250,14 +3103,19 @@ class Scheduler:
             
             # Build ordered list of file paths per sequence steps
             paths = []
-            for block in blocks:
+            for block_index, block in enumerate(blocks):
                 try:
                     block_type = str(block.get("type", "")).lower()
                 except Exception:
                     block_type = ""
+                rotation_key = ("plex", "filler-sequence", sequence_id, "block", block_index)
                 
                 if block_type in {"random", "sequential"}:
-                    picks = resolve_category_sequence_block(block, db)
+                    picks = resolve_category_sequence_block(
+                        block,
+                        db,
+                        rotation_key=rotation_key,
+                    )
                     if not picks:
                         raw_category_id = block.get("category_id") or block.get("categoryId")
                         _scheduler_log(
@@ -3284,7 +3142,11 @@ class Scheduler:
                             paths.append(os.path.abspath(p.path))
                 
                 elif block_type == "nexup_trailers":
-                    picked = resolve_nexup_trailer_block(block, db)
+                    picked = resolve_nexup_trailer_block(
+                        block,
+                        db,
+                        rotation_key=rotation_key,
+                    )
                     if picked:
                         paths.extend(os.path.abspath(t.local_path) for t in picked)
                     else:
@@ -3383,8 +3245,13 @@ class Scheduler:
             combined = delimiter.join(paths_plex)
             
             connector = PlexConnector(setting.plex_url, setting.plex_token)
+            if self._defer_preroll_write(setting, f"saved sequence {sequence_id}"):
+                return False
+
             _scheduler_log(f"FILLER: Sending sequence to Plex ({len(paths_plex)} prerolls)...")
             ok = connector.set_preroll(combined)
+            if ok:
+                self._applied_local_paths = {os.path.abspath(p) for p in paths}
             if ok:
                 _scheduler_log(f"FILLER: Sequence '{saved_seq.name}' applied successfully")
             else:

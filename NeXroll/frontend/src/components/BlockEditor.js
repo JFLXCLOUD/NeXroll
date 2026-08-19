@@ -469,7 +469,7 @@ const BlockEditor = ({ block, categories, prerolls, isNew, onSave, onCancel }) =
                 }}>
                   <Check size={16} color="var(--accent-color)" />
                   <span style={{ color: 'var(--text-color)' }}>
-                    {getCategoryPrerollCount(categoryId)} available • Will select {count} random on each playback
+                    {getCategoryPrerollCount(categoryId)} available • Will cycle through {count} at a time before repeating
                   </span>
                 </div>
               )}
@@ -735,7 +735,7 @@ const BlockEditor = ({ block, categories, prerolls, isNew, onSave, onCancel }) =
               <label style={{ display: 'block', marginBottom: '6px', color: 'var(--text-color)', fontWeight: 600, fontSize: '13px' }}>Mode</label>
               <div style={{ display: 'flex', gap: '8px', marginBottom: '12px' }}>
                 {[
-                  { val: 'random', label: 'Random', desc: 'Shuffle the selected source(s)' },
+                  { val: 'random', label: 'Random', desc: 'Cycle through the pool before repeating' },
                   { val: 'sequential', label: 'Sequential', desc: 'Soonest release first, in order' },
                 ].map(opt => (
                   <button
@@ -778,7 +778,7 @@ const BlockEditor = ({ block, categories, prerolls, isNew, onSave, onCancel }) =
                   <small style={{ display: 'block', marginTop: '5px', color: 'var(--text-secondary)', fontSize: '11px' }}>
                     {nexupMode === 'sequential'
                       ? 'Plays the soonest-releasing trailers from this source, in order'
-                      : 'Randomly picks trailers from this source'}
+                      : 'Cycles through eligible trailers before starting a new shuffled pass'}
                   </small>
                 </div>
                 <div>

@@ -291,6 +291,24 @@ class SequentialSequenceResolutionTests(unittest.TestCase):
                 [],
             )
 
+    def test_random_block_cycles_through_every_eligible_preroll_before_repeating(self):
+        rotation_key = ("test", self.category_id)
+        with self.Session() as db:
+            selected_ids = [
+                scheduler_module.resolve_category_sequence_block(
+                    {
+                        "type": "random",
+                        "category_id": self.category_id,
+                        "count": 1,
+                    },
+                    db,
+                    rotation_key=rotation_key,
+                )[0].id
+                for _ in range(3)
+            ]
+
+        self.assertEqual(set(selected_ids), set(self.expected_ids))
+
     def test_sequential_only_schedule_and_saved_filler_apply_identically(self):
         connector = MagicMock()
         connector.get_server_info.return_value = {"platform": "Windows"}

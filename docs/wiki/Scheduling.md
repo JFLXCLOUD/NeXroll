@@ -67,7 +67,7 @@ When multiple exclusive schedules overlap, priority and **Win/Lose** determines 
 
 ### How Priority Works
 - Schedules have a priority level from 1 (lowest) to 10 (highest)
-- Higher priority schedules take precedence during overlap
+- Higher priority number schedules win when multiple schedules overlap
 - Same-priority conflicts are shown with orange warning badges
 
 ### Win/Lose

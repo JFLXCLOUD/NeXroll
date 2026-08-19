@@ -325,6 +325,104 @@ Content-Type: application/json
 
 ```http
 DELETE /prerolls/{id}
+DELETE /prerolls/{id}?delete_file=true
+```
+
+Removes the preroll from the library. **The video file is kept on disk unless
+you pass `delete_file=true`**, and even then it is moved to a recoverable trash
+rather than erased. Files reached through a path mapping (externally mapped
+media) are never deleted from disk, even with `delete_file=true`.
+
+A preroll removed while its file stays on disk is added to the ignore list, so
+the next library scan does not simply re-import it.
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `delete_file` | bool | `false` | Move the video file to the trash as well |
+
+### Preroll Trash
+
+Files deleted with `delete_file=true` are moved to a `.nexroll-trash` folder
+inside your preroll library and kept for 30 days. Set the
+`NEXROLL_TRASH_RETENTION_DAYS` environment variable to change the window, or
+`0` to keep trashed files indefinitely. Expired entries are cleared during the
+regular library scan.
+
+> These endpoints back the **Library > Trash** page in the UI. Use them directly for scripting or bulk recovery.
+
+#### List Trash
+
+```http
+GET /prerolls/trash
+```
+
+**Response:**
+```json
+{
+  "entries": [
+    {
+      "id": "3f7c1e28c9f04c5f9b1c2d3e4f5a6b70",
+      "filename": "christmas_intro.mp4",
+      "original_path": "/prerolls/Holiday/christmas_intro.mp4",
+      "deleted_at": "2026-08-18T14:22:05",
+      "size_bytes": 25000000
+    }
+  ],
+  "count": 1,
+  "bytes": 25000000,
+  "retention_days": 30
+}
+```
+
+#### Restore from Trash
+
+```http
+POST /prerolls/trash/{entry_id}/restore
+```
+
+Puts the file back where it came from and re-indexes it in the library.
+
+#### Permanently Delete One Entry
+
+```http
+DELETE /prerolls/trash/{entry_id}
+```
+
+#### Empty the Trash
+
+```http
+DELETE /prerolls/trash
+DELETE /prerolls/trash?expired_only=true
+```
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `expired_only` | bool | `false` | Remove only entries past the retention window |
+
+### Ignore List
+
+Prerolls removed from the library while their file stays on disk are recorded
+here so a later scan does not undo the removal. Deliberately re-importing a file
+clears its entry automatically.
+
+#### List Ignored Paths
+
+```http
+GET /prerolls/ignored
+```
+
+#### Stop Ignoring One Path
+
+```http
+DELETE /prerolls/ignored/{id}
+```
+
+The file is re-imported on the next library scan.
+
+#### Clear the Ignore List
+
+```http
+DELETE /prerolls/ignored
 ```
 
 ### Check Duplicate
@@ -541,28 +639,6 @@ Content-Type: application/json
 
 ---
 
-## Genre Mappings
-
-### Get Genre Mappings
-
-```http
-GET /genre-mappings
-```
-
-### Update Genre Mapping
-
-```http
-PUT /genre-mappings
-Content-Type: application/json
-
-{
-  "genre": "Horror",
-  "category_id": 5
-}
-```
-
----
-
 ## Authentication Endpoints
 
 ### Auth Status
@@ -771,6 +847,51 @@ GET /health
 ```http
 GET /version
 ```
+
+### System Health Summary
+
+```http
+GET /system/health/summary
+GET /system/health/summary?conflicts=2
+```
+
+Composite health score behind the dashboard's **System health** tile. Scores the
+install out of 100 across the scheduler, media server, preroll library, storage,
+schedule conflicts, and community index age.
+
+A check that could not be measured is reported as `unknown` and costs no points,
+so a fresh install does not open on an alarming score. Any check in `error`
+holds `status` at `degraded` regardless of the number.
+
+Schedule-conflict detection lives in the frontend, so the count is passed in via
+`conflicts`. Omit it and that check is reported as `unknown` rather than guessed.
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `conflicts` | int | *(none)* | Number of detected schedule conflicts |
+
+**Response:**
+```json
+{
+  "score": 90,
+  "status": "attention",
+  "note": "Your preroll library is empty",
+  "attention_count": 1,
+  "checks": [
+    {
+      "key": "scheduler",
+      "label": "Scheduler",
+      "status": "ok",
+      "detail": "",
+      "value": "Running",
+      "weight": 30
+    }
+  ]
+}
+```
+
+`status` is one of `healthy`, `attention`, or `degraded`. Each check's `status`
+is one of `ok`, `warn`, `error`, or `unknown`.
 
 ---
 

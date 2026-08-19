@@ -1,0 +1,96 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>NeXroll Dashboard Concept A — Focus</title>
+  <link rel="stylesheet" href="demo.css">
+</head>
+<body>
+  <div class="app">
+    <aside class="sidebar">
+      <div class="brand"><img src="../../NeXroll/frontend/public/NeXroll_Logo_WHT.png" alt="NeXroll"><span class="brand-mark">◀</span></div>
+      <div class="search"><span>⌕</span><span>Search pages…</span><span class="key">⌘K</span></div>
+      <nav class="nav">
+        <a class="nav-item active" href="#"><span class="glyph">▦</span><span>Dashboard</span></a>
+        <a class="nav-item" href="#"><span class="glyph">▥</span><span>Library</span><span class="chev">›</span></a>
+        <a class="nav-item" href="#"><span class="glyph">□</span><span>Schedules</span><span class="chev">›</span></a>
+        <a class="nav-item" href="#"><span class="glyph">✣</span><span>NeX-Up</span><span class="chev">›</span></a>
+        <a class="nav-item" href="#"><span class="glyph">⌁</span><span>Connect</span></a>
+        <a class="nav-item" href="#"><span class="glyph">◎</span><span>Community Prerolls</span></a>
+        <a class="nav-item" href="#"><span class="glyph">⚙</span><span>Settings</span><span class="chev">›</span></a>
+      </nav>
+      <div class="sidebar-foot"><div class="socials"><span>◒</span><span>●</span><span>◉</span><span>♡</span></div><div class="version">v2.0.1</div></div>
+    </aside>
+
+    <main class="shell">
+      <header class="topbar"><span class="online"><i class="dot"></i>All systems online</span><span class="top-icon">☼</span><span class="top-icon">?</span><span class="avatar">JB</span></header>
+      <div class="content">
+        <section class="page-head">
+          <div><div class="eyebrow">Friday, August 7</div><h1>Good evening, JB</h1><p>Your preroll system is healthy. Four schedule conflicts need a look.</p></div>
+          <div class="head-actions"><button class="btn ghost">↻ Refresh</button><button class="btn primary">＋ Add preroll</button><button class="btn icon">•••</button></div>
+        </section>
+
+        <section class="metric-row">
+          <article class="card metric"><div class="metric-top"><span>Preroll library</span><span class="metric-icon">▥</span></div><div class="metric-value">164 <small>videos</small></div><div class="metric-sub">30 uncategorized · 1 added today</div></article>
+          <article class="card metric"><div class="metric-top"><span>Schedules</span><span class="metric-icon">□</span></div><div class="metric-value">32 <small>total</small></div><div class="metric-sub"><span style="color:var(--green)">19 enabled</span> · <span style="color:var(--amber)">4 conflicts</span></div></article>
+          <article class="card metric"><div class="metric-top"><span>Storage</span><span class="metric-icon">▰</span></div><div class="metric-value">1.29 <small>GB used</small></div><div class="metric-sub">0.2 GB of 5 GB trailer quota</div></article>
+          <article class="card metric"><div class="metric-top"><span>Media server</span><span class="metric-icon">▣</span></div><div class="metric-value" style="font-size:19px">Plex <span class="pill good">● Connected</span></div><div class="metric-sub">JFLX · v1.43.2</div></article>
+        </section>
+
+        <section class="focus-grid">
+          <article class="card now-card">
+            <div class="card-head"><div class="card-title"><span class="mini-icon">▶</span> Now showing</div><span class="pill good">● Scheduler running</span></div>
+            <div class="now-stage">
+              <div class="poster">✦</div>
+              <div class="now-copy">
+                <h2>Summer Season Schedule</h2>
+                <p>Summer Season · Shuffle mode · 1 preroll</p>
+                <div class="now-meta"><span class="pill blue">Active schedule</span><span class="pill">America/New_York</span><span class="pill">Applied 10:31 AM</span></div>
+                <div class="now-timeline"><span></span></div><div class="now-times"><span>Now</span><span>Next change · 10:55 PM</span></div>
+              </div>
+            </div>
+          </article>
+
+          <article class="card health-card">
+            <div class="card-head"><div class="card-title"><span class="mini-icon">♡</span> System health</div><span class="link">View details →</span></div>
+            <div class="health-score"><div class="score-ring"><strong>86</strong></div><div class="score-copy"><strong>Healthy overall</strong><span>2 items could use attention</span></div></div>
+            <div class="health-list">
+              <div class="health-item"><i class="status-dot"></i><span class="label">Scheduler</span><span class="value">Running</span></div>
+              <div class="health-item"><i class="status-dot"></i><span class="label">Plex server</span><span class="value">Connected</span></div>
+              <div class="health-item"><i class="status-dot warn"></i><span class="label">Schedule conflicts</span><span class="value" style="color:var(--amber)">4 to resolve</span></div>
+              <div class="health-item"><i class="status-dot warn"></i><span class="label">Community index</span><span class="value" style="color:var(--amber)">8 days old</span></div>
+            </div>
+          </article>
+        </section>
+
+        <section class="lower-grid">
+          <article class="card schedule-card">
+            <div class="card-head"><div class="card-title"><span class="mini-icon">▤</span> What’s next</div><span class="link">Open schedules →</span></div>
+            <div class="schedule-list">
+              <div class="schedule-item"><div class="schedule-time"><strong>Now</strong><br>until 10:55</div><i class="schedule-bar green"></i><div class="schedule-name"><strong>Summer Season Schedule</strong><span>Summer Season · 1 preroll</span></div><span class="pill good">Active</span></div>
+              <div class="schedule-item"><div class="schedule-time"><strong>10:55 PM</strong><br>tonight</div><i class="schedule-bar"></i><div class="schedule-name"><strong>Coming Soon List Schedule</strong><span>Rotation · Coming Soon</span></div><span class="pill">Next</span></div>
+              <div class="schedule-item"><div class="schedule-time"><strong>1:00 PM</strong><br>Aug 9</div><i class="schedule-bar amber"></i><div class="schedule-name"><strong>OG Preroll Fillers</strong><span>Fillers · 4 prerolls</span></div><span class="pill">Upcoming</span></div>
+            </div>
+          </article>
+
+          <article class="card library-card">
+            <div class="card-head"><div class="card-title"><span class="mini-icon">▰</span> Storage mix</div><span class="link">Manage →</span></div>
+            <div class="storage-bar"><span></span><span></span><span></span><span></span></div>
+            <div class="legend">
+              <span class="legend-label"><i></i>Prerolls</span><strong>960 MB</strong>
+              <span class="legend-label"><i></i>NeX-Up trailers</span><strong>208 MB</strong>
+              <span class="legend-label"><i></i>Database</span><strong>132 MB</strong>
+              <span class="legend-label"><i></i>Thumbnails</span><strong>20 MB</strong>
+            </div>
+          </article>
+        </section>
+
+        <section class="card action-dock">
+          <span class="dock-label">Quick actions</span><button class="action">↻ Refresh data</button><button class="action">▰ Scan files</button><button class="action">↓ NeX-Up sync</button><button class="action">▥ Rebuild thumbnails</button><button class="action more">All actions ···</button>
+        </section>
+      </div>
+    </main>
+  </div>
+</body>
+</html>

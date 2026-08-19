@@ -254,6 +254,15 @@ body.light {
   --button-secondary-bg: #6c757d;
   --button-text: white;
   --header-icon-color: #000000;
+  /* Health states. --warning-color fills the gap between success and error;
+     the -soft variants are the tinted backings behind status chips and the
+     health ring. Darker amber here than in dark mode so it stays legible on
+     white. */
+  --warning-color: #b45309;
+  --success-soft: rgba(40, 167, 69, 0.12);
+  --warning-soft: rgba(180, 83, 9, 0.12);
+  --error-soft: rgba(220, 53, 69, 0.10);
+  --neutral-soft: rgba(0, 0, 0, 0.05);
 }
 
 body.light .header-icon {
@@ -283,6 +292,12 @@ body.dark {
   --button-secondary-bg: #555;
   --button-text: white;
   --header-icon-color: #ffffff;
+  /* Health states, matched to this theme's brighter success/error pair. */
+  --warning-color: #f59e0b;
+  --success-soft: rgba(64, 192, 87, 0.15);
+  --warning-soft: rgba(245, 158, 11, 0.15);
+  --error-soft: rgba(250, 82, 82, 0.15);
+  --neutral-soft: rgba(255, 255, 255, 0.06);
 }
 
 body.dark .header-icon {
@@ -738,6 +753,392 @@ select.input {
   line-height: 1.5;
   color: var(--text-secondary);
   white-space: pre-wrap;
+}
+
+/* ---- Focus dashboard tiles -------------------------------------------------
+   Every colour here resolves to a theme variable, so these tiles follow the
+   app's existing light/dark palette instead of introducing one of their own. */
+
+.nx-focus-tile {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+  min-width: 0;
+}
+
+.nx-focus-headline {
+  margin: 0;
+  font-size: 1.25rem;
+  font-weight: 600;
+  line-height: 1.25;
+  color: var(--text-color);
+  overflow-wrap: anywhere;
+}
+
+.nx-focus-muted { color: var(--text-secondary); font-weight: 500; }
+
+.nx-focus-sub {
+  margin: 0;
+  font-size: 0.85rem;
+  color: var(--text-secondary);
+  overflow-wrap: anywhere;
+}
+
+.nx-focus-meta { display: flex; flex-wrap: wrap; gap: 0.4rem; }
+
+.nx-focus-timeline { display: grid; gap: 0.45rem; min-width: 0; }
+
+.nx-focus-timeline-row {
+  display: grid;
+  grid-template-columns: minmax(4.5rem, auto) 1fr auto;
+  gap: 0.6rem;
+  align-items: center;
+  padding: 0.4rem 0.55rem;
+  border-radius: 8px;
+  background: var(--neutral-soft);
+  min-width: 0;
+}
+
+.nx-focus-when {
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--text-secondary);
+  white-space: nowrap;
+}
+
+.nx-focus-timeline-body { display: flex; flex-direction: column; min-width: 0; }
+
+.nx-focus-timeline-name {
+  font-size: 0.9rem;
+  color: var(--text-color);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Health score. Tone comes from the shared success/warning/error tokens, so it
+   stays legible against both themes' card backgrounds. */
+.nx-health-summary { display: flex; align-items: baseline; gap: 0.6rem; }
+
+.nx-health-score {
+  font-size: 2rem;
+  font-weight: 700;
+  line-height: 1;
+}
+
+.nx-health-score.is-ok { color: var(--success-color); }
+.nx-health-score.is-warn { color: var(--warning-color); }
+.nx-health-score.is-error { color: var(--error-color); }
+
+.nx-health-dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  margin-right: 0.45rem;
+  flex: 0 0 auto;
+}
+
+.nx-health-dot.is-ok { background: var(--success-color); }
+.nx-health-dot.is-warn { background: var(--warning-color); }
+.nx-health-dot.is-error { background: var(--error-color); }
+
+/* Storage mix. Four segment tones drawn from tokens already in the palette
+   rather than a new set of brand colours. */
+.nx-storage-bar {
+  display: flex;
+  width: 100%;
+  height: 10px;
+  border-radius: 999px;
+  overflow: hidden;
+  background: var(--neutral-soft);
+}
+
+.nx-storage-seg { display: block; height: 100%; }
+
+.nx-storage-key {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border-radius: 3px;
+  margin-right: 0.45rem;
+  flex: 0 0 auto;
+}
+
+.nx-storage-seg-0 { background: var(--button-bg); }
+.nx-storage-seg-1 { background: var(--accent-color); }
+.nx-storage-seg-2 { background: var(--success-color); }
+.nx-storage-seg-3 { background: var(--warning-color); }
+
+.nx-quick-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.nx-quick-action {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.45rem 0.7rem;
+  font-size: 0.85rem;
+  border-radius: 8px;
+  border: 1px solid var(--border-color);
+  background: var(--input-bg);
+  color: var(--text-color);
+  cursor: pointer;
+  transition: background 0.15s ease, border-color 0.15s ease;
+}
+
+.nx-quick-action:hover {
+  background: var(--hover-bg);
+  border-color: var(--text-secondary);
+}
+
+/* ---- Focus dashboard header ---- */
+
+.nx-dash-header {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 1rem;
+  flex-wrap: wrap;
+}
+
+.nx-dash-header-text { min-width: 0; }
+
+.nx-dash-date {
+  font-size: 0.75rem;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+.nx-dash-greeting {
+  margin: 0.15rem 0 0;
+  font-size: 1.6rem;
+  font-weight: 600;
+  color: var(--text-color);
+}
+
+.nx-dash-note {
+  margin: 0.3rem 0 0;
+  font-size: 0.9rem;
+  color: var(--text-secondary);
+}
+
+.nx-dash-note.is-attention { color: var(--warning-color); }
+.nx-dash-note.is-degraded { color: var(--error-color); }
+
+/* Compact density tightens the whole page, not just the grid. */
+.nx-dash-page.density-compact { gap: 0.85rem !important; }
+.nx-dash-page.density-compact .nx-dash-greeting { font-size: 1.3rem; }
+.nx-dash-page.density-compact .card { padding: 0.75rem 0.9rem; }
+
+/* ---- Customize dashboard modal ---- */
+
+.nx-customize { max-width: 760px; width: min(760px, 94vw); }
+
+.nx-customize-body {
+  max-height: min(65vh, 620px);
+  overflow-y: auto;
+}
+
+.nx-customize-section {
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  margin: 1.1rem 0 0.5rem;
+}
+
+.nx-customize-section:first-child { margin-top: 0; }
+
+.nx-preset-row {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 0.6rem;
+}
+
+.nx-preset {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  text-align: left;
+  padding: 0.65rem 0.8rem;
+  border-radius: 10px;
+  border: 1px solid var(--border-color);
+  background: var(--input-bg);
+  cursor: pointer;
+  transition: border-color 0.15s ease, background 0.15s ease;
+}
+
+.nx-preset:hover { background: var(--hover-bg); }
+
+.nx-preset.is-active {
+  border-color: var(--button-bg);
+  background: var(--hover-bg);
+}
+
+.nx-preset-label { font-size: 0.92rem; font-weight: 600; color: var(--text-color); }
+
+.nx-pref-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 0.6rem;
+}
+
+.nx-pref {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.6rem;
+  padding: 0.55rem 0.8rem;
+  border-radius: 10px;
+  border: 1px solid var(--border-color);
+  background: var(--input-bg);
+  font-size: 0.88rem;
+  color: var(--text-color);
+  cursor: pointer;
+}
+
+.nx-pref input[type="checkbox"] { order: 2; margin: 0; cursor: pointer; }
+.nx-pref span { order: 1; }
+
+.nx-tilelist { display: grid; gap: 0.4rem; }
+
+.nx-tilerow {
+  display: grid;
+  grid-template-columns: auto 1fr auto auto auto;
+  gap: 0.6rem;
+  align-items: center;
+  padding: 0.45rem 0.7rem;
+  border-radius: 10px;
+  border: 1px solid var(--border-color);
+  background: var(--input-bg);
+  min-width: 0;
+}
+
+.nx-tilerow.is-off { opacity: 0.55; }
+
+.nx-tilerow-move { display: flex; flex-direction: column; gap: 2px; }
+
+.nx-tilerow-move button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 15px;
+  padding: 0;
+  border: 1px solid var(--border-color);
+  border-radius: 4px;
+  background: var(--card-bg);
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+
+.nx-tilerow-move button:hover:not(:disabled) { color: var(--text-color); border-color: var(--text-secondary); }
+.nx-tilerow-move button:disabled { opacity: 0.35; cursor: default; }
+
+.nx-tilerow-text { display: flex; flex-direction: column; min-width: 0; }
+
+.nx-tilerow-name {
+  font-size: 0.9rem;
+  color: var(--text-color);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.nx-tilerow-toggle input { width: 1rem; height: 1rem; cursor: pointer; accent-color: var(--button-bg); }
+
+@media (max-width: 720px) {
+  .nx-tilerow { grid-template-columns: auto 1fr auto; }
+  .nx-tilerow select { grid-column: 2 / -1; width: 100% !important; }
+}
+
+/* Facts about what is being acted on, shown above the dialog message. */
+.nx-dialog-details {
+  background: var(--card-bg);
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  padding: 0.65rem 0.85rem;
+  margin-bottom: 0.9rem;
+  display: grid;
+  gap: 0.35rem;
+}
+
+.nx-dialog-detail-row {
+  display: flex;
+  gap: 0.75rem;
+  align-items: baseline;
+  font-size: 0.85rem;
+  min-width: 0;
+}
+
+.nx-dialog-detail-label {
+  flex: 0 0 5.5rem;
+  color: var(--text-secondary);
+}
+
+.nx-dialog-detail-value {
+  flex: 1 1 auto;
+  min-width: 0;
+  color: var(--text-color);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  overflow-wrap: anywhere;
+}
+
+/* Opt-in for a destructive extra step. Unchecked by default, and visibly
+   escalated once armed so the consequence is never a surprise. */
+.nx-dialog-checkbox {
+  display: flex;
+  gap: 0.65rem;
+  align-items: flex-start;
+  margin-top: 1rem;
+  padding: 0.7rem 0.85rem;
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  cursor: pointer;
+  transition: border-color 0.15s ease, background 0.15s ease;
+}
+
+.nx-dialog-checkbox:hover {
+  border-color: var(--text-secondary);
+}
+
+.nx-dialog-checkbox.is-armed {
+  border-color: #ef4444;
+  background: rgba(239, 68, 68, 0.08);
+}
+
+.nx-dialog-checkbox input {
+  margin: 0.15rem 0 0;
+  width: 1rem;
+  height: 1rem;
+  accent-color: #ef4444;
+  cursor: pointer;
+  flex: 0 0 auto;
+}
+
+.nx-dialog-checkbox-text {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  min-width: 0;
+}
+
+.nx-dialog-checkbox-label {
+  font-size: 0.9rem;
+  color: var(--text-color);
+}
+
+.nx-dialog-checkbox-hint {
+  font-size: 0.8rem;
+  line-height: 1.4;
+  color: var(--text-secondary);
 }
 
 .nx-dialog-footer {
@@ -3978,6 +4379,28 @@ body.dark .nx-chip.warn {
   z-index: 900;
   transition: flex-basis 0.18s ease, width 0.18s ease;
 }
+
+/* Focus Enhanced dark sidebar palette. Keep the production sidebar's layout
+   and per-section accents, but use the concept's cooler charcoal surfaces. */
+body.dark .nx-sidebar {
+  --bg-color: #101113;
+  --card-bg: #191a1d;
+  --text-color: #d7d9df;
+  --text-secondary: #969ba6;
+  --text-muted: #6f7580;
+  --border-color: #30333a;
+  --hover-bg: #202226;
+  --button-bg: #8d82ff;
+  background-color: #191a1d;
+  border-right-color: #30333a;
+}
+body.dark .nx-sidebar-search-box {
+  background: #101113;
+  border-color: #3a3c43;
+}
+body.dark .nx-sidebar-section:first-child .nx-sidebar-parent.active {
+  background: rgba(109, 93, 252, 0.17);
+}
 .nx-sidebar.collapsed {
   flex-basis: var(--nx-sidebar-w-collapsed);
   width: var(--nx-sidebar-w-collapsed);
@@ -4820,6 +5243,58 @@ body.dark .nx-community select:focus { box-shadow: 0 0 0 3px rgba(79, 70, 229, 0
 }
 .nx-comm-filter select { min-width: 130px; }
 
+.nx-comm-ai-toggle {
+  height: 42px;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  padding: 0 0.75rem;
+  border: 1px solid var(--border-color);
+  border-radius: 9px;
+  background: var(--input-bg);
+  color: var(--text-secondary);
+  font: inherit;
+  font-size: 0.84rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: border-color 0.15s ease, background-color 0.15s ease, color 0.15s ease, box-shadow 0.15s ease;
+}
+.nx-comm-ai-toggle:hover:not(:disabled) {
+  border-color: color-mix(in srgb, #a855f7 55%, var(--border-color));
+  color: var(--text-color);
+}
+.nx-comm-ai-toggle.active {
+  color: #c084fc;
+  border-color: rgba(168, 85, 247, 0.55);
+  background: rgba(168, 85, 247, 0.12);
+  box-shadow: 0 0 0 2px rgba(168, 85, 247, 0.08);
+}
+.nx-comm-ai-toggle:disabled { opacity: 0.55; cursor: not-allowed; }
+.nx-comm-ai-state {
+  padding: 0.12rem 0.4rem;
+  border-radius: 999px;
+  background: var(--hover-bg);
+  font-size: 0.69rem;
+  text-transform: uppercase;
+  letter-spacing: 0.035em;
+}
+.nx-comm-ai-toggle.active .nx-comm-ai-state {
+  background: rgba(168, 85, 247, 0.2);
+}
+.nx-comm-ai-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.2rem;
+  padding: 0.08rem 0.38rem;
+  border: 1px solid rgba(168, 85, 247, 0.38);
+  border-radius: 999px;
+  background: rgba(168, 85, 247, 0.1);
+  color: #a855f7;
+  font-size: 0.7rem;
+  font-weight: 700;
+}
+body.dark .nx-comm-ai-badge { color: #c084fc; }
+
 /* Index/status meta chips inside the hero */
 .nx-comm-chip {
   display: inline-flex;
@@ -5361,4 +5836,795 @@ body.dark .nx-settings textarea:focus { box-shadow: 0 0 0 3px rgba(79, 70, 229, 
   margin-top: -72px;
   background: linear-gradient(to bottom, transparent, var(--card-bg) 80%);
   pointer-events: none;
+}
+
+/* ====================================================================
+   Focus Enhanced dashboard
+   Scoped to the dashboard so the existing sidebar and application pages
+   retain their established visual language in both themes.
+   ==================================================================== */
+.nx-dashboard-controls { display: none !important; }
+
+.nx-dash-page {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  width: 100%;
+  max-width: 1300px;
+  margin: 0 auto;
+}
+
+.nx-global-clock {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  min-width: 155px;
+  color: var(--text-color);
+}
+.nx-global-clock-icon {
+  width: 28px;
+  height: 28px;
+  display: grid;
+  place-items: center;
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  color: var(--button-bg);
+  background: var(--card-bg);
+}
+.nx-global-clock strong,
+.nx-global-clock small { display: block; line-height: 1.2; }
+.nx-global-clock strong { font-size: 0.75rem; }
+.nx-global-clock small { margin-top: 2px; color: var(--text-secondary); font-size: 0.68rem; }
+
+.nx-dash-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  flex-wrap: wrap;
+}
+.nx-dash-header-text { min-width: 0; }
+.nx-dash-eyebrow {
+  color: color-mix(in srgb, var(--button-bg) 60%, var(--text-secondary));
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+.nx-dash-greeting {
+  margin: 0.25rem 0 0;
+  color: var(--text-color);
+  font-size: clamp(1.45rem, 2vw, 1.75rem);
+  font-weight: 650;
+  letter-spacing: -0.025em;
+}
+.nx-dash-note {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin: 0.35rem 0 0;
+  color: var(--text-secondary);
+  font-size: 0.82rem;
+}
+.nx-dash-note-dot {
+  width: 7px;
+  height: 7px;
+  flex: 0 0 auto;
+  border-radius: 50%;
+  background: var(--success-color);
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--success-color) 12%, transparent);
+}
+.nx-dash-note.is-attention { color: var(--warning-color); }
+.nx-dash-note.is-attention .nx-dash-note-dot { background: var(--warning-color); box-shadow: 0 0 0 4px color-mix(in srgb, var(--warning-color) 12%, transparent); }
+.nx-dash-note.is-degraded { color: var(--error-color); }
+.nx-dash-note.is-degraded .nx-dash-note-dot { background: var(--error-color); box-shadow: 0 0 0 4px color-mix(in srgb, var(--error-color) 12%, transparent); }
+
+.nx-dash-header-actions { display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap; }
+.nx-dash-action {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.4rem;
+  min-height: 36px;
+  padding: 0 0.8rem;
+  border: 1px solid var(--border-color);
+  border-radius: 9px;
+  background: var(--card-bg);
+  color: var(--text-color);
+  font-size: 0.8rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+}
+.nx-dash-action:hover,
+.nx-dash-action.is-active { background: var(--hover-bg); border-color: color-mix(in srgb, var(--button-bg) 55%, var(--border-color)); }
+.nx-dash-action.primary { color: #fff; border-color: var(--button-bg); background: var(--button-bg); }
+.nx-dash-action.primary:hover { filter: brightness(1.08); }
+
+.nx-glance-strip {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  min-width: 0;
+}
+.nx-glance-label {
+  margin-right: 0.1rem;
+  color: var(--text-muted);
+  font-size: 0.68rem;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+.nx-glance-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  min-height: 26px;
+  padding: 0 0.65rem;
+  border: 1px solid var(--border-color);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--card-bg) 82%, transparent);
+  color: var(--text-secondary);
+  font-size: 0.7rem;
+  white-space: nowrap;
+}
+.nx-glance-chip strong { color: var(--text-color); }
+.nx-glance-chip i { width: 6px; height: 6px; border-radius: 50%; background: var(--button-bg); }
+.nx-glance-chip.good i { background: var(--success-color); }
+.nx-glance-chip.warn i { background: var(--warning-color); }
+.nx-glance-spacer { flex: 1 1 auto; }
+.nx-optional-count {
+  padding: 0.25rem 0;
+  border: 0;
+  background: transparent;
+  color: color-mix(in srgb, var(--button-bg) 75%, var(--text-color));
+  font-size: 0.7rem;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.nx-arrange-tip {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+  padding: 0.6rem 0.75rem;
+  border: 1px dashed color-mix(in srgb, var(--button-bg) 45%, var(--border-color));
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--button-bg) 8%, transparent);
+  color: var(--text-secondary);
+  font-size: 0.74rem;
+}
+.nx-arrange-tip strong { color: var(--text-color); }
+.nx-arrange-saved { margin-left: auto; }
+
+.nx-dash-grid {
+  display: grid;
+  grid-template-columns: repeat(12, minmax(0, 1fr));
+  grid-auto-flow: row dense;
+  align-items: stretch;
+  gap: 12px;
+}
+.nx-dash-grid.editing {
+  padding: 7px;
+  margin: -7px;
+  border: 1px dashed color-mix(in srgb, var(--button-bg) 32%, var(--border-color));
+  border-radius: 14px;
+  background: color-mix(in srgb, var(--button-bg) 3%, transparent);
+}
+.nx-dash-grid > .nx-tile {
+  grid-column: span var(--nx-tile-span, 4);
+  min-width: 0;
+  min-height: 0;
+}
+.nx-dash-page .nx-dash-grid > .nx-tile > .card {
+  height: 100%;
+  box-sizing: border-box;
+  padding: 1rem;
+  border: 1px solid var(--border-color) !important;
+  border-radius: 12px;
+  box-shadow: 0 6px 22px color-mix(in srgb, var(--shadow) 55%, transparent);
+}
+.nx-dash-page .nx-dash-grid > .nx-tile > .card::before { display: none; }
+.nx-dash-page .nx-focus-tile > div:last-child {
+  flex: 0 1 auto;
+  min-height: auto;
+  overflow: visible;
+}
+.nx-dash-page.density-compact { gap: 0.75rem; }
+.nx-dash-page.density-compact .nx-dash-grid { gap: 8px; }
+.nx-dash-page.density-compact .nx-focus-tile { padding: 0.78rem !important; }
+
+.nx-tile-drag-handle,
+.nx-tile-size-cycle {
+  position: absolute;
+  top: 8px;
+  z-index: 8;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 25px;
+  border: 1px solid color-mix(in srgb, var(--button-bg) 52%, var(--border-color));
+  border-radius: 7px;
+  background: var(--card-bg);
+  color: color-mix(in srgb, var(--button-bg) 70%, var(--text-color));
+}
+.nx-tile-drag-handle { left: 8px; width: 27px; pointer-events: none; }
+.nx-tile-size-cycle { right: 8px; padding: 0 0.55rem; font-size: 0.66rem; font-weight: 700; cursor: pointer; }
+.nx-dash-grid .nx-tile.editing .nx-tile-head { padding-left: 28px; padding-right: 58px; }
+
+.nx-focus-tile { display: flex; flex-direction: column; gap: 0.75rem; min-width: 0; }
+.nx-focus-tile .nx-tile-head { min-height: 25px; margin: 0; }
+.nx-focus-tile .nx-tile-head h2 {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin: 0;
+  color: var(--text-color);
+  font-size: 0.86rem;
+  font-weight: 700;
+}
+.nx-card-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.2rem;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: color-mix(in srgb, var(--button-bg) 75%, var(--text-color));
+  font-size: 0.68rem;
+  font-weight: 700;
+  cursor: pointer;
+}
+.nx-card-link:hover { filter: brightness(1.15); }
+
+/* Current and next schedule */
+.nx-schedule-glance {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 28px minmax(0, 1fr);
+  gap: 0.75rem;
+  align-items: stretch;
+}
+.nx-schedule-state {
+  min-width: 0;
+  padding: 0.8rem;
+  border: 1px solid color-mix(in srgb, var(--border-color) 75%, transparent);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--card-bg) 88%, var(--hover-bg));
+}
+.nx-schedule-state.current {
+  border-color: color-mix(in srgb, var(--success-color) 36%, var(--border-color));
+  background: color-mix(in srgb, var(--success-color) 5%, var(--card-bg));
+}
+.nx-schedule-state.empty { opacity: 0.78; }
+.nx-schedule-state-label {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  color: var(--text-muted);
+  font-size: 0.62rem;
+  font-weight: 800;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+}
+.nx-schedule-state-label .is-live { color: var(--success-color); }
+.nx-schedule-state-label .is-paused { color: var(--warning-color); }
+.nx-schedule-state h3 {
+  margin: 0.65rem 0 0.25rem;
+  overflow: hidden;
+  color: var(--text-color);
+  font-size: 1rem;
+  line-height: 1.2;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.nx-schedule-state p {
+  margin: 0;
+  overflow: hidden;
+  color: var(--text-secondary);
+  font-size: 0.7rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.nx-schedule-facts { display: flex; flex-wrap: wrap; gap: 0.35rem; margin-top: 0.75rem; }
+.nx-schedule-facts span {
+  padding: 0.25rem 0.4rem;
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--hover-bg) 72%, transparent);
+  color: var(--text-secondary);
+  font-size: 0.62rem;
+}
+.nx-schedule-arrow { display: grid; place-items: center; color: var(--text-muted); }
+
+/* Health */
+.nx-health-summary {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  margin: 0.05rem 0 0;
+  padding-bottom: 0.75rem;
+  border-bottom: 1px solid color-mix(in srgb, var(--border-color) 70%, transparent);
+}
+.nx-health-ring {
+  --nx-health-ring-color: var(--success-color);
+  position: relative;
+  width: 48px;
+  height: 48px;
+  flex: 0 0 auto;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  background: conic-gradient(var(--nx-health-ring-color) var(--nx-health-progress), color-mix(in srgb, var(--border-color) 72%, transparent) 0);
+}
+.nx-health-ring::before { content: ''; position: absolute; inset: 4px; border-radius: 50%; background: var(--card-bg); }
+.nx-health-ring > span { position: relative; z-index: 1; color: var(--text-color); font-size: 0.88rem; font-weight: 800; }
+.nx-health-ring.is-warn { --nx-health-ring-color: var(--warning-color); }
+.nx-health-ring.is-error { --nx-health-ring-color: var(--error-color); }
+.nx-health-copy { min-width: 0; }
+.nx-health-copy strong,
+.nx-health-copy small { display: block; }
+.nx-health-copy strong { color: var(--text-color); font-size: 0.82rem; }
+.nx-health-copy small { margin-top: 0.2rem; color: var(--text-secondary); font-size: 0.66rem; }
+.nx-health-checks { display: grid; gap: 0.45rem; }
+.nx-health-check { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 0.5rem; font-size: 0.68rem; }
+.nx-health-check-name { display: flex; align-items: center; min-width: 0; color: var(--text-color); }
+.nx-health-check-value { overflow: hidden; color: var(--text-secondary); text-overflow: ellipsis; white-space: nowrap; }
+.nx-health-check-value.is-warn { color: var(--warning-color); }
+.nx-health-check-value.is-error { color: var(--error-color); }
+.nx-health-dot { width: 6px; height: 6px; margin-right: 0.45rem; }
+
+/* Library */
+.nx-library-hero { display: flex; align-items: flex-end; justify-content: space-between; gap: 0.7rem; }
+.nx-library-hero > strong { color: var(--text-color); font-size: 1.7rem; letter-spacing: -0.04em; line-height: 1; }
+.nx-library-hero small { margin-left: 0.35rem; color: var(--text-secondary); font-size: 0.68rem; font-weight: 500; letter-spacing: 0; }
+.nx-library-hero > span { color: var(--success-color); font-size: 0.65rem; }
+.nx-library-kpis { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 0.45rem; }
+.nx-library-kpis > div {
+  min-width: 0;
+  padding: 0.6rem;
+  border: 1px solid color-mix(in srgb, var(--border-color) 72%, transparent);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--card-bg) 88%, var(--hover-bg));
+}
+.nx-library-kpis span,
+.nx-library-kpis strong { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.nx-library-kpis span { color: var(--text-secondary); font-size: 0.61rem; }
+.nx-library-kpis strong { margin-top: 0.25rem; color: var(--text-color); font-size: 0.8rem; }
+.nx-library-footer { display: flex; align-items: center; justify-content: space-between; gap: 0.5rem; margin-top: auto; font-size: 0.65rem; }
+.nx-library-footer > span { display: inline-flex; align-items: center; gap: 0.25rem; }
+.nx-library-footer .is-warn { color: var(--warning-color); }
+.nx-library-footer .is-ok { color: var(--success-color); }
+
+/* Quick actions */
+.nx-quick-actions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0.45rem; }
+.nx-quick-action {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 0.55rem;
+  min-height: 44px;
+  padding: 0.55rem 0.65rem;
+  overflow: hidden;
+  border: 1px solid color-mix(in srgb, var(--border-color) 75%, transparent);
+  border-radius: 9px;
+  background: color-mix(in srgb, var(--card-bg) 88%, var(--hover-bg));
+  color: var(--text-color);
+  font-size: 0.7rem;
+  text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.nx-quick-action:hover:not(:disabled) { border-color: color-mix(in srgb, var(--button-bg) 45%, var(--border-color)); background: var(--hover-bg); }
+.nx-quick-action:disabled { opacity: 0.55; cursor: wait; }
+.nx-action-icon {
+  width: 25px;
+  height: 25px;
+  flex: 0 0 auto;
+  display: grid;
+  place-items: center;
+  border-radius: 7px;
+  background: color-mix(in srgb, var(--button-bg) 10%, var(--hover-bg));
+  color: var(--button-bg);
+}
+.nx-action-status { margin: auto 0 0; color: var(--text-secondary); font-size: 0.62rem; }
+.nx-action-status.is-done { color: var(--success-color); }
+.nx-action-status.is-error { color: var(--error-color); }
+
+/* Storage */
+.nx-storage-total { display: flex; align-items: baseline; gap: 0.35rem; }
+.nx-storage-total strong { color: var(--text-color); font-size: 1.5rem; letter-spacing: -0.035em; }
+.nx-storage-total span { color: var(--text-secondary); font-size: 0.65rem; }
+.nx-storage-bar { height: 8px; margin-top: 0.05rem; }
+.nx-storage-legend { display: grid; gap: 0.45rem; }
+.nx-storage-row { display: flex; align-items: center; justify-content: space-between; gap: 0.6rem; color: var(--text-secondary); font-size: 0.67rem; }
+.nx-storage-row > span { display: inline-flex; align-items: center; min-width: 0; }
+.nx-storage-row strong { color: var(--text-color); font-size: 0.67rem; white-space: nowrap; }
+.nx-storage-key { width: 7px; height: 7px; border-radius: 2px; }
+
+/* Customize modal polish */
+.nx-customize .nx-dialog-header { position: relative; padding-right: 4.25rem; }
+.nx-customize .nx-pref-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.nx-customize-close {
+  position: absolute;
+  top: 1rem;
+  right: 1rem;
+  width: 30px;
+  height: 30px;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+.nx-customize-close:hover { color: var(--text-color); background: var(--hover-bg); }
+.nx-switch { position: relative; display: inline-flex; flex: 0 0 auto; }
+.nx-switch input { position: absolute; width: 1px !important; height: 1px !important; opacity: 0; pointer-events: none; }
+.nx-switch-track {
+  position: relative;
+  width: 31px;
+  height: 18px;
+  display: block;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--text-muted) 32%, var(--border-color));
+  transition: background 0.15s ease;
+  cursor: pointer;
+}
+.nx-switch-track::after {
+  content: '';
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 1px 3px rgba(0,0,0,.28);
+  transition: transform 0.15s ease;
+}
+.nx-switch input:checked + .nx-switch-track { background: var(--button-bg); }
+.nx-switch input:checked + .nx-switch-track::after { transform: translateX(13px); }
+.nx-switch input:focus-visible + .nx-switch-track { outline: 2px solid var(--button-bg); outline-offset: 2px; }
+.nx-pref input[type="checkbox"] { order: initial; }
+.nx-pref > span:first-child { order: initial; }
+.nx-tilerow-toggle { justify-self: end; }
+
+/* Compact detail has a useful generic fallback for legacy optional cards, while
+   the five Focus panels make their detailed sections conditional in React. */
+.nx-tile[data-detail="compact"] .nx-tile-rows { display: none; }
+
+@media (max-width: 1100px) {
+  .nx-dash-grid { grid-template-columns: repeat(6, minmax(0, 1fr)); }
+  .nx-dash-grid > .nx-tile { grid-column: span 3; }
+  .nx-dash-grid > .nx-tile[data-size="md"],
+  .nx-dash-grid > .nx-tile[data-size="lg"] { grid-column: span 6; }
+}
+
+@media (max-width: 760px) {
+  .nx-global-clock { display: none; }
+  .nx-dash-header { align-items: flex-start; }
+  .nx-dash-header-actions { width: 100%; }
+  .nx-dash-action { flex: 1 1 auto; }
+  .nx-glance-strip { overflow-x: auto; padding-bottom: 0.2rem; scrollbar-width: thin; }
+  .nx-glance-spacer,
+  .nx-optional-count { display: none; }
+  .nx-dash-grid { grid-template-columns: minmax(0, 1fr); }
+  .nx-dash-grid > .nx-tile,
+  .nx-dash-grid > .nx-tile[data-size="md"],
+  .nx-dash-grid > .nx-tile[data-size="lg"] { grid-column: 1 / -1; }
+  .nx-schedule-glance { grid-template-columns: minmax(0, 1fr); }
+  .nx-schedule-arrow { min-height: 10px; transform: rotate(90deg); }
+  .nx-arrange-tip { align-items: flex-start; }
+  .nx-arrange-saved { display: none; }
+  .nx-customize .nx-pref-grid { grid-template-columns: minmax(0, 1fr); }
+}
+
+@media (max-width: 520px) {
+  .nx-dash-action { padding: 0 0.55rem; font-size: 0.72rem; }
+  .nx-library-kpis { grid-template-columns: minmax(0, 1fr); }
+  .nx-quick-actions { grid-template-columns: minmax(0, 1fr); }
+}
+
+/* ====================================================================
+   Focus Enhanced concept parity
+
+   The dashboard content gets the concept's own visual tokens and rhythm.
+   They live on .nx-content-dashboard, not :root/body, so the established
+   production sidebar remains exactly as-is.
+   ==================================================================== */
+.nx-content-dashboard {
+  --nx-topbar-h: 48px;
+  --bg-color: #101112;
+  --card-bg: #191b1f;
+  --text-color: #f4f5f7;
+  --text-secondary: #969ba6;
+  --text-muted: #6f7580;
+  --border-color: #30333a;
+  --shadow: rgba(0, 0, 0, 0.18);
+  --button-bg: #6d5dfc;
+  --button-hover: #5f50e8;
+  --header-bg: #191b1f;
+  --hover-bg: #202226;
+  --input-bg: #202226;
+  --accent-color: #8b7dff;
+  --success-color: #35d06f;
+  --warning-color: #ffbb42;
+  --error-color: #ff5e67;
+  min-height: 100vh;
+  background: #101112;
+  font-family: Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  font-size: 14px;
+  letter-spacing: -0.01em;
+}
+
+body.light .nx-content-dashboard {
+  --bg-color: #f5f6f8;
+  --card-bg: #ffffff;
+  --text-color: #202226;
+  --text-secondary: #626873;
+  --text-muted: #858b96;
+  --border-color: #dfe2e7;
+  --shadow: rgba(15, 23, 42, 0.09);
+  --header-bg: #ffffff;
+  --hover-bg: #f3f4f7;
+  --input-bg: #f7f8fa;
+  background: #f5f6f8;
+}
+
+.nx-content .nx-topbar {
+  min-height: 48px;
+  height: 48px;
+  background: rgba(16, 17, 18, 0.92);
+  border-bottom-color: #30333a;
+  backdrop-filter: blur(14px);
+}
+body.light .nx-content .nx-topbar {
+  background: rgba(245, 246, 248, 0.92);
+  border-bottom-color: #dfe2e7;
+}
+.nx-content .nx-topbar-inner {
+  max-width: none;
+  padding: 0 22px;
+  gap: 10px;
+}
+.nx-content .nx-global-clock {
+  min-width: 152px;
+  gap: 9px;
+  color: #d9dce3;
+}
+body.light .nx-content .nx-global-clock { color: #30333a; }
+.nx-content .nx-global-clock-icon {
+  width: 27px;
+  height: 27px;
+  border-color: var(--border-color);
+  background: var(--card-bg);
+  color: #8b7dff;
+}
+.nx-content .nx-global-clock strong { font-size: 11px; }
+.nx-content .nx-global-clock small { margin-top: 2px; font-size: 10px; }
+.nx-content .nx-focus-topbar-actions { gap: 10px !important; }
+.nx-service-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.25rem 0.6rem;
+  border-radius: 999px;
+  background: rgba(107, 114, 128, 0.12);
+  color: var(--text-secondary);
+  font-size: 0.75rem;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.nx-service-status-dot {
+  width: 8px;
+  height: 8px;
+  flex: 0 0 auto;
+  border-radius: 50%;
+  background: currentColor;
+}
+.nx-service-status.is-ok { color: #35d06f; background: rgba(53, 208, 111, 0.09); }
+.nx-service-status.is-warn { color: #f6b84a; background: rgba(246, 184, 74, 0.11); }
+.nx-service-status.is-error { color: #ff5e67; background: rgba(255, 94, 103, 0.09); }
+.nx-service-status.is-loading { color: #8f96a3; background: rgba(143, 150, 163, 0.1); }
+.nx-content .nx-focus-topbar-actions > span:first-child {
+  min-height: 25px;
+  padding: 5px 10px !important;
+  border-radius: 999px !important;
+  font-size: 11px !important;
+}
+.nx-content .nx-topbar .nx-iconbtn {
+  width: 29px !important;
+  min-width: 29px;
+  height: 29px;
+  min-height: 29px;
+  padding: 0 !important;
+  border-color: var(--border-color);
+  border-radius: 8px;
+  background: var(--card-bg);
+  color: #c5c8cf;
+}
+.nx-content .nx-focus-help { text-decoration: none; }
+.nx-focus-avatar {
+  width: 28px;
+  height: 28px;
+  flex: 0 0 auto;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  background: #6d5dfc;
+  color: #fff;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: -0.02em;
+}
+
+.nx-content-dashboard > .dashboard {
+  width: 100%;
+  max-width: 1328px;
+  min-height: calc(100vh - 48px);
+  margin: 0 auto;
+  padding: 21px 30px 46px;
+}
+.nx-content-dashboard .nx-dash-page {
+  display: block;
+  max-width: none;
+  margin: 0;
+}
+.nx-content-dashboard .nx-dash-header {
+  align-items: center;
+  margin-bottom: 16px;
+}
+.nx-content-dashboard .nx-dash-eyebrow {
+  margin-bottom: 6px;
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+}
+.nx-content-dashboard .nx-dash-greeting {
+  margin: 0;
+  font-size: 25px;
+  font-weight: 700;
+  line-height: 1.1;
+  letter-spacing: -0.035em;
+}
+.nx-content-dashboard .nx-dash-note {
+  gap: 7px;
+  margin-top: 7px;
+  font-size: 12px;
+}
+.nx-content-dashboard .nx-dash-note-dot {
+  width: 7px;
+  height: 7px;
+}
+.nx-content-dashboard .nx-dash-header-actions { gap: 8px; }
+.nx-content-dashboard .nx-dash-action {
+  min-height: 34px;
+  padding: 0 12px;
+  border-radius: 9px;
+  background: var(--card-bg);
+  color: #dfe1e6;
+  font-size: 12px;
+}
+body.light .nx-content-dashboard .nx-dash-action { color: #343841; }
+.nx-content-dashboard .nx-dash-action.primary { background: #6d5dfc; border-color: #6d5dfc; color: #fff; }
+
+.nx-content-dashboard .nx-glance-strip {
+  gap: 8px;
+  min-height: 26px;
+  margin-bottom: 12px;
+}
+.nx-content-dashboard .nx-glance-label {
+  margin-right: 2px;
+  font-size: 10px;
+}
+.nx-content-dashboard .nx-glance-chip {
+  min-height: 26px;
+  padding: 0 9px;
+  border-color: var(--border-color);
+  background: rgba(255, 255, 255, 0.018);
+  font-size: 10px;
+}
+body.light .nx-content-dashboard .nx-glance-chip { background: rgba(15, 23, 42, 0.018); }
+.nx-content-dashboard .nx-optional-count { font-size: 10px; color: #aaa3ff; }
+
+.nx-content-dashboard .nx-arrange-tip { margin: 0 0 11px; font-size: 10px; }
+.nx-content-dashboard .nx-dash-grid {
+  grid-auto-flow: row;
+  gap: 12px;
+}
+.nx-content-dashboard .nx-dash-page .nx-dash-grid > .nx-tile > .card {
+  padding: 16px;
+  border-color: #30333a !important;
+  border-radius: 14px;
+  background: linear-gradient(180deg, #1c1e22 0%, #191b1f 100%);
+  box-shadow: 0 6px 22px rgba(0, 0, 0, 0.14);
+}
+body.light .nx-content-dashboard .nx-dash-page .nx-dash-grid > .nx-tile > .card {
+  border-color: #dfe2e7 !important;
+  background: linear-gradient(180deg, #ffffff 0%, #fbfbfc 100%);
+  box-shadow: 0 6px 22px rgba(15, 23, 42, 0.07);
+}
+.nx-content-dashboard .nx-focus-schedule,
+.nx-content-dashboard .nx-focus-health { min-height: 243px; }
+.nx-content-dashboard .nx-focus-library,
+.nx-content-dashboard .nx-focus-actions,
+.nx-content-dashboard .nx-focus-storage { min-height: 213px; }
+.nx-content-dashboard .nx-focus-tile { gap: 12px; }
+.nx-content-dashboard .nx-focus-tile .nx-tile-head { min-height: 25px; }
+.nx-content-dashboard .nx-focus-tile .nx-tile-head h2 {
+  gap: 9px;
+  font-size: 13px;
+  color: #eceef2;
+}
+body.light .nx-content-dashboard .nx-focus-tile .nx-tile-head h2 { color: #252932; }
+.nx-content-dashboard .nx-focus-tile .nx-tile-head h2 svg { width: 13px; height: 13px; color: var(--text-secondary); }
+.nx-content-dashboard .nx-card-link { font-size: 10px; color: #a69eff; }
+
+.nx-content-dashboard .nx-schedule-glance { grid-template-columns: minmax(0, 1fr) 30px minmax(0, 1fr); gap: 13px; }
+.nx-content-dashboard .nx-schedule-state { padding: 12px; background: rgba(255, 255, 255, 0.018); }
+.nx-content-dashboard .nx-schedule-state.current { background: rgba(53, 208, 111, 0.035); border-color: rgba(53, 208, 111, 0.3); }
+.nx-content-dashboard .nx-schedule-state-label { font-size: 9px; }
+.nx-content-dashboard .nx-schedule-state h3 { margin: 10px 0 5px; font-size: 15px; }
+.nx-content-dashboard .nx-schedule-state p { font-size: 10px; }
+.nx-content-dashboard .nx-schedule-facts { gap: 6px; margin-top: 12px; }
+.nx-content-dashboard .nx-schedule-facts span { padding: 4px 6px; font-size: 9px; }
+
+.nx-content-dashboard .nx-health-summary { gap: 11px; margin: 0; padding-bottom: 11px; }
+.nx-content-dashboard .nx-health-ring { width: 46px; height: 46px; }
+.nx-content-dashboard .nx-health-copy strong { font-size: 13px; }
+.nx-content-dashboard .nx-health-copy small { margin-top: 3px; font-size: 10px; }
+.nx-content-dashboard .nx-health-checks { gap: 8px; }
+.nx-content-dashboard .nx-health-check { font-size: 10px; }
+
+.nx-content-dashboard .nx-library-hero > strong { font-size: 26px; }
+.nx-content-dashboard .nx-library-hero small { margin-left: 5px; font-size: 10px; }
+.nx-content-dashboard .nx-library-hero > span { font-size: 9px; }
+.nx-content-dashboard .nx-library-kpis { gap: 7px; }
+.nx-content-dashboard .nx-library-kpis > div { padding: 9px; }
+.nx-content-dashboard .nx-library-kpis span { font-size: 9px; }
+.nx-content-dashboard .nx-library-kpis strong { margin-top: 5px; font-size: 13px; }
+.nx-content-dashboard .nx-library-footer { font-size: 9px; }
+
+.nx-content-dashboard .nx-quick-actions { gap: 7px; }
+.nx-content-dashboard .nx-quick-action { min-height: 44px; padding: 0 10px; gap: 9px; font-size: 10px; }
+.nx-content-dashboard .nx-action-icon { width: 24px; height: 24px; }
+.nx-content-dashboard .nx-action-status { font-size: 9px; }
+
+.nx-content-dashboard .nx-storage-total strong { font-size: 24px; }
+.nx-content-dashboard .nx-storage-total span { font-size: 10px; }
+.nx-content-dashboard .nx-storage-bar { margin: 1px 0 0; }
+.nx-content-dashboard .nx-storage-legend { gap: 7px; }
+.nx-content-dashboard .nx-storage-row,
+.nx-content-dashboard .nx-storage-row strong { font-size: 10px; }
+.nx-content-dashboard .nx-storage-seg-0 { background: #58a6ff; }
+.nx-content-dashboard .nx-storage-seg-1 { background: #ffbb42; }
+.nx-content-dashboard .nx-storage-seg-2 { background: #35d06f; }
+.nx-content-dashboard .nx-storage-seg-3 { background: #e879f9; }
+
+body.dark .nx-customize {
+  width: min(780px, calc(100vw - 34px));
+  max-width: 780px;
+  color: #f4f5f7;
+  background: #17191d;
+  border-color: #3a3d45;
+  border-radius: 16px;
+  box-shadow: 0 28px 90px rgba(0, 0, 0, 0.58);
+}
+body.dark .nx-customize .nx-dialog-header,
+body.dark .nx-customize .nx-dialog-footer { border-color: #30333a; }
+body.dark .nx-customize .nx-dialog-footer { background: #191b1f; }
+body.dark .nx-customize .nx-preset,
+body.dark .nx-customize .nx-pref,
+body.dark .nx-customize .nx-tilerow { background: rgba(255, 255, 255, 0.014); border-color: #30333a; }
+
+@media (max-width: 760px) {
+  .nx-content-dashboard > .dashboard { padding: 18px 14px 36px; }
+  .nx-content-dashboard .nx-focus-schedule,
+  .nx-content-dashboard .nx-focus-health,
+  .nx-content-dashboard .nx-focus-library,
+  .nx-content-dashboard .nx-focus-actions,
+  .nx-content-dashboard .nx-focus-storage { min-height: 0; }
 }
