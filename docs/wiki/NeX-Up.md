@@ -402,6 +402,23 @@ After mounting the volume, open **NeX-Up → Settings** and set the **Storage Pa
 
 This must match the right side of your volume mount (the container path). If they don't match, NeXroll writes files to one place and looks for them in another.
 
+### Easier Option: Store Trailers Inside Your Prerolls Folder
+
+If you'd rather not manage a second volume mount, point the Storage Path at a
+subfolder inside your existing prerolls path instead, e.g. `/data/prerolls/nexup_trailers`.
+Since that's already inside the volume your media server can see, no extra
+mount or Path Mapping is needed. NeX-Up → Settings now suggests this path
+automatically when Storage Path is unset — click **use this** to apply it in
+one step (existing downloaded trailers are relocated automatically if you
+change an already-configured path).
+
+If NeXroll detects it's running in Docker and your configured Storage Path is
+neither inside the prerolls folder nor covered by a Path Mapping, NeX-Up →
+Settings also shows a dismissible warning with a one-click "Move to
+recommended folder" fix, so this misconfiguration doesn't fail silently the
+way it used to (trailers apply to your media server's preroll setting but the
+file isn't reachable, so nothing plays).
+
 ### Verify It Works
 
 1. Go to **NeX-Up → Your Trailers**

@@ -2738,6 +2738,21 @@ def startup_event():
     # Log startup banner
     _log_startup_banner()
 
+    # Eager, single-threaded warm-import of yt_dlp. Closes a startup race where
+    # radarr_connector's _download_with_ytdlp() (called via run_in_executor from
+    # concurrent NeX-Up trailer downloads) and GET /system/dependencies (lazy
+    # import on every request) could both be the "first" importer concurrently
+    # with the scheduler's background sync thread — historically producing
+    # AttributeError: module 'yt_dlp' has no attribute 'utils'/'version' until
+    # the next restart. Importing once here, before any background thread
+    # starts, guarantees the module is fully initialized before anything else
+    # can race it.
+    try:
+        import yt_dlp as _warm_yt_dlp
+        _file_log(f"yt-dlp warm-imported: {_warm_yt_dlp.version.__version__}")
+    except Exception as e:
+        _file_log(f"yt-dlp warm-import failed (trailer downloads will retry lazily): {e}", level="WARNING")
+
     # PO-Token provider (bgutil) for YouTube downloads. Init always so status
     # endpoints work; start the local token server in the background when NeX-Up
     # is enabled and the provider is present, so trailer downloads can mint
@@ -3042,6 +3057,11 @@ def system_dependencies():
     dependencies["ffprobe"]["version"] = ffprobe_ver
     dependencies["ffprobe"]["path"] = ffprobe_cmd if ffprobe_ok else None
     
+    # Which deps can be installed from this page, given the platform. Computed
+    # up front so both the yt-dlp and Deno/PO-token installable flags below can
+    # use it.
+    is_docker = _is_running_in_docker()
+
     # Check yt-dlp (Python module first, then CLI)
     try:
         import yt_dlp
@@ -3055,7 +3075,12 @@ def system_dependencies():
             yt_ok, yt_ver = probe_version('yt-dlp', '--version')
             dependencies["yt_dlp"]["version"] = f"yt-dlp {yt_ver}" if yt_ver else "yt-dlp (version unknown)"
             dependencies["yt_dlp"]["path"] = yt_dlp_path
-    
+    # Unlike deno/potoken, this doesn't gate on "available" — yt-dlp is always
+    # bundled/present; the button is about freshness, not first-install. Not
+    # offered in Docker (image-managed) or frozen Windows builds (yt-dlp is
+    # compiled into the single-file exe — no site-packages to pip-upgrade).
+    dependencies["yt_dlp"]["installable"] = (not is_docker) and (not getattr(sys, "frozen", False))
+
     # Check Deno (required for yt-dlp YouTube extraction). Use _find_deno so a
     # deno installed after the backend started (not yet on the process PATH) is
     # still detected — and flag whether it was found off-PATH so the UI can hint
@@ -3072,7 +3097,6 @@ def system_dependencies():
         dependencies["deno"]["on_path"] = shutil.which('deno') is not None
 
     # Which deps can be installed from this page, given the platform.
-    is_docker = _is_running_in_docker()
     dependencies["deno"]["installable"] = (not is_docker) and (not dependencies["deno"]["available"] or not dependencies["deno"].get("on_path", True))
 
     # Node + PO-token provider (bgutil) — the modern fix for YouTube's bot wall.
@@ -3110,7 +3134,8 @@ def system_dependencies():
         "platform_version": platform.version(),
         "architecture": platform.machine(),
         "hostname": platform.node(),
-        "is_docker": is_docker
+        "is_docker": is_docker,
+        "frozen": bool(getattr(sys, "frozen", False))
     }
 
     return {
@@ -3194,6 +3219,71 @@ def install_deno():
         }
 
     return {"success": False, "message": "Install ran but Deno could not be located afterward. A NeXroll restart may be required."}
+
+
+@app.post("/system/dependencies/install/ytdlp")
+def install_ytdlp():
+    """Upgrade the bundled yt-dlp Python package via pip.
+
+    Docker: refused — yt-dlp is baked into the image; pull a newer image.
+    Frozen (Windows installer) builds: refused — yt-dlp is compiled into the
+    single-file executable; there is no separate Python interpreter or
+    site-packages to upgrade in place. Update by installing a newer release.
+    Non-frozen (dev/source) installs: runs `sys.executable -m pip install
+    --upgrade yt-dlp`. Takes effect after restart — same caveat as Deno.
+    """
+    if _is_running_in_docker():
+        return {"success": False, "docker": True,
+                "message": "Running in Docker — yt-dlp is provided by the image. Pull the latest NeXroll image to update it; runtime installs don't persist across container recreation."}
+
+    if getattr(sys, "frozen", False):
+        return {"success": False, "frozen": True,
+                "message": "yt-dlp is bundled inside this NeXroll build and can't be upgraded in place. Install the latest NeXroll release to get a newer yt-dlp."}
+
+    try:
+        import yt_dlp as _pre
+        old_version = getattr(_pre.version, "__version__", None)
+    except Exception:
+        old_version = None
+
+    try:
+        r = _run_subprocess(
+            [sys.executable, "-m", "pip", "install", "--upgrade", "yt-dlp"],
+            capture_output=True, text=True, timeout=120,
+        )
+        out = (r.stdout or "") + "\n" + (r.stderr or "")
+        if r.returncode != 0:
+            _file_log(f"yt-dlp upgrade failed (rc={r.returncode}): {out[-500:]}")
+            return {"success": False, "message": f"Upgrade failed: {out.strip()[-300:] or 'unknown error'}"}
+    except Exception as e:
+        _file_log(f"yt-dlp upgrade exception: {e}")
+        return {"success": False, "message": f"Upgrade error: {e}"}
+
+    # Check the new on-disk version from a fresh subprocess rather than
+    # reloading sys.modules['yt_dlp'] in-process — this process keeps using
+    # the version it warm-imported at startup regardless, until restarted.
+    new_version = None
+    try:
+        vr = _run_subprocess(
+            [sys.executable, "-c", "import yt_dlp; print(yt_dlp.version.__version__)"],
+            capture_output=True, text=True, timeout=30,
+        )
+        if vr.returncode == 0 and vr.stdout:
+            new_version = vr.stdout.strip().splitlines()[-1].strip()
+    except Exception:
+        pass
+
+    _file_log(f"yt-dlp upgraded: {old_version} -> {new_version or 'unknown'}")
+    changed = bool(new_version) and new_version != old_version
+    return {
+        "success": True,
+        "old_version": old_version,
+        "version": new_version,
+        "message": (f"yt-dlp upgraded to {new_version}. Restart NeXroll to use it."
+                     if changed else
+                     f"yt-dlp is already up to date ({old_version})." if new_version
+                     else "yt-dlp upgrade command completed; restart NeXroll to pick up the change."),
+    }
 
 
 # Pinned Node LTS. 22.12+ is required so `require()` of ESM works by default:
@@ -18201,6 +18291,49 @@ async def get_sync_progress():
     
     return StreamingResponse(event_stream(), media_type="text/event-stream")
 
+
+def _nexup_storage_mapping_status(storage_path: Optional[str], setting) -> dict:
+    """
+    Best-effort check for whether a configured NeX-Up trailer storage path is
+    reachable by the media server: either nested under the prerolls dir (which
+    is already mounted/mapped for regular prerolls) or covered by an explicit
+    Path Mappings entry. Used to warn Docker users before they hit the silent
+    'file not found' failure this causes (nexup trailers apply fine to Plex's
+    setting but Plex can't actually see the file).
+    """
+    result = {"is_docker": _is_running_in_docker(), "under_prerolls_dir": False, "covered_by_mapping": False}
+    if not storage_path:
+        return result
+    try:
+        sp = os.path.normpath(os.path.abspath(str(storage_path)))
+        prerolls = os.path.normpath(os.path.abspath(PREROLLS_DIR))
+        if sys.platform.startswith("win"):
+            result["under_prerolls_dir"] = sp.lower().startswith(prerolls.lower())
+        else:
+            result["under_prerolls_dir"] = sp.startswith(prerolls)
+    except Exception:
+        sp = None
+    try:
+        raw = getattr(setting, "path_mappings", None) if setting else None
+        if raw and sp:
+            data = json.loads(raw)
+            if isinstance(data, list):
+                for m in data:
+                    if not isinstance(m, dict):
+                        continue
+                    src = m.get("local")
+                    if not src:
+                        continue
+                    src_norm = os.path.normpath(str(src))
+                    matched = sp.lower().startswith(src_norm.lower()) if sys.platform.startswith("win") else sp.startswith(src_norm)
+                    if matched:
+                        result["covered_by_mapping"] = True
+                        break
+    except Exception:
+        pass
+    return result
+
+
 @app.get("/nexup/settings")
 def get_nexup_settings(user: models.User = Depends(require_auth), db: Session = Depends(get_db)):
     """Get all NeX-Up settings"""
@@ -18211,6 +18344,8 @@ def get_nexup_settings(user: models.User = Depends(require_auth), db: Session = 
             "radarr_url": None,
             "radarr_connected": False,
             "storage_path": None,
+            "storage_path_needs_mapping_warning": False,
+            "recommended_storage_path": os.path.join(PREROLLS_DIR, "nexup_trailers"),
             "quality": "1080",
             "days_ahead": 90,
             "max_trailers": 10,
@@ -18240,12 +18375,19 @@ def get_nexup_settings(user: models.User = Depends(require_auth), db: Session = 
     refresh_delta = datetime.timedelta(hours=auto_refresh_hours)
     next_radarr = (last_radarr + refresh_delta).isoformat() if last_radarr and auto_refresh_hours > 0 else None
     next_sonarr = (last_sonarr + refresh_delta).isoformat() if last_sonarr and auto_refresh_hours > 0 else None
-    
+    _nexup_storage_path = getattr(setting, 'nexup_storage_path', None)
+    _mapping_status = _nexup_storage_mapping_status(_nexup_storage_path, setting)
+
     return {
         "enabled": getattr(setting, 'nexup_enabled', False),
         "radarr_url": getattr(setting, 'nexup_radarr_url', None),
         "radarr_connected": bool(getattr(setting, 'nexup_radarr_url', None) and getattr(setting, 'nexup_radarr_api_key', None)),
-        "storage_path": getattr(setting, 'nexup_storage_path', None),
+        "storage_path": _nexup_storage_path,
+        "recommended_storage_path": os.path.join(PREROLLS_DIR, "nexup_trailers"),
+        "storage_path_needs_mapping_warning": bool(
+            _nexup_storage_path and _mapping_status["is_docker"]
+            and not _mapping_status["under_prerolls_dir"] and not _mapping_status["covered_by_mapping"]
+        ),
         "quality": getattr(setting, 'nexup_quality', '1080'),
         "days_ahead": getattr(setting, 'nexup_days_ahead', 90),
         "max_trailers": getattr(setting, 'nexup_max_trailers', 10),
@@ -18501,6 +18643,41 @@ def update_nexup_settings(
     _file_log(f"NeX-Up settings updated")
     log_event('INFO', 'nexup', 'NeX-Up settings updated', source='update_nexup_settings')
     return {"message": "NeX-Up settings updated", "success": True}
+
+
+@app.get("/nexup/tmdb/test-key")
+async def test_tmdb_key(api_key: Optional[str] = None, db: Session = Depends(get_db)):
+    """Validate a TMDB API key against TMDB's own /authentication endpoint —
+    a lightweight, side-effect-free way to check a key without searching for
+    a real movie. If api_key isn't passed (e.g. testing what's already saved),
+    falls back to the configured key, then NeXroll's bundled key, mirroring
+    TMDBTrailerFetcher's own fallback in radarr_connector.py.
+    """
+    import httpx
+    from backend.radarr_connector import TMDB_API_KEY, TMDB_BASE_URL
+
+    key = api_key
+    if not key:
+        setting = db.query(models.Setting).first()
+        key = getattr(setting, 'nexup_tmdb_api_key', None) if setting else None
+    using_custom_key = bool(key)
+    key = key or TMDB_API_KEY
+
+    try:
+        async with httpx.AsyncClient(timeout=15) as client:
+            response = await client.get(f"{TMDB_BASE_URL}/authentication", params={'api_key': key})
+        if response.status_code == 200:
+            return {"valid": True, "using_custom_key": using_custom_key,
+                    "message": "TMDB API key is valid." if using_custom_key else "Using NeXroll's bundled TMDB key (valid)."}
+        elif response.status_code == 401:
+            return {"valid": False, "using_custom_key": using_custom_key,
+                    "message": "TMDB rejected this key (invalid or expired)."}
+        else:
+            return {"valid": False, "using_custom_key": using_custom_key,
+                    "message": f"TMDB returned an unexpected status ({response.status_code})."}
+    except Exception as e:
+        return {"valid": False, "using_custom_key": using_custom_key, "message": f"Could not reach TMDB: {e}"}
+
 
 @app.post("/nexup/radarr/connect")
 async def connect_radarr(

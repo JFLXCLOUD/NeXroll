@@ -18,6 +18,13 @@ env:
   # (Node 20 removed from runners entirely).
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
+# Shared with docker-refresh.yml's scheduled tag refresh — without this, a
+# real release push and a scheduled refresh could race a multi-arch
+# `buildx --push` on the same floating tag and produce a broken manifest list.
+concurrency:
+  group: docker-image-push
+  cancel-in-progress: false
+
 jobs:
   build-and-push:
     runs-on: ubuntu-latest

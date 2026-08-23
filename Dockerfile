@@ -118,6 +118,11 @@ RUN pip install --no-cache-dir --upgrade pip && \
     pip install --no-cache-dir --no-index --find-links=/wheels -r /app/NeXroll/requirements.txt && \
     rm -rf /wheels
 
+# Fail the build if a broken/partial yt-dlp wheel is ever resolved — this is
+# the exact failure shape that caused a day-long outage in the field
+# (AttributeError: module 'yt_dlp' has no attribute 'utils'/'version').
+RUN python -c "import yt_dlp; assert yt_dlp.version.__version__; assert yt_dlp.utils; print(f'yt-dlp OK: {yt_dlp.version.__version__}')"
+
 # Copy backend
 COPY NeXroll/backend /app/NeXroll/backend
 

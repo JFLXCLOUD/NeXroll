@@ -1117,6 +1117,8 @@ const [applyingToServer, setApplyingToServer] = useState(false);
     radarr_url: null,
     radarr_connected: false,
     storage_path: null,
+    recommended_storage_path: null,
+    storage_path_needs_mapping_warning: false,
     quality: '1080',
     days_ahead: 90,
     max_trailers: 10,
@@ -1141,6 +1143,14 @@ const [applyingToServer, setApplyingToServer] = useState(false);
     release_date_preference: 'digital_first'
   });
   const [nexupLoading, setNexupLoading] = useState(false);
+  const [nexupMappingWarningDismissedFor, setNexupMappingWarningDismissedFor] = useState(() => {
+    try { return localStorage.getItem('nexroll_nexup_mapping_warning_dismissed_for') || ''; } catch { return ''; }
+  });
+  const dismissNexupMappingWarning = () => {
+    const path = nexupSettings.storage_path || '';
+    setNexupMappingWarningDismissedFor(path);
+    try { localStorage.setItem('nexroll_nexup_mapping_warning_dismissed_for', path); } catch {}
+  };
   const [downloadingTrailerId, setDownloadingTrailerId] = useState(null); // Track which trailer is downloading
   const [downloadProgress, setDownloadProgress] = useState(null); // { title: 'Movie Name', status: 'Downloading...' }
   const [syncProgress, setSyncProgress] = useState(null); // { status: 'syncing', checked: 0, total: 0 }
@@ -1167,6 +1177,14 @@ const [applyingToServer, setApplyingToServer] = useState(false);
   const [playingTrailer, setPlayingTrailer] = useState(null); // { type: 'movie'|'tv', trailer: {...} }
   const [thumbnailProgress, setThumbnailProgress] = useState(null); // { status: 'Rebuilding...', phase: 'processing' }
   const [librarySyncProgress, setLibrarySyncProgress] = useState(null); // { status: 'Syncing...', phase: 'init'|'done'|'error' }
+  // Read-only visibility toggle for the Library page: NeX-Up trailers live in
+  // their own tables (ComingSoonTrailer/ComingSoonTVTrailer) with their own
+  // auto-retention lifecycle and are never scanned into Preroll rows — this
+  // just lets a user glance at them from Library without merging the two
+  // systems. No move/categorize/apply-to-Plex actions here; manage trailers
+  // from the NeX-Up page.
+  const [showNexupTrailersInLibrary, setShowNexupTrailersInLibrary] = useState(false);
+  const [tmdbKeyTest, setTmdbKeyTest] = useState(null); // { testing, valid, message }
   const [communityIndexProgress, setCommunityIndexProgress] = useState(null); // { status: 'Building...', phase: 'init'|'done'|'error' }
   const [nexupSyncProgress, setNexupSyncProgress] = useState(null); // { status: 'Syncing...', phase: 'init'|'done'|'error' }
   const [updateCheckProgress, setUpdateCheckProgress] = useState(null); // { status: 'Checking...', phase: 'init'|'done'|'error' }
@@ -10130,6 +10148,28 @@ const DashboardTiles = {
           </div>
         )}
         <button
+          onClick={() => {
+            const next = !showNexupTrailersInLibrary;
+            setShowNexupTrailersInLibrary(next);
+            if (next) { loadNexupTrailers(); loadNexupTVTrailers(); }
+          }}
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: '0.5rem',
+            padding: '0.6rem 1rem',
+            background: showNexupTrailersInLibrary ? 'rgba(0, 212, 255, 0.1)' : 'var(--card-bg)',
+            borderRadius: '8px',
+            border: '1px solid ' + (showNexupTrailersInLibrary ? 'var(--accent-color)' : 'var(--border-color)'),
+            cursor: 'pointer',
+            fontSize: '0.9rem'
+          }}
+          title="Show downloaded NeX-Up trailers here too — read-only; manage them from the NeX-Up page"
+        >
+          {showNexupTrailersInLibrary ? <Eye size={16} style={{ color: 'var(--accent-color)' }} /> : <EyeOff size={16} style={{ color: 'var(--text-secondary)' }} />}
+          <span style={{ color: showNexupTrailersInLibrary ? 'var(--accent-color)' : 'var(--text-secondary)' }}>Show NeX-Up trailers</span>
+        </button>
+        <button
           onClick={handleReinitThumbnails}
           className="button button-secondary"
           style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: '0.35rem' }}
@@ -10139,6 +10179,65 @@ const DashboardTiles = {
           {thumbnailProgress?.phase === 'init' ? <Loader2 size={14} className="spin" /> : <RefreshCw size={14} />} Reinitialize Thumbnails
         </button>
       </div>
+
+      {/* NeX-Up Trailers (read-only visibility into the Library page). Trailers
+          are managed entirely from the NeX-Up page — this is purely a "see
+          them here too" view, so no selection/delete/categorize/apply actions
+          are offered. */}
+      {showNexupTrailersInLibrary && (
+        <div className="card" style={{ padding: '1rem 1.25rem' }}>
+          <h3 style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', margin: '0 0 0.75rem 0', fontSize: '1rem' }}>
+            <Film size={16} /> NeX-Up Trailers
+            <span style={{ fontWeight: 400, fontSize: '0.8rem', color: 'var(--text-secondary)' }}>
+              ({nexupTrailers.length + nexupTVTrailers.length}, read-only — manage from the NeX-Up page)
+            </span>
+          </h3>
+          {(nexupTrailers.length + nexupTVTrailers.length) === 0 ? (
+            <p style={{ color: 'var(--text-secondary)', fontSize: '0.9rem', margin: 0 }}>
+              No NeX-Up trailers downloaded yet.
+            </p>
+          ) : (
+            <div style={{ display: 'grid', gap: '0.5rem' }}>
+              {[
+                ...nexupTrailers.map(t => ({ ...t, _kind: 'movie' })),
+                ...nexupTVTrailers.map(t => ({ ...t, _kind: 'tv' })),
+              ].map(trailer => (
+                <div
+                  key={`${trailer._kind}-${trailer.id}`}
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '0.75rem',
+                    padding: '0.5rem 0.75rem',
+                    background: 'var(--bg-color)',
+                    borderRadius: '6px',
+                    border: '1px solid var(--border-color)'
+                  }}
+                >
+                  {trailer._kind === 'movie' ? <Film size={15} style={{ color: 'var(--text-secondary)', flexShrink: 0 }} /> : <Tv size={15} style={{ color: 'var(--text-secondary)', flexShrink: 0 }} />}
+                  <span style={{ fontWeight: 500, flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    {trailer.title}{trailer.year ? ` (${trailer.year})` : ''}
+                  </span>
+                  {trailer.release_date && (
+                    <span style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', flexShrink: 0 }}>
+                      {formatReleaseDate(trailer.release_date)}
+                    </span>
+                  )}
+                  {trailer.local_path && (
+                    <button
+                      onClick={() => setPlayingTrailer({ type: trailer._kind, trailer })}
+                      className="button button-secondary"
+                      style={{ padding: '0.25rem 0.6rem', fontSize: '0.8rem', display: 'inline-flex', alignItems: 'center', gap: '0.3rem', flexShrink: 0 }}
+                    >
+                      <Play size={12} /> Preview
+                    </button>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Reinitialize-thumbnails status, right where the button is (also mirrored
           in the dashboard quick-actions). */}
@@ -19407,6 +19506,43 @@ const DashboardTiles = {
     }
   };
 
+  const handleInstallYtdlp = async () => {
+    setInstallingDep('ytdlp');
+    try {
+      const res = await fetch(apiUrl('system/dependencies/install/ytdlp'), {
+        method: 'POST', credentials: 'include'
+      });
+      const data = await res.json().catch(() => ({}));
+      if (data.success) {
+        showAlert(data.message || 'yt-dlp upgraded.', 'success');
+        await recheckFfmpeg(); // re-probe dependencies so the card updates
+      } else {
+        showAlert(data.message || 'Failed to upgrade yt-dlp.', 'error');
+      }
+    } catch (e) {
+      showAlert('Failed to upgrade yt-dlp: ' + (e?.message || e), 'error');
+    } finally {
+      setInstallingDep(null);
+    }
+  };
+
+  const handleTestTmdbKey = async () => {
+    setTmdbKeyTest({ testing: true });
+    try {
+      const key = nexupSettings.tmdb_api_key || '';
+      const url = apiUrl('/nexup/tmdb/test-key' + (key ? ('?api_key=' + encodeURIComponent(key)) : ''));
+      const res = await fetch(url, { credentials: 'include' });
+      const data = await res.json().catch(() => ({}));
+      setTmdbKeyTest({
+        testing: false,
+        valid: !!data.valid,
+        message: data.message || (data.valid ? 'Key is valid.' : 'Key test failed.'),
+      });
+    } catch (e) {
+      setTmdbKeyTest({ testing: false, valid: false, message: 'Failed to test key: ' + (e?.message || e) });
+    }
+  };
+
   const handleInstallPotoken = async () => {
     setInstallingDep('potoken');
     try {
@@ -24493,6 +24629,73 @@ const DashboardTiles = {
                 <p style={{ fontSize: '0.8rem', color: '#888', marginTop: '0.25rem' }}>
                   Where downloaded trailers will be stored temporarily
                 </p>
+
+                {!nexupSettings.storage_path && nexupSettings.recommended_storage_path && (
+                  <p style={{ fontSize: '0.8rem', marginTop: '0.4rem' }}>
+                    Recommended:{' '}
+                    <code style={{ background: 'var(--hover-bg)', padding: '0.1rem 0.35rem', borderRadius: '4px' }}>
+                      {nexupSettings.recommended_storage_path}
+                    </code>
+                    {' '}(inside your prerolls folder, so it's already reachable by your media server —{' '}
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const path = nexupSettings.recommended_storage_path;
+                        setNexupSettings(prev => ({ ...prev, storage_path: path }));
+                        handleUpdateNexupSettings({ storage_path: path });
+                      }}
+                      style={{ background: 'none', border: 'none', padding: 0, color: '#00a8e8', cursor: 'pointer', textDecoration: 'underline', font: 'inherit' }}
+                    >
+                      use this
+                    </button>
+                    {' '}or Browse to pick your own).
+                  </p>
+                )}
+
+                {nexupSettings.storage_path_needs_mapping_warning
+                  && nexupMappingWarningDismissedFor !== nexupSettings.storage_path && (
+                  <div style={{
+                    marginTop: '0.6rem', padding: '0.75rem', borderRadius: '6px',
+                    border: '1px solid #f59e0b', background: 'rgba(245, 158, 11, 0.1)',
+                    display: 'flex', gap: '0.5rem', alignItems: 'flex-start'
+                  }}>
+                    <AlertTriangle size={16} style={{ color: '#f59e0b', flexShrink: 0, marginTop: '0.1rem' }} />
+                    <div style={{ fontSize: '0.82rem', lineHeight: 1.5 }}>
+                      This folder isn't inside your prerolls path and no Path Mapping covers it — your media
+                      server likely can't see files stored here, so trailer sequences may fail to play even
+                      though NeXroll downloads them fine.
+                      <div style={{ marginTop: '0.4rem', display: 'flex', gap: '0.75rem', flexWrap: 'wrap' }}>
+                        {nexupSettings.recommended_storage_path && (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              const path = nexupSettings.recommended_storage_path;
+                              setNexupSettings(prev => ({ ...prev, storage_path: path }));
+                              handleUpdateNexupSettings({ storage_path: path });
+                            }}
+                            style={{ background: 'none', border: 'none', padding: 0, color: '#00a8e8', cursor: 'pointer', textDecoration: 'underline', font: 'inherit' }}
+                          >
+                            Move to recommended folder
+                          </button>
+                        )}
+                        <button
+                          type="button"
+                          onClick={() => setActiveTab('settings/paths')}
+                          style={{ background: 'none', border: 'none', padding: 0, color: '#00a8e8', cursor: 'pointer', textDecoration: 'underline', font: 'inherit' }}
+                        >
+                          Add a Path Mapping instead
+                        </button>
+                        <button
+                          type="button"
+                          onClick={dismissNexupMappingWarning}
+                          style={{ background: 'none', border: 'none', padding: 0, color: 'var(--text-secondary)', cursor: 'pointer', textDecoration: 'underline', font: 'inherit' }}
+                        >
+                          Dismiss
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                )}
               </div>
               
               {nexupStorage && nexupStorage.configured && (
@@ -24775,16 +24978,42 @@ const DashboardTiles = {
                   <label style={{ display: 'block', marginBottom: '0.5rem', fontWeight: 'bold' }}>
                     TMDB API Key
                   </label>
-                  <input
-                    type={nexupSettings.tmdb_api_key ? 'password' : 'text'}
-                    placeholder="Enter your TMDB API key (optional)"
-                    value={nexupSettings.tmdb_api_key || ''}
-                    onChange={(e) => handleUpdateNexupSettings({ tmdb_api_key: e.target.value || null })}
-                    onFocus={(e) => { e.target.type = 'text'; }}
-                    onBlur={(e) => { if (nexupSettings.tmdb_api_key) e.target.type = 'password'; }}
-                    style={{ width: '75%', padding: '0.5rem', borderRadius: '4px', border: '1px solid var(--border-color)' }}
-                    autoComplete="off"
-                  />
+                  <div style={{ display: 'flex', gap: '0.5rem', width: '75%', alignItems: 'center' }}>
+                    <input
+                      type={nexupSettings.tmdb_api_key ? 'password' : 'text'}
+                      placeholder="Enter your TMDB API key (optional)"
+                      value={nexupSettings.tmdb_api_key || ''}
+                      // Local-only while typing — this used to call the backend and
+                      // reload settings on every keystroke, so an in-flight save from
+                      // an earlier character could resolve after a later one and snap
+                      // the field back mid-edit. Persist once, on blur, instead.
+                      onChange={(e) => setNexupSettings(prev => ({ ...prev, tmdb_api_key: e.target.value }))}
+                      onFocus={(e) => { e.target.type = 'text'; }}
+                      onBlur={(e) => {
+                        e.target.type = e.target.value ? 'password' : 'text';
+                        handleUpdateNexupSettings({ tmdb_api_key: e.target.value });
+                        setTmdbKeyTest(null);
+                      }}
+                      style={{ flex: 1, padding: '0.5rem', borderRadius: '4px', border: '1px solid var(--border-color)' }}
+                      autoComplete="off"
+                    />
+                    <button
+                      onClick={handleTestTmdbKey}
+                      className="button button-secondary"
+                      disabled={tmdbKeyTest?.testing}
+                      style={{ padding: '0.5rem 0.9rem', display: 'inline-flex', alignItems: 'center', gap: '0.35rem', whiteSpace: 'nowrap' }}
+                      title="Check this key against TMDB right now"
+                    >
+                      {tmdbKeyTest?.testing ? <Loader2 size={14} className="spin" /> : null}
+                      {tmdbKeyTest?.testing ? 'Testing…' : 'Test Key'}
+                    </button>
+                  </div>
+                  {tmdbKeyTest && !tmdbKeyTest.testing && (
+                    <p style={{ fontSize: '0.85rem', marginTop: '0.4rem', color: tmdbKeyTest.valid ? '#28a745' : '#dc3545', display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
+                      {tmdbKeyTest.valid ? <CheckCircle size={14} /> : <XCircle size={14} />}
+                      {tmdbKeyTest.message}
+                    </p>
+                  )}
                   <p style={{ fontSize: '0.8rem', color: '#888', marginTop: '0.25rem' }}>
                     Get a free API key from <a href="https://www.themoviedb.org/settings/api" target="_blank" rel="noopener noreferrer" style={{ color: '#00d4ff' }}>themoviedb.org</a>
                   </p>
@@ -29241,8 +29470,33 @@ const DashboardTiles = {
                 </div>
               </div>
             </div>
-            <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>
-              YouTube & trailer downloads (NeX-Up)
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap' }}>
+              <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>
+                YouTube & trailer downloads (NeX-Up)
+              </div>
+              {/* Update action — Docker and frozen Windows builds have yt-dlp
+                  baked in with no site-packages to pip-upgrade, so they get
+                  the same "managed" messaging Deno/PO-token show for Docker. */}
+              {systemDependencies?.system?.is_docker ? (
+                <span style={{ fontSize: '0.72rem', color: 'var(--text-secondary)', fontStyle: 'italic' }}>
+                  Managed by the Docker image — pull the latest image to update
+                </span>
+              ) : systemDependencies?.system?.frozen ? (
+                <span style={{ fontSize: '0.72rem', color: 'var(--text-secondary)', fontStyle: 'italic' }}>
+                  Bundled with this NeXroll build — install the latest release to update
+                </span>
+              ) : systemDependencies?.dependencies?.yt_dlp?.installable && (
+                <button
+                  className="button button-secondary"
+                  disabled={installingDep === 'ytdlp'}
+                  onClick={handleInstallYtdlp}
+                  style={{ fontSize: '0.78rem', padding: '0.35rem 0.7rem', display: 'inline-flex', alignItems: 'center', gap: '0.35rem', whiteSpace: 'nowrap' }}
+                >
+                  {installingDep === 'ytdlp'
+                    ? <><Loader2 size={14} className="spin" /> Updating…</>
+                    : <><Download size={14} /> Update yt-dlp</>}
+                </button>
+              )}
             </div>
           </div>
 

@@ -1,0 +1,140 @@
+name: Scheduled Docker Refresh (latest/beta)
+
+# Rebuilds and repushes the floating :latest / :beta Docker tags on a cadence,
+# from the exact commit of the most recent corresponding GitHub release (NOT
+# main HEAD — never ship unreleased code under a tag people already trust as
+# stable/beta). This exists because the image bakes in whatever yt-dlp was
+# "latest" at build time (requirements.txt pins yt-dlp>=... unbounded), and
+# yt-dlp goes stale against YouTube's anti-bot changes between NeXroll
+# releases. Refreshing the floating tags periodically keeps Docker users from
+# sitting on a stale yt-dlp for the weeks/months between releases.
+#
+# Pinned version-numbered tags (e.g. :2.1.0-beta.2) are never touched here —
+# those stay immutable snapshots of what was actually released.
+
+on:
+  schedule:
+    - cron: '0 6 * * 1'  # weekly, Monday 06:00 UTC
+  workflow_dispatch: {}
+
+env:
+  IMAGE_NAME: jbrns/nexroll
+
+# Shared with docker-build.yml's release-triggered push — prevents a real
+# release and a scheduled refresh from racing on the same floating tag.
+concurrency:
+  group: docker-image-push
+  cancel-in-progress: false
+
+jobs:
+  resolve-refs:
+    runs-on: ubuntu-latest
+    outputs:
+      stable_tag: ${{ steps.resolve.outputs.stable_tag }}
+      beta_tag: ${{ steps.resolve.outputs.beta_tag }}
+      build_beta: ${{ steps.resolve.outputs.build_beta }}
+    steps:
+      - name: Resolve latest stable + prerelease refs
+        id: resolve
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          gh release list --repo "${{ github.repository }}" --limit 50 \
+            --json tagName,isPrerelease,isDraft,publishedAt \
+            --jq '[.[] | select(.isDraft == false)] | sort_by(.publishedAt) | reverse' > releases.json
+
+          STABLE_TAG=$(jq -r '[.[] | select(.isPrerelease == false)][0].tagName // empty' releases.json)
+          BETA_TAG=$(jq -r '[.[] | select(.isPrerelease == true)][0].tagName // empty' releases.json)
+
+          if [ -z "$STABLE_TAG" ]; then
+            echo "No stable release found; nothing to do for :latest" >&2
+            exit 1
+          fi
+          echo "stable_tag=$STABLE_TAG" >> "$GITHUB_OUTPUT"
+          echo "Latest stable: $STABLE_TAG"
+
+          # :beta always tracks the newest prerelease, independent of whether
+          # a stable release has since shipped — :latest and :beta are two
+          # independently-tracked floating tags.
+          if [ -n "$BETA_TAG" ]; then
+            echo "beta_tag=$BETA_TAG" >> "$GITHUB_OUTPUT"
+            echo "build_beta=true" >> "$GITHUB_OUTPUT"
+            echo "Latest prerelease: $BETA_TAG"
+          else
+            echo "build_beta=false" >> "$GITHUB_OUTPUT"
+            echo "No prerelease found — skipping :beta refresh"
+          fi
+
+  refresh-latest:
+    needs: resolve-refs
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout latest stable release
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ needs.resolve-refs.outputs.stable_tag }}
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Build and push :latest
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./Dockerfile
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ env.IMAGE_NAME }}:latest
+          build-args: |
+            VERSION=${{ needs.resolve-refs.outputs.stable_tag }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  refresh-beta:
+    needs: resolve-refs
+    if: needs.resolve-refs.outputs.build_beta == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout latest prerelease
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ needs.resolve-refs.outputs.beta_tag }}
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Build and push :beta
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./Dockerfile
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ env.IMAGE_NAME }}:beta
+          build-args: |
+            VERSION=${{ needs.resolve-refs.outputs.beta_tag }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

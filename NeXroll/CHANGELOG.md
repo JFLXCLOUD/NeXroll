@@ -1,5 +1,29 @@
 # Changelog
 
+## [2.1.0-beta.3][Unreleased] - 08-21-2026 (beta)
+
+> A yt-dlp reliability pass (a startup race that could silently break every
+> trailer download, plus a self-service update path so Docker users aren't
+> stuck waiting on a NeXroll release to get past a YouTube change), a fix for
+> the TMDB API key field, a read-only trailers view on the Library page, and
+> guidance that catches a silent NeX-Up + Docker path-mapping failure before
+> it reaches Plex.
+
+### Fixed
+
+- **NeX-Up trailer sequences could apply to Plex successfully and then simply not play, with nothing in the logs pointing at why.** This happened whenever the trailer Storage Path lived outside the prerolls folder in a Docker setup without a matching Path Mapping — NeXroll would push a container-only path (e.g. `/data/nexup_trailers/...`) that the media server's container had no volume for, so Plex accepted the setting but couldn't find the file. NeX-Up → Settings now suggests a storage path nested inside your existing prerolls folder (already reachable, no extra mount needed) and shows a dismissible warning with a one-click fix when your configured path is Docker-only and unmapped.
+- **The TMDB API key field could feel impossible to type into.** Every keystroke saved the partial value to the server and then reloaded all NeX-Up settings from the response — with no debounce, a fast typist could fire off several overlapping save+reload round trips, and an earlier keystroke's response landing after a later one would snap the field back to a shorter, stale value mid-edit. Typing is now purely local; the key saves once, when you leave the field.
+- **Clearing the TMDB API key field didn't actually clear it.** The old save call dropped empty values before they ever reached the server, so backing out a key you'd entered silently left the previous one in place. Saving now sends the field's real value, so an empty field is saved as empty.
+- **Trailer downloads (and the Dependencies page) could break entirely after certain restarts**, failing every attempt with `module 'yt_dlp' has no attribute 'utils'` (or `'version'`) until the next restart. This came from a startup race: yt-dlp's first import could be triggered concurrently by the background NeX-Up sync thread and a request handler, and losing that race left the module partially initialized for the rest of the process's life. yt-dlp is now imported once, eagerly, before any background thread that touches it exists.
+
+### Added
+
+- **An "Update yt-dlp" button** on the Dependencies page for source/dev installs, so a stale yt-dlp can be refreshed without waiting for a NeXroll release. Docker and the Windows installer build both bundle yt-dlp with no separate Python environment to upgrade in place, so they keep pointing at "pull the latest image" / "install the latest release" instead.
+- **A "Test Key" button** next to the TMDB API key field that checks the key against TMDB on the spot and reports valid or invalid right there, instead of needing to dig through logs to find out.
+- **A "Show NeX-Up trailers" toggle on the Library page.** NeX-Up trailers are intentionally kept out of the Library — they live in their own auto-managed table with their own retention/cleanup schedule, separate from your permanent preroll collection — but that separation was invisible, so downloaded trailers just looked missing. The toggle lets you glance at them from Library without merging the two systems; managing a trailer (enable, delete, etc.) still happens from the NeX-Up page.
+- Docker images now get their `:latest` and `:beta` tags rebuilt weekly, independent of NeXroll releases, so yt-dlp doesn't sit stale for weeks between releases while YouTube keeps changing underneath it.
+- The Docker build now fails outright if yt-dlp installs in a broken state, instead of shipping it and finding out from a support report.
+
 ## [2.1.0-beta.2] - 08-19-2026 (beta)
 
 > A follow-up to beta.1: the account controls are reachable from every page,
