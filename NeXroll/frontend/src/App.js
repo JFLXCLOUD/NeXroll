@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useLayoutEffect, useRef, useCallback } from 'react';
 import { DndContext, closestCenter, PointerSensor, useSensor, useSensors } from '@dnd-kit/core';
 import { SortableContext, rectSortingStrategy, useSortable, arrayMove } from '@dnd-kit/sortable';
 import ReactMarkdown from 'react-markdown';
@@ -46,7 +46,7 @@ import {
     Youtube, Globe, Key, Rocket, FileUp, ArrowRight, HardDrive, ListChecks, Unlink, LinkIcon, ExternalLink,
     Tv, ClipboardList, Info, RotateCw, LayoutDashboard, BarChart3, PieChart as PieChartIcon, TrendingUp, Server, Timer, ArrowUp, ArrowDown,
     Database, Archive, Shield, UserPlus, Users, LayoutGrid, List, Layers, Terminal, AlertCircle, Filter, BarChart2, HelpCircle,
-    Music, Wand2, GitCompare, Square, Plug, GripVertical
+    Music, Wand2, GitCompare, Square, Plug, GripVertical, Maximize2
   } from 'lucide-react';
 // Grid units. A small rowHeight lets a tile's height land close to its measured
 // content height. Tile HEIGHT is always auto-fit to content (so no scrollbars);
@@ -823,11 +823,6 @@ function App() {
     token_length: 0
   });
   const [previewingPreroll, setPreviewingPreroll] = useState(null);
-
-  // Debug: Log when previewingPreroll state changes
-  React.useEffect(() => {
-    console.log('previewingPreroll state changed to:', previewingPreroll);
-  }, [previewingPreroll]);
   // Media server selection for Connect page
   const [activeServer, setActiveServer] = useState(() => {
     try { return localStorage.getItem('activeServer') || 'plex'; } catch { return 'plex'; }
@@ -999,8 +994,12 @@ function App() {
   
   // Docker Quick Connect UI state
   const [prerollView, setPrerollView] = useState(() => {
-    try { return localStorage.getItem('prerollView') || 'grid'; } catch { return 'grid'; }
+    try { return localStorage.getItem('prerollView') || 'list'; } catch { return 'list'; }
   });
+  const [libraryInspectorOpen, setLibraryInspectorOpen] = useState(() => {
+    try { return localStorage.getItem('libraryInspectorOpen') === '1'; } catch { return false; }
+  });
+  const [libraryInspectorPrerollId, setLibraryInspectorPrerollId] = useState(null);
   
   const [categoryView, setCategoryView] = useState(() => {
     try { return localStorage.getItem('categoryView') || 'list'; } catch { return 'list'; }
@@ -1774,7 +1773,7 @@ const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
   };
 
   // Apply theme class on mount and when darkMode changes
-  useEffect(() => {
+  useLayoutEffect(() => {
     document.body.className = darkMode ? 'dark' : 'light';
   }, [darkMode]);
 
@@ -1788,6 +1787,10 @@ const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
   useEffect(() => {
     try { localStorage.setItem('prerollView', prerollView); } catch {}
   }, [prerollView]);
+
+  useEffect(() => {
+    try { localStorage.setItem('libraryInspectorOpen', libraryInspectorOpen ? '1' : '0'); } catch {}
+  }, [libraryInspectorOpen]);
   
   useEffect(() => {
     try { localStorage.setItem('categoryView', categoryView); } catch {}
@@ -6027,6 +6030,20 @@ const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
   const visibleIds = visiblePrerolls.map(p => p.id);
   const allSelectedOnPage = visibleIds.length > 0 && visibleIds.every(id => selectedPrerollIds.includes(id));
 
+  const libraryInspectorPreroll =
+    visiblePrerolls.find(p => p.id === libraryInspectorPrerollId) ||
+    filteredPrerolls.find(p => p.id === libraryInspectorPrerollId) ||
+    visiblePrerolls[0] ||
+    null;
+
+  const handleLibraryPreview = (preroll) => {
+    if (libraryInspectorOpen) {
+      setLibraryInspectorPrerollId(preroll.id);
+      return;
+    }
+    setPreviewingPreroll(preroll);
+  };
+
   const toggleSelectPreroll = (id) => {
     setSelectedPrerollIds(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]);
   };
@@ -7576,6 +7593,17 @@ const DashboardTiles = {
     'library/categories': { icon: Folder,        title: 'Categories',      desc: 'Organize your prerolls into categories.' },
     'library/scaling':  { icon: Video,           title: 'Video Scaling',   desc: 'Review and rescale preroll resolutions.' },
     'library/trash':    { icon: Archive,         title: 'Trash',           desc: 'Restore preroll files you deleted from disk.' },
+    'schedules':        { icon: Calendar,        title: 'My Schedules',     desc: 'See what is active now, what runs next, and manage every schedule.' },
+    'schedules/create': { icon: PlusCircle,      title: 'Create Schedule',  desc: 'Schedule a category or a custom preroll sequence.' },
+    'schedules/calendar': { icon: CalendarDays,  title: 'Schedule Calendar', desc: 'Review active coverage and upcoming changes on a visual calendar.' },
+    'schedules/builder': { icon: Clapperboard,   title: 'Sequence Builder', desc: 'Build a precise mix of categories, fixed clips, and randomized blocks.' },
+    'schedules/library': { icon: BookOpen,       title: 'Saved Sequences',  desc: 'Browse and manage reusable preroll sequences.' },
+    'schedules/conflicts': { icon: GitCompare,   title: 'Schedule Conflicts', desc: 'Detect overlaps and resolve priority conflicts before playback.' },
+    'nexup':            { icon: Clapperboard,    title: 'NeX-Up Connections', desc: 'Connect Radarr and Sonarr for upcoming media trailers.' },
+    'nexup/upcoming':   { icon: ClipboardList,  title: 'Upcoming Items',   desc: 'Review movies and shows that are eligible for Coming Soon lists.' },
+    'nexup/trailers':   { icon: Film,            title: 'Your Trailers',    desc: 'Manage the movie and TV trailers NeX-Up has downloaded.' },
+    'nexup/generator':  { icon: Sparkles,        title: 'Preroll Generator', desc: 'Create cinematic intros and Coming Soon videos.' },
+    'nexup/settings':   { icon: Settings,        title: 'NeX-Up Settings',  desc: 'Configure downloads, storage, schedules, and authentication.' },
     'connect':          { icon: Link2,           title: 'Connections',     desc: 'Connect to your Plex, Jellyfin, or Emby media server.' },
     'community-prerolls': { icon: Globe,         title: 'Community Prerolls', desc: 'Discover and import community-made prerolls.' },
     'settings':         { icon: Settings,        title: 'General Settings',  desc: 'Theme, timezone, and general application preferences.' },
@@ -7588,20 +7616,36 @@ const DashboardTiles = {
     'settings/system':  { icon: Info,            title: 'System',            desc: 'System information and diagnostics.' },
   };
   const renderPageHeader = () => {
-    // EXPERIMENT: page header band hidden app-wide. Flip this to false (or delete
-    // the line) to restore the per-page title + description headers.
-    const HIDE_PAGE_HEADER = true;
-    if (HIDE_PAGE_HEADER) return null;
+    if (activeTab === 'dashboard') return null;
     const cfg = PAGE_HEADERS[activeTab];
     if (!cfg) return null;
     const Icon = cfg.icon;
     return (
       <div className="nx-page-header">
         <div className="nx-page-header-inner">
-          <h1 className="nx-page-header-title">
-            <Icon size={24} className="header-icon" /> {cfg.title}
-          </h1>
-          {cfg.desc && <p className="nx-page-header-desc">{cfg.desc}</p>}
+          <div className="nx-page-header-copy">
+            <h1 className="nx-page-header-title">
+              <Icon size={24} className="header-icon" /> {cfg.title}
+            </h1>
+            {cfg.desc && <p className="nx-page-header-desc">{cfg.desc}</p>}
+          </div>
+          <div className="nx-page-header-actions">
+            {activeTab === 'library' && (
+              <button type="button" className="button" onClick={() => setActiveTab('library/add')}>
+                <Upload size={15} /> Add Prerolls
+              </button>
+            )}
+            {activeTab === 'library/add' && (
+              <button type="button" className="button button-secondary" onClick={() => setActiveTab('library')}>
+                <Library size={15} /> View Library
+              </button>
+            )}
+            {activeTab === 'schedules' && (
+              <button type="button" className="button button-success" onClick={() => setActiveTab('schedules/create')}>
+                <Plus size={15} /> New Schedule
+              </button>
+            )}
+          </div>
         </div>
       </div>
     );
@@ -10115,7 +10159,7 @@ const DashboardTiles = {
 
   // Dashboard Library Sub-Page (Prerolls list/grid)
   const renderDashboardLibrary = () => (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
+    <div className="nx-library-all" style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
 
       {/* Stats Bar */}
       <div style={{ display: 'flex', gap: '1rem', flexWrap: 'wrap' }}>
@@ -10168,6 +10212,21 @@ const DashboardTiles = {
         >
           {showNexupTrailersInLibrary ? <Eye size={16} style={{ color: 'var(--accent-color)' }} /> : <EyeOff size={16} style={{ color: 'var(--text-secondary)' }} />}
           <span style={{ color: showNexupTrailersInLibrary ? 'var(--accent-color)' : 'var(--text-secondary)' }}>Show NeX-Up trailers</span>
+        </button>
+        <button
+          type="button"
+          className={`button button-secondary nx-library-inspector-toggle${libraryInspectorOpen ? ' is-active' : ''}`}
+          aria-pressed={libraryInspectorOpen}
+          onClick={() => {
+            setLibraryInspectorOpen(open => !open);
+            if (!libraryInspectorPrerollId && visiblePrerolls[0]) {
+              setLibraryInspectorPrerollId(visiblePrerolls[0].id);
+            }
+          }}
+          title="Toggle the persistent preview inspector"
+        >
+          {libraryInspectorOpen ? <EyeOff size={15} /> : <Eye size={15} />}
+          {libraryInspectorOpen ? 'Hide Inspector' : 'Show Inspector'}
         </button>
         <button
           onClick={handleReinitThumbnails}
@@ -10619,6 +10678,8 @@ const DashboardTiles = {
         </div>
       )}
 
+      <div className={`nx-library-results-layout${libraryInspectorOpen ? ' has-inspector' : ''}`}>
+      <div className="nx-library-results-main">
       {/* Empty state */}
       {totalPrerolls === 0 && (
         <div className="nx-empty">
@@ -10662,14 +10723,9 @@ const DashboardTiles = {
                 </div>
                 <div className="preroll-actions">
                   <button
-                    onClick={() => {
-                      console.log('List preview button clicked for preroll:', preroll);
-                      console.log('Current previewingPreroll state:', previewingPreroll);
-                      setPreviewingPreroll(preroll);
-                      console.log('Setting previewingPreroll to:', preroll);
-                    }}
+                    onClick={() => handleLibraryPreview(preroll)}
                     className="nx-iconbtn"
-                    title="Preview video"
+                    title={libraryInspectorOpen ? 'Open in inspector' : 'Preview video'}
                   >
                     <Play size={16} />
                   </button>
@@ -10948,14 +11004,9 @@ const DashboardTiles = {
            </div>
            <div style={{ display: 'flex', gap: '0.25rem' }}>
              <button
-               onClick={() => {
-                 console.log('Grid preview button clicked for preroll:', preroll);
-                 console.log('Current previewingPreroll state:', previewingPreroll);
-                 setPreviewingPreroll(preroll);
-                 console.log('Setting previewingPreroll to:', preroll);
-               }}
+               onClick={() => handleLibraryPreview(preroll)}
                className="nx-iconbtn"
-               title="Preview video"
+               title={libraryInspectorOpen ? 'Open in inspector' : 'Preview video'}
              >
                <Play size={16} />
              </button>
@@ -11012,6 +11063,66 @@ const DashboardTiles = {
            </button>
          </div>
        </div>
+      </div>
+      </div>
+
+      {libraryInspectorOpen && (
+        <aside className="nx-library-inspector" aria-label="Preroll preview inspector">
+          <div className="nx-library-inspector-head">
+            <div>
+              <span className="nx-library-inspector-eyebrow">Preview inspector</span>
+              <h2>{libraryInspectorPreroll ? (libraryInspectorPreroll.display_name || libraryInspectorPreroll.filename) : 'Choose a preroll'}</h2>
+            </div>
+            <button
+              type="button"
+              className="nx-iconbtn"
+              onClick={() => setLibraryInspectorOpen(false)}
+              aria-label="Close preview inspector"
+              title="Close inspector"
+            >
+              <X size={16} />
+            </button>
+          </div>
+
+          {libraryInspectorPreroll ? (
+            <>
+              <div className="nx-library-inspector-player">
+                <video
+                  key={libraryInspectorPreroll.id}
+                  ref={previewVideoRef}
+                  controls
+                  preload="metadata"
+                  poster={libraryInspectorPreroll.thumbnail ? thumbnailUrl(libraryInspectorPreroll.thumbnail) : undefined}
+                >
+                  <source src={apiUrl(`prerolls/${libraryInspectorPreroll.id}/video`)} type="video/mp4" />
+                </video>
+              </div>
+              <div className="nx-library-inspector-meta">
+                <div><span>Filename</span><strong>{libraryInspectorPreroll.filename}</strong></div>
+                <div><span>Category</span><strong>{libraryInspectorPreroll.category?.name || 'Uncategorized'}</strong></div>
+                <div><span>Duration</span><strong>{libraryInspectorPreroll.duration ? `${Math.round(libraryInspectorPreroll.duration)}s` : 'Unknown'}</strong></div>
+                <div><span>Added</span><strong>{libraryInspectorPreroll.upload_date ? new Date(libraryInspectorPreroll.upload_date).toLocaleDateString() : 'Unknown'}</strong></div>
+              </div>
+              {libraryInspectorPreroll.description && (
+                <p className="nx-library-inspector-description">{libraryInspectorPreroll.description}</p>
+              )}
+              <div className="nx-library-inspector-actions">
+                <button type="button" className="button" onClick={() => handleEditPreroll(libraryInspectorPreroll)}>
+                  <Edit size={15} /> Edit Preroll
+                </button>
+                <button type="button" className="button button-secondary" onClick={() => setPreviewingPreroll(libraryInspectorPreroll)}>
+                  <Maximize2 size={15} /> Full Preview
+                </button>
+              </div>
+            </>
+          ) : (
+            <div className="nx-empty nx-library-inspector-empty">
+              <Film size={34} />
+              <p>Select a preroll to inspect it without leaving the list.</p>
+            </div>
+          )}
+        </aside>
+      )}
       </div>
     </div>
   );
@@ -16469,12 +16580,12 @@ const DashboardTiles = {
 
       {/* Quick Start Guide - Show only when no schedules exist */}
       {schedules.length === 0 && (
-        <div style={{
+        <div className="nx-schedule-welcome" style={{
           marginBottom: '2rem',
           padding: '2rem',
           backgroundColor: 'var(--card-bg)',
           borderRadius: '12px',
-          border: '2px solid var(--button-bg)',
+          border: '1px solid var(--accent-color)',
           boxShadow: '0 4px 12px rgba(0,0,0,0.1)'
         }}>
           <div style={{ textAlign: 'center', marginBottom: '1.5rem' }}>
@@ -16581,7 +16692,7 @@ const DashboardTiles = {
           <h2 style={{ margin: 0 }}>Your Schedules</h2>
           <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'center' }}>
             {/* View Mode Toggle */}
-            <div style={{ 
+            <div className="nx-schedule-view-toggle" style={{
               display: 'flex', 
               gap: '0.25rem', 
               backgroundColor: 'var(--bg-color)', 
@@ -16593,7 +16704,7 @@ const DashboardTiles = {
                 onClick={() => setScheduleViewMode('compact')}
                 style={{
                   padding: '0.5rem 1rem',
-                  backgroundColor: scheduleViewMode === 'compact' ? 'var(--button-bg)' : 'transparent',
+                  backgroundColor: scheduleViewMode === 'compact' ? 'var(--accent-color)' : 'transparent',
                   color: scheduleViewMode === 'compact' ? 'white' : 'var(--text-color)',
                   border: 'none',
                   borderRadius: '0.25rem',
@@ -16612,7 +16723,7 @@ const DashboardTiles = {
                 onClick={() => setScheduleViewMode('detailed')}
                 style={{
                   padding: '0.5rem 1rem',
-                  backgroundColor: scheduleViewMode === 'detailed' ? 'var(--button-bg)' : 'transparent',
+                  backgroundColor: scheduleViewMode === 'detailed' ? 'var(--accent-color)' : 'transparent',
                   color: scheduleViewMode === 'detailed' ? 'white' : 'var(--text-color)',
                   border: 'none',
                   borderRadius: '0.25rem',
@@ -33883,10 +33994,19 @@ const DashboardTiles = {
   }
 
   const serviceStatusBadge = getDashboardHealthBadge(healthSummary);
+  const activeSection =
+    activeTab === 'dashboard' ? 'dashboard' :
+    activeTab.startsWith('library') ? 'library' :
+    activeTab.startsWith('schedules') ? 'schedules' :
+    activeTab.startsWith('nexup') ? 'nexup' :
+    activeTab.startsWith('settings') ? 'settings' :
+    activeTab === 'connect' ? 'connect' :
+    activeTab === 'community-prerolls' ? 'community' :
+    'dashboard';
 
   return (
     <>
-    <div className="nx-shell">
+    <div className={`nx-shell nx-section-${activeSection}`}>
       <Sidebar
         activeTab={activeTab}
         setActiveTab={setActiveTab}
@@ -33898,7 +34018,7 @@ const DashboardTiles = {
         version={systemVersion?.api_version}
         update={showUpdateBanner && updateInfo ? updateInfo : null}
       />
-      <div className={`nx-content ${activeTab === 'dashboard' ? 'nx-content-dashboard' : ''}`}>
+      <div className={`nx-content nx-content-${activeSection}`}>
         {/* Slim top bar: mobile menu toggle + status/theme/user cluster */}
         <div className="nx-topbar">
           <div className="nx-topbar-inner">

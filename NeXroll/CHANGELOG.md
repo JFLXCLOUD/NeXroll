@@ -2,12 +2,21 @@
 
 ## [2.1.0-beta.3][Unreleased] - 08-21-2026 (beta)
 
-> A yt-dlp reliability pass (a startup race that could silently break every
+> A full dashboard UI pass, plus a yt-dlp reliability fix (a startup race that could silently break every
 > trailer download, plus a self-service update path so Docker users aren't
 > stuck waiting on a NeXroll release to get past a YouTube change), a fix for
 > the TMDB API key field, a read-only trailers view on the Library page, and
 > guidance that catches a silent NeX-Up + Docker path-mapping failure before
 > it reaches Plex.
+
+### Changed
+
+- **The approved dashboard design now spans the whole application.** Library, Schedules, NeX-Up, Connect, Community Prerolls, Settings, and their supporting pages share the dashboard's compact content frame, quieter charcoal surfaces, section-aware accents, controls, cards, tables, empty states, and responsive behavior.
+- **Light mode is now a complete companion theme** rather than a partial color inversion. Sidebar navigation, page headers, forms, cards, tables, status surfaces, inspectors, and dialogs all use dedicated light tokens with readable borders and contrast.
+- **Library now uses the approved hybrid layout.** The command-first search/filter/sort surface remains paired with grid and dense list views, list is the default for new browsers, and an optional persistent preview inspector can be enabled on the right without leaving the results. Existing browser view and inspector choices are remembered.
+- **Schedules now use the Command Center direction with navigation kept exclusively in the sidebar.** Schedule pages use the green section identity, denser working surfaces, and page-level actions without restoring a duplicate horizontal navigation bar.
+- **Modals and confirmation dialogs now share one visual system,** including the preroll editor, with consistent headers, spacing, controls, focus treatment, backdrops, responsive sizing, and dark/light presentation.
+- Theme application now runs before the browser paints the app, preventing the old-theme flash while the dashboard loads.
 
 ### Fixed
 
