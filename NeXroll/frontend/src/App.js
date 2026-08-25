@@ -18454,31 +18454,202 @@ const DashboardTiles = {
   };
 
   const renderApprovedScheduleCalendar = () => {
-    const weekDaysView = Array.from({ length: 7 }, (_, index) => {
-      const value = new Date(calendarDay);
-      value.setDate(calendarDay.getDate() - ((calendarDay.getDay() + 6) % 7) + index);
-      return value;
-    });
-    const hours = [18, 19, 20, 21, 22];
+    const toDayTime = value => {
+      const date = parseNaiveDatetime(value);
+      return date && !Number.isNaN(date.getTime())
+        ? new Date(date.getFullYear(), date.getMonth(), date.getDate()).getTime()
+        : null;
+    };
+    const dateKey = date => `${date.getFullYear()}-${date.getMonth()}-${date.getDate()}`;
+    const startOfWeek = date => new Date(
+      date.getFullYear(),
+      date.getMonth(),
+      date.getDate() - ((date.getDay() + 6) % 7)
+    );
+    const schedulesForDay = date => {
+      const dayTime = new Date(date.getFullYear(), date.getMonth(), date.getDate()).getTime();
+      return schedules.filter(schedule => isScheduleActiveOnDay(schedule, dayTime, toDayTime));
+    };
+    const formatScheduleTime = schedule => {
+      const date = parseNaiveDatetime(schedule.start_date);
+      return date && !Number.isNaN(date.getTime())
+        ? date.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })
+        : 'All day';
+    };
+    const syncCalendarDate = date => {
+      const nextDate = new Date(date.getFullYear(), date.getMonth(), date.getDate());
+      setCalendarDay(nextDate);
+      setCalendarMonth(nextDate.getMonth() + 1);
+      setCalendarYear(nextDate.getFullYear());
+      setCalendarWeekStart(startOfWeek(nextDate));
+    };
+    const changeCalendarMode = mode => {
+      syncCalendarDate(calendarDay);
+      setCalendarMode(mode);
+    };
+    const navigateCalendar = direction => {
+      const nextDate = new Date(calendarDay);
+      if (calendarMode === 'day') nextDate.setDate(nextDate.getDate() + direction);
+      if (calendarMode === 'week') nextDate.setDate(nextDate.getDate() + (7 * direction));
+      if (calendarMode === 'month') nextDate.setMonth(nextDate.getMonth() + direction, 1);
+      if (calendarMode === 'year') nextDate.setFullYear(nextDate.getFullYear() + direction);
+      syncCalendarDate(nextDate);
+    };
+
+    const today = new Date();
+    const weekStart = startOfWeek(calendarDay);
+    const weekDaysView = Array.from({ length: 7 }, (_, index) => new Date(
+      weekStart.getFullYear(),
+      weekStart.getMonth(),
+      weekStart.getDate() + index
+    ));
+    const monthStart = new Date(calendarDay.getFullYear(), calendarDay.getMonth(), 1);
+    const monthGridStart = startOfWeek(monthStart);
+    const monthDaysView = Array.from({ length: 42 }, (_, index) => new Date(
+      monthGridStart.getFullYear(),
+      monthGridStart.getMonth(),
+      monthGridStart.getDate() + index
+    ));
+    const daySchedules = schedulesForDay(calendarDay);
+    const hours = [8, 11, 14, 17, 20];
+    const calendarLabel = calendarMode === 'day'
+      ? calendarDay.toLocaleDateString([], { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' })
+      : calendarMode === 'week'
+        ? `${weekDaysView[0].toLocaleDateString([], { month: 'long', day: 'numeric' })} - ${weekDaysView[6].toLocaleDateString([], { month: 'long', day: 'numeric', year: 'numeric' })}`
+        : calendarMode === 'month'
+          ? calendarDay.toLocaleDateString([], { month: 'long', year: 'numeric' })
+          : String(calendarDay.getFullYear());
+
+    const renderDayView = () => (
+      <div className="nx-draft-day-calendar" data-calendar-view="day">
+        <header className="nx-draft-day-heading">
+          <div><span>{calendarDay.toLocaleDateString([], { weekday: 'long' })}</span><strong>{calendarDay.getDate()}</strong></div>
+          <p>{daySchedules.length} active schedule{daySchedules.length === 1 ? '' : 's'}</p>
+        </header>
+        <div className="nx-draft-day-agenda">
+          {daySchedules.length > 0 ? daySchedules.map(schedule => (
+            <button type="button" key={schedule.id} className="nx-draft-day-event" onClick={() => handleEditSchedule(schedule)}>
+              <time>{formatScheduleTime(schedule)}</time>
+              <span><strong>{schedule.name}</strong><small>{schedule.type || 'schedule'} / Priority {schedule.priority ?? 5}</small></span>
+              <ChevronRight size={13} />
+            </button>
+          )) : (
+            <div className="nx-draft-calendar-empty"><CalendarDays size={20} /><strong>No schedules for this day</strong><span>Choose another date or create a new schedule.</span></div>
+          )}
+        </div>
+      </div>
+    );
+
+    const renderWeekView = () => (
+      <div className="nx-draft-week-calendar" data-calendar-view="week">
+        <div className="nx-draft-cal-head" />
+        {weekDaysView.map(day => (
+          <div key={dateKey(day)} className={`nx-draft-cal-head${dateKey(day) === dateKey(today) ? ' today' : ''}`}>
+            {day.toLocaleDateString([], { weekday: 'short' })}<strong>{day.getDate()}</strong>
+          </div>
+        ))}
+        {hours.flatMap((hour, rowIndex) => [
+          <div key={`hour-${hour}`} className="nx-draft-cal-hour">{new Date(2026, 0, 1, hour).toLocaleTimeString([], { hour: 'numeric' })}</div>,
+          ...weekDaysView.map((day, dayIndex) => {
+            const matchingSchedules = schedulesForDay(day).filter(schedule => {
+              const startDate = parseNaiveDatetime(schedule.start_date);
+              const startHour = startDate ? startDate.getHours() : 8;
+              const nextHour = hours[rowIndex + 1] ?? 24;
+              return startHour >= hour && startHour < nextHour;
+            });
+            return (
+              <div key={`${hour}-${dayIndex}`} className="nx-draft-cal-cell">
+                {matchingSchedules.slice(0, 1).map(schedule => (
+                  <button type="button" key={schedule.id} onClick={() => handleEditSchedule(schedule)} className={`nx-draft-cal-event${schedule.type === 'yearly' || schedule.type === 'holiday' ? ' violet' : ''}`}>
+                    <strong>{schedule.name}</strong><span>{formatScheduleTime(schedule)}</span>
+                  </button>
+                ))}
+                {matchingSchedules.length > 1 && <span className="nx-draft-cal-more">+{matchingSchedules.length - 1}</span>}
+              </div>
+            );
+          })
+        ])}
+      </div>
+    );
+
+    const renderMonthView = () => (
+      <div className="nx-draft-month-calendar" data-calendar-view="month">
+        {['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'].map(day => <div key={day} className="nx-draft-month-weekday">{day}</div>)}
+        {monthDaysView.map(day => {
+          const daySchedulesForView = schedulesForDay(day);
+          const isOutsideMonth = day.getMonth() !== calendarDay.getMonth();
+          const isToday = dateKey(day) === dateKey(today);
+          return (
+            <div key={dateKey(day)} className={`nx-draft-month-day${isOutsideMonth ? ' outside' : ''}${isToday ? ' today' : ''}`}>
+              <button type="button" className="nx-draft-month-date" onClick={() => { syncCalendarDate(day); setCalendarMode('day'); }} aria-label={`Open ${day.toLocaleDateString()}`}>{day.getDate()}</button>
+              <div className="nx-draft-month-events">
+                {daySchedulesForView.slice(0, 2).map(schedule => (
+                  <button type="button" key={schedule.id} onClick={() => handleEditSchedule(schedule)} title={schedule.name}>{schedule.name}</button>
+                ))}
+                {daySchedulesForView.length > 2 && <span>+{daySchedulesForView.length - 2} more</span>}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    );
+
+    const renderYearView = () => (
+      <div className="nx-draft-year-calendar" data-calendar-view="year">
+        {Array.from({ length: 12 }, (_, monthIndex) => {
+          const miniMonthStart = new Date(calendarDay.getFullYear(), monthIndex, 1);
+          const miniGridStart = startOfWeek(miniMonthStart);
+          const miniDays = Array.from({ length: 42 }, (unused, index) => new Date(
+            miniGridStart.getFullYear(),
+            miniGridStart.getMonth(),
+            miniGridStart.getDate() + index
+          ));
+          return (
+            <section key={monthIndex} className="nx-draft-mini-month">
+              <header>{miniMonthStart.toLocaleDateString([], { month: 'long' })}</header>
+              <div className="nx-draft-mini-weekdays">{['M', 'T', 'W', 'T', 'F', 'S', 'S'].map((day, index) => <span key={`${day}-${index}`}>{day}</span>)}</div>
+              <div className="nx-draft-mini-days">
+                {miniDays.map(day => {
+                  const count = day.getMonth() === monthIndex ? schedulesForDay(day).length : 0;
+                  const isToday = dateKey(day) === dateKey(today);
+                  return (
+                    <button
+                      type="button"
+                      key={dateKey(day)}
+                      className={`${day.getMonth() !== monthIndex ? 'outside' : ''}${count ? ' has-events' : ''}${isToday ? ' today' : ''}`}
+                      onClick={() => { syncCalendarDate(day); setCalendarMode('day'); }}
+                      title={`${day.toLocaleDateString()}: ${count} schedule${count === 1 ? '' : 's'}`}
+                    >
+                      {day.getDate()}
+                    </button>
+                  );
+                })}
+              </div>
+            </section>
+          );
+        })}
+      </div>
+    );
+
     return (
       <div className="nx-schedule-draft nx-draft-calendar-page">
         <div className="nx-draft-calendar-toolbar">
-          <div><button className="nx-draft-btn square" onClick={() => setCalendarDay(day => new Date(day.getFullYear(), day.getMonth(), day.getDate() - 7))}><ChevronLeft size={13} /></button><button className="nx-draft-btn square" onClick={() => setCalendarDay(day => new Date(day.getFullYear(), day.getMonth(), day.getDate() + 7))}><ChevronRight size={13} /></button><strong>{weekDaysView[0].toLocaleDateString([], { month: 'long', day: 'numeric' })} - {weekDaysView[6].toLocaleDateString([], { month: 'long', day: 'numeric', year: 'numeric' })}</strong></div>
-          <div className="nx-draft-segmented">{['day', 'week', 'month', 'year'].map(mode => <button key={mode} className={calendarMode === mode ? 'active' : ''} onClick={() => setCalendarMode(mode)}>{mode.charAt(0).toUpperCase() + mode.slice(1)}</button>)}</div>
+          <div>
+            <button type="button" className="nx-draft-btn square" onClick={() => navigateCalendar(-1)} aria-label={`Previous ${calendarMode}`}><ChevronLeft size={13} /></button>
+            <button type="button" className="nx-draft-btn square" onClick={() => navigateCalendar(1)} aria-label={`Next ${calendarMode}`}><ChevronRight size={13} /></button>
+            <strong>{calendarLabel}</strong>
+          </div>
+          <div className="nx-draft-segmented">
+            {['day', 'week', 'month', 'year'].map(mode => (
+              <button type="button" key={mode} className={calendarMode === mode ? 'active' : ''} aria-pressed={calendarMode === mode} onClick={() => changeCalendarMode(mode)}>{mode.charAt(0).toUpperCase() + mode.slice(1)}</button>
+            ))}
+          </div>
         </div>
         <section className="nx-draft-panel nx-draft-calendar-panel">
-          <div className="nx-draft-week-calendar">
-            <div className="nx-draft-cal-head" />
-            {weekDaysView.map(day => <div key={day.toISOString()} className="nx-draft-cal-head">{day.toLocaleDateString([], { weekday: 'short' })}<strong>{day.getDate()}</strong></div>)}
-            {hours.flatMap((hour, rowIndex) => [
-              <div key={`hour-${hour}`} className="nx-draft-cal-hour">{new Date(2026, 0, 1, hour).toLocaleTimeString([], { hour: 'numeric' })}</div>,
-              ...weekDaysView.map((day, dayIndex) => {
-                const schedule = schedules[(rowIndex + dayIndex) % Math.max(schedules.length, 1)];
-                const show = schedule && ((rowIndex === 0 && dayIndex === 4) || (rowIndex === 1 && dayIndex === 5) || (rowIndex === 3 && dayIndex < 5));
-                return <div key={`${hour}-${dayIndex}`} className="nx-draft-cal-cell">{show && <button onClick={() => handleEditSchedule(schedule)} className={`nx-draft-cal-event${dayIndex === 5 || rowIndex === 3 ? ' violet' : ''}`}>{schedule.name}</button>}</div>;
-              })
-            ])}
-          </div>
+          {calendarMode === 'day' && renderDayView()}
+          {calendarMode === 'week' && renderWeekView()}
+          {calendarMode === 'month' && renderMonthView()}
+          {calendarMode === 'year' && renderYearView()}
         </section>
       </div>
     );

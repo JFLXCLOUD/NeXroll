@@ -8852,7 +8852,57 @@ body.light .nx-settings-path-rules > .nx-setting-row > div:nth-child(2) > div { 
 .nx-draft-cal-hour { height: 62px; padding: 5px 7px; border-right: 1px solid var(--border-color); border-bottom: 1px solid var(--border-color); color: var(--text-muted); font-size: 7px; }
 .nx-draft-cal-cell { position: relative; height: 62px; padding: 4px; border-right: 1px solid var(--border-color); border-bottom: 1px solid var(--border-color); }
 .nx-draft-cal-event { width: 100%; height: 100%; padding: 5px; overflow: hidden; border: 0; border-left: 3px solid #31c48d; border-radius: 5px; background: rgba(49,196,141,.12); color: #a4e9cc; font-size: 7px; text-align: left; }
+.nx-draft-cal-event strong,
+.nx-draft-cal-event span { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.nx-draft-cal-event span { margin-top: 3px; opacity: .72; }
 .nx-draft-cal-event.violet { border-color: #7667ff; background: rgba(118,103,255,.14); color: #c6c1ff; }
+.nx-draft-cal-head.today { background: rgba(49,196,141,.08); color: #8ce2be; }
+.nx-draft-cal-more { position: absolute; right: 6px; bottom: 4px; color: var(--text-muted); font-size: 7px; }
+
+.nx-draft-day-calendar { min-width: 560px; display: grid; grid-template-columns: 150px minmax(0,1fr); min-height: 365px; }
+.nx-draft-day-heading { padding: 22px; border-right: 1px solid var(--border-color); background: linear-gradient(155deg,rgba(49,196,141,.1),transparent 68%); }
+.nx-draft-day-heading > div { display: flex; align-items: baseline; gap: 9px; }
+.nx-draft-day-heading span { color: var(--text-secondary); font-size: 9px; text-transform: uppercase; letter-spacing: .08em; }
+.nx-draft-day-heading strong { color: #8ce2be; font-size: 34px; line-height: 1; }
+.nx-draft-day-heading p { margin: 11px 0 0; color: var(--text-muted); font-size: 8px; }
+.nx-draft-day-agenda { display: flex; flex-direction: column; gap: 7px; padding: 14px; }
+.nx-draft-day-event { width: 100%; min-height: 54px; display: grid; grid-template-columns: 70px minmax(0,1fr) auto; align-items: center; gap: 11px; padding: 9px 12px; border: 1px solid var(--border-color); border-left: 3px solid #31c48d; border-radius: 8px; background: var(--raised-bg); color: var(--text-primary); text-align: left; }
+.nx-draft-day-event:hover { border-color: rgba(49,196,141,.5); background: rgba(49,196,141,.07); }
+.nx-draft-day-event time { color: #8ce2be; font-size: 8px; font-weight: 700; }
+.nx-draft-day-event span,
+.nx-draft-day-event strong,
+.nx-draft-day-event small { display: block; min-width: 0; }
+.nx-draft-day-event strong { overflow: hidden; font-size: 9px; text-overflow: ellipsis; white-space: nowrap; }
+.nx-draft-day-event small { margin-top: 3px; color: var(--text-muted); font-size: 7px; text-transform: capitalize; }
+.nx-draft-day-event > svg { color: var(--text-muted); }
+.nx-draft-calendar-empty { min-height: 250px; display: flex; align-items: center; justify-content: center; flex-direction: column; gap: 6px; color: var(--text-muted); text-align: center; }
+.nx-draft-calendar-empty svg { margin-bottom: 3px; color: #31c48d; }
+.nx-draft-calendar-empty strong { color: var(--text-secondary); font-size: 10px; }
+.nx-draft-calendar-empty span { font-size: 8px; }
+
+.nx-draft-month-calendar { min-width: 760px; display: grid; grid-template-columns: repeat(7,minmax(96px,1fr)); }
+.nx-draft-month-weekday { height: 36px; display: grid; place-items: center; border-right: 1px solid var(--border-color); border-bottom: 1px solid var(--border-color); color: var(--text-muted); font-size: 8px; font-weight: 700; text-transform: uppercase; letter-spacing: .07em; }
+.nx-draft-month-day { min-height: 90px; padding: 6px; border-right: 1px solid var(--border-color); border-bottom: 1px solid var(--border-color); background: var(--card-bg); }
+.nx-draft-month-day.outside { opacity: .38; background: var(--raised-bg); }
+.nx-draft-month-day.today { box-shadow: inset 0 0 0 1px rgba(49,196,141,.55); background: rgba(49,196,141,.05); }
+.nx-draft-month-date { width: 23px; height: 23px; display: grid; place-items: center; margin: 0 0 5px auto; border: 0; border-radius: 50%; background: transparent; color: var(--text-secondary); font-size: 8px; font-weight: 700; }
+.nx-draft-month-date:hover,
+.nx-draft-month-day.today .nx-draft-month-date { background: #31c48d; color: #071610; }
+.nx-draft-month-events { display: flex; flex-direction: column; gap: 3px; }
+.nx-draft-month-events button { width: 100%; padding: 4px 5px; overflow: hidden; border: 0; border-left: 2px solid #31c48d; border-radius: 4px; background: rgba(49,196,141,.11); color: #9be4c6; font-size: 7px; text-align: left; text-overflow: ellipsis; white-space: nowrap; }
+.nx-draft-month-events span { padding-left: 6px; color: var(--text-muted); font-size: 7px; }
+
+.nx-draft-year-calendar { min-width: 780px; display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 9px; padding: 10px; }
+.nx-draft-mini-month { padding: 10px; border: 1px solid var(--border-color); border-radius: 8px; background: var(--raised-bg); }
+.nx-draft-mini-month > header { margin-bottom: 8px; color: var(--text-primary); font-size: 9px; font-weight: 700; }
+.nx-draft-mini-weekdays,
+.nx-draft-mini-days { display: grid; grid-template-columns: repeat(7,1fr); gap: 2px; }
+.nx-draft-mini-weekdays span { height: 16px; display: grid; place-items: center; color: var(--text-muted); font-size: 6px; font-weight: 700; }
+.nx-draft-mini-days button { position: relative; height: 22px; display: grid; place-items: center; border: 0; border-radius: 5px; background: transparent; color: var(--text-secondary); font-size: 7px; }
+.nx-draft-mini-days button:hover { background: rgba(49,196,141,.12); color: #8ce2be; }
+.nx-draft-mini-days button.outside { pointer-events: none; opacity: .17; }
+.nx-draft-mini-days button.has-events::after { content: ''; position: absolute; bottom: 2px; width: 3px; height: 3px; border-radius: 50%; background: #31c48d; }
+.nx-draft-mini-days button.today { box-shadow: inset 0 0 0 1px #31c48d; color: #8ce2be; font-weight: 800; }
 
 .nx-draft-builder { display: grid; grid-template-columns: 190px minmax(0,1fr) 275px; gap: 10px; align-items: start; }
 .nx-draft-palette,
@@ -8941,8 +8991,12 @@ body.light .nx-draft-command,
 body.light .nx-draft-choice,
 body.light .nx-draft-sequence-option,
 body.light .nx-draft-seq-block,
+body.light .nx-draft-day-event,
+body.light .nx-draft-mini-month,
 body.light .nx-draft-compare article,
 body.light .nx-draft-conflict-item { background: #fff; }
+body.light .nx-draft-month-events button,
+body.light .nx-draft-cal-event { color: #157a55; }
 
 @media (max-width: 1180px) {
   .nx-draft-step-layout { grid-template-columns: 150px minmax(0,1fr); }
@@ -8963,6 +9017,7 @@ body.light .nx-draft-conflict-item { background: #fff; }
   .nx-draft-inspector,
   .nx-draft-review { position: static; }
   .nx-draft-calendar-toolbar { align-items: flex-start; flex-direction: column; }
+  .nx-draft-year-calendar { grid-template-columns: repeat(2,minmax(0,1fr)); }
   .nx-draft-fields,
   .nx-draft-mode-grid,
   .nx-draft-behavior-grid,
