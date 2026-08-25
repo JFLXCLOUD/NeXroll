@@ -20,6 +20,8 @@
 
 ### Fixed
 
+- **Opening category selectors for multiple Community Prerolls no longer links their choices together.** Each result now keeps its own selected destination category, and completing one download clears only that preroll's choice instead of changing or resetting the other open rows.
+
 - **NeX-Up trailer sequences could apply to Plex successfully and then simply not play, with nothing in the logs pointing at why.** This happened whenever the trailer Storage Path lived outside the prerolls folder in a Docker setup without a matching Path Mapping — NeXroll would push a container-only path (e.g. `/data/nexup_trailers/...`) that the media server's container had no volume for, so Plex accepted the setting but couldn't find the file. NeX-Up → Settings now suggests a storage path nested inside your existing prerolls folder (already reachable, no extra mount needed) and shows a dismissible warning with a one-click fix when your configured path is Docker-only and unmapped.
 - **The TMDB API key field could feel impossible to type into.** Every keystroke saved the partial value to the server and then reloaded all NeX-Up settings from the response — with no debounce, a fast typist could fire off several overlapping save+reload round trips, and an earlier keystroke's response landing after a later one would snap the field back to a shorter, stale value mid-edit. Typing is now purely local; the key saves once, when you leave the field.
 - **Clearing the TMDB API key field didn't actually clear it.** The old save call dropped empty values before they ever reached the server, so backing out a key you'd entered silently left the previous one in place. Saving now sends the field's real value, so an empty field is saved as empty.

@@ -30,6 +30,10 @@ import {
 } from './utils/scheduleUtils';
 import { lockBodyScroll } from './utils/modalBehavior';
 import {
+  getCommunityCategorySelection,
+  setCommunityCategorySelection
+} from './utils/communityCategorySelection';
+import {
   PREROLL_SORT_FIELDS,
   describeSort,
   sortDirectionOrDefault,
@@ -943,7 +947,7 @@ function App() {
   const [browseSort, setBrowseSort] = useState('name');
   const [communityIsDownloading, setCommunityIsDownloading] = useState({});
   const [communityBuildProgress, setCommunityBuildProgress] = useState(null);
-  const [communitySelectedCategory, setCommunitySelectedCategory] = useState(null);
+  const [communitySelectedCategories, setCommunitySelectedCategories] = useState({});
   const [communityShowAddToCategory, setCommunityShowAddToCategory] = useState({});
   const [communityResultLimit, setCommunityResultLimit] = useState(50);
   const [communityTotalResults, setCommunityTotalResults] = useState(0);
@@ -32627,7 +32631,8 @@ const DashboardTiles = {
 
     // Handle preroll download and import
     const handleDownload = async (preroll) => {
-      if (!communitySelectedCategory && communityShowAddToCategory[preroll.id]) {
+      const selectedCategory = getCommunityCategorySelection(communitySelectedCategories, preroll.id);
+      if (!selectedCategory && communityShowAddToCategory[preroll.id]) {
         alert('Please select a category');
         return;
       }
@@ -32647,6 +32652,7 @@ const DashboardTiles = {
       if (!preroll) return;
 
       const customName = communityNewPrerollName.trim() || preroll.title.replace(/^\d+\s*-\s*/, '').trim();
+      const selectedCategory = getCommunityCategorySelection(communitySelectedCategories, preroll.id);
 
       setCommunityIsDownloading(prev => ({ ...prev, [preroll.id]: 'downloading' }));
       setCommunityRenamingPreroll(null);
@@ -32660,7 +32666,7 @@ const DashboardTiles = {
             preroll_id: preroll.id,
             title: customName,
             url: preroll.url || preroll.download_url,
-            category_id: communitySelectedCategory || null,
+            category_id: selectedCategory,
             add_to_category: communityShowAddToCategory[preroll.id] || false,
             tags: '', // Always send empty tags - no auto-tagging
             description: `Community Preroll ID: ${preroll.id}` // Add bug number to description
@@ -32688,7 +32694,9 @@ const DashboardTiles = {
         
         // Reset form
         setCommunityShowAddToCategory(prev => ({ ...prev, [preroll.id]: false }));
-        setCommunitySelectedCategory(null);
+        setCommunitySelectedCategories(prev =>
+          setCommunityCategorySelection(prev, preroll.id, null)
+        );
         
       } catch (error) {
         alert(`Download failed: ${error.message}`);
@@ -33230,6 +33238,7 @@ const DashboardTiles = {
                 const downloaded = isPrerollAlreadyDownloaded(preroll);
                 const dlState = communityIsDownloading[preroll.id];
                 const catOpen = communityShowAddToCategory[preroll.id];
+                const selectedCategory = getCommunityCategorySelection(communitySelectedCategories, preroll.id);
                 return (
                 <div key={preroll.id} className="nx-comm-row">
                   <div className="nx-comm-row-icon"><Film size={20} /></div>
@@ -33249,8 +33258,10 @@ const DashboardTiles = {
                     {catOpen && (
                       <select
                         className="nx-community-select"
-                        value={communitySelectedCategory || ''}
-                        onChange={(e) => setCommunitySelectedCategory(e.target.value || null)}
+                        value={selectedCategory || ''}
+                        onChange={(e) => setCommunitySelectedCategories(prev =>
+                          setCommunityCategorySelection(prev, preroll.id, e.target.value)
+                        )}
                         style={{
                           padding: '0.4rem 0.6rem', fontSize: '0.85rem',
                           border: '1px solid var(--border-color)', borderRadius: '8px',
@@ -33273,7 +33284,7 @@ const DashboardTiles = {
                     ) : (
                       <button
                         onClick={() => handleDownload(preroll)}
-                        disabled={dlState || (catOpen && !communitySelectedCategory)}
+                        disabled={dlState || (catOpen && !selectedCategory)}
                         className="button"
                       >
                         {dlState === 'downloading' ? <><Loader2 size={14} className="spin" /> Downloading…</>
@@ -33363,8 +33374,10 @@ const DashboardTiles = {
                 {communityShowAddToCategory[communityRandomPreroll.id] && (
                   <div style={{ marginTop: '0.75rem', display: 'flex', gap: '0.5rem', flexWrap: 'wrap', alignItems: 'center' }}>
                     <select
-                      value={communitySelectedCategory || ''}
-                      onChange={(e) => setCommunitySelectedCategory(e.target.value ? Number(e.target.value) : null)}
+                      value={getCommunityCategorySelection(communitySelectedCategories, communityRandomPreroll.id) || ''}
+                      onChange={(e) => setCommunitySelectedCategories(prev =>
+                        setCommunityCategorySelection(prev, communityRandomPreroll.id, e.target.value)
+                      )}
                       style={{ flex: '1 1 180px', padding: '0.45rem 0.6rem', borderRadius: '8px', border: '1px solid var(--border-color)', background: 'var(--input-bg)', color: 'var(--text-color)' }}
                     >
                       <option value="">Select category…</option>
