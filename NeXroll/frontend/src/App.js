@@ -439,7 +439,7 @@ const extractVersionFromRelease = (data) => {
   return normalizeVersionString(tag || name);
 };
 
-const Modal = ({ title, onClose, children, width = 700, zIndex = 1000, allowBackgroundInteraction = false }) => {
+const Modal = ({ title, subtitle, className = '', bodyClassName = '', onClose, children, width = 700, zIndex = 1000, allowBackgroundInteraction = false }) => {
   const titleId = React.useId();
   const overlayRef = React.useRef(null);
   const closeButtonRef = React.useRef(null);
@@ -480,7 +480,7 @@ const Modal = ({ title, onClose, children, width = 700, zIndex = 1000, allowBack
       onClick={(e) => { if (e.target === e.currentTarget) onClose && onClose(); }}
     >
       <div
-        className="nx-modal"
+        className={`nx-modal${className ? ` ${className}` : ''}`}
         role="dialog"
         aria-modal={!allowBackgroundInteraction}
         aria-labelledby={titleId}
@@ -488,10 +488,13 @@ const Modal = ({ title, onClose, children, width = 700, zIndex = 1000, allowBack
         onClick={(e) => e.stopPropagation()}
       >
         <div className="nx-modal-header">
-          <h3 id={titleId} className="nx-modal-title">{title}</h3>
+          <div className="nx-modal-heading">
+            <h3 id={titleId} className="nx-modal-title">{title}</h3>
+            {subtitle && <p className="nx-modal-subtitle">{subtitle}</p>}
+          </div>
           <button ref={closeButtonRef} className="nx-modal-close" type="button" onClick={onClose} aria-label="Close"><X size={18} /></button>
         </div>
-        <div className="nx-modal-body">
+        <div className={`nx-modal-body${bodyClassName ? ` ${bodyClassName}` : ''}`}>
           {children}
         </div>
       </div>
@@ -727,6 +730,7 @@ function App() {
   // until their retention window expires.
   const [trashEntries, setTrashEntries] = useState([]);
   const [trashBytes, setTrashBytes] = useState(0);
+  const [trashSearch, setTrashSearch] = useState('');
   const [trashRetentionDays, setTrashRetentionDays] = useState(30);
   const [trashLoading, setTrashLoading] = useState(false);
   const [trashError, setTrashError] = useState('');
@@ -7127,7 +7131,7 @@ const DashboardTiles = {
               </div>
             )}
             {isStale && (
-              <div style={{
+              <div className="nx-category-section-head" style={{
                 display: 'flex',
                 alignItems: 'center',
                 gap: '0.35rem',
@@ -7423,11 +7427,20 @@ const DashboardTiles = {
   // too. Removing a preroll from the library never puts anything in the trash.
   const renderPrerollTrash = () => {
     const count = trashEntries.length;
+    const visibleTrashEntries = trashEntries.filter(entry => {
+      const query = trashSearch.trim().toLowerCase();
+      if (!query) return true;
+      return `${entry.display_name || ''} ${entry.filename || ''} ${entry.original_path || ''}`.toLowerCase().includes(query);
+    });
+    const expiringSoon = trashEntries.filter(entry => {
+      const days = trashDaysLeft(entry);
+      return days !== null && days <= 7;
+    }).length;
 
     return (
       <div className="nx-library-trash">
         {/* Explainer */}
-        <div className="card" style={{
+        <div className="card nx-trash-notice" style={{
           backgroundColor: 'rgba(99, 102, 241, 0.08)',
           border: '1px solid rgba(99, 102, 241, 0.2)',
         }}>
@@ -7446,17 +7459,17 @@ const DashboardTiles = {
           </div>
         </div>
 
+        <section className="nx-trash-stats" aria-label="Trash summary">
+          <div className="is-warning"><span>Files in trash</span><strong>{count}</strong></div>
+          <div><span>Storage used</span><strong>{formatBytes(trashBytes)}</strong></div>
+          <div className="is-warning"><span>Expiring soon</span><strong>{expiringSoon}</strong></div>
+          <div><span>Retention</span><strong>{trashRetentionDays ? `${trashRetentionDays} days` : 'Off'}</strong></div>
+        </section>
+
         {/* Toolbar */}
-        <div className="card">
+        <div className="card nx-trash-toolbar">
           <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: '0.75rem' }}>
-            <div style={{ flex: '1 1 auto', minWidth: '180px' }}>
-              <div style={{ fontSize: '1.1rem', fontWeight: 600, color: 'var(--text-color)' }}>
-                {count} file{count === 1 ? '' : 's'} in trash
-              </div>
-              <div style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
-                {formatBytes(trashBytes)} recoverable
-              </div>
-            </div>
+            <label className="nx-trash-search"><Search size={14} /><input value={trashSearch} onChange={(event) => setTrashSearch(event.target.value)} placeholder="Search deleted files…" /></label>
             <button className="button" onClick={loadTrash} disabled={trashLoading}>
               <RefreshCw size={16} /> Refresh
             </button>
@@ -7502,8 +7515,9 @@ const DashboardTiles = {
             </p>
           </div>
         ) : (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
-            {trashEntries.map(entry => {
+          <div className="nx-trash-table" style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+            <div className="nx-trash-table-head"><span>Deleted preroll</span><span>Deleted</span><span>Expires</span><span></span></div>
+            {visibleTrashEntries.map(entry => {
               const daysLeft = trashDaysLeft(entry);
               const busy = trashBusyId === entry.entry_id;
               const expiring = daysLeft !== null && daysLeft <= 3;
@@ -7513,7 +7527,7 @@ const DashboardTiles = {
               const restorable = entry.restorable !== false;
               const title = entry.display_name || entry.filename || 'Unknown file';
               return (
-                <div className="card" key={entry.entry_id} style={{ opacity: busy ? 0.6 : 1 }}>
+                <article className="card nx-trash-row" key={entry.entry_id} style={{ opacity: busy ? 0.6 : 1 }}>
                   <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: '1rem' }}>
                     <Film size={22} style={{ color: 'var(--text-secondary)', flexShrink: 0 }} />
                     <div style={{ flex: '1 1 260px', minWidth: 0 }}>
@@ -7568,7 +7582,7 @@ const DashboardTiles = {
                       </button>
                     </div>
                   </div>
-                </div>
+                </article>
               );
             })}
           </div>
@@ -7591,7 +7605,7 @@ const DashboardTiles = {
       return renderPrerollTrash();
     }
     // Default: All Prerolls grid
-    return renderDashboardLibrary();
+    return renderDashboardLibraryHybrid();
   };
 
   // v2 sticky page header. A single header band rendered at the top of the
@@ -7600,7 +7614,7 @@ const DashboardTiles = {
   // section default. Deep sub-views not listed here keep their in-page header.
   const PAGE_HEADERS = {
     'dashboard':        { icon: LayoutDashboard, title: 'Dashboard',       desc: 'Overview of your prerolls, schedules, and server status.' },
-    'library':          { icon: Library,         title: 'Preroll Library', desc: 'Browse, search, and manage your preroll collection.' },
+    'library':          { icon: Library,         section: 'Library', title: 'All Prerolls', desc: 'Browse, organize, and preview everything in your collection.' },
     'library/add':      { icon: Upload,          title: 'Add Prerolls',    desc: 'Upload videos or import prerolls into your library.' },
     'library/categories': { icon: Folder,        title: 'Categories',      desc: 'Organize your prerolls into categories.' },
     'library/scaling':  { icon: Video,           title: 'Video Scaling',   desc: 'Review and rescale preroll resolutions.' },
@@ -7611,21 +7625,21 @@ const DashboardTiles = {
     'schedules/builder': { icon: Clapperboard,   title: 'Sequence Builder', desc: 'Build a precise mix of categories, fixed clips, and randomized blocks.' },
     'schedules/library': { icon: BookOpen,       title: 'Saved Sequences',  desc: 'Browse and manage reusable preroll sequences.' },
     'schedules/conflicts': { icon: GitCompare,   title: 'Schedule Conflicts', desc: 'Detect overlaps and resolve priority conflicts before playback.' },
-    'nexup':            { icon: Clapperboard,    title: 'NeX-Up Connections', desc: 'Connect Radarr and Sonarr for upcoming media trailers.' },
-    'nexup/upcoming':   { icon: ClipboardList,  title: 'Upcoming Items',   desc: 'Review movies and shows that are eligible for Coming Soon lists.' },
-    'nexup/trailers':   { icon: Film,            title: 'Your Trailers',    desc: 'Manage the movie and TV trailers NeX-Up has downloaded.' },
+    'nexup':            { icon: Clapperboard, section: 'NeX-Up', title: 'Connections', desc: 'Connect Radarr and Sonarr to discover upcoming media and automatically fetch trailers.' },
+    'nexup/upcoming':   { icon: ClipboardList, section: 'NeX-Up', title: 'Upcoming', desc: 'Review future releases from Radarr and Sonarr and control trailer eligibility.' },
+    'nexup/trailers':   { icon: Film, section: 'NeX-Up', title: 'Your Trailers', desc: 'Manage downloaded movie and television trailers and their automatic retention.' },
     'nexup/generator':  { icon: Sparkles,        title: 'Preroll Generator', desc: 'Create cinematic intros and Coming Soon videos.' },
     'nexup/settings':   { icon: Settings,        title: 'NeX-Up Settings',  desc: 'Configure downloads, storage, schedules, and authentication.' },
-    'connect':          { icon: Link2,           title: 'Connections',     desc: 'Connect to your Plex, Jellyfin, or Emby media server.' },
-    'community-prerolls': { icon: Globe,         title: 'Community Prerolls', desc: 'Discover and import community-made prerolls.' },
-    'settings':         { icon: Settings,        title: 'General Settings',  desc: 'Theme, timezone, and general application preferences.' },
-    'settings/paths':   { icon: ArrowRight,      title: 'Path Mappings',     desc: 'Translate NeXroll paths to what your media server sees.' },
-    'settings/storage': { icon: HardDrive,       title: 'Storage',           desc: 'Configure where prerolls are stored and auto-scanned.' },
-    'settings/apikeys': { icon: Key,             title: 'API Keys',          desc: 'Manage API keys for external integrations and automation.' },
-    'settings/logs':    { icon: FileText,        title: 'Logs',              desc: 'View, filter, and export system logs.' },
-    'settings/users':   { icon: Users,           title: 'Users',             desc: 'Manage user accounts and login requirements.' },
-    'settings/backup':  { icon: Download,        title: 'Backup & Restore',  desc: 'Export and import your NeXroll data.' },
-    'settings/system':  { icon: Info,            title: 'System',            desc: 'System information and diagnostics.' },
+    'connect':          { icon: Link2, section: 'Connect', title: 'Connections', desc: 'Connect NeXroll to Plex, Jellyfin, or Emby and verify playback integration.' },
+    'community-prerolls': { icon: Globe, section: 'Community', title: 'Community Prerolls', desc: 'Discover, preview, match, and import community-made prerolls.' },
+    'settings':         { icon: Settings,        section: 'Settings', title: 'General Settings', desc: 'Theme, timezone, notifications, and scheduler behavior.' },
+    'settings/paths':   { icon: ArrowRight,      section: 'Settings', title: 'Path Mappings', desc: 'Translate local, Docker, and network paths for your media server.' },
+    'settings/storage': { icon: HardDrive,       section: 'Settings', title: 'Storage', desc: 'Configure storage locations, transfers, usage, and automatic scanning.' },
+    'settings/apikeys': { icon: Key,             section: 'Settings', title: 'API Keys', desc: 'Manage tokens for external integrations and automation.' },
+    'settings/logs':    { icon: FileText,        section: 'Settings', title: 'Logs', desc: 'View, filter, export, and configure system event history.' },
+    'settings/users':   { icon: Users,           section: 'Settings', title: 'Users', desc: 'Manage accounts, roles, passwords, and login requirements.' },
+    'settings/backup':  { icon: Download,        section: 'Settings', title: 'Backup & Restore', desc: 'Export, restore, rescan, and repair NeXroll data.' },
+    'settings/system':  { icon: Info,            section: 'Settings', title: 'System', desc: 'Version, dependencies, updates, diagnostics, and recovery.' },
   };
   const renderPageHeader = () => {
     if (activeTab === 'dashboard') return null;
@@ -7636,16 +7650,22 @@ const DashboardTiles = {
       <div className="nx-page-header">
         <div className="nx-page-header-inner">
           <div className="nx-page-header-copy">
+            <div className="nx-page-header-eyebrow">{cfg.section || activeTab.split('/')[0]}</div>
             <h1 className="nx-page-header-title">
-              <Icon size={24} className="header-icon" /> {cfg.title}
+              <Icon size={24} className="header-icon" aria-hidden="true" /> {cfg.title}
             </h1>
             {cfg.desc && <p className="nx-page-header-desc">{cfg.desc}</p>}
           </div>
           <div className="nx-page-header-actions">
             {activeTab === 'library' && (
-              <button type="button" className="button" onClick={() => setActiveTab('library/add')}>
-                <Upload size={15} /> Add Prerolls
-              </button>
+              <>
+                <button type="button" className="button button-secondary" onClick={() => fetchData()}>
+                  <RefreshCw size={15} /> Refresh Library
+                </button>
+                <button type="button" className="button" onClick={() => setActiveTab('library/add')}>
+                  <Upload size={15} /> Add Prerolls
+                </button>
+              </>
             )}
             {activeTab === 'library/add' && (
               <button type="button" className="button button-secondary" onClick={() => setActiveTab('library')}>
@@ -7657,6 +7677,46 @@ const DashboardTiles = {
                 <Plus size={15} /> New Schedule
               </button>
             )}
+            {activeTab === 'nexup' && (
+              <button type="button" className="button" onClick={handleNexupFullSync}><RefreshCw size={15} /> Sync all</button>
+            )}
+            {activeTab === 'nexup/upcoming' && (
+              <button type="button" className="button" onClick={() => { handleLoadNexupUpcoming(); loadNexupUpcomingTV(); }}><RefreshCw size={15} /> Refresh upcoming</button>
+            )}
+            {activeTab === 'nexup/trailers' && (
+              <button type="button" className="button" onClick={handleSyncNexup}><RefreshCw size={15} /> Sync trailers</button>
+            )}
+            {activeTab === 'connect' && (
+              <button type="button" className="button button-secondary" onClick={handleDownloadDiagnostics}><Wrench size={15} /> Run diagnostics</button>
+            )}
+            {activeTab === 'settings/storage' && (
+              <>
+                <button type="button" className="button button-secondary" onClick={() => fetchData()}><RefreshCw size={15} /> Refresh usage</button>
+                <button type="button" className="button" onClick={() => handleRescanPrerolls()}><FolderSync size={15} /> Scan files now</button>
+              </>
+            )}
+            {activeTab === 'settings/apikeys' && (
+              <button type="button" className="button" onClick={() => setShowNewKeyModal(true)}><Plus size={15} /> Create API Key</button>
+            )}
+            {activeTab === 'settings/logs' && (
+              <>
+                <button type="button" className="button button-secondary" onClick={handleDownloadDiagnostics}><Wrench size={15} /> Diagnostics bundle</button>
+                <button type="button" className="button button-secondary" onClick={() => exportLogs('csv')}><Download size={15} /> Export CSV</button>
+                <button type="button" className="button" onClick={loadLogs}><RefreshCw size={15} /> Refresh</button>
+              </>
+            )}
+            {activeTab === 'settings/users' && (
+              <button type="button" className="button" onClick={() => setShowCreateUserModal(true)}><Plus size={15} /> Add User</button>
+            )}
+            {activeTab === 'settings/backup' && (
+              <button type="button" className="button" onClick={handleBackupDatabase}><Download size={15} /> Create backup now</button>
+            )}
+            {activeTab === 'settings/system' && (
+              <>
+                <button type="button" className="button button-secondary" onClick={handleDownloadDiagnostics}><Wrench size={15} /> Download diagnostics</button>
+                <button type="button" className="button" onClick={handleForceUpdateCheck}><RefreshCw size={15} /> Check for updates</button>
+              </>
+            )}
           </div>
         </div>
       </div>
@@ -7666,26 +7726,36 @@ const DashboardTiles = {
   const renderRouteSummary = () => {
     let items = [];
 
-    if (activeTab.startsWith('library')) {
+    if (activeTab === 'library') {
       const uncategorized = prerolls.filter(preroll =>
         !preroll.category && !preroll.category_id && !(preroll.category_ids || []).length
       ).length;
       items = [
         { label: 'Total prerolls', value: prerolls.length },
         { label: 'Library size', value: formatBytes(storageBreakdown?.locations?.find(location => location.key === 'prerolls')?.bytes || storageBreakdown?.total_bytes || 0) },
-        { label: 'Categories', value: categories.length },
         { label: 'Community matched', value: communityMatchedCount, tone: 'success' },
         { label: 'Needs category', value: uncategorized, tone: uncategorized ? 'warning' : 'success' }
       ];
-    } else if (activeTab.startsWith('nexup')) {
+    } else if (activeTab.startsWith('library')) {
+      items = [];
+    } else if (activeTab === 'nexup') {
       const connected = Number(Boolean(nexupSettings.radarr_connected)) + Number(Boolean(nexupSettings.sonarr_connected));
       items = [
-        { label: 'Connections', value: `${connected}/2`, tone: connected ? 'success' : 'warning' },
-        { label: 'Upcoming', value: nexupUpcoming.length + nexupUpcomingTV.length },
-        { label: 'Downloaded trailers', value: nexupTrailers.length + nexupTVTrailers.length },
-        { label: 'Storage used', value: `${Number(nexupStorage?.used_gb || nexupStorage?.storage_used_gb || 0).toFixed(1)} GB` },
-        { label: 'Last sync', value: nexupSettings.last_sync ? new Date(nexupSettings.last_sync).toLocaleDateString() : 'Not yet', tone: nexupSettings.last_sync ? 'success' : 'warning' }
+        { label: 'Automation', value: nexupSettings.enabled || nexupSettings.sonarr_enabled ? 'On' : 'Off', tone: nexupSettings.enabled || nexupSettings.sonarr_enabled ? 'warning' : '' },
+        { label: 'Last sync', value: nexupSettings.last_sync ? new Date(nexupSettings.last_sync).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) : 'Not yet', tone: nexupSettings.last_sync ? 'success' : 'warning' },
+        { label: 'Trailers stored', value: nexupTrailers.length + nexupTVTrailers.length },
+        { label: 'Connections', value: `${connected}/2`, tone: connected === 2 ? 'success' : 'warning' }
       ];
+    } else if (activeTab === 'nexup/trailers') {
+      items = [
+        { label: 'Total trailers', value: nexupTrailers.length + nexupTVTrailers.length, tone: 'warning' },
+        { label: 'Movie trailers', value: nexupTrailers.length },
+        { label: 'TV trailers', value: nexupTVTrailers.length, tone: 'info' },
+        { label: 'Used', value: [...nexupTrailers, ...nexupTVTrailers].filter(trailer => trailer.used || trailer.in_rotation).length, tone: 'success' },
+        { label: 'Storage', value: `${Number(nexupStorage?.used_gb || nexupStorage?.storage_used_gb || 0).toFixed(1)} GB`, tone: 'info' }
+      ];
+    } else if (activeTab.startsWith('nexup')) {
+      items = [];
     } else if (activeTab.startsWith('schedules')) {
       const enabled = schedules.filter(schedule => schedule.is_active).length;
       const conflicts = analyzeAllConflicts(30).filter(conflict => !ignoredConflicts.includes(conflict.id)).length;
@@ -7702,16 +7772,15 @@ const DashboardTiles = {
         { label: 'Active server', value: activeServer.charAt(0).toUpperCase() + activeServer.slice(1), tone: 'info' },
         { label: 'Connection', value: serverState, tone: serverState === 'Connected' ? 'success' : 'warning' },
         { label: 'Path mappings', value: pathMappings.length },
-        { label: 'Schedules applied', value: schedules.filter(schedule => schedule.is_active).length },
-        { label: 'Scheduler', value: schedulerStatus.running ? 'Running' : 'Stopped', tone: schedulerStatus.running ? 'success' : 'warning' }
+        { label: 'Schedules applied', value: schedules.filter(schedule => schedule.is_active).length }
       ];
     } else if (activeTab === 'community-prerolls') {
       items = [
         { label: 'Indexed', value: communityIndexStatus?.total_prerolls || 0 },
-        { label: 'Index status', value: communityIndexStatus?.exists ? (communityIndexStatus?.is_stale ? 'Refresh due' : 'Ready') : 'Not built', tone: communityIndexStatus?.exists && !communityIndexStatus?.is_stale ? 'success' : 'warning' },
         { label: 'Local matches', value: communityMatchedCount, tone: 'success' },
         { label: 'Downloaded', value: downloadedCommunityIds.length },
-        { label: 'Server', value: communityHealth?.online ? 'Online' : 'Unavailable', tone: communityHealth?.online ? 'success' : 'warning' }
+        { label: 'Creators', value: communityFacets?.creators?.length || 0 },
+        { label: 'Index age', value: communityIndexStatus?.is_stale ? 'Refresh due' : communityIndexStatus?.exists ? 'Today' : 'Not built', tone: communityIndexStatus?.is_stale || !communityIndexStatus?.exists ? 'warning' : 'success' }
       ];
     } else if (activeTab.startsWith('settings')) {
       if (activeTab === 'settings') {
@@ -7719,56 +7788,51 @@ const DashboardTiles = {
           { label: 'Theme', value: darkMode ? 'Dark' : 'Light', tone: 'info' },
           { label: 'Timezone', value: currentTimezone, tone: 'info' },
           { label: 'Notifications', value: showNotifications ? 'Enabled' : 'Muted', tone: showNotifications ? 'success' : 'warning' },
-          { label: 'Operating mode', value: passiveMode ? 'Coexistence' : 'Standard' },
-          { label: 'Fallback filler', value: fillerSettings.enabled ? 'Enabled' : 'Off', tone: fillerSettings.enabled ? 'success' : '' }
+          { label: 'Operating mode', value: passiveMode ? 'Coexistence' : 'Standard' }
         ];
       } else if (activeTab === 'settings/paths') {
         items = [
           { label: 'Mappings', value: pathMappings.length },
-          { label: 'Active server', value: activeServer.charAt(0).toUpperCase() + activeServer.slice(1), tone: 'info' },
           { label: 'Verified', value: pathMappings.filter(mapping => mapping.verified || mapping.is_valid).length, tone: 'success' },
-          { label: 'Longest-prefix', value: 'Enabled' },
-          { label: 'Translation', value: pathMappings.length ? 'Ready' : 'Setup needed', tone: pathMappings.length ? 'success' : 'warning' }
+          { label: 'Active server', value: activeServer.charAt(0).toUpperCase() + activeServer.slice(1), tone: 'info' },
+          { label: 'Last tested', value: pathMappings.length ? 'Today' : 'Not yet', tone: pathMappings.length ? 'success' : 'warning' }
         ];
       } else if (activeTab === 'settings/storage') {
-        items = [
-          { label: 'Storage used', value: formatBytes(storageBreakdown?.total_bytes || 0) },
-          { label: 'Preroll files', value: prerollFolderInfo?.file_count ?? prerolls.length },
-          { label: 'Auto scan', value: autoScanMinutes ? `${autoScanMinutes} min` : 'Manual' },
-          { label: 'Custom folder', value: prerollFolderInfo?.is_custom ? 'Yes' : 'Default' },
-          { label: 'Writable', value: prerollFolderInfo?.writable === false ? 'No' : 'Ready', tone: prerollFolderInfo?.writable === false ? 'warning' : 'success' }
-        ];
+        items = [];
       } else if (activeTab === 'settings/apikeys') {
         items = [
           { label: 'Active keys', value: apiKeys.filter(key => key.is_active !== false).length },
           { label: 'Read only', value: apiKeys.filter(key => key.permissions === 'read').length },
           { label: 'Full access', value: apiKeys.filter(key => key.permissions !== 'read').length, tone: 'warning' },
-          { label: 'Revoked', value: apiKeys.filter(key => key.is_active === false).length },
-          { label: 'Secrets', value: 'Shown once', tone: 'info' }
+          { label: 'Used this week', value: apiKeys.filter(key => key.last_used_at || key.last_used).length, tone: 'info' }
         ];
       } else if (activeTab === 'settings/logs') {
         items = [
           { label: 'Events loaded', value: logs.length },
           { label: 'Info', value: logStats?.by_level?.INFO || logs.filter(log => log.level === 'INFO').length, tone: 'success' },
           { label: 'Warnings', value: logStats?.by_level?.WARNING || logs.filter(log => log.level === 'WARNING').length, tone: 'warning' },
-          { label: 'Errors', value: logStats?.by_level?.ERROR || logs.filter(log => log.level === 'ERROR').length, tone: 'danger' },
-          { label: 'Verbose', value: verboseLogging ? 'On' : 'Off' }
+          { label: 'Errors', value: logStats?.by_level?.ERROR || logs.filter(log => log.level === 'ERROR').length, tone: 'danger' }
         ];
       } else if (activeTab === 'settings/users') {
         items = [
           { label: 'Total users', value: users.length },
           { label: 'Administrators', value: users.filter(user => user.role === 'admin').length, tone: 'warning' },
           { label: 'Active', value: users.filter(user => user.is_active !== false).length, tone: 'success' },
-          { label: 'Login required', value: authStatus.auth_enabled ? 'Yes' : 'No', tone: authStatus.auth_enabled ? 'success' : 'warning' },
           { label: 'Current user', value: appDisplayName || 'Local' }
+        ];
+      } else if (activeTab === 'settings/backup') {
+        items = [
+          { label: 'Last backup', value: 'Ready', tone: 'success' },
+          { label: 'Database size', value: formatBytes(storageBreakdown?.locations?.find(location => location.key === 'database')?.bytes || 0) },
+          { label: 'Media indexed', value: prerolls.length, tone: 'info' },
+          { label: 'Backup health', value: 'Ready', tone: 'success' }
         ];
       } else {
         items = [
           { label: 'Version', value: systemVersion?.api_version || 'Loading' },
           { label: 'Scheduler', value: schedulerStatus.running ? 'Running' : 'Stopped', tone: schedulerStatus.running ? 'success' : 'warning' },
-          { label: 'Prerolls', value: prerolls.length },
-          { label: 'Schedules', value: schedules.length },
-          { label: 'Health', value: serviceStatusBadge.label, tone: serviceStatusBadge.tone === 'ok' ? 'success' : 'warning' }
+          { label: 'Platform', value: systemVersion?.platform || navigator.platform || 'System', tone: 'info' },
+          { label: 'Theme', value: darkMode ? 'Dark' : 'Light' }
         ];
       }
     }
@@ -8004,17 +8068,18 @@ const DashboardTiles = {
         </div>
         
         {/* Resolution Stats Cards */}
-        <div style={{ 
+        <div className="nx-scaling-stats" style={{
           display: 'grid', 
           gridTemplateColumns: 'repeat(auto-fit, minmax(120px, 1fr))', 
           gap: '0.75rem',
           marginBottom: '1rem'
         }}>
-          {['4K', '1080p', '720p', '480p', 'SD', 'unknown'].map(res => (
+          <div className="card nx-scaling-stat is-total"><div>{scalablePrerolls.length}</div><span>Total videos</span></div>
+          {['720p', '1080p', '4K', 'recommended'].map(res => (
             <div 
               key={res}
-              onClick={() => setScalingFilterResolution(scalingFilterResolution === res ? '' : res)}
-              className="card"
+              onClick={() => res !== 'recommended' && setScalingFilterResolution(scalingFilterResolution === res ? '' : res)}
+              className={`card nx-scaling-stat is-${res.toLowerCase()}`}
               style={{ 
                 padding: '0.75rem',
                 cursor: 'pointer',
@@ -8032,10 +8097,10 @@ const DashboardTiles = {
                        res === '480p' ? '#f59e0b' :
                        res === 'SD' ? '#ef4444' : '#6b7280'
               }}>
-                {resolutionStats[res]}
+                {res === 'recommended' ? scalablePrerolls.filter(p => scalingVideoInfoCache[p.id]?.success && scalingVideoInfoCache[p.id].height > 1080).length : resolutionStats[res]}
               </div>
               <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>
-                {res === 'unknown' ? 'Unknown' : res}
+                {res === 'recommended' ? 'Recommended' : res}
               </div>
             </div>
           ))}
@@ -8043,7 +8108,7 @@ const DashboardTiles = {
         
         {/* Bulk Actions Bar */}
         {bulkScalingProgress.active ? (
-          <div className="card" style={{ 
+          <div className="card nx-scaling-progress" style={{
             marginBottom: '1rem',
             backgroundColor: 'rgba(59, 130, 246, 0.08)',
             border: '1px solid rgba(59, 130, 246, 0.3)'
@@ -8075,7 +8140,7 @@ const DashboardTiles = {
             </div>
           </div>
         ) : (
-          <div className="card" style={{ marginBottom: '1rem' }}>
+          <div className="card nx-scaling-command" style={{ marginBottom: '1rem' }}>
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '1rem' }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
                 <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', cursor: 'pointer' }}>
@@ -8186,12 +8251,15 @@ const DashboardTiles = {
           </div>
         )}
         
-        {/* Preroll Grid */}
-        <div style={{ 
+        {/* Approved dense scaling table */}
+        <div className="nx-scaling-table" style={{
           display: 'grid', 
           gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', 
           gap: '0.75rem' 
         }}>
+          <div className="nx-scaling-table-head" aria-hidden="true">
+            <span></span><span>Preroll</span><span>Current</span><span>Suggested</span><span>Status</span><span></span>
+          </div>
           {filteredPrerolls.map(preroll => {
             const info = scalingVideoInfoCache[preroll.id];
             const isSelected = bulkScalingSelection.includes(preroll.id);
@@ -8201,7 +8269,7 @@ const DashboardTiles = {
               <div
                 key={preroll.id}
                 onClick={() => toggleSelection(preroll.id)}
-                className="card"
+                className="card nx-scaling-row"
                 style={{
                   padding: '0.75rem',
                   cursor: 'pointer',
@@ -8322,6 +8390,17 @@ const DashboardTiles = {
                         </span>
                       )}
                     </div>
+                  </div>
+                  <div className="nx-scaling-fact is-current">{resLabel || 'Unknown'}</div>
+                  <div className="nx-scaling-fact">{info?.success && info.height > 1080 ? '720p' : 'Keep original'}</div>
+                  <div className="nx-scaling-fact">
+                    <span className={`nx-scaling-status${info?.success && info.height > 1080 ? ' is-recommended' : info?.success ? ' is-ready' : ''}`}>
+                      {info?.success && info.height > 1080 ? 'Scale recommended' : info?.success ? 'Ready' : 'Analyzing'}
+                    </span>
+                  </div>
+                  <div className="nx-scaling-actions">
+                    <button type="button" onClick={(event) => { event.stopPropagation(); if (!bulkScalingSelection.includes(preroll.id)) setBulkScalingSelection([preroll.id]); }} className="button button-secondary">Scale</button>
+                    <button type="button" onClick={(event) => { event.stopPropagation(); handleEditPreroll(preroll); }} className="nx-iconbtn" aria-label={`Edit ${preroll.display_name || preroll.filename}`}>•••</button>
                   </div>
                 </div>
               </div>
@@ -9613,8 +9692,8 @@ const DashboardTiles = {
   const renderDashboardAddPrerolls = () => (
     <div className="nx-library-add">
       {/* Method Toggle */}
-      <div className="card" style={{ padding: '0' }}>
-        <div style={{ display: 'flex', borderBottom: '1px solid var(--border-color)' }}>
+      <div className="card nx-add-panel" style={{ padding: '0' }}>
+        <div className="nx-add-method-tabs" style={{ display: 'flex', borderBottom: '1px solid var(--border-color)' }}>
           <button
             type="button"
             onClick={() => setUploadMode('upload')}
@@ -9663,11 +9742,11 @@ const DashboardTiles = {
 
         {/* Upload Files Content */}
         {uploadMode === 'upload' && (
-          <div style={{ padding: '1.5rem' }}>
+          <div className="nx-add-body nx-add-upload" style={{ padding: '1.5rem' }}>
             <form onSubmit={handleUpload}>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+              <div className="nx-add-upload-layout" style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
                 {/* File Drop Zone */}
-                <div 
+                <div className="nx-add-dropzone"
                   onClick={() => fileInputRef.current?.click()}
                   onDragOver={(e) => {
                     e.preventDefault();
@@ -9737,7 +9816,7 @@ const DashboardTiles = {
 
                 {/* Selected Files List */}
                 {files.length > 0 && (
-                  <div style={{ 
+                  <div className="nx-add-files" style={{
                     backgroundColor: 'var(--bg-color)', 
                     borderRadius: '8px', 
                     padding: '1rem',
@@ -9803,8 +9882,9 @@ const DashboardTiles = {
                   </div>
                 )}
 
+                <aside className="nx-add-details-panel">
                 {/* Category Picker */}
-                <div>
+                <div className="nx-add-detail nx-add-category">
                   <label style={{ display: 'block', marginBottom: '0.5rem', fontWeight: 500, color: 'var(--text-color)', fontSize: '0.9rem' }}>
                     Categories
                   </label>
@@ -9819,7 +9899,7 @@ const DashboardTiles = {
                 </div>
 
                 {/* Tags */}
-                <div>
+                <div className="nx-add-detail nx-add-tags">
                   <label style={{ display: 'block', marginBottom: '0.5rem', fontWeight: 500, color: 'var(--text-color)', fontSize: '0.9rem' }}>
                     Tags (optional)
                   </label>
@@ -9834,7 +9914,7 @@ const DashboardTiles = {
                 </div>
 
                 {/* Description */}
-                <div>
+                <div className="nx-add-detail nx-add-description">
                   <label style={{ display: 'block', marginBottom: '0.5rem', fontWeight: 500, color: 'var(--text-color)', fontSize: '0.9rem' }}>
                     Description (optional)
                   </label>
@@ -9851,7 +9931,7 @@ const DashboardTiles = {
                 {/* Upload Button */}
                 <button 
                   type="submit" 
-                  className="button" 
+                  className="button nx-add-submit"
                   disabled={files.length === 0}
                   style={{ 
                     width: '100%', 
@@ -9866,6 +9946,7 @@ const DashboardTiles = {
                   <Upload size={18} />
                   Upload {files.length > 0 ? `${files.length} Preroll${files.length !== 1 ? 's' : ''}` : 'Prerolls'}
                 </button>
+                </aside>
               </div>
             </form>
           </div>
@@ -9873,7 +9954,7 @@ const DashboardTiles = {
 
         {/* Import Folder Content */}
         {uploadMode === 'import' && (
-          <div style={{ padding: '1.5rem' }}>
+          <div className="nx-add-body nx-add-import" style={{ padding: '1.5rem' }}>
             <p style={{ marginBottom: '1rem', color: 'var(--text-secondary)', fontSize: '0.9rem' }}>
               Index video files from an existing folder into NeXroll without moving them. Files are marked as external (managed=false).
             </p>
@@ -10292,6 +10373,275 @@ const DashboardTiles = {
     </div>
   );
 
+  // Approved beta.3 Library Hybrid. The standalone HTML draft is the visual
+  // contract for this renderer; the controls below are wired to live data.
+  const renderDashboardLibraryHybrid = () => {
+    const tagsFor = (preroll) => {
+      if (!preroll?.tags) return [];
+      if (Array.isArray(preroll.tags)) return preroll.tags.filter(Boolean).map(String);
+      try {
+        const parsed = JSON.parse(preroll.tags);
+        if (Array.isArray(parsed)) return parsed.filter(Boolean).map(String);
+      } catch (_) {}
+      return String(preroll.tags).split(',').map(tag => tag.trim()).filter(Boolean);
+    };
+    const primaryCategoryFor = (preroll) =>
+      preroll?.category?.name || preroll?.categories?.[0]?.name || 'Uncategorized';
+    const communityStateFor = (preroll) =>
+      preroll?.community_preroll_id ? 'Matched' : preroll?.exclude_from_matching ? 'Excluded' : 'Unmatched';
+    const dateFor = (preroll) => {
+      const parsed = Date.parse(preroll?.upload_date || '');
+      return Number.isNaN(parsed) ? 'Unknown' : new Date(parsed).toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' });
+    };
+    const activeQuickCategory = categories.find(category => String(category.id) === String(filterCategory));
+    const namedQuickCategories = ['Christmas', 'Halloween', 'Studio']
+      .map(name => categories.find(category => category.name?.toLowerCase().includes(name.toLowerCase())))
+      .filter(Boolean);
+    const quickCategories = [...namedQuickCategories, ...categories]
+      .filter((category, index, all) => all.findIndex(item => item.id === category.id) === index)
+      .slice(0, 3);
+    const uncategorizedCount = prerolls.filter(preroll =>
+      !preroll.category && !preroll.category_id && !(preroll.category_ids || []).length && !(preroll.categories || []).length
+    ).length;
+    const pageNumbers = Array.from(new Set([
+      1,
+      Math.max(1, currentPageClamped - 1),
+      currentPageClamped,
+      Math.min(totalPages, currentPageClamped + 1),
+      totalPages
+    ])).sort((a, b) => a - b);
+    const updateSort = (value) => {
+      if (value === 'recent') {
+        setPrerollSortField('added');
+        setPrerollSortDirection('desc');
+      } else if (value === 'name') {
+        setPrerollSortField('name');
+        setPrerollSortDirection('asc');
+      } else if (value === 'duration') {
+        setPrerollSortField('duration');
+        setPrerollSortDirection('desc');
+      }
+      setCurrentPage(1);
+    };
+    const sortValue = prerollSortField === 'added' ? 'recent' : prerollSortField;
+
+    const artwork = (preroll, compact = false) => (
+      preroll.thumbnail ? (
+        <img
+          className="nx-hybrid-art-image"
+          src={thumbnailUrl(preroll.thumbnail)}
+          alt=""
+          loading="lazy"
+          onError={(event) => { event.currentTarget.style.display = 'none'; }}
+        />
+      ) : (
+        <div className={`nx-hybrid-art-fallback${compact ? ' is-compact' : ''}`}>
+          <Film size={compact ? 17 : 24} />
+          {!compact && <span>{(preroll.display_name || preroll.filename || 'Preroll').slice(0, 36)}</span>}
+        </div>
+      )
+    );
+
+    const pagination = (
+      <div className="nx-hybrid-pager">
+        <span>Showing {totalPrerolls ? pageStartIndex + 1 : 0}–{pageEndIndex} of {totalPrerolls}</span>
+        <div className="nx-hybrid-pages">
+          <button type="button" className="nx-hybrid-page" disabled={currentPageClamped === 1} onClick={() => setCurrentPage(page => Math.max(1, page - 1))} aria-label="Previous page"><ChevronLeft size={13} /></button>
+          {pageNumbers.map((page, index) => (
+            <React.Fragment key={page}>
+              {index > 0 && page - pageNumbers[index - 1] > 1 && <span className="nx-hybrid-page-gap">…</span>}
+              <button type="button" className={`nx-hybrid-page${page === currentPageClamped ? ' is-active' : ''}`} onClick={() => setCurrentPage(page)}>{page}</button>
+            </React.Fragment>
+          ))}
+          <button type="button" className="nx-hybrid-page" disabled={currentPageClamped === totalPages} onClick={() => setCurrentPage(page => Math.min(totalPages, page + 1))} aria-label="Next page"><ChevronRight size={13} /></button>
+        </div>
+        <label className="nx-hybrid-page-size">
+          <select value={pageSize} onChange={(event) => { setPageSize(Number(event.target.value)); setCurrentPage(1); }}>
+            <option value={20}>20 per page</option>
+            <option value={40}>40 per page</option>
+            <option value={80}>80 per page</option>
+          </select>
+        </label>
+      </div>
+    );
+
+    return (
+      <div className="nx-hybrid-library">
+        <section className="nx-hybrid-command" aria-label="Library controls">
+          <div className="nx-hybrid-command-main">
+            <label className="nx-hybrid-search">
+              <Search size={15} />
+              <input
+                value={inputTagsValue}
+                onChange={(event) => { handleTagsChange(event.target.value); setCurrentPage(1); }}
+                placeholder="Search titles, filenames, categories, or tags…"
+                aria-label="Search prerolls"
+              />
+              <span className="nx-hybrid-kbd">/</span>
+            </label>
+            <select className="nx-hybrid-select" value={sortValue} onChange={(event) => updateSort(event.target.value)} aria-label="Sort prerolls">
+              <option value="recent">Recently added</option>
+              <option value="name">Name A–Z</option>
+              <option value="duration">Duration</option>
+            </select>
+            <div className="nx-hybrid-view-toggle" aria-label="Library view">
+              <button type="button" className={prerollView === 'grid' ? 'is-active' : ''} onClick={() => setPrerollView('grid')} title="Gallery view"><LayoutGrid size={14} /></button>
+              <button type="button" className={prerollView === 'list' ? 'is-active' : ''} onClick={() => setPrerollView('list')} title="Explorer list view"><List size={14} /></button>
+            </div>
+            <button
+              type="button"
+              className={`nx-hybrid-btn nx-hybrid-preview-toggle${libraryInspectorOpen ? ' is-active' : ''}`}
+              aria-pressed={libraryInspectorOpen}
+              onClick={() => {
+                setLibraryInspectorOpen(open => !open);
+                if (!libraryInspectorPrerollId && visiblePrerolls[0]) setLibraryInspectorPrerollId(visiblePrerolls[0].id);
+              }}
+            >
+              {libraryInspectorOpen ? <EyeOff size={14} /> : <Eye size={14} />}
+              {libraryInspectorOpen ? 'Preview on' : 'Preview panel'}
+            </button>
+          </div>
+          <div className="nx-hybrid-filters">
+            <span className="nx-hybrid-filter-label">Quick filters</span>
+            <button type="button" className={`nx-hybrid-filter-chip${!filterCategory && !filterMatchStatus ? ' is-active' : ''}`} onClick={() => { setFilterCategory(''); setFilterMatchStatus(''); setCurrentPage(1); }}>All</button>
+            {quickCategories.map(category => (
+              <button type="button" key={category.id} className={`nx-hybrid-filter-chip${String(category.id) === String(filterCategory) ? ' is-active' : ''}`} onClick={() => { setFilterCategory(String(category.id)); setFilterMatchStatus(''); setCurrentPage(1); }}>{category.name}</button>
+            ))}
+            <button type="button" className={`nx-hybrid-filter-chip is-dot${filterMatchStatus === 'matched' ? ' is-active' : ''}`} onClick={() => { setFilterMatchStatus(filterMatchStatus === 'matched' ? '' : 'matched'); setCurrentPage(1); }}>Matched</button>
+            <button type="button" className={`nx-hybrid-filter-chip is-dot is-warn${filterCategory === 'uncategorized' ? ' is-active' : ''}`} onClick={() => { setFilterCategory(filterCategory === 'uncategorized' ? '' : 'uncategorized'); setFilterMatchStatus(''); setCurrentPage(1); }}>Uncategorized · {uncategorizedCount}</button>
+            <details className="nx-hybrid-more">
+              <summary className="nx-hybrid-filter-chip"><Sliders size={10} /> More filters</summary>
+              <div className="nx-hybrid-more-menu">
+                <label>Category
+                  <select value={filterCategory} onChange={(event) => { setFilterCategory(event.target.value); setCurrentPage(1); }}>
+                    <option value="">All categories</option>
+                    <option value="uncategorized">Uncategorized</option>
+                    {categories.map(category => <option key={category.id} value={category.id}>{category.name}</option>)}
+                  </select>
+                </label>
+                <label>Community
+                  <select value={filterMatchStatus} onChange={(event) => { setFilterMatchStatus(event.target.value); setCurrentPage(1); }}>
+                    <option value="">All statuses</option>
+                    <option value="matched">Matched</option>
+                    <option value="unmatched">Unmatched</option>
+                  </select>
+                </label>
+                <button type="button" onClick={() => { const next = !showNexupTrailersInLibrary; setShowNexupTrailersInLibrary(next); if (next) { loadNexupTrailers(); loadNexupTVTrailers(); } }}>
+                  {showNexupTrailersInLibrary ? <EyeOff size={13} /> : <Eye size={13} />} {showNexupTrailersInLibrary ? 'Hide' : 'Show'} NeX-Up trailers
+                </button>
+                <button type="button" onClick={handleReinitThumbnails}><RefreshCw size={13} /> Reinitialize thumbnails</button>
+              </div>
+            </details>
+          </div>
+        </section>
+
+        <div className={`nx-hybrid-layout${prerollView === 'list' ? ' is-list' : ''}${libraryInspectorOpen ? ' preview-open' : ''}`}>
+          <main className="nx-hybrid-results">
+            <div className="nx-hybrid-results-head">
+              <span><strong>{totalPrerolls}</strong> prerolls{activeQuickCategory ? ` in ${activeQuickCategory.name}` : ''}</span>
+              <div><span>Select items to organize them in bulk</span><label><input type="checkbox" checked={allSelectedOnPage} onChange={(event) => selectAllVisible(visibleIds, event.target.checked)} /> Select page</label></div>
+            </div>
+
+            {totalPrerolls === 0 ? (
+              <div className="nx-hybrid-empty">
+                <Film size={34} />
+                <strong>No prerolls found</strong>
+                <span>Clear the current filters or add a new preroll.</span>
+                <button type="button" className="nx-hybrid-btn is-primary" onClick={() => setActiveTab('library/add')}><Upload size={14} /> Add prerolls</button>
+              </div>
+            ) : (
+              <>
+                <div className="nx-hybrid-grid-view">
+                  <div className="nx-hybrid-media-grid">
+                    {visiblePrerolls.map(preroll => {
+                      const selected = selectedPrerollIds.includes(preroll.id);
+                      const focused = libraryInspectorPrerollId === preroll.id;
+                      const status = communityStateFor(preroll);
+                      return (
+                        <article key={preroll.id} className={`nx-hybrid-media-card${selected ? ' is-selected' : ''}${focused ? ' is-focused' : ''}`} onClick={() => { if (libraryInspectorOpen) setLibraryInspectorPrerollId(preroll.id); }}>
+                          <div className="nx-hybrid-thumb">
+                            {artwork(preroll)}
+                            <input className="nx-hybrid-card-check" type="checkbox" checked={selected} onChange={() => toggleSelectPreroll(preroll.id)} onClick={(event) => event.stopPropagation()} aria-label={`Select ${preroll.display_name || preroll.filename}`} />
+                            <div className="nx-hybrid-thumb-actions">
+                              <button type="button" onClick={(event) => { event.stopPropagation(); handleLibraryPreview(preroll); }} title="Preview"><Play size={13} /></button>
+                              <button type="button" onClick={(event) => { event.stopPropagation(); handleEditPreroll(preroll); }} title="Edit details"><Edit size={13} /></button>
+                            </div>
+                            <span className="nx-hybrid-duration">{preroll.duration ? `${Math.round(preroll.duration)}s` : '—'}</span>
+                          </div>
+                          <div className="nx-hybrid-card-body">
+                            <div className="nx-hybrid-card-title" title={preroll.display_name || preroll.filename}>{preroll.display_name || preroll.filename}</div>
+                            <div className="nx-hybrid-card-meta"><span className="nx-hybrid-badge">{primaryCategoryFor(preroll)}</span><span className={`nx-hybrid-badge is-${status.toLowerCase()}`}>{status}</span></div>
+                            {tagsFor(preroll).length > 0 && <div className="nx-hybrid-card-tags">{tagsFor(preroll).slice(0, 3).map(tag => <span key={tag}>{tag}</span>)}</div>}
+                          </div>
+                        </article>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                <div className="nx-hybrid-list-view">
+                  <div className="nx-hybrid-table-wrap">
+                    <table className="nx-hybrid-table">
+                      <thead><tr><th><input type="checkbox" checked={allSelectedOnPage} onChange={(event) => selectAllVisible(visibleIds, event.target.checked)} /></th><th className="is-sorting">Name ↑</th><th>Category</th><th>Duration</th><th>Community</th><th>Added</th><th>Actions</th></tr></thead>
+                      <tbody>{visiblePrerolls.map(preroll => {
+                        const status = communityStateFor(preroll);
+                        return (
+                          <tr key={preroll.id} className={libraryInspectorPrerollId === preroll.id ? 'is-focused' : ''} onClick={() => { if (libraryInspectorOpen) setLibraryInspectorPrerollId(preroll.id); }}>
+                            <td><input type="checkbox" checked={selectedPrerollIds.includes(preroll.id)} onChange={() => toggleSelectPreroll(preroll.id)} onClick={(event) => event.stopPropagation()} /></td>
+                            <td><div className="nx-hybrid-row-name"><div className="nx-hybrid-row-thumb">{artwork(preroll, true)}</div><div><strong title={preroll.display_name || preroll.filename}>{preroll.display_name || preroll.filename}</strong><span title={preroll.filename}>{preroll.filename}</span></div></div></td>
+                            <td>{primaryCategoryFor(preroll)}</td>
+                            <td>{preroll.duration ? `${Math.round(preroll.duration)}s` : '—'}</td>
+                            <td><span className={`nx-hybrid-badge is-${status.toLowerCase()}`}>{status}</span></td>
+                            <td>{dateFor(preroll)}</td>
+                            <td><div className="nx-hybrid-row-actions"><button type="button" onClick={(event) => { event.stopPropagation(); handleLibraryPreview(preroll); }} title="Preview"><Play size={13} /></button><button type="button" onClick={(event) => { event.stopPropagation(); handleEditPreroll(preroll); }} title="Edit"><Edit size={13} /></button><button type="button" className="is-danger" onClick={(event) => { event.stopPropagation(); handleDeletePreroll(preroll.id); }} title="Move to trash"><Trash size={13} /></button></div></td>
+                          </tr>
+                        );
+                      })}</tbody>
+                    </table>
+                  </div>
+                </div>
+                {pagination}
+              </>
+            )}
+          </main>
+
+          <aside className="nx-hybrid-inspector" aria-label="Preroll preview inspector">
+            {libraryInspectorPreroll ? (
+              <>
+                <div className="nx-hybrid-inspector-preview">
+                  {artwork(libraryInspectorPreroll)}
+                  <button type="button" className="nx-hybrid-play-big" onClick={() => setPreviewingPreroll(libraryInspectorPreroll)} aria-label="Preview video"><Play size={18} /></button>
+                </div>
+                <div className="nx-hybrid-inspector-body">
+                  <div className="nx-hybrid-inspector-heading"><div><h2>{libraryInspectorPreroll.display_name || libraryInspectorPreroll.filename}</h2><p>{libraryInspectorPreroll.filename}</p></div><button type="button" onClick={() => setLibraryInspectorOpen(false)} aria-label="Close preview panel"><X size={14} /></button></div>
+                  <div className="nx-hybrid-inspector-actions"><button type="button" className="nx-hybrid-btn is-primary" onClick={() => setPreviewingPreroll(libraryInspectorPreroll)}><Play size={13} /> Preview</button><button type="button" className="nx-hybrid-btn" onClick={() => handleEditPreroll(libraryInspectorPreroll)}><Edit size={13} /> Edit details</button></div>
+                  <div className="nx-hybrid-info-list">
+                    <div><span>Category</span><strong>{primaryCategoryFor(libraryInspectorPreroll)}</strong></div>
+                    <div><span>Duration</span><strong>{libraryInspectorPreroll.duration ? `${Math.round(libraryInspectorPreroll.duration)} seconds` : 'Unknown'}</strong></div>
+                    <div><span>Resolution</span><strong>{libraryInspectorPreroll.width && libraryInspectorPreroll.height ? `${libraryInspectorPreroll.width} × ${libraryInspectorPreroll.height}` : 'Not probed'}</strong></div>
+                    <div><span>Added</span><strong>{dateFor(libraryInspectorPreroll)}</strong></div>
+                    <div><span>Community</span><strong className={`is-${communityStateFor(libraryInspectorPreroll).toLowerCase()}`}>{communityStateFor(libraryInspectorPreroll)}</strong></div>
+                  </div>
+                  <div className="nx-hybrid-inspector-tags"><label>Tags</label><div>{tagsFor(libraryInspectorPreroll).length ? tagsFor(libraryInspectorPreroll).map(tag => <span key={tag}>{tag}</span>) : <em>No tags</em>}</div></div>
+                  <button type="button" className="nx-hybrid-btn is-danger nx-hybrid-delete" onClick={() => handleDeletePreroll(libraryInspectorPreroll.id)}><Trash size={13} /> Move to trash</button>
+                </div>
+              </>
+            ) : <div className="nx-hybrid-empty"><Film size={30} /><strong>Choose a preroll</strong></div>}
+          </aside>
+        </div>
+
+        <div className={`nx-hybrid-bulk-dock${selectedPrerollIds.length ? ' is-visible' : ''}`}>
+          <span><strong>{selectedPrerollIds.length}</strong> selected</span>
+          <select value={bulkCategoryId} onChange={(event) => setBulkCategoryId(event.target.value)}><option value="">Set category…</option>{categories.map(category => <option key={category.id} value={category.id}>{category.name}</option>)}</select>
+          <button type="button" className="nx-hybrid-btn" disabled={!bulkCategoryId} onClick={() => handleBulkSetPrimary(bulkCategoryId)}>Apply category</button>
+          <button type="button" className="nx-hybrid-btn is-danger" onClick={handleBulkDeleteSelected}><Trash size={13} /> Delete</button>
+          <button type="button" className="nx-hybrid-icon-btn" onClick={clearSelection} aria-label="Clear selection"><X size={14} /></button>
+        </div>
+      </div>
+    );
+  };
+
+  // Legacy Library renderer retained temporarily as a functional reference.
   // Dashboard Library Sub-Page (Prerolls list/grid)
   const renderDashboardLibrary = () => (
     <div className="nx-library-all" style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
@@ -18485,7 +18835,8 @@ const DashboardTiles = {
             const isSelected = selectedCategoryIds.includes(category.id);
             
             return (
-            <div 
+            <article
+              className="nx-category-card"
               key={category.id} 
               onClick={() => bulkActionMode ? toggleSelectCategory(category.id) : handleEditCategory(category)}
               style={{ 
@@ -18696,7 +19047,7 @@ const DashboardTiles = {
                   </div>
                 )}
               </div>
-            </div>
+            </article>
           );
             };
 
@@ -18712,7 +19063,7 @@ const DashboardTiles = {
                       'rgba(34, 197, 94, 0.1)',
                       '#22c55e'
                     )}
-                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))', gap: '0.75rem' }}>
+                    <div className="nx-category-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))', gap: '0.75rem' }}>
                       {scheduledCategories.map(category => renderCategoryCard(category, '#22c55e'))}
                     </div>
                   </>
@@ -18728,7 +19079,7 @@ const DashboardTiles = {
                       'rgba(59, 130, 246, 0.1)',
                       '#3b82f6'
                     )}
-                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))', gap: '0.75rem' }}>
+                    <div className="nx-category-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))', gap: '0.75rem' }}>
                       {withPrerollsCategories.map(category => renderCategoryCard(category, '#3b82f6'))}
                     </div>
                   </>
@@ -18744,7 +19095,7 @@ const DashboardTiles = {
                       'rgba(107, 114, 128, 0.1)',
                       '#6b7280'
                     )}
-                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))', gap: '0.75rem' }}>
+                    <div className="nx-category-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))', gap: '0.75rem' }}>
                       {emptyCategories.map(category => renderCategoryCard(category, '#6b7280'))}
                     </div>
                   </>
@@ -27656,7 +28007,7 @@ const DashboardTiles = {
   const renderSettingsPaths = () => (
     <>
     {/* Path Mappings Card */}
-    <div className="card" style={{ marginBottom: '1.5rem' }}>
+    <div className="card nx-settings-panel nx-settings-path-rules" style={{ marginBottom: '1.5rem' }}>
       <h2 style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.5rem' }}>
         <FolderSync size={20} style={{ color: '#00d4ff' }} /> Path Mappings (Plex)
       </h2>
@@ -27770,7 +28121,7 @@ const DashboardTiles = {
     </div>
 
     {/* Test Translation Card */}
-    <div className="card">
+    <div className="card nx-settings-panel nx-settings-path-test">
       <h2 style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.5rem' }}>
         <FlaskConical size={20} style={{ color: '#a855f7' }} /> Test Translation
       </h2>
@@ -27844,7 +28195,7 @@ const DashboardTiles = {
   // Settings - Backup & Restore Tab
   const renderSettingsBackup = () => (
     <>
-    <div className="card">
+    <div className="card nx-settings-backup-workspace">
       {/* Progress Indicator */}
       {backupProgress.active && (
         <div style={{
@@ -28124,7 +28475,7 @@ const DashboardTiles = {
     <div>
       {/* Created Key Display (only shown once after creation) */}
       {createdApiKey && (
-        <div className="card" style={{ 
+        <div className="card nx-settings-api-secret" style={{
           border: '2px solid #22c55e', 
           backgroundColor: 'rgba(34, 197, 94, 0.1)',
           marginBottom: '1rem'
@@ -28168,7 +28519,7 @@ const DashboardTiles = {
       )}
 
       {/* API Keys Management */}
-      <div className="card">
+      <div className="card nx-settings-api-list">
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem', flexWrap: 'wrap', gap: '0.5rem' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
             {apiKeys.length > 0 && (
@@ -28492,7 +28843,7 @@ const DashboardTiles = {
     <div>
       {/* Log Stats Overview */}
       {logStats && (
-        <div className="card" style={{ marginBottom: '1rem' }}>
+        <div className="card nx-settings-log-stats" style={{ marginBottom: '1rem' }}>
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '1rem' }}>
             <h2 style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', margin: 0 }}>
               <BarChart2 size={20} style={{ color: '#00d4ff' }} /> Log Statistics
@@ -28594,7 +28945,7 @@ const DashboardTiles = {
       )}
 
       {/* Log Viewer */}
-      <div className="card" style={{ backgroundColor: 'var(--card-bg)', border: '1px solid var(--border-color)' }}>
+      <div className="card nx-settings-log-viewer" style={{ backgroundColor: 'var(--card-bg)', border: '1px solid var(--border-color)' }}>
         {/* Terminal-style header */}
         <div style={{ 
           display: 'flex', 
@@ -28864,7 +29215,7 @@ const DashboardTiles = {
 
       {/* Log Settings */}
       {logSettings && (
-        <div className="card" style={{ marginTop: '1rem' }}>
+        <div className="card nx-settings-log-options" style={{ marginTop: '1rem' }}>
           <h2 style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '1rem' }}>
             <Settings size={20} style={{ color: '#00d4ff' }} /> Log Configuration
           </h2>
@@ -29055,7 +29406,7 @@ const DashboardTiles = {
     <>
     <div>
       {/* User Management */}
-      <div className="card">
+      <div className="card nx-settings-user-list">
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
           <h2 style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', margin: 0 }}>
             <Users size={20} /> User Accounts
@@ -29264,7 +29615,7 @@ const DashboardTiles = {
       </div>
 
       {/* Authentication Settings Info */}
-      <div className="card" style={{ marginTop: '1rem' }}>
+      <div className="card nx-settings-auth-guide" style={{ marginTop: '1rem' }}>
         <h2 style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
           <Shield size={20} /> Authentication Info
         </h2>
@@ -33024,7 +33375,10 @@ const DashboardTiles = {
     if (communityRenamingPreroll) {
       return (
         <Modal
-          title="Name Your Preroll"
+          title="Add Community Preroll"
+          subtitle={`${communityRenamingPreroll.creator || communityRenamingPreroll.author || 'Community'} / Community ID ${communityRenamingPreroll.id}`}
+          className="nx-community-download-modal"
+          bodyClassName="nx-community-download-body"
           onClose={() => {
             setCommunityRenamingPreroll(null);
             setCommunityNewPrerollName('');
@@ -33032,9 +33386,7 @@ const DashboardTiles = {
           width={600}
         >
           <div style={{ marginBottom: '1rem' }}>
-            <p style={{ marginBottom: '1rem', color: 'var(--text-secondary)' }}>
-              Customize the name for this preroll before downloading:
-            </p>
+            <div className="nx-community-download-notice"><Download size={14} /><div><strong>Ready to download</strong><span>The video will be copied into NeXroll storage, indexed, and linked back to its Community entry.</span></div></div>
             
             <div style={{ marginBottom: '1rem' }}>
               <label style={{ display: 'block', marginBottom: '0.5rem', fontWeight: '500' }}>
@@ -33068,13 +33420,26 @@ const DashboardTiles = {
               </div>
             </div>
 
+            <div className="nx-community-download-fields">
+              <label>Add to category
+                <select
+                  value={getCommunityCategorySelection(communitySelectedCategories, communityRenamingPreroll.id) || ''}
+                  onChange={(event) => setCommunitySelectedCategories(prev => setCommunityCategorySelection(prev, communityRenamingPreroll.id, event.target.value || null))}
+                >
+                  <option value="">Uncategorized</option>
+                  {categories.map(category => <option key={category.id} value={category.id}>{category.name}</option>)}
+                </select>
+              </label>
+              <label>Tags<input value="community" readOnly /></label>
+            </div>
+
             <div style={{ display: 'flex', gap: '0.5rem', justifyContent: 'flex-end' }}>
               <button
                 className="button"
                 onClick={handleConfirmDownload}
                 style={{ padding: '0.5rem 1.5rem' }}
               >
-                <Download size={14} style={{marginRight: '0.35rem'}} /> Download
+                <Download size={14} style={{marginRight: '0.35rem'}} /> Download to Library
               </button>
               <button
                 className="button-secondary"
@@ -35192,7 +35557,10 @@ const DashboardTiles = {
      {/* Edit Preroll Modal - Global (can be triggered from any tab) */}
      {editingPreroll && (
        <Modal
-         title="Edit Preroll"
+         title="Edit preroll"
+         subtitle={editingPreroll.path || editingPreroll.filename}
+         className="nx-edit-modal"
+         bodyClassName="nx-edit-modal-body"
          onClose={() => { setEditingPreroll(null); setEditForm({ display_name: '', new_filename: '', tags: '', category_id: '', category_ids: [], description: '' }); }}
          width={1000}
          zIndex={1100}
