@@ -18471,6 +18471,10 @@ def update_nexup_settings(
     coming_soon_list_include_audio: Optional[bool] = None,
     coming_soon_list_logo_mode: Optional[str] = None,
     coming_soon_list_language: Optional[str] = None,
+    dynamic_preroll_template: Optional[str] = None,
+    dynamic_preroll_server_name: Optional[str] = None,
+    dynamic_preroll_duration: Optional[int] = None,
+    dynamic_preroll_theme: Optional[str] = None,
     dynamic_preroll_language: Optional[str] = None,
     release_date_preference: Optional[str] = None,
     coming_soon_available_days: Optional[int] = None,
@@ -18579,7 +18583,7 @@ def update_nexup_settings(
     if max_concurrent is not None:
         setting.nexup_max_concurrent = max(1, min(5, max_concurrent))  # 1-5 concurrent
     if bulk_warning_threshold is not None:
-        setting.nexup_bulk_warning_threshold = max(1, min(50, bulk_warning_threshold))  # 1-50 trailers
+        setting.nexup_bulk_warning_threshold = max(0, min(50, bulk_warning_threshold))  # 0 disables warnings
     if tmdb_api_key is not None:
         setting.nexup_tmdb_api_key = tmdb_api_key if tmdb_api_key.strip() else None
     # Unmonitored content settings
@@ -18621,6 +18625,14 @@ def update_nexup_settings(
     if coming_soon_list_language is not None:
         if coming_soon_list_language in ['en', 'fr', 'es', 'de']:
             setting.nexup_coming_soon_list_language = coming_soon_list_language
+    if dynamic_preroll_template is not None:
+        setting.nexup_dynamic_preroll_template = dynamic_preroll_template.strip()[:80] or 'coming_soon'
+    if dynamic_preroll_server_name is not None:
+        setting.nexup_dynamic_preroll_server_name = dynamic_preroll_server_name.strip()[:120]
+    if dynamic_preroll_duration is not None:
+        setting.nexup_dynamic_preroll_duration = max(3, min(20, dynamic_preroll_duration))
+    if dynamic_preroll_theme is not None:
+        setting.nexup_dynamic_preroll_theme = dynamic_preroll_theme.strip()[:80] or 'midnight'
     if dynamic_preroll_language is not None:
         if dynamic_preroll_language in ['en', 'fr', 'es', 'de']:
             setting.nexup_dynamic_preroll_language = dynamic_preroll_language

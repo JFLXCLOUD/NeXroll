@@ -12,6 +12,7 @@ import SequencePreviewModal from './components/SequencePreviewModal';
 import Sidebar from './components/Sidebar';
 import OnboardingWizard from './components/OnboardingWizard';
 import ToastHost from './components/Toast';
+import NexUpApprovedPages from './components/NexUpApprovedPages';
 import { validateSequence, stringifySequence, parseSequence, cloneSequenceWithIds, estimatePrerollCount } from './utils/sequenceValidator';
 import {
   buildBlendBothChanges,
@@ -1190,7 +1191,7 @@ const [applyingToServer, setApplyingToServer] = useState(false);
   const [tvSyncProgress, setTVSyncProgress] = useState(null);
   const [nexupUpcomingTab, setNexupUpcomingTab] = useState('movies'); // 'movies', 'shows', or 'calendar'
   const [nexupCalMonth, setNexupCalMonth] = useState(() => { const d = new Date(); return new Date(d.getFullYear(), d.getMonth(), 1); });
-  const [trailerViewMode, setTrailerViewMode] = useState('list'); // 'list' or 'detailed'
+  const [trailerViewMode, setTrailerViewMode] = useState('detailed'); // 'list' or 'detailed'
   const [playingTrailer, setPlayingTrailer] = useState(null); // { type: 'movie'|'tv', trailer: {...} }
   const [thumbnailProgress, setThumbnailProgress] = useState(null); // { status: 'Rebuilding...', phase: 'processing' }
   const [librarySyncProgress, setLibrarySyncProgress] = useState(null); // { status: 'Syncing...', phase: 'init'|'done'|'error' }
@@ -7645,7 +7646,7 @@ const DashboardTiles = {
     'nexup':            { icon: Clapperboard, section: 'NeX-Up', title: 'Connections', desc: 'Connect Radarr and Sonarr to discover upcoming media and automatically fetch trailers.' },
     'nexup/upcoming':   { icon: ClipboardList, section: 'NeX-Up', title: 'Upcoming', desc: 'Review future releases from Radarr and Sonarr and control trailer eligibility.' },
     'nexup/trailers':   { icon: Film, section: 'NeX-Up', title: 'Your Trailers', desc: 'Manage downloaded movie and television trailers and their automatic retention.' },
-    'nexup/generator':  { icon: Sparkles, section: 'NeX-Up', title: 'Preroll Generator', desc: 'Create cinematic intros and Coming Soon videos.' },
+    'nexup/generator':  { icon: Sparkles, section: 'NeX-Up', title: 'Preroll Generator', desc: 'Create cinematic videos from NeX-Up media and save them directly into your preroll library.' },
     'nexup/settings':   { icon: Settings, section: 'NeX-Up', title: 'NeX-Up Settings', desc: 'Configure trailer downloads, storage, release windows, providers, and cleanup behavior.' },
     'connect':          { icon: Link2, section: 'Connect', title: 'Connections', desc: 'Connect NeXroll to Plex, Jellyfin, or Emby and verify playback integration.' },
     'community-prerolls': { icon: Globe, section: 'Community', title: 'Community Prerolls', desc: 'Discover, preview, match, and import community-made prerolls.' },
@@ -7761,22 +7762,34 @@ const DashboardTiles = {
               <button type="button" className="button button-secondary" onClick={() => setShowIgnoredConflicts(value => !value)}><Eye size={15} /> Ignored conflicts</button>
             )}
             {activeTab === 'nexup' && (
-              <button type="button" className="button" onClick={handleNexupFullSync}><RefreshCw size={15} /> Sync all</button>
+              <>
+                <button type="button" className="button button-secondary" onClick={() => setActiveTab('settings/logs')}><FileText size={15} /> Connection log</button>
+                <button type="button" className="button" disabled={!nexupSettings.radarr_connected && !nexupSettings.sonarr_connected} onClick={handleNexupFullSync}><RefreshCw size={15} /> Sync all</button>
+              </>
             )}
             {activeTab === 'nexup/upcoming' && (
-              <button type="button" className="button" onClick={() => { handleLoadNexupUpcoming(); loadNexupUpcomingTV(); }}><RefreshCw size={15} /> Refresh upcoming</button>
+              <>
+                <button type="button" className="button button-secondary" onClick={() => { const today = new Date(); setNexupCalMonth(new Date(today.getFullYear(), today.getMonth(), 1)); }}>Today</button>
+                <button type="button" className="button" onClick={() => { handleLoadNexupUpcoming(); loadNexupUpcomingTV(); }}><RefreshCw size={15} /> Refresh upcoming</button>
+              </>
             )}
             {activeTab === 'nexup/trailers' && (
-              <button type="button" className="button" onClick={handleSyncNexup}><RefreshCw size={15} /> Sync trailers</button>
+              <>
+                <button type="button" className="button button-secondary" onClick={() => openFolderBrowser('nexup-storage', nexupSettings.storage_path || '')}><FolderOpen size={15} /> Storage folder</button>
+                <button type="button" className="button" disabled={!nexupSettings.storage_path} onClick={handleNexupFullSync}><RefreshCw size={15} /> Sync trailers</button>
+              </>
             )}
             {activeTab === 'nexup/generator' && (
-              <button type="button" className="button button-secondary" onClick={() => {
-                loadNexupSequencePresets();
-                setShowNexupSequenceWizard(true);
-              }} disabled={!nexupSettings.storage_path}><Sparkles size={15} /> Create sequence</button>
+              <>
+                <button type="button" className="button button-secondary" onClick={() => document.querySelector('.nx-ap-generated')?.scrollIntoView({ behavior: 'smooth', block: 'start' })}><Film size={15} /> Generated videos</button>
+                <button type="button" className="button" disabled={!nexupSettings.storage_path || (generatorTab === 'dynamic' && (!ffmpegAvailable || !dynamicPrerollSettings.server_name.trim()))} onClick={() => generatorTab === 'dynamic' ? handleGenerateFromPreview() : handleGenerateComingSoonList(comingSoonListSettings.layout)}><Sparkles size={15} /> {generatorTab === 'dynamic' ? 'Generate preroll' : 'Generate list'}</button>
+              </>
             )}
             {activeTab === 'nexup/settings' && (
-              <button type="button" className="button button-secondary" onClick={loadNexupSettings}><RotateCw size={15} /> Reset changes</button>
+              <>
+                <button type="button" className="button button-secondary" onClick={loadNexupSettings}><RotateCw size={15} /> Reset changes</button>
+                <button type="button" className="button nx-nexup-save-button" onClick={() => showAlert('NeX-Up settings are saved.', 'success')}><Save size={15} /> Save settings</button>
+              </>
             )}
             {activeTab === 'connect' && (
               <button type="button" className="button button-secondary" onClick={handleDownloadDiagnostics}><Wrench size={15} /> Run diagnostics</button>
@@ -7950,7 +7963,7 @@ const DashboardTiles = {
       }
     }
 
-    if (!items.length || activeTab.startsWith('schedules')) return null;
+    if (!items.length || activeTab.startsWith('schedules') || activeTab.startsWith('nexup')) return null;
     return (
       <section className="nx-route-summary" aria-label="Page summary">
         {items.map(item => (
@@ -8526,33 +8539,43 @@ const DashboardTiles = {
   // Quick Actions tile. Syncs Radarr then Sonarr and summarizes both.
   const handleNexupFullSync = async () => {
     if (nexupSyncProgress?.phase === 'init') return;
-    setNexupSyncProgress({ status: 'Syncing Radarr...', phase: 'init' });
+    const syncRadarr = Boolean(nexupSettings.radarr_connected);
+    const syncSonarr = Boolean(nexupSettings.sonarr_connected);
+    if (!syncRadarr && !syncSonarr) {
+      showAlert('Connect Radarr or Sonarr before starting a NeX-Up sync.', 'warning');
+      return;
+    }
+    setNexupSyncProgress({ status: syncRadarr ? 'Syncing Radarr...' : 'Syncing Sonarr...', phase: 'init' });
     let radarrResult = null;
     let sonarrResult = null;
     let radarrError = null;
     let sonarrError = null;
-    try {
-      const res = await fetch(apiUrl('/nexup/sync'), { method: 'POST' });
-      if (res.ok) {
-        radarrResult = await res.json();
-      } else {
-        const err = await res.json().catch(() => ({}));
-        radarrError = err.detail || 'Radarr sync failed';
+    if (syncRadarr) {
+      try {
+        const res = await fetch(apiUrl('/nexup/sync'), { method: 'POST' });
+        if (res.ok) {
+          radarrResult = await res.json();
+        } else {
+          const err = await res.json().catch(() => ({}));
+          radarrError = err.detail || 'Radarr sync failed';
+        }
+      } catch (e) {
+        radarrError = e.message || 'Radarr sync failed';
       }
-    } catch (e) {
-      radarrError = e.message || 'Radarr sync failed';
     }
-    setNexupSyncProgress({ status: 'Syncing Sonarr...', phase: 'init' });
-    try {
-      const res = await fetch(apiUrl('/nexup/sonarr/sync'), { method: 'POST' });
-      if (res.ok) {
-        sonarrResult = await res.json();
-      } else {
-        const err = await res.json().catch(() => ({}));
-        sonarrError = err.detail || 'Sonarr sync failed';
+    if (syncSonarr) {
+      setNexupSyncProgress({ status: 'Syncing Sonarr...', phase: 'init' });
+      try {
+        const res = await fetch(apiUrl('/nexup/sonarr/sync'), { method: 'POST' });
+        if (res.ok) {
+          sonarrResult = await res.json();
+        } else {
+          const err = await res.json().catch(() => ({}));
+          sonarrError = err.detail || 'Sonarr sync failed';
+        }
+      } catch (e) {
+        sonarrError = e.message || 'Sonarr sync failed';
       }
-    } catch (e) {
-      sonarrError = e.message || 'Sonarr sync failed';
     }
     const radarrDownloaded = radarrResult?.downloaded || 0;
     const sonarrDownloaded = sonarrResult?.downloaded || 0;
@@ -8560,8 +8583,10 @@ const DashboardTiles = {
     const radarrCookieError = radarrResult?.errors?.some(e => e.includes('bot detection') || e.includes('cookies'));
     const sonarrCookieError = sonarrResult?.errors?.some(e => e.includes('bot detection') || e.includes('cookies'));
     const hasCookieError = radarrCookieError || sonarrCookieError;
-    if (radarrError && sonarrError) {
-      setNexupSyncProgress({ status: 'Both syncs failed', phase: 'error' });
+    const attemptedErrors = [syncRadarr ? radarrError : null, syncSonarr ? sonarrError : null].filter(Boolean);
+    const attemptedCount = Number(syncRadarr) + Number(syncSonarr);
+    if (attemptedErrors.length === attemptedCount) {
+      setNexupSyncProgress({ status: attemptedCount > 1 ? 'Both syncs failed' : `${syncRadarr ? 'Radarr' : 'Sonarr'} sync failed`, phase: 'error' });
     } else if (hasCookieError) {
       setNexupSyncProgress({
         status: 'YouTube blocked - re-export cookies from Incognito (login, then robots.txt, then export)',
@@ -22116,9 +22141,29 @@ const DashboardTiles = {
       if (settings.availableDays !== undefined) params.append('coming_soon_available_days', settings.availableDays.toString());
       if (settings.maxAvailableNow !== undefined) params.append('coming_soon_max_available_now', settings.maxAvailableNow.toString());
       
-      await fetch(apiUrl('/nexup/settings?' + params.toString()), { method: 'PUT' });
+      const response = await fetch(apiUrl('/nexup/settings?' + params.toString()), { method: 'PUT' });
+      if (!response.ok) throw new Error('Coming Soon defaults could not be saved.');
+      return true;
     } catch (err) {
       console.error('Failed to save Coming Soon List settings:', err);
+      return false;
+    }
+  };
+
+  const saveDynamicPrerollSettings = async () => {
+    try {
+      const params = new URLSearchParams({
+        dynamic_preroll_template: dynamicPrerollSettings.template || 'coming_soon',
+        dynamic_preroll_server_name: dynamicPrerollSettings.server_name || '',
+        dynamic_preroll_duration: String(dynamicPrerollSettings.duration || 5),
+        dynamic_preroll_theme: dynamicPrerollSettings.theme || 'midnight',
+        dynamic_preroll_language: dynamicPrerollSettings.language || 'en'
+      });
+      const response = await fetch(apiUrl(`/nexup/settings?${params.toString()}`), { method: 'PUT' });
+      if (!response.ok) throw new Error('Dynamic preroll defaults could not be saved.');
+      showAlert('Dynamic preroll defaults saved.', 'success');
+    } catch (error) {
+      showAlert(error?.message || 'Dynamic preroll defaults could not be saved.', 'error');
     }
   };
 
@@ -23293,52 +23338,56 @@ const DashboardTiles = {
     }
   };
 
-  const handleGenerateComingSoonList = async () => {
+  const handleGenerateComingSoonList = async (layoutOverride) => {
     setComingSoonListGenerating(true);
     try {
-      const params = new URLSearchParams({
-        layout: comingSoonListSettings.layout,
-        source: comingSoonListSettings.source,
-        duration: comingSoonListSettings.duration.toString(),
-        max_items: comingSoonListSettings.maxItems.toString(),
-        bg_color: comingSoonListSettings.bgColor,
-        text_color: comingSoonListSettings.textColor,
-        accent_color: comingSoonListSettings.accentColor
-      });
-      if (comingSoonListSettings.serverName.trim()) {
-        params.append('server_name', comingSoonListSettings.serverName.trim());
-      }
-      if (comingSoonListSettings.includeAudio) {
-        params.append('include_audio', 'true');
-      }
-      params.append('language', comingSoonListSettings.language || 'en');
-      
-      const res = await fetch(apiUrl(`/nexup/preroll/generate-coming-soon-list?${params}`), {
-        method: 'POST'
-      });
-      
-      if (res.ok) {
-        const data = await res.json();
-        const msg = data.total_eligible && data.total_eligible < data.max_items_setting
-          ? `Coming Soon List generated with ${data.items_count} items (only ${data.total_eligible} trailers have future release dates)`
-          : `Coming Soon List generated with ${data.items_count} items!`;
-        showAlert(msg, 'success');
-        loadGeneratedComingSoonLists();
-        loadGeneratedPrerolls();
-      } else {
-        // A 500 returns plain "Internal Server Error" text, not JSON — reading
-        // it as JSON used to throw "Unexpected token 'I'". Read as text and try
-        // to parse, so the real reason shows instead of a confusing parse error.
-        const raw = await res.text();
-        let detail = `Failed to generate Coming Soon List (HTTP ${res.status})`;
-        try {
-          const parsed = JSON.parse(raw);
-          if (parsed && parsed.detail) detail = parsed.detail;
-        } catch {
-          if (raw && raw.length < 300) detail += `: ${raw.trim()}`;
+      const requestedLayout = typeof layoutOverride === 'string' ? layoutOverride : comingSoonListSettings.layout;
+      const layouts = requestedLayout === 'both' ? ['grid', 'list'] : [requestedLayout];
+      const results = [];
+      for (const layout of layouts) {
+        const params = new URLSearchParams({
+          layout,
+          source: comingSoonListSettings.source,
+          duration: comingSoonListSettings.duration.toString(),
+          max_items: comingSoonListSettings.maxItems.toString(),
+          bg_color: comingSoonListSettings.bgColor,
+          text_color: comingSoonListSettings.textColor,
+          accent_color: comingSoonListSettings.accentColor
+        });
+        if (comingSoonListSettings.serverName.trim()) {
+          params.append('server_name', comingSoonListSettings.serverName.trim());
         }
-        showAlert(detail, 'error');
+        if (comingSoonListSettings.includeAudio) {
+          params.append('include_audio', 'true');
+        }
+        params.append('language', comingSoonListSettings.language || 'en');
+
+        const res = await fetch(apiUrl(`/nexup/preroll/generate-coming-soon-list?${params}`), { method: 'POST' });
+        if (!res.ok) {
+          // A 500 may return plain text instead of JSON. Preserve the backend's
+          // actual error so a failed grid/list batch remains diagnosable.
+          const raw = await res.text();
+          let detail = `Failed to generate ${layout} Coming Soon List (HTTP ${res.status})`;
+          try {
+            const parsed = JSON.parse(raw);
+            if (parsed && parsed.detail) detail = parsed.detail;
+          } catch {
+            if (raw && raw.length < 300) detail += `: ${raw.trim()}`;
+          }
+          throw new Error(detail);
+        }
+        results.push(await res.json());
       }
+
+      const itemCount = results.reduce((sum, result) => sum + Number(result.items_count || 0), 0);
+      showAlert(
+        requestedLayout === 'both'
+          ? `Generated poster-grid and text-list videos with ${itemCount} total items.`
+          : `Coming Soon List generated with ${itemCount} items!`,
+        'success'
+      );
+      loadGeneratedComingSoonLists();
+      loadGeneratedPrerolls();
     } catch (err) {
       showAlert('Error generating Coming Soon List: ' + (err?.message || err), 'error');
     } finally {
@@ -23730,22 +23779,159 @@ const DashboardTiles = {
   // ============================================
   // RENDER: NeX-Up Page with Sub-Navigation
   // ============================================
+  const handleNexupToggleExclude = async (item, type) => {
+    const endpoint = type === 'movie'
+      ? `/nexup/trailers/${item.trailer_db_id}/exclude`
+      : `/nexup/trailers/tv/${item.trailer_db_id}/exclude`;
+    try {
+      const res = await fetch(apiUrl(endpoint), { method: 'PUT' });
+      if (!res.ok) throw new Error('The trailer eligibility could not be updated.');
+      if (type === 'movie') await handleLoadNexupUpcoming();
+      else await loadNexupUpcomingTV();
+    } catch (error) {
+      showAlert(error?.message || 'Failed to update trailer eligibility.', 'error');
+    }
+  };
+
+  const handleNexupAssetUpload = async (kind, file) => {
+    const endpoint = kind === 'dynamic-logo'
+      ? '/nexup/preroll/upload-logo'
+      : kind === 'coming-logo'
+        ? '/nexup/coming-soon-list/upload-logo'
+        : '/nexup/coming-soon-list/upload-audio';
+    const formData = new FormData();
+    formData.append('file', file);
+    try {
+      const res = await fetch(apiUrl(endpoint), { method: 'POST', body: formData });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.detail || 'Asset upload failed.');
+      if (kind === 'dynamic-logo') {
+        setDynamicPrerollSettings(previous => ({ ...previous, customLogoFilename: data.filename || file.name }));
+      } else if (kind === 'coming-logo') {
+        setComingSoonListSettings(previous => ({ ...previous, customLogoFilename: data.filename || file.name }));
+      } else {
+        setComingSoonListSettings(previous => ({ ...previous, customAudioFilename: data.filename || file.name, includeAudio: true }));
+      }
+      showAlert(`${file.name} uploaded.`, 'success');
+    } catch (error) {
+      showAlert(error?.message || 'Asset upload failed.', 'error');
+    }
+  };
+
+  const handleNexupAssetRemove = async kind => {
+    const endpoint = kind === 'dynamic-logo'
+      ? '/nexup/preroll/upload-logo'
+      : kind === 'coming-logo'
+        ? '/nexup/coming-soon-list/upload-logo'
+        : '/nexup/coming-soon-list/upload-audio';
+    try {
+      const res = await fetch(apiUrl(endpoint), { method: 'DELETE' });
+      if (!res.ok) throw new Error('Asset removal failed.');
+      if (kind === 'dynamic-logo') {
+        setDynamicPrerollSettings(previous => ({ ...previous, customLogoFilename: null }));
+      } else if (kind === 'coming-logo') {
+        setComingSoonListSettings(previous => ({ ...previous, customLogoFilename: null }));
+      } else {
+        setComingSoonListSettings(previous => ({ ...previous, customAudioFilename: null, includeAudio: false }));
+      }
+      showAlert('Custom asset removed.', 'success');
+    } catch (error) {
+      showAlert(error?.message || 'Asset removal failed.', 'error');
+    }
+  };
+
   const renderNexUp = () => {
-    // Route based on activeTab
-    if (activeTab === 'nexup/trailers') {
-      return renderNexUpTrailers();
-    }
-    if (activeTab === 'nexup/settings') {
-      return renderNexUpSettings();
-    }
-    if (activeTab === 'nexup/generator') {
-      return renderNexUpGenerator();
-    }
-    if (activeTab === 'nexup/upcoming') {
-      return renderNexUpUpcoming();
-    }
-    // Default: Connections page
-    return renderNexUpConnections();
+    return (
+      <NexUpApprovedPages
+        activeTab={activeTab}
+        onNavigate={setActiveTab}
+        settings={nexupSettings}
+        storage={nexupStorage}
+        loading={nexupLoading}
+        syncProgress={nexupSyncProgress || syncProgress || tvSyncProgress}
+        nexupSyncProgress={nexupSyncProgress}
+        onFullSync={handleNexupFullSync}
+        onSync={handleNexupFullSync}
+        onSyncMovies={handleSyncNexup}
+        onSyncShows={handleSyncSonarr}
+        onUpdateSettings={updates => {
+          setNexupSettings(previous => ({ ...previous, ...updates }));
+          handleUpdateNexupSettings(updates);
+        }}
+        radarrUrl={nexupRadarrUrl}
+        setRadarrUrl={setNexupRadarrUrl}
+        radarrKey={nexupRadarrApiKey}
+        setRadarrKey={setNexupRadarrApiKey}
+        onConnectRadarr={handleConnectRadarr}
+        onDisconnectRadarr={handleDisconnectRadarr}
+        sonarrUrl={nexupSonarrUrl}
+        setSonarrUrl={setNexupSonarrUrl}
+        sonarrKey={nexupSonarrApiKey}
+        setSonarrKey={setNexupSonarrApiKey}
+        onConnectSonarr={handleConnectSonarr}
+        onDisconnectSonarr={handleDisconnectSonarr}
+        upcomingMovies={nexupUpcoming}
+        upcomingShows={nexupUpcomingTV}
+        upcomingTab={nexupUpcomingTab}
+        setUpcomingTab={setNexupUpcomingTab}
+        calendarMonth={nexupCalMonth}
+        setCalendarMonth={setNexupCalMonth}
+        onRefreshMovies={handleLoadNexupUpcoming}
+        onRefreshShows={loadNexupUpcomingTV}
+        onDownloadMovie={handleDownloadTrailer}
+        onDownloadShow={handleDownloadTVTrailer}
+        downloadingId={downloadingTrailerId}
+        onToggleExclude={handleNexupToggleExclude}
+        movieTrailers={nexupTrailers}
+        tvTrailers={nexupTVTrailers}
+        hiddenByPreference={nexupHiddenByPref}
+        trailerViewMode={trailerViewMode}
+        setTrailerViewMode={setTrailerViewMode}
+        onPlayTrailer={setPlayingTrailer}
+        onToggleMovie={handleToggleTrailer}
+        onToggleTv={handleToggleTVTrailer}
+        onDeleteMovie={handleDeleteTrailer}
+        onDeleteTv={handleDeleteTVTrailer}
+        onManual={() => setShowManualTrailerModal(true)}
+        generatorTab={generatorTab}
+        setGeneratorTab={setGeneratorTab}
+        dynamicSettings={dynamicPrerollSettings}
+        setDynamicSettings={setDynamicPrerollSettings}
+        templates={dynamicPrerollTemplates}
+        colorThemes={colorThemes}
+        ffmpegAvailable={ffmpegAvailable}
+        dynamicGenerating={dynamicPrerollGenerating}
+        generatedPrerolls={generatedPrerolls}
+        onGenerateDynamic={handleGenerateFromPreview}
+        onPreviewDynamic={setPreviewingDynamicPreroll}
+        onDeleteDynamic={handleDeleteSpecificPreroll}
+        previewRef={previewContainerRef}
+        onUploadAsset={handleNexupAssetUpload}
+        onRemoveAsset={handleNexupAssetRemove}
+        comingSettings={comingSoonListSettings}
+        setComingSettings={setComingSoonListSettings}
+        comingGenerating={comingSoonListGenerating}
+        generatedComingLists={generatedComingSoonLists}
+        onGenerateComing={handleGenerateComingSoonList}
+        onPreviewComing={setPreviewingComingSoonList}
+        onDeleteComing={handleDeleteComingSoonList}
+        onSaveDynamic={saveDynamicPrerollSettings}
+        onSaveComing={async () => {
+          const saved = await saveComingSoonListSettings(comingSoonListSettings);
+          showAlert(saved ? 'Coming Soon defaults saved.' : 'Coming Soon defaults could not be saved.', saved ? 'success' : 'error');
+        }}
+        potoken={potoken}
+        youtubeSetup={youtubeSetup}
+        onReset={loadNexupSettings}
+        onOpenFolder={openFolderBrowser}
+        onTestPotoken={handleTestPotoken}
+        onConfigureYoutube={() => setYoutubeSetup(previous => ({ ...previous, showWizard: true, wizardStep: 1, testResult: null }))}
+        onInstallPotoken={handleInstallPotokenFromNexup}
+        onTestTmdbKey={handleTestTmdbKey}
+        tmdbKeyTest={tmdbKeyTest}
+        onNotifySaved={() => showAlert('NeX-Up settings are saved.', 'success')}
+      />
+    );
   };
 
   // NeX-Up Upcoming Items Sub-Page - Full control over upcoming movies and TV shows
