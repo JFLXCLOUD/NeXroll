@@ -956,6 +956,10 @@ function App() {
   const [communityPageLimit, setCommunityPageLimit] = useState(50); // page size of the current results
   const [communityActiveMode, setCommunityActiveMode] = useState(null); // 'search' | 'browse'
   const [communityPreviewingPreroll, setCommunityPreviewingPreroll] = useState(null);
+  const [communityInspectorOpen, setCommunityInspectorOpen] = useState(() => {
+    try { return localStorage.getItem('communityInspectorOpen') === '1'; } catch (_) { return false; }
+  });
+  const [communityInspectorPreroll, setCommunityInspectorPreroll] = useState(null);
   const [communityTop5Prerolls, setCommunityTop5Prerolls] = useState([]);
   const [communityRandomPreroll, setCommunityRandomPreroll] = useState(null);
   const [communityIsLoadingRandom, setCommunityIsLoadingRandom] = useState(false);
@@ -995,6 +999,10 @@ function App() {
   const [communityServerLoading, setCommunityServerLoading] = useState(false);
   const [communityCustomUrlInput, setCommunityCustomUrlInput] = useState('');
   const [communityShowCustomUrl, setCommunityShowCustomUrl] = useState(false);
+
+  useEffect(() => {
+    try { localStorage.setItem('communityInspectorOpen', communityInspectorOpen ? '1' : '0'); } catch (_) {}
+  }, [communityInspectorOpen]);
   
   // Docker Quick Connect UI state
   const [prerollView, setPrerollView] = useState(() => {
@@ -7417,7 +7425,7 @@ const DashboardTiles = {
     const count = trashEntries.length;
 
     return (
-      <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
+      <div className="nx-library-trash">
         {/* Explainer */}
         <div className="card" style={{
           backgroundColor: 'rgba(99, 102, 241, 0.08)',
@@ -7655,6 +7663,129 @@ const DashboardTiles = {
     );
   };
 
+  const renderRouteSummary = () => {
+    let items = [];
+
+    if (activeTab.startsWith('library')) {
+      const uncategorized = prerolls.filter(preroll =>
+        !preroll.category && !preroll.category_id && !(preroll.category_ids || []).length
+      ).length;
+      items = [
+        { label: 'Total prerolls', value: prerolls.length },
+        { label: 'Library size', value: formatBytes(storageBreakdown?.locations?.find(location => location.key === 'prerolls')?.bytes || storageBreakdown?.total_bytes || 0) },
+        { label: 'Categories', value: categories.length },
+        { label: 'Community matched', value: communityMatchedCount, tone: 'success' },
+        { label: 'Needs category', value: uncategorized, tone: uncategorized ? 'warning' : 'success' }
+      ];
+    } else if (activeTab.startsWith('nexup')) {
+      const connected = Number(Boolean(nexupSettings.radarr_connected)) + Number(Boolean(nexupSettings.sonarr_connected));
+      items = [
+        { label: 'Connections', value: `${connected}/2`, tone: connected ? 'success' : 'warning' },
+        { label: 'Upcoming', value: nexupUpcoming.length + nexupUpcomingTV.length },
+        { label: 'Downloaded trailers', value: nexupTrailers.length + nexupTVTrailers.length },
+        { label: 'Storage used', value: `${Number(nexupStorage?.used_gb || nexupStorage?.storage_used_gb || 0).toFixed(1)} GB` },
+        { label: 'Last sync', value: nexupSettings.last_sync ? new Date(nexupSettings.last_sync).toLocaleDateString() : 'Not yet', tone: nexupSettings.last_sync ? 'success' : 'warning' }
+      ];
+    } else if (activeTab.startsWith('schedules')) {
+      const enabled = schedules.filter(schedule => schedule.is_active).length;
+      const conflicts = analyzeAllConflicts(30).filter(conflict => !ignoredConflicts.includes(conflict.id)).length;
+      items = [
+        { label: 'Total schedules', value: schedules.length },
+        { label: 'Enabled', value: enabled, tone: 'success' },
+        { label: 'Paused', value: schedules.length - enabled },
+        { label: 'Running now', value: activeScheduleIds.length, tone: activeScheduleIds.length ? 'success' : '' },
+        { label: 'Need attention', value: conflicts, tone: conflicts ? 'warning' : 'success' }
+      ];
+    } else if (activeTab === 'connect') {
+      const serverState = activeServer === 'jellyfin' ? jellyfinStatus : activeServer === 'emby' ? embyStatus : plexStatus;
+      items = [
+        { label: 'Active server', value: activeServer.charAt(0).toUpperCase() + activeServer.slice(1), tone: 'info' },
+        { label: 'Connection', value: serverState, tone: serverState === 'Connected' ? 'success' : 'warning' },
+        { label: 'Path mappings', value: pathMappings.length },
+        { label: 'Schedules applied', value: schedules.filter(schedule => schedule.is_active).length },
+        { label: 'Scheduler', value: schedulerStatus.running ? 'Running' : 'Stopped', tone: schedulerStatus.running ? 'success' : 'warning' }
+      ];
+    } else if (activeTab === 'community-prerolls') {
+      items = [
+        { label: 'Indexed', value: communityIndexStatus?.total_prerolls || 0 },
+        { label: 'Index status', value: communityIndexStatus?.exists ? (communityIndexStatus?.is_stale ? 'Refresh due' : 'Ready') : 'Not built', tone: communityIndexStatus?.exists && !communityIndexStatus?.is_stale ? 'success' : 'warning' },
+        { label: 'Local matches', value: communityMatchedCount, tone: 'success' },
+        { label: 'Downloaded', value: downloadedCommunityIds.length },
+        { label: 'Server', value: communityHealth?.online ? 'Online' : 'Unavailable', tone: communityHealth?.online ? 'success' : 'warning' }
+      ];
+    } else if (activeTab.startsWith('settings')) {
+      if (activeTab === 'settings') {
+        items = [
+          { label: 'Theme', value: darkMode ? 'Dark' : 'Light', tone: 'info' },
+          { label: 'Timezone', value: currentTimezone, tone: 'info' },
+          { label: 'Notifications', value: showNotifications ? 'Enabled' : 'Muted', tone: showNotifications ? 'success' : 'warning' },
+          { label: 'Operating mode', value: passiveMode ? 'Coexistence' : 'Standard' },
+          { label: 'Fallback filler', value: fillerSettings.enabled ? 'Enabled' : 'Off', tone: fillerSettings.enabled ? 'success' : '' }
+        ];
+      } else if (activeTab === 'settings/paths') {
+        items = [
+          { label: 'Mappings', value: pathMappings.length },
+          { label: 'Active server', value: activeServer.charAt(0).toUpperCase() + activeServer.slice(1), tone: 'info' },
+          { label: 'Verified', value: pathMappings.filter(mapping => mapping.verified || mapping.is_valid).length, tone: 'success' },
+          { label: 'Longest-prefix', value: 'Enabled' },
+          { label: 'Translation', value: pathMappings.length ? 'Ready' : 'Setup needed', tone: pathMappings.length ? 'success' : 'warning' }
+        ];
+      } else if (activeTab === 'settings/storage') {
+        items = [
+          { label: 'Storage used', value: formatBytes(storageBreakdown?.total_bytes || 0) },
+          { label: 'Preroll files', value: prerollFolderInfo?.file_count ?? prerolls.length },
+          { label: 'Auto scan', value: autoScanMinutes ? `${autoScanMinutes} min` : 'Manual' },
+          { label: 'Custom folder', value: prerollFolderInfo?.is_custom ? 'Yes' : 'Default' },
+          { label: 'Writable', value: prerollFolderInfo?.writable === false ? 'No' : 'Ready', tone: prerollFolderInfo?.writable === false ? 'warning' : 'success' }
+        ];
+      } else if (activeTab === 'settings/apikeys') {
+        items = [
+          { label: 'Active keys', value: apiKeys.filter(key => key.is_active !== false).length },
+          { label: 'Read only', value: apiKeys.filter(key => key.permissions === 'read').length },
+          { label: 'Full access', value: apiKeys.filter(key => key.permissions !== 'read').length, tone: 'warning' },
+          { label: 'Revoked', value: apiKeys.filter(key => key.is_active === false).length },
+          { label: 'Secrets', value: 'Shown once', tone: 'info' }
+        ];
+      } else if (activeTab === 'settings/logs') {
+        items = [
+          { label: 'Events loaded', value: logs.length },
+          { label: 'Info', value: logStats?.by_level?.INFO || logs.filter(log => log.level === 'INFO').length, tone: 'success' },
+          { label: 'Warnings', value: logStats?.by_level?.WARNING || logs.filter(log => log.level === 'WARNING').length, tone: 'warning' },
+          { label: 'Errors', value: logStats?.by_level?.ERROR || logs.filter(log => log.level === 'ERROR').length, tone: 'danger' },
+          { label: 'Verbose', value: verboseLogging ? 'On' : 'Off' }
+        ];
+      } else if (activeTab === 'settings/users') {
+        items = [
+          { label: 'Total users', value: users.length },
+          { label: 'Administrators', value: users.filter(user => user.role === 'admin').length, tone: 'warning' },
+          { label: 'Active', value: users.filter(user => user.is_active !== false).length, tone: 'success' },
+          { label: 'Login required', value: authStatus.auth_enabled ? 'Yes' : 'No', tone: authStatus.auth_enabled ? 'success' : 'warning' },
+          { label: 'Current user', value: appDisplayName || 'Local' }
+        ];
+      } else {
+        items = [
+          { label: 'Version', value: systemVersion?.api_version || 'Loading' },
+          { label: 'Scheduler', value: schedulerStatus.running ? 'Running' : 'Stopped', tone: schedulerStatus.running ? 'success' : 'warning' },
+          { label: 'Prerolls', value: prerolls.length },
+          { label: 'Schedules', value: schedules.length },
+          { label: 'Health', value: serviceStatusBadge.label, tone: serviceStatusBadge.tone === 'ok' ? 'success' : 'warning' }
+        ];
+      }
+    }
+
+    if (!items.length || activeTab === 'schedules') return null;
+    return (
+      <section className="nx-route-summary" aria-label="Page summary">
+        {items.map(item => (
+          <div key={item.label} className={item.tone ? `is-${item.tone}` : ''}>
+            <span>{item.label}</span>
+            <strong title={String(item.value)}>{item.value}</strong>
+          </div>
+        ))}
+      </section>
+    );
+  };
+
   // ============================================
   // Dashboard Video Scaling Sub-Page
   // ============================================
@@ -7852,7 +7983,7 @@ const DashboardTiles = {
     });
     
     return (
-      <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
+      <div className="nx-library-scaling">
         {/* Info Banner */}
         <div className="card" style={{ 
           backgroundColor: 'rgba(99, 102, 241, 0.08)', 
@@ -9480,7 +9611,7 @@ const DashboardTiles = {
 
   // Dashboard Add Prerolls Sub-Page
   const renderDashboardAddPrerolls = () => (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
+    <div className="nx-library-add">
       {/* Method Toggle */}
       <div className="card" style={{ padding: '0' }}>
         <div style={{ display: 'flex', borderBottom: '1px solid var(--border-color)' }}>
@@ -10600,7 +10731,8 @@ const DashboardTiles = {
       </div>
 
       {/* Bulk Actions Card */}
-      <div className="card" style={{ padding: '0.85rem 1.25rem' }}>
+      {selectedPrerollIds.length > 0 && (
+      <div className="card nx-library-bulk-dock" style={{ padding: '0.85rem 1.25rem' }}>
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '1rem' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
             <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', cursor: 'pointer', fontSize: '0.9rem' }}>
@@ -10667,6 +10799,7 @@ const DashboardTiles = {
           </div>
         </div>
       </div>
+      )}
 
       {/* Available Tags */}
       {availableTags.length > 0 && (
@@ -10892,9 +11025,12 @@ const DashboardTiles = {
         )}
 
       {/* List View */}
-      <div className="card" style={{ display: (prerollView === 'list' && totalPrerolls > 0) ? 'block' : 'none', padding: '1rem' }}>
+      <div className="card nx-library-table" style={{ display: (prerollView === 'list' && totalPrerolls > 0) ? 'block' : 'none', padding: 0 }}>
+       <div className="nx-library-table-head" aria-hidden="true">
+         <span></span><span className="nx-library-table-head-name">Name</span><span>Category</span><span>Duration</span><span>Community</span><span>Added</span><span>Actions</span>
+       </div>
        {visiblePrerolls.map(preroll => (
-         <div key={preroll.id} style={{ display: 'flex', gap: '1rem', alignItems: 'center', padding: '0.75rem 0', borderBottom: '1px solid var(--border-color)' }}>
+         <div key={preroll.id} className={`nx-library-table-row${libraryInspectorPrerollId === preroll.id ? ' is-selected' : ''}`}>
            <input
              type="checkbox"
              checked={selectedPrerollIds.includes(preroll.id)}
@@ -10902,24 +11038,25 @@ const DashboardTiles = {
              title="Select preroll"
              style={{ width: '16px', height: '16px' }}
            />
-           {preroll.thumbnail && (
-             <img
-               src={thumbnailUrl(preroll.thumbnail)}
-               alt="thumbnail"
-               style={{ width: 120, height: 'auto', borderRadius: 6, flexShrink: 0 }}
-               onError={(e) => {
-                 try {
-                   const rel = preroll.thumbnail || '';
-                   const parts = rel.split('/');
-                   const category = parts[2] || 'Default';
-                   const filename = parts.slice(3).join('/') || (parts.length ? parts[parts.length - 1] : '');
-                   e.currentTarget.onerror = null;
-                   e.currentTarget.src = apiUrl(`thumbgen/${encodeURIComponent(category)}/${encodeURIComponent(filename)}`);
-                 } catch (_) {}
-               }}
-             />
-           )}
-           <div style={{ flex: 1, minWidth: 0 }}>
+           <div className="nx-library-table-thumb">
+             {preroll.thumbnail ? (
+               <img
+                 src={thumbnailUrl(preroll.thumbnail)}
+                 alt=""
+                 onError={(e) => {
+                   try {
+                     const rel = preroll.thumbnail || '';
+                     const parts = rel.split('/');
+                     const category = parts[2] || 'Default';
+                     const filename = parts.slice(3).join('/') || (parts.length ? parts[parts.length - 1] : '');
+                     e.currentTarget.onerror = null;
+                     e.currentTarget.src = apiUrl(`thumbgen/${encodeURIComponent(category)}/${encodeURIComponent(filename)}`);
+                   } catch (_) {}
+                 }}
+               />
+             ) : <Film size={17} />}
+           </div>
+           <div className="nx-library-table-name">
              <div style={{ fontWeight: 600, display: 'flex', alignItems: 'center', gap: '0.5rem', color: 'var(--text-color)', fontSize: '0.95rem' }}>
                <span>{preroll.display_name || preroll.filename}</span>
              </div>
@@ -11006,7 +11143,15 @@ const DashboardTiles = {
                {new Date(preroll.upload_date).toLocaleDateString()}
              </div>
            </div>
-           <div style={{ display: 'flex', gap: '0.25rem' }}>
+           <div className="nx-library-table-cell"><span>{preroll.category?.name || 'Uncategorized'}</span></div>
+           <div className="nx-library-table-cell"><strong>{preroll.duration ? `${Math.round(preroll.duration)}s` : '\u2014'}</strong></div>
+           <div className="nx-library-table-cell">
+             <span className={`nx-library-match ${preroll.community_preroll_id ? 'is-match' : preroll.exclude_from_matching ? 'is-excluded' : 'is-unmatched'}`}>
+               {preroll.community_preroll_id ? 'Matched' : preroll.exclude_from_matching ? 'Excluded' : 'Unmatched'}
+             </span>
+           </div>
+           <div className="nx-library-table-cell"><span>{preroll.upload_date ? new Date(preroll.upload_date).toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' }) : '\u2014'}</span></div>
+           <div className="nx-library-table-actions">
              <button
                onClick={() => handleLibraryPreview(preroll)}
                className="nx-iconbtn"
@@ -16570,7 +16715,8 @@ const DashboardTiles = {
   );
 
   // Schedule List page (default view)
-  const renderScheduleListPage = () => (
+  // eslint-disable-next-line no-unused-vars
+  const renderScheduleListPageLegacy = () => (
     <div className="nx-sched-list" style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
       {/* Header */}
       <div>
@@ -17475,12 +17621,178 @@ const DashboardTiles = {
     </div>
   );
 
+  const renderScheduleListPage = () => {
+    const filteredSchedules = schedules.filter(schedule => {
+      const name = String(schedule.name || '').toLowerCase();
+      return name.includes(scheduleSearchQuery.toLowerCase())
+        && (scheduleFilterType === 'all' || schedule.type === scheduleFilterType);
+    });
+    const runningSchedules = filteredSchedules.filter(schedule => activeScheduleIds.includes(schedule.id));
+    const enabledSchedules = filteredSchedules.filter(schedule => schedule.is_active && !activeScheduleIds.includes(schedule.id));
+    const pausedSchedules = filteredSchedules.filter(schedule => !schedule.is_active);
+    const conflictCount = analyzeAllConflicts(30).filter(conflict => !ignoredConflicts.includes(conflict.id)).length;
+
+    const nextDate = schedule => {
+      const value = schedule.next_run || schedule.start_date;
+      if (!value) return 'Not scheduled';
+      const date = new Date(value);
+      if (Number.isNaN(date.getTime())) return 'Not scheduled';
+      const today = new Date();
+      const sameDay = date.toDateString() === today.toDateString();
+      return sameDay
+        ? date.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })
+        : date.toLocaleDateString([], { month: 'short', day: 'numeric' });
+    };
+
+    const scheduleRule = schedule => {
+      const priority = schedule.priority ?? 5;
+      if (schedule.exclusive) return `P${priority} / Exclusive`;
+      if (schedule.blend_enabled) return `P${priority} / Blend`;
+      return `P${priority} / Standard`;
+    };
+
+    const schedulePlayback = schedule => {
+      try {
+        const sequence = JSON.parse(schedule.sequence || '[]');
+        if (Array.isArray(sequence) && sequence.length) return 'Sequence';
+      } catch (_) {}
+      if (schedule.playlist) return 'Playlist';
+      return schedule.shuffle === false ? 'Sequential' : 'Shuffle';
+    };
+
+    const scheduleRecurrence = schedule => {
+      const type = String(schedule.type || 'schedule');
+      let detail = '';
+      try {
+        const pattern = JSON.parse(schedule.recurrence_pattern || '{}');
+        if (pattern.timeRange?.start) {
+          const [hourText, minute = '00'] = String(pattern.timeRange.start).split(':');
+          const hour = Number(hourText);
+          detail = `${hour % 12 || 12}:${minute} ${hour >= 12 ? 'PM' : 'AM'}`;
+        } else if (Array.isArray(pattern.weekDays) && pattern.weekDays.length) {
+          detail = pattern.weekDays.map(day => String(day).slice(0, 3)).join(', ');
+        }
+      } catch (_) {}
+      return `${type.charAt(0).toUpperCase()}${type.slice(1)}${detail ? ` / ${detail}` : ''}`;
+    };
+
+    const renderCommandRow = schedule => {
+      const running = activeScheduleIds.includes(schedule.id);
+      const conflicts = getScheduleConflicts(schedule).length;
+      const content = schedule.category?.name || schedule.fallback_category?.name || 'Sequence content';
+      const accent = schedule.color || schedule.category?.color || (running ? '#35d06f' : '#7667ff');
+      return (
+        <article key={schedule.id} className={`nx-command-row${running ? ' is-running' : ''}${schedule.is_active ? '' : ' is-paused'}`}>
+          <span className="nx-command-row-accent" style={{ background: accent }} />
+          <div className="nx-command-row-name">
+            <strong>{schedule.name}</strong>
+            <span>{scheduleRecurrence(schedule)}</span>
+          </div>
+          <div className="nx-command-row-fact"><span>Playback</span><strong>{schedulePlayback(schedule)}</strong></div>
+          <div className="nx-command-row-fact"><span>Rule</span><strong>{scheduleRule(schedule)}</strong></div>
+          <div className="nx-command-row-fact"><span>Next run</span><strong>{running ? `Now - ${nextDate(schedule)}` : nextDate(schedule)}</strong></div>
+          <div className="nx-command-row-fact nx-command-row-content"><span>Content</span><strong>{content}</strong></div>
+          <div className="nx-command-row-controls">
+            {conflicts > 0 && (
+              <button className="nx-command-conflict" onClick={() => setActiveTab('schedules/conflicts')} title={`${conflicts} conflict${conflicts === 1 ? '' : 's'}`}>
+                <AlertTriangle size={13} /> {conflicts}
+              </button>
+            )}
+            <label className="nx-rockerswitch" title={schedule.is_active ? 'Disable schedule' : 'Enable schedule'}>
+              <input
+                type="checkbox"
+                checked={Boolean(schedule.is_active)}
+                onChange={() => handleToggleSchedule(schedule, 'command center')}
+                aria-label={schedule.is_active ? `Disable ${schedule.name}` : `Enable ${schedule.name}`}
+              />
+              <span className="nx-rockerswitch-slider" />
+            </label>
+            <button className="nx-command-more" onClick={() => handleEditSchedule(schedule)} title={`Edit ${schedule.name}`}><Edit size={14} /></button>
+            <button className="nx-command-more danger" onClick={() => handleDeleteSchedule(schedule.id)} title={`Delete ${schedule.name}`}><Trash2 size={14} /></button>
+          </div>
+        </article>
+      );
+    };
+
+    const renderGroup = (label, items, tone) => items.length > 0 && (
+      <section className={`nx-command-group is-${tone}`}>
+        <header><strong>{label}</strong><span>{items.length} schedule{items.length === 1 ? '' : 's'}</span></header>
+        <div className="nx-command-rows">{items.map(renderCommandRow)}</div>
+      </section>
+    );
+
+    const todayQueue = [...runningSchedules, ...enabledSchedules]
+      .sort((a, b) => new Date(a.next_run || a.start_date || 0) - new Date(b.next_run || b.start_date || 0))
+      .slice(0, 5);
+
+    return (
+      <div className="nx-command-center">
+        <section className="nx-summary-strip" aria-label="Schedule summary">
+          <div><span>Total schedules</span><strong>{schedules.length}</strong></div>
+          <div className="is-success"><span>Enabled</span><strong>{schedules.filter(schedule => schedule.is_active).length}</strong></div>
+          <div><span>Paused</span><strong>{schedules.filter(schedule => !schedule.is_active).length}</strong></div>
+          <div className="is-success"><span>Running now</span><strong>{activeScheduleIds.length}</strong></div>
+          <div className={conflictCount ? 'is-warning' : 'is-success'}><span>Need attention</span><strong>{conflictCount}</strong><small>{conflictCount ? 'conflicts' : 'all clear'}</small></div>
+        </section>
+
+        <section className="nx-command-toolbar">
+          <label className="nx-command-search"><Search size={15} /><input value={scheduleSearchQuery} onChange={event => setScheduleSearchQuery(event.target.value)} placeholder="Search schedules..." /></label>
+          <select value={scheduleFilterType} onChange={event => setScheduleFilterType(event.target.value)} aria-label="Filter schedule type">
+            <option value="all">All types</option>
+            <option value="daily">Daily</option>
+            <option value="weekly">Weekly</option>
+            <option value="monthly">Monthly</option>
+            <option value="yearly">Yearly</option>
+            <option value="holiday">Holiday</option>
+          </select>
+          <button className="button button-secondary" onClick={() => setActiveTab('schedules/conflicts')}><Filter size={14} /> Filters {conflictCount || ''}</button>
+          <button className="button button-secondary" onClick={() => setScheduleViewMode(scheduleViewMode === 'compact' ? 'detailed' : 'compact')}><List size={14} /> {scheduleViewMode === 'compact' ? 'Compact' : 'Detailed'}</button>
+        </section>
+
+        <div className="nx-command-layout">
+          <main>
+            {filteredSchedules.length === 0 ? (
+              <div className="nx-empty"><Inbox size={40} /><h3>No schedules found</h3><p>Try another search or create a schedule.</p></div>
+            ) : (
+              <>
+                {renderGroup('Running now', runningSchedules, 'running')}
+                {renderGroup('Enabled and upcoming', enabledSchedules, 'enabled')}
+                {renderGroup('Paused', pausedSchedules, 'paused')}
+              </>
+            )}
+          </main>
+
+          <aside className="nx-today-rail">
+            <section className="nx-today-playing">
+              <span>Playing now</span>
+              {runningSchedules[0] ? <><strong>{runningSchedules[0].name}</strong><small>{schedulePlayback(runningSchedules[0])} / {runningSchedules[0].category?.name || 'Sequence'}</small></> : <><strong>No active schedule</strong><small>The scheduler is waiting for the next window.</small></>}
+              <div className="nx-today-progress"><i style={{ width: runningSchedules[0] ? '46%' : '0%' }} /></div>
+            </section>
+            <section className="nx-today-queue">
+              <header><strong>Today's run</strong><small>{new Date().toLocaleDateString([], { weekday: 'long', month: 'long', day: 'numeric' })}</small></header>
+              {todayQueue.length ? todayQueue.map(schedule => (
+                <button key={schedule.id} onClick={() => handleEditSchedule(schedule)}>
+                  <time>{activeScheduleIds.includes(schedule.id) ? 'Now' : nextDate(schedule)}</time>
+                  <span>{schedule.name}</span>
+                  <small>{schedulePlayback(schedule)}</small>
+                </button>
+              )) : <p>No enabled schedules in the current queue.</p>}
+            </section>
+            {conflictCount > 0 && (
+              <section className="nx-today-alert"><strong>{conflictCount} schedule conflict{conflictCount === 1 ? '' : 's'}</strong><p>Two or more rules can change the expected preroll order.</p><button className="button" onClick={() => setActiveTab('schedules/conflicts')}>Resolve now</button></section>
+            )}
+          </aside>
+        </div>
+      </div>
+    );
+  };
+
   // Main renderSchedules with routing logic
   const renderSchedules = () => {
     // Route based on activeTab
     if (activeTab === 'schedules/create') {
       return (
-        <div>
+        <div className="nx-schedule-create-page">
           {renderCreateSchedulePage()}
         </div>
       );
@@ -17488,7 +17800,7 @@ const DashboardTiles = {
 
     if (activeTab === 'schedules/calendar') {
       return (
-        <div>
+        <div className="nx-schedule-calendar-page">
           {renderCalendarPage()}
         </div>
       );
@@ -17496,7 +17808,7 @@ const DashboardTiles = {
 
     if (activeTab === 'schedules/builder') {
       return (
-        <div>
+        <div className="nx-schedule-builder-page">
           {renderSequenceBuilder()}
         </div>
       );
@@ -17504,7 +17816,7 @@ const DashboardTiles = {
 
     if (activeTab === 'schedules/library') {
       return (
-        <div>
+        <div className="nx-schedule-library-page">
           {renderSequenceLibrary()}
         </div>
       );
@@ -17512,7 +17824,7 @@ const DashboardTiles = {
 
     if (activeTab === 'schedules/conflicts') {
       return (
-        <div>
+        <div className="nx-schedule-conflicts-page">
           {renderConflictResolutionPage()}
         </div>
       );
@@ -17520,7 +17832,7 @@ const DashboardTiles = {
 
     // Default: Schedule List
     return (
-      <div>
+      <div className="nx-schedule-list-page">
         {renderScheduleListPage()}
       </div>
     );
@@ -17569,7 +17881,7 @@ const DashboardTiles = {
   };
 
   const renderCategories = () => (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
+    <div className="nx-library-categories">
 
       {editingCategory && (
         <Modal
@@ -22410,7 +22722,7 @@ const DashboardTiles = {
     };
 
     return (
-      <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
+      <div className="nx-nexup-upcoming">
         {/* Header */}
         <div>
           <h1 className="header" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.5rem' }}>
@@ -22946,7 +23258,7 @@ const DashboardTiles = {
 
   // NeX-Up Connections Sub-Page
   const renderNexUpConnections = () => (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
+    <div className="nx-nexup-connections">
       {/* Header */}
       <div>
         <h1 className="header" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.5rem' }}>
@@ -22959,7 +23271,7 @@ const DashboardTiles = {
 
       {/* Sync All Card - Only show when at least one service is connected */}
       {(nexupSettings.radarr_connected || nexupSettings.sonarr_connected) && (
-        <div className="card" style={{ padding: '0.75rem 1rem' }}>
+        <div className="card nx-nexup-sync-card" style={{ padding: '0.75rem 1rem' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '1rem', flexWrap: 'wrap' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flex: 1, minWidth: '150px' }}>
               <RefreshCw size={20} style={{ color: 'var(--accent-color)' }} />
@@ -23099,7 +23411,7 @@ const DashboardTiles = {
       )}
 
       {/* Radarr Connection Card */}
-      <div className="card">
+      <div className="card nx-nexup-connection-card is-radarr">
         <h2 style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
           <Video size={24} /> Radarr Connection
         </h2>
@@ -23282,7 +23594,7 @@ const DashboardTiles = {
       </div>
 
       {/* Sonarr Connection Card */}
-      <div className="card">
+      <div className="card nx-nexup-connection-card is-sonarr">
         <h2 style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
           <Tv size={24} /> Sonarr Connection
         </h2>
@@ -23452,7 +23764,7 @@ const DashboardTiles = {
 
   // NeX-Up Trailers Sub-Page
   const renderNexUpTrailers = () => (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
+    <div className="nx-nexup-trailers">
       <div>
         <h1 className="header" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.5rem' }}>
           <Film size={32} className="header-icon" /> Your Trailers
@@ -24104,7 +24416,7 @@ const DashboardTiles = {
 
   // NeX-Up Settings Sub-Page
   const renderNexUpSettings = () => (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
+    <div className="nx-nexup-settings">
       <div>
         <h1 className="header" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.5rem' }}>
           <Settings size={32} className="header-icon" /> NeX-Up Settings
@@ -25332,7 +25644,7 @@ const DashboardTiles = {
 
   // NeX-Up Generator Sub-Page
   const renderNexUpGenerator = () => (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
+    <div className="nx-nexup-generator">
       <div>
         <h1 className="header" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.5rem' }}>
           <Sparkles size={32} className="header-icon" /> Preroll Generator
@@ -26932,7 +27244,7 @@ const DashboardTiles = {
   // Settings - NeX-Up Content Settings Tab
   // Settings - General Tab
   const renderSettingsGeneral = () => (
-    <>
+    <div className="nx-settings-general-grid">
     <div className="card">
       {/* Theme Settings */}
       <div className="nx-setting-row">
@@ -27337,7 +27649,7 @@ const DashboardTiles = {
         )}
       </div>
     </div>
-    </>
+    </div>
   );
 
   // Settings - Path Mappings Tab
@@ -30474,7 +30786,8 @@ const DashboardTiles = {
       activeTab === 'settings/users' ? renderSettingsUsers() :
       activeTab === 'settings/system' ? renderSettingsSystem() :
       renderSettingsGeneral();
-    return <div className="nx-settings">{inner}</div>;
+    const routeName = activeTab.split('/')[1] || 'general';
+    return <div className={`nx-settings nx-settings-${routeName}`}>{inner}</div>;
   };
 
   const renderJellyfin = () => {
@@ -31112,12 +31425,12 @@ const DashboardTiles = {
 
   const renderConnect = () => (
     <div className="nx-connect">
-      {/* Segmented media-server selector */}
-      <div className="nx-server-seg" role="tablist" aria-label="Media server">
+      {/* Media-server context cards: workflow context, not duplicate navigation. */}
+      <div className="nx-connect-server-grid" role="tablist" aria-label="Media server">
         {[
-          { id: 'plex', label: 'Plex', brand: '#f6685e', status: plexStatus },
-          { id: 'jellyfin', label: 'Jellyfin', brand: '#6c5ce7', status: jellyfinStatus },
-          { id: 'emby', label: 'Emby', brand: '#52c41a', status: embyStatus },
+          { id: 'plex', label: 'Plex', mark: 'P', brand: '#f6685e', status: plexStatus, detail: 'Global pre-roll integration' },
+          { id: 'jellyfin', label: 'Jellyfin', mark: 'J', brand: '#6c5ce7', status: jellyfinStatus, detail: 'Real-time intros plugin' },
+          { id: 'emby', label: 'Emby', mark: 'E', brand: '#52c41a', status: embyStatus, detail: 'Real-time intros plugin' },
         ].map((srv) => {
           const active = activeServer === srv.id;
           const connected = srv.status === 'Connected';
@@ -31129,15 +31442,17 @@ const DashboardTiles = {
               id={`tab-${srv.id}`}
               aria-selected={active}
               aria-controls={`panel-${srv.id}`}
-              className={`nx-seg-btn ${active ? 'active' : ''}`}
-              style={active ? { '--brand': srv.brand } : undefined}
+              className={`nx-connect-server-tab${active ? ' active' : ''}`}
+              style={{ '--server-brand': srv.brand }}
               onClick={() => setActiveServer(srv.id)}
               title={`${srv.label}: ${srv.status}`}
             >
-              <span className="nx-seg-label">
-                <span className={`nx-dot ${connected ? 'ok' : 'bad'}`} aria-hidden="true" />
-                {srv.label}
+              <span className="nx-connect-server-mark">{srv.mark}</span>
+              <span className="nx-connect-server-copy">
+                <strong>{srv.label}</strong>
+                <small>{srv.detail}</small>
               </span>
+              <span className={`nx-connect-server-state${connected ? ' connected' : ''}`}><span className={`nx-dot ${connected ? 'ok' : 'bad'}`} />{connected ? 'Connected' : 'Setup'}</span>
             </button>
           );
         })}
@@ -32836,6 +33151,20 @@ const DashboardTiles = {
     const activeServerMeta = communityServers.find(s => communityServerUrl === (s.baseUrl || '').replace(/\/+$/, ''));
     const idxExists = communityIndexStatus?.exists;
     const idxStale = communityIndexStatus?.is_stale;
+    const communityInspectorItem = communityInspectorPreroll || communitySearchResults[0] || communityRandomPreroll;
+    const handleCommunityPreview = (preroll) => {
+      if (communityInspectorOpen) setCommunityInspectorPreroll(preroll);
+      else setCommunityPreviewingPreroll(preroll);
+    };
+    const toggleCommunityInspector = () => {
+      setCommunityInspectorOpen(open => {
+        const next = !open;
+        if (next && !communityInspectorPreroll) {
+          setCommunityInspectorPreroll(communitySearchResults[0] || communityRandomPreroll || null);
+        }
+        return next;
+      });
+    };
     return (
       <div className="nx-community" style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
         {/* Hero: community server + index status + primary actions */}
@@ -33119,6 +33448,17 @@ const DashboardTiles = {
               <span>AI-generated</span>
               <span className="nx-comm-ai-state">{communityIncludeAI ? 'Included' : 'Excluded'}</span>
             </button>
+            <button
+              type="button"
+              className={`nx-comm-inspector-toggle${communityInspectorOpen ? ' active' : ''}`}
+              aria-pressed={communityInspectorOpen}
+              onClick={toggleCommunityInspector}
+              title={communityInspectorOpen ? 'Hide preview panel' : 'Show preview panel'}
+            >
+              <Eye size={16} />
+              <span>Preview panel</span>
+              <span>{communityInspectorOpen ? 'On' : 'Off'}</span>
+            </button>
             <button onClick={() => handleSearch(0)} disabled={communityIsSearching} className="button" style={{ height: '42px' }}>
               {communityIsSearching ? <Loader2 size={16} className="spin" /> : <Search size={16} />}
               <span>{communityIsSearching ? 'Searching…' : 'Search'}</span>
@@ -33228,10 +33568,11 @@ const DashboardTiles = {
 
         {/* Results List */}
         {communitySearchResults.length > 0 && (
-          <div className="card">
-            <h3 style={{ marginTop: 0, marginBottom: '0.75rem', fontSize: '1rem' }}>
-              Results <span style={{ color: 'var(--text-secondary)', fontWeight: 500 }}>({communityTotalResults})</span>
-            </h3>
+          <div className={`card nx-community-browser${communityInspectorOpen ? ' has-inspector' : ''}`}>
+            <div className="nx-community-results-pane">
+              <h3 className="nx-community-results-title">
+                Results <span>({communityTotalResults})</span>
+              </h3>
 
             <div className="nx-comm-results">
               {communitySearchResults.map(preroll => {
@@ -33240,7 +33581,11 @@ const DashboardTiles = {
                 const catOpen = communityShowAddToCategory[preroll.id];
                 const selectedCategory = getCommunityCategorySelection(communitySelectedCategories, preroll.id);
                 return (
-                <div key={preroll.id} className="nx-comm-row">
+                <div
+                  key={preroll.id}
+                  className={`nx-comm-row${communityInspectorOpen && communityInspectorItem?.id === preroll.id ? ' is-selected' : ''}`}
+                  onClick={() => communityInspectorOpen && setCommunityInspectorPreroll(preroll)}
+                >
                   <div className="nx-comm-row-icon"><Film size={20} /></div>
 
                   <div className="nx-comm-row-body">
@@ -33274,7 +33619,7 @@ const DashboardTiles = {
                         ))}
                       </select>
                     )}
-                    <button onClick={() => setCommunityPreviewingPreroll(preroll)} className="button button-secondary" title="Preview video">
+                    <button onClick={(event) => { event.stopPropagation(); handleCommunityPreview(preroll); }} className="button button-secondary" title="Preview video">
                       <Play size={14} /> Preview
                     </button>
                     {downloaded ? (
@@ -33323,6 +33668,45 @@ const DashboardTiles = {
                 </div>
               );
             })()}
+            </div>
+            {communityInspectorOpen && (
+              <aside className="nx-community-inspector" aria-label="Community preroll preview">
+                <header>
+                  <div><span>Preview</span><strong>Community details</strong></div>
+                  <button className="nx-iconbtn" onClick={toggleCommunityInspector} title="Close preview panel"><X size={15} /></button>
+                </header>
+                {communityInspectorItem ? (
+                  <>
+                    <div className="nx-community-inspector-video">
+                      <video key={communityInspectorItem.id} controls preload="metadata">
+                        <source src={communityInspectorItem.url || communityInspectorItem.download_url} type="video/mp4" />
+                      </video>
+                    </div>
+                    <div className="nx-community-inspector-body">
+                      <span className="nx-community-inspector-kicker">Community #{communityInspectorItem.id}</span>
+                      <h3>{cleanDisplayText(communityInspectorItem.title)}</h3>
+                      <dl>
+                        <div><dt>Creator</dt><dd>{cleanDisplayText(communityInspectorItem.creator) || 'Unknown'}</dd></div>
+                        <div><dt>Category</dt><dd>{cleanDisplayText(communityInspectorItem.category) || 'Uncategorized'}</dd></div>
+                        <div><dt>Duration</dt><dd>{communityInspectorItem.duration ? `${communityInspectorItem.duration}s` : 'Unknown'}</dd></div>
+                        <div><dt>File size</dt><dd>{communityInspectorItem.file_size || 'Unknown'}</dd></div>
+                      </dl>
+                      {communityInspectorItem.is_ai && <span className="nx-comm-ai-badge"><Sparkles size={11} /> AI-generated</span>}
+                    </div>
+                    <footer>
+                      <button className="button button-secondary" onClick={() => setCommunityPreviewingPreroll(communityInspectorItem)}><Maximize2 size={14} /> Full preview</button>
+                      {isPrerollAlreadyDownloaded(communityInspectorItem) ? (
+                        <span className="button button-success"><CheckCircle size={14} /> Downloaded</span>
+                      ) : (
+                        <button className="button" onClick={() => handleDownload(communityInspectorItem)} disabled={communityIsDownloading[communityInspectorItem.id]}><Download size={14} /> Download</button>
+                      )}
+                    </footer>
+                  </>
+                ) : (
+                  <div className="nx-community-inspector-empty"><Film size={32} /><strong>Select a result</strong><span>Preview and download details will appear here.</span></div>
+                )}
+              </aside>
+            )}
           </div>
         )}
 
@@ -33401,7 +33785,7 @@ const DashboardTiles = {
                 <button onClick={handleRandomPreroll} disabled={communityIsLoadingRandom} className="button button-secondary" title="Roll again">
                   <span style={{ display: 'inline-flex', animation: communityIsLoadingRandom ? 'diceRoll 0.8s ease-in-out infinite' : 'none' }}><Shuffle size={14} /></span> Reroll
                 </button>
-                <button onClick={() => setCommunityPreviewingPreroll(communityRandomPreroll)} className="button button-secondary">
+                <button onClick={() => handleCommunityPreview(communityRandomPreroll)} className="button button-secondary">
                   <Eye size={14} /> Preview
                 </button>
                 {isPrerollAlreadyDownloaded(communityRandomPreroll) ? (
@@ -34171,6 +34555,7 @@ const DashboardTiles = {
      {renderPageHeader()}
 
      <div className="dashboard">
+       {renderRouteSummary()}
        {/* v2: section navigation is handled by the collapsible Sidebar tree. */}
 
        {/* v2: Schedules section navigation handled by the Sidebar tree. */}
@@ -34813,10 +35198,10 @@ const DashboardTiles = {
          zIndex={1100}
          allowBackgroundInteraction={false}
        >
-         <form onSubmit={handleUpdatePreroll}>
+         <form className="nx-edit-preroll-form" onSubmit={handleUpdatePreroll}>
            {/* Community Match Status Section */}
            {editingPreroll && (
-             <div style={{ 
+             <div className="nx-edit-preroll-community" style={{
                marginBottom: '1rem', 
                padding: '0.75rem', 
                backgroundColor: editingPreroll.community_preroll_id 
@@ -35068,7 +35453,7 @@ const DashboardTiles = {
 
            {/* Video Scaling Section */}
            {editingPreroll && (
-             <div style={{ 
+             <div className="nx-edit-preroll-scaling" style={{
                marginBottom: '1rem', 
                padding: '0.75rem', 
                backgroundColor: 'rgba(99, 102, 241, 0.08)', 
@@ -35177,7 +35562,7 @@ const DashboardTiles = {
            )}
 
            {editingPreroll.filename && (
-             <div style={{ 
+             <div className="nx-edit-preroll-file" style={{
                marginBottom: '1rem', 
                padding: '0.75rem', 
                backgroundColor: 'var(--card-bg, #f0f0f0)', 
@@ -35186,6 +35571,11 @@ const DashboardTiles = {
                fontSize: '0.9rem',
                color: 'var(--text-color, #333)'
              }}>
+               <div className="nx-edit-preroll-preview">
+                 <video controls preload="metadata" poster={editingPreroll.thumbnail ? thumbnailUrl(editingPreroll.thumbnail) : undefined}>
+                   <source src={apiUrl(`prerolls/${editingPreroll.id}/video`)} type="video/mp4" />
+                 </video>
+               </div>
                <div><strong>Current file:</strong> {editingPreroll.filename}</div>
                {editingPreroll.path && (
                  <div style={{ marginTop: '0.5rem', fontSize: '0.82rem', opacity: 0.85 }}>
