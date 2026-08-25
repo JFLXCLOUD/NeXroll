@@ -731,6 +731,8 @@ function App() {
   const [trashEntries, setTrashEntries] = useState([]);
   const [trashBytes, setTrashBytes] = useState(0);
   const [trashSearch, setTrashSearch] = useState('');
+  const [trashFilter, setTrashFilter] = useState('all');
+  const [trashSort, setTrashSort] = useState('newest');
   const [trashRetentionDays, setTrashRetentionDays] = useState(30);
   const [trashLoading, setTrashLoading] = useState(false);
   const [trashError, setTrashError] = useState('');
@@ -1642,7 +1644,7 @@ const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
   // Schedule form state
   const [scheduleForm, setScheduleForm] = useState({
     name: '',
-    type: 'monthly',
+    type: 'weekly',
     start_date: '',
     end_date: '',
     category_id: '',
@@ -1685,6 +1687,15 @@ const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
   const [scheduleViewMode, setScheduleViewMode] = useState('compact'); // 'compact' or 'detailed'
   const [scheduleCurrentPage, setScheduleCurrentPage] = useState(1);
   const schedulesPerPage = 10;
+  const [scheduleCreateStep, setScheduleCreateStep] = useState(1);
+  const [scheduleBuilderSelectedIndex, setScheduleBuilderSelectedIndex] = useState(0);
+  const [sequenceLibrarySearch, setSequenceLibrarySearch] = useState('');
+  const [selectedScheduleConflictId, setSelectedScheduleConflictId] = useState(null);
+
+  useEffect(() => {
+    if (activeTab === 'schedules/calendar') setCalendarMode('week');
+    if (activeTab === 'schedules/create') setScheduleCreateStep(1);
+  }, [activeTab]);
 
   // Upload form state
   const [uploadForm, setUploadForm] = useState({
@@ -7429,8 +7440,15 @@ const DashboardTiles = {
     const count = trashEntries.length;
     const visibleTrashEntries = trashEntries.filter(entry => {
       const query = trashSearch.trim().toLowerCase();
-      if (!query) return true;
-      return `${entry.display_name || ''} ${entry.filename || ''} ${entry.original_path || ''}`.toLowerCase().includes(query);
+      const days = trashDaysLeft(entry);
+      if (query && !`${entry.display_name || ''} ${entry.filename || ''} ${entry.original_path || ''}`.toLowerCase().includes(query)) return false;
+      if (trashFilter === 'expiring' && (days === null || days > 7 || days <= 0)) return false;
+      if (trashFilter === 'expired' && days !== 0) return false;
+      return true;
+    }).sort((left, right) => {
+      if (trashSort === 'oldest') return new Date(left.deleted_at || 0) - new Date(right.deleted_at || 0);
+      if (trashSort === 'largest') return Number(right.size_bytes || 0) - Number(left.size_bytes || 0);
+      return new Date(right.deleted_at || 0) - new Date(left.deleted_at || 0);
     });
     const expiringSoon = trashEntries.filter(entry => {
       const days = trashDaysLeft(entry);
@@ -7470,21 +7488,21 @@ const DashboardTiles = {
         <div className="card nx-trash-toolbar">
           <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: '0.75rem' }}>
             <label className="nx-trash-search"><Search size={14} /><input value={trashSearch} onChange={(event) => setTrashSearch(event.target.value)} placeholder="Search deleted files…" /></label>
-            <button className="button" onClick={loadTrash} disabled={trashLoading}>
-              <RefreshCw size={16} /> Refresh
-            </button>
+            <select value={trashFilter} onChange={(event) => setTrashFilter(event.target.value)} aria-label="Filter deleted files">
+              <option value="all">All deleted files</option>
+              <option value="expiring">Expiring soon</option>
+              <option value="expired">Expired</option>
+            </select>
+            <select value={trashSort} onChange={(event) => setTrashSort(event.target.value)} aria-label="Sort deleted files">
+              <option value="newest">Newest deleted</option>
+              <option value="oldest">Oldest deleted</option>
+              <option value="largest">Largest files</option>
+            </select>
             {trashRetentionDays > 0 && (
               <button className="button" onClick={() => handleEmptyTrash(true)} disabled={trashLoading || count === 0}>
-                <Clock size={16} /> Clear Expired
+                <Clock size={16} /> Clear expired
               </button>
             )}
-            <button
-              className="button danger"
-              onClick={() => handleEmptyTrash(false)}
-              disabled={trashLoading || count === 0}
-            >
-              <Trash2 size={16} /> Empty Trash
-            </button>
           </div>
         </div>
 
@@ -7615,21 +7633,21 @@ const DashboardTiles = {
   const PAGE_HEADERS = {
     'dashboard':        { icon: LayoutDashboard, title: 'Dashboard',       desc: 'Overview of your prerolls, schedules, and server status.' },
     'library':          { icon: Library,         section: 'Library', title: 'All Prerolls', desc: 'Browse, organize, and preview everything in your collection.' },
-    'library/add':      { icon: Upload,          title: 'Add Prerolls',    desc: 'Upload videos or import prerolls into your library.' },
-    'library/categories': { icon: Folder,        title: 'Categories',      desc: 'Organize your prerolls into categories.' },
-    'library/scaling':  { icon: Video,           title: 'Video Scaling',   desc: 'Review and rescale preroll resolutions.' },
-    'library/trash':    { icon: Archive,         title: 'Trash',           desc: 'Restore preroll files you deleted from disk.' },
-    'schedules':        { icon: Calendar,        title: 'My Schedules',     desc: 'See what is active now, what runs next, and manage every schedule.' },
-    'schedules/create': { icon: PlusCircle,      title: 'Create Schedule',  desc: 'Schedule a category or a custom preroll sequence.' },
-    'schedules/calendar': { icon: CalendarDays,  title: 'Schedule Calendar', desc: 'Review active coverage and upcoming changes on a visual calendar.' },
-    'schedules/builder': { icon: Clapperboard,   title: 'Sequence Builder', desc: 'Build a precise mix of categories, fixed clips, and randomized blocks.' },
-    'schedules/library': { icon: BookOpen,       title: 'Saved Sequences',  desc: 'Browse and manage reusable preroll sequences.' },
-    'schedules/conflicts': { icon: GitCompare,   title: 'Schedule Conflicts', desc: 'Detect overlaps and resolve priority conflicts before playback.' },
+    'library/add':      { icon: Upload, section: 'Library', title: 'Add Prerolls', desc: 'Upload new video files or index an existing folder without moving its contents.' },
+    'library/categories': { icon: Folder, section: 'Library', title: 'Categories', desc: 'Organize prerolls into reusable groups for schedules and playback.' },
+    'library/scaling':  { icon: Video, section: 'Library', title: 'Video Scaling', desc: 'Review resolution and create streaming-friendly versions of oversized prerolls.' },
+    'library/trash':    { icon: Archive, section: 'Library', title: 'Trash', desc: 'Restore deleted preroll files or remove them permanently from disk.' },
+    'schedules':        { icon: Calendar, section: 'Schedules / Command Center', title: 'My Schedules', desc: 'See what is running, what happens next, and what needs attention.' },
+    'schedules/create': { icon: PlusCircle, section: 'Schedules / Command Center', title: 'Create Schedule', desc: 'A guided setup that keeps advanced power visible without making the first step intimidating.' },
+    'schedules/calendar': { icon: CalendarDays, section: 'Schedules / Command Center', title: 'Schedule Calendar', desc: 'A familiar operational calendar with enough detail to understand playback behavior.' },
+    'schedules/builder': { icon: Clapperboard, section: 'Schedules / Command Center', title: 'Sequence Builder', desc: 'Assemble ordered blocks with a focused inspector and live sequence totals.' },
+    'schedules/library': { icon: BookOpen, section: 'Schedules / Command Center', title: 'Saved Sequences', desc: 'Search, inspect, and reuse complete playback experiences.' },
+    'schedules/conflicts': { icon: GitCompare, section: 'Schedules / Command Center', title: 'Schedule Conflicts', desc: 'Compare overlapping rules, understand the outcome, and apply safe fixes.' },
     'nexup':            { icon: Clapperboard, section: 'NeX-Up', title: 'Connections', desc: 'Connect Radarr and Sonarr to discover upcoming media and automatically fetch trailers.' },
     'nexup/upcoming':   { icon: ClipboardList, section: 'NeX-Up', title: 'Upcoming', desc: 'Review future releases from Radarr and Sonarr and control trailer eligibility.' },
     'nexup/trailers':   { icon: Film, section: 'NeX-Up', title: 'Your Trailers', desc: 'Manage downloaded movie and television trailers and their automatic retention.' },
-    'nexup/generator':  { icon: Sparkles,        title: 'Preroll Generator', desc: 'Create cinematic intros and Coming Soon videos.' },
-    'nexup/settings':   { icon: Settings,        title: 'NeX-Up Settings',  desc: 'Configure downloads, storage, schedules, and authentication.' },
+    'nexup/generator':  { icon: Sparkles, section: 'NeX-Up', title: 'Preroll Generator', desc: 'Create cinematic intros and Coming Soon videos.' },
+    'nexup/settings':   { icon: Settings, section: 'NeX-Up', title: 'NeX-Up Settings', desc: 'Configure trailer downloads, storage, release windows, providers, and cleanup behavior.' },
     'connect':          { icon: Link2, section: 'Connect', title: 'Connections', desc: 'Connect NeXroll to Plex, Jellyfin, or Emby and verify playback integration.' },
     'community-prerolls': { icon: Globe, section: 'Community', title: 'Community Prerolls', desc: 'Discover, preview, match, and import community-made prerolls.' },
     'settings':         { icon: Settings,        section: 'Settings', title: 'General Settings', desc: 'Theme, timezone, notifications, and scheduler behavior.' },
@@ -7672,10 +7690,76 @@ const DashboardTiles = {
                 <Library size={15} /> View Library
               </button>
             )}
+            {activeTab === 'library/categories' && (
+              <>
+                <button type="button" className="button button-secondary" onClick={handleInitHolidays}><TreePine size={15} /> Holiday presets</button>
+                <button type="button" className="button" onClick={() => setShowCreateCategoryModal(true)}><Plus size={15} /> Create category</button>
+              </>
+            )}
+            {activeTab === 'library/scaling' && (
+              <>
+                <button type="button" className="button button-secondary" onClick={() => loadVideoInfoForPrerolls(prerolls.map(preroll => preroll.id))}><RefreshCw size={15} /> Refresh analysis</button>
+                <button type="button" className="button" disabled={!bulkScalingSelection.length} onClick={() => handleBulkScale('720p')}><Video size={15} /> Scale selected</button>
+              </>
+            )}
+            {activeTab === 'library/trash' && (
+              <>
+                <button type="button" className="button button-secondary" onClick={() => setActiveTab('settings/storage')}><Clock size={15} /> Retention settings</button>
+                <button type="button" className="button button-danger" disabled={trashLoading || !trashEntries.length} onClick={() => handleEmptyTrash(false)}><Trash2 size={15} /> Empty trash</button>
+              </>
+            )}
             {activeTab === 'schedules' && (
-              <button type="button" className="button button-success" onClick={() => setActiveTab('schedules/create')}>
-                <Plus size={15} /> New Schedule
-              </button>
+              <>
+                <button type="button" className="button button-secondary" onClick={() => setActiveTab('schedules/calendar')}><CalendarDays size={15} /> Calendar</button>
+                <button type="button" className="button button-success" onClick={() => setActiveTab('schedules/create')}><Plus size={15} /> Create schedule</button>
+              </>
+            )}
+            {activeTab === 'schedules/create' && (
+              <>
+                <button type="button" className="button button-secondary" onClick={() => {
+                  localStorage.setItem('nx_schedule_draft', JSON.stringify({ scheduleForm, weekDays, timeRange, scheduleMode, sequenceBlocks }));
+                  showAlert('Schedule draft saved in this browser.', 'success');
+                }}><Save size={15} /> Save draft</button>
+                <button type="button" className="button" onClick={() => {
+                  if (scheduleCreateStep < 4) setScheduleCreateStep(step => Math.min(4, step + 1));
+                  else document.getElementById('nx-approved-schedule-form')?.requestSubmit();
+                }}><Check size={15} /> {scheduleCreateStep < 4 ? 'Continue' : 'Create schedule'}</button>
+              </>
+            )}
+            {activeTab === 'schedules/calendar' && (
+              <>
+                <button type="button" className="button button-secondary" onClick={() => {
+                  const now = new Date();
+                  setCalendarDay(now);
+                  setCalendarMonth(now.getMonth() + 1);
+                  setCalendarYear(now.getFullYear());
+                }}>Today</button>
+                <button type="button" className="button" onClick={() => setActiveTab('schedules/create')}><Plus size={15} /> Create schedule</button>
+              </>
+            )}
+            {activeTab === 'schedules/builder' && (
+              <>
+                <button type="button" className="button button-secondary" onClick={() => setShowSequenceImportModal(true)}><Upload size={15} /> Import</button>
+                <button type="button" className="button button-secondary" disabled={!sequenceBlocks.length} onClick={() => {
+                  setPreviewingSequence({ name: editingSequenceName || 'Sequence preview', blocks: sequenceBlocks });
+                  setShowSequencePreviewModal(true);
+                }}><Play size={15} /> Preview</button>
+              </>
+            )}
+            {activeTab === 'schedules/library' && (
+              <>
+                <button type="button" className="button button-secondary" onClick={() => setShowSequenceImportModal(true)}><Upload size={15} /> Import</button>
+                <button type="button" className="button" onClick={() => {
+                  setSequenceBlocks([]);
+                  setEditingSequenceId(null);
+                  setEditingSequenceName('');
+                  setEditingSequenceDescription('');
+                  setActiveTab('schedules/builder');
+                }}><Plus size={15} /> New sequence</button>
+              </>
+            )}
+            {activeTab === 'schedules/conflicts' && (
+              <button type="button" className="button button-secondary" onClick={() => setShowIgnoredConflicts(value => !value)}><Eye size={15} /> Ignored conflicts</button>
             )}
             {activeTab === 'nexup' && (
               <button type="button" className="button" onClick={handleNexupFullSync}><RefreshCw size={15} /> Sync all</button>
@@ -7686,6 +7770,15 @@ const DashboardTiles = {
             {activeTab === 'nexup/trailers' && (
               <button type="button" className="button" onClick={handleSyncNexup}><RefreshCw size={15} /> Sync trailers</button>
             )}
+            {activeTab === 'nexup/generator' && (
+              <button type="button" className="button button-secondary" onClick={() => {
+                loadNexupSequencePresets();
+                setShowNexupSequenceWizard(true);
+              }} disabled={!nexupSettings.storage_path}><Sparkles size={15} /> Create sequence</button>
+            )}
+            {activeTab === 'nexup/settings' && (
+              <button type="button" className="button button-secondary" onClick={loadNexupSettings}><RotateCw size={15} /> Reset changes</button>
+            )}
             {activeTab === 'connect' && (
               <button type="button" className="button button-secondary" onClick={handleDownloadDiagnostics}><Wrench size={15} /> Run diagnostics</button>
             )}
@@ -7693,6 +7786,18 @@ const DashboardTiles = {
               <>
                 <button type="button" className="button button-secondary" onClick={() => fetchData()}><RefreshCw size={15} /> Refresh usage</button>
                 <button type="button" className="button" onClick={() => handleRescanPrerolls()}><FolderSync size={15} /> Scan files now</button>
+              </>
+            )}
+            {activeTab === 'settings' && (
+              <>
+                <button type="button" className="button button-secondary" onClick={fetchData}><RotateCw size={15} /> Reset page</button>
+                <button type="button" className="button" onClick={() => showAlert('General settings are saved as you change them.', 'success')}><Save size={15} /> Save changes</button>
+              </>
+            )}
+            {activeTab === 'settings/paths' && (
+              <>
+                <button type="button" className="button button-secondary" onClick={runMappingsTest}><FlaskConical size={15} /> Test paths</button>
+                <button type="button" className="button" onClick={addMappingRow}><Plus size={15} /> Add mapping</button>
               </>
             )}
             {activeTab === 'settings/apikeys' && (
@@ -7735,6 +7840,15 @@ const DashboardTiles = {
         { label: 'Library size', value: formatBytes(storageBreakdown?.locations?.find(location => location.key === 'prerolls')?.bytes || storageBreakdown?.total_bytes || 0) },
         { label: 'Community matched', value: communityMatchedCount, tone: 'success' },
         { label: 'Needs category', value: uncategorized, tone: uncategorized ? 'warning' : 'success' }
+      ];
+    } else if (activeTab === 'library/categories') {
+      const scheduled = categories.filter(category => schedules.some(schedule => schedule.is_active && schedule.category_id === category.id));
+      const populated = categories.filter(category => getCategoryStats(category).totalPrerolls > 0);
+      items = [
+        { label: 'Total categories', value: categories.length },
+        { label: 'Scheduled', value: scheduled.length, tone: 'success' },
+        { label: 'With prerolls', value: populated.length, tone: 'info' },
+        { label: 'Empty', value: Math.max(0, categories.length - populated.length) }
       ];
     } else if (activeTab.startsWith('library')) {
       items = [];
@@ -7837,7 +7951,7 @@ const DashboardTiles = {
       }
     }
 
-    if (!items.length || activeTab === 'schedules') return null;
+    if (!items.length || activeTab.startsWith('schedules')) return null;
     return (
       <section className="nx-route-summary" aria-label="Page summary">
         {items.map(item => (
@@ -18137,47 +18251,408 @@ const DashboardTiles = {
     );
   };
 
+  const renderApprovedScheduleCreate = () => {
+    const dayOptions = [
+      ['monday', 'M'], ['tuesday', 'T'], ['wednesday', 'W'], ['thursday', 'T'],
+      ['friday', 'F'], ['saturday', 'S'], ['sunday', 'S']
+    ];
+    const selectedCategory = categories.find(category => String(category.id) === String(scheduleForm.category_id));
+    const selectedSequence = savedSequences.find(sequence => sequence.id === loadedSavedSequenceId);
+    const recurrenceLabel = scheduleForm.type === 'weekly'
+      ? `${weekDays.length ? weekDays.map(day => day.slice(0, 3)).join(', ') : 'No days selected'}${timeRange.start ? ` / ${timeRange.start}${timeRange.end ? ` - ${timeRange.end}` : ''}` : ''}`
+      : `${scheduleForm.type.charAt(0).toUpperCase()}${scheduleForm.type.slice(1)}`;
+    const behaviorLabel = scheduleForm.exclusive ? 'Exclusive' : scheduleForm.blend_enabled ? 'Blend' : 'Standard';
+
+    const toggleDay = day => setWeekDays(days => days.includes(day) ? days.filter(value => value !== day) : [...days, day]);
+
+    return (
+      <form id="nx-approved-schedule-form" className="nx-schedule-draft" onSubmit={handleCreateSchedule}>
+        <div className="nx-draft-step-layout">
+          <aside className="nx-draft-panel nx-draft-stepper">
+            {[
+              ['Schedule mode', 'Simple or sequence'],
+              ['Timing', 'When it runs'],
+              ['Content', 'What it plays'],
+              ['Behavior', 'Priority and fallback']
+            ].map((step, index) => (
+              <button
+                type="button"
+                key={step[0]}
+                className={`nx-draft-step${scheduleCreateStep === index + 1 ? ' active' : ''}${scheduleCreateStep > index + 1 ? ' done' : ''}`}
+                onClick={() => setScheduleCreateStep(index + 1)}
+              >
+                <span className="nx-draft-step-num">{scheduleCreateStep > index + 1 ? <Check size={11} /> : index + 1}</span>
+                <span><strong>{step[0]}</strong><small>{step[1]}</small></span>
+              </button>
+            ))}
+          </aside>
+
+          <section className="nx-draft-panel nx-draft-form-panel">
+            {scheduleCreateStep <= 2 && (
+              <>
+                <div className="nx-draft-form-section">
+                  <h2>Choose how this schedule plays</h2>
+                  <p>Start with a category or assemble a multi-part sequence.</p>
+                  <div className="nx-draft-mode-grid">
+                    <button type="button" className={`nx-draft-choice${scheduleMode === 'simple' ? ' selected' : ''}`} onClick={() => setScheduleMode('simple')}>
+                      <strong>Simple schedule</strong><span>Play one category using shuffle or a fixed playlist.</span>
+                    </button>
+                    <button type="button" className={`nx-draft-choice${scheduleMode === 'advanced' ? ' selected' : ''}`} onClick={() => setScheduleMode('advanced')}>
+                      <strong>Sequence schedule</strong><span>Combine intros, trailers, messages, and category blocks.</span>
+                    </button>
+                  </div>
+                </div>
+                <div className="nx-draft-form-section">
+                  <h2>Basic information</h2>
+                  <p>Give this rule a recognizable name and recurrence type.</p>
+                  <div className="nx-draft-fields">
+                    <label><span>Schedule name</span><input value={scheduleForm.name} onChange={event => setScheduleForm({ ...scheduleForm, name: event.target.value })} placeholder="Friday Night Movies" required /></label>
+                    <label><span>Schedule type</span><select value={scheduleForm.type} onChange={event => setScheduleForm({ ...scheduleForm, type: event.target.value })}>
+                      <option value="weekly">Weekly</option><option value="daily">Daily</option><option value="monthly">Monthly</option><option value="yearly">Yearly</option><option value="holiday">Holiday</option>
+                    </select></label>
+                  </div>
+                </div>
+                <div className="nx-draft-form-section">
+                  <h2>{scheduleForm.type === 'weekly' ? 'Weekly recurrence' : `${scheduleForm.type.charAt(0).toUpperCase()}${scheduleForm.type.slice(1)} recurrence`}</h2>
+                  <p>Select the active days, date range, and time window.</p>
+                  {scheduleForm.type === 'weekly' && (
+                    <div className="nx-draft-weekday">{dayOptions.map(([value, label]) => <button type="button" key={value} className={weekDays.includes(value) ? 'on' : ''} onClick={() => toggleDay(value)}>{label}</button>)}</div>
+                  )}
+                  {(scheduleForm.type === 'daily' || scheduleForm.type === 'weekly') && (
+                    <div className="nx-draft-fields nx-draft-time-fields">
+                      <label><span>Starts</span><input type="time" value={timeRange.start} onChange={event => setTimeRange({ ...timeRange, start: event.target.value })} /></label>
+                      <label><span>Ends</span><input type="time" value={timeRange.end} onChange={event => setTimeRange({ ...timeRange, end: event.target.value })} /></label>
+                    </div>
+                  )}
+                  {scheduleForm.type !== 'monthly' && (
+                    <div className="nx-draft-fields nx-draft-date-fields">
+                      <label><span>First active date</span><input type="datetime-local" value={scheduleForm.start_date} onChange={event => setScheduleForm({ ...scheduleForm, start_date: event.target.value })} /></label>
+                      <label><span>Last active date</span><input type="datetime-local" value={scheduleForm.end_date} onChange={event => setScheduleForm({ ...scheduleForm, end_date: event.target.value })} /></label>
+                    </div>
+                  )}
+                  {scheduleForm.type === 'holiday' && (
+                    <div className="nx-draft-fields nx-draft-date-fields">
+                      <label><span>Holiday</span><input value={scheduleForm.holiday_name} onChange={event => setScheduleForm({ ...scheduleForm, holiday_name: event.target.value })} placeholder="Labor Day" /></label>
+                      <label><span>Country</span><input value={scheduleForm.holiday_country} onChange={event => setScheduleForm({ ...scheduleForm, holiday_country: event.target.value })} placeholder="US" /></label>
+                    </div>
+                  )}
+                </div>
+              </>
+            )}
+
+            {scheduleCreateStep === 3 && (
+              <div className="nx-draft-form-section nx-draft-content-step">
+                <h2>Choose what this schedule plays</h2>
+                <p>{scheduleMode === 'advanced' ? 'Select a saved sequence or continue in the Sequence Builder.' : 'Choose a Library category and playback order.'}</p>
+                {scheduleMode === 'advanced' ? (
+                  <>
+                    <div className="nx-draft-sequence-options">
+                      {savedSequences.map(sequence => (
+                        <button type="button" key={sequence.id} className={`nx-draft-sequence-option${loadedSavedSequenceId === sequence.id ? ' selected' : ''}`} onClick={() => {
+                          setLoadedSavedSequenceId(sequence.id);
+                          setSequenceBlocks(cloneSequenceWithIds(sequence.blocks || []));
+                        }}>
+                          <strong>{sequence.name}</strong><span>{sequence.blocks?.length || 0} blocks / {sequence.description || 'Saved sequence'}</span>
+                        </button>
+                      ))}
+                    </div>
+                    <button type="button" className="nx-draft-btn" onClick={() => setActiveTab('schedules/builder')}><Clapperboard size={13} /> Open Sequence Builder</button>
+                  </>
+                ) : (
+                  <div className="nx-draft-fields">
+                    <label><span>Category</span><select value={scheduleForm.category_id} onChange={event => setScheduleForm({ ...scheduleForm, category_id: event.target.value })} required>
+                      <option value="">Choose a category</option>{categories.map(category => <option key={category.id} value={category.id}>{category.name}</option>)}
+                    </select></label>
+                    <label><span>Playback</span><select value={scheduleForm.playlist ? 'playlist' : scheduleForm.shuffle ? 'shuffle' : 'sequential'} onChange={event => setScheduleForm({ ...scheduleForm, playlist: event.target.value === 'playlist', shuffle: event.target.value === 'shuffle' })}>
+                      <option value="shuffle">Shuffle</option><option value="sequential">Sequential</option><option value="playlist">Fixed playlist</option>
+                    </select></label>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {scheduleCreateStep === 4 && (
+              <div className="nx-draft-form-section nx-draft-behavior-step">
+                <h2>Set priority and fallback behavior</h2>
+                <p>Control how this schedule behaves when another rule overlaps it.</p>
+                <div className="nx-draft-fields">
+                  <label><span>Priority</span><input type="number" min="1" max="10" value={scheduleForm.priority} onChange={event => setScheduleForm({ ...scheduleForm, priority: Number(event.target.value) })} /></label>
+                  <label><span>Fallback category</span><select value={scheduleForm.fallback_category_id} onChange={event => setScheduleForm({ ...scheduleForm, fallback_category_id: event.target.value })}><option value="">None</option>{categories.map(category => <option key={category.id} value={category.id}>{category.name}</option>)}</select></label>
+                </div>
+                <div className="nx-draft-behavior-grid">
+                  <button type="button" className={`nx-draft-choice${!scheduleForm.exclusive && !scheduleForm.blend_enabled ? ' selected' : ''}`} onClick={() => setScheduleForm({ ...scheduleForm, exclusive: false, blend_enabled: false })}><strong>Standard</strong><span>Higher priority wins during an overlap.</span></button>
+                  <button type="button" className={`nx-draft-choice${scheduleForm.exclusive ? ' selected' : ''}`} onClick={() => setScheduleForm({ ...scheduleForm, exclusive: true, blend_enabled: false })}><strong>Exclusive</strong><span>Take full control during this window.</span></button>
+                  <button type="button" className={`nx-draft-choice${scheduleForm.blend_enabled ? ' selected' : ''}`} onClick={() => setScheduleForm({ ...scheduleForm, exclusive: false, blend_enabled: true })}><strong>Blend</strong><span>Combine content with compatible schedules.</span></button>
+                </div>
+                <label className="nx-draft-color-field"><span>Schedule color</span><input type="color" value={scheduleForm.color || '#31c48d'} onChange={event => setScheduleForm({ ...scheduleForm, color: event.target.value })} /></label>
+              </div>
+            )}
+
+            <footer className="nx-draft-form-footer">
+              <button type="button" className="nx-draft-btn" disabled={scheduleCreateStep === 1} onClick={() => setScheduleCreateStep(step => Math.max(1, step - 1))}>Back</button>
+              {scheduleCreateStep < 4 ? (
+                <button type="button" className="nx-draft-btn schedule" onClick={() => setScheduleCreateStep(step => step === 2 ? 3 : Math.min(4, step + 1))}>{scheduleCreateStep < 3 ? 'Continue to content' : 'Continue to behavior'}</button>
+              ) : (
+                <button type="submit" className="nx-draft-btn schedule"><Check size={13} /> Create schedule</button>
+              )}
+            </footer>
+          </section>
+
+          <aside className="nx-draft-panel nx-draft-review">
+            <header><div><strong>Live summary</strong><span>Updates as the rule is built</span></div></header>
+            <div className="nx-draft-panel-body">
+              <div className="nx-draft-review-name"><strong>{scheduleForm.name || 'Untitled schedule'}</strong><span>{scheduleForm.type} / {scheduleMode === 'advanced' ? 'Sequence' : 'Simple'} schedule</span></div>
+              <dl className="nx-draft-info-list">
+                <div><dt>When</dt><dd>{recurrenceLabel}</dd></div>
+                <div><dt>Content</dt><dd>{scheduleMode === 'advanced' ? selectedSequence?.name || `${sequenceBlocks.length || 0} blocks` : selectedCategory?.name || 'Not selected'}</dd></div>
+                <div><dt>Playback</dt><dd>{scheduleMode === 'advanced' ? 'Sequence' : scheduleForm.playlist ? 'Playlist' : scheduleForm.shuffle ? 'Shuffle' : 'Sequential'}</dd></div>
+                <div><dt>Priority</dt><dd>{scheduleForm.priority} / {behaviorLabel}</dd></div>
+              </dl>
+              <div className="nx-draft-mini-card"><div><strong>Conflict check</strong><span className="nx-draft-badge warn">{analyzeAllConflicts(30).length} likely</span></div><p>Potential overlaps remain visible before the schedule is created.</p></div>
+            </div>
+          </aside>
+        </div>
+      </form>
+    );
+  };
+
+  const renderApprovedScheduleCalendar = () => {
+    const weekDaysView = Array.from({ length: 7 }, (_, index) => {
+      const value = new Date(calendarDay);
+      value.setDate(calendarDay.getDate() - ((calendarDay.getDay() + 6) % 7) + index);
+      return value;
+    });
+    const hours = [18, 19, 20, 21, 22];
+    return (
+      <div className="nx-schedule-draft nx-draft-calendar-page">
+        <div className="nx-draft-calendar-toolbar">
+          <div><button className="nx-draft-btn square" onClick={() => setCalendarDay(day => new Date(day.getFullYear(), day.getMonth(), day.getDate() - 7))}><ChevronLeft size={13} /></button><button className="nx-draft-btn square" onClick={() => setCalendarDay(day => new Date(day.getFullYear(), day.getMonth(), day.getDate() + 7))}><ChevronRight size={13} /></button><strong>{weekDaysView[0].toLocaleDateString([], { month: 'long', day: 'numeric' })} - {weekDaysView[6].toLocaleDateString([], { month: 'long', day: 'numeric', year: 'numeric' })}</strong></div>
+          <div className="nx-draft-segmented">{['day', 'week', 'month', 'year'].map(mode => <button key={mode} className={calendarMode === mode ? 'active' : ''} onClick={() => setCalendarMode(mode)}>{mode.charAt(0).toUpperCase() + mode.slice(1)}</button>)}</div>
+        </div>
+        <section className="nx-draft-panel nx-draft-calendar-panel">
+          <div className="nx-draft-week-calendar">
+            <div className="nx-draft-cal-head" />
+            {weekDaysView.map(day => <div key={day.toISOString()} className="nx-draft-cal-head">{day.toLocaleDateString([], { weekday: 'short' })}<strong>{day.getDate()}</strong></div>)}
+            {hours.flatMap((hour, rowIndex) => [
+              <div key={`hour-${hour}`} className="nx-draft-cal-hour">{new Date(2026, 0, 1, hour).toLocaleTimeString([], { hour: 'numeric' })}</div>,
+              ...weekDaysView.map((day, dayIndex) => {
+                const schedule = schedules[(rowIndex + dayIndex) % Math.max(schedules.length, 1)];
+                const show = schedule && ((rowIndex === 0 && dayIndex === 4) || (rowIndex === 1 && dayIndex === 5) || (rowIndex === 3 && dayIndex < 5));
+                return <div key={`${hour}-${dayIndex}`} className="nx-draft-cal-cell">{show && <button onClick={() => handleEditSchedule(schedule)} className={`nx-draft-cal-event${dayIndex === 5 || rowIndex === 3 ? ' violet' : ''}`}>{schedule.name}</button>}</div>;
+              })
+            ])}
+          </div>
+        </section>
+      </div>
+    );
+  };
+
+  const renderApprovedSequenceModals = () => (
+    <>
+      <PatternImport
+        isOpen={showSequenceImportModal}
+        onClose={() => setShowSequenceImportModal(false)}
+        onImport={async (importedBlocks, metadata) => {
+          if (importedBlocks?.bundle_import && importedBlocks?.success) {
+            showAlert(`Successfully imported ${importedBlocks.imported_count} sequences from bundle!`, 'success');
+            loadSavedSequences();
+            setShowSequenceImportModal(false);
+            return;
+          }
+          try {
+            const response = await fetch(apiUrl('sequences'), {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ name: metadata?.name || 'Imported Sequence', description: metadata?.description || '', blocks: importedBlocks })
+            });
+            if (!response.ok) throw new Error('The imported sequence could not be saved.');
+            showAlert(`Successfully imported "${metadata?.name || 'Imported Sequence'}"!`, 'success');
+            loadSavedSequences();
+          } catch (error) {
+            showAlert(`Error saving sequence: ${error.message}`, 'error');
+          }
+          setShowSequenceImportModal(false);
+        }}
+        existingFiles={prerolls.map(preroll => preroll.full_path)}
+        showCommunityDownload={true}
+      />
+      {exportingSequence && (
+        <PatternExport
+          isOpen={showSequenceExportModal}
+          onClose={() => { setShowSequenceExportModal(false); setExportingSequence(null); }}
+          scheduleId={exportingSequence.id}
+          scheduleName={exportingSequence.name}
+        />
+      )}
+      {previewingSequence && (
+        <SequencePreviewModal
+          isOpen={showSequencePreviewModal}
+          onClose={() => { setShowSequencePreviewModal(false); setPreviewingSequence(null); }}
+          blocks={previewingSequence.blocks || []}
+          categories={categories}
+          prerolls={prerolls}
+          sequenceName={previewingSequence.name}
+          apiUrl={apiUrl}
+        />
+      )}
+    </>
+  );
+
+  const renderApprovedSequenceBuilder = () => {
+    const addBlock = type => {
+      const presets = {
+        random: { type: 'random', category_id: categories[0]?.id || null, count: 1, label: 'Category' },
+        fixed: { type: 'fixed', preroll_ids: prerolls[0] ? [prerolls[0].id] : [], label: 'Fixed preroll' },
+        nexup_trailers: { type: 'nexup_trailers', source: 'both', count: 2, mode: 'random', label: 'NeX-Up trailers' },
+        dynamic_preroll: { type: 'dynamic_preroll', template: 'cinematic', theme: 'classic', label: 'Generated message' },
+        separator: { type: 'separator', label: 'Pause / separator' }
+      };
+      const next = cloneSequenceWithIds([presets[type]])[0];
+      setSequenceBlocks(blocks => [...blocks, next]);
+      setScheduleBuilderSelectedIndex(sequenceBlocks.length);
+    };
+    const removeBlock = index => {
+      setSequenceBlocks(blocks => blocks.filter((_, blockIndex) => blockIndex !== index));
+      setScheduleBuilderSelectedIndex(index => Math.max(0, index - 1));
+    };
+    const blockTitle = block => block?.label || ({ random: 'Category block', sequential: 'Category block', fixed: 'Fixed preroll', nexup_trailers: 'Upcoming trailers', dynamic_preroll: 'Generated message', separator: 'Pause / separator', coming_soon_list: 'Coming Soon list' }[block?.type] || 'Sequence block');
+    const blockDescription = block => {
+      if (block?.type === 'random' || block?.type === 'sequential') return `${categories.find(category => String(category.id) === String(block.category_id))?.name || 'Choose category'} / ${block.type}`;
+      if (block?.type === 'fixed') return `${block.preroll_ids?.length || 0} selected preroll${block.preroll_ids?.length === 1 ? '' : 's'}`;
+      if (block?.type === 'nexup_trailers') return `${block.count || 2} trailers / ${block.source || 'both'}`;
+      return block?.type?.replaceAll('_', ' ') || 'Configure this block';
+    };
+    const selectedBlock = sequenceBlocks[scheduleBuilderSelectedIndex] || sequenceBlocks[0] || null;
+    const selectedIndex = selectedBlock ? Math.max(0, sequenceBlocks.indexOf(selectedBlock)) : 0;
+    const builderName = editingSequenceName || 'Untitled Sequence';
+
+    return (
+      <div className="nx-schedule-draft nx-draft-builder-page">
+        <div className="nx-draft-builder">
+          <aside className="nx-draft-panel nx-draft-palette">
+            <header><div><strong>Block library</strong><span>Click to add to the sequence</span></div></header>
+            <div className="nx-draft-panel-body">
+              {[
+                ['random', 'CAT', 'Category', 'Random or sequential preroll'],
+                ['fixed', 'FIX', 'Fixed preroll', 'One selected video'],
+                ['nexup_trailers', 'TRL', 'NeX-Up trailers', 'Upcoming or matched media'],
+                ['dynamic_preroll', 'TXT', 'Generated message', 'Dynamic title card'],
+                ['separator', 'BRK', 'Pause / separator', 'Timing and transitions']
+              ].map(([type, icon, title, copy]) => (
+                <button type="button" key={type} className="nx-draft-block-choice" onClick={() => addBlock(type)}><i>{icon}</i><span><strong>{title}</strong><small>{copy}</small></span><Plus size={12} /></button>
+              ))}
+            </div>
+          </aside>
+
+          <section className="nx-draft-panel nx-draft-sequence-canvas">
+            <header className="nx-draft-seq-meta">
+              <div><strong>{builderName}</strong><span>{sequenceBlocks.length} blocks / estimated {Math.max(1, sequenceBlocks.length * 2)}m {sequenceBlocks.length * 5}s</span></div>
+              <span className={`nx-draft-badge${sequenceBlocks.length ? ' live' : ''}`}>{sequenceBlocks.length ? 'Ready' : 'Empty'}</span>
+            </header>
+            <div className="nx-draft-sequence-stack">
+              {sequenceBlocks.length === 0 ? (
+                <div className="nx-draft-sequence-empty"><Layers size={28} /><strong>Build the viewer experience</strong><span>Add a block from the library on the left.</span></div>
+              ) : sequenceBlocks.map((block, index) => (
+                <React.Fragment key={block.ui_id || `${block.type}-${index}`}>
+                  <button type="button" className={`nx-draft-seq-block${index === selectedIndex ? ' selected' : ''}`} onClick={() => setScheduleBuilderSelectedIndex(index)}>
+                    <span className="drag"><GripVertical size={13} /></span><span className="order">{index + 1}</span>
+                    <span className="copy"><strong>{blockTitle(block)}</strong><small>{blockDescription(block)}</small></span>
+                    <Menu size={13} />
+                  </button>
+                  {index < sequenceBlocks.length - 1 && <span className="nx-draft-seq-line" />}
+                </React.Fragment>
+              ))}
+            </div>
+            <div className="nx-draft-builder-stats"><div><span>Blocks</span><strong>{sequenceBlocks.length}</strong></div><div><span>Estimated duration</span><strong>~{Math.max(1, sequenceBlocks.length * 2)}m</strong></div><div><span>Variations</span><strong>{Math.max(1, sequenceBlocks.length * 12)}</strong></div></div>
+          </section>
+
+          <aside className="nx-draft-panel nx-draft-inspector">
+            <header><div><strong>Block settings</strong><span>{selectedBlock ? blockTitle(selectedBlock) : 'Select a block'}</span></div></header>
+            <div className="nx-draft-panel-body">
+              <label className="nx-draft-field"><span>Sequence name</span><input id="nx-approved-sequence-name" value={editingSequenceName} placeholder="Untitled Sequence" onChange={event => setEditingSequenceName(event.target.value)} /></label>
+              <label className="nx-draft-field"><span>Description</span><input value={editingSequenceDescription} placeholder="Describe this experience" onChange={event => setEditingSequenceDescription(event.target.value)} /></label>
+              {selectedBlock && <>
+                <label className="nx-draft-field"><span>Block type</span><select value={selectedBlock.type} disabled><option value={selectedBlock.type}>{selectedBlock.type.replaceAll('_', ' ')}</option></select></label>
+                {(selectedBlock.type === 'random' || selectedBlock.type === 'sequential') && <label className="nx-draft-field"><span>Category</span><select value={selectedBlock.category_id || ''} onChange={event => setSequenceBlocks(blocks => blocks.map((block, index) => index === selectedIndex ? { ...block, category_id: Number(event.target.value) } : block))}><option value="">Choose category</option>{categories.map(category => <option key={category.id} value={category.id}>{category.name}</option>)}</select></label>}
+                {selectedBlock.type === 'nexup_trailers' && <label className="nx-draft-field"><span>Trailer count</span><input type="number" min="1" max="10" value={selectedBlock.count || 2} onChange={event => setSequenceBlocks(blocks => blocks.map((block, index) => index === selectedIndex ? { ...block, count: Number(event.target.value) } : block))} /></label>}
+                <div className="nx-draft-info-row"><span>Position</span><strong>{selectedIndex + 1} of {sequenceBlocks.length}</strong></div>
+                <button type="button" className="nx-draft-btn danger" onClick={() => removeBlock(selectedIndex)}><Trash2 size={12} /> Remove block</button>
+              </>}
+              <button type="button" className="nx-draft-btn schedule wide" disabled={!sequenceBlocks.length} onClick={async () => {
+                try { await saveSequence(editingSequenceName.trim() || 'Untitled Sequence', editingSequenceDescription.trim()); } catch (_) {}
+              }}><Save size={12} /> Save sequence</button>
+            </div>
+          </aside>
+        </div>
+        {renderApprovedSequenceModals()}
+      </div>
+    );
+  };
+
+  const renderApprovedSequenceLibrary = () => {
+    const filtered = savedSequences.filter(sequence => `${sequence.name || ''} ${sequence.description || ''}`.toLowerCase().includes(sequenceLibrarySearch.toLowerCase()));
+    return (
+      <div className="nx-schedule-draft nx-draft-sequence-library">
+        <div className="nx-draft-command">
+          <label className="nx-draft-search"><Search size={13} /><input value={sequenceLibrarySearch} onChange={event => setSequenceLibrarySearch(event.target.value)} placeholder="Search saved sequences..." /></label>
+          <select><option>Recently updated</option><option>Name</option><option>Most used</option></select>
+          <button className="nx-draft-btn small"><List size={12} /> List</button>
+        </div>
+        <section className="nx-draft-panel nx-draft-table-panel">
+          {sequencesLoading ? <div className="nx-draft-loading"><Loader2 className="spin" size={22} /> Loading sequences...</div> : filtered.length === 0 ? <div className="nx-draft-loading"><Layers size={22} /> No saved sequences found.</div> : (
+            <table className="nx-draft-sequence-table"><thead><tr><th>Sequence</th><th>Blocks</th><th>Duration</th><th>Used by</th><th>Updated</th><th /></tr></thead><tbody>
+              {filtered.map(sequence => <tr key={sequence.id}><td><strong>{sequence.name}</strong><span>{sequence.description || 'Reusable playback experience'}</span></td><td><span className="nx-draft-block-dots">{(sequence.blocks || []).slice(0, 5).map((block, index) => <i key={index} className={index % 2 ? 'violet' : ''}>{String(block.type || 'B').charAt(0).toUpperCase()}</i>)}</span></td><td>~{Math.max(1, (sequence.blocks?.length || 1) * 2)}m</td><td>{schedules.filter(schedule => String(schedule.sequence_id) === String(sequence.id)).length} schedules</td><td>{sequence.updated_at ? new Date(sequence.updated_at).toLocaleDateString() : 'Saved'}</td><td><div className="nx-draft-row-actions">
+                <button className="nx-draft-btn small" onClick={() => createScheduleFromSequence(sequence)}>Use</button>
+                <button className="nx-draft-btn square small" onClick={() => { setPreviewingSequence(sequence); setShowSequencePreviewModal(true); }} title="Preview"><Eye size={12} /></button>
+                <button className="nx-draft-btn square small" onClick={() => loadSequenceIntoBuilder(sequence)} title="Edit"><Edit size={12} /></button>
+                <button className="nx-draft-btn square small" onClick={() => { setExportingSequence(sequence); setShowSequenceExportModal(true); }} title="Export"><Download size={12} /></button>
+                <button className="nx-draft-btn square small danger" onClick={async () => { if (await showConfirm(`Delete sequence "${sequence.name}"?`, { title: 'Delete Sequence', type: 'danger', confirmText: 'Delete' })) deleteSequence(sequence.id, sequence.name); }} title="Delete"><Trash2 size={12} /></button>
+              </div></td></tr>)}
+            </tbody></table>
+          )}
+        </section>
+        {renderApprovedSequenceModals()}
+      </div>
+    );
+  };
+
+  const renderApprovedScheduleConflicts = () => {
+    const unresolved = analyzeAllConflicts(30).filter(conflict => !ignoredConflicts.includes(conflict.id));
+    const selected = unresolved.find(conflict => conflict.id === selectedScheduleConflictId) || unresolved[0] || null;
+    return (
+      <div className="nx-schedule-draft nx-draft-conflicts-page">
+        <div className="nx-draft-command nx-draft-conflict-command"><select><option>This month</option><option>This week</option><option>This year</option></select><button className="nx-draft-btn small">High {unresolved.filter(conflict => conflict.severity === 'high').length}</button><button className="nx-draft-btn small">Medium {unresolved.filter(conflict => conflict.severity === 'medium').length}</button><button className="nx-draft-btn small">Low {unresolved.filter(conflict => conflict.severity === 'low').length}</button><span>{unresolved.length} unresolved conflicts</span></div>
+        {selected ? <div className="nx-draft-conflict-layout">
+          <aside className="nx-draft-panel nx-draft-conflict-queue"><header><div><strong>Conflict queue</strong><span>Ordered by impact</span></div></header><div className="nx-draft-panel-body">{unresolved.map(conflict => <button key={conflict.id} className={`nx-draft-conflict-item${conflict.id === selected.id ? ' active' : ''}`} onClick={() => setSelectedScheduleConflictId(conflict.id)}><span><strong>{conflict.scheduleA.name} vs {conflict.scheduleB.name}</strong><i className="nx-draft-badge warn">{conflict.severity || 'Review'}</i></span><p>{conflict.description}</p><small>{conflict.overlappingDays?.length || 1} overlapping day{conflict.overlappingDays?.length === 1 ? '' : 's'}</small></button>)}</div></aside>
+          <section className="nx-draft-panel nx-draft-conflict-detail"><header><div><strong>{selected.scheduleA.name} vs {selected.scheduleB.name}</strong><span>{selected.description}</span></div><i className="nx-draft-badge warn">High impact</i></header><div className="nx-draft-panel-body"><div className="nx-draft-compare">
+            {[selected.scheduleA, selected.scheduleB].map((schedule, index) => <React.Fragment key={schedule.id}>{index === 1 && <div className="nx-draft-versus">VS</div>}<article><i className={`nx-draft-badge${schedule.exclusive ? ' violet' : ' live'}`}>{schedule.exclusive ? 'Exclusive' : schedule.is_active ? 'Enabled' : 'Paused'}</i><h3>{schedule.name}</h3><span>{schedule.type} schedule</span><dl className="nx-draft-info-list"><div><dt>Priority</dt><dd>{schedule.priority ?? 5}</dd></div><div><dt>Behavior</dt><dd>{schedule.exclusive ? 'Exclusive' : schedule.blend_enabled ? 'Blend' : 'Standard'}</dd></div><div><dt>Content</dt><dd>{schedule.category?.name || 'Sequence'}</dd></div></dl></article></React.Fragment>)}
+          </div><div className="nx-draft-suggestion"><strong>{selected.suggestions?.[0]?.label || 'Recommended: adjust the lower-priority schedule window'}</strong><p>{selected.suggestions?.[0]?.description || 'This preserves both experiences while removing the unexpected overlap.'}</p><div><button className="nx-draft-btn schedule small" onClick={() => selected.suggestions?.[0] && setConflictResolutions(values => ({ ...values, [selected.id]: selected.suggestions[0].id }))}>Select this fix</button><button className="nx-draft-btn small">See alternatives</button><button className="nx-draft-btn ghost small" onClick={() => ignoreConflict(selected.id)}>Ignore conflict</button></div></div></div></section>
+        </div> : <div className="nx-draft-panel nx-draft-all-clear"><CheckCircle size={28} /><strong>No unresolved conflicts</strong><span>Schedule priorities and windows are currently clear.</span></div>}
+      </div>
+    );
+  };
+
   // Main renderSchedules with routing logic
   const renderSchedules = () => {
     // Route based on activeTab
     if (activeTab === 'schedules/create') {
-      return (
-        <div className="nx-schedule-create-page">
-          {renderCreateSchedulePage()}
-        </div>
-      );
+      return renderApprovedScheduleCreate();
     }
 
     if (activeTab === 'schedules/calendar') {
-      return (
-        <div className="nx-schedule-calendar-page">
-          {renderCalendarPage()}
-        </div>
-      );
+      return renderApprovedScheduleCalendar();
     }
 
     if (activeTab === 'schedules/builder') {
-      return (
-        <div className="nx-schedule-builder-page">
-          {renderSequenceBuilder()}
-        </div>
-      );
+      return renderApprovedSequenceBuilder();
     }
 
     if (activeTab === 'schedules/library') {
-      return (
-        <div className="nx-schedule-library-page">
-          {renderSequenceLibrary()}
-        </div>
-      );
+      return renderApprovedSequenceLibrary();
     }
 
     if (activeTab === 'schedules/conflicts') {
-      return (
-        <div className="nx-schedule-conflicts-page">
-          {renderConflictResolutionPage()}
-        </div>
-      );
+      return renderApprovedScheduleConflicts();
     }
 
     // Default: Schedule List
@@ -18682,6 +19157,22 @@ const DashboardTiles = {
             <option value="empty">Empty</option>
           </select>
 
+          <select
+            className="nx-cat-filter"
+            value={`${categorySortField}:${categorySortDirection}`}
+            onChange={(event) => {
+              const [field, direction] = event.target.value.split(':');
+              setCategorySortField(field);
+              setCategorySortDirection(direction);
+            }}
+            aria-label="Sort categories"
+          >
+            <option value="name:asc">Name A-Z</option>
+            <option value="name:desc">Name Z-A</option>
+            <option value="prerolls:desc">Most prerolls</option>
+            <option value="prerolls:asc">Fewest prerolls</option>
+          </select>
+
           {/* View Toggle */}
           <div className="view-toggle">
               <button
@@ -18728,7 +19219,7 @@ const DashboardTiles = {
 
         {/* Quick Stats Bar */}
         {categoryView === 'grid' && (
-          <div style={{
+          <div className="nx-category-legacy-stats" style={{
             display: 'flex',
             alignItems: 'center',
             flexWrap: 'wrap',
@@ -18802,7 +19293,7 @@ const DashboardTiles = {
 
             // Section header helper
             const renderCategorySectionHeader = (title, icon, count, bgColor, borderColor) => (
-              <div style={{
+              <div className="nx-category-section-head" style={{
                 display: 'flex',
                 alignItems: 'center',
                 gap: '0.75rem',
@@ -34925,60 +35416,7 @@ const DashboardTiles = {
 
        {/* v2: Schedules section navigation handled by the Sidebar tree. */}
 
-       {/* v2: NeX-Up section navigation handled by the Sidebar tree.
-            The "Create Sequence" action remains, surfaced on the Generator tab. */}
-       {activeTab === 'nexup/generator' && (
-         <div style={{
-           display: 'flex',
-           justifyContent: 'flex-end',
-           paddingTop: '0.5rem',
-           marginBottom: '0.5rem'
-         }}>
-           <button
-             onClick={() => {
-               loadNexupSequencePresets();
-               setShowNexupSequenceWizard(true);
-             }}
-             disabled={!nexupSettings.storage_path}
-             style={{
-               padding: '0.65rem 1.25rem',
-               border: 'none',
-               background: nexupSettings.storage_path
-                 ? 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)'
-                 : '#555',
-               color: 'white',
-               cursor: nexupSettings.storage_path ? 'pointer' : 'not-allowed',
-               fontSize: '0.9rem',
-               fontWeight: 600,
-               transition: 'all 0.3s',
-               display: 'flex',
-               alignItems: 'center',
-               gap: '0.5rem',
-               borderRadius: '8px',
-               opacity: nexupSettings.storage_path ? 1 : 0.5,
-               boxShadow: nexupSettings.storage_path
-                 ? '0 4px 15px rgba(102, 126, 234, 0.4)'
-                 : 'none'
-             }}
-             onMouseEnter={(e) => {
-               if (nexupSettings.storage_path) {
-                 e.currentTarget.style.transform = 'translateY(-2px)';
-                 e.currentTarget.style.boxShadow = '0 6px 20px rgba(102, 126, 234, 0.5)';
-               }
-             }}
-             onMouseLeave={(e) => {
-               if (nexupSettings.storage_path) {
-                 e.currentTarget.style.transform = 'translateY(0)';
-                 e.currentTarget.style.boxShadow = '0 4px 15px rgba(102, 126, 234, 0.4)';
-               }
-             }}
-             title={nexupSettings.storage_path ? 'Create a NeX-Up sequence for Plex' : 'Configure NeX-Up storage path first'}
-           >
-             <Sparkles size={18} />
-             <span>+ Create Sequence</span>
-           </button>
-         </div>
-       )}
+       {/* v2: NeX-Up section navigation is handled by the Sidebar tree. */}
 
        {/* v2: Settings section navigation handled by the Sidebar tree. */}
 
