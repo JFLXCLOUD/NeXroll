@@ -1020,7 +1020,7 @@ function App() {
   const [libraryInspectorPrerollId, setLibraryInspectorPrerollId] = useState(null);
   
   const [categoryView, setCategoryView] = useState(() => {
-    try { return localStorage.getItem('categoryView') || 'list'; } catch { return 'list'; }
+    try { return localStorage.getItem('categoryView') || 'grid'; } catch { return 'grid'; }
   });
   const [categorySearchQuery, setCategorySearchQuery] = useState('');
   const [categorySortField, setCategorySortField] = useState('name');
@@ -1684,6 +1684,7 @@ const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
   // Active Schedules display state
   const [scheduleSearchQuery, setScheduleSearchQuery] = useState('');
   const [scheduleFilterType, setScheduleFilterType] = useState('all'); // 'all', 'daily', 'weekly', 'monthly', 'yearly', 'holiday'
+  const [scheduleFilterStatus, setScheduleFilterStatus] = useState('all'); // 'all', 'running', 'enabled', 'paused'
   const [scheduleViewMode, setScheduleViewMode] = useState('compact'); // 'compact' or 'detailed'
   const [scheduleCurrentPage, setScheduleCurrentPage] = useState(1);
   const schedulesPerPage = 10;
@@ -1780,6 +1781,8 @@ const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
   const [bulkScalingSelection, setBulkScalingSelection] = useState([]);
   const [bulkScalingProgress, setBulkScalingProgress] = useState({ active: false, current: 0, total: 0, currentName: '', errors: [] });
   const [scalingFilterResolution, setScalingFilterResolution] = useState('');
+  const [scalingSearch, setScalingSearch] = useState('');
+  const [scalingTarget, setScalingTarget] = useState('720p');
   const [scalingVideoInfoCache, setScalingVideoInfoCache] = useState({});
   const [loadingVideoInfo, setLoadingVideoInfo] = useState(false);
 
@@ -7467,11 +7470,7 @@ const DashboardTiles = {
             <div>
               <strong style={{ color: 'var(--text-color)' }}>Deleted preroll files</strong>
               <p style={{ margin: '0.25rem 0 0 0', fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
-                Removing a preroll from your library leaves its file alone. A file only
-                arrives here if you ticked <em>Also delete the video file from disk</em>.
-                {trashRetentionDays > 0
-                  ? ` Files are kept for ${trashRetentionDays} days, then removed automatically during a library scan.`
-                  : ' Retention is disabled, so files stay here until you remove them yourself.'}
+                A file arrives here only when <em>Also delete the video file from disk</em> was selected. Restoring returns the file and its library metadata.
               </p>
             </div>
           </div>
@@ -7699,7 +7698,7 @@ const DashboardTiles = {
             {activeTab === 'library/scaling' && (
               <>
                 <button type="button" className="button button-secondary" onClick={() => loadVideoInfoForPrerolls(prerolls.map(preroll => preroll.id))}><RefreshCw size={15} /> Refresh analysis</button>
-                <button type="button" className="button" disabled={!bulkScalingSelection.length} onClick={() => handleBulkScale('720p')}><Video size={15} /> Scale selected</button>
+                <button type="button" className="button" disabled={!bulkScalingSelection.length} onClick={() => handleBulkScale(scalingTarget)}><Video size={15} /> Scale selected</button>
               </>
             )}
             {activeTab === 'library/trash' && (
@@ -8117,6 +8116,8 @@ const DashboardTiles = {
     );
     
     const filteredPrerolls = scalablePrerolls.filter(p => {
+      const query = scalingSearch.trim().toLowerCase();
+      if (query && !`${p.display_name || ''} ${p.filename || ''}`.toLowerCase().includes(query)) return false;
       if (!scalingFilterResolution) return true;
       const info = scalingVideoInfoCache[p.id];
       if (!info || !info.success) return scalingFilterResolution === 'unknown';
@@ -8163,21 +8164,14 @@ const DashboardTiles = {
     return (
       <div className="nx-library-scaling">
         {/* Info Banner */}
-        <div className="card" style={{ 
+        <div className="card nx-scaling-recommendation" style={{
           backgroundColor: 'rgba(99, 102, 241, 0.08)', 
           border: '1px solid rgba(99, 102, 241, 0.2)',
           marginBottom: '1rem'
         }}>
-          <div style={{ display: 'flex', alignItems: 'flex-start', gap: '0.75rem' }}>
-            <Video size={20} style={{ color: '#6366f1', flexShrink: 0, marginTop: '2px' }} />
-            <div>
-              <strong style={{ color: 'var(--text-color)' }}>Bulk Video Scaling</strong>
-              <p style={{ margin: '0.25rem 0 0 0', fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
-                Scale multiple prerolls to optimize for remote streaming. Lower resolutions reduce buffering and bandwidth usage.
-                <br />
-                <span style={{ fontWeight: '500', color: '#10b981' }}>720p is recommended</span> for the best balance of quality and streaming performance.
-              </p>
-            </div>
+          <div>
+            <span className="nx-scaling-recommendation-badge">Recommended</span>
+            <p><strong>720p balances quality and streaming performance.</strong> Scaling replaces or creates a new file based on your selection.</p>
           </div>
         </div>
         
@@ -8255,73 +8249,31 @@ const DashboardTiles = {
           </div>
         ) : (
           <div className="card nx-scaling-command" style={{ marginBottom: '1rem' }}>
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '1rem' }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
-                <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', cursor: 'pointer' }}>
-                  <input
-                    type="checkbox"
-                    checked={bulkScalingSelection.length === filteredPrerolls.length && filteredPrerolls.length > 0}
-                    onChange={(e) => e.target.checked ? selectAllFiltered() : clearSelection()}
-                    style={{ width: '16px', height: '16px' }}
-                  />
-                  <span style={{ fontSize: '0.9rem', color: 'var(--text-color)' }}>
-                    Select All ({filteredPrerolls.length})
-                  </span>
-                </label>
-                {bulkScalingSelection.length > 0 && (
-                  <button
-                    onClick={clearSelection}
-                    className="button button-secondary"
-                    style={{ padding: '0.35rem 0.75rem', fontSize: '0.8rem' }}
-                  >
-                    Clear ({bulkScalingSelection.length})
-                  </button>
-                )}
-              </div>
-              
-              <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                <span style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>Scale to:</span>
-                <button
-                  onClick={() => handleBulkScale('1080p')}
-                  disabled={bulkScalingSelection.length === 0}
-                  className="button"
-                  style={{ 
-                    backgroundColor: '#3b82f6',
-                    opacity: bulkScalingSelection.length === 0 ? 0.5 : 1,
-                    padding: '0.5rem 1rem',
-                    fontSize: '0.85rem'
-                  }}
-                >
-                  <Video size={14} style={{ marginRight: '0.35rem' }} /> 1080p
-                </button>
-                <button
-                  onClick={() => handleBulkScale('720p')}
-                  disabled={bulkScalingSelection.length === 0}
-                  className="button"
-                  style={{ 
-                    backgroundColor: '#10b981',
-                    opacity: bulkScalingSelection.length === 0 ? 0.5 : 1,
-                    padding: '0.5rem 1rem',
-                    fontSize: '0.85rem'
-                  }}
-                >
-                  <Star size={14} style={{ marginRight: '0.35rem' }} /> 720p 
-                </button>
-                <button
-                  onClick={() => handleBulkScale('480p')}
-                  disabled={bulkScalingSelection.length === 0}
-                  className="button"
-                  style={{ 
-                    backgroundColor: '#f59e0b',
-                    opacity: bulkScalingSelection.length === 0 ? 0.5 : 1,
-                    padding: '0.5rem 1rem',
-                    fontSize: '0.85rem'
-                  }}
-                >
-                  <Tv size={14} style={{ marginRight: '0.35rem' }} /> 480p
-                </button>
-              </div>
-            </div>
+            <label className="nx-scaling-select-recommendations">
+              <input
+                type="checkbox"
+                checked={bulkScalingSelection.length > 0 && filteredPrerolls.filter(preroll => scalingVideoInfoCache[preroll.id]?.success && scalingVideoInfoCache[preroll.id].height > 1080).every(preroll => bulkScalingSelection.includes(preroll.id))}
+                onChange={(event) => {
+                  if (!event.target.checked) return clearSelection();
+                  setBulkScalingSelection(filteredPrerolls.filter(preroll => scalingVideoInfoCache[preroll.id]?.success && scalingVideoInfoCache[preroll.id].height > 1080).map(preroll => preroll.id));
+                }}
+              />
+              <span>Select recommendations</span>
+            </label>
+            <label className="nx-scaling-search"><span aria-hidden="true">/</span><input value={scalingSearch} onChange={(event) => setScalingSearch(event.target.value)} placeholder="Search videos..." /></label>
+            <select value={scalingFilterResolution} onChange={(event) => setScalingFilterResolution(event.target.value)} aria-label="Filter by resolution">
+              <option value="">All resolutions</option>
+              <option value="4K">4K</option>
+              <option value="1080p">1080p</option>
+              <option value="720p">720p</option>
+              <option value="480p">480p</option>
+              <option value="unknown">Unknown</option>
+            </select>
+            <select value={scalingTarget} onChange={(event) => setScalingTarget(event.target.value)} aria-label="Target resolution">
+              <option value="720p">Scale to 720p</option>
+              <option value="1080p">Scale to 1080p</option>
+              <option value="480p">Scale to 480p</option>
+            </select>
           </div>
         )}
         
@@ -9807,7 +9759,12 @@ const DashboardTiles = {
     <div className="nx-library-add">
       {/* Method Toggle */}
       <div className="card nx-add-panel" style={{ padding: '0' }}>
-        <div className="nx-add-method-tabs" style={{ display: 'flex', borderBottom: '1px solid var(--border-color)' }}>
+        <div className="nx-add-source-head">
+          <div className="nx-add-source-copy">
+            <strong>Choose a source</strong>
+            <span>{uploadMode === 'upload' ? 'Uploaded files are managed by NeXroll' : 'Imported files remain externally managed'}</span>
+          </div>
+          <div className="nx-add-method-tabs" style={{ display: 'flex', borderBottom: '1px solid var(--border-color)' }}>
           <button
             type="button"
             onClick={() => setUploadMode('upload')}
@@ -9852,6 +9809,7 @@ const DashboardTiles = {
           >
             <Folder size={18} /> Import Folder
           </button>
+          </div>
         </div>
 
         {/* Upload Files Content */}
@@ -9926,6 +9884,9 @@ const DashboardTiles = {
                   <div style={{ color: 'var(--text-secondary)', fontSize: '0.85rem' }}>
                     MP4, MKV, AVI, MOV, WebM, MPEG, and other common video formats
                   </div>
+                  <button type="button" className="button nx-add-browse-files" onClick={(event) => { event.stopPropagation(); fileInputRef.current?.click(); }}>
+                    Browse files
+                  </button>
                 </div>
 
                 {/* Selected Files List */}
@@ -9997,6 +9958,17 @@ const DashboardTiles = {
                 )}
 
                 <aside className="nx-add-details-panel">
+                <div className="nx-add-details-head">
+                  <div>
+                    <strong>Details for {files.length} file{files.length === 1 ? '' : 's'}</strong>
+                    <span>Applied to every uploaded preroll</span>
+                  </div>
+                  {files.length > 0 && (
+                    <span className="nx-add-size-badge">
+                      {(files.reduce((total, file) => total + (Number(file.size) || 0), 0) / (1024 * 1024)).toFixed(1)} MB
+                    </span>
+                  )}
+                </div>
                 {/* Category Picker */}
                 <div className="nx-add-detail nx-add-category">
                   <label style={{ display: 'block', marginBottom: '0.5rem', fontWeight: 500, color: 'var(--text-color)', fontSize: '0.9rem' }}>
@@ -10069,7 +10041,7 @@ const DashboardTiles = {
         {/* Import Folder Content */}
         {uploadMode === 'import' && (
           <div className="nx-add-body nx-add-import" style={{ padding: '1.5rem' }}>
-            <p style={{ marginBottom: '1rem', color: 'var(--text-secondary)', fontSize: '0.9rem' }}>
+            <p className="nx-add-import-legacy-copy" style={{ marginBottom: '1rem', color: 'var(--text-secondary)', fontSize: '0.9rem' }}>
               Index video files from an existing folder into NeXroll without moving them. Files are marked as external (managed=false).
             </p>
 
@@ -10077,7 +10049,7 @@ const DashboardTiles = {
                 files are added/removed outside NeXroll, the user enables Automatic
                 Folder Monitoring under Settings > Storage. Surfaced here so they can
                 make that decision while choosing a folder to import. */}
-            <div style={{
+            <div className="nx-add-import-notice" style={{
               marginBottom: '1rem',
               padding: '0.85rem 1rem',
               backgroundColor: 'rgba(23, 162, 184, 0.1)',
@@ -10115,7 +10087,7 @@ const DashboardTiles = {
               </div>
             </div>
 
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+            <div className="nx-add-import-main" style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
               {/* Path Input */}
               <div>
                 <label style={{ display: 'block', marginBottom: '0.5rem', fontWeight: 500, color: 'var(--text-color)', fontSize: '0.9rem' }}>
@@ -10194,7 +10166,7 @@ const DashboardTiles = {
               </div>
 
               {/* Options */}
-              <div style={{
+              <div className="nx-add-import-options" style={{
                 display: 'flex',
                 gap: '1.5rem',
                 flexWrap: 'wrap',
@@ -10262,7 +10234,7 @@ const DashboardTiles = {
               </div>
 
               {/* Extensions and Tags */}
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
+              <div className="nx-add-import-fields" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
                 <div>
                   <label style={{ display: 'block', marginBottom: '0.5rem', fontWeight: 500, color: 'var(--text-color)', fontSize: '0.9rem' }}>
                     Extensions
@@ -10294,7 +10266,7 @@ const DashboardTiles = {
               </div>
 
               {/* Action Buttons */}
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem' }}>
+              <div className="nx-add-import-actions" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem' }}>
                 <button 
                   type="button" 
                   className="button button-secondary" 
@@ -10330,7 +10302,7 @@ const DashboardTiles = {
 
               {/* Progress Indicator */}
               {mapRootLoading && (
-                <div style={{ 
+                <div className="nx-add-import-progress" style={{
                   padding: '1rem', 
                   background: 'var(--bg-color)', 
                   borderRadius: '8px',
@@ -10357,7 +10329,7 @@ const DashboardTiles = {
 
               {/* Results */}
               {mapRootResult && !mapRootLoading && (
-                <div style={{ 
+                <div className="nx-add-import-result" style={{
                   padding: '1rem', 
                   background: mapRootResult.type === 'error' ? 'rgba(220, 53, 69, 0.1)' : 
                               mapRootResult.type === 'dryrun' ? 'var(--bg-color)' : 'rgba(40, 167, 69, 0.1)', 
@@ -10457,6 +10429,59 @@ const DashboardTiles = {
                 </div>
               )}
             </div>
+            <aside className="nx-add-import-preview">
+              <div className="nx-add-import-preview-head">
+                <div>
+                  <strong>Import preview</strong>
+                  <span>{mapRootResult ? (mapRootResult.type === 'dryrun' ? 'Latest dry run / no files changed' : 'Latest import results') : 'Run a dry preview to inspect changes'}</span>
+                </div>
+                <span className={`nx-add-preview-state${mapRootResult?.type === 'error' ? ' is-error' : ''}`}>
+                  {mapRootLoading ? 'Scanning' : mapRootResult?.type === 'error' ? 'Issue' : mapRootResult ? 'Ready' : 'Waiting'}
+                </span>
+              </div>
+              {mapRootLoading ? (
+                <div className="nx-add-import-preview-empty">
+                  <Loader2 size={22} className="spin" />
+                  <strong>{mapRootLoadingMsg || 'Scanning folder...'}</strong>
+                  <span>{mapRootProgress.phase || 'Building the import preview.'}</span>
+                </div>
+              ) : mapRootResult?.type === 'error' ? (
+                <div className="nx-add-import-preview-empty is-error">
+                  <AlertTriangle size={22} />
+                  <strong>Preview unavailable</strong>
+                  <span>{mapRootResult.message}</span>
+                </div>
+              ) : mapRootResult ? (
+                <div className="nx-add-import-preview-body">
+                  <div className="nx-add-import-preview-stats">
+                    <div><span>Files found</span><strong>{mapRootResult.found ?? 0}</strong></div>
+                    <div><span>Already present</span><strong>{mapRootResult.present ?? 0}</strong></div>
+                  </div>
+                  {Array.isArray(mapRootResult.perCategory) && mapRootResult.perCategory.length > 0 && (
+                    <div className="nx-add-import-tree">
+                      <div><strong>{mapRootForm.root_path || 'Selected folder'}</strong><span>{mapRootResult.found ?? 0}</span></div>
+                      {mapRootResult.perCategory.slice(0, 6).map((row, index) => (
+                        <div className="is-child" key={`${row.category}-${index}`}>
+                          <strong>{row.category}</strong>
+                          <span>{row.found ?? row.to_add ?? row.added ?? 0}</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                  <div className="nx-add-import-preview-totals">
+                    <div><span>{mapRootResult.type === 'dryrun' ? 'New files' : 'Files added'}</span><strong>{mapRootResult.type === 'dryrun' ? mapRootResult.toAdd ?? 0 : mapRootResult.added ?? 0}</strong></div>
+                    <div><span>{mapRootResult.type === 'dryrun' ? 'Files to tag' : 'Files tagged'}</span><strong>{mapRootResult.type === 'dryrun' ? mapRootResult.toTag ?? 0 : mapRootResult.tagged ?? 0}</strong></div>
+                    <div><span>Invalid files</span><strong>{mapRootResult.invalid ?? mapRootResult.errors ?? 0}</strong></div>
+                  </div>
+                </div>
+              ) : (
+                <div className="nx-add-import-preview-empty">
+                  <FlaskConical size={22} />
+                  <strong>No preview yet</strong>
+                  <span>Choose a folder, then run Dry Run / Preview. Nothing will be changed.</span>
+                </div>
+              )}
+            </aside>
           </div>
         )}
       </div>
@@ -18088,8 +18113,14 @@ const DashboardTiles = {
   const renderScheduleListPage = () => {
     const filteredSchedules = schedules.filter(schedule => {
       const name = String(schedule.name || '').toLowerCase();
+      const isRunning = activeScheduleIds.includes(schedule.id);
+      const matchesStatus = scheduleFilterStatus === 'all'
+        || (scheduleFilterStatus === 'running' && isRunning)
+        || (scheduleFilterStatus === 'enabled' && schedule.is_active && !isRunning)
+        || (scheduleFilterStatus === 'paused' && !schedule.is_active);
       return name.includes(scheduleSearchQuery.toLowerCase())
-        && (scheduleFilterType === 'all' || schedule.type === scheduleFilterType);
+        && (scheduleFilterType === 'all' || schedule.type === scheduleFilterType)
+        && matchesStatus;
     });
     const runningSchedules = filteredSchedules.filter(schedule => activeScheduleIds.includes(schedule.id));
     const enabledSchedules = filteredSchedules.filter(schedule => schedule.is_active && !activeScheduleIds.includes(schedule.id));
@@ -18208,6 +18239,12 @@ const DashboardTiles = {
             <option value="monthly">Monthly</option>
             <option value="yearly">Yearly</option>
             <option value="holiday">Holiday</option>
+          </select>
+          <select value={scheduleFilterStatus} onChange={event => setScheduleFilterStatus(event.target.value)} aria-label="Filter schedule state">
+            <option value="all">All states</option>
+            <option value="running">Running</option>
+            <option value="enabled">Enabled</option>
+            <option value="paused">Paused</option>
           </select>
           <button className="button button-secondary" onClick={() => setActiveTab('schedules/conflicts')}><Filter size={14} /> Filters {conflictCount || ''}</button>
           <button className="button button-secondary" onClick={() => setScheduleViewMode(scheduleViewMode === 'compact' ? 'detailed' : 'compact')}><List size={14} /> {scheduleViewMode === 'compact' ? 'Compact' : 'Detailed'}</button>
@@ -19256,7 +19293,7 @@ const DashboardTiles = {
         )}
         
         {/* Grid View */}
-        <div style={{ display: categoryView === 'grid' ? 'block' : 'none' }}>
+        <div className="nx-cat-gridview" style={{ display: categoryView === 'grid' ? 'block' : 'none' }}>
           {(() => {
             const filtered = getFilteredCategories();
             
@@ -28087,7 +28124,11 @@ const DashboardTiles = {
   // Settings - General Tab
   const renderSettingsGeneral = () => (
     <div className="nx-settings-general-grid">
-    <div className="card">
+    <div className="nx-settings-general-column">
+    <div className="card nx-settings-appearance">
+      <h2 style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+        <Palette size={20} style={{ color: '#7667ff' }} /> Appearance &amp; locale
+      </h2>
       {/* Theme Settings */}
       <div className="nx-setting-row">
         <div className="nx-setting-row-head">
@@ -28150,6 +28191,13 @@ const DashboardTiles = {
         </div>
       </div>
 
+    </div>
+
+    <div className="card nx-settings-interface">
+      <h2 style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+        <LayoutDashboard size={20} style={{ color: '#00d4ff' }} /> Interface behavior
+      </h2>
+
       {/* Confirmation Dialogs */}
       <div className="nx-setting-row">
         <div className="nx-setting-row-head">
@@ -28202,24 +28250,17 @@ const DashboardTiles = {
           </p>
         )}
       </div>
-    </div>
-
-    {/* Advanced Settings Card */}
-    <div className="card" style={{ marginTop: '1rem' }}>
-      <h2 style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-        <Sliders size={20} style={{ color: '#00d4ff' }} /> Advanced Settings
-      </h2>
 
       {/* Verbose Logging */}
       <div className="nx-setting-row">
         <div className="nx-setting-row-head">
           <Terminal size={16} style={{ color: '#a78bfa' }} />
           <h3>Verbose Logging</h3>
-          <span style={{ 
-            fontSize: '0.65rem', 
-            padding: '0.15rem 0.4rem', 
-            backgroundColor: 'rgba(139, 92, 246, 0.2)', 
-            color: '#a78bfa', 
+          <span style={{
+            fontSize: '0.65rem',
+            padding: '0.15rem 0.4rem',
+            backgroundColor: 'rgba(139, 92, 246, 0.2)',
+            color: '#a78bfa',
             borderRadius: '4px',
             fontWeight: 600
           }}>
@@ -28251,6 +28292,15 @@ const DashboardTiles = {
           </div>
         )}
       </div>
+    </div>
+    </div>
+
+    <div className="nx-settings-general-column">
+    {/* Scheduler Settings Card */}
+    <div className="card nx-settings-scheduler" style={{ marginTop: '1rem' }}>
+      <h2 style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+        <Sliders size={20} style={{ color: '#35d06f' }} /> Scheduler behavior
+      </h2>
 
       {/* Coexistence Mode (Passive Mode) */}
       <div className="nx-setting-row">
@@ -28336,9 +28386,9 @@ const DashboardTiles = {
     </div>
 
     {/* Filler Category Card */}
-    <div className="card" style={{ marginTop: '1rem' }}>
+    <div className="card nx-settings-filler" style={{ marginTop: '1rem' }}>
       <h2 style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-        <Layers size={20} style={{ color: '#00d4ff' }} /> Filler Category
+        <Layers size={20} style={{ color: '#f7c948' }} /> Fallback filler
       </h2>
       <p style={{ color: 'var(--text-secondary)', marginBottom: '1rem', fontSize: '0.9rem' }}>
         When no schedules are active, NeXroll can apply a filler category, sequence, or Coming Soon content to fill gaps in your calendar.
@@ -28489,6 +28539,17 @@ const DashboardTiles = {
             </div>
           </>
         )}
+      </div>
+    </div>
+    </div>
+
+    <div className="nx-settings-save-dock">
+      <span>Settings are saved as you change them.</span>
+      <div>
+        <button type="button" className="button button-secondary" onClick={fetchData}>Discard</button>
+        <button type="button" className="button" onClick={() => showAlert('General settings are saved as you change them.', 'success')}>
+          <Save size={14} /> Save General Settings
+        </button>
       </div>
     </div>
     </div>
@@ -34558,7 +34619,7 @@ const DashboardTiles = {
         )}
 
         {/* Random Preroll Section */}
-        <div className="card">
+        <div className="card nx-community-random-card">
           <h3 style={{ marginTop: 0, marginBottom: '0.85rem', display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '1rem' }}>
             <Shuffle size={16} /> Random Preroll
           </h3>
