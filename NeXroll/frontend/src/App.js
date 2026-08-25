@@ -29523,21 +29523,17 @@ const DashboardTiles = {
         </p>
 
         {/* Filters Bar */}
-        <div style={{ 
-          display: 'flex', 
-          gap: '2.5rem', 
-          marginBottom: '1rem',
-          flexWrap: 'wrap',
-          alignItems: 'center',
-          padding: '0.75rem',
-          backgroundColor: 'var(--bg-color)',
-          borderRadius: '8px',
-          border: '1px solid var(--border-color)'
-        }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', color: 'var(--text-secondary)', fontSize: '0.85rem', marginRight: '0.25rem' }}>
-            <Filter size={14} />
-            <span>Filter:</span>
-          </div>
+        <div className="nx-settings-log-toolbar">
+          <label className="nx-settings-log-search">
+            <span aria-hidden="true">/</span>
+            <input
+              type="text"
+              className="input"
+              placeholder="Search messages, sources, or request IDs..."
+              value={logFilters.search}
+              onChange={(e) => setLogFilters(prev => ({ ...prev, search: e.target.value }))}
+            />
+          </label>
           <select
             className="input"
             style={{ 
@@ -29578,28 +29574,6 @@ const DashboardTiles = {
             <option value="jellyfin">Jellyfin</option>
             <option value="nexup">NeX-Up</option>
           </select>
-          <div style={{ flex: '1 1 180px', minWidth: '150px', maxWidth: '280px', position: 'relative', marginTop: '4px' }}>
-            <Search size={14} style={{ 
-              position: 'absolute', 
-              left: '0.75rem', 
-              top: '50%', 
-              transform: 'translateY(-50%)',
-              color: 'var(--text-secondary)'
-            }} />
-            <input
-              type="text"
-              className="input"
-              placeholder="Search logs..."
-              style={{ 
-                width: '100%', 
-                paddingLeft: '2rem',
-                fontSize: '0.85rem',
-                backgroundColor: 'var(--card-bg)'
-              }}
-              value={logFilters.search}
-              onChange={(e) => setLogFilters(prev => ({ ...prev, search: e.target.value }))}
-            />
-          </div>
           <select
             className="input"
             style={{ 
@@ -34213,7 +34187,7 @@ const DashboardTiles = {
           </div>
         )}
 
-        <div className="card">
+        <div className="card nx-community-search-card">
 
           {/* Retro Progress Bar */}
           {communityBuildProgress && (
@@ -34276,7 +34250,7 @@ const DashboardTiles = {
             </div>
             <div className="nx-comm-filter">
               <label>Platform</label>
-              <select value={communitySearchPlatform} onChange={(e) => setCommunitySearchPlatform(e.target.value)}>
+              <select aria-label="Platform" value={communitySearchPlatform} onChange={(e) => setCommunitySearchPlatform(e.target.value)}>
                 <option value="">All Platforms</option>
                 <option value="plex">Plex</option>
                 <option value="jellyfin">Jellyfin</option>
@@ -34285,11 +34259,11 @@ const DashboardTiles = {
             </div>
             <div className="nx-comm-filter">
               <label>Results</label>
-              <select value={communityResultLimit} onChange={(e) => setCommunityResultLimit(Number(e.target.value))}>
-                <option value={10}>10</option>
-                <option value={20}>20</option>
-                <option value={50}>50</option>
-                <option value={100}>100</option>
+              <select aria-label="Results per page" value={communityResultLimit} onChange={(e) => setCommunityResultLimit(Number(e.target.value))}>
+                <option value={10}>10 results</option>
+                <option value={20}>20 results</option>
+                <option value={50}>50 results</option>
+                <option value={100}>100 results</option>
               </select>
             </div>
             <button
@@ -34304,18 +34278,7 @@ const DashboardTiles = {
               <span>AI-generated</span>
               <span className="nx-comm-ai-state">{communityIncludeAI ? 'Included' : 'Excluded'}</span>
             </button>
-            <button
-              type="button"
-              className={`nx-comm-inspector-toggle${communityInspectorOpen ? ' active' : ''}`}
-              aria-pressed={communityInspectorOpen}
-              onClick={toggleCommunityInspector}
-              title={communityInspectorOpen ? 'Hide preview panel' : 'Show preview panel'}
-            >
-              <Eye size={16} />
-              <span>Preview panel</span>
-              <span>{communityInspectorOpen ? 'On' : 'Off'}</span>
-            </button>
-            <button onClick={() => handleSearch(0)} disabled={communityIsSearching} className="button" style={{ height: '42px' }}>
+            <button onClick={() => handleSearch(0)} disabled={communityIsSearching} className="button">
               {communityIsSearching ? <Loader2 size={16} className="spin" /> : <Search size={16} />}
               <span>{communityIsSearching ? 'Searching…' : 'Search'}</span>
             </button>
@@ -34426,9 +34389,22 @@ const DashboardTiles = {
         {communitySearchResults.length > 0 && (
           <div className={`card nx-community-browser${communityInspectorOpen ? ' has-inspector' : ''}`}>
             <div className="nx-community-results-pane">
-              <h3 className="nx-community-results-title">
-                Results <span>({communityTotalResults})</span>
-              </h3>
+              <div className="nx-community-results-heading">
+                <h3 className="nx-community-results-title">
+                  Results <span>({communityTotalResults})</span>
+                </h3>
+                <button
+                  type="button"
+                  className={`nx-comm-inspector-toggle${communityInspectorOpen ? ' active' : ''}`}
+                  aria-pressed={communityInspectorOpen}
+                  onClick={toggleCommunityInspector}
+                  title={communityInspectorOpen ? 'Hide preview panel' : 'Show preview panel'}
+                >
+                  <Eye size={14} />
+                  <span>Preview panel</span>
+                  <span>{communityInspectorOpen ? 'On' : 'Off'}</span>
+                </button>
+              </div>
 
             <div className="nx-comm-results">
               {communitySearchResults.map(preroll => {
