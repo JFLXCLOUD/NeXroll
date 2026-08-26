@@ -91,7 +91,11 @@ const NAV = [
     label: 'Community Prerolls',
     icon: Globe,
     accent: '#f43f5e', // rose
-    match: (t) => t === 'community-prerolls',
+    match: (t) => t === 'community-prerolls' || t.startsWith('community-prerolls/'),
+    children: [
+      { id: 'community-prerolls/browse', label: 'Browse', icon: FolderTree },
+      { id: 'community-prerolls/search', label: 'Search', icon: Search },
+    ],
   },
   {
     id: 'settings',
@@ -135,6 +139,8 @@ const KEYWORDS = {
   'nexup/settings': 'nexup settings radarr sonarr tmdb youtube cookies quality',
   'connect': 'plex jellyfin emby server token oauth sign in api key media server cinema trailers',
   'community-prerolls': 'community typical nerds download search index browse',
+  'community-prerolls/browse': 'community typical nerds browse discover categories creators platforms sort random',
+  'community-prerolls/search': 'community typical nerds search find query title theme holiday genre franchise',
   'settings': 'general theme dark mode light timezone notifications preferences',
   'settings/paths': 'path mapping docker nas unc translate plex path',
   'settings/storage': 'storage folder preroll location auto scan disk',
@@ -408,7 +414,10 @@ function Sidebar({
                   <div className="nx-sidebar-children">
                     {section.children.map((child) => {
                       const ChildIcon = child.icon;
-                      const childActive = activeTab === child.id;
+                      const childActive = activeTab === child.id
+                        || (section.id === 'community-prerolls'
+                          && activeTab === 'community-prerolls'
+                          && child.id === 'community-prerolls/browse');
                       return (
                         <button
                           key={child.id}

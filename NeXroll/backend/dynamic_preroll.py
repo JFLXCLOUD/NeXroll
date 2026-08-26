@@ -15,6 +15,106 @@ from typing import Optional, Dict, Any, List, Callable
 
 logger = logging.getLogger(__name__)
 
+RENDER_RESOLUTIONS = {
+    '720': (1280, 720),
+    '1080': (1920, 1080),
+    '2160': (3840, 2160),
+}
+
+RENDER_QUALITY_PROFILES = {
+    'draft': {
+        'label': 'Draft',
+        'preset': 'veryfast',
+        'crf': 24,
+        'audio_bitrate': '128k',
+    },
+    'balanced': {
+        'label': 'Balanced',
+        'preset': 'fast',
+        'crf': 20,
+        'audio_bitrate': '192k',
+    },
+    'high': {
+        'label': 'High quality',
+        'preset': 'slow',
+        'crf': 15,
+        'audio_bitrate': '256k',
+    },
+    'master': {
+        'label': 'Master',
+        'preset': 'slower',
+        'crf': 12,
+        'audio_bitrate': '320k',
+    },
+}
+
+RENDER_FRAME_RATES = (24, 30, 60)
+DYNAMIC_FONT_SCALE_MIN = 0.85
+DYNAMIC_FONT_SCALE_MAX = 1.30
+DYNAMIC_AUDIO_MODES = ('none', 'default', 'custom')
+
+
+def resolve_dynamic_font_scale(value: Any = 1.0) -> float:
+    """Normalize the shared preview/render typography scale."""
+    try:
+        numeric = float(value)
+    except (TypeError, ValueError):
+        return 1.0
+    if not math.isfinite(numeric):
+        return 1.0
+    return max(DYNAMIC_FONT_SCALE_MIN, min(DYNAMIC_FONT_SCALE_MAX, numeric))
+
+
+def resolve_dynamic_text_color(value: Any = None) -> Optional[str]:
+    """Return a normalized six-digit web color or None to inherit the theme."""
+    if value is None:
+        return None
+    normalized = str(value).strip().lower()
+    if re.fullmatch(r'#[0-9a-f]{6}', normalized):
+        return normalized
+    return None
+
+
+def resolve_dynamic_audio_mode(value: Any = 'none') -> str:
+    """Normalize the user-facing soundtrack choice."""
+    normalized = str(value or 'none').strip().lower()
+    return normalized if normalized in DYNAMIC_AUDIO_MODES else 'none'
+
+
+def resolve_render_settings(
+    resolution: str = '1080',
+    frame_rate: int = 30,
+    quality: str = 'balanced',
+) -> Dict[str, Any]:
+    """Return a safe, concrete FFmpeg profile for user-facing render options."""
+    resolution_key = str(resolution or '1080').lower().replace('p', '')
+    if resolution_key == '4k':
+        resolution_key = '2160'
+    if resolution_key not in RENDER_RESOLUTIONS:
+        resolution_key = '1080'
+
+    try:
+        normalized_frame_rate = int(frame_rate)
+    except (TypeError, ValueError):
+        normalized_frame_rate = 30
+    if normalized_frame_rate not in RENDER_FRAME_RATES:
+        normalized_frame_rate = 30
+
+    quality_key = str(quality or 'balanced').lower()
+    if quality_key not in RENDER_QUALITY_PROFILES:
+        quality_key = 'balanced'
+
+    width, height = RENDER_RESOLUTIONS[resolution_key]
+    profile = RENDER_QUALITY_PROFILES[quality_key]
+    return {
+        'resolution': resolution_key,
+        'width': width,
+        'height': height,
+        'frame_rate': normalized_frame_rate,
+        'quality': quality_key,
+        **profile,
+    }
+
 # Verbose logging callback - will be set by main.py
 _verbose_log_callback: Optional[Callable[[str], None]] = None
 
@@ -71,13 +171,19 @@ class DynamicPrerollGenerator:
         }
     }
     
-    # Color themes - brighter backgrounds for better video quality
+    # Visual themes. Legacy FFmpeg renderers consume the four color keys while
+    # the shared browser canvas also uses label/description/effect metadata.
     COLOR_THEMES = {
-        'midnight': {'bg': '0x141428', 'primary': '0x00d4ff', 'secondary': '0x7b2cbf', 'accent': '0xff006e'},
-        'sunset': {'bg': '0x2a1414', 'primary': '0xff6b35', 'secondary': '0xf7c59f', 'accent': '0xef233c'},
-        'forest': {'bg': '0x142a14', 'primary': '0x2ec4b6', 'secondary': '0x83c5be', 'accent': '0xedf6f9'},
-        'royal': {'bg': '0x1a0040', 'primary': '0xffd700', 'secondary': '0xc77dff', 'accent': '0xe0aaff'},
-        'monochrome': {'bg': '0x1a1a1a', 'primary': '0xffffff', 'secondary': '0xaaaaaa', 'accent': '0xcccccc'},
+        'midnight': {'label': 'Midnight', 'description': 'Cool cinematic glow', 'effect': 'orbital', 'bg': '0x141428', 'primary': '0x00d4ff', 'secondary': '0x7b2cbf', 'accent': '0xff006e'},
+        'sunset': {'label': 'Sunset', 'description': 'Warm orange cinema light', 'effect': 'orbital', 'bg': '0x2a1414', 'primary': '0xff6b35', 'secondary': '0xf7c59f', 'accent': '0xef233c'},
+        'forest': {'label': 'Forest', 'description': 'Deep natural teal', 'effect': 'orbital', 'bg': '0x142a14', 'primary': '0x2ec4b6', 'secondary': '0x83c5be', 'accent': '0xedf6f9'},
+        'royal': {'label': 'Royal', 'description': 'Gold and violet premiere', 'effect': 'orbital', 'bg': '0x1a0040', 'primary': '0xffd700', 'secondary': '0xc77dff', 'accent': '0xe0aaff'},
+        'monochrome': {'label': 'Monochrome', 'description': 'Clean black and silver', 'effect': 'orbital', 'bg': '0x1a1a1a', 'primary': '0xffffff', 'secondary': '0xaaaaaa', 'accent': '0xcccccc'},
+        'aurora_drift': {'label': 'Aurora Drift', 'description': 'Flowing arctic light ribbons', 'effect': 'aurora', 'featured': True, 'bg': '0x061522', 'primary': '0x59f8e8', 'secondary': '0x8b5cf6', 'accent': '0xb8ff7a'},
+        'neon_city': {'label': 'Neon City', 'description': 'Animated synthwave horizon', 'effect': 'cyber_grid', 'featured': True, 'bg': '0x090014', 'primary': '0x37f5ff', 'secondary': '0xf72585', 'accent': '0xf9c74f'},
+        'solar_flare': {'label': 'Solar Flare', 'description': 'Rotating cinematic light rays', 'effect': 'solar', 'featured': True, 'bg': '0x1e0805', 'primary': '0xffd166', 'secondary': '0xff6b35', 'accent': '0xef233c'},
+        'deep_space': {'label': 'Deep Space', 'description': 'Twinkling stars and orbital rings', 'effect': 'starfield', 'featured': True, 'bg': '0x050816', 'primary': '0xdff6ff', 'secondary': '0x6c63ff', 'accent': '0xffcc66'},
+        'velvet_gold': {'label': 'Velvet Gold', 'description': 'Elegant gold arcs and shimmer', 'effect': 'luxe', 'featured': True, 'bg': '0x180b18', 'primary': '0xf4d58d', 'secondary': '0xc084fc', 'accent': '0xffffff'},
     }
     
     # Language translations for static text in generated videos
@@ -759,7 +865,13 @@ class DynamicPrerollGenerator:
                            custom_audio_path: str = None,
                            custom_logo_path: str = None,
                            logo_mode: str = "watermark",
-                           fade_duration: float = 0) -> Optional[str]:
+                           fade_duration: float = 0,
+                           output_width: int = None,
+                           output_height: int = None,
+                           frame_rate: int = 30,
+                           video_preset: str = 'fast',
+                           video_crf: int = 20,
+                           audio_bitrate: str = '192k') -> Optional[str]:
         """Fallback: Run FFmpeg with simple vignette (no colored orbs).
         Supports optional custom logo (faded, centered, behind text) and
         custom audio with auto fade in/out.
@@ -767,6 +879,8 @@ class DynamicPrerollGenerator:
         fade_duration: if > 0, applies video fade in/out after all overlays (logo + text fade together)."""
         _verbose_log(f"=== VIGNETTE FALLBACK ===")
         _verbose_log(f"BG color: {bg_color}, Include audio: {include_audio}, Logo: {custom_logo_path}")
+        output_width = output_width or width
+        output_height = output_height or height
         
         bg_hex = bg_color.replace('0x', '').replace('#', '')
         try:
@@ -796,7 +910,7 @@ class DynamicPrerollGenerator:
             self.ffmpeg_path,
             '-y',
             '-f', 'lavfi',
-            '-i', f'color=c={bright_bg}:s={width}x{height}:d={duration}:r=30',
+            '-i', f'color=c={bright_bg}:s={width}x{height}:d={duration}:r={frame_rate}',
         ]
         
         # Track input indices: 0 = color background
@@ -881,6 +995,13 @@ class DynamicPrerollGenerator:
             audio_map = "[aout]"
         else:
             audio_map = f"{audio_index}:a"
+
+        if output_width != width or output_height != height:
+            filter_parts.append(
+                f"{video_label}scale={output_width}:{output_height}:flags=lanczos,"
+                "format=yuv420p[vscaled]"
+            )
+            video_label = "[vscaled]"
         
         filter_complex_str = ";".join(filter_parts)
         
@@ -890,10 +1011,12 @@ class DynamicPrerollGenerator:
             '-map', audio_map,
             '-t', str(duration),
             '-c:v', 'libx264',
-            '-preset', 'fast',
-            '-crf', '20',
+            '-preset', video_preset,
+            '-crf', str(video_crf),
+            '-profile:v', 'high',
+            '-level', '5.2' if output_width >= 3840 or frame_rate >= 60 else '4.1',
             '-c:a', 'aac',
-            '-b:a', '128k',
+            '-b:a', audio_bitrate,
             '-shortest',
             '-pix_fmt', 'yuv420p',
             str(output_path)
@@ -908,7 +1031,7 @@ class DynamicPrerollGenerator:
                 text=True,
                 encoding='utf-8',
                 errors='replace',
-                timeout=120,
+                timeout=300 if output_width >= 3840 else 180,
                 startupinfo=STARTUPINFO,
                 creationflags=CREATE_NO_WINDOW
             )
@@ -925,32 +1048,61 @@ class DynamicPrerollGenerator:
             else:
                 _verbose_log(f"VIGNETTE FAILED! Trying simple fallback...")
                 logger.warning(f"Vignette fallback failed: {result.stderr[:300] if result.stderr else 'no error'}")
-                return self._run_ffmpeg_simple_fallback(filter_str, output_path, duration, width, height, bg_color)
+                return self._run_ffmpeg_simple_fallback(
+                    filter_str, output_path, duration, width, height, bg_color,
+                    output_width=output_width,
+                    output_height=output_height,
+                    frame_rate=frame_rate,
+                    video_preset=video_preset,
+                    video_crf=video_crf,
+                    audio_bitrate=audio_bitrate,
+                )
         except Exception as e:
             _verbose_log(f"VIGNETTE EXCEPTION: {e}")
             logger.error(f"FFmpeg vignette error: {e}")
-            return self._run_ffmpeg_simple_fallback(filter_str, output_path, duration, width, height, bg_color)
+            return self._run_ffmpeg_simple_fallback(
+                filter_str, output_path, duration, width, height, bg_color,
+                output_width=output_width,
+                output_height=output_height,
+                frame_rate=frame_rate,
+                video_preset=video_preset,
+                video_crf=video_crf,
+                audio_bitrate=audio_bitrate,
+            )
     
     def _run_ffmpeg_simple_fallback(self, filter_str: str, output_path: Path, duration: float,
-                           width: int, height: int, bg_color: str) -> Optional[str]:
+                           width: int, height: int, bg_color: str,
+                           output_width: int = None,
+                           output_height: int = None,
+                           frame_rate: int = 30,
+                           video_preset: str = 'fast',
+                           video_crf: int = 20,
+                           audio_bitrate: str = '192k') -> Optional[str]:
         """Fallback: Run FFmpeg with simple solid color background"""
         _verbose_log(f"=== SIMPLE FALLBACK (solid color) ===")
         _verbose_log(f"BG color: {bg_color}")
+        output_width = output_width or width
+        output_height = output_height or height
+        output_filter = filter_str
+        if output_width != width or output_height != height:
+            output_filter += f",scale={output_width}:{output_height}:flags=lanczos"
         
         cmd = [
             self.ffmpeg_path,
             '-y',
             '-f', 'lavfi',
-            '-i', f'color=c={bg_color}:s={width}x{height}:d={duration}:r=30',
+            '-i', f'color=c={bg_color}:s={width}x{height}:d={duration}:r={frame_rate}',
             '-f', 'lavfi',
             '-i', f'anullsrc=r=48000:cl=stereo:d={duration}',
-            '-vf', filter_str,
+            '-vf', output_filter,
             '-t', str(duration),
             '-c:v', 'libx264',
-            '-preset', 'fast',
-            '-crf', '20',
+            '-preset', video_preset,
+            '-crf', str(video_crf),
+            '-profile:v', 'high',
+            '-level', '5.2' if output_width >= 3840 or frame_rate >= 60 else '4.1',
             '-c:a', 'aac',
-            '-b:a', '128k',
+            '-b:a', audio_bitrate,
             '-shortest',
             '-pix_fmt', 'yuv420p',
             str(output_path)
@@ -965,7 +1117,7 @@ class DynamicPrerollGenerator:
                 text=True,
                 encoding='utf-8',
                 errors='replace',
-                timeout=90,
+                timeout=300 if output_width >= 3840 else 180,
                 startupinfo=STARTUPINFO,
                 creationflags=CREATE_NO_WINDOW
             )
@@ -1276,7 +1428,7 @@ class DynamicPrerollGenerator:
         
         return None
     
-    def get_color_themes(self) -> Dict[str, Dict[str, str]]:
+    def get_color_themes(self) -> Dict[str, Dict[str, Any]]:
         """Get available color themes"""
         return self.COLOR_THEMES.copy()
     
@@ -1298,7 +1450,12 @@ class DynamicPrerollGenerator:
         output_filename: str = "preview_preroll.mp4",
         width: int = 1920,
         height: int = 1080,
-        fade_duration: float = 1.0
+        fade_duration: float = 1.0,
+        frame_rate: int = 30,
+        video_preset: str = 'slow',
+        video_crf: int = 15,
+        audio_bitrate: str = '192k',
+        audio_path: str = None,
     ) -> Optional[str]:
         """
         Generate a video from a still image with fade in/out effects.
@@ -1313,6 +1470,10 @@ class DynamicPrerollGenerator:
             width: Output video width (image will be scaled)
             height: Output video height (image will be scaled)
             fade_duration: Duration of fade in and fade out effects
+            frame_rate: Output frames per second
+            video_preset: FFmpeg x264 encoding preset
+            video_crf: FFmpeg constant-rate-factor quality value
+            audio_bitrate: AAC bitrate for the compatibility audio track
             
         Returns:
             Path to generated video or None on failure
@@ -1329,7 +1490,10 @@ class DynamicPrerollGenerator:
         import uuid
         
         _verbose_log(f"=== generate_from_image ===")
-        _verbose_log(f"Duration: {duration}s, Fade: {fade_duration}s, Size: {width}x{height}")
+        _verbose_log(
+            f"Duration: {duration}s, Fade: {fade_duration}s, Size: {width}x{height}, "
+            f"FPS: {frame_rate}, Preset: {video_preset}, CRF: {video_crf}"
+        )
         _verbose_log(f"Image data size: {len(image_data)} bytes")
         
         output_path = self.output_dir / output_filename
@@ -1367,24 +1531,36 @@ class DynamicPrerollGenerator:
                 self.ffmpeg_path,
                 '-y',  # Overwrite output
                 '-loop', '1',  # Loop the image
-                '-framerate', '30',  # 30fps for smooth playback
+                '-framerate', str(frame_rate),
                 '-i', temp_image,  # Input image
-                '-f', 'lavfi',
-                '-i', f'anullsrc=r=48000:cl=stereo',  # Silent audio
-                '-filter_complex', filter_complex,
-                '-map', '[v]',
-                '-map', '1:a',
+            ]
+
+            has_audio = bool(audio_path and os.path.isfile(audio_path))
+            if has_audio:
+                audio_fade = max(0.2, min(1.0, duration * 0.15))
+                audio_fade_out = max(0, duration - audio_fade)
+                cmd.extend(['-stream_loop', '-1', '-i', audio_path])
+                filter_complex += (
+                    f";[1:a]atrim=duration={duration},asetpts=PTS-STARTPTS,"
+                    f"afade=t=in:st=0:d={audio_fade},"
+                    f"afade=t=out:st={audio_fade_out}:d={audio_fade}[a]"
+                )
+
+            cmd.extend(['-filter_complex', filter_complex, '-map', '[v]'])
+            if has_audio:
+                cmd.extend(['-map', '[a]', '-c:a', 'aac', '-b:a', audio_bitrate, '-shortest'])
+            else:
+                cmd.append('-an')
+            cmd.extend([
                 '-t', str(duration),
                 '-c:v', 'libx264',
-                '-preset', 'slow',  # Better quality encoding
-                '-crf', '15',  # High quality (lower = better, 15-18 is very good)
+                '-preset', video_preset,
+                '-crf', str(video_crf),
                 '-profile:v', 'high',  # High profile for better quality
-                '-level', '4.1',  # Compatibility level
-                '-c:a', 'aac',
-                '-b:a', '192k',  # Better audio quality
+                '-level', '5.2' if width >= 3840 or frame_rate >= 60 else '4.1',
                 '-movflags', '+faststart',  # Web optimization
                 str(output_path)
-            ]
+            ])
             
             _verbose_log(f"FFmpeg command: {' '.join(cmd)}")
             
@@ -1394,7 +1570,7 @@ class DynamicPrerollGenerator:
                 text=True,
                 encoding='utf-8',
                 errors='replace',
-                timeout=60,
+                timeout=240 if width >= 3840 else 120,
                 startupinfo=STARTUPINFO,
                 creationflags=CREATE_NO_WINDOW
             )
@@ -1428,6 +1604,120 @@ class DynamicPrerollGenerator:
                     os.unlink(temp_image)
                     _verbose_log(f"Cleaned up temp image: {temp_image}")
                 except:
+                    pass
+
+    def generate_from_video(
+        self,
+        video_data: bytes,
+        duration: float = 5.0,
+        output_filename: str = "preview_preroll.mp4",
+        width: int = 1920,
+        height: int = 1080,
+        frame_rate: int = 30,
+        video_preset: str = 'slow',
+        video_crf: int = 15,
+        audio_bitrate: str = '192k',
+        audio_path: str = None,
+    ) -> Optional[str]:
+        """Transcode an animated browser-canvas recording into a delivery MP4."""
+        if not self.is_available():
+            logger.error("FFmpeg not available")
+            return None
+        if not self.output_dir:
+            logger.error("Output directory not set")
+            return None
+
+        import tempfile
+
+        output_path = self.output_dir / output_filename
+        temp_video = None
+        try:
+            temp_fd, temp_video = tempfile.mkstemp(suffix='.webm')
+            os.close(temp_fd)
+            with open(temp_video, 'wb') as stream:
+                stream.write(video_data)
+
+            _verbose_log("=== generate_from_video ===")
+            _verbose_log(
+                f"Duration: {duration}s, Size: {width}x{height}, FPS: {frame_rate}, "
+                f"Preset: {video_preset}, CRF: {video_crf}, Input: {len(video_data)} bytes"
+            )
+
+            # The browser recording already contains the exact shared preview motion.
+            # Normalize its dimensions/cadence and pad the last frame if the recorder
+            # finishes a fraction early, without layering a second animation over it.
+            filter_complex = (
+                f"[0:v]scale={width}:{height}:flags=lanczos,"
+                f"fps={frame_rate},"
+                f"tpad=stop_mode=clone:stop_duration=2,"
+                f"trim=duration={duration},setpts=PTS-STARTPTS,"
+                f"format=yuv420p[v]"
+            )
+            cmd = [
+                self.ffmpeg_path,
+                '-y',
+                '-i', temp_video,
+            ]
+
+            has_audio = bool(audio_path and os.path.isfile(audio_path))
+            if has_audio:
+                audio_fade = max(0.2, min(1.0, duration * 0.15))
+                audio_fade_out = max(0, duration - audio_fade)
+                cmd.extend(['-stream_loop', '-1', '-i', audio_path])
+                filter_complex += (
+                    f";[1:a]atrim=duration={duration},asetpts=PTS-STARTPTS,"
+                    f"afade=t=in:st=0:d={audio_fade},"
+                    f"afade=t=out:st={audio_fade_out}:d={audio_fade}[a]"
+                )
+
+            cmd.extend(['-filter_complex', filter_complex, '-map', '[v]'])
+            if has_audio:
+                cmd.extend(['-map', '[a]', '-c:a', 'aac', '-b:a', audio_bitrate, '-shortest'])
+            else:
+                cmd.append('-an')
+            cmd.extend([
+                '-t', str(duration),
+                '-c:v', 'libx264',
+                '-preset', video_preset,
+                '-crf', str(video_crf),
+                '-profile:v', 'high',
+                '-level', '5.2' if width >= 3840 or frame_rate >= 60 else '4.1',
+                '-movflags', '+faststart',
+                str(output_path),
+            ])
+            _verbose_log(f"FFmpeg command: {' '.join(cmd)}")
+            result = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                encoding='utf-8',
+                errors='replace',
+                timeout=300 if width >= 3840 else 180,
+                startupinfo=STARTUPINFO,
+                creationflags=CREATE_NO_WINDOW,
+            )
+            if result.returncode == 0 and output_path.exists():
+                _verbose_log(f"SUCCESS! Generated animated preview: {output_path} ({output_path.stat().st_size} bytes)")
+                logger.info(f"Generated video from animated canvas: {output_path}")
+                return str(output_path)
+
+            _verbose_log(f"FAILED! Return code: {result.returncode}")
+            logger.error(f"FFmpeg animated preview transcode failed: {result.stderr}")
+            return None
+        except subprocess.TimeoutExpired:
+            _verbose_log("Animated preview transcode timed out")
+            logger.error("FFmpeg animated preview transcode timed out")
+            return None
+        except Exception as exc:
+            _verbose_log(f"Animated preview transcode exception: {exc}")
+            logger.error(f"Error generating video from animated preview: {exc}")
+            return None
+        finally:
+            if temp_video and os.path.exists(temp_video):
+                try:
+                    os.unlink(temp_video)
+                    _verbose_log(f"Cleaned up temp video: {temp_video}")
+                except OSError:
                     pass
 
     # =========================================================================
@@ -1474,7 +1764,11 @@ class DynamicPrerollGenerator:
         custom_audio_path: str = None,
         custom_logo_path: str = None,
         logo_mode: str = "watermark",
-        language: str = 'en'
+        language: str = 'en',
+        frame_rate: int = 30,
+        video_preset: str = 'fast',
+        video_crf: int = 20,
+        audio_bitrate: str = '192k',
     ) -> Optional[str]:
         """Generate a Coming Soon List video.
         
@@ -1491,6 +1785,10 @@ class DynamicPrerollGenerator:
             height: Video height
             max_items: Maximum number of items to show
             include_audio: Whether to include background music
+            frame_rate: Output frames per second
+            video_preset: FFmpeg x264 encoding preset
+            video_crf: FFmpeg constant-rate-factor quality value
+            audio_bitrate: AAC bitrate when music is enabled
             
         Returns:
             Path to generated video or None on failure
@@ -1504,7 +1802,10 @@ class DynamicPrerollGenerator:
             return None
         
         _verbose_log(f"=== generate_coming_soon_list ===")
-        _verbose_log(f"Items: {len(items)}, Layout: {layout}, Duration: {duration}s, Audio: {include_audio}")
+        _verbose_log(
+            f"Items: {len(items)}, Layout: {layout}, Duration: {duration}s, Audio: {include_audio}, "
+            f"Output: {width}x{height}@{frame_rate}, Preset: {video_preset}, CRF: {video_crf}"
+        )
         _verbose_log(f"Server name: '{server_name}'")
         _verbose_log(f"Colors - BG: {bg_color}, Text: {text_color}, Accent: {accent_color}")
         _verbose_log(f"Custom audio: {custom_audio_path}, Custom logo: {custom_logo_path}, Logo mode: {logo_mode}")
@@ -1519,22 +1820,34 @@ class DynamicPrerollGenerator:
         if layout == "grid":
             return self._generate_list_grid_layout(
                 items, server_name, duration, output_filename,
-                bg_color, text_color, accent_color, width, height,
+                bg_color, text_color, accent_color, 1920, 1080,
                 include_audio=include_audio,
                 custom_audio_path=custom_audio_path,
                 custom_logo_path=custom_logo_path,
                 logo_mode=logo_mode,
-                language=language
+                language=language,
+                output_width=width,
+                output_height=height,
+                frame_rate=frame_rate,
+                video_preset=video_preset,
+                video_crf=video_crf,
+                audio_bitrate=audio_bitrate,
             )
         else:
             return self._generate_list_text_layout(
                 items, server_name, duration, output_filename,
-                bg_color, text_color, accent_color, width, height,
+                bg_color, text_color, accent_color, 1920, 1080,
                 include_audio=include_audio,
                 custom_audio_path=custom_audio_path,
                 custom_logo_path=custom_logo_path,
                 logo_mode=logo_mode,
-                language=language
+                language=language,
+                output_width=width,
+                output_height=height,
+                frame_rate=frame_rate,
+                video_preset=video_preset,
+                video_crf=video_crf,
+                audio_bitrate=audio_bitrate,
             )
     
     def _generate_list_text_layout(
@@ -1552,7 +1865,13 @@ class DynamicPrerollGenerator:
         custom_audio_path: str = None,
         custom_logo_path: str = None,
         logo_mode: str = "watermark",
-        language: str = 'en'
+        language: str = 'en',
+        output_width: int = 1920,
+        output_height: int = 1080,
+        frame_rate: int = 30,
+        video_preset: str = 'fast',
+        video_crf: int = 20,
+        audio_bitrate: str = '192k',
     ) -> Optional[str]:
         """Generate text-only list layout (no posters)"""
         output_path = self.output_dir / output_filename
@@ -1673,7 +1992,13 @@ class DynamicPrerollGenerator:
             custom_audio_path=custom_audio_path,
             custom_logo_path=custom_logo_path,
             logo_mode=logo_mode,
-            fade_duration=0.8
+            fade_duration=0.8,
+            output_width=output_width,
+            output_height=output_height,
+            frame_rate=frame_rate,
+            video_preset=video_preset,
+            video_crf=video_crf,
+            audio_bitrate=audio_bitrate,
         )
     
     def _generate_list_grid_layout(
@@ -1691,7 +2016,13 @@ class DynamicPrerollGenerator:
         custom_audio_path: str = None,
         custom_logo_path: str = None,
         logo_mode: str = "watermark",
-        language: str = 'en'
+        language: str = 'en',
+        output_width: int = 1920,
+        output_height: int = 1080,
+        frame_rate: int = 30,
+        video_preset: str = 'fast',
+        video_crf: int = 20,
+        audio_bitrate: str = '192k',
     ) -> Optional[str]:
         """
         Generate grid layout with poster images.
@@ -1759,7 +2090,14 @@ class DynamicPrerollGenerator:
                     include_audio=include_audio,
                     custom_audio_path=custom_audio_path,
                     custom_logo_path=custom_logo_path,
-                    language=language
+                    logo_mode=logo_mode,
+                    language=language,
+                    output_width=output_width,
+                    output_height=output_height,
+                    frame_rate=frame_rate,
+                    video_preset=video_preset,
+                    video_crf=video_crf,
+                    audio_bitrate=audio_bitrate,
                 )
             
             # Build grid layout with FFmpeg
@@ -1853,7 +2191,7 @@ class DynamicPrerollGenerator:
                 self.ffmpeg_path,
                 '-y',
                 '-f', 'lavfi',
-                '-i', f'color=c={bg_color}:s={width}x{height}:d={duration}:r=30',
+                '-i', f'color=c={bg_color}:s={width}x{height}:d={duration}:r={frame_rate}',
             ]
             
             # Add poster inputs
@@ -2000,6 +2338,13 @@ class DynamicPrerollGenerator:
             
             # Determine final video output label
             video_out_label = '[outl]'
+
+            if output_width != width or output_height != height:
+                filter_complex_str += (
+                    f";{video_out_label}scale={output_width}:{output_height}:flags=lanczos,"
+                    "format=yuv420p[outscaled]"
+                )
+                video_out_label = '[outscaled]'
             
             # Add audio source — this becomes the next input after posters (and optional logo)
             audio_index = len(poster_paths) + 1 + (1 if logo_input_index else 0)
@@ -2028,8 +2373,10 @@ class DynamicPrerollGenerator:
                 '-filter_complex', filter_complex_str,
                 '-map', video_out_label,
                 '-map', audio_map,
-                '-c:v', 'libx264', '-preset', 'fast', '-crf', '20',
-                '-c:a', 'aac', '-b:a', '128k',
+                '-c:v', 'libx264', '-preset', video_preset, '-crf', str(video_crf),
+                '-profile:v', 'high',
+                '-level', '5.2' if output_width >= 3840 or frame_rate >= 60 else '4.1',
+                '-c:a', 'aac', '-b:a', audio_bitrate,
                 '-shortest',
                 '-pix_fmt', 'yuv420p',
                 str(output_path)
@@ -2044,7 +2391,7 @@ class DynamicPrerollGenerator:
                 text=True,
                 encoding='utf-8',
                 errors='replace',
-                timeout=120,
+                timeout=300 if output_width >= 3840 else 180,
                 startupinfo=STARTUPINFO,
                 creationflags=CREATE_NO_WINDOW
             )
@@ -2065,7 +2412,14 @@ class DynamicPrerollGenerator:
                     include_audio=include_audio,
                     custom_audio_path=custom_audio_path,
                     custom_logo_path=custom_logo_path,
-                    language=language
+                    logo_mode=logo_mode,
+                    language=language,
+                    output_width=output_width,
+                    output_height=output_height,
+                    frame_rate=frame_rate,
+                    video_preset=video_preset,
+                    video_crf=video_crf,
+                    audio_bitrate=audio_bitrate,
                 )
                 
         except Exception as e:
@@ -2078,7 +2432,14 @@ class DynamicPrerollGenerator:
                 include_audio=include_audio,
                 custom_audio_path=custom_audio_path,
                 custom_logo_path=custom_logo_path,
-                language=language
+                logo_mode=logo_mode,
+                language=language,
+                output_width=output_width,
+                output_height=output_height,
+                frame_rate=frame_rate,
+                video_preset=video_preset,
+                video_crf=video_crf,
+                audio_bitrate=audio_bitrate,
             )
         finally:
             # Clean up temp directory

@@ -58,7 +58,14 @@ from backend.scheduler import (
     _localized_now,
 )
 from backend import secure_store
-from backend.dynamic_preroll import DynamicPrerollGenerator, set_verbose_logger as set_dp_verbose_logger
+from backend.dynamic_preroll import (
+    DynamicPrerollGenerator,
+    resolve_dynamic_audio_mode,
+    resolve_dynamic_font_scale,
+    resolve_dynamic_text_color,
+    resolve_render_settings,
+    set_verbose_logger as set_dp_verbose_logger,
+)
 from backend import scanner as fs_scanner
 from backend.preroll_files import (
     MAX_PREROLL_UPLOAD_SIZE,
@@ -277,6 +284,17 @@ def ensure_schema() -> None:
                 ("nexup_coming_soon_list_logo_mode", "nexup_coming_soon_list_logo_mode TEXT DEFAULT 'watermark'"),
                 ("nexup_coming_soon_list_language", "nexup_coming_soon_list_language TEXT DEFAULT 'en'"),
                 ("nexup_dynamic_preroll_language", "nexup_dynamic_preroll_language TEXT DEFAULT 'en'"),
+                ("nexup_dynamic_preroll_resolution", "nexup_dynamic_preroll_resolution TEXT DEFAULT '1080'"),
+                ("nexup_dynamic_preroll_frame_rate", "nexup_dynamic_preroll_frame_rate INTEGER DEFAULT 30"),
+                ("nexup_dynamic_preroll_render_quality", "nexup_dynamic_preroll_render_quality TEXT DEFAULT 'high'"),
+                ("nexup_dynamic_preroll_font_scale", "nexup_dynamic_preroll_font_scale REAL DEFAULT 1.0"),
+                ("nexup_dynamic_preroll_title_color", "nexup_dynamic_preroll_title_color TEXT"),
+                ("nexup_dynamic_preroll_subject_color", "nexup_dynamic_preroll_subject_color TEXT"),
+                ("nexup_dynamic_preroll_audio_mode", "nexup_dynamic_preroll_audio_mode TEXT DEFAULT 'none'"),
+                ("nexup_dynamic_preroll_custom_audio_path", "nexup_dynamic_preroll_custom_audio_path TEXT"),
+                ("nexup_coming_soon_list_resolution", "nexup_coming_soon_list_resolution TEXT DEFAULT '1080'"),
+                ("nexup_coming_soon_list_frame_rate", "nexup_coming_soon_list_frame_rate INTEGER DEFAULT 30"),
+                ("nexup_coming_soon_list_render_quality", "nexup_coming_soon_list_render_quality TEXT DEFAULT 'balanced'"),
                 ("nexup_coming_soon_available_days", "nexup_coming_soon_available_days INTEGER DEFAULT 1"),
                 ("nexup_coming_soon_max_available_now", "nexup_coming_soon_max_available_now INTEGER DEFAULT 0"),
                 ("nexup_trailer_retention_days", "nexup_trailer_retention_days INTEGER DEFAULT 7"),
@@ -18429,7 +18447,17 @@ def get_nexup_settings(user: models.User = Depends(require_auth), db: Session = 
         "coming_soon_list_custom_logo_filename": os.path.basename(getattr(setting, 'nexup_coming_soon_list_custom_logo_path', '') or '') or None,
         "coming_soon_list_logo_mode": getattr(setting, 'nexup_coming_soon_list_logo_mode', 'watermark'),
         "coming_soon_list_language": getattr(setting, 'nexup_coming_soon_list_language', 'en'),
+        "coming_soon_list_resolution": getattr(setting, 'nexup_coming_soon_list_resolution', '1080'),
+        "coming_soon_list_frame_rate": getattr(setting, 'nexup_coming_soon_list_frame_rate', 30),
+        "coming_soon_list_render_quality": getattr(setting, 'nexup_coming_soon_list_render_quality', 'balanced'),
         "dynamic_preroll_language": getattr(setting, 'nexup_dynamic_preroll_language', 'en'),
+        "dynamic_preroll_resolution": getattr(setting, 'nexup_dynamic_preroll_resolution', '1080'),
+        "dynamic_preroll_frame_rate": getattr(setting, 'nexup_dynamic_preroll_frame_rate', 30),
+        "dynamic_preroll_render_quality": getattr(setting, 'nexup_dynamic_preroll_render_quality', 'high'),
+        "dynamic_preroll_font_scale": getattr(setting, 'nexup_dynamic_preroll_font_scale', 1.0),
+        "dynamic_preroll_title_color": getattr(setting, 'nexup_dynamic_preroll_title_color', None),
+        "dynamic_preroll_subject_color": getattr(setting, 'nexup_dynamic_preroll_subject_color', None),
+        "dynamic_preroll_audio_mode": resolve_dynamic_audio_mode(getattr(setting, 'nexup_dynamic_preroll_audio_mode', 'none')),
         # Release date preference (which date to use for "Coming Soon")
         "release_date_preference": getattr(setting, 'nexup_release_date_preference', 'digital_first'),
         # Available Now! settings
@@ -18471,11 +18499,21 @@ def update_nexup_settings(
     coming_soon_list_include_audio: Optional[bool] = None,
     coming_soon_list_logo_mode: Optional[str] = None,
     coming_soon_list_language: Optional[str] = None,
+    coming_soon_list_resolution: Optional[str] = None,
+    coming_soon_list_frame_rate: Optional[int] = None,
+    coming_soon_list_render_quality: Optional[str] = None,
     dynamic_preroll_template: Optional[str] = None,
     dynamic_preroll_server_name: Optional[str] = None,
     dynamic_preroll_duration: Optional[int] = None,
     dynamic_preroll_theme: Optional[str] = None,
     dynamic_preroll_language: Optional[str] = None,
+    dynamic_preroll_resolution: Optional[str] = None,
+    dynamic_preroll_frame_rate: Optional[int] = None,
+    dynamic_preroll_render_quality: Optional[str] = None,
+    dynamic_preroll_font_scale: Optional[float] = None,
+    dynamic_preroll_title_color: Optional[str] = None,
+    dynamic_preroll_subject_color: Optional[str] = None,
+    dynamic_preroll_audio_mode: Optional[str] = None,
     release_date_preference: Optional[str] = None,
     coming_soon_available_days: Optional[int] = None,
     coming_soon_max_available_now: Optional[int] = None,
@@ -18625,6 +18663,12 @@ def update_nexup_settings(
     if coming_soon_list_language is not None:
         if coming_soon_list_language in ['en', 'fr', 'es', 'de']:
             setting.nexup_coming_soon_list_language = coming_soon_list_language
+    if coming_soon_list_resolution is not None:
+        setting.nexup_coming_soon_list_resolution = resolve_render_settings(coming_soon_list_resolution)['resolution']
+    if coming_soon_list_frame_rate is not None:
+        setting.nexup_coming_soon_list_frame_rate = resolve_render_settings(frame_rate=coming_soon_list_frame_rate)['frame_rate']
+    if coming_soon_list_render_quality is not None:
+        setting.nexup_coming_soon_list_render_quality = resolve_render_settings(quality=coming_soon_list_render_quality)['quality']
     if dynamic_preroll_template is not None:
         setting.nexup_dynamic_preroll_template = dynamic_preroll_template.strip()[:80] or 'coming_soon'
     if dynamic_preroll_server_name is not None:
@@ -18636,6 +18680,20 @@ def update_nexup_settings(
     if dynamic_preroll_language is not None:
         if dynamic_preroll_language in ['en', 'fr', 'es', 'de']:
             setting.nexup_dynamic_preroll_language = dynamic_preroll_language
+    if dynamic_preroll_resolution is not None:
+        setting.nexup_dynamic_preroll_resolution = resolve_render_settings(dynamic_preroll_resolution)['resolution']
+    if dynamic_preroll_frame_rate is not None:
+        setting.nexup_dynamic_preroll_frame_rate = resolve_render_settings(frame_rate=dynamic_preroll_frame_rate)['frame_rate']
+    if dynamic_preroll_render_quality is not None:
+        setting.nexup_dynamic_preroll_render_quality = resolve_render_settings(quality=dynamic_preroll_render_quality)['quality']
+    if dynamic_preroll_font_scale is not None:
+        setting.nexup_dynamic_preroll_font_scale = resolve_dynamic_font_scale(dynamic_preroll_font_scale)
+    if dynamic_preroll_title_color is not None:
+        setting.nexup_dynamic_preroll_title_color = resolve_dynamic_text_color(dynamic_preroll_title_color)
+    if dynamic_preroll_subject_color is not None:
+        setting.nexup_dynamic_preroll_subject_color = resolve_dynamic_text_color(dynamic_preroll_subject_color)
+    if dynamic_preroll_audio_mode is not None:
+        setting.nexup_dynamic_preroll_audio_mode = resolve_dynamic_audio_mode(dynamic_preroll_audio_mode)
     # Release date preference
     if release_date_preference is not None:
         if release_date_preference in ['digital_first', 'digital_only', 'physical_first', 'theatrical']:
@@ -19412,6 +19470,11 @@ async def _auto_regenerate_coming_soon_list(db: Session):
         custom_logo_path = getattr(setting, 'nexup_coming_soon_list_custom_logo_path', None)
         logo_mode = getattr(setting, 'nexup_coming_soon_list_logo_mode', 'watermark')
         language = getattr(setting, 'nexup_coming_soon_list_language', 'en') or 'en'
+        render = resolve_render_settings(
+            getattr(setting, 'nexup_coming_soon_list_resolution', '1080'),
+            getattr(setting, 'nexup_coming_soon_list_frame_rate', 30),
+            getattr(setting, 'nexup_coming_soon_list_render_quality', 'balanced'),
+        )
         storage_path = getattr(setting, 'nexup_storage_path', None)
         
         if not storage_path:
@@ -19588,7 +19651,13 @@ async def _auto_regenerate_coming_soon_list(db: Session):
                 custom_audio_path=custom_audio_path,
                 custom_logo_path=custom_logo_path,
                 logo_mode=logo_mode,
-                language=language
+                language=language,
+                width=render['width'],
+                height=render['height'],
+                frame_rate=render['frame_rate'],
+                video_preset=render['preset'],
+                video_crf=render['crf'],
+                audio_bitrate=render['audio_bitrate'],
             )
             
             if output_path:
@@ -22183,6 +22252,75 @@ def delete_coming_soon_audio(db: Session = Depends(get_db)):
     return {"success": True, "message": "Custom audio removed, will use default"}
 
 
+@app.post("/nexup/preroll/upload-audio")
+async def upload_dynamic_preroll_audio(
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db)
+):
+    """Upload a custom soundtrack for Dynamic Preroll videos."""
+    setting = db.query(models.Setting).first()
+    if not setting:
+        raise HTTPException(status_code=400, detail="Settings not configured")
+
+    storage_path = getattr(setting, 'nexup_storage_path', None)
+    if not storage_path:
+        raise HTTPException(status_code=400, detail="NeX-Up storage path not configured")
+
+    allowed_audio = ('.mp3', '.wav', '.aac', '.m4a', '.ogg', '.flac')
+    ext = os.path.splitext(file.filename or '')[1].lower()
+    if ext not in allowed_audio:
+        raise HTTPException(status_code=400, detail=f"Unsupported audio format. Allowed: {', '.join(allowed_audio)}")
+
+    assets_dir = Path(storage_path) / "dynamic_prerolls" / "assets"
+    assets_dir.mkdir(parents=True, exist_ok=True)
+
+    old_path = getattr(setting, 'nexup_dynamic_preroll_custom_audio_path', None)
+    if old_path and os.path.isfile(old_path):
+        try:
+            os.remove(old_path)
+        except OSError:
+            pass
+
+    content = await file.read()
+    if not content:
+        raise HTTPException(status_code=400, detail="Uploaded audio file is empty")
+
+    dest = assets_dir / f"dynamic_audio{ext}"
+    with open(dest, "wb") as stream:
+        stream.write(content)
+
+    setting.nexup_dynamic_preroll_custom_audio_path = str(dest)
+    setting.nexup_dynamic_preroll_audio_mode = 'custom'
+    setting.updated_at = datetime.datetime.utcnow()
+    db.commit()
+
+    _file_log(f"Custom Dynamic Preroll audio uploaded: {dest} ({len(content)} bytes)")
+    return {"success": True, "path": str(dest), "filename": file.filename, "size_bytes": len(content)}
+
+
+@app.delete("/nexup/preroll/upload-audio")
+def delete_dynamic_preroll_audio(db: Session = Depends(get_db)):
+    """Remove the custom Dynamic Preroll soundtrack and select the bundled track."""
+    setting = db.query(models.Setting).first()
+    if not setting:
+        raise HTTPException(status_code=400, detail="Settings not configured")
+
+    old_path = getattr(setting, 'nexup_dynamic_preroll_custom_audio_path', None)
+    if old_path and os.path.isfile(old_path):
+        try:
+            os.remove(old_path)
+        except OSError:
+            pass
+
+    setting.nexup_dynamic_preroll_custom_audio_path = None
+    setting.nexup_dynamic_preroll_audio_mode = 'default'
+    setting.updated_at = datetime.datetime.utcnow()
+    db.commit()
+
+    _file_log("Custom Dynamic Preroll audio removed")
+    return {"success": True, "message": "Custom audio removed; bundled soundtrack selected"}
+
+
 @app.post("/nexup/preroll/upload-logo")
 async def upload_dynamic_preroll_logo(
     file: UploadFile = File(...),
@@ -22359,6 +22497,9 @@ async def generate_coming_soon_list(
     server_name: str = None,  # Optional custom server name override
     include_audio: bool = False,
     language: str = "en",
+    resolution: str = "1080",
+    frame_rate: int = 30,
+    quality: str = "balanced",
     db: Session = Depends(get_db)
 ):
     """
@@ -22378,7 +22519,12 @@ async def generate_coming_soon_list(
     from backend.radarr_connector import RadarrConnector
     from backend.sonarr_connector import SonarrConnector
     
-    _file_log(f"[COMING-SOON-LIST] Request params: layout={layout}, source={source}, duration={duration}, max_items={max_items}")
+    render = resolve_render_settings(resolution, frame_rate, quality)
+    _file_log(
+        f"[COMING-SOON-LIST] Request params: layout={layout}, source={source}, "
+        f"duration={duration}, max_items={max_items}, output={render['width']}x{render['height']}@{render['frame_rate']}, "
+        f"quality={render['quality']}"
+    )
     log_event('INFO', 'nexup', f'Coming Soon List generation started (layout={layout}, source={source}, max_items={max_items})',
              source='generate_coming_soon_list', db=db)
     
@@ -22583,7 +22729,13 @@ async def generate_coming_soon_list(
             custom_audio_path=getattr(setting, 'nexup_coming_soon_list_custom_audio_path', None),
             custom_logo_path=getattr(setting, 'nexup_coming_soon_list_custom_logo_path', None),
             logo_mode=getattr(setting, 'nexup_coming_soon_list_logo_mode', 'watermark'),
-            language=language
+            language=language,
+            width=render['width'],
+            height=render['height'],
+            frame_rate=render['frame_rate'],
+            video_preset=render['preset'],
+            video_crf=render['crf'],
+            audio_bitrate=render['audio_bitrate'],
         )
         
         if output_path:
@@ -22608,6 +22760,13 @@ async def generate_coming_soon_list(
                 "max_items_setting": max_items,
                 "source": source,
                 "duration": duration,
+                "render": {
+                    "resolution": render['resolution'],
+                    "width": render['width'],
+                    "height": render['height'],
+                    "frame_rate": render['frame_rate'],
+                    "quality": render['quality'],
+                },
                 "message": f"Generated Coming Soon list with {min(len(items), max_items)} items (of {len(items)} eligible)"
             }
         else:
@@ -22747,32 +22906,26 @@ async def preview_coming_soon_list(
 
 @app.post("/nexup/preroll/generate-from-preview")
 async def generate_preroll_from_preview(
-    image_data: str = Body(..., description="Base64 encoded PNG image from CSS preview"),
+    image_data: Optional[str] = Body(None, description="Base64 encoded PNG compatibility frame"),
+    video_data: Optional[str] = Body(None, description="Base64 encoded animated WebM from the shared preview canvas"),
+    video_mime_type: Optional[str] = Body(None, description="Browser recording MIME type"),
     duration: int = Body(5, description="Video duration in seconds"),
     template: str = Body("custom", description="Template name for filename"),
     server_name: str = Body("", description="Server name (for metadata)"),
     theme: str = Body("custom", description="Theme name (for metadata)"),
+    resolution: str = Body("1080", description="Output height: 720, 1080, or 2160"),
+    frame_rate: int = Body(30, description="Output frame rate: 24, 30, or 60"),
+    quality: str = Body("high", description="Encoding profile: draft, balanced, high, or master"),
+    font_scale: float = Body(1.0, description="Typography scale from 0.85 to 1.30"),
+    title_color: Optional[str] = Body(None, description="Optional #RRGGBB heading color override"),
+    subject_color: Optional[str] = Body(None, description="Optional #RRGGBB server-name color override"),
+    audio_mode: str = Body("none", description="Soundtrack choice: none, default, or custom"),
     db: Session = Depends(get_db)
 ):
     """
-    Generate a preroll video from a captured CSS preview image.
-    
-    This is the "What You See Is What You Get" approach - the frontend captures
-    the live CSS preview as a PNG image, and we create a video from it with
-    smooth fade in/out effects.
-    
-    Benefits:
-    - Pixel-perfect match to the CSS preview
-    - No complex FFmpeg text rendering needed
-    - Supports any CSS effects (gradients, shadows, custom fonts, etc.)
-    - Much simpler and more maintainable
-    
-    Args:
-        image_data: Base64 encoded PNG image (with or without data:image/png;base64, prefix)
-        duration: Video duration in seconds
-        template: Template name (used for filename)
-        server_name: Server name (stored for reference)
-        theme: Theme name (stored for reference)
+    Generate a preroll from the shared animated preview canvas. Modern browsers
+    send a WebM recording containing the exact preview motion; a PNG frame remains
+    available as a compatibility fallback.
     """
     import base64
     
@@ -22782,7 +22935,7 @@ async def generate_preroll_from_preview(
             _file_log(f"[PREROLL-IMG] {msg}", level="DEBUG")
             print(f"[PREROLL-IMG] {msg}")
         set_dp_verbose_logger(preroll_verbose_log)
-        _file_log(f"[PREROLL-IMG] === Starting image-to-video generation ===", level="DEBUG")
+        _file_log(f"[PREROLL-IMG] === Starting preview-to-video generation ===", level="DEBUG")
     
     # Get storage path
     setting = db.query(models.Setting).first()
@@ -22800,32 +22953,71 @@ async def generate_preroll_from_preview(
         raise HTTPException(status_code=500, detail="FFmpeg not found. Please install FFmpeg to generate prerolls.")
     
     try:
-        # Decode base64 image
-        # Strip data URL prefix if present
-        if ',' in image_data:
-            image_data = image_data.split(',', 1)[1]
-        
-        image_bytes = base64.b64decode(image_data)
-        _file_log(f"[PREROLL-IMG] Decoded image: {len(image_bytes)} bytes")
-        
+        if not video_data and not image_data:
+            raise HTTPException(status_code=400, detail="Animated video data or fallback image data is required")
+
+        render = resolve_render_settings(resolution, frame_rate, quality)
+        normalized_font_scale = resolve_dynamic_font_scale(font_scale)
+        normalized_title_color = resolve_dynamic_text_color(title_color)
+        normalized_subject_color = resolve_dynamic_text_color(subject_color)
+        normalized_audio_mode = resolve_dynamic_audio_mode(audio_mode)
+
+        audio_path = None
+        if normalized_audio_mode == 'custom':
+            custom_audio_path = getattr(setting, 'nexup_dynamic_preroll_custom_audio_path', None)
+            if not custom_audio_path or not os.path.isfile(custom_audio_path):
+                raise HTTPException(status_code=400, detail="Upload a custom soundtrack before rendering with Custom audio")
+            audio_path = custom_audio_path
+        elif normalized_audio_mode == 'default':
+            audio_path = generator._get_coming_soon_audio_path()
+            if not audio_path:
+                raise HTTPException(status_code=500, detail="Bundled NeXroll soundtrack could not be found")
+
         # Generate filename based on template AND theme (unique file per combination)
         import re
         safe_template = re.sub(r'[^a-zA-Z0-9_-]', '_', template)
         safe_theme = re.sub(r'[^a-zA-Z0-9_-]', '_', theme) if theme else 'custom'
         output_filename = f"{safe_template}_{safe_theme}_preroll.mp4"
         
-        # Calculate fade duration - 1 second fades look smooth and professional
-        # For shorter videos, use proportionally shorter fades
-        fade_duration = max(0.5, min(1.0, duration * 0.2))
-        
-        output_path = generator.generate_from_image(
-            image_data=image_bytes,
-            duration=float(duration),
-            output_filename=output_filename,
-            width=1920,
-            height=1080,
-            fade_duration=fade_duration
-        )
+        source_method = "preview_motion_capture"
+        if video_data:
+            encoded_video = video_data.split(',', 1)[1] if ',' in video_data else video_data
+            video_bytes = base64.b64decode(encoded_video)
+            _file_log(
+                f"[PREROLL-IMG] Decoded animated preview: {len(video_bytes)} bytes "
+                f"({video_mime_type or 'video/webm'})"
+            )
+            output_path = generator.generate_from_video(
+                video_data=video_bytes,
+                duration=float(duration),
+                output_filename=output_filename,
+                width=render['width'],
+                height=render['height'],
+                frame_rate=render['frame_rate'],
+                video_preset=render['preset'],
+                video_crf=render['crf'],
+                audio_bitrate=render['audio_bitrate'],
+                audio_path=audio_path,
+            )
+        else:
+            source_method = "preview_still_fallback"
+            encoded_image = image_data.split(',', 1)[1] if ',' in image_data else image_data
+            image_bytes = base64.b64decode(encoded_image)
+            _file_log(f"[PREROLL-IMG] Decoded fallback image: {len(image_bytes)} bytes")
+            fade_duration = max(0.5, min(1.0, duration * 0.2))
+            output_path = generator.generate_from_image(
+                image_data=image_bytes,
+                duration=float(duration),
+                output_filename=output_filename,
+                width=render['width'],
+                height=render['height'],
+                fade_duration=fade_duration,
+                frame_rate=render['frame_rate'],
+                video_preset=render['preset'],
+                video_crf=render['crf'],
+                audio_bitrate=render['audio_bitrate'],
+                audio_path=audio_path,
+            )
         
         if output_path:
             # Save settings for reference
@@ -22834,7 +23026,14 @@ async def generate_preroll_from_preview(
                     nexup_dynamic_preroll_template=template,
                     nexup_dynamic_preroll_server_name=server_name,
                     nexup_dynamic_preroll_duration=duration,
-                    nexup_dynamic_preroll_theme=theme
+                    nexup_dynamic_preroll_theme=theme,
+                    nexup_dynamic_preroll_resolution=render['resolution'],
+                    nexup_dynamic_preroll_frame_rate=render['frame_rate'],
+                    nexup_dynamic_preroll_render_quality=render['quality'],
+                    nexup_dynamic_preroll_font_scale=normalized_font_scale,
+                    nexup_dynamic_preroll_title_color=normalized_title_color,
+                    nexup_dynamic_preroll_subject_color=normalized_subject_color,
+                    nexup_dynamic_preroll_audio_mode=normalized_audio_mode,
                 )
             )
             db.commit()
@@ -22853,18 +23052,31 @@ async def generate_preroll_from_preview(
                 "server_name": server_name,
                 "duration": duration,
                 "theme": theme,
-                "method": "preview_capture",
-                "message": f"Generated preroll from CSS preview successfully"
+                "font_scale": normalized_font_scale,
+                "title_color": normalized_title_color,
+                "subject_color": normalized_subject_color,
+                "audio_mode": normalized_audio_mode,
+                "render": {
+                    "resolution": render['resolution'],
+                    "width": render['width'],
+                    "height": render['height'],
+                    "frame_rate": render['frame_rate'],
+                    "quality": render['quality'],
+                },
+                "method": source_method,
+                "message": "Generated preroll from animated preview successfully"
             }
         else:
-            raise HTTPException(status_code=500, detail="Failed to generate video from preview image")
+            raise HTTPException(status_code=500, detail="Failed to generate video from preview capture")
             
+    except HTTPException:
+        raise
     except base64.binascii.Error as e:
         _file_log(f"[PREROLL-IMG] Base64 decode error: {e}")
         raise HTTPException(status_code=400, detail=f"Invalid base64 image data: {e}")
     except Exception as e:
         _file_log(f"[PREROLL-IMG] Error: {e}")
-        log_event('ERROR', 'user', f'Preroll from image generation failed: {e}', source='generate_preroll_from_image')
+        log_event('ERROR', 'user', f'Preroll from preview generation failed: {e}', source='generate_preroll_from_preview')
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/nexup/preroll/settings")
@@ -22878,7 +23090,15 @@ def get_preroll_settings(db: Session = Depends(get_db)):
             "template": "coming_soon",
             "server_name": "",
             "duration": 5,
-            "theme": "midnight"
+            "theme": "midnight",
+            "resolution": "1080",
+            "frame_rate": 30,
+            "render_quality": "high",
+            "font_scale": 1.0,
+            "title_color": None,
+            "subject_color": None,
+            "audio_mode": "none",
+            "custom_audio_filename": None,
         }
     
     storage_path = getattr(setting, 'nexup_storage_path', None)
@@ -22899,8 +23119,16 @@ def get_preroll_settings(db: Session = Depends(get_db)):
         "duration": getattr(setting, 'nexup_dynamic_preroll_duration', 5),
         "theme": getattr(setting, 'nexup_dynamic_preroll_theme', 'midnight'),
         "language": getattr(setting, 'nexup_dynamic_preroll_language', 'en'),
+        "resolution": getattr(setting, 'nexup_dynamic_preroll_resolution', '1080'),
+        "frame_rate": getattr(setting, 'nexup_dynamic_preroll_frame_rate', 30),
+        "render_quality": getattr(setting, 'nexup_dynamic_preroll_render_quality', 'high'),
+        "font_scale": getattr(setting, 'nexup_dynamic_preroll_font_scale', 1.0),
+        "title_color": getattr(setting, 'nexup_dynamic_preroll_title_color', None),
+        "subject_color": getattr(setting, 'nexup_dynamic_preroll_subject_color', None),
+        "audio_mode": resolve_dynamic_audio_mode(getattr(setting, 'nexup_dynamic_preroll_audio_mode', 'none')),
         "preroll_path": preroll_path,
-        "custom_logo_filename": os.path.basename(getattr(setting, 'nexup_dynamic_preroll_custom_logo_path', '') or '') or None
+        "custom_logo_filename": os.path.basename(getattr(setting, 'nexup_dynamic_preroll_custom_logo_path', '') or '') or None,
+        "custom_audio_filename": os.path.basename(getattr(setting, 'nexup_dynamic_preroll_custom_audio_path', '') or '') or None
     }
 
 @app.get("/nexup/preroll/list")

@@ -784,7 +784,7 @@ class Scheduler:
     def _regenerate_coming_soon_lists(self, db: Session, setting):
         """Regenerate Coming Soon List videos after sync"""
         from pathlib import Path
-        from backend.dynamic_preroll import DynamicPrerollGenerator
+        from backend.dynamic_preroll import DynamicPrerollGenerator, resolve_render_settings
         import datetime
         
         storage_path = getattr(setting, 'nexup_storage_path', None)
@@ -804,6 +804,11 @@ class Scheduler:
         bg_color = getattr(setting, 'nexup_coming_soon_list_bg_color', '#141428') or '#141428'
         text_color = getattr(setting, 'nexup_coming_soon_list_text_color', '#ffffff') or '#ffffff'
         accent_color = getattr(setting, 'nexup_coming_soon_list_accent_color', '#00d4ff') or '#00d4ff'
+        render = resolve_render_settings(
+            getattr(setting, 'nexup_coming_soon_list_resolution', '1080'),
+            getattr(setting, 'nexup_coming_soon_list_frame_rate', 30),
+            getattr(setting, 'nexup_coming_soon_list_render_quality', 'balanced'),
+        )
         
         # Get items from downloaded trailers
         items = []
@@ -874,7 +879,13 @@ class Scheduler:
                     include_audio=include_audio,
                     custom_audio_path=custom_audio_path,
                     custom_logo_path=custom_logo_path,
-                    logo_mode=logo_mode
+                    logo_mode=logo_mode,
+                    width=render['width'],
+                    height=render['height'],
+                    frame_rate=render['frame_rate'],
+                    video_preset=render['preset'],
+                    video_crf=render['crf'],
+                    audio_bitrate=render['audio_bitrate'],
                 )
                 if output_path:
                     _scheduler_log(f"NeX-Up auto-regen: Generated {output_filename}")

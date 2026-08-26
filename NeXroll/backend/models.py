@@ -327,6 +327,14 @@ class Setting(Base):
     nexup_dynamic_preroll_theme = Column(String, nullable=True)  # Color theme: 'midnight', 'sunset', 'forest', 'royal', 'monochrome'
     nexup_dynamic_preroll_custom_logo_path = Column(String, nullable=True)  # User-uploaded custom logo image path for dynamic prerolls
     nexup_dynamic_preroll_language = Column(String, default='en')  # Language for generated preroll text: en, fr, es, de
+    nexup_dynamic_preroll_resolution = Column(String, default='1080')  # Output height: 720, 1080, or 2160
+    nexup_dynamic_preroll_frame_rate = Column(Integer, default=30)  # Output FPS: 24, 30, or 60
+    nexup_dynamic_preroll_render_quality = Column(String, default='high')  # draft, balanced, high, or master
+    nexup_dynamic_preroll_font_scale = Column(Float, default=1.0)  # Shared preview/export type scale: 0.85 to 1.30
+    nexup_dynamic_preroll_title_color = Column(String, nullable=True)  # Optional #RRGGBB override; null inherits theme primary
+    nexup_dynamic_preroll_subject_color = Column(String, nullable=True)  # Optional #RRGGBB override; null inherits theme secondary
+    nexup_dynamic_preroll_audio_mode = Column(String, default='none')  # none, default, or custom
+    nexup_dynamic_preroll_custom_audio_path = Column(String, nullable=True)  # User-uploaded soundtrack for dynamic prerolls
     
     # Coming Soon List Auto-Regeneration Settings
     nexup_coming_soon_list_auto_regen = Column(Boolean, default=False)  # Auto-regenerate Coming Soon List after sync
@@ -344,6 +352,9 @@ class Setting(Base):
     nexup_coming_soon_list_custom_logo_path = Column(String, nullable=True)  # User-uploaded custom logo image path
     nexup_coming_soon_list_logo_mode = Column(String, default='watermark')  # 'watermark' (faded bg), 'right' (right of title), or 'below' (below title)
     nexup_coming_soon_list_language = Column(String, default='en')  # Language for generated CSL text: en, fr, es, de
+    nexup_coming_soon_list_resolution = Column(String, default='1080')  # Output height: 720, 1080, or 2160
+    nexup_coming_soon_list_frame_rate = Column(Integer, default=30)  # Output FPS: 24, 30, or 60
+    nexup_coming_soon_list_render_quality = Column(String, default='balanced')  # draft, balanced, high, or master
     nexup_coming_soon_available_days = Column(Integer, default=1)  # Days to show "Available Now!" after download before auto-removing
     nexup_coming_soon_max_available_now = Column(Integer, default=0)  # Max "Available Now!" items to show (0 = no limit)
     nexup_trailer_retention_days = Column(Integer, default=7)  # Days to retain downloaded trailers before auto-deleting (0 = keep forever)

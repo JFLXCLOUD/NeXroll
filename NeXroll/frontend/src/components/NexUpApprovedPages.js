@@ -4,6 +4,7 @@ import {
   Film, FolderOpen, Loader2, MoreHorizontal, Play, Plus, RefreshCw, Search,
   Sparkles, Trash2, Tv, Upload, Video, X
 } from 'lucide-react';
+import NeXUpGeneratorStudio from './NeXUpGeneratorStudio';
 
 const formatDate = value => {
   if (!value) return 'Date unknown';
@@ -290,6 +291,8 @@ function TrailersPage(props) {
   );
 }
 
+// Retained temporarily as a parity reference while Generator Studio ships.
+// eslint-disable-next-line no-unused-vars
 function GeneratorPage(props) {
   const {
     settings, generatorTab, setGeneratorTab,
@@ -385,7 +388,7 @@ function SettingsPage(props) {
 export default function NexUpApprovedPages(props) {
   if (props.activeTab === 'nexup/upcoming') return <UpcomingPage {...props} />;
   if (props.activeTab === 'nexup/trailers') return <TrailersPage {...props} />;
-  if (props.activeTab === 'nexup/generator') return <GeneratorPage {...props} />;
+  if (props.activeTab === 'nexup/generator') return <NeXUpGeneratorStudio {...props} />;
   if (props.activeTab === 'nexup/settings') return <SettingsPage {...props} />;
   return <ConnectionsPage {...props} />;
 }

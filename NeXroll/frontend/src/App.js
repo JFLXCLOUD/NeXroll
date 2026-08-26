@@ -2,7 +2,6 @@ import React, { useState, useEffect, useLayoutEffect, useRef, useCallback } from
 import { DndContext, closestCenter, PointerSensor, useSensor, useSensors } from '@dnd-kit/core';
 import { SortableContext, rectSortingStrategy, useSortable, arrayMove } from '@dnd-kit/sortable';
 import ReactMarkdown from 'react-markdown';
-import html2canvas from 'html2canvas';
 import RetroProgressBar from './components/RetroProgressBar';
 import TestSequenceBuilder from './TestSequenceBuilder';
 import SequenceBuilder from './components/SequenceBuilder';
@@ -13,6 +12,7 @@ import Sidebar from './components/Sidebar';
 import OnboardingWizard from './components/OnboardingWizard';
 import ToastHost from './components/Toast';
 import NexUpApprovedPages from './components/NexUpApprovedPages';
+import { captureDynamicPrerollFrame, prepareDynamicPrerollOptions, recordDynamicPrerollAnimation } from './utils/dynamicPrerollMotion';
 import { validateSequence, stringifySequence, parseSequence, cloneSequenceWithIds, estimatePrerollCount } from './utils/sequenceValidator';
 import {
   buildBlendBothChanges,
@@ -961,7 +961,6 @@ function App() {
   // Pagination for community search/browse results.
   const [communityOffset, setCommunityOffset] = useState(0);
   const [communityPageLimit, setCommunityPageLimit] = useState(50); // page size of the current results
-  const [communityActiveMode, setCommunityActiveMode] = useState(null); // 'search' | 'browse'
   const [communityPreviewingPreroll, setCommunityPreviewingPreroll] = useState(null);
   const [communityInspectorOpen, setCommunityInspectorOpen] = useState(() => {
     try { return localStorage.getItem('communityInspectorOpen') === '1'; } catch (_) { return false; }
@@ -1214,8 +1213,16 @@ const [applyingToServer, setApplyingToServer] = useState(false);
     duration: 5,
     theme: 'midnight',
     language: 'en',
+    resolution: '1080',
+    frameRate: 30,
+    renderQuality: 'high',
+    fontScale: 1,
+    titleColor: null,
+    subjectColor: null,
+    audioMode: 'none',
     preroll_path: null,
-    customLogoFilename: null
+    customLogoFilename: null,
+    customAudioFilename: null
   });
   const [dynamicPrerollTemplates, setDynamicPrerollTemplates] = useState([]);
   const [dynamicPrerollGenerating, setDynamicPrerollGenerating] = useState(false);
@@ -1242,6 +1249,9 @@ const [applyingToServer, setApplyingToServer] = useState(false);
     customLogoFilename: null, // User-uploaded custom logo filename
     logoMode: 'watermark', // 'watermark' = faded bg, 'right' = right of header, 'below' = below header
     language: 'en', // Text language: en, fr, es, de
+    resolution: '1080',
+    frameRate: 30,
+    renderQuality: 'balanced',
     availableDays: 1, // Days to show "Available Now!" before auto-removal
     maxAvailableNow: 0 // Max "Available Now!" items to show (0 = no limit)
   });
@@ -2805,7 +2815,7 @@ const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
  
   // Check Community Prerolls Fair Use status when tab is active
   useEffect(() => {
-    if (activeTab === 'community-prerolls' && communityFairUseStatus === null) {
+    if (activeTab.startsWith('community-prerolls') && communityFairUseStatus === null) {
       const checkFairUseStatus = async () => {
         try {
           console.log('Checking Community Fair Use status...');
@@ -2905,12 +2915,23 @@ const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
     }
   }, [activeTab, communityFairUseStatus]);
 
+  // Browse and Search are separate Community destinations. Reset only the
+  // shared result surface when moving between them so filters and queries stay
+  // available when the user returns without showing results from the other mode.
+  useEffect(() => {
+    if (!activeTab.startsWith('community-prerolls')) return;
+    setCommunitySearchResults([]);
+    setCommunityTotalResults(0);
+    setCommunityOffset(0);
+    setCommunityInspectorPreroll(null);
+  }, [activeTab]);
+
   // While the Community page is open, reflect an index build that was started
   // elsewhere (e.g. the dashboard "Rebuild Index" button) so its progress shows
   // without re-clicking. Opens the progress stream once; closes immediately when
   // nothing is building.
   useEffect(() => {
-    if (activeTab !== 'community-prerolls') return undefined;
+    if (!activeTab.startsWith('community-prerolls')) return undefined;
     let es = null;
     let closed = false;
     let sawBuilding = false;
@@ -7649,7 +7670,9 @@ const DashboardTiles = {
     'nexup/generator':  { icon: Sparkles, section: 'NeX-Up', title: 'Preroll Generator', desc: 'Create cinematic videos from NeX-Up media and save them directly into your preroll library.' },
     'nexup/settings':   { icon: Settings, section: 'NeX-Up', title: 'NeX-Up Settings', desc: 'Configure trailer downloads, storage, release windows, providers, and cleanup behavior.' },
     'connect':          { icon: Link2, section: 'Connect', title: 'Connections', desc: 'Connect NeXroll to Plex, Jellyfin, or Emby and verify playback integration.' },
-    'community-prerolls': { icon: Globe, section: 'Community', title: 'Community Prerolls', desc: 'Discover, preview, match, and import community-made prerolls.' },
+    'community-prerolls': { icon: LayoutGrid, section: 'Community Prerolls', title: 'Browse', desc: 'Discover community-made prerolls by category, creator, platform, or date.' },
+    'community-prerolls/browse': { icon: LayoutGrid, section: 'Community Prerolls', title: 'Browse', desc: 'Discover community-made prerolls by category, creator, platform, or date.' },
+    'community-prerolls/search': { icon: Search, section: 'Community Prerolls', title: 'Search', desc: 'Find a specific theme, holiday, genre, franchise, or title.' },
     'settings':         { icon: Settings,        section: 'Settings', title: 'General Settings', desc: 'Theme, timezone, notifications, and scheduler behavior.' },
     'settings/paths':   { icon: ArrowRight,      section: 'Settings', title: 'Path Mappings', desc: 'Translate local, Docker, and network paths for your media server.' },
     'settings/storage': { icon: HardDrive,       section: 'Settings', title: 'Storage', desc: 'Configure storage locations, transfers, usage, and automatic scanning.' },
@@ -7781,8 +7804,8 @@ const DashboardTiles = {
             )}
             {activeTab === 'nexup/generator' && (
               <>
-                <button type="button" className="button button-secondary" onClick={() => document.querySelector('.nx-ap-generated')?.scrollIntoView({ behavior: 'smooth', block: 'start' })}><Film size={15} /> Generated videos</button>
-                <button type="button" className="button" disabled={!nexupSettings.storage_path || (generatorTab === 'dynamic' && (!ffmpegAvailable || !dynamicPrerollSettings.server_name.trim()))} onClick={() => generatorTab === 'dynamic' ? handleGenerateFromPreview() : handleGenerateComingSoonList(comingSoonListSettings.layout)}><Sparkles size={15} /> {generatorTab === 'dynamic' ? 'Generate preroll' : 'Generate list'}</button>
+                <button type="button" className="button button-secondary" onClick={() => document.querySelector('.nx-gen-recent')?.scrollIntoView({ behavior: 'smooth', block: 'start' })}><Film size={15} /> Generated videos</button>
+                <button type="button" className="button" disabled={(!nexupSettings.radarr_connected && !nexupSettings.sonarr_connected) || !nexupSettings.storage_path || !ffmpegAvailable || (generatorTab === 'dynamic' && !dynamicPrerollSettings.server_name.trim())} onClick={() => generatorTab === 'dynamic' ? handleGenerateFromPreview() : handleGenerateComingSoonList(comingSoonListSettings.layout)}><Sparkles size={15} /> {generatorTab === 'dynamic' ? 'Generate preroll' : 'Generate list'}</button>
               </>
             )}
             {activeTab === 'nexup/settings' && (
@@ -7900,7 +7923,7 @@ const DashboardTiles = {
         { label: 'Path mappings', value: pathMappings.length },
         { label: 'Schedules applied', value: schedules.filter(schedule => schedule.is_active).length }
       ];
-    } else if (activeTab === 'community-prerolls') {
+    } else if (activeTab.startsWith('community-prerolls')) {
       items = [
         { label: 'Indexed', value: communityIndexStatus?.total_prerolls || 0 },
         { label: 'Local matches', value: communityMatchedCount, tone: 'success' },
@@ -22110,6 +22133,9 @@ const DashboardTiles = {
           customLogoFilename: data.coming_soon_list_custom_logo_filename || null,
           logoMode: (() => { const m = data.coming_soon_list_logo_mode || 'watermark'; return m === 'replace' ? 'below' : m; })(),
           language: data.coming_soon_list_language || 'en',
+          resolution: data.coming_soon_list_resolution || '1080',
+          frameRate: data.coming_soon_list_frame_rate || 30,
+          renderQuality: data.coming_soon_list_render_quality || 'balanced',
           availableDays: data.coming_soon_available_days || 1,
           maxAvailableNow: data.coming_soon_max_available_now ?? 0
         }));
@@ -22138,6 +22164,9 @@ const DashboardTiles = {
       if (settings.includeAudio !== undefined) params.append('coming_soon_list_include_audio', settings.includeAudio.toString());
       if (settings.logoMode !== undefined) params.append('coming_soon_list_logo_mode', settings.logoMode);
       if (settings.language !== undefined) params.append('coming_soon_list_language', settings.language);
+      if (settings.resolution !== undefined) params.append('coming_soon_list_resolution', settings.resolution);
+      if (settings.frameRate !== undefined) params.append('coming_soon_list_frame_rate', settings.frameRate.toString());
+      if (settings.renderQuality !== undefined) params.append('coming_soon_list_render_quality', settings.renderQuality);
       if (settings.availableDays !== undefined) params.append('coming_soon_available_days', settings.availableDays.toString());
       if (settings.maxAvailableNow !== undefined) params.append('coming_soon_max_available_now', settings.maxAvailableNow.toString());
       
@@ -22157,7 +22186,14 @@ const DashboardTiles = {
         dynamic_preroll_server_name: dynamicPrerollSettings.server_name || '',
         dynamic_preroll_duration: String(dynamicPrerollSettings.duration || 5),
         dynamic_preroll_theme: dynamicPrerollSettings.theme || 'midnight',
-        dynamic_preroll_language: dynamicPrerollSettings.language || 'en'
+        dynamic_preroll_language: dynamicPrerollSettings.language || 'en',
+        dynamic_preroll_resolution: dynamicPrerollSettings.resolution || '1080',
+        dynamic_preroll_frame_rate: String(dynamicPrerollSettings.frameRate || 30),
+        dynamic_preroll_render_quality: dynamicPrerollSettings.renderQuality || 'high',
+        dynamic_preroll_font_scale: String(dynamicPrerollSettings.fontScale || 1),
+        dynamic_preroll_title_color: dynamicPrerollSettings.titleColor || '',
+        dynamic_preroll_subject_color: dynamicPrerollSettings.subjectColor || '',
+        dynamic_preroll_audio_mode: dynamicPrerollSettings.audioMode || 'none'
       });
       const response = await fetch(apiUrl(`/nexup/settings?${params.toString()}`), { method: 'PUT' });
       if (!response.ok) throw new Error('Dynamic preroll defaults could not be saved.');
@@ -23144,8 +23180,16 @@ const DashboardTiles = {
           duration: data.duration || 5,
           theme: data.theme || 'midnight',
           language: data.language || 'en',
+          resolution: data.resolution || '1080',
+          frameRate: data.frame_rate || 30,
+          renderQuality: data.render_quality || 'high',
+          fontScale: data.font_scale || 1,
+          titleColor: data.title_color || null,
+          subjectColor: data.subject_color || null,
+          audioMode: data.audio_mode || 'none',
           preroll_path: data.preroll_path,
-          customLogoFilename: data.custom_logo_filename || null
+          customLogoFilename: data.custom_logo_filename || null,
+          customAudioFilename: data.custom_audio_filename || null
         });
         setTimeout(() => { dynamicPrerollSettingsLoadedRef.current = true; }, 100);
       }
@@ -23157,6 +23201,11 @@ const DashboardTiles = {
   const handleGenerateDynamicPreroll = async () => {
     if (!dynamicPrerollSettings.server_name.trim()) {
       alert('Please enter your server name');
+      return;
+    }
+
+    if (dynamicPrerollSettings.audioMode === 'custom' && !dynamicPrerollSettings.customAudioFilename) {
+      alert('Please upload a custom soundtrack or choose Default soundtrack or No audio.');
       return;
     }
     
@@ -23193,10 +23242,15 @@ const DashboardTiles = {
     }
   };
 
-  // Generate video from CSS preview capture (WYSIWYG approach)
+  // Record the same animated canvas used by the live preview, then transcode it to MP4.
   const handleGenerateFromPreview = async () => {
     if (!dynamicPrerollSettings.server_name.trim()) {
       alert('Please enter your server name');
+      return;
+    }
+
+    if (dynamicPrerollSettings.audioMode === 'custom' && !dynamicPrerollSettings.customAudioFilename) {
+      alert('Please upload a custom soundtrack or choose Default soundtrack or No audio.');
       return;
     }
     
@@ -23207,41 +23261,21 @@ const DashboardTiles = {
     
     setDynamicPrerollGenerating(true);
     try {
-      // Get the preview element
-      const previewEl = previewContainerRef.current;
-      
-      // Capture the CSS preview at high resolution (1920x1080 target)
-      // Use scale factor based on preview size to get exact 1920x1080
-      const previewWidth = previewEl.offsetWidth;
-      const targetWidth = 1920;
-      const scaleFactor = Math.max(3, Math.ceil(targetWidth / previewWidth));
-      
-      const canvas = await html2canvas(previewContainerRef.current, {
-        scale: scaleFactor,
-        useCORS: true,
-        backgroundColor: null, // Let the CSS background show through
-        logging: false,
-        allowTaint: true,
-        width: previewEl.offsetWidth,
-        height: previewEl.offsetHeight,
-        // Capture with animations at a good frame
-        onclone: (clonedDoc, clonedEl) => {
-          // Pause CSS animations for a clean capture
-          const style = clonedDoc.createElement('style');
-          style.textContent = `
-            *, *::before, *::after { 
-              animation-play-state: paused !important;
-              animation-delay: -0.5s !important;
-            }
-          `;
-          clonedDoc.head.appendChild(style);
-        }
+      const selectedTheme = colorThemes?.[dynamicPrerollSettings.theme] || {};
+      const selectedTemplate = dynamicPrerollTemplates.find(item => item.id === dynamicPrerollSettings.template);
+      const logoUrl = dynamicPrerollSettings.customLogoFilename
+        ? `${apiUrl('/nexup/preroll/logo-image')}?v=${encodeURIComponent(dynamicPrerollSettings.customLogoFilename)}`
+        : null;
+      const motionOptions = await prepareDynamicPrerollOptions({
+        settings: { ...dynamicPrerollSettings },
+        theme: { ...selectedTheme },
+        templateName: selectedTemplate?.name || 'Dynamic preroll',
+        logoUrl,
       });
+      const motionCapture = await recordDynamicPrerollAnimation(motionOptions);
+      const imageData = motionCapture ? null : captureDynamicPrerollFrame(motionOptions);
       
-      // Convert canvas to base64 PNG
-      const imageData = canvas.toDataURL('image/png', 1.0);
-      
-      // Send to backend to generate video with fade effects
+      // Animated WebM is preferred; the still frame remains a compatibility fallback.
       const res = await fetch(apiUrl('/nexup/preroll/generate-from-preview'), {
         method: 'POST',
         headers: {
@@ -23249,17 +23283,26 @@ const DashboardTiles = {
         },
         body: JSON.stringify({
           image_data: imageData,
+          video_data: motionCapture?.videoData || null,
+          video_mime_type: motionCapture?.mimeType || null,
           duration: dynamicPrerollSettings.duration,
           template: dynamicPrerollSettings.template,
           server_name: dynamicPrerollSettings.server_name,
-          theme: dynamicPrerollSettings.theme || 'custom'
+          theme: dynamicPrerollSettings.theme || 'custom',
+          resolution: dynamicPrerollSettings.resolution || '1080',
+          frame_rate: dynamicPrerollSettings.frameRate || 30,
+          quality: dynamicPrerollSettings.renderQuality || 'high',
+          font_scale: dynamicPrerollSettings.fontScale || 1,
+          title_color: dynamicPrerollSettings.titleColor || null,
+          subject_color: dynamicPrerollSettings.subjectColor || null,
+          audio_mode: dynamicPrerollSettings.audioMode || 'none'
         })
       });
       
       const data = await res.json();
       
       if (data.success) {
-        alert(`Generated preroll from preview successfully!\n\nThe video is an exact match of what you see in the preview with smooth fade in/out effects.`);
+        alert('Generated preroll from preview successfully!');
         setDynamicPrerollSettings(prev => ({
           ...prev,
           preroll_path: data.path
@@ -23352,7 +23395,10 @@ const DashboardTiles = {
           max_items: comingSoonListSettings.maxItems.toString(),
           bg_color: comingSoonListSettings.bgColor,
           text_color: comingSoonListSettings.textColor,
-          accent_color: comingSoonListSettings.accentColor
+          accent_color: comingSoonListSettings.accentColor,
+          resolution: comingSoonListSettings.resolution || '1080',
+          frame_rate: String(comingSoonListSettings.frameRate || 30),
+          quality: comingSoonListSettings.renderQuality || 'balanced'
         });
         if (comingSoonListSettings.serverName.trim()) {
           params.append('server_name', comingSoonListSettings.serverName.trim());
@@ -23794,11 +23840,13 @@ const DashboardTiles = {
   };
 
   const handleNexupAssetUpload = async (kind, file) => {
-    const endpoint = kind === 'dynamic-logo'
-      ? '/nexup/preroll/upload-logo'
-      : kind === 'coming-logo'
-        ? '/nexup/coming-soon-list/upload-logo'
-        : '/nexup/coming-soon-list/upload-audio';
+    const endpoint = {
+      'dynamic-logo': '/nexup/preroll/upload-logo',
+      'dynamic-audio': '/nexup/preroll/upload-audio',
+      'coming-logo': '/nexup/coming-soon-list/upload-logo',
+      'coming-audio': '/nexup/coming-soon-list/upload-audio',
+    }[kind];
+    if (!endpoint) return;
     const formData = new FormData();
     formData.append('file', file);
     try {
@@ -23807,6 +23855,8 @@ const DashboardTiles = {
       if (!res.ok) throw new Error(data.detail || 'Asset upload failed.');
       if (kind === 'dynamic-logo') {
         setDynamicPrerollSettings(previous => ({ ...previous, customLogoFilename: data.filename || file.name }));
+      } else if (kind === 'dynamic-audio') {
+        setDynamicPrerollSettings(previous => ({ ...previous, customAudioFilename: data.filename || file.name, audioMode: 'custom' }));
       } else if (kind === 'coming-logo') {
         setComingSoonListSettings(previous => ({ ...previous, customLogoFilename: data.filename || file.name }));
       } else {
@@ -23819,16 +23869,20 @@ const DashboardTiles = {
   };
 
   const handleNexupAssetRemove = async kind => {
-    const endpoint = kind === 'dynamic-logo'
-      ? '/nexup/preroll/upload-logo'
-      : kind === 'coming-logo'
-        ? '/nexup/coming-soon-list/upload-logo'
-        : '/nexup/coming-soon-list/upload-audio';
+    const endpoint = {
+      'dynamic-logo': '/nexup/preroll/upload-logo',
+      'dynamic-audio': '/nexup/preroll/upload-audio',
+      'coming-logo': '/nexup/coming-soon-list/upload-logo',
+      'coming-audio': '/nexup/coming-soon-list/upload-audio',
+    }[kind];
+    if (!endpoint) return;
     try {
       const res = await fetch(apiUrl(endpoint), { method: 'DELETE' });
       if (!res.ok) throw new Error('Asset removal failed.');
       if (kind === 'dynamic-logo') {
         setDynamicPrerollSettings(previous => ({ ...previous, customLogoFilename: null }));
+      } else if (kind === 'dynamic-audio') {
+        setDynamicPrerollSettings(previous => ({ ...previous, customAudioFilename: null, audioMode: 'default' }));
       } else if (kind === 'coming-logo') {
         setComingSoonListSettings(previous => ({ ...previous, customLogoFilename: null }));
       } else {
@@ -23906,6 +23960,8 @@ const DashboardTiles = {
         onPreviewDynamic={setPreviewingDynamicPreroll}
         onDeleteDynamic={handleDeleteSpecificPreroll}
         previewRef={previewContainerRef}
+        dynamicLogoUrl={`${apiUrl('/nexup/preroll/logo-image')}?v=${encodeURIComponent(dynamicPrerollSettings.customLogoFilename || 'none')}`}
+        comingLogoUrl={`${apiUrl('/nexup/coming-soon-list/logo-image')}?v=${encodeURIComponent(comingSoonListSettings.customLogoFilename || 'none')}`}
         onUploadAsset={handleNexupAssetUpload}
         onRemoveAsset={handleNexupAssetRemove}
         comingSettings={comingSoonListSettings}
@@ -33680,6 +33736,8 @@ const DashboardTiles = {
   };
 
   const renderCommunityPrerolls = () => {
+    const isCommunitySearchPage = activeTab === 'community-prerolls/search';
+
     // Handle Fair Use acceptance
     const handleAcceptFairUse = async () => {
       try {
@@ -33994,7 +34052,6 @@ const DashboardTiles = {
         setCommunityTotalResults(data.total || 0);
         setCommunityOffset(offset);
         setCommunityPageLimit(pageLimit);
-        setCommunityActiveMode('search');
 
         // Show message if available (even with results)
         if (data.message) {
@@ -34039,7 +34096,6 @@ const DashboardTiles = {
         setCommunityTotalResults(data.total || 0);
         setCommunityOffset(offset);
         setCommunityPageLimit(pageLimit);
-        setCommunityActiveMode('browse');
       } catch (error) {
         alert(`Browse failed: ${error.message}`);
       } finally {
@@ -34050,8 +34106,8 @@ const DashboardTiles = {
     // Jump to a results page (re-runs the current search/browse at a new offset).
     const goToCommunityPage = (newOffset) => {
       const off = Math.max(0, newOffset);
-      if (communityActiveMode === 'browse') handleBrowse({}, off);
-      else handleSearch(off);
+      if (isCommunitySearchPage) handleSearch(off);
+      else handleBrowse({}, off);
     };
 
     const handleAIToggle = async () => {
@@ -34067,9 +34123,9 @@ const DashboardTiles = {
         console.error('Failed to refresh community facets:', error);
       }
 
-      if (communityActiveMode === 'browse') {
+      if (!isCommunitySearchPage) {
         handleBrowse({ includeAI }, 0);
-      } else if (communityActiveMode === 'search') {
+      } else if (communitySearchQuery.trim() || communitySearchPlatform.trim()) {
         handleSearch(0, includeAI);
       }
     };
@@ -34605,6 +34661,7 @@ const DashboardTiles = {
           </div>
         )}
 
+        {(isCommunitySearchPage || communityBuildProgress || communityMigrationProgress) && (
         <div className="card nx-community-search-card">
 
           {/* Retro Progress Bar */}
@@ -34655,6 +34712,8 @@ const DashboardTiles = {
           )}
 
           {/* Search toolbar */}
+          {isCommunitySearchPage && (
+          <React.Fragment>
           <div className="nx-comm-toolbar" style={{ marginBottom: '1.25rem' }}>
             <div className="nx-comm-search">
               <span className="nx-comm-search-icon"><Search size={18} /></span>
@@ -34745,10 +34804,13 @@ const DashboardTiles = {
               Found {communityTotalResults} preroll{communityTotalResults !== 1 ? 's' : ''} • Showing {communitySearchResults.length} results
             </div>
           )}
+          </React.Fragment>
+          )}
         </div>
+        )}
 
         {/* Browse the library by facet (category / platform / creator / sort) */}
-        {communityFacets && (
+        {!isCommunitySearchPage && communityFacets && (
           <div className="card">
             <h3 style={{ marginTop: 0, marginBottom: '0.75rem', fontSize: '1rem', display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
               <Filter size={16} /> Browse the Library
@@ -34777,6 +34839,15 @@ const DashboardTiles = {
                 </select>
               </div>
               <div>
+                <label className="nx-conn-field-label">Results per page</label>
+                <select className="input" value={communityResultLimit} onChange={(e) => setCommunityResultLimit(Number(e.target.value))}>
+                  <option value={10}>10 results</option>
+                  <option value={20}>20 results</option>
+                  <option value={50}>50 results</option>
+                  <option value={100}>100 results</option>
+                </select>
+              </div>
+              <div>
                 <label className="nx-conn-field-label">Sort</label>
                 <select className="input" value={browseSort} onChange={e => { setBrowseSort(e.target.value); handleBrowse({ sort: e.target.value }); }}>
                   <option value="name">Name (A–Z)</option>
@@ -34786,8 +34857,21 @@ const DashboardTiles = {
               </div>
             </div>
             <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', flexWrap: 'wrap' }}>
+              <button
+                type="button"
+                className={`nx-comm-ai-toggle${communityIncludeAI ? ' active' : ''}`}
+                aria-pressed={communityIncludeAI}
+                onClick={handleAIToggle}
+                disabled={communityIsSearching}
+                title={communityIncludeAI ? 'Exclude AI-generated prerolls' : 'Include AI-generated prerolls'}
+              >
+                <Sparkles size={16} />
+                <span>AI-generated</span>
+                <span className="nx-comm-ai-state">{communityIncludeAI ? 'Included' : 'Excluded'}</span>
+              </button>
               <button className="button" onClick={() => handleBrowse()} disabled={communityIsSearching}>
-                <Filter size={14} style={{ marginRight: '0.35rem' }} /> Browse
+                {communityIsSearching ? <Loader2 size={14} className="spin" /> : <Filter size={14} />}
+                {communityIsSearching ? 'Loading...' : 'Browse'}
               </button>
               {(browseCategory || browseCreator || browsePlatform) && (
                 <button className="button button-secondary" onClick={() => { setBrowseCategory(''); setBrowseCreator(''); setBrowsePlatform(''); handleBrowse({ category: '', creator: '', platform: '' }); }}>
@@ -34963,12 +35047,17 @@ const DashboardTiles = {
         {/* Empty state */}
         {communitySearchResults.length === 0 && !communityIsSearching && (
           <div className="nx-empty">
-            <span className="nx-empty-icon"><Film size={48} /></span>
+            <span className="nx-empty-icon">{isCommunitySearchPage ? <Search size={48} /> : <LayoutGrid size={48} />}</span>
             <h3 className="nx-empty-title">
-              {communityTotalResults === 0 && communitySearchQuery ? 'No results found' : 'Search the community library'}
+              {!isCommunitySearchPage
+                ? 'Browse the community library'
+                : (communityTotalResults === 0 && communitySearchQuery ? 'No results found' : 'Search the community library')}
             </h3>
             <p className="nx-empty-text">
-              {communityTotalResults === 0 && communitySearchQuery
+              {!isCommunitySearchPage ? (
+                'Choose any combination of category, platform, creator, and sort order, or leave every filter open to browse the full catalog.'
+              ) :
+                communityTotalResults === 0 && communitySearchQuery
                 ? `Nothing matched "${communitySearchQuery}". Try a different theme, holiday, genre, or franchise.`
                 : 'Search by theme, holiday, genre, or franchise — e.g. "halloween", "thanksgiving", "christmas", "marvel", "star wars".'}
             </p>
@@ -34976,6 +35065,7 @@ const DashboardTiles = {
         )}
 
         {/* Random Preroll Section */}
+        {!isCommunitySearchPage && (
         <div className="card nx-community-random-card">
           <h3 style={{ marginTop: 0, marginBottom: '0.85rem', display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '1rem' }}>
             <Shuffle size={16} /> Random Preroll
@@ -35060,6 +35150,8 @@ const DashboardTiles = {
             </div>
           )}
         </div>
+
+        )}
 
         {/* Attribution */}
         <p style={{ textAlign: 'center', fontSize: '0.82rem', color: 'var(--text-muted)', margin: '0.25rem 0 0' }}>
@@ -35648,7 +35740,7 @@ const DashboardTiles = {
     activeTab.startsWith('nexup') ? 'nexup' :
     activeTab.startsWith('settings') ? 'settings' :
     activeTab === 'connect' ? 'connect' :
-    activeTab === 'community-prerolls' ? 'community' :
+    activeTab.startsWith('community-prerolls') ? 'community' :
     'dashboard';
 
   return (
@@ -35820,7 +35912,7 @@ const DashboardTiles = {
        {activeTab.startsWith('nexup') && renderNexUp()}
        {activeTab.startsWith('settings') && renderSettings()}
        {activeTab === 'connect' && renderConnect()}
-       {activeTab === 'community-prerolls' && renderCommunityPrerolls()}
+       {activeTab.startsWith('community-prerolls') && renderCommunityPrerolls()}
      </div>
 
      {/* NeX-Up Sequence Wizard Modal - Global (accessible from any NeX-Up tab) */}
