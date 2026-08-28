@@ -367,7 +367,31 @@ def ensure_schema() -> None:
             # Coming Soon TV Trailers: ensure excluded_from_list column
             if not _sqlite_has_column("coming_soon_tv_trailers", "excluded_from_list"):
                 _sqlite_add_column("coming_soon_tv_trailers", "excluded_from_list BOOLEAN DEFAULT 0")
-            
+
+            # Repair trailers whose download finished but whose status was never
+            # advanced past the model default of 'pending'. A row with both a
+            # downloaded_at and a local_path is a completed download by
+            # definition, and roughly a dozen queries key off status ==
+            # 'downloaded' — retention, the applied-preroll guard, the upcoming
+            # "already downloaded" markers. Left as 'pending' the file is
+            # invisible to all of them: never reaped, never counted.
+            try:
+                with engine.connect() as conn:
+                    repaired = 0
+                    for _tbl in ("coming_soon_trailers", "coming_soon_tv_trailers"):
+                        res = conn.exec_driver_sql(
+                            f"UPDATE {_tbl} SET status = 'downloaded' "
+                            "WHERE downloaded_at IS NOT NULL "
+                            "AND local_path IS NOT NULL AND TRIM(local_path) != '' "
+                            "AND (status IS NULL OR status IN ('pending', 'downloading'))"
+                        )
+                        repaired += res.rowcount or 0
+                    if repaired:
+                        conn.commit()
+                        print(f"Schema: marked {repaired} completed trailer(s) as downloaded")
+            except Exception as _e:
+                print(f"Schema: trailer status repair skipped: {_e}")
+
             # Settings: NeX-Up unmonitored settings
             if not _sqlite_has_column("settings", "nexup_include_unmonitored_movies"):
                 _sqlite_add_column("settings", "nexup_include_unmonitored_movies BOOLEAN DEFAULT 0")

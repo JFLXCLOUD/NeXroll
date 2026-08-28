@@ -609,8 +609,15 @@ class Scheduler:
                 # movie is even out (an early download would otherwise be removed
                 # well before its release). A trailer is only old enough to remove
                 # once BOTH its download and its release are past the cutoff.
+                # Keyed on the download itself (downloaded_at + local_path), not
+                # on status == 'downloaded'. Rows created before the status field
+                # was set consistently still sit at the model default 'pending'
+                # despite having a real file on disk, and matching the string
+                # exactly meant those were never reaped. Only an in-flight
+                # 'downloading' row is excluded, so a file still being written is
+                # never pulled out from under yt-dlp.
                 old = db.query(model).filter(
-                    model.status == 'downloaded',
+                    or_(model.status == None, model.status != 'downloading'),  # noqa: E711
                     model.downloaded_at != None,  # noqa: E711 (SQLAlchemy NULL check)
                     model.downloaded_at < cutoff,
                     or_(model.release_date == None, model.release_date < cutoff),  # noqa: E711
@@ -633,6 +640,14 @@ class Scheduler:
             if removed:
                 db.commit()
                 _scheduler_log(f"NeX-Up trailer retention: removed {removed} trailer(s) older than {days} day(s)")
+            else:
+                # Logged at debug so a pass that reaps nothing is still visible.
+                # Previously this job wrote nothing at all when it found nothing,
+                # so "is retention even running?" was unanswerable from the logs.
+                _scheduler_log(
+                    f"NeX-Up trailer retention: nothing past the {days}-day window",
+                    level="DEBUG"
+                )
             if skipped_in_use:
                 _scheduler_log(
                     f"NeX-Up trailer retention: kept {skipped_in_use} expired trailer(s) "
