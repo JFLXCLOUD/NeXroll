@@ -231,6 +231,7 @@ export default function NeXUpGeneratorStudio(props) {
               <SectionHeader step="02" icon={Video} title="Title, timing, and tone" copy="Personalize the message while keeping the composition broadcast-safe." />
               <div className="nx-gen-card-body">
                 <div className="nx-gen-fields">
+                  <label><span>Name this preroll <small>(optional)</small></span><input value={dynamicSettings.name || ''} onChange={event => updateDynamic({ name: event.target.value })} placeholder="e.g. Holiday Intro" /><small>Naming it saves a distinct file you can pick individually in the Sequence Builder. Leave blank to keep overwriting the template/theme combo as before.</small></label>
                   <label><span>Server name</span><input value={dynamicSettings.server_name} onChange={event => updateDynamic({ server_name: event.target.value })} placeholder="My Media Server" /></label>
                   <label><span>Duration</span><select value={dynamicSettings.duration} onChange={event => updateDynamic({ duration: Number(event.target.value) })}>{[3, 4, 5, 6, 7, 8, 10, 15, 20].map(value => <option key={value} value={value}>{value} seconds</option>)}</select></label>
                   <label><span>Text language</span><select value={dynamicSettings.language} onChange={event => updateDynamic({ language: event.target.value })}><option value="en">English</option><option value="fr">French</option><option value="es">Spanish</option><option value="de">German</option></select></label>

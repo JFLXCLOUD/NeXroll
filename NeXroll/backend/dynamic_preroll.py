@@ -406,7 +406,64 @@ class DynamicPrerollGenerator:
     def check_ffmpeg_available(self) -> bool:
         """Alias for is_available - check if FFmpeg is available"""
         return self.is_available()
-    
+
+    def generate_blank_video(self, duration: float, resolution: str = '1080', frame_rate: int = 30) -> Optional[str]:
+        """Generate (or reuse a cached) silent black video, used as a timed
+        pause between blocks in a sequence. Cached by duration/resolution so
+        repeated use after the first generation is free."""
+        if not self.output_dir:
+            logger.error("Cannot generate blank video: no output directory configured")
+            return None
+        if not self.ffmpeg_path:
+            logger.error("Cannot generate blank video: FFmpeg not found")
+            return None
+
+        duration = max(0.5, float(duration))
+        width, height = RENDER_RESOLUTIONS.get(str(resolution), RENDER_RESOLUTIONS['1080'])
+        output_filename = f"blank_{duration:g}s_{resolution}.mp4"
+        output_path = self.output_dir / output_filename
+
+        if output_path.exists() and output_path.stat().st_size > 0:
+            return str(output_path)
+
+        cmd = [
+            self.ffmpeg_path,
+            '-y',
+            '-f', 'lavfi',
+            '-i', f'color=c=black:s={width}x{height}:d={duration}:r={frame_rate}',
+            '-f', 'lavfi',
+            '-i', f'anullsrc=r=48000:cl=stereo:d={duration}',
+            '-t', str(duration),
+            '-c:v', 'libx264',
+            '-preset', 'veryfast',
+            '-crf', '24',
+            '-c:a', 'aac',
+            '-b:a', '128k',
+            '-shortest',
+            '-pix_fmt', 'yuv420p',
+            str(output_path)
+        ]
+
+        try:
+            result = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                encoding='utf-8',
+                errors='replace',
+                timeout=60,
+                startupinfo=STARTUPINFO,
+                creationflags=CREATE_NO_WINDOW
+            )
+            if result.returncode == 0 and output_path.exists():
+                logger.info(f"Generated blank pause video: {output_path} ({duration}s)")
+                return str(output_path)
+            logger.error(f"Failed to generate blank video: {result.stderr[:500] if result.stderr else 'no error'}")
+            return None
+        except Exception as e:
+            logger.error(f"Exception generating blank video: {e}")
+            return None
+
     def get_templates(self) -> Dict[str, Dict[str, Any]]:
         """Get available templates"""
         return self.TEMPLATES.copy()

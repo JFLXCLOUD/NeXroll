@@ -2742,19 +2742,43 @@ class Scheduler:
                 else:
                     _scheduler_log("Sequence: NeX-Up storage path not configured for Coming Soon List", level="WARNING")
             elif stype == "dynamic_preroll":
-                # Dynamic preroll video (template + theme combination)
-                template = str(step.get("template", "coming_soon")).lower()
-                theme = str(step.get("theme", "midnight")).lower()
+                # A specific already-generated NeX-Up video (preferred), or the
+                # legacy template+theme combination for older saved sequences.
                 setting_obj = db.query(models.Setting).first()
                 storage = getattr(setting_obj, "nexup_storage_path", None) if setting_obj else None
                 if storage:
-                    video_file = os.path.join(storage, "dynamic_prerolls", f"{template}_{theme}_preroll.mp4")
+                    filename = step.get("filename")
+                    if filename:
+                        video_file = os.path.join(storage, "dynamic_prerolls", os.path.basename(str(filename)))
+                    else:
+                        template = str(step.get("template", "coming_soon")).lower()
+                        theme = str(step.get("theme", "midnight")).lower()
+                        video_file = os.path.join(storage, "dynamic_prerolls", f"{template}_{theme}_preroll.mp4")
                     if os.path.exists(video_file):
                         paths.append(os.path.abspath(video_file))
                     else:
-                        _scheduler_log(f"Sequence: Dynamic preroll not found: {video_file}", level="WARNING")
+                        _scheduler_log(f"Sequence: Generated preroll not found: {video_file}", level="WARNING")
                 else:
-                    _scheduler_log("Sequence: NeX-Up storage path not configured for dynamic preroll", level="WARNING")
+                    _scheduler_log("Sequence: NeX-Up storage path not configured for generated preroll", level="WARNING")
+            elif stype == "separator":
+                # Timed blank/black gap between blocks
+                duration = float(step.get("duration") or 3)
+                setting_obj = db.query(models.Setting).first()
+                storage = getattr(setting_obj, "nexup_storage_path", None) if setting_obj else None
+                if storage:
+                    try:
+                        from backend.dynamic_preroll import DynamicPrerollGenerator
+                        output_dir = os.path.join(storage, "dynamic_prerolls")
+                        os.makedirs(output_dir, exist_ok=True)
+                        blank_path = DynamicPrerollGenerator(output_dir).generate_blank_video(duration)
+                        if blank_path:
+                            paths.append(os.path.abspath(blank_path))
+                        else:
+                            _scheduler_log("Sequence: Could not generate blank pause video (FFmpeg missing?)", level="WARNING")
+                    except Exception as e:
+                        _scheduler_log(f"Sequence: Error generating pause block: {e}", level="ERROR")
+                else:
+                    _scheduler_log("Sequence: NeX-Up storage path not configured for pause block", level="WARNING")
             else:
                 # ignore unknown step types
                 continue
@@ -2973,14 +2997,32 @@ class Scheduler:
                                     if os.path.exists(video_file):
                                         paths.append(os.path.abspath(video_file))
                             elif stype == "dynamic_preroll":
-                                template = str(step.get("template", "coming_soon")).lower()
-                                theme = str(step.get("theme", "midnight")).lower()
                                 blend_setting = db.query(models.Setting).first()
                                 storage = getattr(blend_setting, "nexup_storage_path", None) if blend_setting else None
                                 if storage:
-                                    video_file = os.path.join(storage, "dynamic_prerolls", f"{template}_{theme}_preroll.mp4")
+                                    filename = step.get("filename")
+                                    if filename:
+                                        video_file = os.path.join(storage, "dynamic_prerolls", os.path.basename(str(filename)))
+                                    else:
+                                        template = str(step.get("template", "coming_soon")).lower()
+                                        theme = str(step.get("theme", "midnight")).lower()
+                                        video_file = os.path.join(storage, "dynamic_prerolls", f"{template}_{theme}_preroll.mp4")
                                     if os.path.exists(video_file):
                                         paths.append(os.path.abspath(video_file))
+                            elif stype == "separator":
+                                duration = float(step.get("duration") or 3)
+                                blend_setting = db.query(models.Setting).first()
+                                storage = getattr(blend_setting, "nexup_storage_path", None) if blend_setting else None
+                                if storage:
+                                    try:
+                                        from backend.dynamic_preroll import DynamicPrerollGenerator
+                                        output_dir = os.path.join(storage, "dynamic_prerolls")
+                                        os.makedirs(output_dir, exist_ok=True)
+                                        blank_path = DynamicPrerollGenerator(output_dir).generate_blank_video(duration)
+                                        if blank_path:
+                                            paths.append(os.path.abspath(blank_path))
+                                    except Exception:
+                                        pass
                 except Exception as e:
                     _scheduler_log(f"Error parsing sequence for blended schedule '{schedule.name}': {e}", level="WARNING")
             
@@ -3177,19 +3219,42 @@ class Scheduler:
                         _scheduler_log("FILLER: NeX-Up storage path not configured for Coming Soon List", level="WARNING")
                 
                 elif block_type == "dynamic_preroll":
-                    template = str(block.get("template", "coming_soon")).lower()
-                    theme = str(block.get("theme", "midnight")).lower()
                     setting_obj = db.query(models.Setting).first()
                     storage = getattr(setting_obj, "nexup_storage_path", None) if setting_obj else None
                     if storage:
-                        video_file = os.path.join(storage, "dynamic_prerolls", f"{template}_{theme}_preroll.mp4")
+                        filename = block.get("filename")
+                        if filename:
+                            video_file = os.path.join(storage, "dynamic_prerolls", os.path.basename(str(filename)))
+                        else:
+                            template = str(block.get("template", "coming_soon")).lower()
+                            theme = str(block.get("theme", "midnight")).lower()
+                            video_file = os.path.join(storage, "dynamic_prerolls", f"{template}_{theme}_preroll.mp4")
                         if os.path.exists(video_file):
                             paths.append(os.path.abspath(video_file))
                         else:
-                            _scheduler_log(f"FILLER: Dynamic preroll not found: {video_file}", level="WARNING")
+                            _scheduler_log(f"FILLER: Generated preroll not found: {video_file}", level="WARNING")
                     else:
-                        _scheduler_log("FILLER: NeX-Up storage path not configured for dynamic preroll", level="WARNING")
-            
+                        _scheduler_log("FILLER: NeX-Up storage path not configured for generated preroll", level="WARNING")
+
+                elif block_type == "separator":
+                    duration = float(block.get("duration") or 3)
+                    setting_obj = db.query(models.Setting).first()
+                    storage = getattr(setting_obj, "nexup_storage_path", None) if setting_obj else None
+                    if storage:
+                        try:
+                            from backend.dynamic_preroll import DynamicPrerollGenerator
+                            output_dir = os.path.join(storage, "dynamic_prerolls")
+                            os.makedirs(output_dir, exist_ok=True)
+                            blank_path = DynamicPrerollGenerator(output_dir).generate_blank_video(duration)
+                            if blank_path:
+                                paths.append(os.path.abspath(blank_path))
+                            else:
+                                _scheduler_log("FILLER: Could not generate blank pause video (FFmpeg missing?)", level="WARNING")
+                        except Exception as e:
+                            _scheduler_log(f"FILLER: Error generating pause block: {e}", level="ERROR")
+                    else:
+                        _scheduler_log("FILLER: NeX-Up storage path not configured for pause block", level="WARNING")
+
             if not paths:
                 _scheduler_log(f"Filler sequence '{saved_seq.name}' produced no preroll paths", level="WARNING")
                 return False

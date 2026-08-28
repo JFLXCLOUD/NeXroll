@@ -46,7 +46,7 @@ import {
     Search, Folder, Film, BookOpen, Star, Plus, PlusCircle, Settings, Target, CheckCircle, Link, Link2,
     Sun, Moon, RefreshCw, Download, AlertTriangle, Ban, Crown, Shuffle, Lock, Bell,
     ListOrdered, Palette, Lightbulb, Inbox, FolderOpen, Wrench, FileText, Sliders, FolderSync,
-    Bug, Zap, Loader2, Package, FlaskConical, TreePine, Check, XCircle, Video, ChevronRight, ChevronDown,
+    Bug, Zap, Loader2, Package, FlaskConical, TreePine, Check, XCircle, Video, ChevronRight, ChevronDown, ChevronUp,
     Library, Clapperboard, Sparkles, PartyPopper, Users2, Theater, Eye, EyeOff, X, User, RefreshCcw, Menu,
     Youtube, Globe, Key, Rocket, FileUp, ArrowRight, HardDrive, ListChecks, Unlink, LinkIcon, ExternalLink,
     Tv, ClipboardList, Info, RotateCw, LayoutDashboard, BarChart3, PieChart as PieChartIcon, TrendingUp, Server, Timer, ArrowUp, ArrowDown,
@@ -81,6 +81,44 @@ const DEFAULT_ORDER = ['now_showing', 'system_health', 'prerolls', 'quick_action
 const DEFAULT_HIDDEN = DEFAULT_ORDER.filter(key => !FOCUS_ESSENTIAL_KEYS.includes(key));
 const DASH_KEYS = DEFAULT_ORDER.slice();
 const NEXROLL_WIKI_URL = 'https://github.com/JFLXCLOUD/NeXroll/wiki';
+
+// ---- Themes ---------------------------------------------------------------
+// Appearance used to be a single boolean, which the styling leans on heavily:
+// ~94 `body.dark` rules, ~65 `body.light` rules, and ~84 inline `darkMode ? x : y`
+// branches in the JSX below. Every theme is still fundamentally light or dark,
+// so `base` keeps feeding all of that unchanged — the body carries the base as a
+// class exactly like before, plus a `theme-<id>` class that only overrides color
+// variables in CSS. Adding a theme is a block of values, not a refactor.
+const THEMES = {
+  midnight:  { label: 'Midnight',  base: 'dark',  blurb: 'Neutral graphite with violet accents.', swatch: ['#101112', '#7667ff', '#35d06f'] },
+  daylight:  { label: 'Daylight',  base: 'light', blurb: 'Cool paper white with indigo accents.', swatch: ['#f4f5f7', '#6657f4', '#15945d'] },
+  cinema:    { label: 'Cinema',    base: 'dark',  blurb: 'Warm black, velvet crimson, marquee gold.', swatch: ['#131010', '#b02a37', '#e3b04b'] },
+  nocturne:  { label: 'Nocturne',  base: 'dark',  blurb: 'Deep navy with a cyan highlight.', swatch: ['#0c1017', '#2f7ff0', '#38c8d8'] },
+  parchment: { label: 'Parchment', base: 'light', blurb: 'Warm sepia paper, no pure white.', swatch: ['#f2eadb', '#9a5b23', '#4d7a41'] },
+  terminal:  { label: 'Terminal',  base: 'dark',  blurb: 'Green phosphor CRT, dialled back to stay readable.', swatch: ['#080b08', '#1f7a33', '#4ade80'] },
+  neon:      { label: 'Neon',      base: 'dark',  blurb: 'Synthwave violet-black, magenta and electric cyan.', swatch: ['#0b0714', '#ff2e97', '#00e5ff'] },
+  carbon:    { label: 'Carbon',    base: 'dark',  blurb: 'True black for OLED panels, with an amber accent.', swatch: ['#000000', '#f0a020', '#3ecf6d'] },
+};
+const THEME_IDS = Object.keys(THEMES);
+const DEFAULT_THEME = 'midnight';
+const resolveTheme = (id) => (THEMES[id] ? id : DEFAULT_THEME);
+
+// Videos produced by the NeX-Up generator (dynamic prerolls and Coming Soon
+// lists) rather than added by the user. They live in their own system
+// categories and are written to a dedicated folder, so either signal identifies
+// them. The library hides them by default — they're managed from NeX-Up, and in
+// bulk they bury the prerolls someone actually curated.
+const NEXUP_GENERATED_CATEGORIES = ['nex-up prerolls', 'coming soon lists'];
+const isNexUpGeneratedPreroll = (preroll) => {
+  if (!preroll) return false;
+  const path = String(preroll.path || '').toLowerCase().replace(/\\/g, '/');
+  if (path.includes('/dynamic_prerolls/') || path.includes('/coming_soon/')) return true;
+  const names = [
+    preroll.category?.name,
+    ...(Array.isArray(preroll.categories) ? preroll.categories.map(c => c?.name) : []),
+  ].filter(Boolean).map(n => String(n).toLowerCase());
+  return names.some(n => NEXUP_GENERATED_CATEGORIES.includes(n));
+};
 
 const HEALTH_CHECK_ACTIONS = {
   media_server: { tab: 'connect', label: 'Connect server' },
@@ -814,15 +852,20 @@ function App() {
   const [factoryReset, setFactoryReset] = useState({ open: false, wipeTrailers: false, wipePrerolls: false, wipeProvider: false, confirm: '', busy: false });
   const [communityTemplates, setCommunityTemplates] = useState([]);
   const [selectedSchedules, setSelectedSchedules] = useState([]);
-  const [darkMode, setDarkMode] = useState(() => {
+  const [theme, setTheme] = useState(() => {
     try {
-      const saved = localStorage.getItem('darkMode');
-      return saved !== null ? JSON.parse(saved) : true;
-    } catch {
-      return true;
-    }
+      const saved = localStorage.getItem('nx_theme');
+      if (saved && THEMES[saved]) return saved;
+      // Carry the pre-theme boolean over so an existing preference survives the
+      // upgrade instead of silently snapping back to the default.
+      const legacy = localStorage.getItem('darkMode');
+      if (legacy !== null) return JSON.parse(legacy) ? 'midnight' : 'daylight';
+    } catch { /* private mode / blocked storage — fall through to the default */ }
+    return DEFAULT_THEME;
   });
-  const [darkModeLoaded, setDarkModeLoaded] = useState(true); // Mark as loaded since we init from localStorage
+  // Everything downstream still asks "is this dark?" — that answer now comes
+  // from the active theme rather than being the setting itself.
+  const darkMode = THEMES[resolveTheme(theme)].base === 'dark';
   const [editingSchedule, setEditingSchedule] = useState(null);
   const [editingPreroll, setEditingPreroll] = useState(null);
   const [editingCategory, setEditingCategory] = useState(null);
@@ -899,6 +942,7 @@ function App() {
   const [systemDependencies, setSystemDependencies] = useState(null);
   const [dependenciesLoading, setDependenciesLoading] = useState(false);
   const [installingDep, setInstallingDep] = useState(null); // e.g. 'deno' while installing
+  const [downloadingDiagnostics, setDownloadingDiagnostics] = useState(false); // bundle generation takes ~10s+ with no other feedback
   const [updateInfo, setUpdateInfo] = useState(null);
   const [showUpdateBanner, setShowUpdateBanner] = useState(false);
   const [updateSettings, setUpdateSettings] = useState({ check_interval: 'daily', include_prerelease: false, last_check: null, dismissed_version: null });
@@ -1201,6 +1245,10 @@ const [applyingToServer, setApplyingToServer] = useState(false);
   // systems. No move/categorize/apply-to-Plex actions here; manage trailers
   // from the NeX-Up page.
   const [showNexupTrailersInLibrary, setShowNexupTrailersInLibrary] = useState(false);
+  // Generator output is hidden by default; the preference is remembered.
+  const [showNexupGeneratedInLibrary, setShowNexupGeneratedInLibrary] = useState(() => {
+    try { return localStorage.getItem('nx_show_generated') === '1'; } catch { return false; }
+  });
   const [tmdbKeyTest, setTmdbKeyTest] = useState(null); // { testing, valid, message }
   const [communityIndexProgress, setCommunityIndexProgress] = useState(null); // { status: 'Building...', phase: 'init'|'done'|'error' }
   const [nexupSyncProgress, setNexupSyncProgress] = useState(null); // { status: 'Syncing...', phase: 'init'|'done'|'error' }
@@ -1208,6 +1256,7 @@ const [applyingToServer, setApplyingToServer] = useState(false);
   const [generatorTab, setGeneratorTab] = useState('dynamic'); // 'dynamic' or 'coming-soon'
   // Dynamic Preroll Generator State
   const [dynamicPrerollSettings, setDynamicPrerollSettings] = useState({
+    name: '',
     template: 'coming_soon',
     server_name: '',
     duration: 5,
@@ -1451,6 +1500,7 @@ const [conflictWizardApplying, setConflictWizardApplying] = useState(false);
 const [conflictWizardResults, setConflictWizardResults] = useState(null); // { applied: [], failed: [] }
 const [ignoredConflicts, setIgnoredConflicts] = useState([]); // Array of ignored pair-keys like ["3-7"]
 const [showIgnoredConflicts, setShowIgnoredConflicts] = useState(false); // Toggle for ignored section
+const [showConflictAlternatives, setShowConflictAlternatives] = useState(false); // Approved conflicts page: alternatives panel
 const [conflictPageTimeframe, setConflictPageTimeframe] = useState('monthly'); // 'weekly', 'monthly', 'yearly'
 
 // Holiday Browser state
@@ -1697,17 +1747,85 @@ const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
   const [scheduleFilterType, setScheduleFilterType] = useState('all'); // 'all', 'daily', 'weekly', 'monthly', 'yearly', 'holiday'
   const [scheduleFilterStatus, setScheduleFilterStatus] = useState('all'); // 'all', 'running', 'enabled', 'paused'
   const [scheduleViewMode, setScheduleViewMode] = useState('compact'); // 'compact' or 'detailed'
+  // Secondary filters, revealed by the command centre's "Filters" button. Type
+  // and status stay inline in the toolbar; these are the less-common ones.
+  const [scheduleFiltersOpen, setScheduleFiltersOpen] = useState(false);
+  const [scheduleFilterPlayback, setScheduleFilterPlayback] = useState('all');
+  const [scheduleFilterBehavior, setScheduleFilterBehavior] = useState('all');
+  const [scheduleFilterConflictsOnly, setScheduleFilterConflictsOnly] = useState(false);
   const [scheduleCurrentPage, setScheduleCurrentPage] = useState(1);
   const schedulesPerPage = 10;
   const [scheduleCreateStep, setScheduleCreateStep] = useState(1);
+  const [isCreatingSchedule, setIsCreatingSchedule] = useState(false);
+  const [highlightSettingsTarget, setHighlightSettingsTarget] = useState(null);
   const [scheduleBuilderSelectedIndex, setScheduleBuilderSelectedIndex] = useState(0);
+  const [draggedBlockIndex, setDraggedBlockIndex] = useState(null);
+  const [fixedBlockPrerollSearch, setFixedBlockPrerollSearch] = useState('');
   const [sequenceLibrarySearch, setSequenceLibrarySearch] = useState('');
+  const [sequenceLibrarySort, setSequenceLibrarySort] = useState('updated');
   const [selectedScheduleConflictId, setSelectedScheduleConflictId] = useState(null);
+  const previousActiveTabRef = useRef(activeTab);
 
   useEffect(() => {
+    const previousTab = previousActiveTabRef.current;
+    previousActiveTabRef.current = activeTab;
+    // Navigating away from the schedule editor any other way (sidebar, breadcrumb)
+    // should discard the in-progress edit, same as closing the old edit modal did.
+    // 'schedules/builder' is excluded: the Content step sends advanced-mode edits
+    // there deliberately, and the user is expected to come back and finish.
+    if (previousTab === 'schedules/create' && activeTab !== 'schedules/create' && activeTab !== 'schedules/builder' && editingSchedule) {
+      setEditingSchedule(null);
+      setScheduleForm({
+        name: '', type: 'monthly', start_date: '', end_date: '',
+        category_id: '', shuffle: true, playlist: false, fallback_category_id: '', color: '',
+        holiday_name: '', holiday_country: '', blend_enabled: false, priority: 5, exclusive: false
+      });
+      setScheduleMode('simple');
+      setSequenceBlocks([]);
+      setLoadedSavedSequenceId(null);
+      setWeekDays([]);
+      setSelectedMonths([]); setMonthDays([]);
+      setTimeRange({ start: '', end: '' });
+    }
     if (activeTab === 'schedules/calendar') setCalendarMode('week');
-    if (activeTab === 'schedules/create') setScheduleCreateStep(1);
+    if (activeTab === 'schedules/create') {
+      setScheduleCreateStep(1);
+      // Editing an existing schedule already populated this state via
+      // handleEditSchedule — never clobber it with an unrelated saved draft.
+      if (!editingSchedule) {
+        try {
+          const saved = localStorage.getItem('nx_schedule_draft');
+          if (saved) {
+            const draft = JSON.parse(saved);
+            if (draft.scheduleForm) setScheduleForm(draft.scheduleForm);
+            if (draft.weekDays) setWeekDays(draft.weekDays);
+            if (draft.timeRange) setTimeRange(draft.timeRange);
+            if (draft.scheduleMode) setScheduleMode(draft.scheduleMode);
+            if (draft.sequenceBlocks) setSequenceBlocks(draft.sequenceBlocks);
+            if (draft.selectedMonths) setSelectedMonths(draft.selectedMonths);
+            if (draft.monthDays) setMonthDays(draft.monthDays);
+            showAlert('Restored your saved schedule draft.', 'info');
+          }
+        } catch (e) {
+          console.error('Failed to restore schedule draft:', e);
+        }
+      }
+    }
   }, [activeTab]);
+
+  useEffect(() => {
+    if (!highlightSettingsTarget || activeTab !== 'settings') return;
+    const timer = setTimeout(() => {
+      const el = document.querySelector(`.${highlightSettingsTarget}`);
+      if (el) {
+        el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        el.classList.add('nx-settings-highlight');
+        setTimeout(() => el.classList.remove('nx-settings-highlight'), 2400);
+      }
+      setHighlightSettingsTarget(null);
+    }, 200);
+    return () => clearTimeout(timer);
+  }, [activeTab, highlightSettingsTarget]);
 
   // Upload form state
   const [uploadForm, setUploadForm] = useState({
@@ -1813,17 +1931,23 @@ const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
     return response.json();
   };
 
-  // Apply theme class on mount and when darkMode changes
+  // Apply the theme on mount and whenever it changes. Two classes: the base,
+  // which every existing body.dark / body.light rule keys off, and the theme id,
+  // which only carries color overrides.
   useLayoutEffect(() => {
-    document.body.className = darkMode ? 'dark' : 'light';
-  }, [darkMode]);
+    const id = resolveTheme(theme);
+    document.body.className = `${THEMES[id].base} theme-${id}`;
+  }, [theme]);
 
   // Save theme preference to localStorage when user changes it
   useEffect(() => {
-    if (darkModeLoaded) {
-      localStorage.setItem('darkMode', JSON.stringify(darkMode));
-    }
-  }, [darkMode, darkModeLoaded]);
+    try {
+      localStorage.setItem('nx_theme', resolveTheme(theme));
+      // Keep the legacy key in step so anything still reading it (and older
+      // builds, if a user rolls back) sees the right light/dark answer.
+      localStorage.setItem('darkMode', JSON.stringify(THEMES[resolveTheme(theme)].base === 'dark'));
+    } catch { /* storage unavailable — the theme still applies for this session */ }
+  }, [theme]);
 
   useEffect(() => {
     try { localStorage.setItem('prerollView', prerollView); } catch {}
@@ -2174,9 +2298,10 @@ const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
     setShowInstallPrompt(false);
   };
  
-  const toggleTheme = () => {
-    setDarkMode(!darkMode);
-  };
+  // The topbar button cycles rather than toggles now that there are five themes.
+  // The full picker lives in Settings > General > Appearance.
+  const nextThemeId = THEME_IDS[(THEME_IDS.indexOf(resolveTheme(theme)) + 1) % THEME_IDS.length];
+  const cycleTheme = () => setTheme(nextThemeId);
 
   // === Timezone settings helpers (must be before useEffect) ===
   const loadTimezone = React.useCallback(async () => {
@@ -3328,6 +3453,7 @@ const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
 
   const handleCreateSchedule = async (e) => {
     e.preventDefault();
+    if (isCreatingSchedule) return;
 
     let sourceSequenceId = loadedSavedSequenceId || null;
 
@@ -3418,6 +3544,7 @@ const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
       }
     }
 
+    setIsCreatingSchedule(true);
     fetch(apiUrl('schedules'), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -3435,14 +3562,15 @@ const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
         // Check for potential conflicts with the new schedule
         const newSchedule = { ...data, ...scheduleData };
         const potentialConflicts = getScheduleConflicts(newSchedule);
-        
+
         if (potentialConflicts.length > 0) {
           const conflictNames = potentialConflicts.map(c => c.schedule.name).join(', ');
           alert(`Schedule created, but it conflicts with: ${conflictNames}\n\nThe schedules share priority ${scheduleData.priority || 5} during an overlapping window. NeXroll's fixed tie-break order will select one.\n\nTo make the intended winner explicit, give the schedules different priorities.`);
         } else {
           alert('Schedule created successfully!');
         }
-        
+
+        localStorage.removeItem('nx_schedule_draft');
         setScheduleForm({
           name: '', type: 'monthly', start_date: '', end_date: '',
           category_id: '', shuffle: true, playlist: false, fallback_category_id: '', color: '',
@@ -3454,17 +3582,18 @@ const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
         setWeekDays([]);
         setSelectedMonths([]); setMonthDays([]);
         setTimeRange({ start: '', end: '' });
-        // Add the new schedule to the state immediately with category info
-        if (data.category) {
-          setSchedules(prev => [...prev, data]);
-        } else {
-          // If no category in response, refresh data
-          fetchData();
-        }
+        // Always refresh from the server: the raw POST response doesn't carry
+        // every field (recurrence_pattern, etc.) that conflict detection needs,
+        // so an optimistic local append left new schedules invisible to the
+        // conflicts page until a manual refresh.
+        fetchData();
       })
       .catch(error => {
         console.error('Schedule creation error:', error);
         alert('Failed to create schedule: ' + error.message);
+      })
+      .finally(() => {
+        setIsCreatingSchedule(false);
       });
   };
 
@@ -3961,7 +4090,7 @@ const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
     // Normalize priority (default to 5 if not set)
     const thisPriority = schedule.priority ?? 5;
     const actionableConflictDays = getActionableConflictDaysForSchedule(schedule);
-    
+
     // Check against all other schedules
     schedules.forEach(other => {
       if (other.id === schedule.id) return; // Skip self
@@ -4563,6 +4692,23 @@ const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
     fetchData(); // Refresh schedule data
   };
 
+  // Apply one fix for one conflict immediately (used by the Command Center conflicts page)
+  const applySingleConflictFix = async (conflict, fix) => {
+    if (!fix) return;
+    setConflictWizardApplying(true);
+    const workingSchedules = new Map(schedules.map(schedule => [schedule.id, { ...schedule }]));
+    const results = await applyConflictFix(fix.changes, workingSchedules);
+    setConflictWizardApplying(false);
+    setShowConflictAlternatives(false);
+    if (results.every(r => r.success)) {
+      showAlert(`Applied: ${fix.label}`, 'success');
+      setConflictResolutions(values => ({ ...values, [conflict.id]: fix.id }));
+      fetchData();
+    } else {
+      showAlert('Could not apply that fix. Try editing the schedules manually.', 'error');
+    }
+  };
+
   // Auto-resolve: pick the best suggestion for each conflict
   const autoResolveConflicts = (allConflicts) => {
     const auto = {};
@@ -4730,6 +4876,9 @@ const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
           const stats = getCategoryStats(c);
           return stats.totalPrerolls === 0;
         });
+        break;
+      case 'system':
+        filtered = filtered.filter(c => c.is_system);
         break;
       default: // 'all'
         break;
@@ -5105,6 +5254,7 @@ const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
 
   const handleEditSchedule = (schedule) => {
     setEditingSchedule(schedule);
+    setActiveTab('schedules/create');
     setLoadedSavedSequenceId(schedule.source_sequence_id ?? null);
     setScheduleForm({
       name: schedule.name,
@@ -5183,8 +5333,26 @@ const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
     }
  };
 
+  const handleCancelScheduleEdit = () => {
+    setEditingSchedule(null);
+    setScheduleForm({
+      name: '', type: 'monthly', start_date: '', end_date: '',
+      category_id: '', shuffle: true, playlist: false, fallback_category_id: '', color: '',
+      holiday_name: '', holiday_country: '', blend_enabled: false, priority: 5, exclusive: false
+    });
+    setScheduleMode('simple');
+    setSequenceBlocks([]);
+    setLoadedSavedSequenceId(null);
+    setWeekDays([]);
+    setSelectedMonths([]); setMonthDays([]);
+    setTimeRange({ start: '', end: '' });
+    setScheduleCreateStep(1);
+    setActiveTab('schedules');
+  };
+
   const handleUpdateSchedule = (e) => {
     e.preventDefault();
+    if (isCreatingSchedule) return;
     console.log('Update schedule clicked');
     console.log('Editing schedule:', editingSchedule);
     console.log('Schedule mode:', scheduleMode);
@@ -5238,6 +5406,7 @@ const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
     console.log('Sending schedule data:', scheduleData);
     console.log('Making fetch request to:', apiUrl(`schedules/${editingSchedule.id}`));
 
+    setIsCreatingSchedule(true);
     fetch(apiUrl(`schedules/${editingSchedule.id}`), {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
@@ -5281,11 +5450,16 @@ const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
         setWeekDays([]);
         setSelectedMonths([]); setMonthDays([]);
         setTimeRange({ start: '', end: '' });
+        setScheduleCreateStep(1);
+        setActiveTab('schedules');
         fetchData();
       })
       .catch(error => {
         console.error('Update schedule error:', error);
         alert('Failed to update schedule: ' + error.message);
+      })
+      .finally(() => {
+        setIsCreatingSchedule(false);
       });
   };
 
@@ -6069,9 +6243,20 @@ const isScheduleActiveOnDay = (schedule, dayTime, normalizeDay) => {
       filtered = filtered.filter(p => !p.community_preroll_id);
     }
 
-    // 4. Sort last, so the ordering applies to what survived the filters.
+    // 4. Hide generator output unless asked for. Skipped when the user has
+    //    explicitly picked one of those categories, so choosing "NeX-Up Prerolls"
+    //    from the category filter never returns an empty list.
+    const viewingGeneratedCategory = filterCategory && filterCategory !== 'uncategorized'
+      && NEXUP_GENERATED_CATEGORIES.includes(
+        String(categories.find(c => String(c.id) === String(filterCategory))?.name || '').toLowerCase()
+      );
+    if (!showNexupGeneratedInLibrary && !viewingGeneratedCategory) {
+      filtered = filtered.filter(p => !isNexUpGeneratedPreroll(p));
+    }
+
+    // 5. Sort last, so the ordering applies to what survived the filters.
     return sortPrerolls(filtered, prerollSortField, prerollSortDirection);
-  }, [prerolls, filterCategory, filterTags, filterMatchStatus, prerollSortField, prerollSortDirection]);
+  }, [prerolls, categories, filterCategory, filterTags, filterMatchStatus, showNexupGeneratedInLibrary, prerollSortField, prerollSortDirection]);
 
   const totalPrerolls = filteredPrerolls.length;
   const totalPages = Math.max(1, Math.ceil(totalPrerolls / pageSize));
@@ -6294,16 +6479,13 @@ const visibleOrder = React.useMemo(
 
 const dashSensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 5 } }));
 const loadDashLayout = React.useCallback(async () => {
-  // localStorage is handled synchronously in the state initializer. Only fall
-  // back to the backend when this browser has no local copy.
-  let stored = null;
-  try { stored = localStorage.getItem('dashLayout'); } catch {}
-  if (stored) {
-    setDashLayoutReady(true);
-    return;
-  }
-  
-  // Fall back to backend if localStorage is empty
+  // The synchronous state initializer already applied localStorage (if any)
+  // so the first paint has no flash of defaults. But treating that local
+  // cache as permanent — never re-checking the backend once a browser has
+  // any copy — meant two devices (or a browser vs. a cleared one) could
+  // diverge forever, each stuck on its own stale snapshot. The backend is
+  // authoritative: always reconcile against it once on mount, and let it
+  // overwrite the local cache when it disagrees.
   try {
     const res = await fetch(apiUrl('/settings/dashboard-layout'));
     const data = await safeJson(res);
@@ -6344,7 +6526,9 @@ const loadDashLayout = React.useCallback(async () => {
 
 React.useEffect(() => { try { loadDashLayout(); } catch {} }, [loadDashLayout]);
 
-// Save to localStorage as primary storage (immediate persistence)
+// Fast local cache so the next load in this browser can paint instantly
+// without waiting on the network — the backend (see loadDashLayout) is what
+// actually reconciles across devices and survives a cleared cache.
 const saveDashLayoutToStorage = React.useCallback((layout) => {
   try {
     localStorage.setItem('dashLayout', JSON.stringify(layout));
@@ -6354,10 +6538,10 @@ const saveDashLayoutToStorage = React.useCallback((layout) => {
 }, []);
 
 const persistDashLayout = React.useCallback(async (next) => {
-  // First, save to localStorage for immediate persistence
+  // Update the local cache immediately so this tab feels instant...
   saveDashLayoutToStorage(next);
-  
-  // Then try to sync to backend (non-blocking, doesn't affect user experience)
+
+  // ...then sync to the backend, which is the durable, cross-device copy.
   setDashSaving(true);
   try {
     await fetch(apiUrl('/settings/dashboard-layout'), {
@@ -6378,7 +6562,7 @@ const persistDashLayout = React.useCallback(async (next) => {
     });
   } catch (e) {
     console.warn('Failed to persist dashboard layout to backend:', e);
-    // Not critical - localStorage is our fallback
+    // The local cache still has it; the next successful reconcile will retry.
   }
   setDashSaving(false);
 }, [saveDashLayoutToStorage]);
@@ -7684,7 +7868,9 @@ const DashboardTiles = {
   };
   const renderPageHeader = () => {
     if (activeTab === 'dashboard') return null;
-    const cfg = PAGE_HEADERS[activeTab];
+    const cfg = activeTab === 'schedules/create' && editingSchedule
+      ? { ...PAGE_HEADERS[activeTab], title: `Edit "${editingSchedule.name}"`, desc: 'Update the timing, content, and behavior for this schedule.' }
+      : PAGE_HEADERS[activeTab];
     if (!cfg) return null;
     const Icon = cfg.icon;
     return (
@@ -7739,14 +7925,18 @@ const DashboardTiles = {
             )}
             {activeTab === 'schedules/create' && (
               <>
-                <button type="button" className="button button-secondary" onClick={() => {
-                  localStorage.setItem('nx_schedule_draft', JSON.stringify({ scheduleForm, weekDays, timeRange, scheduleMode, sequenceBlocks }));
-                  showAlert('Schedule draft saved in this browser.', 'success');
-                }}><Save size={15} /> Save draft</button>
-                <button type="button" className="button" onClick={() => {
+                {editingSchedule ? (
+                  <button type="button" className="button button-secondary" onClick={handleCancelScheduleEdit}><X size={15} /> Cancel</button>
+                ) : (
+                  <button type="button" className="button button-secondary" onClick={() => {
+                    localStorage.setItem('nx_schedule_draft', JSON.stringify({ scheduleForm, weekDays, timeRange, scheduleMode, sequenceBlocks, selectedMonths, monthDays }));
+                    showAlert('Schedule draft saved in this browser.', 'success');
+                  }}><Save size={15} /> Save draft</button>
+                )}
+                <button type="button" className="button" disabled={isCreatingSchedule} onClick={() => {
                   if (scheduleCreateStep < 4) setScheduleCreateStep(step => Math.min(4, step + 1));
                   else document.getElementById('nx-approved-schedule-form')?.requestSubmit();
-                }}><Check size={15} /> {scheduleCreateStep < 4 ? 'Continue' : 'Create schedule'}</button>
+                }}><Check size={15} /> {scheduleCreateStep < 4 ? 'Continue' : (isCreatingSchedule ? (editingSchedule ? 'Saving...' : 'Creating...') : (editingSchedule ? 'Save changes' : 'Create schedule'))}</button>
               </>
             )}
             {activeTab === 'schedules/calendar' && (
@@ -7808,25 +7998,10 @@ const DashboardTiles = {
                 <button type="button" className="button" disabled={(!nexupSettings.radarr_connected && !nexupSettings.sonarr_connected) || !nexupSettings.storage_path || !ffmpegAvailable || (generatorTab === 'dynamic' && !dynamicPrerollSettings.server_name.trim())} onClick={() => generatorTab === 'dynamic' ? handleGenerateFromPreview() : handleGenerateComingSoonList(comingSoonListSettings.layout)}><Sparkles size={15} /> {generatorTab === 'dynamic' ? 'Generate preroll' : 'Generate list'}</button>
               </>
             )}
-            {activeTab === 'nexup/settings' && (
-              <>
-                <button type="button" className="button button-secondary" onClick={loadNexupSettings}><RotateCw size={15} /> Reset changes</button>
-                <button type="button" className="button nx-nexup-save-button" onClick={() => showAlert('NeX-Up settings are saved.', 'success')}><Save size={15} /> Save settings</button>
-              </>
-            )}
-            {activeTab === 'connect' && (
-              <button type="button" className="button button-secondary" onClick={handleDownloadDiagnostics}><Wrench size={15} /> Run diagnostics</button>
-            )}
             {activeTab === 'settings/storage' && (
               <>
                 <button type="button" className="button button-secondary" onClick={() => fetchData()}><RefreshCw size={15} /> Refresh usage</button>
                 <button type="button" className="button" onClick={() => handleRescanPrerolls()}><FolderSync size={15} /> Scan files now</button>
-              </>
-            )}
-            {activeTab === 'settings' && (
-              <>
-                <button type="button" className="button button-secondary" onClick={fetchData}><RotateCw size={15} /> Reset page</button>
-                <button type="button" className="button" onClick={() => showAlert('General settings are saved as you change them.', 'success')}><Save size={15} /> Save changes</button>
               </>
             )}
             {activeTab === 'settings/paths' && (
@@ -7840,7 +8015,7 @@ const DashboardTiles = {
             )}
             {activeTab === 'settings/logs' && (
               <>
-                <button type="button" className="button button-secondary" onClick={handleDownloadDiagnostics}><Wrench size={15} /> Diagnostics bundle</button>
+                <button type="button" className="button button-secondary" disabled={downloadingDiagnostics} onClick={handleDownloadDiagnostics}>{downloadingDiagnostics ? <Loader2 size={15} className="spin" /> : <Wrench size={15} />} {downloadingDiagnostics ? 'Generating…' : 'Diagnostics bundle'}</button>
                 <button type="button" className="button button-secondary" onClick={() => exportLogs('csv')}><Download size={15} /> Export CSV</button>
                 <button type="button" className="button" onClick={loadLogs}><RefreshCw size={15} /> Refresh</button>
               </>
@@ -7853,7 +8028,7 @@ const DashboardTiles = {
             )}
             {activeTab === 'settings/system' && (
               <>
-                <button type="button" className="button button-secondary" onClick={handleDownloadDiagnostics}><Wrench size={15} /> Download diagnostics</button>
+                <button type="button" className="button button-secondary" disabled={downloadingDiagnostics} onClick={handleDownloadDiagnostics}>{downloadingDiagnostics ? <Loader2 size={15} className="spin" /> : <Wrench size={15} />} {downloadingDiagnostics ? 'Generating…' : 'Download diagnostics'}</button>
                 <button type="button" className="button" onClick={handleForceUpdateCheck}><RefreshCw size={15} /> Check for updates</button>
               </>
             )}
@@ -7916,12 +8091,31 @@ const DashboardTiles = {
         { label: 'Need attention', value: conflicts, tone: conflicts ? 'warning' : 'success' }
       ];
     } else if (activeTab === 'connect') {
-      const serverState = activeServer === 'jellyfin' ? jellyfinStatus : activeServer === 'emby' ? embyStatus : plexStatus;
+      // "Active server" / "Connection" describe NeXroll's actual integration
+      // state (getActiveConnectedServer), not just whichever card the user
+      // happens to be previewing below (activeServer) — those are independent.
+      const realActive = getActiveConnectedServer(); // 'plex' | 'jellyfin' | 'emby' | 'conflict' | null
+      const activeLabel = realActive === 'conflict' ? 'Conflict' : realActive ? realActive.charAt(0).toUpperCase() + realActive.slice(1) : 'None';
+      const connectionValue = realActive === 'conflict' ? 'Multiple' : realActive ? 'Connected' : 'Disconnected';
+      const connectionTone = realActive === 'conflict' ? 'warning' : realActive ? 'success' : 'warning';
+      // pathMappings always carries at least one blank placeholder row (for the
+      // Path Mappings form's empty state) — filter those out so the tile reflects
+      // real saved mappings, not the placeholder. Path mappings are Plex-only, so
+      // Jellyfin/Emby show their real plugin-client count instead.
+      const realPathMappingCount = pathMappings.filter(mapping => (mapping.local || '').trim() && (mapping.plex || '').trim()).length;
+      const pluginClientCount = realActive === 'jellyfin'
+        ? (jellyfinServerInfo?.plugin_clients?.length || 0)
+        : realActive === 'emby'
+          ? (embyServerInfo?.plugin_clients?.length || 0)
+          : 0;
+      const thirdTile = (realActive === 'jellyfin' || realActive === 'emby')
+        ? { label: 'Plugin clients', value: pluginClientCount, tone: pluginClientCount ? 'success' : '' }
+        : { label: 'Path mappings', value: realPathMappingCount, tone: realPathMappingCount ? 'success' : '' };
       items = [
-        { label: 'Active server', value: activeServer.charAt(0).toUpperCase() + activeServer.slice(1), tone: 'info' },
-        { label: 'Connection', value: serverState, tone: serverState === 'Connected' ? 'success' : 'warning' },
-        { label: 'Path mappings', value: pathMappings.length },
-        { label: 'Schedules applied', value: schedules.filter(schedule => schedule.is_active).length }
+        { label: 'Active server', value: activeLabel, tone: realActive === 'conflict' ? 'warning' : realActive ? 'info' : '' },
+        { label: 'Connection', value: connectionValue, tone: connectionTone },
+        thirdTile,
+        { label: 'Schedules applied', value: activeScheduleIds.length, tone: activeScheduleIds.length ? 'success' : '' }
       ];
     } else if (activeTab.startsWith('community-prerolls')) {
       items = [
@@ -7934,17 +8128,26 @@ const DashboardTiles = {
     } else if (activeTab.startsWith('settings')) {
       if (activeTab === 'settings') {
         items = [
-          { label: 'Theme', value: darkMode ? 'Dark' : 'Light', tone: 'info' },
+          { label: 'Theme', value: THEMES[resolveTheme(theme)].label, tone: 'info' },
           { label: 'Timezone', value: currentTimezone, tone: 'info' },
           { label: 'Notifications', value: showNotifications ? 'Enabled' : 'Muted', tone: showNotifications ? 'success' : 'warning' },
           { label: 'Operating mode', value: passiveMode ? 'Coexistence' : 'Standard' }
         ];
       } else if (activeTab === 'settings/paths') {
+        // pathMappings always carries at least one blank placeholder row for the
+        // form's empty state — exclude it so these tiles reflect real saved mappings.
+        const realMappings = pathMappings.filter(mapping => (mapping.local || '').trim() && (mapping.plex || '').trim());
+        // Report the server actually connected, not whichever card happens to be
+        // selected for editing over on the Connect page — those are independent.
+        const pathsActive = getActiveConnectedServer();
+        const pathsActiveLabel = pathsActive === 'conflict' ? 'Conflict'
+          : pathsActive ? pathsActive.charAt(0).toUpperCase() + pathsActive.slice(1)
+          : 'None';
         items = [
-          { label: 'Mappings', value: pathMappings.length },
-          { label: 'Verified', value: pathMappings.filter(mapping => mapping.verified || mapping.is_valid).length, tone: 'success' },
-          { label: 'Active server', value: activeServer.charAt(0).toUpperCase() + activeServer.slice(1), tone: 'info' },
-          { label: 'Last tested', value: pathMappings.length ? 'Today' : 'Not yet', tone: pathMappings.length ? 'success' : 'warning' }
+          { label: 'Mappings', value: realMappings.length },
+          { label: 'Verified', value: realMappings.filter(mapping => mapping.verified || mapping.is_valid).length, tone: 'success' },
+          { label: 'Active server', value: pathsActiveLabel, tone: pathsActive === 'conflict' ? 'warning' : pathsActive ? 'info' : '' },
+          { label: 'Last tested', value: realMappings.length ? 'Today' : 'Not yet', tone: realMappings.length ? 'success' : 'warning' }
         ];
       } else if (activeTab === 'settings/storage') {
         items = [];
@@ -7981,7 +8184,7 @@ const DashboardTiles = {
           { label: 'Version', value: systemVersion?.api_version || 'Loading' },
           { label: 'Scheduler', value: schedulerStatus.running ? 'Running' : 'Stopped', tone: schedulerStatus.running ? 'success' : 'warning' },
           { label: 'Platform', value: systemVersion?.platform || navigator.platform || 'System', tone: 'info' },
-          { label: 'Theme', value: darkMode ? 'Dark' : 'Light' }
+          { label: 'Theme', value: THEMES[resolveTheme(theme)].label }
         ];
       }
     }
@@ -8052,13 +8255,16 @@ const DashboardTiles = {
     }
   }, [activeTab, prerolls, scalingVideoInfoCache, loadingVideoInfo, loadVideoInfoForPrerolls, nexupSettings.category_id, nexupSettings.tv_category_id]);
 
-  const handleBulkScale = async (targetResolution) => {
-    if (bulkScalingSelection.length === 0) {
+  // `idsOverride` lets a single row's Scale button run the same pipeline for
+  // just that video without disturbing the bulk selection.
+  const handleBulkScale = async (targetResolution, idsOverride = null) => {
+    const ids = idsOverride || bulkScalingSelection;
+    if (ids.length === 0) {
       alert('Please select at least one preroll to scale.');
       return;
     }
-    
-    const selectedPrerolls = prerolls.filter(p => bulkScalingSelection.includes(p.id));
+
+    const selectedPrerolls = prerolls.filter(p => ids.includes(p.id));
     const heights = { '1080p': 1080, '720p': 720, '480p': 480 };
     const targetHeight = heights[targetResolution];
     
@@ -8285,17 +8491,31 @@ const DashboardTiles = {
           </div>
         ) : (
           <div className="card nx-scaling-command" style={{ marginBottom: '1rem' }}>
-            <label className="nx-scaling-select-recommendations">
-              <input
-                type="checkbox"
-                checked={bulkScalingSelection.length > 0 && filteredPrerolls.filter(preroll => scalingVideoInfoCache[preroll.id]?.success && scalingVideoInfoCache[preroll.id].height > 1080).every(preroll => bulkScalingSelection.includes(preroll.id))}
-                onChange={(event) => {
-                  if (!event.target.checked) return clearSelection();
-                  setBulkScalingSelection(filteredPrerolls.filter(preroll => scalingVideoInfoCache[preroll.id]?.success && scalingVideoInfoCache[preroll.id].height > 1080).map(preroll => preroll.id));
-                }}
-              />
-              <span>Select recommendations</span>
-            </label>
+            {(() => {
+              // "Recommended" means analysis came back and the video is taller
+              // than 1080p. Until analysis lands there is nothing to select, so
+              // show the count and disable rather than appearing inert.
+              const recommended = filteredPrerolls.filter(preroll =>
+                scalingVideoInfoCache[preroll.id]?.success && scalingVideoInfoCache[preroll.id].height > 1080);
+              const allPicked = recommended.length > 0 && recommended.every(preroll => bulkScalingSelection.includes(preroll.id));
+              return (
+                <label className={`nx-scaling-select-recommendations${recommended.length ? '' : ' is-disabled'}`}
+                  title={recommended.length
+                    ? `Select the ${recommended.length} video${recommended.length === 1 ? '' : 's'} above 1080p`
+                    : 'No videos above 1080p in the current view'}>
+                  <input
+                    type="checkbox"
+                    disabled={recommended.length === 0}
+                    checked={allPicked}
+                    onChange={(event) => {
+                      if (!event.target.checked) return clearSelection();
+                      setBulkScalingSelection(recommended.map(preroll => preroll.id));
+                    }}
+                  />
+                  <span>Select recommended{recommended.length ? ` (${recommended.length})` : ''}</span>
+                </label>
+              );
+            })()}
             <label className="nx-scaling-search"><span aria-hidden="true">/</span><input value={scalingSearch} onChange={(event) => setScalingSearch(event.target.value)} placeholder="Search videos..." /></label>
             <select value={scalingFilterResolution} onChange={(event) => setScalingFilterResolution(event.target.value)} aria-label="Filter by resolution">
               <option value="">All resolutions</option>
@@ -8501,7 +8721,15 @@ const DashboardTiles = {
                     </span>
                   </div>
                   <div className="nx-scaling-actions">
-                    <button type="button" onClick={(event) => { event.stopPropagation(); if (!bulkScalingSelection.includes(preroll.id)) setBulkScalingSelection([preroll.id]); }} className="button button-secondary">Scale</button>
+                    <button
+                      type="button"
+                      onClick={(event) => { event.stopPropagation(); handleBulkScale(scalingTarget, [preroll.id]); }}
+                      disabled={bulkScalingProgress.active}
+                      className="button button-secondary"
+                      title={`Scale this video to ${scalingTarget}`}
+                    >
+                      Scale to {scalingTarget}
+                    </button>
                     <button type="button" onClick={(event) => { event.stopPropagation(); handleEditPreroll(preroll); }} className="nx-iconbtn" aria-label={`Edit ${preroll.display_name || preroll.filename}`}>•••</button>
                   </div>
                 </div>
@@ -10715,6 +10943,18 @@ const DashboardTiles = {
                 </label>
                 <button type="button" onClick={() => { const next = !showNexupTrailersInLibrary; setShowNexupTrailersInLibrary(next); if (next) { loadNexupTrailers(); loadNexupTVTrailers(); } }}>
                   {showNexupTrailersInLibrary ? <EyeOff size={13} /> : <Eye size={13} />} {showNexupTrailersInLibrary ? 'Hide' : 'Show'} NeX-Up trailers
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const next = !showNexupGeneratedInLibrary;
+                    setShowNexupGeneratedInLibrary(next);
+                    setCurrentPage(1);
+                    try { localStorage.setItem('nx_show_generated', next ? '1' : '0'); } catch {}
+                  }}
+                  title="Dynamic prerolls and Coming Soon lists made in the NeX-Up generator"
+                >
+                  {showNexupGeneratedInLibrary ? <EyeOff size={13} /> : <Eye size={13} />} {showNexupGeneratedInLibrary ? 'Hide' : 'Show'} NeX-Up generated prerolls
                 </button>
                 <button type="button" onClick={handleReinitThumbnails}><RefreshCw size={13} /> Reinitialize thumbnails</button>
               </div>
@@ -18159,6 +18399,20 @@ const DashboardTiles = {
   );
 
   const renderScheduleListPage = () => {
+    const schedulePlayback = schedule => {
+      try {
+        const sequence = JSON.parse(schedule.sequence || '[]');
+        if (Array.isArray(sequence) && sequence.length) return 'Sequence';
+      } catch (_) {}
+      if (schedule.playlist) return 'Playlist';
+      return schedule.shuffle === false ? 'Sequential' : 'Shuffle';
+    };
+
+    const scheduleBehavior = schedule => schedule.exclusive ? 'exclusive' : schedule.blend_enabled ? 'blend' : 'standard';
+    const activeExtraFilters = Number(scheduleFilterPlayback !== 'all')
+      + Number(scheduleFilterBehavior !== 'all')
+      + Number(scheduleFilterConflictsOnly);
+
     const filteredSchedules = schedules.filter(schedule => {
       const name = String(schedule.name || '').toLowerCase();
       const isRunning = activeScheduleIds.includes(schedule.id);
@@ -18166,9 +18420,14 @@ const DashboardTiles = {
         || (scheduleFilterStatus === 'running' && isRunning)
         || (scheduleFilterStatus === 'enabled' && schedule.is_active && !isRunning)
         || (scheduleFilterStatus === 'paused' && !schedule.is_active);
+      const matchesPlayback = scheduleFilterPlayback === 'all'
+        || schedulePlayback(schedule).toLowerCase() === scheduleFilterPlayback;
+      const matchesBehavior = scheduleFilterBehavior === 'all'
+        || scheduleBehavior(schedule) === scheduleFilterBehavior;
+      const matchesConflicts = !scheduleFilterConflictsOnly || getScheduleConflicts(schedule).length > 0;
       return name.includes(scheduleSearchQuery.toLowerCase())
         && (scheduleFilterType === 'all' || schedule.type === scheduleFilterType)
-        && matchesStatus;
+        && matchesStatus && matchesPlayback && matchesBehavior && matchesConflicts;
     });
     const runningSchedules = filteredSchedules.filter(schedule => activeScheduleIds.includes(schedule.id));
     const enabledSchedules = filteredSchedules.filter(schedule => schedule.is_active && !activeScheduleIds.includes(schedule.id));
@@ -18192,15 +18451,6 @@ const DashboardTiles = {
       if (schedule.exclusive) return `P${priority} / Exclusive`;
       if (schedule.blend_enabled) return `P${priority} / Blend`;
       return `P${priority} / Standard`;
-    };
-
-    const schedulePlayback = schedule => {
-      try {
-        const sequence = JSON.parse(schedule.sequence || '[]');
-        if (Array.isArray(sequence) && sequence.length) return 'Sequence';
-      } catch (_) {}
-      if (schedule.playlist) return 'Playlist';
-      return schedule.shuffle === false ? 'Sequential' : 'Shuffle';
     };
 
     const scheduleRecurrence = schedule => {
@@ -18231,9 +18481,9 @@ const DashboardTiles = {
             <strong>{schedule.name}</strong>
             <span>{scheduleRecurrence(schedule)}</span>
           </div>
-          <div className="nx-command-row-fact"><span>Playback</span><strong>{schedulePlayback(schedule)}</strong></div>
-          <div className="nx-command-row-fact"><span>Rule</span><strong>{scheduleRule(schedule)}</strong></div>
-          <div className="nx-command-row-fact"><span>Next run</span><strong>{running ? `Now - ${nextDate(schedule)}` : nextDate(schedule)}</strong></div>
+          <div className="nx-command-row-fact is-playback"><span>Playback</span><strong>{schedulePlayback(schedule)}</strong></div>
+          <div className="nx-command-row-fact is-rule"><span>Rule</span><strong>{scheduleRule(schedule)}</strong></div>
+          <div className="nx-command-row-fact is-next"><span>Next run</span><strong>{running ? `Now - ${nextDate(schedule)}` : nextDate(schedule)}</strong></div>
           <div className="nx-command-row-fact nx-command-row-content"><span>Content</span><strong>{content}</strong></div>
           <div className="nx-command-row-controls">
             {conflicts > 0 && (
@@ -18260,7 +18510,7 @@ const DashboardTiles = {
     const renderGroup = (label, items, tone) => items.length > 0 && (
       <section className={`nx-command-group is-${tone}`}>
         <header><strong>{label}</strong><span>{items.length} schedule{items.length === 1 ? '' : 's'}</span></header>
-        <div className="nx-command-rows">{items.map(renderCommandRow)}</div>
+        <div className={`nx-command-rows is-${scheduleViewMode}`}>{items.map(renderCommandRow)}</div>
       </section>
     );
 
@@ -18294,9 +18544,55 @@ const DashboardTiles = {
             <option value="enabled">Enabled</option>
             <option value="paused">Paused</option>
           </select>
-          <button className="button button-secondary" onClick={() => setActiveTab('schedules/conflicts')}><Filter size={14} /> Filters {conflictCount || ''}</button>
-          <button className="button button-secondary" onClick={() => setScheduleViewMode(scheduleViewMode === 'compact' ? 'detailed' : 'compact')}><List size={14} /> {scheduleViewMode === 'compact' ? 'Compact' : 'Detailed'}</button>
+          <button
+            className={`button button-secondary${scheduleFiltersOpen ? ' is-active' : ''}`}
+            aria-expanded={scheduleFiltersOpen}
+            onClick={() => setScheduleFiltersOpen(open => !open)}
+          >
+            <Filter size={14} /> Filters {activeExtraFilters ? `· ${activeExtraFilters}` : ''}
+          </button>
+          <button
+            className="button button-secondary"
+            title={scheduleViewMode === 'compact' ? 'Switch to detailed rows' : 'Switch to compact rows'}
+            onClick={() => setScheduleViewMode(scheduleViewMode === 'compact' ? 'detailed' : 'compact')}
+          >
+            {scheduleViewMode === 'compact' ? <List size={14} /> : <LayoutGrid size={14} />} {scheduleViewMode === 'compact' ? 'Compact' : 'Detailed'}
+          </button>
         </section>
+
+        {scheduleFiltersOpen && (
+          <section className="nx-command-filters" aria-label="Additional schedule filters">
+            <label><span>Playback</span>
+              <select value={scheduleFilterPlayback} onChange={event => setScheduleFilterPlayback(event.target.value)}>
+                <option value="all">Any playback</option>
+                <option value="shuffle">Shuffle</option>
+                <option value="sequential">Sequential</option>
+                <option value="sequence">Sequence</option>
+                <option value="playlist">Playlist</option>
+              </select>
+            </label>
+            <label><span>Behavior</span>
+              <select value={scheduleFilterBehavior} onChange={event => setScheduleFilterBehavior(event.target.value)}>
+                <option value="all">Any behavior</option>
+                <option value="standard">Standard</option>
+                <option value="exclusive">Exclusive</option>
+                <option value="blend">Blend</option>
+              </select>
+            </label>
+            <label className="nx-command-filters-check">
+              <input type="checkbox" checked={scheduleFilterConflictsOnly} onChange={event => setScheduleFilterConflictsOnly(event.target.checked)} />
+              <span>Conflicts only</span>
+            </label>
+            <button
+              type="button"
+              className="button button-secondary"
+              disabled={!activeExtraFilters}
+              onClick={() => { setScheduleFilterPlayback('all'); setScheduleFilterBehavior('all'); setScheduleFilterConflictsOnly(false); }}
+            >
+              Clear
+            </button>
+          </section>
+        )}
 
         <div className="nx-command-layout">
           <main>
@@ -18350,8 +18646,20 @@ const DashboardTiles = {
 
     const toggleDay = day => setWeekDays(days => days.includes(day) ? days.filter(value => value !== day) : [...days, day]);
 
+    // Live conflict preview: check the schedule as currently drafted against
+    // existing schedules, not the unrelated system-wide conflict count.
+    const draftScheduleForConflicts = {
+      ...buildScheduleData(),
+      // Reuse the real id when editing so the conflict check's self-skip excludes
+      // this schedule's own (not-yet-saved) original entry instead of flagging it.
+      id: editingSchedule ? editingSchedule.id : '__draft__',
+      is_active: true,
+      category_id: scheduleMode === 'simple' && scheduleForm.category_id ? parseInt(scheduleForm.category_id) : null
+    };
+    const draftConflicts = getScheduleConflicts(draftScheduleForConflicts);
+
     return (
-      <form id="nx-approved-schedule-form" className="nx-schedule-draft" onSubmit={handleCreateSchedule}>
+      <form id="nx-approved-schedule-form" className="nx-schedule-draft" onSubmit={editingSchedule ? handleUpdateSchedule : handleCreateSchedule}>
         <div className="nx-draft-step-layout">
           <aside className="nx-draft-panel nx-draft-stepper">
             {[
@@ -18373,7 +18681,7 @@ const DashboardTiles = {
           </aside>
 
           <section className="nx-draft-panel nx-draft-form-panel">
-            {scheduleCreateStep <= 2 && (
+            {scheduleCreateStep === 1 && (
               <>
                 <div className="nx-draft-form-section">
                   <h2>Choose how this schedule plays</h2>
@@ -18397,32 +18705,63 @@ const DashboardTiles = {
                     </select></label>
                   </div>
                 </div>
-                <div className="nx-draft-form-section">
-                  <h2>{scheduleForm.type === 'weekly' ? 'Weekly recurrence' : `${scheduleForm.type.charAt(0).toUpperCase()}${scheduleForm.type.slice(1)} recurrence`}</h2>
-                  <p>Select the active days, date range, and time window.</p>
-                  {scheduleForm.type === 'weekly' && (
-                    <div className="nx-draft-weekday">{dayOptions.map(([value, label]) => <button type="button" key={value} className={weekDays.includes(value) ? 'on' : ''} onClick={() => toggleDay(value)}>{label}</button>)}</div>
-                  )}
-                  {(scheduleForm.type === 'daily' || scheduleForm.type === 'weekly') && (
-                    <div className="nx-draft-fields nx-draft-time-fields">
-                      <label><span>Starts</span><input type="time" value={timeRange.start} onChange={event => setTimeRange({ ...timeRange, start: event.target.value })} /></label>
-                      <label><span>Ends</span><input type="time" value={timeRange.end} onChange={event => setTimeRange({ ...timeRange, end: event.target.value })} /></label>
-                    </div>
-                  )}
-                  {scheduleForm.type !== 'monthly' && (
-                    <div className="nx-draft-fields nx-draft-date-fields">
-                      <label><span>First active date</span><input type="datetime-local" value={scheduleForm.start_date} onChange={event => setScheduleForm({ ...scheduleForm, start_date: event.target.value })} /></label>
-                      <label><span>Last active date</span><input type="datetime-local" value={scheduleForm.end_date} onChange={event => setScheduleForm({ ...scheduleForm, end_date: event.target.value })} /></label>
-                    </div>
-                  )}
-                  {scheduleForm.type === 'holiday' && (
-                    <div className="nx-draft-fields nx-draft-date-fields">
-                      <label><span>Holiday</span><input value={scheduleForm.holiday_name} onChange={event => setScheduleForm({ ...scheduleForm, holiday_name: event.target.value })} placeholder="Labor Day" /></label>
-                      <label><span>Country</span><input value={scheduleForm.holiday_country} onChange={event => setScheduleForm({ ...scheduleForm, holiday_country: event.target.value })} placeholder="US" /></label>
-                    </div>
-                  )}
-                </div>
               </>
+            )}
+
+            {scheduleCreateStep === 2 && (
+              <div className="nx-draft-form-section">
+                <h2>{scheduleForm.type === 'weekly' ? 'Weekly recurrence' : `${scheduleForm.type.charAt(0).toUpperCase()}${scheduleForm.type.slice(1)} recurrence`}</h2>
+                <p>Select the active days, date range, and time window.</p>
+                {scheduleForm.type === 'weekly' && (
+                  <div className="nx-draft-weekday">{dayOptions.map(([value, label]) => <button type="button" key={value} className={weekDays.includes(value) ? 'on' : ''} onClick={() => toggleDay(value)}>{label}</button>)}</div>
+                )}
+                {(scheduleForm.type === 'daily' || scheduleForm.type === 'weekly') && (
+                  <div className="nx-draft-fields nx-draft-time-fields">
+                    <label><span>Starts</span><input type="time" value={timeRange.start} onChange={event => setTimeRange({ ...timeRange, start: event.target.value })} /></label>
+                    <label><span>Ends</span><input type="time" value={timeRange.end} onChange={event => setTimeRange({ ...timeRange, end: event.target.value })} /></label>
+                  </div>
+                )}
+                {scheduleForm.type === 'monthly' && (
+                  <>
+                    <div className="nx-draft-month-grid">
+                      {['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'].map((label, index) => {
+                        const monthNum = index + 1;
+                        const on = selectedMonths.includes(monthNum);
+                        return (
+                          <button type="button" key={monthNum} className={on ? 'on' : ''} onClick={() => setSelectedMonths(on ? selectedMonths.filter(m => m !== monthNum) : [...selectedMonths, monthNum].sort((a, b) => a - b))}>{label}</button>
+                        );
+                      })}
+                    </div>
+                    <div className="nx-draft-monthday-head">
+                      <span>Days of the month</span>
+                      <div>
+                        <button type="button" className="nx-draft-btn small" onClick={() => setMonthDays(Array.from({ length: 31 }, (_, i) => i + 1))}>Select all</button>
+                        <button type="button" className="nx-draft-btn small ghost" onClick={() => setMonthDays([])}>Clear</button>
+                      </div>
+                    </div>
+                    <div className="nx-draft-monthday-grid">
+                      {Array.from({ length: 31 }, (_, i) => i + 1).map(day => {
+                        const on = monthDays.includes(day);
+                        return (
+                          <button type="button" key={day} className={on ? 'on' : ''} onClick={() => setMonthDays(on ? monthDays.filter(d => d !== day) : [...monthDays, day].sort((a, b) => a - b))}>{day}</button>
+                        );
+                      })}
+                    </div>
+                  </>
+                )}
+                {scheduleForm.type !== 'monthly' && (
+                  <div className="nx-draft-fields nx-draft-date-fields">
+                    <label><span>First active date</span><input type="datetime-local" value={scheduleForm.start_date} onChange={event => setScheduleForm({ ...scheduleForm, start_date: event.target.value })} /></label>
+                    <label><span>Last active date</span><input type="datetime-local" value={scheduleForm.end_date} onChange={event => setScheduleForm({ ...scheduleForm, end_date: event.target.value })} /></label>
+                  </div>
+                )}
+                {scheduleForm.type === 'holiday' && (
+                  <div className="nx-draft-fields nx-draft-date-fields">
+                    <label><span>Holiday</span><input value={scheduleForm.holiday_name} onChange={event => setScheduleForm({ ...scheduleForm, holiday_name: event.target.value })} placeholder="Labor Day" /></label>
+                    <label><span>Country</span><input value={scheduleForm.holiday_country} onChange={event => setScheduleForm({ ...scheduleForm, holiday_country: event.target.value })} placeholder="US" /></label>
+                  </div>
+                )}
+              </div>
             )}
 
             {scheduleCreateStep === 3 && (
@@ -18448,8 +18787,8 @@ const DashboardTiles = {
                     <label><span>Category</span><select value={scheduleForm.category_id} onChange={event => setScheduleForm({ ...scheduleForm, category_id: event.target.value })} required>
                       <option value="">Choose a category</option>{categories.map(category => <option key={category.id} value={category.id}>{category.name}</option>)}
                     </select></label>
-                    <label><span>Playback</span><select value={scheduleForm.playlist ? 'playlist' : scheduleForm.shuffle ? 'shuffle' : 'sequential'} onChange={event => setScheduleForm({ ...scheduleForm, playlist: event.target.value === 'playlist', shuffle: event.target.value === 'shuffle' })}>
-                      <option value="shuffle">Shuffle</option><option value="sequential">Sequential</option><option value="playlist">Fixed playlist</option>
+                    <label><span>Playback</span><select value={scheduleForm.shuffle ? 'shuffle' : 'sequential'} onChange={event => setScheduleForm({ ...scheduleForm, shuffle: event.target.value === 'shuffle', playlist: false })}>
+                      <option value="shuffle">Shuffle</option><option value="sequential">Sequential</option>
                     </select></label>
                   </div>
                 )}
@@ -18464,6 +18803,12 @@ const DashboardTiles = {
                   <label><span>Priority</span><input type="number" min="1" max="10" value={scheduleForm.priority} onChange={event => setScheduleForm({ ...scheduleForm, priority: Number(event.target.value) })} /></label>
                   <label><span>Fallback category</span><select value={scheduleForm.fallback_category_id} onChange={event => setScheduleForm({ ...scheduleForm, fallback_category_id: event.target.value })}><option value="">None</option>{categories.map(category => <option key={category.id} value={category.id}>{category.name}</option>)}</select></label>
                 </div>
+                <p className="nx-draft-field-hint">
+                  This only covers what this schedule falls back to during a conflict. To fill gaps whenever <strong>no schedule</strong> is active at all, set a{' '}
+                  <button type="button" className="nx-draft-link" onClick={() => { setActiveTab('settings'); setHighlightSettingsTarget('nx-settings-filler'); }}>
+                    Global Filler in Settings →
+                  </button>
+                </p>
                 <div className="nx-draft-behavior-grid">
                   <button type="button" className={`nx-draft-choice${!scheduleForm.exclusive && !scheduleForm.blend_enabled ? ' selected' : ''}`} onClick={() => setScheduleForm({ ...scheduleForm, exclusive: false, blend_enabled: false })}><strong>Standard</strong><span>Higher priority wins during an overlap.</span></button>
                   <button type="button" className={`nx-draft-choice${scheduleForm.exclusive ? ' selected' : ''}`} onClick={() => setScheduleForm({ ...scheduleForm, exclusive: true, blend_enabled: false })}><strong>Exclusive</strong><span>Take full control during this window.</span></button>
@@ -18474,11 +18819,14 @@ const DashboardTiles = {
             )}
 
             <footer className="nx-draft-form-footer">
-              <button type="button" className="nx-draft-btn" disabled={scheduleCreateStep === 1} onClick={() => setScheduleCreateStep(step => Math.max(1, step - 1))}>Back</button>
+              <div className="nx-draft-form-footer-left">
+                {editingSchedule && <button type="button" className="nx-draft-btn ghost" onClick={handleCancelScheduleEdit}>Cancel</button>}
+                <button type="button" className="nx-draft-btn" disabled={scheduleCreateStep === 1} onClick={() => setScheduleCreateStep(step => Math.max(1, step - 1))}>Back</button>
+              </div>
               {scheduleCreateStep < 4 ? (
-                <button type="button" className="nx-draft-btn schedule" onClick={() => setScheduleCreateStep(step => step === 2 ? 3 : Math.min(4, step + 1))}>{scheduleCreateStep < 3 ? 'Continue to content' : 'Continue to behavior'}</button>
+                <button type="button" className="nx-draft-btn schedule" onClick={() => setScheduleCreateStep(step => step === 2 ? 3 : Math.min(4, step + 1))}>{scheduleCreateStep === 1 ? 'Continue to timing' : scheduleCreateStep === 2 ? 'Continue to content' : 'Continue to behavior'}</button>
               ) : (
-                <button type="submit" className="nx-draft-btn schedule"><Check size={13} /> Create schedule</button>
+                <button type="submit" className="nx-draft-btn schedule" disabled={isCreatingSchedule}><Check size={13} /> {isCreatingSchedule ? (editingSchedule ? 'Saving...' : 'Creating...') : (editingSchedule ? 'Save changes' : 'Create schedule')}</button>
               )}
             </footer>
           </section>
@@ -18493,7 +18841,7 @@ const DashboardTiles = {
                 <div><dt>Playback</dt><dd>{scheduleMode === 'advanced' ? 'Sequence' : scheduleForm.playlist ? 'Playlist' : scheduleForm.shuffle ? 'Shuffle' : 'Sequential'}</dd></div>
                 <div><dt>Priority</dt><dd>{scheduleForm.priority} / {behaviorLabel}</dd></div>
               </dl>
-              <div className="nx-draft-mini-card"><div><strong>Conflict check</strong><span className="nx-draft-badge warn">{analyzeAllConflicts(30).length} likely</span></div><p>Potential overlaps remain visible before the schedule is created.</p></div>
+              <div className="nx-draft-mini-card"><div><strong>Conflict check</strong><span className={`nx-draft-badge${draftConflicts.length ? ' warn' : ''}`}>{draftConflicts.length} likely</span></div><p>{draftConflicts.length > 0 ? `Overlaps: ${draftConflicts.map(c => c.schedule.name).join(', ')}` : 'No overlaps detected with this schedule’s current settings.'}</p></div>
             </div>
           </aside>
         </div>
@@ -18755,13 +19103,16 @@ const DashboardTiles = {
   );
 
   const renderApprovedSequenceBuilder = () => {
+    const generatedItems = [
+      ...generatedPrerolls.map(item => ({ filename: item.filename, name: item.name || item.template_id, kind: 'dynamic' })),
+      ...generatedComingSoonLists.map(item => ({ filename: item.filename, name: item.name || `Coming Soon (${item.layout})`, kind: 'coming_soon' }))
+    ];
     const addBlock = type => {
       const presets = {
         random: { type: 'random', category_id: categories[0]?.id || null, count: 1, label: 'Category' },
         fixed: { type: 'fixed', preroll_ids: prerolls[0] ? [prerolls[0].id] : [], label: 'Fixed preroll' },
         nexup_trailers: { type: 'nexup_trailers', source: 'both', count: 2, mode: 'random', label: 'NeX-Up trailers' },
-        dynamic_preroll: { type: 'dynamic_preroll', template: 'cinematic', theme: 'classic', label: 'Generated message' },
-        separator: { type: 'separator', label: 'Pause / separator' }
+        dynamic_preroll: { type: 'dynamic_preroll', filename: generatedItems[0]?.filename || null, label: 'Generated preroll' }
       };
       const next = cloneSequenceWithIds([presets[type]])[0];
       setSequenceBlocks(blocks => [...blocks, next]);
@@ -18771,11 +19122,23 @@ const DashboardTiles = {
       setSequenceBlocks(blocks => blocks.filter((_, blockIndex) => blockIndex !== index));
       setScheduleBuilderSelectedIndex(index => Math.max(0, index - 1));
     };
-    const blockTitle = block => block?.label || ({ random: 'Category block', sequential: 'Category block', fixed: 'Fixed preroll', nexup_trailers: 'Upcoming trailers', dynamic_preroll: 'Generated message', separator: 'Pause / separator', coming_soon_list: 'Coming Soon list' }[block?.type] || 'Sequence block');
+    const moveBlock = (fromIndex, toIndex) => {
+      if (toIndex < 0 || toIndex >= sequenceBlocks.length || fromIndex === toIndex) return;
+      setSequenceBlocks(blocks => {
+        const next = [...blocks];
+        const [moved] = next.splice(fromIndex, 1);
+        next.splice(toIndex, 0, moved);
+        return next;
+      });
+      setScheduleBuilderSelectedIndex(toIndex);
+    };
+    const blockTitle = block => block?.label || ({ random: 'Category block', sequential: 'Category block', fixed: 'Fixed preroll', nexup_trailers: 'Upcoming trailers', dynamic_preroll: 'Generated preroll', separator: 'Pause / separator', coming_soon_list: 'Coming Soon list' }[block?.type] || 'Sequence block');
     const blockDescription = block => {
       if (block?.type === 'random' || block?.type === 'sequential') return `${categories.find(category => String(category.id) === String(block.category_id))?.name || 'Choose category'} / ${block.type}`;
       if (block?.type === 'fixed') return `${block.preroll_ids?.length || 0} selected preroll${block.preroll_ids?.length === 1 ? '' : 's'}`;
-      if (block?.type === 'nexup_trailers') return `${block.count || 2} trailers / ${block.source || 'both'}`;
+      if (block?.type === 'nexup_trailers') return `${block.count || 2} trailers / ${{ both: 'Movies & TV', movies: 'Movies only', tv: 'TV only' }[block.source] || 'Movies & TV'}`;
+      if (block?.type === 'dynamic_preroll') return generatedItems.find(item => item.filename === block.filename)?.name || 'Choose a generated item';
+      if (block?.type === 'separator') return `${block.duration ?? 3}s blank gap`;
       return block?.type?.replaceAll('_', ' ') || 'Configure this block';
     };
     const selectedBlock = sequenceBlocks[scheduleBuilderSelectedIndex] || sequenceBlocks[0] || null;
@@ -18792,8 +19155,7 @@ const DashboardTiles = {
                 ['random', 'CAT', 'Category', 'Random or sequential preroll'],
                 ['fixed', 'FIX', 'Fixed preroll', 'One selected video'],
                 ['nexup_trailers', 'TRL', 'NeX-Up trailers', 'Upcoming or matched media'],
-                ['dynamic_preroll', 'TXT', 'Generated message', 'Dynamic title card'],
-                ['separator', 'BRK', 'Pause / separator', 'Timing and transitions']
+                ['dynamic_preroll', 'GEN', 'Generated preroll', 'A video made in NeX-Up Generator']
               ].map(([type, icon, title, copy]) => (
                 <button type="button" key={type} className="nx-draft-block-choice" onClick={() => addBlock(type)}><i>{icon}</i><span><strong>{title}</strong><small>{copy}</small></span><Plus size={12} /></button>
               ))}
@@ -18810,10 +19172,26 @@ const DashboardTiles = {
                 <div className="nx-draft-sequence-empty"><Layers size={28} /><strong>Build the viewer experience</strong><span>Add a block from the library on the left.</span></div>
               ) : sequenceBlocks.map((block, index) => (
                 <React.Fragment key={block.ui_id || `${block.type}-${index}`}>
-                  <button type="button" className={`nx-draft-seq-block${index === selectedIndex ? ' selected' : ''}`} onClick={() => setScheduleBuilderSelectedIndex(index)}>
+                  <button
+                    type="button"
+                    className={`nx-draft-seq-block${index === selectedIndex ? ' selected' : ''}${draggedBlockIndex === index ? ' dragging' : ''}`}
+                    onClick={() => setScheduleBuilderSelectedIndex(index)}
+                    draggable
+                    onDragStart={event => { setDraggedBlockIndex(index); event.dataTransfer.effectAllowed = 'move'; }}
+                    onDragOver={event => event.preventDefault()}
+                    onDrop={event => {
+                      event.preventDefault();
+                      if (draggedBlockIndex !== null && draggedBlockIndex !== index) moveBlock(draggedBlockIndex, index);
+                      setDraggedBlockIndex(null);
+                    }}
+                    onDragEnd={() => setDraggedBlockIndex(null)}
+                  >
                     <span className="drag"><GripVertical size={13} /></span><span className="order">{index + 1}</span>
                     <span className="copy"><strong>{blockTitle(block)}</strong><small>{blockDescription(block)}</small></span>
-                    <Menu size={13} />
+                    <span className="nx-draft-seq-move">
+                      <span role="button" tabIndex={0} title="Move up" aria-disabled={index === 0} onClick={event => { event.stopPropagation(); moveBlock(index, index - 1); }} onKeyDown={event => { if (event.key === 'Enter') { event.stopPropagation(); moveBlock(index, index - 1); } }}><ChevronUp size={12} /></span>
+                      <span role="button" tabIndex={0} title="Move down" aria-disabled={index === sequenceBlocks.length - 1} onClick={event => { event.stopPropagation(); moveBlock(index, index + 1); }} onKeyDown={event => { if (event.key === 'Enter') { event.stopPropagation(); moveBlock(index, index + 1); } }}><ChevronDown size={12} /></span>
+                    </span>
                   </button>
                   {index < sequenceBlocks.length - 1 && <span className="nx-draft-seq-line" />}
                 </React.Fragment>
@@ -18830,7 +19208,50 @@ const DashboardTiles = {
               {selectedBlock && <>
                 <label className="nx-draft-field"><span>Block type</span><select value={selectedBlock.type} disabled><option value={selectedBlock.type}>{selectedBlock.type.replaceAll('_', ' ')}</option></select></label>
                 {(selectedBlock.type === 'random' || selectedBlock.type === 'sequential') && <label className="nx-draft-field"><span>Category</span><select value={selectedBlock.category_id || ''} onChange={event => setSequenceBlocks(blocks => blocks.map((block, index) => index === selectedIndex ? { ...block, category_id: Number(event.target.value) } : block))}><option value="">Choose category</option>{categories.map(category => <option key={category.id} value={category.id}>{category.name}</option>)}</select></label>}
-                {selectedBlock.type === 'nexup_trailers' && <label className="nx-draft-field"><span>Trailer count</span><input type="number" min="1" max="10" value={selectedBlock.count || 2} onChange={event => setSequenceBlocks(blocks => blocks.map((block, index) => index === selectedIndex ? { ...block, count: Number(event.target.value) } : block))} /></label>}
+                {selectedBlock.type === 'fixed' && <>
+                  <label className="nx-draft-field"><span>Search prerolls</span><input value={fixedBlockPrerollSearch} onChange={event => setFixedBlockPrerollSearch(event.target.value)} placeholder="Search by name..." /></label>
+                  <div className="nx-draft-preroll-picker">
+                    {prerolls
+                      .filter(preroll => (preroll.display_name || preroll.filename || '').toLowerCase().includes(fixedBlockPrerollSearch.toLowerCase()))
+                      .map(preroll => {
+                        const checked = (selectedBlock.preroll_ids || []).includes(preroll.id);
+                        return (
+                          <label key={preroll.id} className="nx-draft-preroll-row">
+                            <input type="checkbox" checked={checked} onChange={() => setSequenceBlocks(blocks => blocks.map((block, index) => {
+                              if (index !== selectedIndex) return block;
+                              const ids = block.preroll_ids || [];
+                              return { ...block, preroll_ids: checked ? ids.filter(id => id !== preroll.id) : [...ids, preroll.id] };
+                            }))} />
+                            <span>{preroll.display_name || preroll.filename}</span>
+                          </label>
+                        );
+                      })}
+                    {prerolls.length === 0 && <p className="nx-draft-field-hint">No prerolls in your library yet.</p>}
+                  </div>
+                  <div className="nx-draft-info-row"><span>Selected</span><strong>{(selectedBlock.preroll_ids || []).length} preroll{(selectedBlock.preroll_ids || []).length === 1 ? '' : 's'}</strong></div>
+                </>}
+                {selectedBlock.type === 'nexup_trailers' && <>
+                  <label className="nx-draft-field"><span>Source</span><select value={selectedBlock.source || 'both'} onChange={event => setSequenceBlocks(blocks => blocks.map((block, index) => index === selectedIndex ? { ...block, source: event.target.value } : block))}>
+                    <option value="both">Movies &amp; TV</option><option value="movies">Movies only</option><option value="tv">TV only</option>
+                  </select></label>
+                  <label className="nx-draft-field"><span>Trailer count</span><input type="number" min="1" max="10" value={selectedBlock.count || 2} onChange={event => setSequenceBlocks(blocks => blocks.map((block, index) => index === selectedIndex ? { ...block, count: Number(event.target.value) } : block))} /></label>
+                </>}
+                {selectedBlock.type === 'dynamic_preroll' && <>
+                  {generatedItems.length > 0 ? (
+                    <label className="nx-draft-field"><span>Generated item</span><select value={selectedBlock.filename || ''} onChange={event => setSequenceBlocks(blocks => blocks.map((block, index) => index === selectedIndex ? { ...block, filename: event.target.value } : block))}>
+                      <option value="">Choose a generated item</option>
+                      {generatedPrerolls.length > 0 && <optgroup label="Dynamic prerolls">{generatedPrerolls.map(item => <option key={item.filename} value={item.filename}>{item.name || item.template_id}</option>)}</optgroup>}
+                      {generatedComingSoonLists.length > 0 && <optgroup label="Coming Soon lists">{generatedComingSoonLists.map(item => <option key={item.filename} value={item.filename}>{item.name || `Coming Soon (${item.layout})`}</option>)}</optgroup>}
+                    </select></label>
+                  ) : (
+                    <p className="nx-draft-field-hint">You haven't generated anything yet. <button type="button" className="nx-draft-link" onClick={() => setActiveTab('nexup/generator')}>Open NeX-Up Generator →</button></p>
+                  )}
+                  <p className="nx-draft-field-hint">Plays this exact generated video during the sequence.</p>
+                </>}
+                {selectedBlock.type === 'separator' && <>
+                  <label className="nx-draft-field"><span>Pause duration (seconds)</span><input type="number" min="1" max="60" value={selectedBlock.duration ?? 3} onChange={event => setSequenceBlocks(blocks => blocks.map((block, index) => index === selectedIndex ? { ...block, duration: Math.max(1, Number(event.target.value) || 1) } : block))} /></label>
+                  <p className="nx-draft-field-hint">Inserts a blank black screen for this many seconds before continuing to the next block.</p>
+                </>}
                 <div className="nx-draft-info-row"><span>Position</span><strong>{selectedIndex + 1} of {sequenceBlocks.length}</strong></div>
                 <button type="button" className="nx-draft-btn danger" onClick={() => removeBlock(selectedIndex)}><Trash2 size={12} /> Remove block</button>
               </>}
@@ -18846,13 +19267,24 @@ const DashboardTiles = {
   };
 
   const renderApprovedSequenceLibrary = () => {
-    const filtered = savedSequences.filter(sequence => `${sequence.name || ''} ${sequence.description || ''}`.toLowerCase().includes(sequenceLibrarySearch.toLowerCase()));
+    const filtered = savedSequences
+      .filter(sequence => `${sequence.name || ''} ${sequence.description || ''}`.toLowerCase().includes(sequenceLibrarySearch.toLowerCase()))
+      .sort((a, b) => {
+        if (sequenceLibrarySort === 'name') return (a.name || '').localeCompare(b.name || '');
+        if (sequenceLibrarySort === 'used') {
+          const usedA = schedules.filter(schedule => String(schedule.sequence_id) === String(a.id)).length;
+          const usedB = schedules.filter(schedule => String(schedule.sequence_id) === String(b.id)).length;
+          return usedB - usedA;
+        }
+        return new Date(b.updated_at || 0) - new Date(a.updated_at || 0);
+      });
     return (
       <div className="nx-schedule-draft nx-draft-sequence-library">
         <div className="nx-draft-command">
           <label className="nx-draft-search"><Search size={13} /><input value={sequenceLibrarySearch} onChange={event => setSequenceLibrarySearch(event.target.value)} placeholder="Search saved sequences..." /></label>
-          <select><option>Recently updated</option><option>Name</option><option>Most used</option></select>
-          <button className="nx-draft-btn small"><List size={12} /> List</button>
+          <select value={sequenceLibrarySort} onChange={event => setSequenceLibrarySort(event.target.value)}>
+            <option value="updated">Recently updated</option><option value="name">Name</option><option value="used">Most used</option>
+          </select>
         </div>
         <section className="nx-draft-panel nx-draft-table-panel">
           {sequencesLoading ? <div className="nx-draft-loading"><Loader2 className="spin" size={22} /> Loading sequences...</div> : filtered.length === 0 ? <div className="nx-draft-loading"><Layers size={22} /> No saved sequences found.</div> : (
@@ -18879,10 +19311,25 @@ const DashboardTiles = {
       <div className="nx-schedule-draft nx-draft-conflicts-page">
         <div className="nx-draft-command nx-draft-conflict-command"><select><option>This month</option><option>This week</option><option>This year</option></select><button className="nx-draft-btn small">High {unresolved.filter(conflict => conflict.severity === 'high').length}</button><button className="nx-draft-btn small">Medium {unresolved.filter(conflict => conflict.severity === 'medium').length}</button><button className="nx-draft-btn small">Low {unresolved.filter(conflict => conflict.severity === 'low').length}</button><span>{unresolved.length} unresolved conflicts</span></div>
         {selected ? <div className="nx-draft-conflict-layout">
-          <aside className="nx-draft-panel nx-draft-conflict-queue"><header><div><strong>Conflict queue</strong><span>Ordered by impact</span></div></header><div className="nx-draft-panel-body">{unresolved.map(conflict => <button key={conflict.id} className={`nx-draft-conflict-item${conflict.id === selected.id ? ' active' : ''}`} onClick={() => setSelectedScheduleConflictId(conflict.id)}><span><strong>{conflict.scheduleA.name} vs {conflict.scheduleB.name}</strong><i className="nx-draft-badge warn">{conflict.severity || 'Review'}</i></span><p>{conflict.description}</p><small>{conflict.overlappingDays?.length || 1} overlapping day{conflict.overlappingDays?.length === 1 ? '' : 's'}</small></button>)}</div></aside>
+          <aside className="nx-draft-panel nx-draft-conflict-queue"><header><div><strong>Conflict queue</strong><span>Ordered by impact</span></div></header><div className="nx-draft-panel-body">{unresolved.map(conflict => <button key={conflict.id} className={`nx-draft-conflict-item${conflict.id === selected.id ? ' active' : ''}`} onClick={() => { setSelectedScheduleConflictId(conflict.id); setShowConflictAlternatives(false); }}><span><strong>{conflict.scheduleA.name} vs {conflict.scheduleB.name}</strong><i className="nx-draft-badge warn">{conflict.severity || 'Review'}</i></span><p>{conflict.description}</p><small>{conflict.overlappingDays?.length || 1} overlapping day{conflict.overlappingDays?.length === 1 ? '' : 's'}</small></button>)}</div></aside>
           <section className="nx-draft-panel nx-draft-conflict-detail"><header><div><strong>{selected.scheduleA.name} vs {selected.scheduleB.name}</strong><span>{selected.description}</span></div><i className="nx-draft-badge warn">High impact</i></header><div className="nx-draft-panel-body"><div className="nx-draft-compare">
             {[selected.scheduleA, selected.scheduleB].map((schedule, index) => <React.Fragment key={schedule.id}>{index === 1 && <div className="nx-draft-versus">VS</div>}<article><i className={`nx-draft-badge${schedule.exclusive ? ' violet' : ' live'}`}>{schedule.exclusive ? 'Exclusive' : schedule.is_active ? 'Enabled' : 'Paused'}</i><h3>{schedule.name}</h3><span>{schedule.type} schedule</span><dl className="nx-draft-info-list"><div><dt>Priority</dt><dd>{schedule.priority ?? 5}</dd></div><div><dt>Behavior</dt><dd>{schedule.exclusive ? 'Exclusive' : schedule.blend_enabled ? 'Blend' : 'Standard'}</dd></div><div><dt>Content</dt><dd>{schedule.category?.name || 'Sequence'}</dd></div></dl></article></React.Fragment>)}
-          </div><div className="nx-draft-suggestion"><strong>{selected.suggestions?.[0]?.label || 'Recommended: adjust the lower-priority schedule window'}</strong><p>{selected.suggestions?.[0]?.description || 'This preserves both experiences while removing the unexpected overlap.'}</p><div><button className="nx-draft-btn schedule small" onClick={() => selected.suggestions?.[0] && setConflictResolutions(values => ({ ...values, [selected.id]: selected.suggestions[0].id }))}>Select this fix</button><button className="nx-draft-btn small">See alternatives</button><button className="nx-draft-btn ghost small" onClick={() => ignoreConflict(selected.id)}>Ignore conflict</button></div></div></div></section>
+          </div><div className="nx-draft-suggestion"><strong>{selected.suggestions?.[0]?.label || 'Recommended: adjust the lower-priority schedule window'}</strong><p>{selected.suggestions?.[0]?.description || 'This preserves both experiences while removing the unexpected overlap.'}</p><div>
+            <button className="nx-draft-btn schedule small" disabled={!selected.suggestions?.[0] || conflictWizardApplying} onClick={() => applySingleConflictFix(selected, selected.suggestions[0])}>{conflictWizardApplying ? 'Applying...' : 'Select this fix'}</button>
+            <button className="nx-draft-btn small" disabled={(selected.suggestions?.length || 0) < 2} onClick={() => setShowConflictAlternatives(value => !value)}>{showConflictAlternatives ? 'Hide alternatives' : 'See alternatives'}</button>
+            <button className="nx-draft-btn ghost small" onClick={() => ignoreConflict(selected.id)}>Ignore conflict</button>
+          </div>
+          {showConflictAlternatives && (selected.suggestions?.length || 0) > 1 && (
+            <div className="nx-draft-alternatives">
+              {selected.suggestions.slice(1).map(fix => (
+                <div key={fix.id} className="nx-draft-alternative-row">
+                  <div><strong>{fix.label}</strong><p>{fix.description}</p></div>
+                  <button className="nx-draft-btn small" disabled={conflictWizardApplying} onClick={() => applySingleConflictFix(selected, fix)}>Use this fix</button>
+                </div>
+              ))}
+            </div>
+          )}
+          </div></div></section>
         </div> : <div className="nx-draft-panel nx-draft-all-clear"><CheckCircle size={28} /><strong>No unresolved conflicts</strong><span>Schedule priorities and windows are currently clear.</span></div>}
       </div>
     );
@@ -19411,6 +19858,7 @@ const DashboardTiles = {
             <option value="active">Active Only</option>
             <option value="hasPrerolls">Has Prerolls</option>
             <option value="empty">Empty</option>
+            <option value="system">System</option>
           </select>
 
           <select
@@ -19652,8 +20100,37 @@ const DashboardTiles = {
                     }}>
                       {stats.totalPrerolls}
                     </span>
+                    {category.is_system && (
+                      <span
+                        style={{
+                          fontSize: '0.7rem',
+                          padding: '0.1rem 0.4rem',
+                          borderRadius: '999px',
+                          border: '1px solid var(--border-color)',
+                          color: 'var(--text-secondary)',
+                          fontWeight: '600',
+                          flexShrink: 0
+                        }}
+                        title="Managed automatically by NeXroll; cannot be edited or deleted"
+                      >
+                        System
+                      </span>
+                    )}
                   </div>
-                  
+
+                  <p style={{
+                    margin: '0 0 0.5rem',
+                    fontSize: '0.8rem',
+                    color: 'var(--text-secondary)',
+                    overflow: 'hidden',
+                    textOverflow: 'ellipsis',
+                    display: '-webkit-box',
+                    WebkitLineClamp: 2,
+                    WebkitBoxOrient: 'vertical'
+                  }}>
+                    {category.description || <em style={{ opacity: 0.6 }}>No description</em>}
+                  </p>
+
                   {/* Secondary info badges */}
                   <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.3rem' }}>
                     {stats.totalDuration > 0 && (
@@ -20014,6 +20491,25 @@ const DashboardTiles = {
                     )}
                     <td style={{ padding: '0.75rem', fontWeight: '600', color: 'var(--text-color)' }}>
                       {category.name}
+                      {category.is_system && (
+                        <span
+                          style={{
+                            display: 'inline-block',
+                            marginLeft: '0.5rem',
+                            fontSize: '0.7rem',
+                            padding: '0.1rem 0.4rem',
+                            borderRadius: '999px',
+                            border: '1px solid var(--border-color)',
+                            color: 'var(--text-secondary)',
+                            fontWeight: '600',
+                            fontStyle: 'normal',
+                            verticalAlign: 'middle'
+                          }}
+                          title="Managed automatically by NeXroll; cannot be edited or deleted"
+                        >
+                          System
+                        </span>
+                      )}
                       {stats.hasActiveSchedules && (
                         <span 
                           style={{ marginLeft: '0.5rem', fontSize: '0.85rem' }}
@@ -20075,7 +20571,7 @@ const DashboardTiles = {
                     </td>
                     <td style={{ padding: '0.75rem', textAlign: 'center' }}>
                       {!bulkActionMode && (
-                        <div style={{ display: 'flex', gap: '0.5rem', justifyContent: 'center', flexWrap: 'wrap' }}>
+                        <div style={{ display: 'flex', gap: '0.5rem', justifyContent: 'flex-start', flexWrap: 'nowrap' }}>
                           <button
                             onClick={(e) => {
                               e.stopPropagation();
@@ -20088,35 +20584,30 @@ const DashboardTiles = {
                           >
                             <Film size={14} />
                           </button>
-                          {!category.is_system && (
-                            <>
-                              <button
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  handleEditCategory(category);
-                                }}
-                                className="nx-iconbtn"
-                                title="Edit category"
-                                style={{ fontSize: '0.9rem' }}
-                              >
-                                <Edit size={14} />
-                              </button>
-                              <button
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  handleDeleteCategory(category.id);
-                                }}
-                                className="nx-iconbtn nx-iconbtn--danger"
-                                title="Delete category"
-                                style={{ fontSize: '0.9rem' }}
-                              >
-                                <Trash size={14} />
-                              </button>
-                            </>
-                          )}
-                          {category.is_system && (
-                            <span style={{ fontSize: '0.75rem', color: '#888', fontStyle: 'italic' }}>System</span>
-                          )}
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              if (!category.is_system) handleEditCategory(category);
+                            }}
+                            className="nx-iconbtn"
+                            title={category.is_system ? 'System categories cannot be edited' : 'Edit category'}
+                            style={{ fontSize: '0.9rem' }}
+                            disabled={category.is_system}
+                          >
+                            <Edit size={14} />
+                          </button>
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              if (!category.is_system) handleDeleteCategory(category.id);
+                            }}
+                            className="nx-iconbtn nx-iconbtn--danger"
+                            title={category.is_system ? 'System categories cannot be deleted' : 'Delete category'}
+                            style={{ fontSize: '0.9rem' }}
+                            disabled={category.is_system}
+                          >
+                            <Trash size={14} />
+                          </button>
                         </div>
                       )}
                     </td>
@@ -20623,42 +21114,8 @@ const DashboardTiles = {
     const connected = plexStatus === 'Connected';
     return (
     <div className="nx-conn-panel" style={{ '--brand': '#f6685e' }}>
-      {/* Hero status header */}
-      <div className={`nx-conn-hero${connected ? ' connected' : ''}`}>
-        <div className={`nx-conn-hero-badge${connected ? '' : ' idle'}`}>
-          <Server size={24} />
-        </div>
-        <div className="nx-conn-hero-body">
-          <h2 className="nx-conn-hero-title">
-            Plex
-            <span className={`nx-conn-hero-state ${connected ? 'ok' : 'bad'}`}>
-              <span className={`nx-dot ${connected ? 'ok' : 'bad'}`} aria-hidden="true" />
-              {connected ? 'Connected' : 'Not connected'}
-            </span>
-          </h2>
-          <div className="nx-conn-hero-meta">
-            {connected ? (
-              <>
-                {plexServerInfo?.friendlyName && <span>{plexServerInfo.friendlyName}</span>}
-                {plexServerInfo?.version && <><span className="sep">·</span><span>v{plexServerInfo.version}</span></>}
-                {plexServerInfo?.url && <><span className="sep">·</span><span>{plexServerInfo.url}</span></>}
-                {plexServerInfo?.token_source && (
-                  <><span className="sep">·</span><span>{plexServerInfo.token_source === 'secure_store' ? 'Secure token' : plexServerInfo.token_source === 'database' ? 'DB token' : plexServerInfo.token_source}</span></>
-                )}
-              </>
-            ) : (
-              <span>Connect with a Stable Token (recommended) or another method below.</span>
-            )}
-          </div>
-        </div>
-        {connected && (
-          <div className="nx-conn-hero-actions">
-            <button onClick={handleDisconnectPlex} className="button button-danger">
-              <Unlink size={15} /> Disconnect
-            </button>
-          </div>
-        )}
-      </div>
+      {/* Identity, status, meta, and Disconnect now live in the server card
+          above (renderConnect) — this panel only covers connect/settings UI. */}
 
       {/* Connection-problem notices (shown even when "connected" flag is off but info exists) */}
       {plexServerInfo?.message && !plexServerInfo.connected && (
@@ -20992,7 +21449,11 @@ const DashboardTiles = {
   };
 
   const handleDownloadDiagnostics = async () => {
+    if (downloadingDiagnostics) return;
+    setDownloadingDiagnostics(true);
     try {
+      // Assembling the bundle (logs + system info) can take 10+ seconds with
+      // no other progress signal — the button's own loading state is it.
       const res = await fetch(apiUrl('diagnostics/bundle'));
       if (!res.ok) {
         throw new Error(`HTTP ${res.status}`);
@@ -21008,6 +21469,8 @@ const DashboardTiles = {
       URL.revokeObjectURL(url);
     } catch (e) {
       alert('Failed to download diagnostics: ' + (e && e.message ? e.message : e));
+    } finally {
+      setDownloadingDiagnostics(false);
     }
   };
 
@@ -23285,6 +23748,7 @@ const DashboardTiles = {
           image_data: imageData,
           video_data: motionCapture?.videoData || null,
           video_mime_type: motionCapture?.mimeType || null,
+          name: dynamicPrerollSettings.name?.trim() || null,
           duration: dynamicPrerollSettings.duration,
           template: dynamicPrerollSettings.template,
           server_name: dynamicPrerollSettings.server_name,
@@ -23978,14 +24442,12 @@ const DashboardTiles = {
         }}
         potoken={potoken}
         youtubeSetup={youtubeSetup}
-        onReset={loadNexupSettings}
         onOpenFolder={openFolderBrowser}
         onTestPotoken={handleTestPotoken}
         onConfigureYoutube={() => setYoutubeSetup(previous => ({ ...previous, showWizard: true, wizardStep: 1, testResult: null }))}
         onInstallPotoken={handleInstallPotokenFromNexup}
         onTestTmdbKey={handleTestTmdbKey}
         tmdbKeyTest={tmdbKeyTest}
-        onNotifySaved={() => showAlert('NeX-Up settings are saved.', 'success')}
       />
     );
   };
@@ -25868,452 +26330,6 @@ const DashboardTiles = {
               </div>
             </div>
           </div>
-
-          {/* YouTube Setup Wizard Modal - OUTSIDE the main content flow */}
-          {youtubeSetup.showWizard && (
-            <div 
-              style={{
-                position: 'fixed',
-                top: 0,
-                left: 0,
-                right: 0,
-                bottom: 0,
-                backgroundColor: 'rgba(0, 0, 0, 0.8)',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                zIndex: 10000
-              }}
-              onClick={() => setYoutubeSetup(prev => ({ ...prev, showWizard: false }))}
-            >
-              <div 
-                role="dialog"
-                aria-modal="true"
-                aria-labelledby="youtube-setup-title"
-                style={{ 
-                  maxWidth: '550px',
-                  width: '90%',
-                  maxHeight: '90vh',
-                  overflow: 'auto',
-                  backgroundColor: 'var(--card-bg, #1e1e2e)',
-                  borderRadius: '12px',
-                  boxShadow: '0 25px 50px rgba(0, 0, 0, 0.5)',
-                  border: '1px solid var(--border-color)'
-                }} 
-                onClick={(e) => e.stopPropagation()}
-              >
-                <div style={{ 
-                  padding: '1.5rem',
-                  borderBottom: '1px solid var(--border-color)',
-                  display: 'flex',
-                  justifyContent: 'space-between',
-                  alignItems: 'center'
-                }}>
-                  <h2 id="youtube-setup-title" style={{ margin: 0, fontSize: '1.5rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                    <Youtube size={28} /> YouTube Setup Wizard
-                  </h2>
-                  <button 
-                    onClick={() => setYoutubeSetup(prev => ({ ...prev, showWizard: false }))}
-                    style={{
-                      background: 'none',
-                      border: 'none',
-                      fontSize: '2rem',
-                      cursor: 'pointer',
-                      color: 'var(--text-color)',
-                      lineHeight: 1,
-                      padding: '0 0.5rem',
-                      display: 'inline-flex',
-                      alignItems: 'center'
-                    }}
-                    aria-label="Close"
-                  ><X size={20} /></button>
-                </div>
-                <div style={{ padding: '1.5rem' }}>
-                  {/* Progress Indicator */}
-                  <div style={{ 
-                    display: 'flex', 
-                    justifyContent: 'center', 
-                    gap: '0.5rem', 
-                    marginBottom: '1.5rem' 
-                  }}>
-                    {[1, 2, 3, 4].map(step => (
-                      <div 
-                        key={step}
-                        style={{
-                          width: '40px',
-                          height: '40px',
-                          borderRadius: '50%',
-                          display: 'flex',
-                          alignItems: 'center',
-                          justifyContent: 'center',
-                          fontWeight: 'bold',
-                          backgroundColor: youtubeSetup.wizardStep >= step ? 'var(--button-bg)' : 'var(--bg-color)',
-                          color: youtubeSetup.wizardStep >= step ? 'white' : '#888',
-                          border: '2px solid var(--border-color)'
-                        }}
-                      >
-                        {youtubeSetup.wizardStep > step ? <Check size={18} /> : step}
-                      </div>
-                    ))}
-                  </div>
-
-                  {/* Step 1: Introduction & Method Selection */}
-                  {youtubeSetup.wizardStep === 1 && (
-                    <div style={{ textAlign: 'center' }}>
-                      <div style={{ marginBottom: '1rem' }}><Key size={64} color="var(--button-bg)" /></div>
-                      <h3 style={{ marginBottom: '1rem' }}>YouTube Requires Authentication</h3>
-                      <p style={{ color: '#888', marginBottom: '1.5rem' }}>
-                        YouTube has bot protection that requires authentication.
-                        Choose how you want to set this up:
-                      </p>
-                      
-                      {/* Method Selection Cards */}
-                      <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem', marginBottom: '1.5rem' }}>
-                        {/* Browser Cookies Method - Recommended */}
-                        <button
-                          type="button"
-                          onClick={() => setYoutubeSetup(prev => ({ ...prev, authMethod: 'browser' }))}
-                          style={{ 
-                            width: '100%',
-                            padding: '1rem', 
-                            backgroundColor: youtubeSetup.authMethod === 'browser' ? 'rgba(40, 167, 69, 0.2)' : 'var(--bg-color)', 
-                            borderRadius: '8px',
-                            border: youtubeSetup.authMethod === 'browser' ? '2px solid #28a745' : '2px solid var(--border-color)',
-                            cursor: 'pointer',
-                            textAlign: 'left',
-                            color: 'inherit',
-                            font: 'inherit',
-                            transition: 'all 0.2s'
-                          }}
-                        >
-                          <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', marginBottom: '0.5rem' }}>
-                            <Globe size={24} color="#28a745" />
-                            <strong style={{ fontSize: '1.1rem' }}>Extract Browser Cookies</strong>
-                            <span style={{ 
-                              backgroundColor: '#28a745', 
-                              color: 'white', 
-                              padding: '0.15rem 0.5rem', 
-                              borderRadius: '4px', 
-                              fontSize: '0.75rem' 
-                            }}>EASIEST</span>
-                          </div>
-                          <p style={{ margin: 0, fontSize: '0.9rem', color: '#888' }}>
-                            Sign in to YouTube in your browser, then we'll extract the cookies automatically.
-                            Requires closing the browser briefly during extraction.
-                          </p>
-                        </button>
-                        
-                        {/* Manual Upload Method */}
-                        <button
-                          type="button"
-                          onClick={() => setYoutubeSetup(prev => ({ ...prev, authMethod: 'cookies' }))}
-                          style={{ 
-                            width: '100%',
-                            padding: '1rem', 
-                            backgroundColor: youtubeSetup.authMethod === 'cookies' ? 'rgba(23, 162, 184, 0.2)' : 'var(--bg-color)', 
-                            borderRadius: '8px',
-                            border: youtubeSetup.authMethod === 'cookies' ? '2px solid #17a2b8' : '2px solid var(--border-color)',
-                            cursor: 'pointer',
-                            textAlign: 'left',
-                            color: 'inherit',
-                            font: 'inherit',
-                            transition: 'all 0.2s'
-                          }}
-                        >
-                          <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', marginBottom: '0.5rem' }}>
-                            <FileUp size={24} color="#17a2b8" />
-                            <strong style={{ fontSize: '1.1rem' }}>Upload Cookies File</strong>
-                            <span style={{ fontSize: '0.8rem', color: '#888' }}>(Advanced)</span>
-                          </div>
-                          <p style={{ margin: 0, fontSize: '0.9rem', color: '#888' }}>
-                            Already exported a cookies.txt file using a browser extension? Upload it directly.
-                            Use extensions like "Get cookies.txt LOCALLY" for Chrome/Edge.
-                          </p>
-                          <p style={{ margin: '0.5rem 0 0 0', fontSize: '0.85rem', color: '#6c757d', fontStyle: 'italic' }}>
-                            Tip: Use an Incognito/Private browser window when logging into YouTube and exporting cookies for best results.
-                          </p>
-                        </button>
-                      </div>
-                      
-                      {youtubeSetup.testResult && !youtubeSetup.testResult.success && (
-                        <div style={{ 
-                          padding: '1rem', 
-                          backgroundColor: '#f8d7da', 
-                          borderRadius: '8px',
-                          marginBottom: '1rem',
-                          color: '#721c24',
-                          textAlign: 'left'
-                        }}>
-                          {youtubeSetup.testResult.message}
-                        </div>
-                      )}
-                      
-                      {youtubeSetup.authMethod === 'browser' && (
-                        <button
-                          onClick={() => setYoutubeSetup(prev => ({ ...prev, wizardStep: 2 }))}
-                          className="button"
-                          style={{ padding: '0.75rem 2rem' }}
-                        >
-                          Continue →
-                        </button>
-                      )}
-                      
-                      {/* Manual upload for cookies method */}
-                      {youtubeSetup.authMethod === 'cookies' && (
-                        <div style={{ marginTop: '1rem' }}>
-                          <label 
-                            className="button" 
-                            style={{ 
-                              display: 'inline-flex',
-                              alignItems: 'center',
-                              gap: '0.5rem',
-                              cursor: 'pointer',
-                              padding: '0.75rem 2rem'
-                            }}
-                          >
-                            <FileUp size={16} /> Select Cookies File
-                            <input 
-                              type="file" 
-                              accept=".txt"
-                              onChange={handleYoutubeUploadCookies}
-                              style={{ display: 'none' }}
-                              disabled={youtubeSetup.uploading}
-                            />
-                          </label>
-                          {youtubeSetup.uploading && <span style={{ marginLeft: '0.5rem', display: 'inline-flex', alignItems: 'center', gap: '0.25rem' }}><Loader2 size={16} className="spin" /> Uploading...</span>}
-                        </div>
-                      )}
-                    </div>
-                  )}
-
-                  {/* Step 2: Browser Selection & Sign In (for browser cookies method) */}
-                  {youtubeSetup.wizardStep === 2 && (
-                    <div style={{ textAlign: 'center' }}>
-                      <div style={{ marginBottom: '1rem' }}><Globe size={64} color="var(--button-bg)" /></div>
-                      <h3 style={{ marginBottom: '1rem' }}>Step 1: Select Browser & Sign In</h3>
-                      
-                      {/* Browser Selection */}
-                      <div style={{ 
-                        padding: '1rem', 
-                        backgroundColor: 'var(--bg-color)', 
-                        borderRadius: '8px',
-                        marginBottom: '1rem'
-                      }}>
-                        <label style={{ display: 'block', fontWeight: 'bold', marginBottom: '0.5rem' }}>
-                          Which browser will you use?
-                        </label>
-                        <select
-                          value={youtubeSetup.selectedBrowser}
-                          onChange={(e) => setYoutubeSetup(prev => ({ ...prev, selectedBrowser: e.target.value }))}
-                          style={{ 
-                            width: '100%', 
-                            padding: '0.75rem', 
-                            borderRadius: '6px', 
-                            border: '1px solid var(--border-color)',
-                            fontSize: '1rem',
-                            backgroundColor: 'var(--card-bg)'
-                          }}
-                        >
-                          <option value="chrome">Google Chrome</option>
-                          <option value="edge">Microsoft Edge</option>
-                          <option value="firefox">Mozilla Firefox</option>
-                          <option value="brave">Brave Browser</option>
-                        </select>
-                      </div>
-                      
-                      <p style={{ color: '#888', marginBottom: '0.5rem' }}>
-                        Sign in to YouTube using <strong>{youtubeSetup.selectedBrowser.charAt(0).toUpperCase() + youtubeSetup.selectedBrowser.slice(1)}</strong>.
-                      </p>
-                      
-                      {/* Important tip */}
-                      <div style={{ 
-                        padding: '1rem', 
-                        backgroundColor: '#17a2b8',
-                        color: 'white',
-                        borderRadius: '8px',
-                        textAlign: 'left',
-                        marginBottom: '1.5rem'
-                      }}>
-                        <strong style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}><Lightbulb size={18} /> Tip:</strong>
-                        <p style={{ margin: '0.5rem 0 0 0', fontSize: '0.9rem' }}>
-                          Use a <strong>different browser</strong> than the one viewing NeXroll.
-                        </p>
-                      </div>
-                      
-                      <button
-                        onClick={handleYoutubeOpenBrowser}
-                        className="button"
-                        style={{ padding: '0.75rem 2rem', marginBottom: '1rem', display: 'flex', alignItems: 'center', gap: '0.5rem', margin: '0 auto 1rem auto' }}
-                      >
-                        <Rocket size={18} /> Open YouTube in {youtubeSetup.selectedBrowser.charAt(0).toUpperCase() + youtubeSetup.selectedBrowser.slice(1)}
-                      </button>
-                      <p style={{ fontSize: '0.85rem', color: '#888' }}>
-                        Already signed in? Just proceed to the next step.
-                      </p>
-                      <div style={{ marginTop: '1.5rem', display: 'flex', gap: '1rem', justifyContent: 'center' }}>
-                        <button
-                          onClick={() => setYoutubeSetup(prev => ({ ...prev, wizardStep: 1 }))}
-                          className="button button-secondary"
-                        >
-                          ← Back
-                        </button>
-                        <button
-                          onClick={() => setYoutubeSetup(prev => ({ ...prev, wizardStep: 3 }))}
-                          className="button"
-                          style={{ backgroundColor: '#28a745', padding: '0.75rem 2rem' }}
-                        >
-                          I'm Signed In →
-                        </button>
-                      </div>
-                    </div>
-                  )}
-
-                  {/* Step 3: Browser Cookie Extraction */}
-                  {youtubeSetup.wizardStep === 3 && (
-                    <div style={{ textAlign: 'center' }}>
-                      <div style={{ marginBottom: '1rem' }}><Lock size={64} color="var(--button-bg)" /></div>
-                      <h3 style={{ marginBottom: '1rem' }}>Step 2: Close {youtubeSetup.selectedBrowser.charAt(0).toUpperCase() + youtubeSetup.selectedBrowser.slice(1)}</h3>
-                      <p style={{ color: '#888', marginBottom: '1rem' }}>
-                        <strong>Important:</strong> Close <strong>{youtubeSetup.selectedBrowser.charAt(0).toUpperCase() + youtubeSetup.selectedBrowser.slice(1)}</strong> completely
-                        so we can read the login cookies.
-                      </p>
-                      <div style={{ 
-                        padding: '1rem', 
-                        backgroundColor: '#d4edda', 
-                        borderRadius: '8px',
-                        marginBottom: '1rem',
-                        textAlign: 'left',
-                        color: '#155724'
-                      }}>
-                        <strong style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}><CheckCircle size={18} /> Good News:</strong>
-                        <p style={{ margin: '0.5rem 0 0 0', fontSize: '0.9rem' }}>
-                          You only need to close <strong>{youtubeSetup.selectedBrowser.charAt(0).toUpperCase() + youtubeSetup.selectedBrowser.slice(1)}</strong> - 
-                          you can keep using other browsers (like this one viewing NeXroll)!
-                        </p>
-                      </div>
-                      <div style={{ 
-                        padding: '1rem', 
-                        backgroundColor: '#fff3cd', 
-                        borderRadius: '8px',
-                        marginBottom: '1.5rem',
-                        textAlign: 'left',
-                        color: '#856404'
-                      }}>
-                        <strong style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}><AlertTriangle size={18} /> Why close the browser?</strong>
-                        <p style={{ margin: '0.5rem 0 0 0', fontSize: '0.9rem' }}>
-                          Browsers lock their cookie database while running. 
-                          Closing {youtubeSetup.selectedBrowser.charAt(0).toUpperCase() + youtubeSetup.selectedBrowser.slice(1)} allows us to safely read your YouTube login.
-                        </p>
-                      </div>
-                      
-                      {youtubeSetup.testResult && !youtubeSetup.testResult.success && (
-                        <div style={{ 
-                          padding: '1rem', 
-                          backgroundColor: '#f8d7da', 
-                          borderRadius: '8px',
-                          marginBottom: '1rem',
-                          color: '#721c24'
-                        }}>
-                          {youtubeSetup.testResult.message}
-                        </div>
-                      )}
-                      
-                      <div style={{ display: 'flex', gap: '1rem', justifyContent: 'center' }}>
-                        <button
-                          onClick={() => setYoutubeSetup(prev => ({ ...prev, wizardStep: 2 }))}
-                          className="button button-secondary"
-                        >
-                          ← Back
-                        </button>
-                        <button
-                          onClick={handleYoutubeExtractCookies}
-                          className="button"
-                          disabled={youtubeSetup.extracting}
-                          style={{ padding: '0.75rem 2rem' }}
-                        >
-                          {youtubeSetup.extracting 
-                            ? <><Loader2 size={16} className="spin" /> Extracting Cookies...</>
-                            : <><Key size={16} /> Extract Cookies Now</>}
-                        </button>
-                      </div>
-                      <p style={{ fontSize: '0.8rem', color: '#888', marginTop: '1rem' }}>
-                        Make sure {youtubeSetup.selectedBrowser.charAt(0).toUpperCase() + youtubeSetup.selectedBrowser.slice(1)} is completely closed before clicking.
-                      </p>
-                    </div>
-                  )}
-
-                  {/* Step 4: Success */}
-                  {youtubeSetup.wizardStep === 4 && (
-                    <div style={{ textAlign: 'center' }}>
-                      <div style={{ marginBottom: '1rem' }}><PartyPopper size={64} color="#28a745" /></div>
-                      <h3 style={{ marginBottom: '1rem', color: '#28a745' }}>YouTube is Ready!</h3>
-                      <p style={{ color: '#888', marginBottom: '1.5rem' }}>
-                        Your YouTube authentication is set up successfully. 
-                        You can now download trailers without issues.
-                      </p>
-                      
-                      {youtubeSetup.testResult && (
-                        <div style={{
-                          padding: '0.85rem 1rem',
-                          borderRadius: '8px',
-                          marginBottom: '1.5rem',
-                          fontSize: '0.9rem',
-                          color: youtubeSetup.testResult.success ? 'var(--success-color, #28a745)' : '#dc3545',
-                          background: youtubeSetup.testResult.success
-                            ? 'color-mix(in srgb, var(--success-color, #28a745) 12%, transparent)'
-                            : 'color-mix(in srgb, #dc3545 12%, transparent)',
-                          border: `1px solid ${youtubeSetup.testResult.success ? 'color-mix(in srgb, var(--success-color, #28a745) 40%, transparent)' : 'color-mix(in srgb, #dc3545 40%, transparent)'}`,
-                        }}>
-                          <div style={{ fontWeight: 600 }}>
-                            {youtubeSetup.testResult.message || youtubeSetup.testResult.error || 'Test failed'}
-                          </div>
-                          {youtubeSetup.testResult.hint && (
-                            <div style={{ marginTop: '0.4rem', color: 'var(--text-secondary)', fontWeight: 400 }}>
-                              {youtubeSetup.testResult.hint}
-                            </div>
-                          )}
-                        </div>
-                      )}
-
-                      {/* Optional: test the exact trailer that's failing, so a
-                          single bad video can be told apart from broken auth. */}
-                      <div style={{ marginBottom: '1rem' }}>
-                        <label style={{ display: 'block', marginBottom: '0.35rem', fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
-                          Test a specific trailer URL <span style={{ opacity: 0.7 }}>(optional)</span>
-                        </label>
-                        <input
-                          type="text"
-                          className="nx-input"
-                          placeholder="https://www.youtube.com/watch?v=... (leave blank to test sign-in only)"
-                          value={youtubeSetup.testUrl || ''}
-                          onChange={(e) => setYoutubeSetup(prev => ({ ...prev, testUrl: e.target.value }))}
-                          style={{ width: '100%', padding: '0.55rem 0.7rem', borderRadius: '6px', border: '1px solid var(--border-color)', boxSizing: 'border-box' }}
-                        />
-                      </div>
-
-                      <div style={{ display: 'flex', gap: '1rem', justifyContent: 'center' }}>
-                        <button
-                          onClick={handleYoutubeTestDownload}
-                          className="button button-secondary"
-                          disabled={youtubeSetup.testing}
-                        >
-                          {youtubeSetup.testing
-                            ? <><Loader2 size={16} className="spin" /> Testing...</>
-                            : <><FlaskConical size={16} /> Test Download</>}
-                        </button>
-                        <button
-                          onClick={() => setYoutubeSetup(prev => ({ ...prev, showWizard: false }))}
-                          className="button button-success"
-                        >
-                                                    <Check size={16} /> Done
-                        </button>
-                      </div>
-                    </div>
-                  )}
-                </div>
-              </div>
-            </div>
-          )}
 
           {/* Storage Card */}
           <div className="card">
@@ -28537,32 +28553,42 @@ const DashboardTiles = {
   // Settings - General Tab
   const renderSettingsGeneral = () => (
     <div className="nx-settings-general-grid">
-    <div className="nx-settings-general-column">
     <div className="card nx-settings-appearance">
       <h2 style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
         <Palette size={20} style={{ color: '#7667ff' }} /> Appearance &amp; locale
       </h2>
       {/* Theme Settings */}
-      <div className="nx-setting-row">
+      <div className="nx-setting-row nx-setting-row-theme">
         <div className="nx-setting-row-head">
           {darkMode ? <Moon size={16} style={{ color: '#a78bfa' }} /> : <Sun size={16} style={{ color: '#fbbf24' }} />}
           <h3>Theme</h3>
         </div>
         <p className="nx-setting-row-desc">
-          Choose between light and dark themes for the interface.
+          Applies across every page. {THEMES[resolveTheme(theme)].blurb}
         </p>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-          <label className="nx-rockerswitch">
-            <input
-              type="checkbox"
-              checked={darkMode}
-              onChange={toggleTheme}
-            />
-            <span className="nx-rockerswitch-slider"></span>
-          </label>
-          <span style={{ fontWeight: 600, color: 'var(--text-color)' }}>
-            {darkMode ? 'Dark Mode' : 'Light Mode'}
-          </span>
+        <div className="nx-theme-picker" role="radiogroup" aria-label="Interface theme">
+          {THEME_IDS.map(id => {
+            const t = THEMES[id];
+            const selected = resolveTheme(theme) === id;
+            return (
+              <button
+                key={id}
+                type="button"
+                role="radio"
+                aria-checked={selected}
+                className={`nx-theme-option${selected ? ' selected' : ''}`}
+                onClick={() => setTheme(id)}
+                title={t.blurb}
+              >
+                <span className="nx-theme-swatch" aria-hidden="true">
+                  {t.swatch.map((color, index) => <i key={index} style={{ background: color }} />)}
+                </span>
+                <span className="nx-theme-option-name">{t.label}</span>
+                <span className="nx-theme-option-base">{t.base}</span>
+                {selected && <Check size={13} className="nx-theme-option-check" />}
+              </button>
+            );
+          })}
         </div>
       </div>
 
@@ -28604,6 +28630,94 @@ const DashboardTiles = {
         </div>
       </div>
 
+    </div>
+
+    <div className="card nx-settings-scheduler">
+      <h2 style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+        <Sliders size={20} style={{ color: '#35d06f' }} /> Scheduler behavior
+      </h2>
+
+      {/* Coexistence Mode (Passive Mode) */}
+      <div className="nx-setting-row">
+        <div className="nx-setting-row-head">
+          <Users size={16} style={{ color: '#3b82f6' }} />
+          <h3>Coexistence Mode</h3>
+        </div>
+        <p className="nx-setting-row-desc">
+          Enable if you use another preroll manager alongside NeXroll. NeXroll will only manage prerolls during active schedules.
+        </p>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+          <label className="nx-rockerswitch">
+            <input
+              type="checkbox"
+              checked={passiveMode}
+              onChange={(e) => updatePassiveMode(e.target.checked)}
+              disabled={passiveModeLoading}
+            />
+            <span className="nx-rockerswitch-slider"></span>
+          </label>
+          <span style={{ fontWeight: 600, color: 'var(--text-color)' }}>
+            {passiveMode ? 'Coexistence Mode Enabled' : 'Coexistence Mode Disabled'}
+          </span>
+        </div>
+        {passiveMode && (
+          <div style={{ marginTop: '0.75rem', padding: '0.5rem 0.75rem', backgroundColor: 'rgba(59, 130, 246, 0.1)', border: '1px solid rgba(59, 130, 246, 0.3)', borderRadius: '6px' }}>
+            <p style={{ margin: 0, fontSize: '0.8rem', color: '#3b82f6', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+              <Check size={14} /> NeXroll will only apply prerolls during active schedules.
+            </p>
+          </div>
+        )}
+        {!passiveMode && (
+          <div style={{ marginTop: '0.75rem', padding: '0.5rem 0.75rem', backgroundColor: 'var(--bg-color)', border: '1px solid var(--border-color)', borderRadius: '6px' }}>
+            <p style={{ margin: 0, fontSize: '0.8rem', color: 'var(--text-secondary)', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+              <Info size={14} /> Standard mode: NeXroll manages prerolls at all times.
+            </p>
+          </div>
+        )}
+      </div>
+
+      {/* Clear When Inactive */}
+      <div className="nx-setting-row">
+        <div className="nx-setting-row-head">
+          <XCircle size={16} style={{ color: '#ef4444' }} />
+          <h3>Clear Prerolls When Inactive</h3>
+        </div>
+        <p className="nx-setting-row-desc">
+          Clear the Plex preroll field when no schedules are active. No prerolls will play outside scheduled times.
+        </p>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+          <label className="nx-rockerswitch">
+            <input
+              type="checkbox"
+              checked={clearWhenInactive}
+              onChange={(e) => updateClearWhenInactive(e.target.checked)}
+              disabled={clearWhenInactiveLoading || passiveMode}
+            />
+            <span className="nx-rockerswitch-slider"></span>
+          </label>
+      </div>
+        {passiveMode && (
+          <div style={{ marginTop: '0.75rem', padding: '0.5rem 0.75rem', backgroundColor: 'rgba(245, 158, 11, 0.1)', border: '1px solid rgba(245, 158, 11, 0.3)', borderRadius: '6px' }}>
+            <p style={{ margin: 0, fontSize: '0.8rem', color: '#f59e0b', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+              <AlertTriangle size={14} /> Disabled while Coexistence Mode is active.
+            </p>
+          </div>
+        )}
+        {!passiveMode && clearWhenInactive && (
+          <div style={{ marginTop: '0.75rem', padding: '0.5rem 0.75rem', backgroundColor: 'rgba(59, 130, 246, 0.1)', border: '1px solid rgba(59, 130, 246, 0.3)', borderRadius: '6px' }}>
+            <p style={{ margin: 0, fontSize: '0.8rem', color: '#3b82f6', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+              <Check size={14} /> Movies will play without prerolls outside scheduled times.
+            </p>
+          </div>
+        )}
+        {!passiveMode && !clearWhenInactive && (
+          <div style={{ marginTop: '0.75rem', padding: '0.5rem 0.75rem', backgroundColor: 'var(--bg-color)', border: '1px solid var(--border-color)', borderRadius: '6px' }}>
+            <p style={{ margin: 0, fontSize: '0.8rem', color: 'var(--text-secondary)', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+              <Info size={14} /> Prerolls remain in Plex when no schedules are active.
+            </p>
+          </div>
+        )}
+      </div>
     </div>
 
     <div className="card nx-settings-interface">
@@ -28706,109 +28820,21 @@ const DashboardTiles = {
         )}
       </div>
     </div>
-    </div>
 
-    <div className="nx-settings-general-column">
-    {/* Scheduler Settings Card */}
-    <div className="card nx-settings-scheduler" style={{ marginTop: '1rem' }}>
-      <h2 style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-        <Sliders size={20} style={{ color: '#35d06f' }} /> Scheduler behavior
-      </h2>
-
-      {/* Coexistence Mode (Passive Mode) */}
-      <div className="nx-setting-row">
-        <div className="nx-setting-row-head">
-          <Users size={16} style={{ color: '#3b82f6' }} />
-          <h3>Coexistence Mode</h3>
-        </div>
-        <p className="nx-setting-row-desc">
-          Enable if you use another preroll manager alongside NeXroll. NeXroll will only manage prerolls during active schedules.
-        </p>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-          <label className="nx-rockerswitch">
-            <input
-              type="checkbox"
-              checked={passiveMode}
-              onChange={(e) => updatePassiveMode(e.target.checked)}
-              disabled={passiveModeLoading}
-            />
-            <span className="nx-rockerswitch-slider"></span>
-          </label>
-          <span style={{ fontWeight: 600, color: 'var(--text-color)' }}>
-            {passiveMode ? 'Coexistence Mode Enabled' : 'Coexistence Mode Disabled'}
-          </span>
-        </div>
-        {passiveMode && (
-          <div style={{ marginTop: '0.75rem', padding: '0.5rem 0.75rem', backgroundColor: 'rgba(59, 130, 246, 0.1)', border: '1px solid rgba(59, 130, 246, 0.3)', borderRadius: '6px' }}>
-            <p style={{ margin: 0, fontSize: '0.8rem', color: '#3b82f6', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-              <Check size={14} /> NeXroll will only apply prerolls during active schedules.
-            </p>
-          </div>
-        )}
-        {!passiveMode && (
-          <div style={{ marginTop: '0.75rem', padding: '0.5rem 0.75rem', backgroundColor: 'var(--bg-color)', border: '1px solid var(--border-color)', borderRadius: '6px' }}>
-            <p style={{ margin: 0, fontSize: '0.8rem', color: 'var(--text-secondary)', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-              <Info size={14} /> Standard mode: NeXroll manages prerolls at all times.
-            </p>
-          </div>
-        )}
-      </div>
-
-      {/* Clear When Inactive */}
-      <div className="nx-setting-row">
-        <div className="nx-setting-row-head">
-          <XCircle size={16} style={{ color: '#ef4444' }} />
-          <h3>Clear Prerolls When Inactive</h3>
-        </div>
-        <p className="nx-setting-row-desc">
-          Clear the Plex preroll field when no schedules are active. No prerolls will play outside scheduled times.
-        </p>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-          <label className="nx-rockerswitch">
-            <input
-              type="checkbox"
-              checked={clearWhenInactive}
-              onChange={(e) => updateClearWhenInactive(e.target.checked)}
-              disabled={clearWhenInactiveLoading || passiveMode}
-            />
-            <span className="nx-rockerswitch-slider"></span>
-          </label>
-      </div>
-        {passiveMode && (
-          <div style={{ marginTop: '0.75rem', padding: '0.5rem 0.75rem', backgroundColor: 'rgba(245, 158, 11, 0.1)', border: '1px solid rgba(245, 158, 11, 0.3)', borderRadius: '6px' }}>
-            <p style={{ margin: 0, fontSize: '0.8rem', color: '#f59e0b', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-              <AlertTriangle size={14} /> Disabled while Coexistence Mode is active.
-            </p>
-          </div>
-        )}
-        {!passiveMode && clearWhenInactive && (
-          <div style={{ marginTop: '0.75rem', padding: '0.5rem 0.75rem', backgroundColor: 'rgba(59, 130, 246, 0.1)', border: '1px solid rgba(59, 130, 246, 0.3)', borderRadius: '6px' }}>
-            <p style={{ margin: 0, fontSize: '0.8rem', color: '#3b82f6', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-              <Check size={14} /> Movies will play without prerolls outside scheduled times.
-            </p>
-          </div>
-        )}
-        {!passiveMode && !clearWhenInactive && (
-          <div style={{ marginTop: '0.75rem', padding: '0.5rem 0.75rem', backgroundColor: 'var(--bg-color)', border: '1px solid var(--border-color)', borderRadius: '6px' }}>
-            <p style={{ margin: 0, fontSize: '0.8rem', color: 'var(--text-secondary)', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-              <Info size={14} /> Prerolls remain in Plex when no schedules are active.
-            </p>
-          </div>
-        )}
-      </div>
-    </div>
-
-    {/* Filler Category Card */}
-    <div className="card nx-settings-filler" style={{ marginTop: '1rem' }}>
+    <div className="card nx-settings-filler">
       <h2 style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
         <Layers size={20} style={{ color: '#f7c948' }} /> Fallback filler
       </h2>
-      <p style={{ color: 'var(--text-secondary)', marginBottom: '1rem', fontSize: '0.9rem' }}>
-        When no schedules are active, NeXroll can apply a filler category, sequence, or Coming Soon content to fill gaps in your calendar.
-      </p>
 
       <div className="nx-setting-row">
-        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.75rem' }}>
+        <div className="nx-setting-row-head">
+          <Layers size={16} style={{ color: '#f7c948' }} />
+          <h3>Enable Fallback Filler</h3>
+        </div>
+        <p className="nx-setting-row-desc">
+          Apply a filler category, sequence, or Coming Soon content when no schedules are active.
+        </p>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
           <label className="nx-rockerswitch">
             <input
               type="checkbox"
@@ -28834,32 +28860,21 @@ const DashboardTiles = {
         {fillerSettings.enabled && !passiveMode && !clearWhenInactive && (
           <>
             {/* Filler Type Selection */}
-            <div style={{ marginBottom: '1rem' }}>
-              <label style={{ display: 'block', marginBottom: '0.5rem', fontWeight: 600, color: 'var(--text-color)', fontSize: '0.9rem' }}>
-                Filler Type:
-              </label>
-              <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
+            <div className="nx-filler-block">
+              <label className="nx-filler-label">Filler Type</label>
+              <div className="nx-filler-choices">
                 {[
-                  { value: 'category', label: 'Category', icon: <Folder size={14} /> },
-                  { value: 'sequence', label: 'NeX-Up Sequence', icon: <Layers size={14} /> },
-                  { value: 'coming_soon', label: 'NeX-Up Coming Soon', icon: <Film size={14} /> }
+                  { value: 'category', label: 'Category', icon: <Folder size={13} /> },
+                  { value: 'sequence', label: 'NeX-Up Sequence', icon: <Layers size={13} /> },
+                  { value: 'coming_soon', label: 'NeX-Up Coming Soon', icon: <Film size={13} /> }
                 ].map(opt => (
                   <button
                     key={opt.value}
+                    type="button"
+                    aria-pressed={fillerSettings.type === opt.value}
                     onClick={() => updateFillerSettings({ type: opt.value })}
                     disabled={fillerLoading}
-                    style={{
-                      display: 'flex',
-                      alignItems: 'center',
-                      gap: '0.35rem',
-                      padding: '0.5rem 1rem',
-                      border: `2px solid ${fillerSettings.type === opt.value ? '#00d4ff' : 'var(--border-color)'}`,
-                      backgroundColor: fillerSettings.type === opt.value ? 'rgba(0, 212, 255, 0.1)' : 'var(--card-bg)',
-                      color: fillerSettings.type === opt.value ? '#00d4ff' : 'var(--text-color)',
-                      borderRadius: '6px',
-                      cursor: 'pointer',
-                      fontWeight: fillerSettings.type === opt.value ? 'bold' : 'normal'
-                    }}
+                    className={`nx-filler-choice${fillerSettings.type === opt.value ? ' selected' : ''}`}
                   >
                     {opt.icon} {opt.label}
                   </button>
@@ -28869,16 +28884,13 @@ const DashboardTiles = {
 
             {/* Category selector */}
             {fillerSettings.type === 'category' && (
-              <div style={{ marginBottom: '1rem' }}>
-                <label style={{ display: 'block', marginBottom: '0.5rem', fontWeight: 600, color: 'var(--text-color)', fontSize: '0.9rem' }}>
-                  Select Category:
-                </label>
+              <div className="nx-filler-block">
+                <label className="nx-filler-label">Select Category</label>
                 <select
                   className="input"
                   value={fillerSettings.category_id || ''}
                   onChange={(e) => updateFillerSettings({ category_id: e.target.value ? parseInt(e.target.value) : null })}
                   disabled={fillerLoading}
-                  style={{ maxWidth: '400px' }}
                 >
                   <option value="">-- Select a category --</option>
                   {categories.map(cat => (
@@ -28890,16 +28902,13 @@ const DashboardTiles = {
 
             {/* Sequence selector */}
             {fillerSettings.type === 'sequence' && (
-              <div style={{ marginBottom: '1rem' }}>
-                <label style={{ display: 'block', marginBottom: '0.5rem', fontWeight: 600, color: 'var(--text-color)', fontSize: '0.9rem' }}>
-                  Select NeX-Up Sequence:
-                </label>
+              <div className="nx-filler-block">
+                <label className="nx-filler-label">Select NeX-Up Sequence</label>
                 <select
                   className="input"
                   value={fillerSettings.sequence_id || ''}
                   onChange={(e) => updateFillerSettings({ sequence_id: e.target.value ? parseInt(e.target.value) : null })}
                   disabled={fillerLoading}
-                  style={{ maxWidth: '400px' }}
                 >
                   <option value="">-- Select a sequence --</option>
                   {savedSequences.map(seq => (
@@ -28911,35 +28920,23 @@ const DashboardTiles = {
 
             {/* Coming Soon layout selector */}
             {fillerSettings.type === 'coming_soon' && (
-              <div style={{ marginBottom: '1rem' }}>
-                <label style={{ display: 'block', marginBottom: '0.5rem', fontWeight: 600, color: 'var(--text-color)', fontSize: '0.9rem' }}>
-                  Coming Soon Layout:
-                </label>
-                <div style={{ display: 'flex', gap: '0.5rem' }}>
+              <div className="nx-filler-block">
+                <label className="nx-filler-label">Coming Soon Layout</label>
+                <div className="nx-filler-choices">
                   {['grid', 'list'].map(layout => (
                     <button
                       key={layout}
+                      type="button"
+                      aria-pressed={fillerSettings.coming_soon_layout === layout}
                       onClick={() => updateFillerSettings({ coming_soon_layout: layout })}
                       disabled={fillerLoading}
-                      style={{
-                        display: 'flex',
-                        alignItems: 'center',
-                        gap: '0.35rem',
-                        padding: '0.5rem 1rem',
-                        border: `2px solid ${fillerSettings.coming_soon_layout === layout ? '#00d4ff' : 'var(--border-color)'}`,
-                        backgroundColor: fillerSettings.coming_soon_layout === layout ? 'rgba(0, 212, 255, 0.1)' : 'var(--card-bg)',
-                        color: fillerSettings.coming_soon_layout === layout ? '#00d4ff' : 'var(--text-color)',
-                        borderRadius: '6px',
-                        cursor: 'pointer',
-                        fontWeight: fillerSettings.coming_soon_layout === layout ? 'bold' : 'normal',
-                        textTransform: 'capitalize'
-                      }}
+                      className={`nx-filler-choice capitalize${fillerSettings.coming_soon_layout === layout ? ' selected' : ''}`}
                     >
-                      {layout === 'grid' ? <LayoutGrid size={14} /> : <List size={14} />} {layout}
+                      {layout === 'grid' ? <LayoutGrid size={13} /> : <List size={13} />} {layout}
                     </button>
                   ))}
                 </div>
-                <p style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', marginTop: '0.5rem' }}>
+                <p className="nx-filler-hint">
                   Displays upcoming movies/shows from NeX-Up as the filler preroll.
                 </p>
               </div>
@@ -28952,17 +28949,6 @@ const DashboardTiles = {
             </div>
           </>
         )}
-      </div>
-    </div>
-    </div>
-
-    <div className="nx-settings-save-dock">
-      <span>Settings are saved as you change them.</span>
-      <div>
-        <button type="button" className="button button-secondary" onClick={fetchData}>Discard</button>
-        <button type="button" className="button" onClick={() => showAlert('General settings are saved as you change them.', 'success')}>
-          <Save size={14} /> Save General Settings
-        </button>
       </div>
     </div>
     </div>
@@ -29970,9 +29956,10 @@ const DashboardTiles = {
                 padding: '0.4rem 0.75rem'
               }}
               onClick={handleDownloadDiagnostics}
+              disabled={downloadingDiagnostics}
               title="Download a diagnostics bundle (logs + system info, with secrets redacted)"
             >
-              <Wrench size={14} /> Diagnostics
+              {downloadingDiagnostics ? <Loader2 size={14} className="spin" /> : <Wrench size={14} />} {downloadingDiagnostics ? 'Generating…' : 'Diagnostics'}
             </button>
             <button
               className="button"
@@ -30954,8 +30941,8 @@ const DashboardTiles = {
           <button onClick={handleViewChangelog} className="button">
             <FileText size={14} style={{marginRight: '0.35rem'}} /> View Changelog
           </button>
-          <button onClick={handleDownloadDiagnostics} className="button">
-            <Download size={14} style={{marginRight: '0.35rem'}} /> Download Diagnostics
+          <button onClick={handleDownloadDiagnostics} disabled={downloadingDiagnostics} className="button">
+            {downloadingDiagnostics ? <Loader2 size={14} className="spin" style={{marginRight: '0.35rem'}} /> : <Download size={14} style={{marginRight: '0.35rem'}} />} {downloadingDiagnostics ? 'Generating…' : 'Download Diagnostics'}
           </button>
           <button onClick={handleShowSystemPaths} className="button">
             <FolderOpen size={14} style={{marginRight: '0.35rem'}} /> Show Resolved Paths
@@ -32084,43 +32071,8 @@ const DashboardTiles = {
     const connected = jellyfinStatus === 'Connected';
     return (
     <div className="nx-conn-panel" style={{ '--brand': '#6c5ce7' }}>
-      {/* Hero status header */}
-      <div className={`nx-conn-hero${connected ? ' connected' : ''}`}>
-        <div className={`nx-conn-hero-badge${connected ? '' : ' idle'}`}>
-          <Server size={24} />
-        </div>
-        <div className="nx-conn-hero-body">
-          <h2 className="nx-conn-hero-title">
-            Jellyfin
-            <span className={`nx-conn-hero-state ${connected ? 'ok' : 'bad'}`}>
-              <span className={`nx-dot ${connected ? 'ok' : 'bad'}`} aria-hidden="true" />
-              {connected ? 'Connected' : 'Not connected'}
-            </span>
-          </h2>
-          <div className="nx-conn-hero-meta">
-            {connected ? (
-              <>
-                {jellyfinServerInfo?.name && <span>{jellyfinServerInfo.name}</span>}
-                {jellyfinServerInfo?.version && <><span className="sep">·</span><span>v{jellyfinServerInfo.version}</span></>}
-                {jellyfinServerInfo?.connection_type === 'plugin'
-                  ? <><span className="sep">·</span><span>via Plugin (API Key)</span></>
-                  : jellyfinServerInfo?.connection_type === 'direct'
-                    ? <><span className="sep">·</span><span>Direct connection</span></>
-                    : null}
-              </>
-            ) : (
-              <span>Enter your server URL and API key below to connect.</span>
-            )}
-          </div>
-        </div>
-        {connected && jellyfinServerInfo?.connection_type !== 'plugin' && (
-          <div className="nx-conn-hero-actions">
-            <button onClick={handleDisconnectJellyfin} className="button button-danger">
-              <Unlink size={15} /> Disconnect
-            </button>
-          </div>
-        )}
-      </div>
+      {/* Identity, status, meta, and Disconnect now live in the server card
+          above (renderConnect) — this panel only covers connect/settings UI. */}
 
       {/* Plugin clients (when present) */}
       {jellyfinServerInfo?.plugin_clients?.length > 0 && (
@@ -32426,43 +32378,8 @@ const DashboardTiles = {
     const connected = embyStatus === 'Connected';
     return (
     <div className="nx-conn-panel" style={{ '--brand': '#52c41a' }}>
-      {/* Hero status header */}
-      <div className={`nx-conn-hero${connected ? ' connected' : ''}`}>
-        <div className={`nx-conn-hero-badge${connected ? '' : ' idle'}`}>
-          <Server size={24} />
-        </div>
-        <div className="nx-conn-hero-body">
-          <h2 className="nx-conn-hero-title">
-            Emby
-            <span className={`nx-conn-hero-state ${connected ? 'ok' : 'bad'}`}>
-              <span className={`nx-dot ${connected ? 'ok' : 'bad'}`} aria-hidden="true" />
-              {connected ? 'Connected' : 'Not connected'}
-            </span>
-          </h2>
-          <div className="nx-conn-hero-meta">
-            {connected ? (
-              <>
-                {embyServerInfo?.name && <span>{embyServerInfo.name}</span>}
-                {embyServerInfo?.version && <><span className="sep">·</span><span>v{embyServerInfo.version}</span></>}
-                {embyServerInfo?.connection_type === 'plugin'
-                  ? <><span className="sep">·</span><span>via Plugin (API Key)</span></>
-                  : embyServerInfo?.connection_type === 'direct'
-                    ? <><span className="sep">·</span><span>Direct connection</span></>
-                    : null}
-              </>
-            ) : (
-              <span>Enter your server URL and API key below to connect.</span>
-            )}
-          </div>
-        </div>
-        {connected && embyServerInfo?.connection_type !== 'plugin' && (
-          <div className="nx-conn-hero-actions">
-            <button onClick={handleDisconnectEmby} className="button button-danger">
-              <Unlink size={15} /> Disconnect
-            </button>
-          </div>
-        )}
-      </div>
+      {/* Identity, status, meta, and Disconnect now live in the server card
+          above (renderConnect) — this panel only covers connect/settings UI. */}
 
       {/* Plugin clients (when present) */}
       {embyServerInfo?.plugin_clients?.length > 0 && (
@@ -32713,73 +32630,101 @@ const DashboardTiles = {
     );
   };
 
-  const renderConnect = () => (
-    <div className="nx-connect">
-      {/* Media-server context cards: workflow context, not duplicate navigation. */}
-      <div className="nx-connect-server-grid" role="tablist" aria-label="Media server">
-        {[
-          { id: 'plex', label: 'Plex', mark: 'P', brand: '#f6685e', status: plexStatus, detail: 'Global pre-roll integration' },
-          { id: 'jellyfin', label: 'Jellyfin', mark: 'J', brand: '#6c5ce7', status: jellyfinStatus, detail: 'Real-time intros plugin' },
-          { id: 'emby', label: 'Emby', mark: 'E', brand: '#52c41a', status: embyStatus, detail: 'Real-time intros plugin' },
-        ].map((srv) => {
-          const active = activeServer === srv.id;
-          const connected = srv.status === 'Connected';
-          return (
-            <button
-              key={srv.id}
-              type="button"
-              role="tab"
-              id={`tab-${srv.id}`}
-              aria-selected={active}
-              aria-controls={`panel-${srv.id}`}
-              className={`nx-connect-server-tab${active ? ' active' : ''}`}
-              style={{ '--server-brand': srv.brand }}
-              onClick={() => setActiveServer(srv.id)}
-              title={`${srv.label}: ${srv.status}`}
-            >
-              <span className="nx-connect-server-mark">{srv.mark}</span>
-              <span className="nx-connect-server-copy">
-                <strong>{srv.label}</strong>
-                <small>{srv.detail}</small>
-              </span>
-              <span className={`nx-connect-server-state${connected ? ' connected' : ''}`}><span className={`nx-dot ${connected ? 'ok' : 'bad'}`} />{connected ? 'Connected' : 'Setup'}</span>
-            </button>
-          );
-        })}
-      </div>
+  const renderConnect = () => {
+    const servers = [
+      {
+        id: 'plex', label: 'Plex', mark: 'P', brand: '#f6685e',
+        connected: plexStatus === 'Connected',
+        idleCopy: 'Global pre-roll integration',
+        meta: [
+          plexServerInfo?.friendlyName,
+          plexServerInfo?.version && `v${plexServerInfo.version}`,
+          plexServerInfo?.url,
+          plexServerInfo?.token_source && (plexServerInfo.token_source === 'secure_store' ? 'Secure token' : plexServerInfo.token_source === 'database' ? 'DB token' : plexServerInfo.token_source),
+        ].filter(Boolean),
+        canDisconnect: true,
+        disconnect: handleDisconnectPlex,
+      },
+      {
+        id: 'jellyfin', label: 'Jellyfin', mark: 'J', brand: '#6c5ce7',
+        connected: jellyfinStatus === 'Connected',
+        idleCopy: 'Real-time intros plugin',
+        meta: [
+          jellyfinServerInfo?.name,
+          jellyfinServerInfo?.version && `v${jellyfinServerInfo.version}`,
+          jellyfinServerInfo?.connection_type === 'plugin' ? 'via Plugin (API Key)' : jellyfinServerInfo?.connection_type === 'direct' ? 'Direct connection' : null,
+        ].filter(Boolean),
+        canDisconnect: jellyfinServerInfo?.connection_type !== 'plugin',
+        disconnect: handleDisconnectJellyfin,
+      },
+      {
+        id: 'emby', label: 'Emby', mark: 'E', brand: '#52c41a',
+        connected: embyStatus === 'Connected',
+        idleCopy: 'Real-time intros plugin',
+        meta: [
+          embyServerInfo?.name,
+          embyServerInfo?.version && `v${embyServerInfo.version}`,
+          embyServerInfo?.connection_type === 'plugin' ? 'via Plugin (API Key)' : embyServerInfo?.connection_type === 'direct' ? 'Direct connection' : null,
+        ].filter(Boolean),
+        canDisconnect: embyServerInfo?.connection_type !== 'plugin',
+        disconnect: handleDisconnectEmby,
+      },
+    ];
+    const activeConnected = getActiveConnectedServer();
 
-      {/* Context banner */}
-      {(() => {
-        const s = getActiveConnectedServer();
-        if (s === 'conflict') {
-          return (
-            <div role="alert" className="nx-conn-banner warn">
-              Multiple media servers are connected. Disconnect all but one before proceeding.
-            </div>
-          );
-        }
-        if (s === null) {
-          return (
-            <div role="note" className="nx-conn-banner idle">
-              No media server is connected yet. Pick a server above and configure it to get started.
-            </div>
-          );
-        }
-        const label = s === 'plex' ? 'Plex' : s === 'emby' ? 'Emby' : 'Jellyfin';
-        return (
-          <div role="status" className="nx-conn-banner ok">
-            <span className="nx-dot ok" aria-hidden="true" />
-            <span><strong>Active server:</strong> {label} — connected</span>
+    return (
+      <div className="nx-connect">
+        {/* One self-contained card per server: identity, live status, and key
+            details together — no separate status banner repeating the same info. */}
+        <div className="nx-connect-card-grid" role="tablist" aria-label="Media server">
+          {servers.map((srv) => {
+            const active = activeServer === srv.id;
+            return (
+              <article key={srv.id} className={`nx-connect-card${active ? ' active' : ''}${srv.connected ? ' connected' : ''}`} style={{ '--server-brand': srv.brand }}>
+                <button
+                  type="button"
+                  role="tab"
+                  id={`tab-${srv.id}`}
+                  aria-selected={active}
+                  aria-controls={`panel-${srv.id}`}
+                  className="nx-connect-card-head"
+                  onClick={() => setActiveServer(srv.id)}
+                >
+                  <span className="nx-connect-card-mark">{srv.mark}</span>
+                  <span className="nx-connect-card-copy">
+                    <strong>{srv.label}</strong>
+                    <span className={`nx-connect-card-badge${srv.connected ? ' ok' : ''}`}><span className={`nx-dot ${srv.connected ? 'ok' : 'bad'}`} />{srv.connected ? 'Connected' : 'Not connected'}</span>
+                  </span>
+                </button>
+                {srv.connected ? (
+                  <div className="nx-connect-card-body">
+                    <ul className="nx-connect-card-meta">{srv.meta.map((line, index) => <li key={index} title={line}>{line}</li>)}</ul>
+                    {srv.canDisconnect && <button type="button" className="button button-danger" onClick={srv.disconnect}><Unlink size={13} /> Disconnect</button>}
+                  </div>
+                ) : (
+                  <div className="nx-connect-card-body idle">
+                    <span>{srv.idleCopy}</span>
+                    <button type="button" className="nx-connect-card-setup" onClick={() => setActiveServer(srv.id)}>Setup <ChevronRight size={13} /></button>
+                  </div>
+                )}
+              </article>
+            );
+          })}
+        </div>
+
+        {activeConnected === 'conflict' && (
+          <div role="alert" className="nx-conn-banner warn">
+            Multiple media servers are connected. Disconnect all but one before proceeding.
           </div>
-        );
-      })()}
+        )}
 
-      {/* Active panel */}
-      <div id={`panel-${activeServer}`} role="tabpanel" aria-labelledby={`tab-${activeServer}`}>
-        {activeServer === 'plex' ? renderPlex() : activeServer === 'emby' ? renderEmby() : renderJellyfin()}
+        {/* Active panel — connect form (not connected) or extra settings (connected) */}
+        <div id={`panel-${activeServer}`} role="tabpanel" aria-labelledby={`tab-${activeServer}`}>
+          {activeServer === 'plex' ? renderPlex() : activeServer === 'emby' ? renderEmby() : renderJellyfin()}
+        </div>
       </div>
-    </div>
-  );
+    );
+  };
 
   // Render function for Create Schedule page
   // Render function for Sequence Builder page
@@ -33031,8 +32976,9 @@ const DashboardTiles = {
         } else if (block.type === 'coming_soon_list') {
           cleaned.layout = block.layout || 'grid';
         } else if (block.type === 'dynamic_preroll') {
-          cleaned.template = block.template;
-          cleaned.theme = block.theme;
+          cleaned.filename = block.filename;
+        } else if (block.type === 'separator') {
+          cleaned.duration = block.duration || 3;
         }
         
         return cleaned;
@@ -34074,7 +34020,7 @@ const DashboardTiles = {
       const platform = overrides.platform !== undefined ? overrides.platform : browsePlatform;
       const sort = overrides.sort !== undefined ? overrides.sort : browseSort;
       const includeAI = overrides.includeAI !== undefined ? overrides.includeAI : communityIncludeAI;
-      const pageLimit = Number(communityResultLimit) || 50;
+      const pageLimit = Number(overrides.limit !== undefined ? overrides.limit : communityResultLimit) || 50;
       setCommunityIsSearching(true);
       try {
         const params = new URLSearchParams();
@@ -34840,7 +34786,7 @@ const DashboardTiles = {
               </div>
               <div>
                 <label className="nx-conn-field-label">Results per page</label>
-                <select className="input" value={communityResultLimit} onChange={(e) => setCommunityResultLimit(Number(e.target.value))}>
+                <select className="input" value={communityResultLimit} onChange={(e) => { const limit = Number(e.target.value); setCommunityResultLimit(limit); handleBrowse({ limit }); }}>
                   <option value={10}>10 results</option>
                   <option value={20}>20 results</option>
                   <option value={50}>50 results</option>
@@ -35017,7 +34963,7 @@ const DashboardTiles = {
                       </video>
                     </div>
                     <div className="nx-community-inspector-body">
-                      <span className="nx-community-inspector-kicker">Community #{communityInspectorItem.id}</span>
+                      <span className="nx-community-inspector-kicker">Community preroll</span>
                       <h3>{cleanDisplayText(communityInspectorItem.title)}</h3>
                       <dl>
                         <div><dt>Creator</dt><dd>{cleanDisplayText(communityInspectorItem.creator) || 'Unknown'}</dd></div>
@@ -35154,7 +35100,7 @@ const DashboardTiles = {
         )}
 
         {/* Attribution */}
-        <p style={{ textAlign: 'center', fontSize: '0.82rem', color: 'var(--text-muted)', margin: '0.25rem 0 0' }}>
+        <p className="nx-community-attribution" style={{ textAlign: 'center', fontSize: '0.82rem', color: 'var(--text-muted)', margin: '0.25rem 0 0' }}>
           Community prerolls powered by{' '}
           <a href="https://typicalnerds.uk/" target="_blank" rel="noopener noreferrer" style={{ color: '#f6685e', textDecoration: 'none', fontWeight: 600 }}>
             Typical Nerds
@@ -35193,9 +35139,9 @@ const DashboardTiles = {
         alignItems: 'center',
         justifyContent: 'center',
         height: '100vh',
-        backgroundColor: darkMode ? '#1a1a2e' : '#f5f5f5'
+        backgroundColor: 'var(--bg-color)'
       }}>
-        <div style={{ textAlign: 'center', color: darkMode ? '#fff' : '#333' }}>
+        <div style={{ textAlign: 'center', color: 'var(--text-color)' }}>
           <Loader2 size={40} className="spin" style={{ marginBottom: '1rem' }} />
           <div style={{ fontSize: '1.1rem', fontStyle: 'italic', letterSpacing: '0.01em' }}>
             {BOOT_QUOTE}
@@ -35213,7 +35159,7 @@ const DashboardTiles = {
         alignItems: 'center',
         justifyContent: 'center',
         minHeight: '100vh',
-        backgroundColor: darkMode ? '#1a1a2e' : '#f5f5f5',
+        backgroundColor: 'var(--bg-color)',
         padding: '1rem'
       }}>
         <div style={{
@@ -35787,10 +35733,10 @@ const DashboardTiles = {
           
           {/* Theme Toggle Button */}
           <button
-            onClick={toggleTheme}
+            onClick={cycleTheme}
             className="nx-iconbtn"
-            aria-label={darkMode ? 'Switch to Light Mode' : 'Switch to Dark Mode'}
-            title={darkMode ? 'Switch to Light Mode' : 'Switch to Dark Mode'}
+            aria-label={`Theme: ${THEMES[resolveTheme(theme)].label}. Switch to ${THEMES[nextThemeId].label}`}
+            title={`Theme: ${THEMES[resolveTheme(theme)].label} — switch to ${THEMES[nextThemeId].label}`}
             style={{ width: '32px', padding: 0 }}
           >
             {darkMode ? <Sun size={15} /> : <Moon size={15} />}
@@ -37842,674 +37788,6 @@ const DashboardTiles = {
 
       {/* Page footer removed in v2 — resource links + version now live in the sidebar footer. */}
 
-      {/* Edit Schedule Modal - Available Globally */}
-      {editingSchedule && (
-        <Modal
-          title="Edit Schedule"
-          width={900}
-          onClose={() => {
-            setEditingSchedule(null);
-            setScheduleForm({
-              name: '', type: 'monthly', start_date: '', end_date: '',
-              category_id: '', shuffle: true, playlist: false, fallback_category_id: '', color: '',
-              holiday_name: '', holiday_country: '', blend_enabled: false, priority: 5, exclusive: false
-            });
-            setScheduleMode('simple');
-            setSequenceBlocks([]);
-            setLoadedSavedSequenceId(null);
-            setWeekDays([]);
-            setSelectedMonths([]); setMonthDays([]);
-            setTimeRange({ start: '', end: '' });
-          }}
-        >
-          <form onSubmit={handleUpdateSchedule} className="nx-sched">
-            {/* Mode Toggle */}
-            <div style={{ marginBottom: '1.5rem', padding: '1rem', backgroundColor: 'var(--card-bg)', borderRadius: '0.5rem', border: '1px solid var(--border-color)' }}>
-              <label style={{ display: 'block', marginBottom: '0.75rem', fontWeight: 600, fontSize: '1rem' }}>Schedule Mode</label>
-              <div style={{ display: 'flex', gap: '1rem', marginBottom: '0.5rem' }}>
-                <label style={{ display: 'flex', alignItems: 'center', cursor: 'pointer', padding: '0.5rem 1rem', backgroundColor: scheduleMode === 'simple' ? 'var(--button-bg)' : 'var(--bg-color)', color: scheduleMode === 'simple' ? 'white' : 'var(--text-color)', borderRadius: '0.25rem', border: '2px solid var(--border-color)', transition: 'all 0.2s' }}>
-                  <input
-                    type="radio"
-                    value="simple"
-                    checked={scheduleMode === 'simple'}
-                    onChange={(e) => setScheduleMode(e.target.value)}
-                    style={{ marginRight: '0.5rem' }}
-                  />
-                  <span>Simple (Single Category)</span>
-                </label>
-                <label style={{ display: 'flex', alignItems: 'center', cursor: 'pointer', padding: '0.5rem 1rem', backgroundColor: scheduleMode === 'advanced' ? 'var(--button-bg)' : 'var(--bg-color)', color: scheduleMode === 'advanced' ? 'white' : 'var(--text-color)', borderRadius: '0.25rem', border: '2px solid var(--border-color)', transition: 'all 0.2s' }}>
-                  <input
-                    type="radio"
-                    value="advanced"
-                    checked={scheduleMode === 'advanced'}
-                    onChange={(e) => setScheduleMode(e.target.value)}
-                    style={{ marginRight: '0.5rem' }}
-                  />
-                  <span>Advanced (Sequence Builder)</span>
-                </label>
-              </div>
-              <p style={{ fontSize: '0.85rem', color: '#666', margin: 0 }}>
-                {scheduleMode === 'simple' 
-                  ? 'Select a single category with random or sequential playback.' 
-                  : 'Build a custom sequence with multiple categories and fixed prerolls.'}
-              </p>
-            </div>
-
-            <div className="nx-form-grid">
-              <div className="nx-field">
-                <label className="nx-label">Name</label>
-                <input
-                  className="nx-input"
-                  type="text"
-                  placeholder="Schedule Name"
-                  value={scheduleForm.name}
-                  onChange={(e) => setScheduleForm({...scheduleForm, name: e.target.value})}
-                  required
-                />
-              </div>
-              <div className="nx-field">
-                <label className="nx-label">Type</label>
-                <select
-                  className="nx-select"
-                  value={scheduleForm.type}
-                  onChange={(e) => setScheduleForm({...scheduleForm, type: e.target.value})}
-                >
-                  <option value="daily">Daily</option>
-                  <option value="weekly">Weekly</option>
-                  <option value="monthly">Monthly</option>
-                  <option value="yearly">Yearly</option>
-                  <option value="holiday">Holiday</option>
-                </select>
-                {scheduleForm.type === 'yearly' && (
-                  <p style={{ fontSize: '0.8rem', color: '#10b981', margin: '0.3rem 0 0 0', fontWeight: 500 }}>
-                    <strong>Yearly (Seasonal):</strong> Recurs every year on the same month/day range. The year you enter is ignored — only month, day, and time matter.
-                  </p>
-                )}
-                {scheduleForm.type === 'holiday' && (
-                  <p style={{ fontSize: '0.8rem', color: '#f59e0b', margin: '0.3rem 0 0 0', fontWeight: 500 }}>
-                    <strong>Holiday (Single Day / API-driven):</strong> Runs on one specific holiday date looked up via the Holiday API. Use <strong>Yearly</strong> for multi-day seasonal windows.
-                  </p>
-                )}
-              </div>
-              {scheduleForm.type !== 'monthly' && (
-                <div className="nx-field">
-                  <label className="nx-label">Start Date & Time</label>
-                  <input
-                    className="nx-input"
-                    type="datetime-local"
-                    value={scheduleForm.start_date}
-                    onChange={(e) => setScheduleForm({...scheduleForm, start_date: e.target.value})}
-                    required
-                  />
-                </div>
-              )}
-              {scheduleForm.type !== 'monthly' && (
-                <div className="nx-field">
-                  <label className="nx-label">End Date & Time (Optional)</label>
-                  <input
-                    className="nx-input"
-                    type="datetime-local"
-                    value={scheduleForm.end_date}
-                    onChange={(e) => setScheduleForm({...scheduleForm, end_date: e.target.value})}
-                  />
-                </div>
-              )}
-              {scheduleForm.type === 'monthly' && (
-                <div className="nx-field nx-span-2">
-                  <label className="nx-label">Active Months</label>
-                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '0.5rem', marginTop: '0.25rem' }}>
-                    {['January','February','March','April','May','June','July','August','September','October','November','December'].map((name, i) => {
-                      const monthNum = i + 1;
-                      const isSelected = selectedMonths.includes(monthNum);
-                      return (
-                        <button
-                          key={monthNum}
-                          type="button"
-                          onClick={() => {
-                            if (isSelected) {
-                              setSelectedMonths(selectedMonths.filter(m => m !== monthNum));
-                            } else {
-                              setSelectedMonths([...selectedMonths, monthNum].sort((a, b) => a - b));
-                            }
-                          }}
-                          style={{
-                            padding: '0.5rem',
-                            backgroundColor: isSelected ? 'var(--button-bg)' : 'var(--bg-color)',
-                            color: isSelected ? 'white' : 'var(--text-color)',
-                            border: '2px solid ' + (isSelected ? 'var(--button-bg)' : 'var(--border-color)'),
-                            borderRadius: '0.25rem',
-                            cursor: 'pointer',
-                            fontSize: '0.85rem',
-                            fontWeight: isSelected ? 600 : 400,
-                            transition: 'all 0.2s'
-                          }}
-                        >
-                          {name.slice(0, 3)}
-                        </button>
-                      );
-                    })}
-                  </div>
-                  {selectedMonths.length === 0 && (
-                    <p style={{ fontSize: '0.85rem', color: '#dc3545', marginTop: '0.5rem', marginBottom: 0 }}>
-                      <AlertTriangle size={14} style={{ display: 'inline', marginRight: '0.3rem' }} /> Select at least one month
-                    </p>
-                  )}
-                </div>
-              )}
-
-              {/* Daily Schedule: Time Selector */}
-              {scheduleForm.type === 'daily' && (
-                <div className="nx-field nx-span-2" style={{ padding: '1rem', backgroundColor: 'var(--card-bg)', borderRadius: '0.5rem', border: '1px solid var(--border-color)' }}>
-                  <label className="nx-label" style={{ marginBottom: '0.75rem', fontWeight: 600 }}>Run At Time</label>
-                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
-                    <div>
-                      <label style={{ display: 'block', marginBottom: '0.5rem', fontSize: '0.9rem', color: '#666' }}>Start Time</label>
-                      <input
-                        type="time"
-                        className="nx-input"
-                        value={timeRange.start || ''}
-                        onChange={(e) => setTimeRange({...timeRange, start: e.target.value})}
-                        style={{ width: '100%' }}
-                      />
-                      <TimeQuickPicks current={timeRange.start} onPick={(v) => setTimeRange({ ...timeRange, start: v })} />
-                    </div>
-                    <div>
-                      <label style={{ display: 'block', marginBottom: '0.5rem', fontSize: '0.9rem', color: '#666' }}>End Time (Optional)</label>
-                      <input
-                        type="time"
-                        className="nx-input"
-                        value={timeRange.end || ''}
-                        onChange={(e) => setTimeRange({...timeRange, end: e.target.value})}
-                        style={{ width: '100%' }}
-                      />
-                      <TimeQuickPicks end current={timeRange.end} onPick={(v) => setTimeRange({ ...timeRange, end: v })} />
-                    </div>
-                  </div>
-                  <p style={{ fontSize: '0.85rem', color: '#666', marginTop: '0.5rem', marginBottom: 0 }}>
-                    Leave end time empty to run at a specific time, or set both to create a time window
-                  </p>
-                  {!timeRange.start && (
-                    <p style={{ fontSize: '0.85rem', color: '#dc3545', marginTop: '0.5rem', marginBottom: 0 }}>
-                      <AlertTriangle size={14} style={{ display: 'inline', marginRight: '0.3rem' }} /> Please select at least a start time
-                    </p>
-                  )}
-                </div>
-              )}
-
-              {/* Weekly Schedule: Day of Week Selector */}
-              {scheduleForm.type === 'weekly' && (
-                <>
-                  <div className="nx-field nx-span-2">
-                    <label className="nx-label">Repeat On</label>
-                    <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap', marginTop: '0.5rem' }}>
-                      {['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'].map((day) => {
-                        const dayLower = day.toLowerCase();
-                        const isSelected = weekDays.includes(dayLower);
-                        return (
-                          <label
-                            key={day}
-                            style={{
-                              display: 'flex',
-                              alignItems: 'center',
-                              padding: '0.5rem 0.75rem',
-                              backgroundColor: isSelected ? 'var(--button-bg)' : 'var(--bg-color)',
-                              color: isSelected ? 'white' : 'var(--text-color)',
-                              borderRadius: '0.25rem',
-                              border: '2px solid ' + (isSelected ? 'var(--button-bg)' : 'var(--border-color)'),
-                              cursor: 'pointer',
-                              fontSize: '0.9rem',
-                              transition: 'all 0.2s',
-                              userSelect: 'none'
-                            }}
-                          >
-                            <input
-                              type="checkbox"
-                              checked={isSelected}
-                              onChange={(e) => {
-                                if (e.target.checked) {
-                                  setWeekDays([...weekDays, dayLower]);
-                                } else {
-                                  setWeekDays(weekDays.filter(d => d !== dayLower));
-                                }
-                              }}
-                              style={{ marginRight: '0.5rem' }}
-                            />
-                            <span>{day.substring(0, 3)}</span>
-                          </label>
-                        );
-                      })}
-                    </div>
-                    {weekDays.length === 0 && (
-                      <p style={{ fontSize: '0.85rem', color: '#dc3545', marginTop: '0.5rem', marginBottom: 0 }}>
-                        <AlertTriangle size={14} style={{ display: 'inline', marginRight: '0.3rem' }} /> Select at least one day
-                      </p>
-                    )}
-                  </div>
-
-                  {/* Weekly Schedule: Time Range (Optional) */}
-                  <div className="nx-field nx-span-2" style={{ padding: '1rem', backgroundColor: 'var(--card-bg)', borderRadius: '0.5rem', border: '1px solid var(--border-color)' }}>
-                    <label className="nx-label" style={{ marginBottom: '0.75rem', fontWeight: 600, display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                      <Clock size={16} /> Active Time Range (Optional)
-                    </label>
-                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
-                      <div>
-                        <label style={{ display: 'block', marginBottom: '0.5rem', fontSize: '0.9rem', color: '#666' }}>Start Time</label>
-                        <input
-                          type="time"
-                          className="nx-input"
-                          value={timeRange.start || ''}
-                          onChange={(e) => setTimeRange({...timeRange, start: e.target.value})}
-                          style={{ width: '100%' }}
-                        />
-                        <TimeQuickPicks current={timeRange.start} onPick={(v) => setTimeRange({ ...timeRange, start: v })} />
-                      </div>
-                      <div>
-                        <label style={{ display: 'block', marginBottom: '0.5rem', fontSize: '0.9rem', color: '#666' }}>End Time</label>
-                        <input
-                          type="time"
-                          className="nx-input"
-                          value={timeRange.end || ''}
-                          onChange={(e) => setTimeRange({...timeRange, end: e.target.value})}
-                          style={{ width: '100%' }}
-                        />
-                        <TimeQuickPicks end current={timeRange.end} onPick={(v) => setTimeRange({ ...timeRange, end: v })} />
-                      </div>
-                    </div>
-                    <p style={{ fontSize: '0.85rem', color: '#666', marginTop: '0.5rem', marginBottom: 0 }}>
-                      Optionally set a time window for when this schedule is active (e.g., 8:00 AM - 12:00 PM)
-                    </p>
-                    {timeRange.start && timeRange.end && (
-                      <p style={{ fontSize: '0.85rem', color: '#10b981', marginTop: '0.5rem', marginBottom: 0, fontWeight: 500 }}>
-                        Schedule will run from {timeRange.start} to {timeRange.end}
-                      </p>
-                    )}
-                  </div>
-                </>
-              )}
-
-              {/* Monthly Schedule: Day of Month Selector */}
-              {scheduleForm.type === 'monthly' && (
-                <div className="nx-field nx-span-2">
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem' }}>
-                    <label className="nx-label" style={{ margin: 0 }}>On Day(s) of Month</label>
-                    <div style={{ display: 'flex', gap: '0.5rem' }}>
-                      <button
-                        type="button"
-                        onClick={() => setMonthDays(Array.from({length: 31}, (_, i) => i + 1))}
-                        style={{
-                          padding: '0.35rem 0.75rem',
-                          fontSize: '0.8rem',
-                          backgroundColor: 'var(--button-bg)',
-                          color: 'white',
-                          border: 'none',
-                          borderRadius: '0.25rem',
-                          cursor: 'pointer',
-                          fontWeight: 500
-                        }}
-                      >
-                        Select All
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => setMonthDays([])}
-                        style={{
-                          padding: '0.35rem 0.75rem',
-                          fontSize: '0.8rem',
-                          backgroundColor: '#6c757d',
-                          color: 'white',
-                          border: 'none',
-                          borderRadius: '0.25rem',
-                          cursor: 'pointer',
-                          fontWeight: 500
-                        }}
-                      >
-                        Deselect All
-                      </button>
-                    </div>
-                  </div>
-                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', gap: '0.5rem', marginTop: '0.5rem' }}>
-                    {Array.from({length: 31}, (_, i) => i + 1).map((day) => {
-                      const isSelected = monthDays.includes(day);
-                      return (
-                        <button
-                          key={day}
-                          type="button"
-                          onClick={() => {
-                            if (isSelected) {
-                              setMonthDays(monthDays.filter(d => d !== day));
-                            } else {
-                              setMonthDays([...monthDays, day].sort((a, b) => a - b));
-                            }
-                          }}
-                          style={{
-                            padding: '0.5rem',
-                            backgroundColor: isSelected ? 'var(--button-bg)' : 'var(--bg-color)',
-                            color: isSelected ? 'white' : 'var(--text-color)',
-                            border: '2px solid ' + (isSelected ? 'var(--button-bg)' : 'var(--border-color)'),
-                            borderRadius: '0.25rem',
-                            cursor: 'pointer',
-                            fontSize: '0.85rem',
-                            fontWeight: isSelected ? 600 : 400,
-                            transition: 'all 0.2s'
-                          }}
-                        >
-                          {day}
-                        </button>
-                      );
-                    })}
-                  </div>
-                  {monthDays.length === 0 && (
-                    <p style={{ fontSize: '0.85rem', color: '#dc3545', marginTop: '0.5rem', marginBottom: 0 }}>
-                      <AlertTriangle size={14} style={{ display: 'inline', marginRight: '0.3rem' }} /> Select at least one day
-                    </p>
-                  )}
-                  {/* Time Window */}
-                  <div style={{ marginTop: '1rem', paddingTop: '1rem', borderTop: '1px solid var(--border-color)' }}>
-                    <label className="nx-label" style={{ marginBottom: '0.5rem', display: 'block' }}>
-                      Time Window <span style={{ fontWeight: 400, color: 'var(--text-secondary)', fontSize: '0.8rem' }}>(Optional — leave blank to run all day)</span>
-                    </label>
-                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem' }}>
-                      <div>
-                        <label style={{ display: 'block', marginBottom: '0.3rem', fontSize: '0.8rem', color: 'var(--text-secondary)' }}>Start Time</label>
-                        <input
-                          type="time"
-                          className="nx-input"
-                          value={timeRange.start || ''}
-                          onChange={(e) => setTimeRange({...timeRange, start: e.target.value})}
-                        />
-                        <TimeQuickPicks current={timeRange.start} onPick={(v) => setTimeRange({ ...timeRange, start: v })} />
-                      </div>
-                      <div>
-                        <label style={{ display: 'block', marginBottom: '0.3rem', fontSize: '0.8rem', color: 'var(--text-secondary)' }}>End Time</label>
-                        <input
-                          type="time"
-                          className="nx-input"
-                          value={timeRange.end || ''}
-                          onChange={(e) => setTimeRange({...timeRange, end: e.target.value})}
-                        />
-                        <TimeQuickPicks end current={timeRange.end} onPick={(v) => setTimeRange({ ...timeRange, end: v })} />
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              )}
-
-              {/* Yearly type: informational recap panel */}
-              {scheduleForm.type === 'yearly' && (
-                <div className="nx-field nx-span-2" style={{ padding: '1rem', backgroundColor: 'rgba(16, 185, 129, 0.08)', borderRadius: '0.5rem', border: '1px solid #10b981' }}>
-                  <label className="nx-label" style={{ marginBottom: '0.5rem', fontWeight: 600, color: '#10b981', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                    <ListChecks size={18} /> Yearly (Seasonal) — How It Works
-                  </label>
-                  <ul style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', margin: 0, paddingLeft: '1.25rem', lineHeight: '1.7' }}>
-                    <li>Recurs <strong>every year</strong> automatically — no manual date updates needed.</li>
-                    <li>The <strong>year</strong> in Start/End is ignored; only <strong>month, day, and time</strong> matter.</li>
-                    <li>Great for seasons: <em>Christmas Dec 1–26</em>, <em>Summer Jun 1–Aug 31</em>, <em>Halloween Oct 1–31</em>.</li>
-                    <li>For single days whose dates shift yearly (Thanksgiving, Easter), use <strong>Holiday</strong> type instead.</li>
-                  </ul>
-                </div>
-              )}
-
-              {/* Holiday type: API auto-update fields */}
-              {scheduleForm.type === 'holiday' && (
-                <div className="nx-field nx-span-2" style={{ padding: '1rem', backgroundColor: 'rgba(245, 158, 11, 0.08)', borderRadius: '0.5rem', border: '1px solid #f59e0b' }}>
-                  <label className="nx-label" style={{ marginBottom: '0.5rem', fontWeight: 600, color: '#f59e0b', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                    <PartyPopper size={18} /> Holiday — API Auto-Update
-                  </label>
-                  <p style={{ fontSize: '0.85rem', color: '#666', margin: '0 0 0.75rem 0', lineHeight: '1.5' }}>
-                    NeXroll looks up the correct date via the Holiday API each year. Start/end dates above serve as a fallback.
-                    <br /><strong>Single-day only.</strong> For multi-day ranges, switch to the <strong>Yearly</strong> type.
-                  </p>
-                  <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: '1rem' }}>
-                    <div>
-                      <label style={{ display: 'block', marginBottom: '0.5rem', fontSize: '0.9rem', color: '#666' }}>Holiday Name <span style={{ color: '#dc3545' }}>*</span></label>
-                      <input
-                        className="nx-input"
-                        type="text"
-                        placeholder="e.g., Thanksgiving, Easter"
-                        value={scheduleForm.holiday_name}
-                        onChange={(e) => setScheduleForm({...scheduleForm, holiday_name: e.target.value})}
-                        style={{ width: '100%' }}
-                      />
-                    </div>
-                    <div>
-                      <label style={{ display: 'block', marginBottom: '0.5rem', fontSize: '0.9rem', color: '#666' }}>Country <span style={{ color: '#dc3545' }}>*</span></label>
-                      <input
-                        className="nx-input"
-                        type="text"
-                        placeholder="e.g., US, CA, GB"
-                        value={scheduleForm.holiday_country}
-                        onChange={(e) => setScheduleForm({...scheduleForm, holiday_country: e.target.value})}
-                        style={{ width: '100%' }}
-                      />
-                    </div>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      openHolidayBrowser();
-                    }}
-                    style={{
-                      marginTop: '1rem',
-                      padding: '0.75rem 1.25rem',
-                      fontSize: '0.9rem',
-                      fontWeight: 600,
-                      backgroundColor: '#f59e0b',
-                      color: 'white',
-                      border: 'none',
-                      borderRadius: '0.5rem',
-                      cursor: 'pointer',
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                      gap: '0.5rem',
-                      transition: 'all 0.2s ease'
-                    }}
-                    onMouseEnter={(e) => e.currentTarget.style.backgroundColor = '#d97706'}
-                    onMouseLeave={(e) => e.currentTarget.style.backgroundColor = '#f59e0b'}
-                  >
-                    <Globe size={18} />
-                    Browse Holidays
-                  </button>
-                </div>
-              )}
-
-              {/* Simple Mode: Category Selection */}
-              {scheduleMode === 'simple' && (
-                <div className="nx-field">
-                  <label className="nx-label">Category</label>
-                  <select
-                    className="nx-select"
-                    value={scheduleForm.category_id}
-                    onChange={(e) => setScheduleForm({...scheduleForm, category_id: e.target.value})}
-                    required
-                  >
-                    <option value="">Select Category</option>
-                    {[...categories].sort((a, b) => a.name.localeCompare(b.name)).map(cat => (
-                      <option key={cat.id} value={cat.id}>{cat.name}</option>
-                    ))}
-                  </select>
-                </div>
-              )}
-              <div className="nx-field">
-                <label className="nx-label">Fallback Category</label>
-                <select
-                  className="nx-select"
-                  value={scheduleForm.fallback_category_id || ''}
-                  onChange={(e) => setScheduleForm({...scheduleForm, fallback_category_id: e.target.value})}
-                >
-                  <option value="">No Fallback</option>
-                  {[...categories].sort((a, b) => a.name.localeCompare(b.name)).map(cat => (
-                    <option key={cat.id} value={cat.id}>{cat.name}</option>
-                  ))}
-                </select>
-              </div>
-              
-              {/* Blend Mode Toggle */}
-              <div className="nx-field nx-span-2">
-                <label className="nx-label" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                  <input
-                    type="checkbox"
-                    checked={scheduleForm.blend_enabled}
-                    onChange={(e) => setScheduleForm({...scheduleForm, blend_enabled: e.target.checked})}
-                    style={{ width: 'auto' }}
-                  />
-                  <span>Blend Mode</span>
-                </label>
-                <p style={{ fontSize: '0.85rem', color: '#666', marginTop: '0.25rem' }}>
-                  When enabled, this schedule's prerolls will be mixed with other overlapping schedules that also have Blend Mode enabled. 
-                  Great for combining holiday themes (e.g., Hanukkah + Christmas).
-                </p>
-              </div>
-              
-              {/* Priority and Exclusive Controls */}
-              <div className="nx-field">
-                <label className="nx-label">Priority (1-10)</label>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
-                  <input
-                    type="range"
-                    min="1"
-                    max="10"
-                    value={scheduleForm.priority}
-                    onChange={(e) => setScheduleForm({...scheduleForm, priority: parseInt(e.target.value)})}
-                    style={{ flex: 1 }}
-                  />
-                  <span style={{ 
-                    minWidth: '2rem', 
-                    textAlign: 'center', 
-                    fontWeight: 'bold',
-                    color: scheduleForm.priority >= 8 ? '#ef4444' : scheduleForm.priority >= 5 ? '#14B8A6' : '#6b7280'
-                  }}>
-                    {scheduleForm.priority}
-                  </span>
-                </div>
-                <p style={{ fontSize: '0.85rem', color: '#666', marginTop: '0.25rem' }}>
-                  Higher priority number schedules win when multiple schedules overlap.
-                </p>
-              </div>
-              
-              <div className="nx-field">
-                <label className="nx-label" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                  <input
-                    type="checkbox"
-                    checked={scheduleForm.exclusive}
-                    onChange={(e) => setScheduleForm({...scheduleForm, exclusive: e.target.checked})}
-                    style={{ width: 'auto' }}
-                  />
-                  <Lock size={16} style={{ color: '#14B8A6' }} />
-                  <span>Exclusive</span>
-                </label>
-                <p style={{ fontSize: '0.85rem', color: '#666', marginTop: '0.25rem' }}>
-                  When active, this schedule wins exclusively (no blending with other schedules).
-                </p>
-              </div>
-              
-              {/* Simple Mode: Playback Mode */}
-              {scheduleMode === 'simple' && (
-                <div className="nx-field nx-span-2">
-                  <label className="nx-label">Playback Mode</label>
-                  <select
-                    className="nx-select"
-                    value={scheduleForm.shuffle ? 'random' : 'sequential'}
-                    onChange={(e) => setScheduleForm({
-                      ...scheduleForm,
-                      shuffle: e.target.value === 'random',
-                      playlist: e.target.value === 'sequential'
-                    })}
-                  >
-                    <option value="random">Random</option>
-                    <option value="sequential">Sequential</option>
-                  </select>
-                </div>
-              )}
-
-              {/* Advanced Mode: Sequence Builder */}
-              {scheduleMode === 'advanced' && (
-                <div className="nx-field nx-span-2" style={{ marginTop: '1rem' }}>
-                  <SequenceBuilder
-                    blocks={sequenceBlocks}
-                    onBlocksChange={(blocks) => {
-                      setSequenceBlocks(blocks);
-                      // Editing embedded blocks intentionally detaches this
-                      // schedule from its reusable source sequence.
-                      setLoadedSavedSequenceId(null);
-                    }}
-                    categories={categories}
-                    prerolls={prerolls}
-                    scheduleId={editingSchedule?.id || null}
-                    apiUrl={apiUrl}
-                    hideNameSection={true}
-                    initialName={scheduleForm.name || ''}
-                    onSave={(blocks) => {
-                      setSequenceBlocks(blocks);
-                      setLoadedSavedSequenceId(null);
-                      console.log('Sequence updated:', blocks);
-                    }}
-                    onCancel={() => {
-                      console.log('Sequence builder cancelled');
-                    }}
-                  />
-                </div>
-              )}
-              <div className="nx-field nx-span-2">
-                <label className="nx-label">Calendar Color (Optional)</label>
-                <p style={{ fontSize: '0.85rem', color: '#666', marginBottom: '0.5rem' }}>
-                  Custom color for calendar display. Leave empty to use category color.
-                </p>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                  <input
-                    type="color"
-                    value={scheduleForm.color || '#3b82f6'}
-                    onChange={(e) => setScheduleForm({...scheduleForm, color: e.target.value})}
-                    style={{ width: '50px', height: '35px', border: '1px solid var(--border-color)', borderRadius: '4px', cursor: 'pointer' }}
-                  />
-                  <input
-                    className="nx-input"
-                    type="text"
-                    placeholder="#3b82f6"
-                    value={scheduleForm.color || ''}
-                    onChange={(e) => setScheduleForm({...scheduleForm, color: e.target.value})}
-                    style={{ flex: 1, fontFamily: 'monospace' }}
-                  />
-                  {scheduleForm.color && (
-                    <button
-                      type="button"
-                      className="button-secondary"
-                      onClick={() => setScheduleForm({...scheduleForm, color: ''})}
-                      style={{ padding: '0.5rem 0.75rem' }}
-                    >
-                      Clear
-                    </button>
-                  )}
-                </div>
-              </div>
-            </div>
-            <div className="nx-actions">
-              <button type="submit" className="button">Update Schedule</button>
-              <button
-                type="button"
-                className="button-secondary"
-                onClick={() => {
-                  setEditingSchedule(null);
-                  setScheduleForm({
-                    name: '', type: 'monthly', start_date: '', end_date: '',
-                    category_id: '', shuffle: true, playlist: false, fallback_category_id: '', color: '',
-                    holiday_name: '', holiday_country: '', blend_enabled: false, priority: 5, exclusive: false
-                  });
-                  setScheduleMode('simple');
-                  setSequenceBlocks([]);
-                  setLoadedSavedSequenceId(null);
-                  setWeekDays([]);
-                  setSelectedMonths([]); setMonthDays([]);
-                  setTimeRange({ start: '', end: '' });
-                }}
-              >
-                Cancel
-              </button>
-            </div>
-          </form>
-        </Modal>
-      )}
-
       {/* Holiday Browser Modal */}
       {showHolidayBrowser && (
         <div className="nx-modal-overlay" style={{
@@ -39562,6 +38840,452 @@ const DashboardTiles = {
                   ? confirmDialog.confirmTextChecked
                   : confirmDialog.confirmText}
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* YouTube Setup Wizard Modal (moved here so it renders from any NeX-Up page) */}
+      {youtubeSetup.showWizard && (
+        <div 
+          style={{
+            position: 'fixed',
+            top: 0,
+            left: 0,
+            right: 0,
+            bottom: 0,
+            backgroundColor: 'rgba(0, 0, 0, 0.8)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            zIndex: 10000
+          }}
+          onClick={() => setYoutubeSetup(prev => ({ ...prev, showWizard: false }))}
+        >
+          <div 
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="youtube-setup-title"
+            style={{ 
+              maxWidth: '550px',
+              width: '90%',
+              maxHeight: '90vh',
+              overflow: 'auto',
+              backgroundColor: 'var(--card-bg, #1e1e2e)',
+              borderRadius: '12px',
+              boxShadow: '0 25px 50px rgba(0, 0, 0, 0.5)',
+              border: '1px solid var(--border-color)'
+            }} 
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div style={{ 
+              padding: '1.5rem',
+              borderBottom: '1px solid var(--border-color)',
+              display: 'flex',
+              justifyContent: 'space-between',
+              alignItems: 'center'
+            }}>
+              <h2 id="youtube-setup-title" style={{ margin: 0, fontSize: '1.5rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                <Youtube size={28} /> YouTube Setup Wizard
+              </h2>
+              <button 
+                onClick={() => setYoutubeSetup(prev => ({ ...prev, showWizard: false }))}
+                style={{
+                  background: 'none',
+                  border: 'none',
+                  fontSize: '2rem',
+                  cursor: 'pointer',
+                  color: 'var(--text-color)',
+                  lineHeight: 1,
+                  padding: '0 0.5rem',
+                  display: 'inline-flex',
+                  alignItems: 'center'
+                }}
+                aria-label="Close"
+              ><X size={20} /></button>
+            </div>
+            <div style={{ padding: '1.5rem' }}>
+              {/* Progress Indicator */}
+              <div style={{ 
+                display: 'flex', 
+                justifyContent: 'center', 
+                gap: '0.5rem', 
+                marginBottom: '1.5rem' 
+              }}>
+                {[1, 2, 3, 4].map(step => (
+                  <div 
+                    key={step}
+                    style={{
+                      width: '40px',
+                      height: '40px',
+                      borderRadius: '50%',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      fontWeight: 'bold',
+                      backgroundColor: youtubeSetup.wizardStep >= step ? 'var(--button-bg)' : 'var(--bg-color)',
+                      color: youtubeSetup.wizardStep >= step ? 'white' : '#888',
+                      border: '2px solid var(--border-color)'
+                    }}
+                  >
+                    {youtubeSetup.wizardStep > step ? <Check size={18} /> : step}
+                  </div>
+                ))}
+              </div>
+
+              {/* Step 1: Introduction & Method Selection */}
+              {youtubeSetup.wizardStep === 1 && (
+                <div style={{ textAlign: 'center' }}>
+                  <div style={{ marginBottom: '1rem' }}><Key size={64} color="var(--button-bg)" /></div>
+                  <h3 style={{ marginBottom: '1rem' }}>YouTube Requires Authentication</h3>
+                  <p style={{ color: '#888', marginBottom: '1.5rem' }}>
+                    YouTube has bot protection that requires authentication.
+                    Choose how you want to set this up:
+                  </p>
+                  
+                  {/* Method Selection Cards */}
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem', marginBottom: '1.5rem' }}>
+                    {/* Browser Cookies Method - Recommended */}
+                    <button
+                      type="button"
+                      onClick={() => setYoutubeSetup(prev => ({ ...prev, authMethod: 'browser' }))}
+                      style={{ 
+                        width: '100%',
+                        padding: '1rem', 
+                        backgroundColor: youtubeSetup.authMethod === 'browser' ? 'rgba(40, 167, 69, 0.2)' : 'var(--bg-color)', 
+                        borderRadius: '8px',
+                        border: youtubeSetup.authMethod === 'browser' ? '2px solid #28a745' : '2px solid var(--border-color)',
+                        cursor: 'pointer',
+                        textAlign: 'left',
+                        color: 'inherit',
+                        font: 'inherit',
+                        transition: 'all 0.2s'
+                      }}
+                    >
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', marginBottom: '0.5rem' }}>
+                        <Globe size={24} color="#28a745" />
+                        <strong style={{ fontSize: '1.1rem' }}>Extract Browser Cookies</strong>
+                        <span style={{ 
+                          backgroundColor: '#28a745', 
+                          color: 'white', 
+                          padding: '0.15rem 0.5rem', 
+                          borderRadius: '4px', 
+                          fontSize: '0.75rem' 
+                        }}>EASIEST</span>
+                      </div>
+                      <p style={{ margin: 0, fontSize: '0.9rem', color: '#888' }}>
+                        Sign in to YouTube in your browser, then we'll extract the cookies automatically.
+                        Requires closing the browser briefly during extraction.
+                      </p>
+                    </button>
+                    
+                    {/* Manual Upload Method */}
+                    <button
+                      type="button"
+                      onClick={() => setYoutubeSetup(prev => ({ ...prev, authMethod: 'cookies' }))}
+                      style={{ 
+                        width: '100%',
+                        padding: '1rem', 
+                        backgroundColor: youtubeSetup.authMethod === 'cookies' ? 'rgba(23, 162, 184, 0.2)' : 'var(--bg-color)', 
+                        borderRadius: '8px',
+                        border: youtubeSetup.authMethod === 'cookies' ? '2px solid #17a2b8' : '2px solid var(--border-color)',
+                        cursor: 'pointer',
+                        textAlign: 'left',
+                        color: 'inherit',
+                        font: 'inherit',
+                        transition: 'all 0.2s'
+                      }}
+                    >
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', marginBottom: '0.5rem' }}>
+                        <FileUp size={24} color="#17a2b8" />
+                        <strong style={{ fontSize: '1.1rem' }}>Upload Cookies File</strong>
+                        <span style={{ fontSize: '0.8rem', color: '#888' }}>(Advanced)</span>
+                      </div>
+                      <p style={{ margin: 0, fontSize: '0.9rem', color: '#888' }}>
+                        Already exported a cookies.txt file using a browser extension? Upload it directly.
+                        Use extensions like "Get cookies.txt LOCALLY" for Chrome/Edge.
+                      </p>
+                      <p style={{ margin: '0.5rem 0 0 0', fontSize: '0.85rem', color: '#6c757d', fontStyle: 'italic' }}>
+                        Tip: Use an Incognito/Private browser window when logging into YouTube and exporting cookies for best results.
+                      </p>
+                    </button>
+                  </div>
+                  
+                  {youtubeSetup.testResult && !youtubeSetup.testResult.success && (
+                    <div style={{ 
+                      padding: '1rem', 
+                      backgroundColor: '#f8d7da', 
+                      borderRadius: '8px',
+                      marginBottom: '1rem',
+                      color: '#721c24',
+                      textAlign: 'left'
+                    }}>
+                      {youtubeSetup.testResult.message}
+                    </div>
+                  )}
+                  
+                  {youtubeSetup.authMethod === 'browser' && (
+                    <button
+                      onClick={() => setYoutubeSetup(prev => ({ ...prev, wizardStep: 2 }))}
+                      className="button"
+                      style={{ padding: '0.75rem 2rem' }}
+                    >
+                      Continue →
+                    </button>
+                  )}
+                  
+                  {/* Manual upload for cookies method */}
+                  {youtubeSetup.authMethod === 'cookies' && (
+                    <div style={{ marginTop: '1rem' }}>
+                      <label 
+                        className="button" 
+                        style={{ 
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          gap: '0.5rem',
+                          cursor: 'pointer',
+                          padding: '0.75rem 2rem'
+                        }}
+                      >
+                        <FileUp size={16} /> Select Cookies File
+                        <input 
+                          type="file" 
+                          accept=".txt"
+                          onChange={handleYoutubeUploadCookies}
+                          style={{ display: 'none' }}
+                          disabled={youtubeSetup.uploading}
+                        />
+                      </label>
+                      {youtubeSetup.uploading && <span style={{ marginLeft: '0.5rem', display: 'inline-flex', alignItems: 'center', gap: '0.25rem' }}><Loader2 size={16} className="spin" /> Uploading...</span>}
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* Step 2: Browser Selection & Sign In (for browser cookies method) */}
+              {youtubeSetup.wizardStep === 2 && (
+                <div style={{ textAlign: 'center' }}>
+                  <div style={{ marginBottom: '1rem' }}><Globe size={64} color="var(--button-bg)" /></div>
+                  <h3 style={{ marginBottom: '1rem' }}>Step 1: Select Browser & Sign In</h3>
+                  
+                  {/* Browser Selection */}
+                  <div style={{ 
+                    padding: '1rem', 
+                    backgroundColor: 'var(--bg-color)', 
+                    borderRadius: '8px',
+                    marginBottom: '1rem'
+                  }}>
+                    <label style={{ display: 'block', fontWeight: 'bold', marginBottom: '0.5rem' }}>
+                      Which browser will you use?
+                    </label>
+                    <select
+                      value={youtubeSetup.selectedBrowser}
+                      onChange={(e) => setYoutubeSetup(prev => ({ ...prev, selectedBrowser: e.target.value }))}
+                      style={{ 
+                        width: '100%', 
+                        padding: '0.75rem', 
+                        borderRadius: '6px', 
+                        border: '1px solid var(--border-color)',
+                        fontSize: '1rem',
+                        backgroundColor: 'var(--card-bg)'
+                      }}
+                    >
+                      <option value="chrome">Google Chrome</option>
+                      <option value="edge">Microsoft Edge</option>
+                      <option value="firefox">Mozilla Firefox</option>
+                      <option value="brave">Brave Browser</option>
+                    </select>
+                  </div>
+                  
+                  <p style={{ color: '#888', marginBottom: '0.5rem' }}>
+                    Sign in to YouTube using <strong>{youtubeSetup.selectedBrowser.charAt(0).toUpperCase() + youtubeSetup.selectedBrowser.slice(1)}</strong>.
+                  </p>
+                  
+                  {/* Important tip */}
+                  <div style={{ 
+                    padding: '1rem', 
+                    backgroundColor: '#17a2b8',
+                    color: 'white',
+                    borderRadius: '8px',
+                    textAlign: 'left',
+                    marginBottom: '1.5rem'
+                  }}>
+                    <strong style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}><Lightbulb size={18} /> Tip:</strong>
+                    <p style={{ margin: '0.5rem 0 0 0', fontSize: '0.9rem' }}>
+                      Use a <strong>different browser</strong> than the one viewing NeXroll.
+                    </p>
+                  </div>
+                  
+                  <button
+                    onClick={handleYoutubeOpenBrowser}
+                    className="button"
+                    style={{ padding: '0.75rem 2rem', marginBottom: '1rem', display: 'flex', alignItems: 'center', gap: '0.5rem', margin: '0 auto 1rem auto' }}
+                  >
+                    <Rocket size={18} /> Open YouTube in {youtubeSetup.selectedBrowser.charAt(0).toUpperCase() + youtubeSetup.selectedBrowser.slice(1)}
+                  </button>
+                  <p style={{ fontSize: '0.85rem', color: '#888' }}>
+                    Already signed in? Just proceed to the next step.
+                  </p>
+                  <div style={{ marginTop: '1.5rem', display: 'flex', gap: '1rem', justifyContent: 'center' }}>
+                    <button
+                      onClick={() => setYoutubeSetup(prev => ({ ...prev, wizardStep: 1 }))}
+                      className="button button-secondary"
+                    >
+                      ← Back
+                    </button>
+                    <button
+                      onClick={() => setYoutubeSetup(prev => ({ ...prev, wizardStep: 3 }))}
+                      className="button"
+                      style={{ backgroundColor: '#28a745', padding: '0.75rem 2rem' }}
+                    >
+                      I'm Signed In →
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {/* Step 3: Browser Cookie Extraction */}
+              {youtubeSetup.wizardStep === 3 && (
+                <div style={{ textAlign: 'center' }}>
+                  <div style={{ marginBottom: '1rem' }}><Lock size={64} color="var(--button-bg)" /></div>
+                  <h3 style={{ marginBottom: '1rem' }}>Step 2: Close {youtubeSetup.selectedBrowser.charAt(0).toUpperCase() + youtubeSetup.selectedBrowser.slice(1)}</h3>
+                  <p style={{ color: '#888', marginBottom: '1rem' }}>
+                    <strong>Important:</strong> Close <strong>{youtubeSetup.selectedBrowser.charAt(0).toUpperCase() + youtubeSetup.selectedBrowser.slice(1)}</strong> completely
+                    so we can read the login cookies.
+                  </p>
+                  <div style={{ 
+                    padding: '1rem', 
+                    backgroundColor: '#d4edda', 
+                    borderRadius: '8px',
+                    marginBottom: '1rem',
+                    textAlign: 'left',
+                    color: '#155724'
+                  }}>
+                    <strong style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}><CheckCircle size={18} /> Good News:</strong>
+                    <p style={{ margin: '0.5rem 0 0 0', fontSize: '0.9rem' }}>
+                      You only need to close <strong>{youtubeSetup.selectedBrowser.charAt(0).toUpperCase() + youtubeSetup.selectedBrowser.slice(1)}</strong> - 
+                      you can keep using other browsers (like this one viewing NeXroll)!
+                    </p>
+                  </div>
+                  <div style={{ 
+                    padding: '1rem', 
+                    backgroundColor: '#fff3cd', 
+                    borderRadius: '8px',
+                    marginBottom: '1.5rem',
+                    textAlign: 'left',
+                    color: '#856404'
+                  }}>
+                    <strong style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}><AlertTriangle size={18} /> Why close the browser?</strong>
+                    <p style={{ margin: '0.5rem 0 0 0', fontSize: '0.9rem' }}>
+                      Browsers lock their cookie database while running. 
+                      Closing {youtubeSetup.selectedBrowser.charAt(0).toUpperCase() + youtubeSetup.selectedBrowser.slice(1)} allows us to safely read your YouTube login.
+                    </p>
+                  </div>
+                  
+                  {youtubeSetup.testResult && !youtubeSetup.testResult.success && (
+                    <div style={{ 
+                      padding: '1rem', 
+                      backgroundColor: '#f8d7da', 
+                      borderRadius: '8px',
+                      marginBottom: '1rem',
+                      color: '#721c24'
+                    }}>
+                      {youtubeSetup.testResult.message}
+                    </div>
+                  )}
+                  
+                  <div style={{ display: 'flex', gap: '1rem', justifyContent: 'center' }}>
+                    <button
+                      onClick={() => setYoutubeSetup(prev => ({ ...prev, wizardStep: 2 }))}
+                      className="button button-secondary"
+                    >
+                      ← Back
+                    </button>
+                    <button
+                      onClick={handleYoutubeExtractCookies}
+                      className="button"
+                      disabled={youtubeSetup.extracting}
+                      style={{ padding: '0.75rem 2rem' }}
+                    >
+                      {youtubeSetup.extracting 
+                        ? <><Loader2 size={16} className="spin" /> Extracting Cookies...</>
+                        : <><Key size={16} /> Extract Cookies Now</>}
+                    </button>
+                  </div>
+                  <p style={{ fontSize: '0.8rem', color: '#888', marginTop: '1rem' }}>
+                    Make sure {youtubeSetup.selectedBrowser.charAt(0).toUpperCase() + youtubeSetup.selectedBrowser.slice(1)} is completely closed before clicking.
+                  </p>
+                </div>
+              )}
+
+              {/* Step 4: Success */}
+              {youtubeSetup.wizardStep === 4 && (
+                <div style={{ textAlign: 'center' }}>
+                  <div style={{ marginBottom: '1rem' }}><PartyPopper size={64} color="#28a745" /></div>
+                  <h3 style={{ marginBottom: '1rem', color: '#28a745' }}>YouTube is Ready!</h3>
+                  <p style={{ color: '#888', marginBottom: '1.5rem' }}>
+                    Your YouTube authentication is set up successfully. 
+                    You can now download trailers without issues.
+                  </p>
+                  
+                  {youtubeSetup.testResult && (
+                    <div style={{
+                      padding: '0.85rem 1rem',
+                      borderRadius: '8px',
+                      marginBottom: '1.5rem',
+                      fontSize: '0.9rem',
+                      color: youtubeSetup.testResult.success ? 'var(--success-color, #28a745)' : '#dc3545',
+                      background: youtubeSetup.testResult.success
+                        ? 'color-mix(in srgb, var(--success-color, #28a745) 12%, transparent)'
+                        : 'color-mix(in srgb, #dc3545 12%, transparent)',
+                      border: `1px solid ${youtubeSetup.testResult.success ? 'color-mix(in srgb, var(--success-color, #28a745) 40%, transparent)' : 'color-mix(in srgb, #dc3545 40%, transparent)'}`,
+                    }}>
+                      <div style={{ fontWeight: 600 }}>
+                        {youtubeSetup.testResult.message || youtubeSetup.testResult.error || 'Test failed'}
+                      </div>
+                      {youtubeSetup.testResult.hint && (
+                        <div style={{ marginTop: '0.4rem', color: 'var(--text-secondary)', fontWeight: 400 }}>
+                          {youtubeSetup.testResult.hint}
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  {/* Optional: test the exact trailer that's failing, so a
+                      single bad video can be told apart from broken auth. */}
+                  <div style={{ marginBottom: '1rem' }}>
+                    <label style={{ display: 'block', marginBottom: '0.35rem', fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
+                      Test a specific trailer URL <span style={{ opacity: 0.7 }}>(optional)</span>
+                    </label>
+                    <input
+                      type="text"
+                      className="nx-input"
+                      placeholder="https://www.youtube.com/watch?v=... (leave blank to test sign-in only)"
+                      value={youtubeSetup.testUrl || ''}
+                      onChange={(e) => setYoutubeSetup(prev => ({ ...prev, testUrl: e.target.value }))}
+                      style={{ width: '100%', padding: '0.55rem 0.7rem', borderRadius: '6px', border: '1px solid var(--border-color)', boxSizing: 'border-box' }}
+                    />
+                  </div>
+
+                  <div style={{ display: 'flex', gap: '1rem', justifyContent: 'center' }}>
+                    <button
+                      onClick={handleYoutubeTestDownload}
+                      className="button button-secondary"
+                      disabled={youtubeSetup.testing}
+                    >
+                      {youtubeSetup.testing
+                        ? <><Loader2 size={16} className="spin" /> Testing...</>
+                        : <><FlaskConical size={16} /> Test Download</>}
+                    </button>
+                    <button
+                      onClick={() => setYoutubeSetup(prev => ({ ...prev, showWizard: false }))}
+                      className="button button-success"
+                    >
+                                                <Check size={16} /> Done
+                    </button>
+                  </div>
+                </div>
+              )}
             </div>
           </div>
         </div>

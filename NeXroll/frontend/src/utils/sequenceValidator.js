@@ -206,8 +206,9 @@ export const sanitizeSequence = (sequence) => {
     } else if (block.type === 'coming_soon_list') {
       sanitized.layout = block.layout || 'grid';
     } else if (block.type === 'dynamic_preroll') {
-      sanitized.template = block.template;
-      sanitized.theme = block.theme;
+      sanitized.filename = block.filename;
+    } else if (block.type === 'separator') {
+      sanitized.duration = block.duration || 3;
     }
 
     return sanitized;

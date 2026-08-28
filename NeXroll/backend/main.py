@@ -22082,13 +22082,14 @@ async def generate_dynamic_preroll(
         raise HTTPException(status_code=500, detail=str(e))
 
 
-def _register_generated_preroll_to_category(db: Session, output_path: Path, template: str = "", theme: str = ""):
+def _register_generated_preroll_to_category(db: Session, output_path: Path, template: str = "", theme: str = "", name: str = ""):
     """Register a generated dynamic preroll video to the NeX-Up Prerolls system category.
-    
+
     This mirrors what _register_coming_soon_list_to_category does for Coming Soon Lists,
     ensuring generated prerolls appear in the Sequence Builder block editor.
     """
     try:
+        custom_display_name = f"NeX-Up: {name.strip()}" if name and name.strip() else None
         # Get or create the NeX-Up Prerolls category
         category = db.query(models.Category).filter(
             models.Category.name == "NeX-Up Prerolls"
@@ -22114,14 +22115,16 @@ def _register_generated_preroll_to_category(db: Session, output_path: Path, temp
 
         if existing:
             existing.category_id = category.id
+            if custom_display_name:
+                existing.display_name = custom_display_name
             db.commit()
             _file_log(f"Updated existing Generated Preroll registration: {output_path.name}")
         else:
-            display_name = output_path.stem.replace('_preroll', '').replace('_', ' ').title()
+            fallback_name = output_path.stem.replace('_preroll', '').replace('_', ' ').title()
             new_preroll = models.Preroll(
                 filename=output_path.name,
                 path=str(output_path),
-                display_name=f"NeX-Up: {display_name}",
+                display_name=custom_display_name or f"NeX-Up: {fallback_name}",
                 category_id=category.id,
                 thumbnail="",
                 tags="[]",
@@ -22920,6 +22923,7 @@ async def generate_preroll_from_preview(
     title_color: Optional[str] = Body(None, description="Optional #RRGGBB heading color override"),
     subject_color: Optional[str] = Body(None, description="Optional #RRGGBB server-name color override"),
     audio_mode: str = Body("none", description="Soundtrack choice: none, default, or custom"),
+    name: Optional[str] = Body(None, description="Optional user-supplied name; saves this as a distinct, individually selectable preroll instead of overwriting the template/theme combo's file"),
     db: Session = Depends(get_db)
 ):
     """
@@ -22973,11 +22977,20 @@ async def generate_preroll_from_preview(
             if not audio_path:
                 raise HTTPException(status_code=500, detail="Bundled NeXroll soundtrack could not be found")
 
-        # Generate filename based on template AND theme (unique file per combination)
+        # Named generations get their own file (so multiple named variants of the
+        # same template/theme can coexist and be individually selected later);
+        # unnamed generations keep the legacy one-file-per-combination behavior.
         import re
-        safe_template = re.sub(r'[^a-zA-Z0-9_-]', '_', template)
-        safe_theme = re.sub(r'[^a-zA-Z0-9_-]', '_', theme) if theme else 'custom'
-        output_filename = f"{safe_template}_{safe_theme}_preroll.mp4"
+        clean_name = (name or "").strip()
+        if clean_name:
+            safe_name = re.sub(r'[^a-zA-Z0-9_-]+', '_', clean_name).strip('_').lower()[:80]
+            output_filename = f"{safe_name}_preroll.mp4" if safe_name else None
+        else:
+            output_filename = None
+        if not output_filename:
+            safe_template = re.sub(r'[^a-zA-Z0-9_-]', '_', template)
+            safe_theme = re.sub(r'[^a-zA-Z0-9_-]', '_', theme) if theme else 'custom'
+            output_filename = f"{safe_template}_{safe_theme}_preroll.mp4"
         
         source_method = "preview_motion_capture"
         if video_data:
@@ -23040,7 +23053,7 @@ async def generate_preroll_from_preview(
             
             # Auto-register generated preroll to the NeX-Up Prerolls category
             # (so it shows up in sequences/block editor like Coming Soon Lists do)
-            _register_generated_preroll_to_category(db, Path(output_path), template, theme)
+            _register_generated_preroll_to_category(db, Path(output_path), template, theme, name=clean_name)
             
             _file_log(f"[PREROLL-IMG] === Generation complete: {output_path} ===")
             
@@ -23148,17 +23161,29 @@ def list_generated_prerolls(db: Session = Depends(get_db)):
     coming_soon_lists = []
     
     if output_dir.exists():
+        # Registered Preroll rows carry the user-supplied name (if any) for
+        # named generations; fall back to a filename-derived label otherwise.
+        registered_by_path = {
+            p.path: p.display_name
+            for p in db.query(models.Preroll.path, models.Preroll.display_name).filter(
+                models.Preroll.path.like(f"{output_dir}%")
+            ).all()
+        }
+
         # List dynamic prerolls (*_preroll.mp4)
         for file in output_dir.glob("*_preroll.mp4"):
             # Extract template name from filename (e.g., "coming_soon_cinematic_preroll.mp4" -> "coming_soon_cinematic")
             template_id = file.stem.replace("_preroll", "")
-            
+            registered_name = registered_by_path.get(str(file))
+            display_name = registered_name.replace("NeX-Up: ", "", 1) if registered_name else template_id.replace('_', ' ').title()
+
             # Get file stats
             stat = file.stat()
-            
+
             prerolls.append({
                 "filename": file.name,
                 "template_id": template_id,
+                "name": display_name,
                 "path": str(file),
                 "size_bytes": stat.st_size,
                 "created_at": stat.st_mtime
@@ -23178,6 +23203,7 @@ def list_generated_prerolls(db: Session = Depends(get_db)):
             coming_soon_lists.append({
                 "filename": file.name,
                 "layout": layout_type,
+                "name": f"Coming Soon ({layout_type.title()})",
                 "path": str(file),
                 "size_bytes": stat.st_size,
                 "created_at": stat.st_mtime
@@ -23260,11 +23286,21 @@ def resolve_preview_blocks(blocks: list = Body(...), db: Session = Depends(get_d
                         "type": "coming_soon_list"
                     })
         elif block_type == "dynamic_preroll":
+            filename = str(block.get("filename", "")).strip()
             template = str(block.get("template", "")).lower().strip()
             theme = str(block.get("theme", "")).lower().strip()
             if storage_path:
                 dp_dir = os.path.join(storage_path, "dynamic_prerolls")
-                if template and theme:
+                if filename and os.path.sep not in filename and filename not in (".", ".."):
+                    fpath = os.path.join(dp_dir, filename)
+                    if os.path.exists(fpath):
+                        label = filename.replace("_preroll.mp4", "").replace("_", " ").title()
+                        items.append({
+                            "title": label,
+                            "url": f"/nexup/preroll/video/{filename}",
+                            "type": "dynamic_preroll"
+                        })
+                if not items and template and theme:
                     filename = f"{template}_{theme}_preroll.mp4"
                     fpath = os.path.join(dp_dir, filename)
                     if os.path.exists(fpath):
