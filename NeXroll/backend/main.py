@@ -21684,11 +21684,21 @@ async def sync_nexup(db: Session = Depends(get_db)):
         _nexup_sync_progress["total"] = len(eligible_movies)
         _nexup_sync_progress["status"] = f"Found {len(eligible_movies)} movies with trailers..."
         
+        # Clear leftovers from earlier interrupted or failed downloads before
+        # starting a new pass. Without this a dead .part both inflates reported
+        # storage and makes yt-dlp try to resume a partial that will fail again.
+        try:
+            swept = downloader.cleanup_partial_downloads()
+            if swept:
+                _file_log(f"NeX-Up sync: cleared {swept} stale download leftover(s) before starting")
+        except Exception as _e:
+            _file_log(f"NeX-Up sync: leftover cleanup skipped ({_e})", level="WARNING")
+
         # Get rate limiting settings
         download_delay = getattr(setting, 'nexup_download_delay', 5) or 5
         downloads_completed = 0
         processed_count = 0
-        
+
         for movie in eligible_movies:
             processed_count += 1
             progress_pct = int((processed_count / len(eligible_movies)) * 100) if eligible_movies else 100

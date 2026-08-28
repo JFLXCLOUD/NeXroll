@@ -577,6 +577,14 @@ def classify_ytdlp_error(msg: str) -> dict:
         return {'category': 'age_restricted', 'reason': 'This video is age-restricted. Signed-in cookies are required for this one specifically.'}
     if 'http error 429' in m or 'too many requests' in m:
         return {'category': 'rate_limited', 'reason': 'YouTube is rate-limiting your IP. Wait a while, or try a VPN/different network.'}
+    if 'unable to download video data' in m and '403' in m:
+        # Extraction and the PO token both succeeded — the media URL itself was
+        # revoked partway through the transfer. This is YouTube's SABR rollout
+        # (yt-dlp #12482), not a cookie or token problem, and no amount of
+        # re-authenticating fixes it; a newer yt-dlp is what carries the fix.
+        return {'category': 'sabr_blocked', 'reason': 'YouTube revoked the media URL mid-download (SABR streaming). Not an authentication problem; needs a newer yt-dlp.'}
+    if 'forcing sabr streaming' in m:
+        return {'category': 'sabr_blocked', 'reason': 'YouTube is forcing SABR streaming for this client, so the usual download URLs are withheld.'}
     if 'requested format is not available' in m or 'no video formats found' in m:
         # Extraction + auth SUCCEEDED — yt-dlp reached the video and read its
         # format list; it only failed to match a format string. For a probe
@@ -1103,7 +1111,8 @@ class TrailerDownloader:
                             last_strategy_msg = result['message']
                             cls = classify_ytdlp_error(last_strategy_msg)
                             if best_error is None and cls['category'] in (
-                                    'video_unavailable', 'age_restricted', 'rate_limited', 'auth'):
+                                    'video_unavailable', 'age_restricted', 'rate_limited', 'auth',
+                                    'sabr_blocked'):
                                 best_error = {'category': cls['category'], 'raw': last_strategy_msg}
                             if '--cookies' in actual_args and cls['category'] == 'auth':
                                 cookies_tried_but_failed = True
@@ -1154,6 +1163,14 @@ class TrailerDownloader:
                             "RATE_LIMITED: YouTube is temporarily rate-limiting this IP (too many requests in a "
                             "short time). Wait a while, or use a different network/VPN, then retry."
                         )
+                    elif cat == 'sabr_blocked':
+                        last_error = (
+                            "SABR_BLOCKED: YouTube served this video over SABR streaming and revoked the media "
+                            "URL partway through the download, so the transfer stopped with a 403. Sign-in and "
+                            "PO tokens don't affect this — it's a YouTube delivery change that yt-dlp has to "
+                            "catch up with. Upgrade yt-dlp from the System page, then retry."
+                            + (f" [YouTube: {raw_short}]" if raw_short else "")
+                        )
                     elif not pot_usable:
                         last_error = (
                             "YOUTUBE_BOT_BLOCK: YouTube requires a Proof-of-Origin (PO) token and the token "
@@ -1175,9 +1192,16 @@ class TrailerDownloader:
                     logger.warning(last_error)
 
             logger.error(f"All trailer sources failed for {title}. Last error: {last_error}")
+            # Every strategy failed, so anything yt-dlp wrote is a dead fragment.
+            # Clearing it keeps the folder clean and stops the next attempt from
+            # trying to resume a partial that will just fail again.
+            try:
+                self.cleanup_partial_downloads(output_dir, title, tmdb_id)
+            except Exception:
+                pass
             # Map the message prefix to a stable error code the UI can branch on.
             code = 'DOWNLOAD_FAILED'
-            for prefix in ('YOUTUBE_BOT_BLOCK', 'VIDEO_UNAVAILABLE', 'AGE_RESTRICTED', 'RATE_LIMITED'):
+            for prefix in ('YOUTUBE_BOT_BLOCK', 'VIDEO_UNAVAILABLE', 'AGE_RESTRICTED', 'RATE_LIMITED', 'SABR_BLOCKED'):
                 if last_error and last_error.startswith(prefix):
                     code = prefix
                     break
@@ -1338,6 +1362,50 @@ class TrailerDownloader:
         
         return None
     
+    def cleanup_partial_downloads(self, output_dir: Path = None, title: str = None, tmdb_id: int = None) -> int:
+        """Remove yt-dlp leftovers (.part/.ytdl and orphaned per-format streams).
+
+        A failed or interrupted download leaves the fragments it had already
+        written — e.g. Title_1234_trailer.f137.mp4.part. Nothing used to clear
+        them, so they accumulated in the storage folder and counted toward
+        reported usage. Worse, a stale .part makes yt-dlp attempt a resume on the
+        next try, which fails again if the partial is no longer valid.
+
+        Scoped to one title when `title` is given, otherwise sweeps the folder.
+        """
+        # Downloads land in the movies/ and tv/ subfolders, so a sweep with no
+        # explicit directory has to cover those too, not just the storage root.
+        if output_dir:
+            search_dirs = [Path(output_dir)]
+        else:
+            search_dirs = [self.base_storage_path, self.movies_path, self.tv_path]
+
+        if title:
+            prefix = self.sanitize_filename(title)
+            if tmdb_id:
+                prefix = f"{prefix}_{tmdb_id}"
+        else:
+            prefix = ''
+        patterns = [f"{prefix}*.part", f"{prefix}*.ytdl",
+                    f"{prefix}*.f[0-9]*.mp4", f"{prefix}*.f[0-9]*.webm", f"{prefix}*.f[0-9]*.m4a"]
+
+        removed = 0
+        for search_dir in search_dirs:
+            try:
+                if not search_dir or not Path(search_dir).is_dir():
+                    continue
+                for pattern in patterns:
+                    for leftover in Path(search_dir).glob(pattern):
+                        try:
+                            leftover.unlink()
+                            removed += 1
+                            logger.info(f"Removed stale download leftover: {leftover.name}")
+                        except Exception as e:
+                            logger.warning(f"Could not remove leftover {leftover.name}: {e}")
+            except Exception as e:
+                logger.warning(f"Partial-download cleanup failed in {search_dir}: {e}")
+        return removed
+
     def delete_trailer(self, filepath: str) -> bool:
         """Delete a trailer file"""
         try:
