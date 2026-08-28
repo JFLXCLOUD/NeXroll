@@ -4,11 +4,14 @@ const OUTPUT_DIMENSIONS = {
   '2160': { width: 3840, height: 2160 },
 };
 
+// `at` is the Now Showing connector, the counterpart to Coming Soon's `to`.
+// The renderer writes "NOW SHOWING / at / <server>", so the preview has to as
+// well or the two disagree. Values match TRANSLATIONS in dynamic_preroll.py.
 const COPY = {
-  en: { coming: 'COMING SOON', to: 'to', feature: 'FEATURE PRESENTATION', now: 'NOW SHOWING' },
-  fr: { coming: 'PROCHAINEMENT', to: 'sur', feature: 'LONG M\u00c9TRAGE', now: '\u00c0 L\'AFFICHE' },
-  es: { coming: 'PR\u00d3XIMAMENTE', to: 'en', feature: 'FUNCI\u00d3N PRINCIPAL', now: 'EN CARTELERA' },
-  de: { coming: 'DEMN\u00c4CHST', to: 'auf', feature: 'HAUPTFILM', now: 'JETZT IM PROGRAMM' },
+  en: { coming: 'COMING SOON', to: 'to', at: 'at', feature: 'FEATURE PRESENTATION', now: 'NOW SHOWING' },
+  fr: { coming: 'PROCHAINEMENT', to: 'sur', at: 'sur', feature: 'LONG M\u00c9TRAGE', now: '\u00c0 L\'AFFICHE' },
+  es: { coming: 'PR\u00d3XIMAMENTE', to: 'en', at: 'en', feature: 'FUNCI\u00d3N PRINCIPAL', now: 'EN CARTELERA' },
+  de: { coming: 'DEMN\u00c4CHST', to: 'auf', at: 'auf', feature: 'HAUPTFILM', now: 'JETZT IM PROGRAMM' },
 };
 
 const QUALITY_BITRATES = {
@@ -341,6 +344,8 @@ export function drawDynamicPrerollFrame(canvas, options, elapsedSeconds) {
     const titleSpacing = 5 * scale * fontScale;
     setFittedFont(context, text.now, 32 * scale * fontScale, width * 0.78, 900, titleSpacing);
     drawGlowText(context, text.now, centerX, height * 0.40 + ((1 - state.titleReveal) * 15 * scale), titleColor, rgba(titleColor, 0.62, '#00d4ff'), 22 * scale, state.titleReveal, titleSpacing);
+    // Marquee bulbs sit just under the title, freeing the 0.49 line for the
+    // connector so this template reads the same way Coming Soon does.
     const startX = centerX - (width * 0.25);
     for (let index = 0; index < 9; index += 1) {
       context.save();
@@ -349,10 +354,12 @@ export function drawDynamicPrerollFrame(canvas, options, elapsedSeconds) {
       context.shadowColor = secondary;
       context.shadowBlur = 10 * scale;
       context.beginPath();
-      context.arc(startX + (index * width * 0.0625), height * 0.49, 4 * scale, 0, Math.PI * 2);
+      context.arc(startX + (index * width * 0.0625), height * 0.455, 4 * scale, 0, Math.PI * 2);
       context.fill();
       context.restore();
     }
+    setFont(context, 17 * scale * fontScale, 500);
+    drawGlowText(context, text.at, centerX, height * 0.52, rgba(titleColor, 0.78, '#ffffff'), 'rgba(0,0,0,0)', 0, state.detailReveal);
     if (!drawLogo(context, logoDrawn ? options.logoImage : null, centerX, height * 0.61, width * 0.42, height * 0.18, state.subjectReveal)) {
       setFittedFont(context, subject, 42 * scale * fontScale, width * 0.78, 900);
       drawGlowText(context, subject, centerX, height * 0.61 + ((1 - state.subjectReveal) * 18 * scale), subjectColor, rgba(subjectColor, 0.55, '#7b2cbf'), 25 * scale, state.subjectReveal);
